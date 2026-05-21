@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tone-forge.dev/schemas/tone_descriptor.schema.json",
+  "title": "ToneDescriptor",
+  "description": "Hardware-agnostic description of a guitar tone. Produced by the analyzer, consumed by per-device translators.",
+  "type": "object",
+  "required": ["version", "source", "guitar", "amp", "cab", "effects", "confidence"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "0.1.0"
+    },
+    "source": {
+      "type": "object",
+      "description": "Provenance of the analyzed audio.",
+      "required": ["kind", "duration_sec"],
+      "properties": {
+        "kind": { "enum": ["isolated_guitar", "stem_separated", "full_mix"] },
+        "duration_sec": { "type": "number", "minimum": 0 },
+        "sample_rate": { "type": "integer" },
+        "filename": { "type": "string" }
+      }
+    },
+    "guitar": {
+      "type": "object",
+      "description": "Inferred player/instrument context. Often coarse.",
+      "properties": {
+        "pickup_brightness": {
+          "type": "number", "minimum": 0, "maximum": 1,
+          "description": "0 = dark humbucker, 1 = bright single-coil"
+        },
+        "playing_style": { "enum": ["clean_strum", "fingerpick", "palm_mute", "lead", "chord_riff", "unknown"] },
+        "estimated_tuning": { "type": "string", "examples": ["E_standard", "Drop_D", "D_standard", "Drop_C", "unknown"] }
+      }
+    },
+    "amp": {
+      "type": "object",
+      "required": ["family", "gain", "voicing"],
+      "properties": {
+        "family": {
+          "enum": ["fender_clean", "vox_chime", "marshall_plexi", "marshall_jcm", "mesa_rectifier", "5150_peavey", "bogner", "soldano", "ac30", "tweed", "dumble", "unknown"],
+          "description": "Coarse amp character. Not a specific model."
+        },
+        "gain": {
+          "type": "number", "minimum": 0, "maximum": 1,
+          "description": "0 = sparkling clean, 0.5 = crunch, 0.8+ = high gain"
+        },
+        "voicing": {
+          "type": "object",
+          "description": "Tone-stack shape (relative, not absolute dB).",
+          "required": ["bass", "mid", "treble", "presence"],
+          "properties": {
+            "bass":     { "type": "number", "minimum": 0, "maximum": 1 },
+            "mid":      { "type": "number", "minimum": 0, "maximum": 1 },
+            "treble":   { "type": "number", "minimum": 0, "maximum": 1 },
+            "presence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "mid_scoop": {
+              "type": "number", "minimum": 0, "maximum": 1,
+              "description": "Derived: 1 = heavily scooped (mid pulled, bass+treble pushed)."
+            }
+          }
+        }
+      }
+    },
+    "cab": {
+      "type": "object",
+      "description": "Cab character — family, not specific IR.",
+      "required": ["configuration", "speaker_character"],
+      "properties": {
+        "configuration": { "enum": ["1x12", "2x12", "4x10", "4x12", "unknown"] },
+        "speaker_character": {
+          "enum": ["v30_like", "g12h_like", "g12m_like", "alnico_blue_like", "jensen_like", "unknown"],
+          "description": "Closest tonal family, not a brand claim."
+        },
+        "mic_position": { "enum": ["on_axis_cap", "off_axis_cap", "edge", "room", "unknown"] }
+      }
+    },
+    "effects": {
+      "type": "object",
+      "description": "Detected effects in the signal. Each block is optional; absence = not detected.",
+      "properties": {
+        "overdrive_pedal": {
+          "type": "object",
+          "properties": {
+            "style": { "enum": ["tube_screamer_like", "klon_like", "rat_like", "fuzz_like", "unknown"] },
+            "drive": { "type": "number", "minimum": 0, "maximum": 1 },
+            "level": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "compressor": {
+          "type": "object",
+          "properties": {
+            "amount":   { "type": "number", "minimum": 0, "maximum": 1 },
+            "character": { "enum": ["studio", "stomp", "optical", "unknown"] }
+          }
+        },
+        "modulation": {
+          "type": "object",
+          "properties": {
+            "type":  { "enum": ["chorus", "flanger", "phaser", "tremolo", "vibrato", "none"] },
+            "rate":  { "type": "number", "minimum": 0, "maximum": 1 },
+            "depth": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "delay": {
+          "type": "object",
+          "properties": {
+            "type":   { "enum": ["digital", "analog_bbd", "tape", "slapback", "none"] },
+            "time_ms":{ "type": "number", "minimum": 0 },
+            "feedback": { "type": "number", "minimum": 0, "maximum": 1 },
+            "mix":    { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "reverb": {
+          "type": "object",
+          "properties": {
+            "type": { "enum": ["spring", "plate", "hall", "room", "shimmer", "none"] },
+            "size": { "type": "number", "minimum": 0, "maximum": 1 },
+            "mix":  { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "confidence": {
+      "type": "object",
+      "description": "Per-section confidence in [0,1]. Drives UI hedging and which tweak hints to show.",
+      "required": ["amp_family", "gain", "cab", "effects"],
+      "properties": {
+        "amp_family": { "type": "number", "minimum": 0, "maximum": 1 },
+        "gain":       { "type": "number", "minimum": 0, "maximum": 1 },
+        "cab":        { "type": "number", "minimum": 0, "maximum": 1 },
+        "effects":    { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

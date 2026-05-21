@@ -1,0 +1,23 @@
+# Audio I/O + features
+librosa>=0.10.1
+soundfile>=0.12.1
+numpy>=1.26
+scipy>=1.11
+
+# Web server (for the frontend)
+fastapi>=0.104
+uvicorn[standard]>=0.24
+python-multipart>=0.0.6  # required by FastAPI for multipart/form-data file uploads
+
+# Stem separation (for full-mix input)
+# These are optional but required for source_kind="full_mix"
+demucs>=4.0.1
+torch>=2.1
+torchaudio>=2.1
+
+# Extra audio features (optional, faster than librosa for some things)
+# essentia>=2.1b6.dev1110
+
+# Dev
+pytest>=7.4
+httpx>=0.25                # only for tests (FastAPI's TestClient uses it)

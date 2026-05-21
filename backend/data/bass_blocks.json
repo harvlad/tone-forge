@@ -1,0 +1,225 @@
+{
+  "amps": [
+    {
+      "id": "amp.ampeg_svt",
+      "display": "Ampeg SVT",
+      "models": "Ampeg SVT Classic/VR",
+      "families": ["ampeg_svt"],
+      "price_estimate": "$2,000-3,000",
+      "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "master": [0, 10]}
+    },
+    {
+      "id": "amp.ampeg_b15",
+      "display": "Ampeg B-15",
+      "models": "Ampeg B-15 Portaflex",
+      "families": ["ampeg_b15"],
+      "price_estimate": "$1,500-2,500",
+      "params": {"gain": [0, 10], "bass": [0, 10], "treble": [0, 10], "volume": [0, 10]}
+    },
+    {
+      "id": "amp.fender_bassman",
+      "display": "Fender Bassman",
+      "models": "Fender Bassman 100/300/800",
+      "families": ["fender_bassman"],
+      "price_estimate": "$800-1,500",
+      "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "master": [0, 10]}
+    },
+    {
+      "id": "amp.darkglass_microtubes",
+      "display": "Darkglass Microtubes 900",
+      "models": "Darkglass Microtubes 900 v2",
+      "families": ["darkglass"],
+      "price_estimate": "$1,200",
+      "params": {"drive": [0, 10], "blend": [0, 10], "bass": [0, 10], "low_mid": [0, 10], "high_mid": [0, 10], "treble": [0, 10]}
+    },
+    {
+      "id": "amp.mesa_subway",
+      "display": "Mesa Subway D-800+",
+      "models": "Mesa Boogie Subway D-800+",
+      "families": ["mesa_bass"],
+      "price_estimate": "$1,000",
+      "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "master": [0, 10]}
+    },
+    {
+      "id": "amp.gk_mb800",
+      "display": "Gallien-Krueger MB800",
+      "models": "GK MB Fusion 800",
+      "families": ["gallien_krueger"],
+      "price_estimate": "$900",
+      "params": {"gain": [0, 10], "bass": [0, 10], "low_mid": [0, 10], "high_mid": [0, 10], "treble": [0, 10]}
+    },
+    {
+      "id": "amp.hartke_lh1000",
+      "display": "Hartke LH1000",
+      "models": "Hartke LH1000",
+      "families": ["hartke"],
+      "price_estimate": "$700",
+      "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "brite": [0, 1]}
+    },
+    {
+      "id": "amp.markbass_little_mark",
+      "display": "Markbass Little Mark III",
+      "models": "Markbass Little Mark III",
+      "families": ["markbass"],
+      "price_estimate": "$700",
+      "params": {"gain": [0, 10], "bass": [0, 10], "low_mid": [0, 10], "high_mid": [0, 10], "treble": [0, 10], "vpf": [0, 10], "vle": [0, 10]}
+    },
+    {
+      "id": "amp.orange_bass_terror",
+      "display": "Orange Bass Terror",
+      "models": "Orange Bass Terror 500/1000",
+      "families": ["orange_bass"],
+      "price_estimate": "$600-900",
+      "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "volume": [0, 10]}
+    },
+    {
+      "id": "amp.aguilar_th500",
+      "display": "Aguilar Tone Hammer 500",
+      "models": "Aguilar Tone Hammer 500",
+      "families": ["aguilar"],
+      "price_estimate": "$900",
+      "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "drive": [0, 10]}
+    }
+  ],
+  "cabs": [
+    {
+      "id": "cab.ampeg_810",
+      "display": "Ampeg 8x10",
+      "models": "Ampeg SVT-810E",
+      "config": "8x10",
+      "character": "punchy",
+      "price_estimate": "$1,200"
+    },
+    {
+      "id": "cab.ampeg_410",
+      "display": "Ampeg 4x10",
+      "models": "Ampeg SVT-410HLF",
+      "config": "4x10",
+      "character": "punchy",
+      "price_estimate": "$800"
+    },
+    {
+      "id": "cab.ampeg_115",
+      "display": "Ampeg 1x15",
+      "models": "Ampeg SVT-15E",
+      "config": "1x15",
+      "character": "warm",
+      "price_estimate": "$500"
+    },
+    {
+      "id": "cab.mesa_212",
+      "display": "Mesa Subway 2x12",
+      "models": "Mesa Boogie Subway 2x12",
+      "config": "2x12",
+      "character": "modern",
+      "price_estimate": "$900"
+    },
+    {
+      "id": "cab.bergantino_410",
+      "display": "Bergantino NV610",
+      "models": "Bergantino NV610",
+      "config": "4x10",
+      "character": "vintage",
+      "price_estimate": "$1,500"
+    }
+  ],
+  "drives": [
+    {
+      "id": "drive.darkglass_b7k",
+      "display": "Darkglass B7K Ultra",
+      "models": "Darkglass Microtubes B7K Ultra",
+      "price_estimate": "$350",
+      "params": {"drive": [0, 10], "blend": [0, 10], "level": [0, 10], "grunt": [0, 1], "attack": [0, 1]}
+    },
+    {
+      "id": "drive.sansamp_bddi",
+      "display": "Tech 21 SansAmp BDDI",
+      "models": "Tech 21 SansAmp Bass Driver DI",
+      "price_estimate": "$200",
+      "params": {"level": [0, 10], "blend": [0, 10], "treble": [0, 10], "bass": [0, 10], "drive": [0, 10], "presence": [0, 10]}
+    },
+    {
+      "id": "drive.vt_bass",
+      "display": "Tech 21 VT Bass",
+      "models": "Tech 21 Character Series VT Bass",
+      "price_estimate": "$180",
+      "params": {"level": [0, 10], "low": [0, 10], "mid": [0, 10], "high": [0, 10], "character": [0, 10], "drive": [0, 10]}
+    },
+    {
+      "id": "drive.mxr_m80",
+      "display": "MXR M80 Bass D.I.+",
+      "models": "MXR M80 Bass D.I.+",
+      "price_estimate": "$130",
+      "params": {"clean": [0, 10], "color": [0, 1], "distortion": [0, 10], "blend": [0, 10]}
+    },
+    {
+      "id": "drive.ehx_battalion",
+      "display": "EHX Bass Battalion",
+      "models": "Electro-Harmonix Battalion Bass Preamp",
+      "price_estimate": "$150",
+      "params": {"drive": [0, 10], "tone": [0, 10], "bass": [0, 10], "treble": [0, 10], "blend": [0, 10]}
+    }
+  ],
+  "compressors": [
+    {
+      "id": "comp.mxr_m87",
+      "display": "MXR M87 Bass Compressor",
+      "models": "MXR M87 Bass Compressor",
+      "price_estimate": "$180",
+      "params": {"input": [0, 10], "output": [0, 10], "attack": [0, 10], "release": [0, 10], "ratio": [0, 10]}
+    },
+    {
+      "id": "comp.aguilar_tlc",
+      "display": "Aguilar TLC Compressor",
+      "models": "Aguilar TLC Compressor",
+      "price_estimate": "$250",
+      "params": {"threshold": [0, 10], "slope": [0, 10], "attack": [0, 10], "level": [0, 10]}
+    },
+    {
+      "id": "comp.darkglass_hyper_luminal",
+      "display": "Darkglass Hyper Luminal",
+      "models": "Darkglass Hyper Luminal Compressor",
+      "price_estimate": "$300",
+      "params": {"comp": [0, 10], "blend": [0, 10], "output": [0, 10]}
+    }
+  ],
+  "modulation": [
+    {
+      "id": "mod.ehx_bass_clone",
+      "display": "EHX Bass Clone",
+      "models": "Electro-Harmonix Bass Clone",
+      "price_estimate": "$80",
+      "params": {"rate": [0, 10], "depth": [0, 10]}
+    },
+    {
+      "id": "mod.boss_ceb3",
+      "display": "Boss CEB-3 Bass Chorus",
+      "models": "Boss CEB-3 Bass Chorus",
+      "price_estimate": "$100",
+      "params": {"rate": [0, 10], "depth": [0, 10], "low_filter": [0, 10]}
+    }
+  ],
+  "octavers": [
+    {
+      "id": "oct.boss_oc3",
+      "display": "Boss OC-3 Super Octave",
+      "models": "Boss OC-3 Super Octave",
+      "price_estimate": "$120",
+      "params": {"direct": [0, 10], "oct1": [0, 10], "oct2": [0, 10]}
+    },
+    {
+      "id": "oct.ehx_pog2",
+      "display": "EHX POG2",
+      "models": "Electro-Harmonix POG2",
+      "price_estimate": "$350",
+      "params": {"dry": [0, 10], "sub_octave": [0, 10], "octave_up": [0, 10], "2nd_octave_up": [0, 10]}
+    },
+    {
+      "id": "oct.aguilar_octamizer",
+      "display": "Aguilar Octamizer",
+      "models": "Aguilar Octamizer",
+      "price_estimate": "$200",
+      "params": {"clean": [0, 10], "octave": [0, 10], "filter": [0, 10]}
+    }
+  ]
+}

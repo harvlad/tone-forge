@@ -1,0 +1,187 @@
+{
+  "machines": [
+    {
+      "id": "tr808",
+      "display": "Roland TR-808",
+      "description": "The legendary analog drum machine. Iconic boomy kicks and snappy snares.",
+      "price_estimate": "$3,500+ (vintage) / $400 (Behringer clone)",
+      "style": "electronic",
+      "year": 1980,
+      "sounds": ["boomy kick", "snappy snare", "sizzly hats", "cowbell", "clap"],
+      "params": {
+        "kick": {"level": [0, 10], "tone": [0, 10], "decay": [0, 10]},
+        "snare": {"level": [0, 10], "tone": [0, 10], "snappy": [0, 10]},
+        "hihat": {"level": [0, 10], "decay": [0, 10]}
+      }
+    },
+    {
+      "id": "tr909",
+      "display": "Roland TR-909",
+      "description": "Punchy analog/sample hybrid. The sound of house and techno.",
+      "price_estimate": "$4,000+ (vintage) / $400 (Behringer clone)",
+      "style": "electronic",
+      "year": 1983,
+      "sounds": ["punchy kick", "crisp snare", "bright hats", "ride", "crash"],
+      "params": {
+        "kick": {"level": [0, 10], "tune": [0, 10], "attack": [0, 10], "decay": [0, 10]},
+        "snare": {"level": [0, 10], "tune": [0, 10], "tone": [0, 10], "snappy": [0, 10]},
+        "hihat": {"level": [0, 10], "decay": [0, 10]}
+      }
+    },
+    {
+      "id": "linndrum",
+      "display": "LinnDrum",
+      "description": "12-bit digital samples. The sound of 80s pop and R&B.",
+      "price_estimate": "$2,500+ (vintage)",
+      "style": "electronic",
+      "year": 1982,
+      "sounds": ["tight kick", "acoustic-ish snare", "clean hats", "toms", "clap"],
+      "params": {
+        "kick": {"level": [0, 10], "tune": [0, 10]},
+        "snare": {"level": [0, 10], "tune": [0, 10]},
+        "hihat": {"level": [0, 10]}
+      }
+    },
+    {
+      "id": "dmx",
+      "display": "Oberheim DMX",
+      "description": "Classic 8-bit samples. Early hip-hop essential.",
+      "price_estimate": "$1,500+ (vintage)",
+      "style": "electronic",
+      "year": 1981,
+      "sounds": ["punchy kick", "snappy snare", "crisp hats", "handclap"],
+      "params": {
+        "kick": {"level": [0, 10]},
+        "snare": {"level": [0, 10]},
+        "hihat": {"level": [0, 10]}
+      }
+    },
+    {
+      "id": "sp1200",
+      "display": "E-mu SP-1200",
+      "description": "Lo-fi 12-bit sampling legend. Crunchy hip-hop character.",
+      "price_estimate": "$3,000+ (vintage)",
+      "style": "sampled",
+      "year": 1987,
+      "sounds": ["crunchy samples", "lo-fi character", "punchy transients"],
+      "params": {
+        "sample": {"tune": [-12, 12], "filter": [0, 10]},
+        "amp": {"attack": [0, 10], "decay": [0, 10]}
+      }
+    },
+    {
+      "id": "mpc",
+      "display": "Akai MPC",
+      "description": "The production workhorse. Clean sampling with swing.",
+      "price_estimate": "$300-2,500 (various models)",
+      "style": "sampled",
+      "year": 1988,
+      "sounds": ["clean samples", "tight timing", "adjustable swing"],
+      "params": {
+        "sample": {"tune": [-12, 12], "level": [0, 100]},
+        "amp": {"attack": [0, 100], "decay": [0, 100]},
+        "swing": {"amount": [50, 75]}
+      }
+    },
+    {
+      "id": "volca_beats",
+      "display": "Korg Volca Beats",
+      "description": "Compact analog drum machine with PCM hi-hats.",
+      "price_estimate": "$150",
+      "style": "electronic",
+      "year": 2013,
+      "sounds": ["analog kick", "analog snare", "PCM hats", "PCM toms"],
+      "params": {
+        "kick": {"level": [0, 127], "attack": [0, 127], "decay": [0, 127]},
+        "snare": {"level": [0, 127], "snappy": [0, 127], "decay": [0, 127]},
+        "hihat": {"level": [0, 127], "decay": [0, 127]}
+      }
+    },
+    {
+      "id": "volca_drum",
+      "display": "Korg Volca Drum",
+      "description": "Digital modeling percussion synthesizer. Experimental sounds.",
+      "price_estimate": "$170",
+      "style": "electronic",
+      "year": 2019,
+      "sounds": ["modeled drums", "experimental", "layered synthesis"],
+      "params": {
+        "part": {"select": [0, 5], "level": [0, 127]},
+        "layer1": {"pitch": [0, 127], "mod_amt": [0, 127], "decay": [0, 127]},
+        "layer2": {"pitch": [0, 127], "mod_amt": [0, 127], "decay": [0, 127]}
+      }
+    },
+    {
+      "id": "drum_brute",
+      "display": "Arturia DrumBrute",
+      "description": "Pure analog drum synthesizer. Raw and punchy.",
+      "price_estimate": "$450",
+      "style": "electronic",
+      "year": 2016,
+      "sounds": ["analog kick", "analog snare", "analog hats", "metallic percussion"],
+      "params": {
+        "kick": {"level": [0, 10], "pitch": [0, 10], "decay": [0, 10], "impact": [0, 10]},
+        "snare": {"level": [0, 10], "pitch": [0, 10], "snap": [0, 10], "tone": [0, 10]},
+        "hihat": {"level": [0, 10], "tone": [0, 10]}
+      }
+    },
+    {
+      "id": "dfam",
+      "display": "Moog DFAM",
+      "description": "Semi-modular analog percussion synthesizer. Experimental and aggressive.",
+      "price_estimate": "$700",
+      "style": "electronic",
+      "year": 2018,
+      "sounds": ["deep bass drums", "metallic hits", "noise percussion", "sequenced patterns"],
+      "params": {
+        "vco1": {"freq": [0, 10], "wave": [0, 1]},
+        "vco2": {"freq": [0, 10], "wave": [0, 1]},
+        "noise": {"level": [0, 10]},
+        "vcf": {"freq": [0, 10], "decay": [0, 10]},
+        "vca": {"decay": [0, 10]}
+      }
+    },
+    {
+      "id": "digitakt",
+      "display": "Elektron Digitakt",
+      "description": "Modern 8-track sampling drum machine with effects.",
+      "price_estimate": "$850",
+      "style": "sampled",
+      "year": 2017,
+      "sounds": ["clean samples", "filtered drums", "parameter locks", "effects processing"],
+      "params": {
+        "sample": {"tune": [-24, 24], "start": [0, 120], "length": [0, 120]},
+        "filter": {"freq": [0, 127], "res": [0, 127]},
+        "amp": {"attack": [0, 127], "decay": [0, 127], "level": [0, 127]}
+      }
+    },
+    {
+      "id": "rd8",
+      "display": "Behringer RD-8",
+      "description": "TR-808 clone with modern features. Affordable analog sound.",
+      "price_estimate": "$350",
+      "style": "electronic",
+      "year": 2019,
+      "sounds": ["808-style kick", "808-style snare", "analog hats", "cowbell"],
+      "params": {
+        "kick": {"level": [0, 10], "tone": [0, 10], "decay": [0, 10]},
+        "snare": {"level": [0, 10], "tone": [0, 10], "snappy": [0, 10]},
+        "hihat": {"level": [0, 10]}
+      }
+    },
+    {
+      "id": "rd9",
+      "display": "Behringer RD-9",
+      "description": "TR-909 clone. Punchy house/techno drums on a budget.",
+      "price_estimate": "$400",
+      "style": "electronic",
+      "year": 2020,
+      "sounds": ["909-style kick", "909-style snare", "sample hats", "ride", "crash"],
+      "params": {
+        "kick": {"level": [0, 10], "tune": [0, 10], "attack": [0, 10], "decay": [0, 10]},
+        "snare": {"level": [0, 10], "tune": [0, 10], "tone": [0, 10], "snappy": [0, 10]},
+        "hihat": {"level": [0, 10], "decay": [0, 10]}
+      }
+    }
+  ]
+}

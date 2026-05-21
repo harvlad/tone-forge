@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 300" class="synth-panel volca-keys">
+  <!-- Volca Keys Patch Sheet - clean line art style, white background -->
+  <style>
+    .bg { fill: #fff; }
+    .label { font-family: 'IBM Plex Mono', monospace; font-size: 8px; fill: #333; text-transform: uppercase; letter-spacing: 0.5px; }
+    .section-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700; fill: #000; letter-spacing: 1px; }
+    .knob-ring { fill: none; stroke: #000; stroke-width: 1.5; }
+    .knob-indicator { stroke: #000; stroke-width: 2; stroke-linecap: round; }
+    .knob-value { font-family: 'IBM Plex Mono', monospace; font-size: 9px; fill: #000; font-weight: 600; }
+    .discrete-label { font-family: 'IBM Plex Mono', monospace; font-size: 7px; fill: #555; }
+    .brand { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: #999; }
+  </style>
+
+  <!-- Background -->
+  <rect class="bg" x="0" y="0" width="540" height="300" rx="4"/>
+  <rect x="0" y="0" width="540" height="300" rx="4" fill="none" stroke="#ccc" stroke-width="1"/>
+
+  <!-- VOICE Section (large rotary) -->
+  <g transform="translate(60, 80)">
+    <text x="0" y="-45" class="section-label" text-anchor="middle">VOICE</text>
+    <g class="knob" data-control="VOICE" data-type="discrete">
+      <circle cx="0" cy="0" r="30" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-24"/>
+      <!-- Position markers -->
+      <text x="-42" y="-12" class="discrete-label" text-anchor="end">POLY</text>
+      <text x="-38" y="18" class="discrete-label" text-anchor="end">UNISON</text>
+      <text x="-8" y="42" class="discrete-label" text-anchor="middle">OCTAVE</text>
+      <text x="8" y="-38" class="discrete-label" text-anchor="middle">FIFTH</text>
+      <text x="42" y="-12" class="discrete-label" text-anchor="start">UNI RING</text>
+      <text x="38" y="18" class="discrete-label" text-anchor="start">POLY RING</text>
+    </g>
+  </g>
+
+  <!-- OCTAVE Section -->
+  <g transform="translate(60, 200)">
+    <text x="0" y="-42" class="section-label" text-anchor="middle">OCTAVE</text>
+    <g class="knob" data-control="OCTAVE" data-type="discrete">
+      <circle cx="0" cy="0" r="26" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-20"/>
+      <!-- Footage markers -->
+      <text x="-35" y="-8" class="discrete-label" text-anchor="end">32'</text>
+      <text x="-30" y="15" class="discrete-label" text-anchor="end">16'</text>
+      <text x="0" y="38" class="discrete-label" text-anchor="middle">8'</text>
+      <text x="0" y="-32" class="discrete-label" text-anchor="middle">4'</text>
+      <text x="30" y="-8" class="discrete-label" text-anchor="start">2'</text>
+      <text x="35" y="15" class="discrete-label" text-anchor="start">1'</text>
+    </g>
+  </g>
+
+  <!-- VCO Section -->
+  <text x="160" y="25" class="section-label">VCO</text>
+  <g transform="translate(145, 70)">
+    <g class="knob" data-control="DETUNE">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">DETUNE</text>
+      <text class="knob-value" x="0" y="42" text-anchor="middle">0</text>
+    </g>
+  </g>
+  <g transform="translate(145, 145)">
+    <g class="knob" data-control="PORTAMENTO">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">PORTA</text>
+    </g>
+  </g>
+  <g transform="translate(145, 220)">
+    <g class="knob" data-control="VCO EG INT">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">EG INT</text>
+    </g>
+  </g>
+
+  <!-- VCF Section -->
+  <text x="230" y="25" class="section-label">VCF</text>
+  <g transform="translate(220, 70)">
+    <g class="knob" data-control="VCF CUTOFF">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">CUTOFF</text>
+      <text class="knob-value" x="0" y="42" text-anchor="middle">0</text>
+    </g>
+  </g>
+  <g transform="translate(220, 145)">
+    <g class="knob" data-control="VCF PEAK">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">PEAK</text>
+    </g>
+  </g>
+  <g transform="translate(220, 220)">
+    <g class="knob" data-control="VCF EG INT">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">EG INT</text>
+      <text class="knob-value" x="0" y="42" text-anchor="middle">0</text>
+    </g>
+  </g>
+
+  <!-- LFO Section -->
+  <text x="305" y="25" class="section-label">LFO</text>
+  <g transform="translate(295, 70)">
+    <g class="knob" data-control="LFO RATE">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">RATE</text>
+    </g>
+  </g>
+  <g transform="translate(295, 145)">
+    <g class="knob" data-control="LFO PITCH INT">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">PITCH</text>
+    </g>
+  </g>
+  <g transform="translate(295, 220)">
+    <g class="knob" data-control="LFO CUTOFF INT">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">CUTOFF</text>
+    </g>
+  </g>
+
+  <!-- EG Section -->
+  <text x="380" y="25" class="section-label">EG</text>
+  <g transform="translate(370, 70)">
+    <g class="knob" data-control="ATTACK">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">ATTACK</text>
+      <text class="knob-value" x="0" y="42" text-anchor="middle">0</text>
+    </g>
+  </g>
+  <g transform="translate(370, 145)">
+    <g class="knob" data-control="DECAY/RELEASE">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">DEC/REL</text>
+      <text class="knob-value" x="0" y="42" text-anchor="middle">0</text>
+    </g>
+  </g>
+  <g transform="translate(370, 220)">
+    <g class="knob" data-control="SUSTAIN">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">SUSTAIN</text>
+      <text class="knob-value" x="0" y="42" text-anchor="middle">0</text>
+    </g>
+  </g>
+
+  <!-- DELAY Section -->
+  <text x="470" y="25" class="section-label">DELAY</text>
+  <g transform="translate(455, 70)">
+    <g class="knob" data-control="DELAY TIME">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">TIME</text>
+      <text class="knob-value" x="0" y="42" text-anchor="middle">0</text>
+    </g>
+  </g>
+  <g transform="translate(455, 145)">
+    <g class="knob" data-control="DELAY FEEDBACK">
+      <circle cx="0" cy="0" r="18" class="knob-ring"/>
+      <line class="knob-indicator" x1="0" y1="0" x2="0" y2="-14"/>
+      <text x="0" y="30" class="label" text-anchor="middle">FEEDBACK</text>
+      <text class="knob-value" x="0" y="42" text-anchor="middle">0</text>
+    </g>
+  </g>
+
+  <!-- Korg branding -->
+  <text x="500" y="280" class="brand" text-anchor="end">VOLCA KEYS</text>
+</svg>

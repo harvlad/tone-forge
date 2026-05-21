@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Tone Forge — Tone analysis &amp; gear recommendations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead__edge">№ 001 · Vol. 0.5</div>
+    <h1 class="masthead__title">Tone Forge</h1>
+    <div class="masthead__edge masthead__edge--right">Tone analysis &amp; gear recommendations</div>
+  </header>
+
+  <main class="layout">
+    <!-- Upload / source column -->
+    <section class="col col--source" id="col-source">
+      <div class="section-label">Source</div>
+
+      <form id="upload-form" class="dropzone" tabindex="0" aria-label="Upload an audio file">
+        <input type="file" id="file-input" accept=".wav,.mp3,.flac,.ogg,.m4a,.aiff,.aif" hidden />
+        <div class="dropzone__inner">
+          <div class="dropzone__icon">⌬</div>
+          <div class="dropzone__lede">Drop a clip or <span class="dropzone__action">browse</span></div>
+          <div class="dropzone__meta">WAV · MP3 · FLAC · isolated instruments work best</div>
+        </div>
+      </form>
+
+      <div class="input-divider"><span>or</span></div>
+
+      <div class="url-input-wrap">
+        <input type="url" id="url-input" class="url-input" placeholder="Paste YouTube URL..." />
+        <button type="button" id="url-submit" class="btn btn--url">Analyze</button>
+      </div>
+      <label class="analysis-option tooltip-wrap">
+        <input type="checkbox" id="deep-analysis" />
+        <span class="analysis-option__label">Deep analysis</span>
+        <span class="analysis-option__hint">(slower but more accurate for full mixes)</span>
+        <span class="tooltip tooltip--below">
+          <strong>Fast mode (default):</strong> Analyzes first 60 seconds directly. Works great for isolated instruments and gives good approximations for full mixes. ~10-20 seconds. No MIDI export.<br><br>
+          <strong>Deep analysis:</strong> Uses AI stem separation to isolate instruments from full mixes. Extracts guitar, bass, or drums depending on what's detected. <strong>Includes MIDI extraction.</strong> Takes 2-4 minutes.
+        </span>
+      </label>
+
+      <div class="input-divider"><span>or</span></div>
+
+      <div class="record-wrap">
+        <button type="button" id="record-btn" class="btn btn--record">
+          <span class="record-icon"></span>
+          <span id="record-label">Record</span>
+        </button>
+        <div class="record-time" id="record-time"></div>
+      </div>
+
+      <div class="detection-info" id="detection-info" hidden>
+        <div class="detection-badge" id="detection-badge"></div>
+      </div>
+
+      <div class="status" id="status" aria-live="polite"></div>
+
+      <div class="local-engine-indicator" id="local-engine-indicator"></div>
+
+      <div class="history-section" id="history-section">
+        <div class="section-label">History</div>
+        <div class="history-search-wrap">
+          <input type="text" id="history-search" class="history-search" placeholder="Search history..." />
+        </div>
+        <ul class="history-list" id="history-list"></ul>
+        <button class="btn btn--clear-history" id="clear-history" hidden>Clear history</button>
+      </div>
+    </section>
+
+    <!-- Result column -->
+    <section class="col col--result" id="col-result">
+      <div id="result-empty" class="empty">
+        <div class="empty__rule"></div>
+        <p class="empty__body">
+          Analyzes spectral characteristics to identify guitar amps, bass rigs,
+          drum machines, and synth parameters from any audio.
+        </p>
+        <p class="empty__body">
+          Get recommendations for Line 6 Helix, real pedals/amps, bass gear,
+          drum machines, or synth parameters. Paste a YouTube link to analyze any song.
+        </p>
+        <p class="empty__body">
+          Upload a clip, paste a URL, or record audio to begin.
+        </p>
+      </div>
+
+      <article id="result" class="report" hidden>
+        <header class="report__head">
+          <div class="report__file" id="r-filename">—</div>
+          <div class="report__stats">
+            <div class="stat">
+              <div class="stat__label" id="r-family-label">amp family</div>
+              <div class="stat__value stat__value--display" id="r-amp-family">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat__label" id="r-gain-label">gain</div>
+              <div class="stat__value" id="r-gain">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat__label">confidence</div>
+              <div class="stat__value" id="r-conf">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat__label">duration</div>
+              <div class="stat__value" id="r-duration">—</div>
+            </div>
+          </div>
+        </header>
+
+        <div class="platform-tabs" id="platform-tabs">
+          <button class="tab tab--active" data-platform="helix">Helix</button>
+          <button class="tab" data-platform="pedals">Gear</button>
+          <button class="tab" data-platform="bass">Bass</button>
+          <button class="tab" data-platform="drums">Drums</button>
+          <button class="tab" data-platform="synth">Synth</button>
+        </div>
+
+        <div class="section-label">Signal chain</div>
+        <ol class="chain" id="chain-list"></ol>
+
+        <div id="hints-wrap" hidden>
+          <div class="section-label">Tweak hints</div>
+          <ul class="hints" id="hints-list"></ul>
+        </div>
+
+        <div id="synth-hardware-section" class="synth-hardware-section" hidden>
+          <div class="section-label">Hardware synth settings</div>
+          <div class="synth-hardware-select-wrap">
+            <select id="synth-hardware-select" class="synth-hardware-select">
+              <option value="">Select a hardware synth...</option>
+            </select>
+          </div>
+          <div id="synth-hardware-config" class="synth-hardware-config" hidden>
+            <div class="synth-hardware-header">
+              <span class="synth-hardware-name" id="synth-hw-name"></span>
+              <span class="synth-hardware-price" id="synth-hw-price"></span>
+            </div>
+            <p class="synth-hardware-desc" id="synth-hw-desc"></p>
+            <div class="synth-panel-container" id="synth-panel-container"></div>
+            <div class="synth-controls" id="synth-controls"></div>
+            <ul class="synth-notes" id="synth-notes"></ul>
+          </div>
+        </div>
+
+        <div class="preview-section" id="preview-section" hidden>
+          <div class="section-label">Tone preview</div>
+          <div class="preview-controls">
+            <button class="btn btn--preview" id="btn-preview">
+              <span class="preview-icon">&#9658;</span> Preview reconstructed tone
+            </button>
+            <audio id="preview-audio" controls hidden></audio>
+          </div>
+          <div class="preview-reference" id="preview-reference" hidden>
+            <div class="reference-match">
+              <span class="reference-label">Closest match:</span>
+              <span class="reference-name" id="reference-name">—</span>
+              <span class="reference-confidence" id="reference-confidence"></span>
+            </div>
+            <div class="reference-description" id="reference-description"></div>
+            <div class="reference-tags" id="reference-tags"></div>
+          </div>
+        </div>
+
+        <div class="export-section">
+          <div class="section-label">Export preset</div>
+          <div class="export-buttons">
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="text">Text Analysis</button>
+              <span class="tooltip">Readable text file with all analysis data - amp settings, signal chain, synth parameters, etc.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="hlx">Helix .hlx</button>
+              <span class="tooltip">Line 6 Helix Floor/LT/Rack preset (8 blocks). Import via HX Edit.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="hlx_stomp">HX Stomp</button>
+              <span class="tooltip">HX Stomp preset (6 blocks max). Prioritizes amp, cab, drive, delay, reverb, mod.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="json">JSON</button>
+              <span class="tooltip">Universal format for backup, sharing, or importing into custom tools and scripts.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="neural_dsp">Quad Cortex</button>
+              <span class="tooltip">Neural DSP Quad Cortex preset format. A powerful floor modeler with neural capture technology.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="synth_serum">Synth</button>
+              <span class="tooltip">Synth parameters in Serum/Vital-compatible format. Use as a starting point in your soft synth.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="bass">Bass Rig</button>
+              <span class="tooltip">Bass amp and pedal recommendations with suggested settings.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="drums">Drum Machine</button>
+              <span class="tooltip">Drum machine parameters and settings based on the analyzed rhythm.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="ableton_analog">Analog .adv</button>
+              <span class="tooltip">Native Ableton Analog preset (Standard/Suite). Drag directly into Live to load the synth patch.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export btn--als" data-format="ableton_live_set" id="btn-als">Live Set .als</button>
+              <span class="tooltip">Ableton Live project with MIDI tracks for each stem. Requires "Deep analysis" with stem separation.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export" data-format="midi" id="btn-midi" data-stem="all">MIDI</button>
+              <span class="tooltip">Extract notes as MIDI using AI polyphonic detection. With "Deep analysis", stems are separated first for cleaner bass and melody MIDI files.</span>
+            </span>
+            <span class="tooltip-wrap">
+              <button class="btn btn--export btn--project-bundle" data-format="project_bundle" id="btn-project-bundle">Project Bundle</button>
+              <span class="tooltip">Download ZIP with all MIDI stems + analysis notes. Works with any DAW (Ableton, Logic, FL Studio, etc). Requires "Deep analysis".</span>
+            </span>
+          </div>
+        </div>
+
+        <details class="raw">
+          <summary>Raw descriptor (JSON)</summary>
+          <pre id="raw-json"></pre>
+        </details>
+      </article>
+    </section>
+  </main>
+
+  <footer class="colophon">
+    <span>Built with librosa, scipy, FastAPI · v0.5.0</span>
+    <span class="colophon__rule"></span>
+    <span>Heuristic DSP, no ML — calibration improves with labelled data</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

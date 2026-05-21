@@ -1,0 +1,82 @@
+{
+  "_meta": {
+    "description": "Real pedal and amp recommendations. These are actual products users can buy. Prices are approximate USD (2024).",
+    "version": "0.1.0"
+  },
+  "amps": [
+    {"id": "amp.fender_twin_reverb",       "display": "Fender '65 Twin Reverb",        "models": "Fender Twin Reverb",           "families": ["fender_clean"],                       "price": "$1800", "params": {"volume": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10]}},
+    {"id": "amp.fender_deluxe_reverb",     "display": "Fender '65 Deluxe Reverb",      "models": "Fender Deluxe Reverb",         "families": ["fender_clean", "tweed"],              "price": "$1400", "params": {"volume": [0, 10], "bass": [0, 10], "treble": [0, 10]}},
+    {"id": "amp.fender_princeton_reverb",  "display": "Fender '65 Princeton Reverb",   "models": "Fender Princeton Reverb",      "families": ["fender_clean", "tweed"],              "price": "$1200", "params": {"volume": [0, 10], "bass": [0, 10], "treble": [0, 10]}},
+    {"id": "amp.fender_blues_jr",          "display": "Fender Blues Junior IV",        "models": "Fender Blues Junior",          "families": ["fender_clean", "tweed"],              "price": "$700",  "params": {"volume": [0, 12], "master": [0, 12], "bass": [0, 12], "mid": [0, 12], "treble": [0, 12]}},
+    {"id": "amp.fender_bassbreaker",       "display": "Fender Bassbreaker 15",         "models": "Fender Bassbreaker",           "families": ["tweed", "marshall_plexi"],            "price": "$700",  "params": {"volume": [0, 12], "bass": [0, 12], "mid": [0, 12], "treble": [0, 12]}},
+    {"id": "amp.vox_ac15",                 "display": "Vox AC15C1",                    "models": "Vox AC15",                     "families": ["vox_chime", "ac30"],                  "price": "$800",  "params": {"gain": [0, 10], "bass": [0, 10], "treble": [0, 10], "master": [0, 10]}},
+    {"id": "amp.vox_ac30",                 "display": "Vox AC30S1",                    "models": "Vox AC30",                     "families": ["vox_chime", "ac30"],                  "price": "$1200", "params": {"gain": [0, 10], "bass": [0, 10], "treble": [0, 10], "master": [0, 10]}},
+    {"id": "amp.marshall_origin20",        "display": "Marshall Origin 20",            "models": "Marshall Origin",              "families": ["marshall_plexi"],                     "price": "$600",  "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10]}},
+    {"id": "amp.marshall_dsl40",           "display": "Marshall DSL40CR",              "models": "Marshall DSL",                 "families": ["marshall_jcm"],                       "price": "$900",  "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "presence": [0, 10]}},
+    {"id": "amp.marshall_sc20h",           "display": "Marshall Studio Classic SC20H", "models": "Marshall JCM800",              "families": ["marshall_jcm"],                       "price": "$1400", "params": {"pre_gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "presence": [0, 10]}},
+    {"id": "amp.orange_rocker_15",         "display": "Orange Rocker 15",              "models": "Orange Rocker",                "families": ["marshall_plexi", "vox_chime"],        "price": "$800",  "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10]}},
+    {"id": "amp.orange_th30",              "display": "Orange TH30H",                  "models": "Orange TH30",                  "families": ["marshall_jcm", "bogner"],             "price": "$1200", "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10]}},
+    {"id": "amp.mesa_rectifier",           "display": "Mesa/Boogie Rectifier",         "models": "Mesa Dual Rectifier",          "families": ["mesa_rectifier"],                     "price": "$2200", "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "presence": [0, 10]}},
+    {"id": "amp.mesa_mark_v",              "display": "Mesa/Boogie Mark V",            "models": "Mesa Mark V",                  "families": ["mesa_rectifier", "fender_clean"],     "price": "$2800", "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "presence": [0, 10]}},
+    {"id": "amp.evh_5150",                 "display": "EVH 5150 III 50W",              "models": "Peavey 5150 / EVH",            "families": ["5150_peavey"],                        "price": "$1700", "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10], "presence": [0, 10]}},
+    {"id": "amp.prs_mt15",                 "display": "PRS MT 15",                     "models": "PRS Mark Tremonti",            "families": ["5150_peavey", "mesa_rectifier"],      "price": "$700",  "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10]}},
+    {"id": "amp.friedman_be_mini",         "display": "Friedman BE-Mini",              "models": "Friedman BE-100",              "families": ["bogner", "marshall_jcm"],             "price": "$600",  "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10]}},
+    {"id": "amp.bogner_atma",              "display": "Bogner Atma",                   "models": "Bogner",                       "families": ["bogner", "marshall_jcm"],             "price": "$3000", "params": {"gain": [0, 10], "bass": [0, 10], "mid": [0, 10], "treble": [0, 10]}}
+  ],
+  "drives": [
+    {"id": "drive.klon_centaur",           "display": "Klon KTR",                      "style": "klon_like",                     "price": "$300",  "params": {"gain": [0, 10], "treble": [0, 10], "output": [0, 10]}},
+    {"id": "drive.soul_food",              "display": "Electro-Harmonix Soul Food",   "style": "klon_like",                     "price": "$80",   "params": {"drive": [0, 10], "treble": [0, 10], "volume": [0, 10]}},
+    {"id": "drive.tumnus",                 "display": "Wampler Tumnus",               "style": "klon_like",                     "price": "$150",  "params": {"gain": [0, 10], "treble": [0, 10], "level": [0, 10]}},
+    {"id": "drive.ts808",                  "display": "Ibanez TS808",                 "style": "tube_screamer_like",            "price": "$180",  "params": {"overdrive": [0, 10], "tone": [0, 10], "level": [0, 10]}},
+    {"id": "drive.ts9",                    "display": "Ibanez TS9",                   "style": "tube_screamer_like",            "price": "$100",  "params": {"drive": [0, 10], "tone": [0, 10], "level": [0, 10]}},
+    {"id": "drive.tube_screamer_mini",     "display": "Ibanez Tube Screamer Mini",    "style": "tube_screamer_like",            "price": "$80",   "params": {"overdrive": [0, 10], "tone": [0, 10], "level": [0, 10]}},
+    {"id": "drive.ocd",                    "display": "Fulltone OCD",                 "style": "tube_screamer_like",            "price": "$150",  "params": {"drive": [0, 10], "tone": [0, 10], "volume": [0, 10]}},
+    {"id": "drive.rat",                    "display": "ProCo RAT 2",                  "style": "rat_like",                      "price": "$80",   "params": {"distortion": [0, 10], "filter": [0, 10], "volume": [0, 10]}},
+    {"id": "drive.big_muff",               "display": "Electro-Harmonix Big Muff Pi", "style": "fuzz_like",                     "price": "$90",   "params": {"sustain": [0, 10], "tone": [0, 10], "volume": [0, 10]}},
+    {"id": "drive.fuzz_face",              "display": "Dunlop Fuzz Face Mini",        "style": "fuzz_like",                     "price": "$130",  "params": {"fuzz": [0, 10], "volume": [0, 10]}},
+    {"id": "drive.blues_driver",           "display": "Boss BD-2 Blues Driver",       "style": "tube_screamer_like",            "price": "$100",  "params": {"level": [0, 10], "tone": [0, 10], "gain": [0, 10]}},
+    {"id": "drive.ds1",                    "display": "Boss DS-1 Distortion",         "style": "rat_like",                      "price": "$60",   "params": {"level": [0, 10], "tone": [0, 10], "distortion": [0, 10]}},
+    {"id": "drive.plumes",                 "display": "EarthQuaker Devices Plumes",   "style": "tube_screamer_like",            "price": "$100",  "params": {"level": [0, 10], "tone": [0, 10], "gain": [0, 10]}}
+  ],
+  "delays": [
+    {"id": "delay.boss_dd8",               "display": "Boss DD-8 Digital Delay",      "type": "digital",                        "price": "$180",  "params": {"e_level": [0, 100], "f_back": [0, 100], "d_time": [1, 800]}},
+    {"id": "delay.boss_dd3t",              "display": "Boss DD-3T Digital Delay",     "type": "digital",                        "price": "$150",  "params": {"e_level": [0, 100], "f_back": [0, 100], "d_time": [12.5, 800]}},
+    {"id": "delay.carbon_copy",            "display": "MXR Carbon Copy",              "type": "analog_bbd",                     "price": "$150",  "params": {"regen": [0, 10], "mix": [0, 10], "delay": [20, 600]}},
+    {"id": "delay.memory_man",             "display": "Electro-Harmonix Deluxe Memory Man", "type": "analog_bbd",              "price": "$350",  "params": {"blend": [0, 10], "feedback": [0, 10], "delay": [30, 550]}},
+    {"id": "delay.el_capistan",            "display": "Strymon El Capistan",          "type": "tape",                           "price": "$300",  "params": {"time": [0, 10], "mix": [0, 10], "tape_age": [0, 10], "repeats": [0, 10]}},
+    {"id": "delay.timeline",               "display": "Strymon Timeline",             "type": "digital",                        "price": "$450",  "params": {"time": [0, 10], "mix": [0, 10], "repeats": [0, 10]}},
+    {"id": "delay.flashback",              "display": "TC Electronic Flashback 2",    "type": "digital",                        "price": "$150",  "params": {"delay": [20, 7000], "feedback": [0, 10], "fx_level": [0, 10]}},
+    {"id": "delay.canyon",                 "display": "Electro-Harmonix Canyon",      "type": "digital",                        "price": "$150",  "params": {"delay": [5, 3000], "fdbk": [0, 10], "fx_lvl": [0, 10]}},
+    {"id": "delay.dispatch_master",        "display": "EarthQuaker Devices Dispatch Master", "type": "digital",                "price": "$200",  "params": {"time": [0, 10], "repeats": [0, 10], "mix": [0, 10]}}
+  ],
+  "reverbs": [
+    {"id": "reverb.boss_rv6",              "display": "Boss RV-6 Reverb",             "type": "digital",                        "price": "$150",  "params": {"e_level": [0, 100], "tone": [0, 100], "time": [0, 100]}},
+    {"id": "reverb.holy_grail",            "display": "Electro-Harmonix Holy Grail Neo", "type": "spring",                      "price": "$150",  "params": {"blend": [0, 10]}},
+    {"id": "reverb.oceans_11",             "display": "Electro-Harmonix Oceans 11",   "type": "digital",                        "price": "$180",  "params": {"reverb": [0, 10], "fxlvl": [0, 10], "tone": [0, 10]}},
+    {"id": "reverb.big_sky",               "display": "Strymon BigSky",               "type": "digital",                        "price": "$480",  "params": {"decay": [0, 10], "mix": [0, 10], "tone": [0, 10]}},
+    {"id": "reverb.flint",                 "display": "Strymon Flint",                "type": "spring",                         "price": "$300",  "params": {"decay": [0, 10], "mix": [0, 10], "color": [0, 10]}},
+    {"id": "reverb.hall_of_fame",          "display": "TC Electronic Hall of Fame 2", "type": "digital",                        "price": "$150",  "params": {"decay": [0, 10], "fx_level": [0, 10], "tone": [0, 10]}},
+    {"id": "reverb.afterneath",            "display": "EarthQuaker Devices Afterneath", "type": "ambient",                      "price": "$200",  "params": {"length": [0, 10], "diffuse": [0, 10], "mix": [0, 10]}}
+  ],
+  "modulation": [
+    {"id": "mod.boss_ce2w",                "display": "Boss CE-2W Chorus",            "type": "chorus",                         "price": "$200",  "params": {"rate": [0, 10], "depth": [0, 10]}},
+    {"id": "mod.small_clone",              "display": "Electro-Harmonix Small Clone", "type": "chorus",                         "price": "$100",  "params": {"rate": [0, 10], "depth_switch": [0, 1]}},
+    {"id": "mod.julia",                    "display": "Walrus Audio Julia",           "type": "chorus",                         "price": "$200",  "params": {"rate": [0, 10], "depth": [0, 10], "lag": [0, 10], "mix": [0, 10]}},
+    {"id": "mod.phase_90",                 "display": "MXR Phase 90",                 "type": "phaser",                         "price": "$90",   "params": {"speed": [0, 10]}},
+    {"id": "mod.small_stone",              "display": "Electro-Harmonix Small Stone", "type": "phaser",                         "price": "$100",  "params": {"rate": [0, 10], "color_switch": [0, 1]}},
+    {"id": "mod.univibe",                  "display": "Dunlop Uni-Vibe",              "type": "rotary",                         "price": "$180",  "params": {"speed": [0, 10], "intensity": [0, 10]}},
+    {"id": "mod.bf2",                      "display": "Boss BF-2 Flanger",            "type": "flanger",                        "price": "$130",  "params": {"manual": [0, 10], "depth": [0, 10], "rate": [0, 10], "res": [0, 10]}},
+    {"id": "mod.electric_mistress",        "display": "Electro-Harmonix Electric Mistress", "type": "flanger",                  "price": "$150",  "params": {"rate": [0, 10], "range": [0, 10], "color": [0, 10]}},
+    {"id": "mod.tr2",                      "display": "Boss TR-2 Tremolo",            "type": "tremolo",                        "price": "$100",  "params": {"rate": [0, 10], "depth": [0, 10], "wave": [0, 10]}}
+  ],
+  "cabs": [
+    {"id": "cab.celestion_v30",            "display": "Celestion Vintage 30 (speaker)", "configuration": "1x12",               "speaker_character": "v30_like",                    "price": "$180"},
+    {"id": "cab.celestion_g12m",           "display": "Celestion G12M Greenback (speaker)", "configuration": "1x12",           "speaker_character": "g12m_like",                   "price": "$150"},
+    {"id": "cab.celestion_g12h",           "display": "Celestion G12H-30 (speaker)",  "configuration": "1x12",                  "speaker_character": "g12h_like",                   "price": "$170"},
+    {"id": "cab.celestion_blue",           "display": "Celestion Blue (speaker)",     "configuration": "1x12",                  "speaker_character": "alnico_blue_like",            "price": "$280"},
+    {"id": "cab.jensen_p12q",              "display": "Jensen P12Q (speaker)",        "configuration": "1x12",                  "speaker_character": "jensen_like",                 "price": "$130"},
+    {"id": "cab.orange_ppc112",            "display": "Orange PPC112 Cabinet",        "configuration": "1x12",                  "speaker_character": "v30_like",                    "price": "$450"},
+    {"id": "cab.marshall_1960a",           "display": "Marshall 1960A 4x12 Cabinet",  "configuration": "4x12",                  "speaker_character": "g12h_like",                   "price": "$900"},
+    {"id": "cab.mesa_recto_412",           "display": "Mesa/Boogie Rectifier 4x12",   "configuration": "4x12",                  "speaker_character": "v30_like",                    "price": "$1200"}
+  ]
+}
