@@ -64,6 +64,16 @@ try:
 except ImportError:
     pass
 
+# Reconstruction quality imports (optional)
+_RECONSTRUCTION_AVAILABLE = False
+try:
+    from .reconstruction.stem_quality import StemQuality
+    from .reconstruction.contamination import ContaminationAnalysis
+    _RECONSTRUCTION_AVAILABLE = True
+except ImportError:
+    StemQuality = None
+    ContaminationAnalysis = None
+
 
 _SR = 22050  # analysis sample rate; plenty for guitar
 _N_FFT = 2048
@@ -80,6 +90,8 @@ def analyze(
     display_name: str | None = None,
     use_ml_confidence: bool = True,
     index_for_similarity: bool = False,
+    stem_quality: Optional["StemQuality"] = None,
+    contamination: Optional["ContaminationAnalysis"] = None,
 ) -> ToneDescriptor:
     """Analyze an audio file and return a descriptor.
 
@@ -95,6 +107,12 @@ def analyze(
             available. Falls back to heuristics if ML models aren't loaded.
         index_for_similarity: Whether to index the tone for similarity search.
             Requires ML embeddings to be available.
+        stem_quality: Optional StemQuality from reconstruction module. When
+            provided, confidence scores are adjusted based on stem quality
+            (contamination, artifacts, etc.). This helps rules_engine make
+            better decisions about alternate picks and tweak hints.
+        contamination: Optional ContaminationAnalysis from reconstruction
+            module. Provides additional signal about cross-stem bleed.
     """
     path = Path(path)
     analysis_path = path  # May be overridden by stem separation
@@ -133,6 +151,12 @@ def analyze(
             gain=gain_conf,
             cab=cab_conf,
             effects=fx_conf,
+        )
+
+    # Adjust confidence based on stem quality if provided
+    if stem_quality is not None or contamination is not None:
+        confidence = _adjust_confidence_for_quality(
+            confidence, stem_quality, contamination
         )
 
     descriptor = ToneDescriptor(
@@ -211,6 +235,82 @@ def _compute_ml_confidence(
             cab=0.5,
             effects=0.5,
         )
+
+
+def _adjust_confidence_for_quality(
+    confidence: Confidence,
+    stem_quality: Optional["StemQuality"],
+    contamination: Optional["ContaminationAnalysis"],
+) -> Confidence:
+    """Adjust confidence scores based on stem quality analysis.
+
+    When stems have quality issues (contamination, artifacts, low SNR),
+    we reduce confidence scores proportionally. This causes rules_engine
+    to:
+    - Show more alternate amp picks (triggers at confidence < 0.7)
+    - Add tweak hints about uncertainty (triggers at confidence < 0.6)
+
+    The adjustment is multiplicative to preserve relative ordering while
+    expressing uncertainty about the entire analysis.
+    """
+    amp_factor = 1.0
+    gain_factor = 1.0
+    cab_factor = 1.0
+    effects_factor = 1.0
+
+    if stem_quality is not None:
+        # Overall quality affects all confidence scores
+        quality = getattr(stem_quality, 'overall_quality', None)
+        if quality is not None:
+            # Map quality 0-1 to multiplier 0.5-1.0
+            # Low quality (0.3) -> 0.65 multiplier
+            # High quality (0.9) -> 0.95 multiplier
+            base_factor = 0.5 + (quality * 0.5)
+            amp_factor *= base_factor
+            gain_factor *= base_factor
+            cab_factor *= base_factor
+            effects_factor *= base_factor
+
+        # Harmonic purity affects amp and cab detection
+        harmonic_purity = getattr(stem_quality, 'harmonic_purity', None)
+        if harmonic_purity is not None and harmonic_purity < 0.5:
+            purity_penalty = 0.7 + (harmonic_purity * 0.6)  # 0.7-1.0
+            amp_factor *= purity_penalty
+            cab_factor *= purity_penalty
+
+        # Transient integrity affects gain estimation
+        transient_integrity = getattr(stem_quality, 'transient_integrity', None)
+        if transient_integrity is not None and transient_integrity < 0.5:
+            transient_penalty = 0.8 + (transient_integrity * 0.4)  # 0.8-1.0
+            gain_factor *= transient_penalty
+
+        # Reverb density affects cab and effects detection
+        reverb_density = getattr(stem_quality, 'reverb_density', None)
+        if reverb_density is not None and reverb_density > 0.6:
+            # Heavy reverb makes cab character hard to read
+            reverb_penalty = 1.0 - ((reverb_density - 0.6) * 0.5)  # 0.8-1.0
+            cab_factor *= reverb_penalty
+            effects_factor *= reverb_penalty
+
+    if contamination is not None:
+        # Cross-stem contamination affects all confidence
+        contamination_score = getattr(contamination, 'overall_contamination', None)
+        if contamination_score is not None and contamination_score > 0.3:
+            # Contaminated stems are unreliable
+            contam_penalty = 1.0 - ((contamination_score - 0.3) * 0.7)  # 0.51-1.0
+            contam_penalty = max(0.5, contam_penalty)  # Floor at 0.5
+            amp_factor *= contam_penalty
+            gain_factor *= contam_penalty
+            cab_factor *= contam_penalty
+            effects_factor *= contam_penalty
+
+    # Apply factors and clamp to valid range
+    return Confidence(
+        amp_family=float(np.clip(confidence.amp_family * amp_factor, 0.1, 0.95)),
+        gain=float(np.clip(confidence.gain * gain_factor, 0.1, 0.95)),
+        cab=float(np.clip(confidence.cab * cab_factor, 0.1, 0.95)),
+        effects=float(np.clip(confidence.effects * effects_factor, 0.1, 0.95)),
+    )
 
 
 # ---------------------------------------------------------------------------

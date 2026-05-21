@@ -280,6 +280,146 @@ class TestGuitarContext:
         assert 0 <= d.guitar.pickup_brightness <= 1
 
 
+class TestConfidenceQualityAdjustment:
+    """Test confidence adjustment based on stem quality."""
+
+    def test_no_adjustment_without_quality_data(self):
+        """Confidence should remain unchanged when no quality data provided."""
+        from tone_forge.analyzer import _adjust_confidence_for_quality
+        from tone_forge.descriptor import Confidence
+
+        original = Confidence(amp_family=0.8, gain=0.7, cab=0.6, effects=0.5)
+        adjusted = _adjust_confidence_for_quality(original, None, None)
+
+        assert adjusted.amp_family == original.amp_family
+        assert adjusted.gain == original.gain
+        assert adjusted.cab == original.cab
+        assert adjusted.effects == original.effects
+
+    def test_high_quality_stem_preserves_confidence(self):
+        """High quality stems should preserve most confidence."""
+        from tone_forge.analyzer import _adjust_confidence_for_quality
+        from tone_forge.descriptor import Confidence
+        from dataclasses import dataclass
+
+        @dataclass
+        class MockStemQuality:
+            overall_quality: float = 0.9
+            harmonic_purity: float = 0.8
+            transient_integrity: float = 0.9
+            reverb_density: float = 0.2
+
+        original = Confidence(amp_family=0.8, gain=0.7, cab=0.6, effects=0.5)
+        adjusted = _adjust_confidence_for_quality(original, MockStemQuality(), None)
+
+        # High quality should preserve most of the confidence
+        assert adjusted.amp_family >= original.amp_family * 0.85
+        assert adjusted.gain >= original.gain * 0.85
+        assert adjusted.cab >= original.cab * 0.85
+        assert adjusted.effects >= original.effects * 0.85
+
+    def test_low_quality_stem_reduces_confidence(self):
+        """Low quality stems should reduce confidence significantly."""
+        from tone_forge.analyzer import _adjust_confidence_for_quality
+        from tone_forge.descriptor import Confidence
+        from dataclasses import dataclass
+
+        @dataclass
+        class MockStemQuality:
+            overall_quality: float = 0.3
+            harmonic_purity: float = 0.3
+            transient_integrity: float = 0.3
+            reverb_density: float = 0.8
+
+        original = Confidence(amp_family=0.8, gain=0.8, cab=0.8, effects=0.8)
+        adjusted = _adjust_confidence_for_quality(original, MockStemQuality(), None)
+
+        # Low quality should significantly reduce confidence
+        assert adjusted.amp_family < original.amp_family * 0.75
+        assert adjusted.gain < original.gain * 0.75
+        assert adjusted.cab < original.cab * 0.75
+        assert adjusted.effects < original.effects * 0.75
+
+    def test_contamination_reduces_all_confidence(self):
+        """High contamination should reduce all confidence scores."""
+        from tone_forge.analyzer import _adjust_confidence_for_quality
+        from tone_forge.descriptor import Confidence
+        from dataclasses import dataclass
+
+        @dataclass
+        class MockContamination:
+            overall_contamination: float = 0.7
+
+        original = Confidence(amp_family=0.8, gain=0.8, cab=0.8, effects=0.8)
+        adjusted = _adjust_confidence_for_quality(original, None, MockContamination())
+
+        # High contamination should reduce all confidence
+        assert adjusted.amp_family < original.amp_family
+        assert adjusted.gain < original.gain
+        assert adjusted.cab < original.cab
+        assert adjusted.effects < original.effects
+
+    def test_confidence_stays_within_bounds(self):
+        """Adjusted confidence should always be within [0.1, 0.95]."""
+        from tone_forge.analyzer import _adjust_confidence_for_quality
+        from tone_forge.descriptor import Confidence
+        from dataclasses import dataclass
+
+        @dataclass
+        class MockStemQuality:
+            overall_quality: float = 0.1
+            harmonic_purity: float = 0.1
+            transient_integrity: float = 0.1
+            reverb_density: float = 0.9
+
+        @dataclass
+        class MockContamination:
+            overall_contamination: float = 0.9
+
+        # Test with extreme low quality
+        original = Confidence(amp_family=0.8, gain=0.8, cab=0.8, effects=0.8)
+        adjusted = _adjust_confidence_for_quality(
+            original, MockStemQuality(), MockContamination()
+        )
+
+        assert 0.1 <= adjusted.amp_family <= 0.95
+        assert 0.1 <= adjusted.gain <= 0.95
+        assert 0.1 <= adjusted.cab <= 0.95
+        assert 0.1 <= adjusted.effects <= 0.95
+
+        # Test with high original confidence
+        high_original = Confidence(amp_family=0.99, gain=0.99, cab=0.99, effects=0.99)
+        adjusted_high = _adjust_confidence_for_quality(high_original, None, None)
+        assert adjusted_high.amp_family <= 0.95
+        assert adjusted_high.gain <= 0.95
+        assert adjusted_high.cab <= 0.95
+        assert adjusted_high.effects <= 0.95
+
+    def test_low_harmonic_purity_affects_amp_and_cab(self):
+        """Low harmonic purity should specifically affect amp and cab confidence."""
+        from tone_forge.analyzer import _adjust_confidence_for_quality
+        from tone_forge.descriptor import Confidence
+        from dataclasses import dataclass
+
+        @dataclass
+        class MockStemQuality:
+            overall_quality: float = 0.8  # Good overall
+            harmonic_purity: float = 0.3  # But poor harmonic purity
+            transient_integrity: float = 0.8
+            reverb_density: float = 0.3
+
+        original = Confidence(amp_family=0.8, gain=0.8, cab=0.8, effects=0.8)
+        adjusted = _adjust_confidence_for_quality(original, MockStemQuality(), None)
+
+        # Amp and cab should be more affected than gain/effects
+        amp_reduction = (original.amp_family - adjusted.amp_family) / original.amp_family
+        cab_reduction = (original.cab - adjusted.cab) / original.cab
+        gain_reduction = (original.gain - adjusted.gain) / original.gain
+
+        assert amp_reduction > gain_reduction * 0.8  # Amp more affected
+        assert cab_reduction > gain_reduction * 0.8  # Cab more affected
+
+
 class TestEdgeCases:
     """Test edge cases and error handling."""
 
