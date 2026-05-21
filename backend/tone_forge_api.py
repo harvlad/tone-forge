@@ -64,6 +64,14 @@ from tone_forge import analyzer, helix_translator
 from tone_forge import translator
 from tone_forge.hardware import Platform
 
+# Reconstruction pipeline for quality-aware analysis
+_RECONSTRUCTION_AVAILABLE = False
+try:
+    from tone_forge.reconstruction.pipeline import get_pipeline, ReconstructionConfig
+    _RECONSTRUCTION_AVAILABLE = True
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
@@ -220,10 +228,56 @@ async def analyze_endpoint(
             if source_kind != "auto":
                 actual_source_kind = source_kind
 
+            # Run quality analysis if reconstruction pipeline is available
+            stem_quality = None
+            contamination = None
+            quality_warnings = []
+
+            if _RECONSTRUCTION_AVAILABLE:
+                try:
+                    import librosa
+                    # Load audio for quality analysis
+                    audio, sr = librosa.load(str(tmp_path), sr=22050, mono=True)
+
+                    # Run quality analysis (fast config - no MIDI extraction)
+                    config = ReconstructionConfig(
+                        extract_midi=False,  # We handle MIDI separately
+                        analyze_continuity=False,  # Skip expensive analysis
+                    )
+                    pipeline = get_pipeline(config)
+                    analysis, quality_report = pipeline.analyze_only(
+                        audio=audio,
+                        sr=sr,
+                        stem_type="guitar",
+                    )
+
+                    stem_quality = analysis.stem_quality
+                    contamination = analysis.contamination
+
+                    # Collect warnings for the user
+                    if quality_report and quality_report.warnings:
+                        quality_warnings = [
+                            {
+                                "level": w.level.value if hasattr(w.level, 'value') else str(w.level),
+                                "message": w.message,
+                                "suggestion": w.suggestion,
+                            }
+                            for w in quality_report.warnings
+                        ]
+
+                    logger.debug(
+                        f"Quality analysis: overall={quality_report.overall_confidence:.2f}, "
+                        f"warnings={len(quality_warnings)}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Quality analysis failed (non-fatal): {e}")
+
             descriptor = analyzer.analyze(
                 str(tmp_path),
                 source_kind=actual_source_kind if actual_source_kind != "synth" else "isolated_guitar",
                 display_name=file.filename or tmp_path.name,
+                stem_quality=stem_quality,
+                contamination=contamination,
             )
 
             helix_card = helix_translator.translate(descriptor)
@@ -238,7 +292,8 @@ async def analyze_endpoint(
                 "platforms": {
                     "helix": helix_chain,
                     "pedals": pedal_chain,
-                }
+                },
+                "quality_warnings": quality_warnings,
             }
 
         # Also provide synth analysis for non-drum audio (for tab switching)
