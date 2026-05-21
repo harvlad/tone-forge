@@ -15,11 +15,18 @@ Usage:
         analyze_stem_quality,
         detect_contamination,
         classify_role,
+        analyze_continuity,
         get_quality_gates,
     )
 
     # Analyze stem quality
     qualities = analyze_stem_quality(stems, sr)
+
+    # Classify musical role
+    role = classify_role(audio, sr, stem_type="bass")
+
+    # Analyze temporal continuity
+    continuity = analyze_continuity(audio, sr)
 
     # Check if quality is sufficient
     gates = get_quality_gates()
@@ -63,7 +70,52 @@ from .quality_gates import (
     QualityThresholds,
     QualityReport,
     QualityGates,
+    QualityLevel,
+    GateStatus,
     get_quality_gates,
+)
+from .quality_reporter import (
+    WarningLevel,
+    WarningCategory,
+    QualityWarning,
+    MIDIQualityMetrics,
+    UnifiedQualityReport,
+    QualityReporter,
+    get_quality_reporter,
+    generate_quality_report,
+)
+from .pipeline import (
+    ReconstructionConfig,
+    AnalysisResults,
+    ReconstructionResult,
+    ReconstructionPipeline,
+    get_pipeline,
+    reconstruct,
+)
+from .role_classifier import (
+    MusicalRole,
+    SpectralProfile,
+    TemporalProfile,
+    RoleFeatures,
+    RoleClassification,
+    RoleClassifier,
+    get_role_classifier,
+    classify_role,
+)
+from .temporal_continuity import (
+    EnvelopeType,
+    PhraseType,
+    HarmonicTrack,
+    ContinuityRegion,
+    Phrase,
+    ContinuityAnalysis,
+    HarmonicTracker,
+    PhraseDetector,
+    TemporalContinuityAnalyzer,
+    get_continuity_analyzer,
+    get_harmonic_tracker,
+    get_phrase_detector,
+    analyze_continuity,
 )
 
 __all__ = [
@@ -97,5 +149,46 @@ __all__ = [
     "QualityThresholds",
     "QualityReport",
     "QualityGates",
+    "QualityLevel",
+    "GateStatus",
     "get_quality_gates",
+    # Quality reporter
+    "WarningLevel",
+    "WarningCategory",
+    "QualityWarning",
+    "MIDIQualityMetrics",
+    "UnifiedQualityReport",
+    "QualityReporter",
+    "get_quality_reporter",
+    "generate_quality_report",
+    # Pipeline
+    "ReconstructionConfig",
+    "AnalysisResults",
+    "ReconstructionResult",
+    "ReconstructionPipeline",
+    "get_pipeline",
+    "reconstruct",
+    # Role classification
+    "MusicalRole",
+    "SpectralProfile",
+    "TemporalProfile",
+    "RoleFeatures",
+    "RoleClassification",
+    "RoleClassifier",
+    "get_role_classifier",
+    "classify_role",
+    # Temporal continuity
+    "EnvelopeType",
+    "PhraseType",
+    "HarmonicTrack",
+    "ContinuityRegion",
+    "Phrase",
+    "ContinuityAnalysis",
+    "HarmonicTracker",
+    "PhraseDetector",
+    "TemporalContinuityAnalyzer",
+    "get_continuity_analyzer",
+    "get_harmonic_tracker",
+    "get_phrase_detector",
+    "analyze_continuity",
 ]
