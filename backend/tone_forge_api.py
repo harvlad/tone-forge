@@ -260,7 +260,7 @@ async def analyze_endpoint(
                             {
                                 "level": w.level.value if hasattr(w.level, 'value') else str(w.level),
                                 "message": w.message,
-                                "suggestion": w.suggestion,
+                                "recommendation": w.recommendation,
                             }
                             for w in quality_report.warnings
                         ]
