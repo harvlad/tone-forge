@@ -691,6 +691,189 @@ async def health() -> dict:
     return {"status": "ok", "version": app.version}
 
 
+@app.get("/admin")
+async def admin_page():
+    """Serve the admin UI."""
+    return FileResponse("static/admin.html")
+
+
+@app.post("/api/admin/analyze-quality")
+async def admin_analyze_quality(
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    """Deep quality analysis for admin view.
+
+    Returns detailed stem quality metrics, confidence maps,
+    MIDI pass statistics, and archetype information.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".wav") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    try:
+        import librosa
+        import time
+
+        start_time = time.time()
+
+        # Load audio
+        audio, sr = librosa.load(str(tmp_path), sr=22050, mono=True)
+        load_time = time.time() - start_time
+
+        result = {
+            "filename": file.filename,
+            "duration_sec": len(audio) / sr,
+            "sample_rate": sr,
+            "load_time_ms": load_time * 1000,
+            "reconstruction_available": _RECONSTRUCTION_AVAILABLE,
+        }
+
+        # Initialize analysis to None in case reconstruction isn't available
+        analysis = None
+
+        if _RECONSTRUCTION_AVAILABLE:
+            analysis_start = time.time()
+
+            # Run full reconstruction analysis
+            config = ReconstructionConfig(
+                extract_midi=False,
+                analyze_continuity=True,  # Include continuity for admin
+            )
+            pipeline = get_pipeline(config)
+            analysis, quality_report = pipeline.analyze_only(
+                audio=audio,
+                sr=sr,
+                stem_type="guitar",
+            )
+
+            analysis_time = time.time() - analysis_start
+
+            # Stem Quality Details
+            if analysis.stem_quality:
+                sq = analysis.stem_quality
+                result["stem_quality"] = {
+                    "overall_quality": getattr(sq, 'overall_quality', None),
+                    "contamination_score": getattr(sq, 'contamination_score', None),
+                    "transient_integrity": getattr(sq, 'transient_integrity', None),
+                    "harmonic_purity": getattr(sq, 'harmonic_purity', None),
+                    "reverb_density": getattr(sq, 'reverb_density', None),
+                    "stereo_coherence": getattr(sq, 'stereo_coherence', None),
+                    "snr_estimate": getattr(sq, 'snr_estimate', None),
+                }
+
+            # Contamination Details
+            if analysis.contamination:
+                ct = analysis.contamination
+                result["contamination"] = {
+                    "overall_contamination": getattr(ct, 'overall_contamination', None),
+                    "bass_bleed": getattr(ct, 'bass_bleed', None),
+                    "drum_bleed": getattr(ct, 'drum_bleed', None),
+                    "vocal_bleed": getattr(ct, 'vocal_bleed', None),
+                    "reverb_contamination": getattr(ct, 'reverb_contamination', None),
+                }
+
+            # Artifact Details
+            if analysis.artifacts:
+                af = analysis.artifacts
+                result["artifacts"] = {
+                    "clipping_detected": getattr(af, 'clipping_detected', None),
+                    "clipping_severity": getattr(af, 'clipping_severity', None),
+                    "noise_floor_db": getattr(af, 'noise_floor_db', None),
+                    "dc_offset": getattr(af, 'dc_offset', None),
+                    "phase_issues": getattr(af, 'phase_issues', None),
+                }
+
+            # Role Classification
+            if analysis.role:
+                role = analysis.role
+                result["role"] = {
+                    "primary_role": getattr(role, 'primary_role', None),
+                    "confidence": getattr(role, 'confidence', None),
+                    "spectral_profile": getattr(role, 'spectral_profile', None),
+                    "temporal_profile": getattr(role, 'temporal_profile', None),
+                }
+
+            # Confidence Map Summary
+            if analysis.confidence_map:
+                cm = analysis.confidence_map
+                result["confidence_map"] = {
+                    "global_confidence": getattr(cm, 'global_confidence', None),
+                    "region_count": getattr(cm, 'region_count', None),
+                    "low_confidence_regions": getattr(cm, 'low_confidence_region_count', 0),
+                    "high_confidence_regions": getattr(cm, 'high_confidence_region_count', 0),
+                }
+
+            # Continuity Analysis
+            if analysis.continuity:
+                cont = analysis.continuity
+                result["continuity"] = {
+                    "sustained_regions": getattr(cont, 'sustained_region_count', None),
+                    "avg_sustain_duration": getattr(cont, 'avg_sustain_duration', None),
+                    "pitch_stability": getattr(cont, 'pitch_stability', None),
+                }
+
+            # Archetype Priors
+            if analysis.priors:
+                priors = analysis.priors
+                result["priors"] = {
+                    "source_archetype": getattr(priors, 'source_archetype', None),
+                    "onset_threshold": getattr(priors, 'suggested_onset_threshold', None),
+                    "frame_threshold": getattr(priors, 'suggested_frame_threshold', None),
+                    "min_note_ms": getattr(priors, 'min_note_ms', None),
+                    "quantization_strength": getattr(priors, 'quantization_strength', None),
+                }
+
+            # Quality Report
+            if quality_report:
+                result["quality_report"] = {
+                    "overall_confidence": quality_report.overall_confidence,
+                    "quality_level": quality_report.overall_quality.value if hasattr(quality_report.overall_quality, 'value') else str(quality_report.overall_quality),
+                    "should_proceed": quality_report.should_proceed,
+                    "warning_count": len(quality_report.warnings),
+                    "warnings": [
+                        {
+                            "level": w.level.value if hasattr(w.level, 'value') else str(w.level),
+                            "category": w.category.value if hasattr(w.category, 'value') else str(w.category),
+                            "message": w.message,
+                            "recommendation": w.recommendation,
+                        }
+                        for w in quality_report.warnings
+                    ],
+                }
+
+            result["analysis_time_ms"] = analysis_time * 1000
+
+        # Also run standard analysis to get confidence scores
+        descriptor = analyzer.analyze(
+            str(tmp_path),
+            source_kind="isolated_guitar",
+            stem_quality=analysis.stem_quality if analysis else None,
+            contamination=analysis.contamination if analysis else None,
+        )
+
+        result["confidence_scores"] = {
+            "amp_family": descriptor.confidence.amp_family,
+            "gain": descriptor.confidence.gain,
+            "cab": descriptor.confidence.cab,
+            "effects": descriptor.confidence.effects,
+        }
+
+        result["detected"] = {
+            "amp_family": descriptor.amp.family,
+            "gain": descriptor.amp.gain,
+        }
+
+        return JSONResponse(_convert_numpy_types(result))
+
+    except Exception as e:
+        logger.exception("Admin quality analysis failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 @app.get("/api/history")
 async def get_history(
     q: Optional[str] = Query(None, description="Search query"),

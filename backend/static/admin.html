@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ToneForge Admin - Quality Analysis</title>
+    <style>
+        :root {
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --bg-input: #0f0f1a;
+            --text-primary: #eee;
+            --text-secondary: #888;
+            --accent: #e94560;
+            --accent-hover: #ff6b6b;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --error: #f87171;
+            --info: #60a5fa;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #333;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        h1 span {
+            color: var(--accent);
+        }
+
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+        }
+
+        .back-link:hover {
+            color: var(--text-primary);
+        }
+
+        .upload-section {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        .drop-zone {
+            border: 2px dashed #444;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--accent);
+            background: rgba(233, 69, 96, 0.1);
+        }
+
+        .drop-zone input {
+            display: none;
+        }
+
+        .drop-zone p {
+            color: var(--text-secondary);
+            margin-top: 10px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .results {
+            display: none;
+        }
+
+        .results.active {
+            display: block;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .card h2 {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #222;
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .metric-value {
+            font-weight: 600;
+        }
+
+        .metric-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .bar {
+            width: 100px;
+            height: 8px;
+            background: #222;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+
+        .bar-fill.low { background: var(--error); }
+        .bar-fill.medium { background: var(--warning); }
+        .bar-fill.high { background: var(--success); }
+
+        .status-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-badge.good { background: rgba(74, 222, 128, 0.2); color: var(--success); }
+        .status-badge.warning { background: rgba(251, 191, 36, 0.2); color: var(--warning); }
+        .status-badge.bad { background: rgba(248, 113, 113, 0.2); color: var(--error); }
+        .status-badge.info { background: rgba(96, 165, 250, 0.2); color: var(--info); }
+
+        .warnings-list {
+            margin-top: 10px;
+        }
+
+        .warning-item {
+            background: var(--bg-input);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 8px;
+            border-left: 3px solid;
+        }
+
+        .warning-item.critical { border-color: var(--error); }
+        .warning-item.warning { border-color: var(--warning); }
+        .warning-item.info { border-color: var(--info); }
+
+        .warning-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .warning-level {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .warning-category {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .warning-message {
+            font-size: 0.9rem;
+            margin-bottom: 5px;
+        }
+
+        .warning-recommendation {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .summary-card {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+
+        .overall-score {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-input);
+            flex-shrink: 0;
+        }
+
+        .overall-score .score {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .overall-score .label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .summary-details {
+            flex: 1;
+        }
+
+        .summary-details h3 {
+            margin-bottom: 10px;
+        }
+
+        .summary-row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .summary-item {
+            background: var(--bg-input);
+            padding: 10px 15px;
+            border-radius: 6px;
+        }
+
+        .summary-item .value {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .summary-item .label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .file-info {
+            display: flex;
+            gap: 20px;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ToneForge <span>Admin</span></h1>
+            <a href="/" class="back-link">&larr; Back to App</a>
+        </header>
+
+        <div class="upload-section">
+            <div class="drop-zone" id="dropZone">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                </svg>
+                <p>Drop audio file here or click to upload</p>
+                <input type="file" id="fileInput" accept=".wav,.mp3,.flac,.ogg,.m4a">
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Analyzing quality...</p>
+        </div>
+
+        <div class="results" id="results">
+            <div class="grid">
+                <!-- Summary Card -->
+                <div class="card summary-card" id="summaryCard">
+                    <div class="overall-score" id="overallScore">
+                        <span class="score">--</span>
+                        <span class="label">Quality</span>
+                    </div>
+                    <div class="summary-details">
+                        <h3 id="summaryTitle">Analysis Complete</h3>
+                        <div class="summary-row" id="summaryRow"></div>
+                        <div class="file-info" id="fileInfo"></div>
+                    </div>
+                </div>
+
+                <!-- Confidence Scores -->
+                <div class="card" id="confidenceCard">
+                    <h2>Confidence Scores</h2>
+                    <div id="confidenceMetrics"></div>
+                </div>
+
+                <!-- Stem Quality -->
+                <div class="card" id="stemQualityCard">
+                    <h2>Stem Quality</h2>
+                    <div id="stemQualityMetrics"></div>
+                </div>
+
+                <!-- Contamination -->
+                <div class="card" id="contaminationCard">
+                    <h2>Contamination</h2>
+                    <div id="contaminationMetrics"></div>
+                </div>
+
+                <!-- Artifacts -->
+                <div class="card" id="artifactsCard">
+                    <h2>Artifacts</h2>
+                    <div id="artifactsMetrics"></div>
+                </div>
+
+                <!-- Role Classification -->
+                <div class="card" id="roleCard">
+                    <h2>Role Classification</h2>
+                    <div id="roleMetrics"></div>
+                </div>
+
+                <!-- Warnings -->
+                <div class="card" id="warningsCard" style="grid-column: 1 / -1;">
+                    <h2>Quality Warnings</h2>
+                    <div class="warnings-list" id="warningsList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+
+        // Drag and drop handlers
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        async function handleFile(file) {
+            loading.classList.add('active');
+            results.classList.remove('active');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/admin/analyze-quality', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Analysis failed: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                loading.classList.remove('active');
+            }
+        }
+
+        function displayResults(data) {
+            results.classList.add('active');
+
+            // Overall score
+            const overallScore = document.getElementById('overallScore');
+            const score = data.quality_report?.overall_confidence ?? data.confidence_scores?.amp_family ?? 0;
+            const scorePercent = Math.round(score * 100);
+            overallScore.querySelector('.score').textContent = scorePercent + '%';
+            overallScore.style.borderColor = getScoreColor(score);
+
+            // Summary
+            document.getElementById('summaryTitle').textContent =
+                data.quality_report?.should_proceed ? 'Quality Acceptable' : 'Quality Issues Detected';
+
+            const summaryRow = document.getElementById('summaryRow');
+            summaryRow.innerHTML = `
+                <div class="summary-item">
+                    <div class="value">${data.detected?.amp_family || 'N/A'}</div>
+                    <div class="label">Amp Family</div>
+                </div>
+                <div class="summary-item">
+                    <div class="value">${((data.detected?.gain || 0) * 10).toFixed(1)}</div>
+                    <div class="label">Gain</div>
+                </div>
+                <div class="summary-item">
+                    <div class="value">${data.quality_report?.warning_count || 0}</div>
+                    <div class="label">Warnings</div>
+                </div>
+                <div class="summary-item">
+                    <div class="value">${(data.analysis_time_ms || 0).toFixed(0)}ms</div>
+                    <div class="label">Analysis Time</div>
+                </div>
+            `;
+
+            document.getElementById('fileInfo').innerHTML = `
+                <span>${data.filename}</span>
+                <span>${data.duration_sec?.toFixed(2)}s</span>
+                <span>${data.sample_rate}Hz</span>
+            `;
+
+            // Confidence scores
+            displayMetrics('confidenceMetrics', data.confidence_scores, true);
+
+            // Stem quality
+            displayMetrics('stemQualityMetrics', data.stem_quality, true);
+
+            // Contamination
+            displayMetrics('contaminationMetrics', data.contamination, true, true);
+
+            // Artifacts
+            displayArtifacts('artifactsMetrics', data.artifacts);
+
+            // Role
+            displayRole('roleMetrics', data.role);
+
+            // Warnings
+            displayWarnings('warningsList', data.quality_report?.warnings || []);
+        }
+
+        function displayMetrics(elementId, metrics, showBar = false, invertColors = false) {
+            const container = document.getElementById(elementId);
+            if (!metrics) {
+                container.innerHTML = '<p style="color: var(--text-secondary)">Not available</p>';
+                return;
+            }
+
+            container.innerHTML = Object.entries(metrics)
+                .filter(([_, v]) => v !== null && v !== undefined)
+                .map(([key, value]) => {
+                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    const numValue = typeof value === 'number' ? value : parseFloat(value);
+
+                    if (showBar && !isNaN(numValue) && numValue >= 0 && numValue <= 1) {
+                        const level = invertColors
+                            ? (numValue > 0.5 ? 'low' : numValue > 0.3 ? 'medium' : 'high')
+                            : (numValue < 0.4 ? 'low' : numValue < 0.7 ? 'medium' : 'high');
+                        return `
+                            <div class="metric">
+                                <span class="metric-label">${label}</span>
+                                <div class="metric-bar">
+                                    <div class="bar">
+                                        <div class="bar-fill ${level}" style="width: ${numValue * 100}%"></div>
+                                    </div>
+                                    <span class="metric-value">${(numValue * 100).toFixed(0)}%</span>
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    return `
+                        <div class="metric">
+                            <span class="metric-label">${label}</span>
+                            <span class="metric-value">${formatValue(value)}</span>
+                        </div>
+                    `;
+                }).join('');
+        }
+
+        function displayArtifacts(elementId, artifacts) {
+            const container = document.getElementById(elementId);
+            if (!artifacts) {
+                container.innerHTML = '<p style="color: var(--text-secondary)">Not available</p>';
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="metric">
+                    <span class="metric-label">Clipping</span>
+                    <span class="status-badge ${artifacts.clipping_detected ? 'bad' : 'good'}">
+                        ${artifacts.clipping_detected ? 'Detected' : 'None'}
+                    </span>
+                </div>
+                ${artifacts.clipping_severity ? `
+                <div class="metric">
+                    <span class="metric-label">Severity</span>
+                    <span class="metric-value">${(artifacts.clipping_severity * 100).toFixed(0)}%</span>
+                </div>
+                ` : ''}
+                <div class="metric">
+                    <span class="metric-label">Noise Floor</span>
+                    <span class="metric-value">${artifacts.noise_floor_db?.toFixed(1) || 'N/A'} dB</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">DC Offset</span>
+                    <span class="status-badge ${artifacts.dc_offset > 0.01 ? 'warning' : 'good'}">
+                        ${artifacts.dc_offset?.toFixed(4) || 'N/A'}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Phase Issues</span>
+                    <span class="status-badge ${artifacts.phase_issues ? 'warning' : 'good'}">
+                        ${artifacts.phase_issues ? 'Yes' : 'No'}
+                    </span>
+                </div>
+            `;
+        }
+
+        function displayRole(elementId, role) {
+            const container = document.getElementById(elementId);
+            if (!role) {
+                container.innerHTML = '<p style="color: var(--text-secondary)">Not available</p>';
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="metric">
+                    <span class="metric-label">Primary Role</span>
+                    <span class="status-badge info">${role.primary_role || 'Unknown'}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Confidence</span>
+                    <div class="metric-bar">
+                        <div class="bar">
+                            <div class="bar-fill ${role.confidence < 0.5 ? 'low' : role.confidence < 0.7 ? 'medium' : 'high'}"
+                                 style="width: ${(role.confidence || 0) * 100}%"></div>
+                        </div>
+                        <span class="metric-value">${((role.confidence || 0) * 100).toFixed(0)}%</span>
+                    </div>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Spectral Profile</span>
+                    <span class="metric-value">${role.spectral_profile || 'N/A'}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Temporal Profile</span>
+                    <span class="metric-value">${role.temporal_profile || 'N/A'}</span>
+                </div>
+            `;
+        }
+
+        function displayWarnings(elementId, warnings) {
+            const container = document.getElementById(elementId);
+            if (!warnings || warnings.length === 0) {
+                container.innerHTML = '<p style="color: var(--success)">No warnings - quality looks good!</p>';
+                return;
+            }
+
+            container.innerHTML = warnings.map(w => `
+                <div class="warning-item ${w.level}">
+                    <div class="warning-header">
+                        <span class="warning-level" style="color: var(--${w.level === 'critical' ? 'error' : w.level === 'warning' ? 'warning' : 'info'})">${w.level}</span>
+                        <span class="warning-category">${w.category}</span>
+                    </div>
+                    <div class="warning-message">${w.message}</div>
+                    ${w.recommendation ? `<div class="warning-recommendation">${w.recommendation}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function formatValue(value) {
+            if (typeof value === 'number') {
+                if (value >= 0 && value <= 1) return (value * 100).toFixed(0) + '%';
+                return value.toFixed(2);
+            }
+            if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+            return value || 'N/A';
+        }
+
+        function getScoreColor(score) {
+            if (score < 0.4) return 'var(--error)';
+            if (score < 0.7) return 'var(--warning)';
+            return 'var(--success)';
+        }
+    </script>
+</body>
+</html>
