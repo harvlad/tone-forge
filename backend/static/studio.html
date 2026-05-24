@@ -1,0 +1,4017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ToneForge Studio - Quality Analysis</title>
+    <style>
+        :root {
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --bg-input: #0f0f1a;
+            --text-primary: #eee;
+            --text-secondary: #888;
+            --accent: #e94560;
+            --accent-hover: #ff6b6b;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --error: #f87171;
+            --info: #60a5fa;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #333;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        h1 span {
+            color: var(--accent);
+        }
+
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+        }
+
+        .back-link:hover {
+            color: var(--text-primary);
+        }
+
+        .upload-section {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        /* Hide upload section when results are visible */
+        .results.active ~ .upload-section,
+        .container:has(.results.active) .upload-section {
+            display: none;
+        }
+
+        /* New Analysis button */
+        .new-analysis-btn {
+            display: none;
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--accent);
+            border-radius: 6px;
+            color: var(--accent);
+            font-family: inherit;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .new-analysis-btn:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        .results.active ~ .new-analysis-btn,
+        .container:has(.results.active) .new-analysis-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .drop-zone {
+            border: 2px dashed #444;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--accent);
+            background: rgba(233, 69, 96, 0.1);
+        }
+
+        .drop-zone input {
+            display: none;
+        }
+
+        .drop-zone p {
+            color: var(--text-secondary);
+            margin-top: 10px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .cancel-analysis-btn {
+            margin-top: 20px;
+            padding: 10px 24px;
+            background: transparent;
+            border: 1px solid var(--error);
+            border-radius: 6px;
+            color: var(--error);
+            font-family: inherit;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .cancel-analysis-btn:hover {
+            background: var(--error);
+            color: white;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .results {
+            display: none;
+        }
+
+        .results.active {
+            display: block;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        .card h2 {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+        }
+
+        .metric {
+            display: grid;
+            grid-template-columns: 100px 1fr auto;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 0;
+            border-bottom: 1px solid #222;
+            max-width: 100%;
+        }
+
+        /* When metric only has label + value (no bar), value spans remaining columns */
+        .metric > .metric-label + .metric-value {
+            grid-column: 2 / -1;
+            text-align: left;
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .metric-value {
+            font-weight: 600;
+        }
+
+        .metric-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .bar {
+            width: 100px;
+            height: 8px;
+            background: #222;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+
+        .bar-fill.low { background: var(--error); }
+        .bar-fill.medium { background: var(--warning); }
+        .bar-fill.high { background: var(--success); }
+
+        .status-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-badge.good { background: rgba(74, 222, 128, 0.2); color: var(--success); }
+        .status-badge.warning { background: rgba(251, 191, 36, 0.2); color: var(--warning); }
+        .status-badge.bad { background: rgba(248, 113, 113, 0.2); color: var(--error); }
+        .status-badge.info { background: rgba(96, 165, 250, 0.2); color: var(--info); }
+
+        .warnings-list {
+            margin-top: 10px;
+        }
+
+        .warning-item {
+            background: var(--bg-input);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 8px;
+            border-left: 3px solid;
+        }
+
+        .warning-item.critical { border-color: var(--error); }
+        .warning-item.warning { border-color: var(--warning); }
+        .warning-item.info { border-color: var(--info); }
+
+        .warning-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .warning-level {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .warning-category {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .warning-message {
+            font-size: 0.9rem;
+        }
+
+        /* Provenance styles */
+        .provenance-summary {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 16px;
+        }
+        .provenance-stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 12px 20px;
+            background: var(--bg-input);
+            border-radius: 8px;
+        }
+        .provenance-stat .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .provenance-stat .stat-value {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .provenance-details {
+            margin-top: 12px;
+        }
+        .provenance-details summary {
+            cursor: pointer;
+            color: var(--accent);
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        .provenance-decisions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .provenance-decision {
+            background: var(--bg-input);
+            border-radius: 6px;
+            padding: 10px 12px;
+            border-left: 3px solid var(--accent);
+        }
+        .provenance-decision .decision-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        .provenance-decision .decision-action {
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+        .provenance-decision .decision-stage {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        .provenance-decision .decision-reason {
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            margin-bottom: 5px;
+        }
+
+        .warning-recommendation {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .summary-card {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+
+        .overall-score {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-input);
+            flex-shrink: 0;
+        }
+
+        .overall-score .score {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .overall-score .label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .summary-details {
+            flex: 1;
+        }
+
+        .summary-details h3 {
+            margin-bottom: 10px;
+        }
+
+        .summary-row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .summary-item {
+            background: var(--bg-input);
+            padding: 10px 15px;
+            border-radius: 6px;
+        }
+
+        .summary-item .value {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .summary-item .label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .file-info {
+            display: flex;
+            gap: 20px;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 15px;
+        }
+
+        .options-row {
+            margin-top: 15px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            padding: 8px 12px;
+            border-radius: 6px;
+            background: var(--bg-input);
+            transition: all 0.2s;
+        }
+
+        .checkbox-label:hover {
+            color: var(--text-primary);
+            background: #222;
+        }
+
+        .checkbox-label:has(input:checked) {
+            color: var(--accent);
+            background: rgba(233, 69, 96, 0.15);
+            border: 1px solid var(--accent);
+        }
+
+        .checkbox-label input[type="radio"],
+        .checkbox-label input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .progress-container {
+            margin-top: 15px;
+            padding: 15px;
+            background: var(--bg-input);
+            border-radius: 8px;
+            display: none;
+        }
+
+        .progress-container.active {
+            display: block;
+        }
+
+        .progress-bar-wrapper {
+            height: 8px;
+            background: #333;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--accent);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .progress-stage {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .progress-stage .stage-name {
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.75rem;
+        }
+
+        .progress-log {
+            margin-top: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 0.8rem;
+            font-family: 'SF Mono', monospace;
+            background: #0a0a12;
+            border-radius: 4px;
+            padding: 8px;
+        }
+
+        .progress-log .log-entry {
+            padding: 2px 0;
+            display: flex;
+            gap: 8px;
+        }
+
+        .progress-log .log-time {
+            color: #555;
+        }
+
+        .progress-log .log-msg {
+            color: var(--text-secondary);
+        }
+
+        .progress-log .log-msg.error {
+            color: var(--error);
+        }
+
+        .progress-log .log-msg.success {
+            color: var(--success);
+        }
+
+        /* Search Modal */
+        .search-btn {
+            background: transparent;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 8px 12px;
+            color: var(--text-primary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        .search-btn:hover {
+            border-color: var(--accent);
+            background: rgba(233, 69, 96, 0.1);
+        }
+        .search-btn svg {
+            width: 18px;
+            height: 18px;
+        }
+        .search-btn .shortcut {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            background: var(--bg-input);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: flex-start;
+            padding-top: 10vh;
+        }
+        .modal-overlay.active {
+            display: flex;
+        }
+        .modal {
+            background: var(--bg-card);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 700px;
+            max-height: 80vh;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            animation: modalSlide 0.2s ease-out;
+        }
+        @keyframes modalSlide {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .modal-header input {
+            flex: 1;
+            padding: 12px 16px;
+            background: var(--bg-input);
+            border: 1px solid #444;
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            font-family: inherit;
+        }
+        .modal-header input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 8px;
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+        .modal-filters {
+            padding: 12px 20px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            border-bottom: 1px solid #333;
+            background: var(--bg-input);
+        }
+        .modal-filters select {
+            padding: 6px 10px;
+            background: var(--bg-card);
+            border: 1px solid #444;
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+        }
+        .modal-body {
+            max-height: 50vh;
+            overflow-y: auto;
+        }
+        .modal-empty {
+            padding: 3rem;
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        /* Export table */
+        .export-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0.75rem;
+            font-size: 0.8rem;
+        }
+        .export-row {
+            border-bottom: 1px solid var(--border);
+        }
+        .export-row:last-child {
+            border-bottom: none;
+        }
+        .export-row--header {
+            background: var(--card-bg);
+        }
+        .export-cell {
+            padding: 0.5rem 0.75rem;
+            text-align: left;
+            vertical-align: middle;
+        }
+        .export-cell--category {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .export-cell--name {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            font-weight: 500;
+            width: 120px;
+            color: var(--text-primary);
+        }
+        .export-cell--desc {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+        .export-cell--action {
+            width: 80px;
+            text-align: right;
+        }
+        .btn-export {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.4rem 0.75rem;
+            border: 1px solid var(--primary);
+            background: transparent;
+            color: var(--primary);
+            cursor: pointer;
+            border-radius: 3px;
+            transition: all 0.15s;
+        }
+        .btn-export:hover {
+            background: var(--primary);
+            color: var(--bg);
+        }
+        .btn-export:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .export-row--midi-stem {
+            background: rgba(217, 119, 6, 0.05);
+        }
+        .export-row--midi-stem .export-cell--name {
+            padding-left: 1.5rem;
+        }
+        /* Plugin badge - appears on detected items */
+        .plugin-badge {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 2px 8px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #4ade80;
+            background: rgba(74, 222, 128, 0.15);
+            white-space: nowrap;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex-shrink: 0;
+            border: 1px solid rgba(74, 222, 128, 0.3);
+            border-radius: 4px;
+            vertical-align: middle;
+        }
+        /* Value group container for metric + badge */
+        .metric-value-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            grid-column: 2 / -1; /* Span from column 2 to end */
+            min-width: 0; /* Allow shrinking */
+        }
+
+        .metric-value-group .metric-value {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ========== Studio Tabs - DAW Style ========== */
+        .studio-tabs {
+            display: flex;
+            gap: 0;
+            background: var(--bg-input);
+            border-radius: 8px 8px 0 0;
+            padding: 4px 4px 0;
+            margin-top: 20px;
+            border-bottom: 2px solid var(--accent);
+        }
+
+        .studio-tab {
+            font-family: 'SF Mono', 'Monaco', monospace;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 12px 20px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 6px 6px 0 0;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .studio-tab:hover {
+            color: var(--text-primary);
+            background: rgba(233, 69, 96, 0.1);
+        }
+
+        .studio-tab--active {
+            color: var(--accent);
+            background: var(--bg-card);
+            font-weight: 600;
+        }
+
+        .studio-tab--active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--bg-card);
+        }
+
+        .studio-tab--empty {
+            color: var(--text-dim);
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .studio-tab--empty:hover {
+            color: var(--text-dim);
+            background: transparent;
+        }
+
+        .studio-tab--empty::before {
+            display: none;
+        }
+
+        .studio-tab--has-content::before {
+            content: '';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 6px;
+            height: 6px;
+            background: var(--success);
+            border-radius: 50%;
+        }
+
+        .studio-tab--empty {
+            opacity: 0.4;
+        }
+
+        /* ========== Studio Panels ========== */
+        .studio-panels {
+            background: var(--bg-card);
+            border-radius: 0 0 12px 12px;
+            padding: 20px;
+            min-height: 300px;
+            margin-bottom: 20px;
+        }
+
+        .studio-panel {
+            display: none;
+            animation: panelFadeIn 0.2s ease-out;
+        }
+
+        .studio-panel--active {
+            display: block;
+        }
+
+        @keyframes panelFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(4px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .studio-panel__empty {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        /* ========== Fixed Transport (DAW-style bottom bar) ========== */
+        .studio-transport {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to bottom, transparent 0%, var(--bg-dark) 20px);
+            z-index: 100;
+            padding-top: 20px;
+            transition: transform 0.3s ease;
+        }
+
+        .studio-transport__inner {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .studio-transport--collapsed {
+            transform: translateY(calc(100% - 60px));
+        }
+
+        .studio-transport--collapsed .studio-transport__inner {
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        .studio-transport--collapsed:hover .studio-transport__inner {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .studio-transport__toggle {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-card);
+            border: 1px solid #333;
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            padding: 4px 20px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .studio-transport__toggle:hover {
+            color: var(--text-primary);
+        }
+
+        .studio-transport__toggle-icon {
+            transition: transform 0.2s;
+        }
+
+        .studio-transport--collapsed .studio-transport__toggle-icon {
+            transform: rotate(180deg);
+        }
+
+        .studio-transport .card {
+            margin-bottom: 0;
+            background: rgba(22, 33, 62, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid #333;
+        }
+
+        /* Compact waveform in transport */
+        .studio-transport #waveformCard {
+            padding: 12px;
+        }
+
+        .studio-transport #waveformCard h2 {
+            display: none;
+        }
+
+        .studio-transport #waveformCanvas {
+            height: 80px !important;
+        }
+
+        /* Compact audio players in transport */
+        .studio-transport #audioPlayersCard {
+            padding: 12px;
+        }
+
+        .studio-transport #audioPlayersCard h2 {
+            font-size: 0.7rem;
+            margin-bottom: 8px;
+        }
+
+        .studio-transport #audioPlayers {
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 8px;
+        }
+
+        /* Add padding to results when transport is visible */
+        .results.has-transport {
+            padding-bottom: 280px;
+        }
+
+        /* Hide cards source once tabs are initialized */
+        .results.tabs-ready #cardsSource {
+            display: none;
+        }
+
+        /* ========== Responsive Adjustments ========== */
+        @media (max-width: 768px) {
+            .studio-tabs {
+                flex-wrap: wrap;
+                gap: 2px;
+            }
+
+            .studio-tab {
+                flex: 1 1 auto;
+                min-width: 70px;
+                padding: 10px 12px;
+                font-size: 0.65rem;
+                justify-content: center;
+                text-align: center;
+            }
+
+            .results.has-transport {
+                padding-bottom: 320px;
+            }
+
+            .studio-transport #waveformCanvas {
+                height: 60px !important;
+            }
+        }
+    </style>
+    <script src="/static/preview-shared.js"></script>
+    <script src="/static/export-shared.js"></script>
+    <script src="/static/plugin-shared.js"></script>
+    <script src="/static/detection-shared.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><a href="/" style="color: inherit; text-decoration: none;">ToneForge</a> <span>Studio</span></h1>
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <button id="clientStatus" style="font-size: 0.75rem; padding: 8px 14px; background: rgba(74, 222, 128, 0.08); border: 1px solid rgba(74, 222, 128, 0.3); border-radius: 6px; display: flex; align-items: center; gap: 8px; letter-spacing: 0.5px; cursor: pointer; font-family: inherit;">
+                    <span style="color: var(--text-secondary); text-transform: uppercase;">Checking</span>
+                </button>
+                <button class="search-btn" id="openModelsBtn" title="Manage ML Models">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                        <line x1="12" y1="22.08" x2="12" y2="12"/>
+                    </svg>
+                    <span>Models</span>
+                    <span class="plugin-count" id="headerModelStatus" style="font-size: 0.7rem; color: var(--text-secondary); background: var(--bg-input); padding: 2px 6px; border-radius: 4px;">-</span>
+                </button>
+                <button class="search-btn" id="openPluginsBtn" title="Browse Plugins">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                    </svg>
+                    <span>Plugins</span>
+                    <span class="plugin-count" id="headerPluginCount" style="font-size: 0.7rem; color: var(--text-secondary); background: var(--bg-input); padding: 2px 6px; border-radius: 4px;">-</span>
+                </button>
+                <button class="search-btn" id="openSearchBtn" title="Search history (Cmd+K)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="m21 21-4.35-4.35"/>
+                    </svg>
+                    <span>Search</span>
+                    <span class="shortcut">⌘K</span>
+                </button>
+                <button class="new-analysis-btn" id="newAnalysisBtn" title="Start new analysis">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    New Analysis
+                </button>
+                <a href="/" class="back-link">&larr; Back to App</a>
+            </div>
+        </header>
+
+        <!-- Search Modal -->
+        <div class="modal-overlay" id="searchModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" style="width: 20px; height: 20px;">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="m21 21-4.35-4.35"/>
+                    </svg>
+                    <input type="text" id="modalSearchInput" placeholder="Search analyses..." autofocus>
+                    <button class="modal-close" id="closeSearchBtn">&times;</button>
+                </div>
+                <div class="modal-filters">
+                    <select id="modalFilterType">
+                        <option value="">All Types</option>
+                        <option value="guitar">Guitar</option>
+                        <option value="bass">Bass</option>
+                        <option value="drums">Drums</option>
+                        <option value="synth">Synth</option>
+                    </select>
+                    <select id="modalFilterAmp">
+                        <option value="">All Amps</option>
+                        <option value="fender_clean">Fender Clean</option>
+                        <option value="vox_chime">Vox Chime</option>
+                        <option value="marshall_plexi">Marshall Plexi</option>
+                        <option value="marshall_jcm">Marshall JCM</option>
+                        <option value="mesa_rectifier">Mesa Rectifier</option>
+                        <option value="5150_peavey">5150/Peavey</option>
+                        <option value="bogner">Bogner</option>
+                        <option value="soldano">Soldano</option>
+                    </select>
+                    <select id="modalFilterDeep">
+                        <option value="">All Analyses</option>
+                        <option value="deep">Deep Only</option>
+                        <option value="fast">Fast Only</option>
+                    </select>
+                </div>
+                <div class="modal-body" id="modalHistoryList">
+                    <div class="modal-empty">No analyses yet</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Plugin Browser Modal -->
+        <div class="modal-overlay" id="pluginModal">
+            <div class="modal" style="max-width: 900px; display: flex; flex-direction: column;">
+                <div class="modal-header">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" style="width: 20px; height: 20px;">
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                    </svg>
+                    <input type="text" id="pluginSearchInput" placeholder="Search plugins..." autofocus>
+                    <button class="modal-close" id="closePluginsBtn">&times;</button>
+                </div>
+                <div class="modal-filters">
+                    <select id="pluginFilterFormat">
+                        <option value="">All Formats</option>
+                        <option value="au">Audio Unit</option>
+                        <option value="vst3">VST3</option>
+                        <option value="ableton_device">Ableton</option>
+                    </select>
+                    <select id="pluginFilterType">
+                        <option value="">All Types</option>
+                        <option value="effect">Effects</option>
+                        <option value="instrument">Instruments</option>
+                        <option value="audio_effect">Audio Effects</option>
+                    </select>
+                    <select id="pluginFilterCategory">
+                        <option value="">All Categories</option>
+                        <option value="Amp Simulation">Amp Simulation</option>
+                        <option value="Distortion">Distortion</option>
+                        <option value="Dynamics">Dynamics</option>
+                        <option value="EQ">EQ</option>
+                        <option value="Reverb">Reverb</option>
+                        <option value="Delay">Delay</option>
+                        <option value="Modulation">Modulation</option>
+                    </select>
+                    <button id="rescanPluginsBtn" style="padding: 8px 16px; background: var(--accent); border: none; border-radius: 6px; color: white; cursor: pointer; font-size: 0.85rem;">
+                        Rescan
+                    </button>
+                </div>
+                <div class="modal-body" id="pluginList" style="flex: 1; overflow-y: auto; min-height: 200px; max-height: 55vh;">
+                    <div class="modal-empty">Loading plugins...</div>
+                </div>
+                <div style="padding: 14px 20px; border-top: 1px solid #333; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-secondary); flex-shrink: 0; background: var(--bg-card);">
+                    <span id="pluginStats">-</span>
+                    <span id="lastScanTime">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Models Manager Modal -->
+        <div class="modal-overlay" id="modelsModal">
+            <div class="modal" style="max-width: 600px;">
+                <div class="modal-header" style="border-bottom: 1px solid #333; padding-bottom: 16px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" style="width: 20px; height: 20px;">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                        <line x1="12" y1="22.08" x2="12" y2="12"/>
+                    </svg>
+                    <span style="flex: 1; font-weight: 500;">ML Models</span>
+                    <button class="modal-close" id="closeModelsBtn">&times;</button>
+                </div>
+                <div class="modal-body" style="padding: 20px;">
+                    <p style="color: var(--text-secondary); margin-bottom: 20px; font-size: 0.9rem;">
+                        These models are required for deep analysis with stem separation. They download once and are cached locally.
+                    </p>
+                    <div id="modelsList" style="display: flex; flex-direction: column; gap: 12px;">
+                        <div class="modal-empty">Checking models...</div>
+                    </div>
+                    <div id="modelsProgress" style="display: none; margin-top: 20px; padding: 16px; background: var(--bg-input); border-radius: 8px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                            <span id="modelsProgressLabel">Downloading...</span>
+                            <button id="cancelDownloadBtn" style="padding: 4px 12px; background: #ef4444; border: none; border-radius: 4px; color: white; cursor: pointer; font-size: 0.8rem;">Cancel</button>
+                        </div>
+                        <div style="height: 4px; background: #333; border-radius: 2px; overflow: hidden;">
+                            <div id="modelsProgressBar" style="height: 100%; background: var(--accent); width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                    </div>
+                </div>
+                <div style="padding: 14px 20px; border-top: 1px solid #333; display: flex; justify-content: space-between; align-items: center;">
+                    <span id="modelsCacheInfo" style="font-size: 0.8rem; color: var(--text-secondary);">-</span>
+                    <button id="downloadModelsBtn" style="padding: 10px 20px; background: var(--accent); border: none; border-radius: 6px; color: white; cursor: pointer; font-weight: 500;">
+                        Download All
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Client Control Modal -->
+        <div class="modal-overlay" id="clientModal">
+            <div class="modal" style="max-width: 500px;">
+                <div class="modal-header" style="border-bottom: 1px solid #333; padding-bottom: 16px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" style="width: 20px; height: 20px;">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                    <span style="flex: 1; font-weight: 500;">Local GPU Engine</span>
+                    <button class="modal-close" id="closeClientBtn">&times;</button>
+                </div>
+                <div class="modal-body" style="padding: 20px;">
+                    <div id="clientStatusDetail" style="margin-bottom: 20px;">
+                        <!-- Status will be populated by JS -->
+                    </div>
+                    <div id="clientActions">
+                        <!-- Stop button (shown when running) -->
+                        <button id="stopEngineBtn" style="width: 100%; padding: 14px 20px; background: #c73e3e; border: none; border-radius: 8px; color: white; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                            Stop Engine
+                        </button>
+                        <!-- Start button (shown when stopped) -->
+                        <button id="startEngineBtn" style="width: 100%; padding: 14px 20px; background: var(--accent); border: none; border-radius: 8px; color: white; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><polygon points="5,3 19,12 5,21"/></svg>
+                            Start Engine
+                        </button>
+                        <p id="waitingForEngine" style="color: var(--accent); font-size: 0.8rem; margin-top: 12px; text-align: center; display: none;">
+                            <span class="spinner" style="width: 14px; height: 14px; border-width: 2px; display: inline-block; vertical-align: middle; margin-right: 8px;"></span>
+                            Starting engine...
+                        </p>
+                        <details id="manualStartDetails" style="margin-top: 16px; display: none;">
+                            <summary style="color: var(--text-dim); font-size: 0.8rem; cursor: pointer;">Manual start (Terminal)</summary>
+                            <code id="startCommand" style="display: block; background: #000; padding: 10px; border-radius: 4px; font-size: 0.75rem; margin-top: 8px; overflow-x: auto; cursor: pointer;" title="Click to copy">cd /Users/mattharvey/Sites/tone-forge/backend && python3 local_engine/server.py</code>
+                        </details>
+                    </div>
+                </div>
+                <div style="padding: 14px 20px; border-top: 1px solid #333; display: flex; justify-content: flex-end; gap: 10px;">
+                    <button id="refreshClientBtn" style="padding: 10px 20px; background: var(--bg-input); border: 1px solid #444; border-radius: 6px; color: var(--text-primary); cursor: pointer;">
+                        Refresh Status
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="upload-section">
+            <div class="drop-zone" id="dropZone">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                </svg>
+                <p>Drop audio file here or click to upload</p>
+                <input type="file" id="fileInput" accept=".wav,.mp3,.flac,.ogg,.m4a">
+            </div>
+            <div class="options-row">
+                <label class="checkbox-label">
+                    <input type="radio" name="analysisMode" id="quickMode" value="quick" checked>
+                    Quick (CPU, ~30s)
+                </label>
+                <label class="checkbox-label">
+                    <input type="radio" name="analysisMode" id="standardMode" value="standard">
+                    Standard (CPU, ~1-2min)
+                </label>
+                <label class="checkbox-label">
+                    <input type="radio" name="analysisMode" id="deepMode" value="deep">
+                    Deep (GPU, stem sep + MIDI)
+                </label>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p id="loadingText">Analyzing quality...</p>
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <div class="progress-stage">
+                    <span class="stage-name" id="stageName">Starting...</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="progress-log" id="progressLog"></div>
+            </div>
+            <button class="cancel-analysis-btn" id="cancelAnalysisBtn">Cancel Analysis</button>
+        </div>
+
+        <div class="results" id="results">
+            <!-- Summary Card - Always visible above tabs -->
+            <div class="card summary-card" id="summaryCard">
+                <div class="overall-score" id="overallScore">
+                    <span class="score">--</span>
+                    <span class="label">Quality</span>
+                </div>
+                <div class="summary-details">
+                    <h3 id="summaryTitle">Analysis Complete</h3>
+                    <div class="summary-row" id="summaryRow"></div>
+                    <div class="file-info" id="fileInfo"></div>
+                </div>
+            </div>
+
+            <!-- Tab Navigation -->
+            <div class="studio-tabs" id="studioTabs">
+                <button class="studio-tab studio-tab--active" data-tab="overview">Overview</button>
+                <button class="studio-tab" data-tab="tone">Tone</button>
+                <button class="studio-tab" data-tab="quality">Quality</button>
+                <button class="studio-tab" data-tab="stems">Stems</button>
+                <button class="studio-tab" data-tab="technical">Technical</button>
+            </div>
+
+            <!-- Tab Panels -->
+            <div class="studio-panels" id="studioPanels">
+                <div class="studio-panel studio-panel--active" data-panel="overview">
+                    <div class="grid" id="overviewGrid"></div>
+                </div>
+                <div class="studio-panel" data-panel="tone">
+                    <div class="grid" id="toneGrid"></div>
+                </div>
+                <div class="studio-panel" data-panel="quality">
+                    <div class="grid" id="qualityGrid"></div>
+                </div>
+                <div class="studio-panel" data-panel="stems">
+                    <div class="grid" id="stemsGrid"></div>
+                </div>
+                <div class="studio-panel" data-panel="technical">
+                    <div class="grid" id="technicalGrid"></div>
+                </div>
+            </div>
+
+            <!-- Original cards container (will be hidden after cards are moved to tabs) -->
+            <div class="grid" id="cardsSource">
+                <!-- Confidence Scores -->
+                <div class="card" id="confidenceCard">
+                    <h2>Confidence Scores</h2>
+                    <div id="confidenceMetrics"></div>
+                </div>
+
+                <!-- Stem Quality -->
+                <div class="card" id="stemQualityCard">
+                    <h2>Stem Quality</h2>
+                    <div id="stemQualityMetrics"></div>
+                </div>
+
+                <!-- Contamination -->
+                <div class="card" id="contaminationCard">
+                    <h2>Contamination</h2>
+                    <div id="contaminationMetrics"></div>
+                </div>
+
+                <!-- Artifacts -->
+                <div class="card" id="artifactsCard">
+                    <h2>Artifacts</h2>
+                    <div id="artifactsMetrics"></div>
+                </div>
+
+                <!-- Role Classification -->
+                <div class="card" id="roleCard">
+                    <h2>Role Classification</h2>
+                    <div id="roleMetrics"></div>
+                </div>
+
+                <!-- MIDI Stats (Deep mode only) -->
+                <div class="card" id="midiCard" style="display: none;">
+                    <h2>MIDI Extraction</h2>
+                    <div id="midiMetrics"></div>
+                </div>
+
+                <!-- Stems (Deep mode only) -->
+                <div class="card" id="stemsCard" style="display: none;">
+                    <h2>Stem Separation</h2>
+                    <div id="stemsMetrics"></div>
+                </div>
+
+                <!-- Amp Details -->
+                <div class="card" id="ampDetailsCard" style="display: none;">
+                    <h2>Amp Detection</h2>
+                    <div id="ampDetailsMetrics"></div>
+                </div>
+
+                <!-- Cab Details -->
+                <div class="card" id="cabDetailsCard" style="display: none;">
+                    <h2>Cabinet Detection</h2>
+                    <div id="cabDetailsMetrics"></div>
+                </div>
+
+                <!-- Effects Chain -->
+                <div class="card" id="effectsChainCard" style="display: none;">
+                    <h2>Effects Chain</h2>
+                    <div id="effectsChainMetrics"></div>
+                </div>
+
+                <!-- Guitar Detection -->
+                <div class="card" id="guitarDetailsCard" style="display: none;">
+                    <h2>Guitar Detection</h2>
+                    <div id="guitarDetailsMetrics"></div>
+                </div>
+
+                <!-- Waveform Visualization (Deep mode only) -->
+                <div class="card" id="waveformCard" style="display: none; grid-column: 1 / -1;">
+                    <div style="display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;">
+                        <h2 style="margin: 0;">Waveform Analysis</h2>
+                        <span style="font-size: 0.7rem; color: rgb(96, 165, 250);">Peak: max amplitude</span>
+                        <span style="font-size: 0.7rem; color: rgb(251, 146, 60);">RMS: average loudness</span>
+                    </div>
+                    <div id="waveformContainer" style="position: relative;">
+                        <canvas id="waveformCanvas" style="width: 100%; height: 150px; background: var(--bg-input); border-radius: 8px;"></canvas>
+                        <div id="waveformInfo" style="display: flex; justify-content: space-between; margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-secondary);">
+                            <span id="waveformDuration"></span>
+                            <span id="waveformSampleRate"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Audio Players (Deep mode only) -->
+                <div class="card" id="audioPlayersCard" style="display: none; grid-column: 1 / -1;">
+                    <h2>Audio Playback</h2>
+                    <div id="audioPlayers" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;"></div>
+                </div>
+
+                <!-- Pipeline Profiling (Deep mode only) -->
+                <div class="card" id="profilingCard" style="display: none; grid-column: 1 / -1;">
+                    <h2>Pipeline Profiling</h2>
+                    <div id="profilingMetrics"></div>
+                </div>
+
+                <!-- Reconstruction Reasoning (Deep mode only) -->
+                <div class="card" id="reasoningCard" style="display: none; grid-column: 1 / -1;">
+                    <h2>Reconstruction Reasoning</h2>
+                    <div id="reasoningContent"></div>
+                </div>
+
+                <!-- Provenance Tracking -->
+                <div class="card" id="provenanceCard" style="display: none; grid-column: 1 / -1;">
+                    <h2>Decision Provenance</h2>
+                    <div id="provenanceContent">
+                        <div class="provenance-summary">
+                            <div class="provenance-stat">
+                                <span class="stat-label">Decisions</span>
+                                <span class="stat-value" id="provenanceDecisionCount">0</span>
+                            </div>
+                            <div class="provenance-stat">
+                                <span class="stat-label">Confidence</span>
+                                <span class="stat-value" id="provenanceConfidence">0%</span>
+                            </div>
+                            <div class="provenance-stat">
+                                <span class="stat-label">Domain</span>
+                                <span class="stat-value" id="provenanceDomain">-</span>
+                            </div>
+                        </div>
+                        <details class="provenance-details">
+                            <summary>View Decisions</summary>
+                            <div class="provenance-decisions" id="provenanceDecisions"></div>
+                        </details>
+                    </div>
+                </div>
+
+                <!-- Warnings -->
+                <div class="card" id="warningsCard" style="grid-column: 1 / -1;">
+                    <h2>Quality Warnings</h2>
+                    <div class="warnings-list" id="warningsList"></div>
+                </div>
+
+                <!-- Export (uses shared ToneExport utility) -->
+                <div class="card" id="exportCard" style="display: none; grid-column: 1 / -1;">
+                    <h2>Export</h2>
+                    <div id="exportStatus" class="export-status" style="display: none; padding: 8px 12px; margin-bottom: 12px; border-radius: 6px; font-size: 0.85rem;"></div>
+                    <div id="exportTableContainer"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Fixed Transport (DAW-style bottom bar) -->
+        <div class="studio-transport" id="studioTransport" style="display: none;">
+            <button class="studio-transport__toggle" id="transportToggle">
+                <span class="studio-transport__toggle-icon">&#9650;</span>
+                Transport
+            </button>
+            <div class="studio-transport__inner" id="transportInner"></div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+
+        // Check for analysis ID in query string and load it
+        async function loadAnalysisFromQuery() {
+            const params = new URLSearchParams(window.location.search);
+            const analysisId = params.get('analysis');
+            if (!analysisId) return;
+
+            loading.classList.add('active');
+            document.getElementById('loadingText').textContent = 'Loading analysis...';
+
+            try {
+                const response = await fetch(`/api/history/${analysisId}`);
+                if (!response.ok) throw new Error('Analysis not found');
+
+                const entry = await response.json();
+                if (entry.result) {
+                    // Display the stored result
+                    displayDeepResults({
+                        ...entry.result,
+                        filename: entry.name || 'Loaded analysis',
+                    });
+                    loading.classList.remove('active');
+                    results.classList.add('active');
+                }
+            } catch (err) {
+                console.error('Failed to load analysis:', err);
+                loading.classList.remove('active');
+            }
+        }
+
+        // Load analysis from query string on page load
+        loadAnalysisFromQuery();
+
+        // Drag and drop handlers
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        // Global abort controller for cancelling analysis
+        let analysisAbortController = null;
+
+        async function handleFile(file) {
+            loading.classList.add('active');
+            results.classList.remove('active');
+
+            // Create new abort controller for this analysis
+            analysisAbortController = new AbortController();
+
+            const mode = document.querySelector('input[name="analysisMode"]:checked').value;
+            const progressContainer = document.getElementById('progressContainer');
+            const progressBar = document.getElementById('progressBar');
+            const stageName = document.getElementById('stageName');
+            const progressPercent = document.getElementById('progressPercent');
+            const progressLog = document.getElementById('progressLog');
+
+            // Reset progress
+            progressBar.style.width = '0%';
+            progressPercent.textContent = '0%';
+            progressLog.innerHTML = '';
+
+            if (mode === 'deep') {
+                // Use SSE for deep analysis
+                document.getElementById('loadingText').textContent = 'Deep GPU analysis...';
+                progressContainer.classList.add('active');
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch('/api/admin/analyze-deep', {
+                        method: 'POST',
+                        body: formData,
+                        signal: analysisAbortController.signal
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Analysis failed: ${response.status}`);
+                    }
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    function addLog(msg, type = '') {
+                        const time = new Date().toLocaleTimeString();
+                        progressLog.innerHTML += `<div class="log-entry"><span class="log-time">${time}</span><span class="log-msg ${type}">${msg}</span></div>`;
+                        progressLog.scrollTop = progressLog.scrollHeight;
+                    }
+
+                    while (true) {
+                        const {done, value} = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, {stream: true});
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop(); // Keep incomplete line in buffer
+
+                        for (const line of lines) {
+                            if (line.startsWith('event: ')) {
+                                const eventType = line.substring(7);
+                                continue;
+                            }
+                            if (line.startsWith('data: ')) {
+                                const data = JSON.parse(line.substring(6));
+
+                                if (data.stage) {
+                                    stageName.textContent = data.stage.replace('_', ' ');
+                                }
+                                if (data.percent !== undefined) {
+                                    progressBar.style.width = data.percent + '%';
+                                    progressPercent.textContent = data.percent + '%';
+                                }
+                                if (data.message) {
+                                    addLog(data.message, data.error ? 'error' : '');
+                                }
+                                if (data.success !== undefined) {
+                                    addLog(`Analysis complete in ${data.total_time_sec?.toFixed(1)}s`, 'success');
+                                    displayDeepResults(data);
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                } finally {
+                    loading.classList.remove('active');
+                    progressContainer.classList.remove('active');
+                }
+            } else {
+                // Use standard API for quick/standard modes
+                progressContainer.classList.remove('active');
+                document.getElementById('loadingText').textContent =
+                    mode === 'quick' ? 'Quick analysis...' : 'Standard analysis...';
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const url = '/api/admin/analyze-quality' + (mode === 'quick' ? '?quick=true' : '');
+
+                try {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        body: formData,
+                        signal: analysisAbortController.signal
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Analysis failed: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    displayResults(data);
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                } finally {
+                    loading.classList.remove('active');
+                }
+            }
+        }
+
+        async function displayDeepResults(data) {
+            console.log('displayDeepResults raw data:', {
+                has_midi_stems: 'midi_stems' in data,
+                midi_stems_keys: data.midi_stems ? Object.keys(data.midi_stems) : 'undefined',
+                has_midi: 'midi' in data,
+                keys: Object.keys(data).slice(0, 20)
+            });
+
+            // Handle both formats: direct admin analysis (data.tone) and stored history (data.guitar)
+            const tone = data.tone || data.guitar || {};
+            const descriptor = tone.descriptor || data.descriptor || {};
+
+            // Format deep analysis results for display
+            const formatted = {
+                filename: data.filename || data.source_name || 'Unknown',
+                duration_sec: data.duration_sec || descriptor.source?.duration_sec,
+                sample_rate: data.sample_rate || descriptor.source?.sample_rate || 22050,
+                reconstruction_available: true,
+                stem_quality: data.quality?.stem_quality || {},
+                contamination: data.quality?.contamination || {},
+                artifacts: data.quality?.artifacts || null,
+                role: data.quality?.role || null,
+                quality_report: data.quality?.quality_report || {},
+                confidence_scores: tone.confidence || descriptor.confidence || {},
+                detected: {
+                    amp_family: tone.amp_family || descriptor.amp?.family || 'N/A',
+                    gain: tone.gain || descriptor.amp?.gain || 0,
+                },
+                // Detection confidence for showing/hiding sections
+                detection: data.detection || {},
+                detected_type: data.detected_type || 'guitar',
+                // Full detection details from descriptor
+                amp_details: tone.amp || descriptor.amp || null,
+                cab_details: tone.cab || descriptor.cab || null,
+                effects_chain: tone.effects || descriptor.effects || null,
+                guitar_details: tone.guitar || descriptor.guitar || null,
+                midi_stats: data.midi || {},
+                midi_data: data.midi || null,
+                midi_stems: data.midi_stems || {},
+                stems_available: data.stems ? Object.keys(data.stems) : [],
+                stems_paths: data.stems || {},
+                analysis_time_ms: data.profiling?.total_ms || (data.total_time_sec || data.profiling?.total_time_sec || 0) * 1000,
+                profiling: data.profiling || null,
+                tone_reasoning: tone.reasoning || descriptor.reasoning || null,
+                waveform: data.waveform || null,
+                // Store descriptor for preview generation
+                descriptor: descriptor,
+            };
+
+            await displayResults(formatted);
+        }
+
+        async function displayResults(data) {
+            results.classList.add('active');
+
+            // Fetch plugin matches for badge display
+            if (localEngineAvailable && data.descriptor) {
+                await TonePlugins.fetchMatches(data.descriptor);
+            }
+
+            // Overall score
+            const overallScore = document.getElementById('overallScore');
+            const score = data.quality_report?.overall_confidence ?? data.confidence_scores?.amp_family ?? 0;
+            const scorePercent = Math.round(score * 100);
+            overallScore.querySelector('.score').textContent = scorePercent + '%';
+            overallScore.style.borderColor = getScoreColor(score);
+
+            // Summary
+            document.getElementById('summaryTitle').textContent =
+                data.quality_report?.should_proceed ? 'Quality Acceptable' : 'Quality Issues Detected';
+
+            const summaryRow = document.getElementById('summaryRow');
+            summaryRow.innerHTML = `
+                <div class="summary-item">
+                    <div class="value">${data.detected?.amp_family || 'N/A'}</div>
+                    <div class="label">Amp Family</div>
+                </div>
+                <div class="summary-item">
+                    <div class="value">${((data.detected?.gain || 0) * 10).toFixed(1)}</div>
+                    <div class="label">Gain</div>
+                </div>
+                <div class="summary-item">
+                    <div class="value">${data.quality_report?.warning_count || 0}</div>
+                    <div class="label">Warnings</div>
+                </div>
+                <div class="summary-item">
+                    <div class="value">${(data.analysis_time_ms || 0).toFixed(0)}ms</div>
+                    <div class="label">Analysis Time</div>
+                </div>
+            `;
+
+            document.getElementById('fileInfo').innerHTML = `
+                <span>${data.filename}</span>
+                <span>${data.duration_sec?.toFixed(2)}s</span>
+                <span>${data.sample_rate}Hz</span>
+            `;
+
+            // Confidence scores
+            displayMetrics('confidenceMetrics', data.confidence_scores, true);
+
+            // Stem quality
+            displayMetrics('stemQualityMetrics', data.stem_quality, true);
+
+            // Contamination (filter out regions array for metrics display)
+            const contaminationMetrics = data.contamination ? {
+                overall_score: data.contamination.overall_score,
+                drum_bleed: data.contamination.drum_bleed,
+                vocal_bleed: data.contamination.vocal_bleed,
+            } : {};
+            displayMetrics('contaminationMetrics', contaminationMetrics, true, true);
+
+            // Artifacts
+            displayArtifacts('artifactsMetrics', data.artifacts);
+
+            // Role
+            displayRole('roleMetrics', data.role);
+
+            // Warnings
+            displayWarnings('warningsList', data.quality_report?.warnings || []);
+
+            // Provenance (from MIDI or tone analysis)
+            displayProvenance(data);
+
+            // MIDI stats (deep mode)
+            const midiCard = document.getElementById('midiCard');
+            if (data.midi_stats && Object.keys(data.midi_stats).length > 0) {
+                midiCard.style.display = 'block';
+                const midiPath = data.midi_stats.midi_file_path;
+                document.getElementById('midiMetrics').innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">Notes Extracted</span>
+                        <span class="metric-value">${data.midi_stats.note_count || 0}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Extraction Time</span>
+                        <span class="metric-value">${((data.midi_stats.total_time_ms || 0) / 1000).toFixed(2)}s</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Tempo</span>
+                        <span class="metric-value">${data.midi_stats.tempo?.toFixed(0) || 120} BPM</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Confidence</span>
+                        ${(() => {
+                            // Calculate confidence - use provided value or estimate from note count
+                            let conf = data.midi_stats.overall_confidence || 0;
+                            if (conf === 0 && data.midi_stats.note_count > 0) {
+                                // Estimate confidence based on note count (more notes = more confident)
+                                conf = Math.min(0.85, 0.3 + (data.midi_stats.note_count / 500) * 0.55);
+                            }
+                            const level = conf < 0.5 ? 'low' : conf < 0.7 ? 'medium' : 'high';
+                            return `
+                                <div class="bar-container">
+                                    <div class="bar-fill ${level}" style="width: ${(conf * 100)}%"></div>
+                                </div>
+                                <span class="metric-value">${(conf * 100).toFixed(0)}%</span>
+                            `;
+                        })()}
+                    </div>
+                    ${midiPath ? `
+                    <div style="margin-top: 1rem;">
+                        <a href="/api/admin/serve-file?path=${encodeURIComponent(midiPath)}&download=true"
+                           style="display: inline-block; padding: 0.5rem 1rem; background: var(--primary); color: white; text-decoration: none; border-radius: 0.25rem;">
+                            Download MIDI
+                        </a>
+                    </div>
+                    ` : ''}
+                `;
+            } else {
+                midiCard.style.display = 'none';
+            }
+
+            // Stems (deep mode)
+            const stemsCard = document.getElementById('stemsCard');
+            if (data.stems_available && data.stems_available.length > 0) {
+                stemsCard.style.display = 'block';
+                document.getElementById('stemsMetrics').innerHTML = data.stems_available.map(stem => `
+                    <div class="metric">
+                        <span class="metric-label">${stem}</span>
+                        <span class="status-badge good">Separated</span>
+                    </div>
+                `).join('');
+            } else {
+                stemsCard.style.display = 'none';
+            }
+
+            // Use shared detection utility for visibility decisions
+            const detectionConf = data.detection?.confidence || {};
+            const showGuitarDetails = ToneDetection.shouldShowInstrument('guitar', detectionConf, data);
+
+            // Also show guitar details if amp/cab data exists (even if confidence is low)
+            const hasAmpData = data.amp_details && (data.amp_details.amp_family || data.amp_details.gain_level !== undefined);
+            const hasCabData = data.cab_details && data.cab_details.cabinet_config;
+            const showToneTab = showGuitarDetails || hasAmpData || hasCabData;
+
+            // Detailed detection info (deep mode) - show if guitar detected OR amp/cab data exists
+            if (showToneTab) {
+                displayAmpDetails('ampDetailsMetrics', data.amp_details);
+                displayCabDetails('cabDetailsMetrics', data.cab_details);
+                displayEffectsChain('effectsChainMetrics', data.effects_chain);
+                displayGuitarDetails('guitarDetailsMetrics', data.guitar_details);
+            } else {
+                // Hide guitar-related cards for synth-dominant content (no amp/cab data)
+                document.getElementById('ampDetailsCard').style.display = 'none';
+                document.getElementById('cabDetailsCard').style.display = 'none';
+                document.getElementById('effectsChainCard').style.display = 'none';
+                document.getElementById('guitarDetailsCard').style.display = 'none';
+            }
+
+            // Debug: log tone tab decision
+            console.log('Tone tab decision:', { showGuitarDetails, hasAmpData, hasCabData, showToneTab });
+
+            // Audio players for stems (with tone preview)
+            // Use descriptor or tone data for preview generation
+            const toneDescriptor = data.descriptor || data.tone;
+            displayAudioPlayers('audioPlayers', data.stems_paths, data.midi_stems, toneDescriptor);
+
+            // Pipeline profiling
+            displayProfiling('profilingMetrics', data.profiling);
+
+            // Reconstruction reasoning
+            displayReasoning('reasoningContent', data.tone_reasoning);
+
+            // Waveform visualization with quality overlays
+            displayWaveform(data.waveform, {
+                artifacts: data.artifacts,
+                contamination: data.contamination,
+                duration_sec: data.duration_sec,
+            });
+
+            // Export table (uses shared ToneExport utility)
+            displayExportTable(data);
+
+            // Reorganize cards into tabs after all content is rendered
+            requestAnimationFrame(() => {
+                StudioTabs.reorganizeCards();
+            });
+        }
+
+        function displayExportTable(data) {
+            const card = document.getElementById('exportCard');
+            const container = document.getElementById('exportTableContainer');
+
+            if (!container || typeof ToneExport === 'undefined') {
+                if (card) card.style.display = 'none';
+                return;
+            }
+
+            // Build result object for ToneExport
+            const exportResult = {
+                source_name: data.filename,
+                filename: data.filename,
+                descriptor: data.descriptor || {},
+                midi_stems: data.midi_stems || {},
+                midi: data.midi_data,
+                guitar: data.descriptor ? { descriptor: data.descriptor } : null,
+                synth: data.descriptor ? { descriptor: data.descriptor } : null,
+            };
+
+            ToneExport.setResult(exportResult);
+            console.log('ToneExport result set:', {
+                has_midi_stems: !!exportResult.midi_stems,
+                midi_stems_keys: Object.keys(exportResult.midi_stems || {}),
+                midi_stems_count: Object.keys(exportResult.midi_stems || {}).length
+            });
+            ToneExport.renderTable(container, {
+                onStatus: (status, msg) => {
+                    console.log(`Export ${status}: ${msg}`);
+                    const statusEl = document.getElementById('exportStatus');
+                    if (statusEl) {
+                        statusEl.style.display = 'block';
+                        statusEl.textContent = msg;
+                        statusEl.style.background = status === 'error' ? 'rgba(239, 68, 68, 0.2)' :
+                                                    status === 'success' ? 'rgba(34, 197, 94, 0.2)' :
+                                                    'rgba(234, 179, 8, 0.2)';
+                        statusEl.style.color = status === 'error' ? '#ef4444' :
+                                               status === 'success' ? '#22c55e' : '#eab308';
+                        if (status === 'success') {
+                            setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+                        }
+                    }
+                }
+            });
+
+            card.style.display = '';
+        }
+
+        function displayMetrics(elementId, metrics, showBar = false, invertColors = false) {
+            const container = document.getElementById(elementId);
+            const card = container.closest('.card');
+            if (!metrics || Object.keys(metrics).length === 0) {
+                if (card) card.style.display = 'none';
+                return;
+            }
+
+            // Filter out null/undefined values first
+            const filteredEntries = Object.entries(metrics).filter(([_, v]) => v !== null && v !== undefined);
+
+            // Hide card if no displayable entries
+            if (filteredEntries.length === 0) {
+                if (card) card.style.display = 'none';
+                return;
+            }
+            if (card) card.style.display = '';
+
+            container.innerHTML = filteredEntries
+                .map(([key, value]) => {
+                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    const numValue = typeof value === 'number' ? value : parseFloat(value);
+
+                    if (showBar && !isNaN(numValue) && numValue >= 0 && numValue <= 1) {
+                        const level = invertColors
+                            ? (numValue > 0.5 ? 'low' : numValue > 0.3 ? 'medium' : 'high')
+                            : (numValue < 0.4 ? 'low' : numValue < 0.7 ? 'medium' : 'high');
+                        return `
+                            <div class="metric">
+                                <span class="metric-label">${label}</span>
+                                <div class="metric-bar">
+                                    <div class="bar">
+                                        <div class="bar-fill ${level}" style="width: ${numValue * 100}%"></div>
+                                    </div>
+                                    <span class="metric-value">${(numValue * 100).toFixed(0)}%</span>
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    return `
+                        <div class="metric">
+                            <span class="metric-label">${label}</span>
+                            <span class="metric-value">${formatValue(value)}</span>
+                        </div>
+                    `;
+                }).join('');
+        }
+
+        function displayArtifacts(elementId, artifacts) {
+            const container = document.getElementById(elementId);
+            const card = container.closest('.card');
+            if (!artifacts) {
+                if (card) card.style.display = 'none';
+                return;
+            }
+            if (card) card.style.display = '';
+
+            // Calculate cleanliness score if overall_score is null
+            // More artifacts = lower cleanliness
+            let score = artifacts.overall_score;
+            if (score === null || score === undefined) {
+                const count = artifacts.artifact_count || 0;
+                // Approximate: 0 artifacts = 1.0, 500+ artifacts = 0.0
+                score = Math.max(0, 1 - (count / 500));
+                if (artifacts.clipping_detected) score = Math.max(0, score - 0.2);
+                if (artifacts.phase_issues) score = Math.max(0, score - 0.1);
+            }
+            const scorePercent = Math.round(score * 100);
+            const scoreClass = score > 0.7 ? 'high' : score > 0.4 ? 'medium' : 'low';
+
+            container.innerHTML = `
+                <div class="metric">
+                    <span class="metric-label">Cleanliness</span>
+                    <div class="metric-bar">
+                        <div class="bar">
+                            <div class="bar-fill ${scoreClass}" style="width: ${scorePercent}%"></div>
+                        </div>
+                        <span class="metric-value">${scorePercent}%</span>
+                    </div>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Artifacts Found</span>
+                    <span class="metric-value">${artifacts.artifact_count || 0}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Clipping</span>
+                    <span class="status-badge ${artifacts.clipping_detected ? 'bad' : 'good'}">
+                        ${artifacts.clipping_detected ? 'Detected' : 'None'}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Phase Issues</span>
+                    <span class="status-badge ${artifacts.phase_issues ? 'warning' : 'good'}">
+                        ${artifacts.phase_issues ? 'Yes' : 'No'}
+                    </span>
+                </div>
+            `;
+        }
+
+        function displayRole(elementId, role) {
+            const container = document.getElementById(elementId);
+            const card = container.closest('.card');
+            if (!role) {
+                if (card) card.style.display = 'none';
+                return;
+            }
+            if (card) card.style.display = '';
+
+            container.innerHTML = `
+                <div class="metric">
+                    <span class="metric-label">Primary Role</span>
+                    <span class="status-badge info">${role.primary_role || 'Unknown'}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Confidence</span>
+                    <div class="metric-bar">
+                        <div class="bar">
+                            <div class="bar-fill ${role.confidence < 0.5 ? 'low' : role.confidence < 0.7 ? 'medium' : 'high'}"
+                                 style="width: ${(role.confidence || 0) * 100}%"></div>
+                        </div>
+                        <span class="metric-value">${((role.confidence || 0) * 100).toFixed(0)}%</span>
+                    </div>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Spectral Profile</span>
+                    <span class="metric-value">${role.spectral_profile || 'N/A'}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Temporal Profile</span>
+                    <span class="metric-value">${role.temporal_profile || 'N/A'}</span>
+                </div>
+            `;
+        }
+
+        function displayWarnings(elementId, warnings) {
+            const container = document.getElementById(elementId);
+            if (!warnings || warnings.length === 0) {
+                container.innerHTML = '<p style="color: var(--success)">No warnings - quality looks good!</p>';
+                return;
+            }
+
+            container.innerHTML = warnings.map(w => `
+                <div class="warning-item ${w.level}">
+                    <div class="warning-header">
+                        <span class="warning-level" style="color: var(--${w.level === 'critical' ? 'error' : w.level === 'warning' ? 'warning' : 'info'})">${w.level}</span>
+                        <span class="warning-category">${w.category}</span>
+                    </div>
+                    <div class="warning-message">${w.message}</div>
+                    ${w.recommendation ? `<div class="warning-recommendation">${w.recommendation}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function displayProvenance(data) {
+            const card = document.getElementById('provenanceCard');
+
+            // Collect provenance from various sources
+            const provenanceSources = [];
+
+            // MIDI provenance (check both midi and midi_stats/midi_data)
+            if (data.midi?.provenance) {
+                provenanceSources.push({ source: 'MIDI', ...data.midi.provenance });
+            } else if (data.midi_stats?.provenance) {
+                provenanceSources.push({ source: 'MIDI', ...data.midi_stats.provenance });
+            } else if (data.midi_data?.provenance) {
+                provenanceSources.push({ source: 'MIDI', ...data.midi_data.provenance });
+            }
+
+            // Tone/descriptor provenance
+            if (data.tone?.provenance) {
+                provenanceSources.push({ source: 'Tone', ...data.tone.provenance });
+            } else if (data.descriptor?.provenance) {
+                provenanceSources.push({ source: 'Tone', ...data.descriptor.provenance });
+            }
+
+            // Check per-stem MIDI provenance
+            if (data.midi_stats?.per_stem) {
+                for (const [stem, stemData] of Object.entries(data.midi_stats.per_stem)) {
+                    if (stemData.provenance) {
+                        provenanceSources.push({ source: `MIDI (${stem})`, ...stemData.provenance });
+                    }
+                }
+            }
+            if (data.midi_stems) {
+                for (const [stem, stemData] of Object.entries(data.midi_stems)) {
+                    if (stemData.provenance) {
+                        provenanceSources.push({ source: `MIDI (${stem})`, ...stemData.provenance });
+                    }
+                }
+            }
+
+            if (provenanceSources.length === 0) {
+                card.style.display = 'none';
+                return;
+            }
+
+            card.style.display = 'block';
+
+            // Aggregate stats
+            let totalDecisions = 0;
+            let totalConfidence = 0;
+            const domains = new Set();
+
+            provenanceSources.forEach(p => {
+                totalDecisions += p.decision_count || 0;
+                totalConfidence += (p.aggregate_confidence || 0) * (p.decision_count || 1);
+                if (p.domain) domains.add(p.domain);
+            });
+
+            const avgConfidence = totalDecisions > 0 ? totalConfidence / totalDecisions : 0;
+
+            document.getElementById('provenanceDecisionCount').textContent = totalDecisions;
+            document.getElementById('provenanceConfidence').textContent = `${(avgConfidence * 100).toFixed(0)}%`;
+            document.getElementById('provenanceDomain').textContent = [...domains].join(', ') || '-';
+
+            // Display decisions
+            const decisionsEl = document.getElementById('provenanceDecisions');
+            let decisionsHtml = '';
+
+            provenanceSources.forEach(p => {
+                if (p.decisions && p.decisions.length > 0) {
+                    decisionsHtml += `<div style="margin-bottom: 8px; font-weight: 500; color: var(--text-secondary);">${p.source}</div>`;
+                    p.decisions.forEach(d => {
+                        decisionsHtml += `
+                            <div class="provenance-decision">
+                                <div class="decision-header">
+                                    <span class="decision-action">${d.action}</span>
+                                    <span class="decision-stage">${d.stage}</span>
+                                </div>
+                                <div class="decision-reason">${d.reason?.summary || 'No reason provided'}</div>
+                            </div>
+                        `;
+                    });
+                }
+            });
+
+            decisionsEl.innerHTML = decisionsHtml || '<p>No detailed decisions available</p>';
+        }
+
+        function displayAmpDetails(elementId, amp) {
+            const el = document.getElementById(elementId);
+            const card = document.getElementById('ampDetailsCard');
+            if (!amp) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+
+            const voicing = amp.voicing || {};
+            const alternates = amp.alternates || [];
+
+            const ampBadge = TonePlugins.getBadgeFor(amp.family);
+            el.innerHTML = `
+                <div class="metric">
+                    <span class="metric-label">Amp Family</span>
+                    <span class="metric-value-group">
+                        <span class="status-badge info">${amp.family?.replace(/_/g, ' ').toUpperCase() || 'Unknown'}</span>
+                        ${ampBadge}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Gain Level</span>
+                    <span class="metric-value">${(amp.gain * 10).toFixed(1)}</span>
+                </div>
+                <div style="margin-top: 1rem;">
+                    <span class="metric-label" style="display: block; margin-bottom: 0.5rem;">EQ Voicing</span>
+                    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem; text-align: center;">
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-dim);">Bass</div>
+                            <div style="font-weight: bold;">${((voicing.bass || 0.5) * 10).toFixed(1)}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-dim);">Mid</div>
+                            <div style="font-weight: bold;">${((voicing.mid || 0.5) * 10).toFixed(1)}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-dim);">Treble</div>
+                            <div style="font-weight: bold;">${((voicing.treble || 0.5) * 10).toFixed(1)}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-dim);">Presence</div>
+                            <div style="font-weight: bold;">${((voicing.presence || 0.5) * 10).toFixed(1)}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-dim);">Mid Scoop</div>
+                            <div style="font-weight: bold;">${((voicing.mid_scoop || 0) * 10).toFixed(1)}</div>
+                        </div>
+                    </div>
+                </div>
+                ${alternates.length > 0 ? `
+                <div style="margin-top: 1rem;">
+                    <span class="metric-label" style="display: block; margin-bottom: 0.5rem;">Alternative Matches</span>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                        ${alternates.slice(0, 3).map(alt => `
+                            <span class="status-badge" style="background: var(--card-bg);">
+                                ${alt.family?.replace(/_/g, ' ')} (${(alt.score * 100).toFixed(0)}%)
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+            `;
+        }
+
+        function displayCabDetails(elementId, cab) {
+            const el = document.getElementById(elementId);
+            const card = document.getElementById('cabDetailsCard');
+            if (!cab) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+
+            const cabBadge = TonePlugins.getBadgeFor('cab_ir') || TonePlugins.getBadgeFor('ir_loader') || TonePlugins.getBadgeFor('cab');
+            el.innerHTML = `
+                <div class="metric">
+                    <span class="metric-label">Cabinet Config</span>
+                    <span class="metric-value-group">
+                        <span class="status-badge info">${cab.configuration || 'Unknown'}</span>
+                        ${cabBadge}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Speaker Character</span>
+                    <span class="metric-value">${cab.speaker_character?.replace(/_/g, ' ') || 'Unknown'}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Mic Position</span>
+                    <span class="metric-value">${cab.mic_position || 'Unknown'}</span>
+                </div>
+            `;
+        }
+
+        function displayEffectsChain(elementId, effects) {
+            const el = document.getElementById(elementId);
+            const card = document.getElementById('effectsChainCard');
+            if (!effects) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+
+            const sections = [];
+
+            if (effects.overdrive) {
+                const odFamily = effects.overdrive.style ? `overdrive_${effects.overdrive.style}` : 'overdrive';
+                const odBadge = TonePlugins.getBadgeFor(odFamily);
+                sections.push(`
+                    <div class="metric">
+                        <span class="metric-label">Overdrive</span>
+                        <span class="metric-value-group">
+                            <span class="metric-value">${effects.overdrive.style || 'None'} (Drive: ${(effects.overdrive.drive * 10).toFixed(1)})</span>
+                            ${odBadge}
+                        </span>
+                    </div>
+                `);
+            }
+
+            if (effects.compressor) {
+                const compBadge = TonePlugins.getBadgeFor('compressor');
+                sections.push(`
+                    <div class="metric">
+                        <span class="metric-label">Compressor</span>
+                        <span class="metric-value-group">
+                            <span class="metric-value">${effects.compressor.character || 'None'} (${(effects.compressor.amount * 100).toFixed(0)}%)</span>
+                            ${compBadge}
+                        </span>
+                    </div>
+                `);
+            }
+
+            if (effects.modulation && effects.modulation.type !== 'none') {
+                const modFamily = `modulation_${effects.modulation.type}`;
+                const modBadge = TonePlugins.getBadgeFor(modFamily) || TonePlugins.getBadgeFor('modulation');
+                sections.push(`
+                    <div class="metric">
+                        <span class="metric-label">Modulation</span>
+                        <span class="metric-value-group">
+                            <span class="metric-value">${effects.modulation.type} (Rate: ${effects.modulation.rate?.toFixed(1) || 0}, Depth: ${(effects.modulation.depth * 100).toFixed(0)}%)</span>
+                            ${modBadge}
+                        </span>
+                    </div>
+                `);
+            }
+
+            if (effects.delay && effects.delay.type !== 'none') {
+                const delayFamily = `delay_${effects.delay.type}`;
+                const delayBadge = TonePlugins.getBadgeFor(delayFamily) || TonePlugins.getBadgeFor('delay');
+                sections.push(`
+                    <div class="metric">
+                        <span class="metric-label">Delay</span>
+                        <span class="metric-value-group">
+                            <span class="metric-value">${effects.delay.type} (${effects.delay.time_ms?.toFixed(0) || 0}ms, Mix: ${(effects.delay.mix * 100).toFixed(0)}%)</span>
+                            ${delayBadge}
+                        </span>
+                    </div>
+                `);
+            }
+
+            if (effects.reverb && effects.reverb.type !== 'none') {
+                const reverbFamily = `reverb_${effects.reverb.type}`;
+                const reverbBadge = TonePlugins.getBadgeFor(reverbFamily) || TonePlugins.getBadgeFor('reverb');
+                sections.push(`
+                    <div class="metric">
+                        <span class="metric-label">Reverb</span>
+                        <span class="metric-value-group">
+                            <span class="metric-value">${effects.reverb.type} (Size: ${(effects.reverb.size * 10).toFixed(1)}, Mix: ${(effects.reverb.mix * 100).toFixed(0)}%)</span>
+                            ${reverbBadge}
+                        </span>
+                    </div>
+                `);
+            }
+
+            if (sections.length === 0) {
+                el.innerHTML = '<p style="color: var(--text-dim);">No effects detected</p>';
+            } else {
+                el.innerHTML = sections.join('');
+            }
+        }
+
+        function displayGuitarDetails(elementId, guitar) {
+            const el = document.getElementById(elementId);
+            const card = document.getElementById('guitarDetailsCard');
+            if (!guitar) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+
+            el.innerHTML = `
+                <div class="metric">
+                    <span class="metric-label">Pickup Brightness</span>
+                    <div class="bar-container">
+                        <div class="bar-fill ${guitar.pickup_brightness < 0.4 ? 'low' : guitar.pickup_brightness < 0.7 ? 'medium' : 'high'}"
+                             style="width: ${(guitar.pickup_brightness || 0.5) * 100}%"></div>
+                    </div>
+                    <span class="metric-value">${((guitar.pickup_brightness || 0.5) * 100).toFixed(0)}%</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Playing Style</span>
+                    <span class="metric-value">${guitar.playing_style || 'Unknown'}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Estimated Tuning</span>
+                    <span class="metric-value">${guitar.estimated_tuning || 'Standard'}</span>
+                </div>
+            `;
+        }
+
+        function displayAudioPlayers(elementId, stemsPaths, midiStems, descriptor) {
+            const el = document.getElementById(elementId);
+            const card = document.getElementById('audioPlayersCard');
+
+            const hasStemPaths = stemsPaths && Object.keys(stemsPaths).length > 0;
+            const hasMidiStems = midiStems && Object.keys(midiStems).length > 0;
+
+            if (!hasStemPaths && !hasMidiStems) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+            el.innerHTML = '';
+
+            // Helper to create a stem card
+            function createStemCard(stemName, stemPath, midiData) {
+                const card = document.createElement('div');
+                card.style.cssText = 'background: var(--card-bg); padding: 1rem; border-radius: 0.5rem;';
+
+                // Header
+                const header = document.createElement('div');
+                header.style.cssText = 'font-weight: bold; margin-bottom: 0.5rem; text-transform: capitalize;';
+                header.textContent = stemName;
+                card.appendChild(header);
+
+                // Original stem audio player (if available)
+                if (stemPath) {
+                    const encodedPath = encodeURIComponent(stemPath);
+                    const audio = document.createElement('audio');
+                    audio.controls = true;
+                    audio.style.width = '100%';
+                    audio.preload = 'none';
+                    audio.innerHTML = `<source src="/api/admin/serve-file?path=${encodedPath}" type="audio/wav">`;
+                    card.appendChild(audio);
+
+                    // Download link
+                    const downloadLink = document.createElement('a');
+                    downloadLink.href = `/api/admin/serve-file?path=${encodedPath}&download=true`;
+                    downloadLink.style.cssText = 'display: inline-block; margin-top: 0.5rem; color: var(--primary); text-decoration: none; font-size: 0.875rem;';
+                    downloadLink.textContent = `📁 Download ${stemName}.wav`;
+                    card.appendChild(downloadLink);
+                }
+
+                // MIDI section (if available)
+                if (midiData && midiData.content && midiData.note_count > 0) {
+                    const midiFilename = midiData.filename || `${stemName}.mid`;
+                    const noteCount = midiData.note_count || 0;
+
+                    // MIDI download link
+                    const midiLink = document.createElement('a');
+                    midiLink.href = `data:audio/midi;base64,${midiData.content}`;
+                    midiLink.download = midiFilename;
+                    midiLink.style.cssText = 'display: block; margin-top: 0.25rem; color: var(--success); text-decoration: none; font-size: 0.875rem;';
+                    midiLink.textContent = `🎹 Download MIDI (${noteCount} notes)`;
+                    card.appendChild(midiLink);
+
+                    // Reconstructed tone preview section
+                    if (descriptor && typeof TonePreview !== 'undefined') {
+                        const previewSection = document.createElement('div');
+                        previewSection.style.cssText = 'margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border);';
+
+                        const previewLabel = document.createElement('div');
+                        previewLabel.style.cssText = 'font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 0.5rem;';
+                        previewLabel.textContent = 'Reconstructed Tone';
+                        previewSection.appendChild(previewLabel);
+
+                        const previewAudio = document.createElement('audio');
+                        previewAudio.controls = true;
+                        previewAudio.hidden = true;
+                        previewAudio.style.cssText = 'width: 100%; height: 32px; margin-top: 0.5rem;';
+
+                        const previewBtn = TonePreview.createPreviewButton({
+                            stemName,
+                            descriptor,
+                            midiContent: midiData.content,
+                            audioEl: previewAudio,
+                        });
+
+                        previewSection.appendChild(previewBtn);
+                        previewSection.appendChild(previewAudio);
+                        card.appendChild(previewSection);
+                    }
+                } else if (!stemPath) {
+                    // No audio and no useful MIDI - show message
+                    const noAudio = document.createElement('div');
+                    noAudio.style.cssText = 'color: var(--text-secondary); font-size: 0.875rem;';
+                    noAudio.textContent = 'Audio not available';
+                    card.appendChild(noAudio);
+                }
+
+                return card;
+            }
+
+            // Process stems
+            if (hasStemPaths) {
+                for (const [stemName, stemPath] of Object.entries(stemsPaths)) {
+                    const midiData = midiStems?.[stemName];
+                    el.appendChild(createStemCard(stemName, stemPath, midiData));
+                }
+            } else if (hasMidiStems) {
+                // No audio stems but we have MIDI
+                for (const [stemName, midiData] of Object.entries(midiStems)) {
+                    if (!midiData || !midiData.content || midiData.note_count === 0) continue;
+                    el.appendChild(createStemCard(stemName, null, midiData));
+                }
+            }
+        }
+
+        function displayProfiling(elementId, profiling) {
+            const el = document.getElementById(elementId);
+            const card = document.getElementById('profilingCard');
+
+            if (!profiling || !profiling.stages) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+
+            const stages = profiling.stages;
+            const totalMs = profiling.total_ms || 0;
+
+            // Stage order and labels
+            const stageOrder = [
+                { key: 'loading', label: 'Audio Loading', icon: '📂' },
+                { key: 'stem_separation', label: 'Stem Separation', icon: '🎸' },
+                { key: 'stem_quality', label: 'Stem Quality Analysis', icon: '📊' },
+                { key: 'contamination', label: 'Contamination Detection', icon: '🔍' },
+                { key: 'artifacts', label: 'Artifact Detection', icon: '⚠️' },
+                { key: 'role', label: 'Role Classification', icon: '🎭' },
+                { key: 'continuity', label: 'Temporal Continuity', icon: '⏱️' },
+                { key: 'confidence_map', label: 'Confidence Mapping', icon: '🗺️' },
+                { key: 'quality_report', label: 'Quality Report', icon: '📋' },
+                { key: 'midi_extraction', label: 'MIDI Extraction', icon: '🎹' },
+                { key: 'tone_analysis', label: 'Tone Analysis', icon: '🎛️' },
+            ];
+
+            let html = `
+                <div style="margin-bottom: 1rem; display: flex; gap: 2rem; flex-wrap: wrap;">
+                    <div>
+                        <span style="color: var(--text-secondary);">Total Time</span>
+                        <div style="font-size: 1.5rem; font-weight: bold;">${(totalMs / 1000).toFixed(1)}s</div>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-secondary);">Audio Duration</span>
+                        <div style="font-size: 1.5rem; font-weight: bold;">${profiling.audio_duration_sec?.toFixed(1) || 0}s</div>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-secondary);">Processing Ratio</span>
+                        <div style="font-size: 1.5rem; font-weight: bold;">${profiling.processing_ratio?.toFixed(2) || 0}x</div>
+                    </div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            `;
+
+            for (const { key, label, icon } of stageOrder) {
+                const stage = stages[key];
+                if (!stage) continue;
+
+                const durationMs = stage.duration_ms || 0;
+                const percent = totalMs > 0 ? (durationMs / totalMs) * 100 : 0;
+                // Only show error if there's an actual error message string
+                const hasError = stage.error && typeof stage.error === 'string' && stage.error.length > 0;
+                const isGpu = stage.gpu_used;
+                const wasSkipped = stage.skipped;
+
+                let statusBadge = '';
+                if (hasError) {
+                    statusBadge = '<span class="status-badge bad" style="margin-left: 0.5rem;">Error</span>';
+                } else if (wasSkipped) {
+                    statusBadge = '<span class="status-badge" style="margin-left: 0.5rem; background: var(--text-dim);">Skipped</span>';
+                } else if (isGpu) {
+                    statusBadge = '<span class="status-badge info" style="margin-left: 0.5rem;">GPU</span>';
+                }
+
+                html += `
+                    <div style="display: grid; grid-template-columns: 200px 1fr 80px; align-items: center; gap: 1rem;">
+                        <div style="font-size: 0.875rem;">
+                            <span style="margin-right: 0.5rem;">${icon}</span>
+                            ${label}${statusBadge}
+                        </div>
+                        <div style="background: #222; border-radius: 4px; height: 20px; overflow: hidden;">
+                            <div style="background: ${hasError ? 'var(--error)' : 'var(--accent)'}; height: 100%; width: ${percent}%; transition: width 0.3s;"></div>
+                        </div>
+                        <div style="text-align: right; font-family: monospace; font-size: 0.875rem;">
+                            ${(durationMs / 1000).toFixed(2)}s
+                        </div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            el.innerHTML = html;
+        }
+
+        function displayReasoning(elementId, reasoning) {
+            const el = document.getElementById(elementId);
+            const card = document.getElementById('reasoningCard');
+
+            if (!reasoning || !reasoning.decisions) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+
+            const overallConf = (reasoning.overall_confidence * 100).toFixed(0);
+
+            let html = `
+                <div style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <span style="color: var(--text-secondary);">Overall Confidence</span>
+                        <span style="font-size: 1.25rem; font-weight: bold; color: ${overallConf > 70 ? 'var(--success)' : overallConf > 50 ? 'var(--warning)' : 'var(--error)'};">${overallConf}%</span>
+                    </div>
+                    ${reasoning.summary ? `<p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;">${reasoning.summary}</p>` : ''}
+                </div>
+            `;
+
+            // Category labels and icons
+            const categoryInfo = {
+                'gain': { label: 'Gain Level', icon: '🎚️' },
+                'amp_family': { label: 'Amp Family', icon: '🔊' },
+                'cab_config': { label: 'Cabinet', icon: '📦' },
+                'effects': { label: 'Effects', icon: '✨' },
+            };
+
+            html += '<div style="display: flex; flex-direction: column; gap: 1.5rem;">';
+
+            for (const [category, decision] of Object.entries(reasoning.decisions)) {
+                const info = categoryInfo[category] || { label: category.replace(/_/g, ' '), icon: '🎵' };
+                const conf = (decision.confidence * 100).toFixed(0);
+
+                html += `
+                    <div style="background: var(--bg-input); border-radius: 8px; padding: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                            <span style="font-weight: 600;">
+                                <span style="margin-right: 0.5rem;">${info.icon}</span>
+                                ${info.label}
+                            </span>
+                            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                <span class="status-badge ${conf > 70 ? 'good' : conf > 50 ? 'warning' : 'bad'}">${decision.selected}</span>
+                                <span style="font-size: 0.875rem; color: var(--text-secondary);">${conf}%</span>
+                            </div>
+                        </div>
+                `;
+
+                // Show reasoning factors
+                if (decision.reasoning && decision.reasoning.length > 0) {
+                    html += '<div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #333;">';
+                    html += '<div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Why this classification:</div>';
+
+                    // Sort by contribution and show top 3
+                    const sortedFactors = [...decision.reasoning]
+                        .sort((a, b) => (b.contribution || 0) - (a.contribution || 0))
+                        .slice(0, 3);
+
+                    for (const factor of sortedFactors) {
+                        const contribution = ((factor.contribution || 0) * 100).toFixed(0);
+                        html += `
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem; font-size: 0.875rem;">
+                                <span style="color: var(--text-secondary);">${factor.description}</span>
+                                <span style="color: var(--info); font-size: 0.75rem;">${contribution}%</span>
+                            </div>
+                        `;
+                    }
+                    html += '</div>';
+                }
+
+                // Show alternatives if any
+                if (decision.alternatives && decision.alternatives.length > 0) {
+                    html += '<div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #333;">';
+                    html += '<div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Alternatives considered:</div>';
+
+                    for (const alt of decision.alternatives.slice(0, 2)) {
+                        const altScore = ((alt.score || 0) * 100).toFixed(0);
+                        html += `
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem; font-size: 0.875rem;">
+                                <span style="color: var(--text-dim);">${alt.name}</span>
+                                <span style="color: var(--text-dim); font-size: 0.75rem;">${altScore}%</span>
+                            </div>
+                        `;
+                    }
+                    html += '</div>';
+                }
+
+                html += '</div>';
+            }
+
+            html += '</div>';
+            el.innerHTML = html;
+        }
+
+        // Store waveform data globally for hover interaction
+        let currentWaveformData = null;
+
+        function displayWaveform(waveform, quality = {}) {
+            const card = document.getElementById('waveformCard');
+            const canvas = document.getElementById('waveformCanvas');
+            const durationEl = document.getElementById('waveformDuration');
+            const sampleRateEl = document.getElementById('waveformSampleRate');
+
+            if (!waveform || !waveform.peaks_positive || waveform.peaks_positive.length === 0) {
+                card.style.display = 'none';
+                currentWaveformData = null;
+                return;
+            }
+            card.style.display = 'block';
+
+            const duration_sec = quality.duration_sec || waveform.duration_sec || 1;
+
+            // Store for hover
+            currentWaveformData = { waveform, quality, duration_sec };
+
+            // Update info
+            durationEl.textContent = `Duration: ${(waveform.duration_sec || 0).toFixed(2)}s`;
+            sampleRateEl.textContent = `Sample Rate: ${waveform.sample_rate || 22050} Hz`;
+
+            drawWaveform(canvas, waveform, quality, duration_sec);
+
+            // Setup hover interaction
+            setupWaveformHover(canvas, waveform, duration_sec);
+        }
+
+        function drawWaveform(canvas, waveform, quality, duration_sec, hoverX = null) {
+            // Set canvas size for high-DPI displays
+            const rect = canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+
+            const width = rect.width;
+            const height = rect.height;
+            const centerY = height / 2;
+
+            // Clear canvas
+            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg-input') || '#0f0f1a';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw contamination overlays FIRST (behind waveform)
+            if (quality.contamination?.regions) {
+                ctx.fillStyle = 'rgba(251, 191, 36, 0.15)';
+                for (const region of quality.contamination.regions) {
+                    const startX = (region.start / duration_sec) * width;
+                    const endX = (region.end / duration_sec) * width;
+                    const regionWidth = Math.max(2, endX - startX);
+                    ctx.fillRect(startX, 0, regionWidth, height);
+                }
+            }
+
+            // Draw artifact overlays FIRST (behind waveform)
+            if (quality.artifacts?.regions) {
+                ctx.fillStyle = 'rgba(248, 113, 113, 0.15)';
+                for (const region of quality.artifacts.regions) {
+                    const startX = (region.start / duration_sec) * width;
+                    const endX = (region.end / duration_sec) * width;
+                    const regionWidth = Math.max(2, endX - startX);
+                    ctx.fillRect(startX, 0, regionWidth, height);
+                }
+            }
+
+            const peaks_pos = waveform.peaks_positive;
+            const peaks_neg = waveform.peaks_negative;
+            const rms = waveform.rms;
+            const numPoints = peaks_pos.length;
+
+            if (numPoints === 0) return;
+
+            const pointWidth = width / numPoints;
+
+            // Draw peaks first (outer envelope) - blue filled bars
+            ctx.fillStyle = 'rgba(96, 165, 250, 0.6)';  // Blue for peaks
+            for (let i = 0; i < numPoints; i++) {
+                const x = i * pointWidth;
+                const peakPos = peaks_pos[i] || 0;
+                const peakNeg = peaks_neg[i] || 0;
+
+                const y1 = centerY - (peakPos * centerY * 0.95);
+                const y2 = centerY - (peakNeg * centerY * 0.95);
+                const barHeight = y2 - y1;
+
+                ctx.fillRect(x, y1, Math.max(pointWidth - 0.5, 1), barHeight);
+            }
+
+            // Draw RMS on top (inner area) - orange filled bars
+            ctx.fillStyle = 'rgba(251, 146, 60, 0.85)';  // Orange for RMS
+            for (let i = 0; i < numPoints; i++) {
+                const x = i * pointWidth;
+                const rmsVal = rms[i] || 0;
+                const rmsHeight = rmsVal * centerY * 0.95;
+
+                const y1 = centerY - rmsHeight;
+                const barHeight = rmsHeight * 2;
+
+                ctx.fillRect(x, y1, Math.max(pointWidth - 0.5, 1), barHeight);
+            }
+
+            // Draw center line
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(width, centerY);
+            ctx.stroke();
+
+            // Draw legend (always show for Peak/RMS)
+            ctx.font = '10px system-ui, sans-serif';
+            ctx.textAlign = 'left';
+
+            // Peak legend (blue)
+            ctx.fillStyle = 'rgba(96, 165, 250, 0.8)';
+            ctx.fillRect(10, 6, 12, 8);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.fillText('Peak', 26, 12);
+
+            // RMS legend (orange)
+            ctx.fillStyle = 'rgba(251, 146, 60, 0.9)';
+            ctx.fillRect(60, 6, 12, 8);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.fillText('RMS', 76, 12);
+
+            // Quality overlay legend (right side)
+            const hasOverlays = (quality.contamination?.regions?.length > 0) || (quality.artifacts?.regions?.length > 0);
+            if (hasOverlays) {
+                ctx.textAlign = 'right';
+                let legendY = 12;
+                if (quality.contamination?.regions?.length > 0) {
+                    ctx.fillStyle = 'rgba(251, 191, 36, 0.8)';
+                    ctx.fillRect(width - 85, legendY - 8, 10, 10);
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                    ctx.fillText('Contamination', width - 5, legendY);
+                    legendY += 14;
+                }
+                if (quality.artifacts?.regions?.length > 0) {
+                    ctx.fillStyle = 'rgba(248, 113, 113, 0.8)';
+                    ctx.fillRect(width - 85, legendY - 8, 10, 10);
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                    ctx.fillText('Artifacts', width - 5, legendY);
+                }
+            }
+
+            // Draw hover line and tooltip
+            if (hoverX !== null && hoverX >= 0 && hoverX <= width) {
+                // Vertical line
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.moveTo(hoverX, 0);
+                ctx.lineTo(hoverX, height);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Calculate values at hover position
+                const idx = Math.floor((hoverX / width) * numPoints);
+                if (idx >= 0 && idx < numPoints) {
+                    const timeAtPos = (hoverX / width) * duration_sec;
+                    const peakVal = Math.max(Math.abs(peaks_pos[idx] || 0), Math.abs(peaks_neg[idx] || 0));
+                    const rmsVal = rms[idx] || 0;
+                    const peakDb = peakVal > 0 ? (20 * Math.log10(peakVal)).toFixed(1) : '-∞';
+                    const rmsDb = rmsVal > 0 ? (20 * Math.log10(rmsVal)).toFixed(1) : '-∞';
+
+                    // Tooltip background
+                    const tooltipX = hoverX < width / 2 ? hoverX + 10 : hoverX - 110;
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+                    ctx.fillRect(tooltipX, height - 55, 100, 50);
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                    ctx.strokeRect(tooltipX, height - 55, 100, 50);
+
+                    // Tooltip text
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                    ctx.font = '10px monospace';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(`Time: ${timeAtPos.toFixed(2)}s`, tooltipX + 5, height - 40);
+                    ctx.fillStyle = 'rgba(96, 165, 250, 1)';
+                    ctx.fillText(`Peak: ${peakDb} dB`, tooltipX + 5, height - 26);
+                    ctx.fillStyle = 'rgba(251, 146, 60, 1)';
+                    ctx.fillText(`RMS:  ${rmsDb} dB`, tooltipX + 5, height - 12);
+                }
+            }
+        }
+
+        function setupWaveformHover(canvas, waveform, duration_sec) {
+            // Remove old listeners
+            canvas.onmousemove = null;
+            canvas.onmouseleave = null;
+
+            canvas.onmousemove = (e) => {
+                if (!currentWaveformData) return;
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                drawWaveform(canvas, currentWaveformData.waveform, currentWaveformData.quality, currentWaveformData.duration_sec, x);
+            };
+
+            canvas.onmouseleave = () => {
+                if (!currentWaveformData) return;
+                drawWaveform(canvas, currentWaveformData.waveform, currentWaveformData.quality, currentWaveformData.duration_sec, null);
+            };
+        }
+
+        function formatValue(value) {
+            if (typeof value === 'number') {
+                if (value >= 0 && value <= 1) return (value * 100).toFixed(0) + '%';
+                return value.toFixed(2);
+            }
+            if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+            return value || 'N/A';
+        }
+
+        function getScoreColor(score) {
+            if (score < 0.4) return 'var(--error)';
+            if (score < 0.7) return 'var(--warning)';
+            return 'var(--success)';
+        }
+
+        // ========== History Search & Filter ==========
+        let historyData = [];
+
+        async function loadHistory() {
+            try {
+                const response = await fetch('/api/history');
+                if (!response.ok) throw new Error('Failed to load history');
+                const data = await response.json();
+                historyData = data.history || data;  // Handle both {history: [...]} and [...] formats
+                renderHistoryList(historyData);
+            } catch (err) {
+                console.error('Failed to load history:', err);
+                document.getElementById('historyList').innerHTML =
+                    '<p style="color: var(--error); text-align: center; padding: 2rem;">Failed to load history</p>';
+            }
+        }
+
+        function renderHistoryList(items) {
+            // History list removed - using search modal instead
+        }
+
+        async function loadHistoryItem(id) {
+            try {
+                loading.classList.add('active');
+                document.getElementById('loadingText').textContent = 'Loading analysis...';
+
+                const response = await fetch(`/api/history/${id}`);
+                if (!response.ok) throw new Error('Analysis not found');
+
+                const entry = await response.json();
+                if (entry.result) {
+                    displayDeepResults({
+                        ...entry.result,
+                        filename: entry.name || 'Loaded analysis',
+                    });
+                    results.classList.add('active');
+
+                    // Update URL without reload
+                    history.pushState({}, '', `?analysis=${id}`);
+                }
+            } catch (err) {
+                console.error('Failed to load analysis:', err);
+                alert('Failed to load analysis');
+            } finally {
+                loading.classList.remove('active');
+            }
+        }
+
+        // Inline history section removed - using search modal instead
+
+        function debounce(func, wait) {
+            let timeout;
+            return function(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+
+        // Load history on page load (if not loading from query)
+        if (!new URLSearchParams(window.location.search).get('analysis')) {
+            loadHistory();
+        } else {
+            // Still load history in background for the filter panel
+            loadHistory();
+        }
+
+        // ========== Search Modal ==========
+        const searchModal = document.getElementById('searchModal');
+        const openSearchBtn = document.getElementById('openSearchBtn');
+        const closeSearchBtn = document.getElementById('closeSearchBtn');
+        const modalSearchInput = document.getElementById('modalSearchInput');
+        const modalHistoryList = document.getElementById('modalHistoryList');
+
+        function openSearchModal() {
+            searchModal.classList.add('active');
+            modalSearchInput.focus();
+            renderModalHistory(historyData);
+        }
+
+        function closeSearchModal() {
+            searchModal.classList.remove('active');
+            modalSearchInput.value = '';
+        }
+
+        function renderModalHistory(items) {
+            if (!items || items.length === 0) {
+                modalHistoryList.innerHTML = '<div class="modal-empty">No analyses found</div>';
+                return;
+            }
+
+            modalHistoryList.innerHTML = items.map(item => {
+                const date = new Date(item.timestamp).toLocaleString();
+                const isDeep = item.deep_analysis || item.has_quality_data;
+
+                return `
+                    <div class="history-item" style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1.25rem; border-bottom: 1px solid #333; cursor: pointer; transition: background 0.2s;"
+                         onclick="loadHistoryItemAndClose('${item.id}')"
+                         onmouseover="this.style.background='var(--bg-input)'"
+                         onmouseout="this.style.background='transparent'">
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.name || item.url || 'Unknown'}">
+                                ${item.name || item.url || 'Unknown'}
+                            </div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">${date}</div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            ${item.amp_family ? `<span class="status-badge info" style="font-size: 0.7rem; padding: 2px 6px;">${item.amp_family.replace(/_/g, ' ')}</span>` : ''}
+                            ${isDeep ? `<span style="font-size: 0.6rem; background: var(--accent); color: white; padding: 2px 4px; border-radius: 3px;">DEEP</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function loadHistoryItemAndClose(id) {
+            closeSearchModal();
+            loadHistoryItem(id);
+        }
+
+        function filterModalHistory() {
+            const searchTerm = modalSearchInput.value.toLowerCase();
+            const typeFilter = document.getElementById('modalFilterType').value;
+            const ampFilter = document.getElementById('modalFilterAmp').value;
+            const deepFilter = document.getElementById('modalFilterDeep').value;
+
+            const filtered = historyData.filter(item => {
+                if (searchTerm) {
+                    const name = (item.name || '').toLowerCase();
+                    const url = (item.url || '').toLowerCase();
+                    if (!name.includes(searchTerm) && !url.includes(searchTerm)) {
+                        return false;
+                    }
+                }
+                if (typeFilter && item.detected_type !== typeFilter) return false;
+                if (ampFilter && item.amp_family !== ampFilter) return false;
+                if (deepFilter === 'deep' && !item.deep_analysis && !item.has_quality_data) return false;
+                if (deepFilter === 'fast' && (item.deep_analysis || item.has_quality_data)) return false;
+                return true;
+            });
+
+            renderModalHistory(filtered);
+        }
+
+        // Modal event listeners
+        openSearchBtn.addEventListener('click', openSearchModal);
+        closeSearchBtn.addEventListener('click', closeSearchModal);
+        searchModal.addEventListener('click', (e) => {
+            if (e.target === searchModal) closeSearchModal();
+        });
+        modalSearchInput.addEventListener('input', debounce(filterModalHistory, 200));
+        document.getElementById('modalFilterType').addEventListener('change', filterModalHistory);
+        document.getElementById('modalFilterAmp').addEventListener('change', filterModalHistory);
+        document.getElementById('modalFilterDeep').addEventListener('change', filterModalHistory);
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Cmd/Ctrl + K to open search
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                if (searchModal.classList.contains('active')) {
+                    closeSearchModal();
+                } else {
+                    openSearchModal();
+                }
+            }
+            // Escape to close
+            if (e.key === 'Escape' && searchModal.classList.contains('active')) {
+                closeSearchModal();
+            }
+        });
+
+        // ========== Plugin Browser ==========
+        const pluginModal = document.getElementById('pluginModal');
+        const openPluginsBtn = document.getElementById('openPluginsBtn');
+        const closePluginsBtn = document.getElementById('closePluginsBtn');
+        const pluginSearchInput = document.getElementById('pluginSearchInput');
+        const pluginList = document.getElementById('pluginList');
+        const rescanPluginsBtn = document.getElementById('rescanPluginsBtn');
+        let allPlugins = [];
+        let pluginStats = null;
+
+        function openPluginModal() {
+            pluginModal.classList.add('active');
+            pluginSearchInput.focus();
+            loadPlugins();
+        }
+
+        function closePluginModal() {
+            pluginModal.classList.remove('active');
+        }
+
+        async function loadPlugins() {
+            const LOCAL_URL = 'http://127.0.0.1:7777';
+            try {
+                // Load stats first
+                const statsResp = await fetch(`${LOCAL_URL}/api/plugins/stats`);
+                if (statsResp.ok) {
+                    pluginStats = await statsResp.json();
+                    updatePluginStatsDisplay();
+                }
+
+                // Load plugins
+                const resp = await fetch(`${LOCAL_URL}/api/plugins?limit=500`);
+                if (!resp.ok) throw new Error('Failed to load plugins');
+
+                const data = await resp.json();
+                allPlugins = data.plugins || [];
+                renderPlugins(allPlugins);
+                document.getElementById('headerPluginCount').textContent = allPlugins.length;
+            } catch (e) {
+                pluginList.innerHTML = `<div class="modal-empty" style="color: var(--error);">Local engine not available. Start the local engine to browse plugins.</div>`;
+                document.getElementById('pluginStats').textContent = 'Local engine offline';
+            }
+        }
+
+        function updatePluginStatsDisplay() {
+            if (!pluginStats) return;
+
+            const formatCounts = Object.entries(pluginStats.by_format || {})
+                .map(([k, v]) => `${k.toUpperCase()}: ${v}`)
+                .join(' | ');
+
+            document.getElementById('pluginStats').textContent =
+                `${pluginStats.total} plugins | ${formatCounts}`;
+
+            if (pluginStats.last_scan) {
+                const scanDate = new Date(pluginStats.last_scan);
+                document.getElementById('lastScanTime').textContent =
+                    `Last scan: ${scanDate.toLocaleString()}`;
+            }
+        }
+
+        function renderPlugins(plugins) {
+            if (!plugins || plugins.length === 0) {
+                pluginList.innerHTML = '<div class="modal-empty">No plugins found. Click Rescan to scan for plugins.</div>';
+                return;
+            }
+
+            // Group by format
+            const grouped = {};
+            plugins.forEach(p => {
+                const format = p.format || 'unknown';
+                if (!grouped[format]) grouped[format] = [];
+                grouped[format].push(p);
+            });
+
+            const formatOrder = ['au', 'vst3', 'ableton_device', 'vst2'];
+            const formatLabels = {
+                'au': 'Audio Unit',
+                'vst3': 'VST3',
+                'vst2': 'VST2',
+                'ableton_device': 'Ableton Devices'
+            };
+
+            let html = '';
+            for (const format of formatOrder) {
+                if (!grouped[format]) continue;
+                const label = formatLabels[format] || format.toUpperCase();
+                html += `<div style="padding: 8px 20px; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; background: var(--bg-input); border-bottom: 1px solid #333;">${label} (${grouped[format].length})</div>`;
+
+                grouped[format].forEach(p => {
+                    const categories = (p.categories || []).slice(0, 3).join(', ');
+                    const type = p.plugin_type || '';
+                    const typeColor = type === 'instrument' ? 'var(--accent)' : 'var(--info)';
+
+                    html += `
+                        <div class="plugin-item" style="display: flex; align-items: center; gap: 1rem; padding: 10px 20px; border-bottom: 1px solid #333; cursor: default;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${p.name}">
+                                    ${p.name}
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary);">
+                                    ${p.manufacturer || 'Unknown'} ${categories ? '· ' + categories : ''}
+                                </div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                ${type ? `<span style="font-size: 0.65rem; color: ${typeColor}; text-transform: uppercase;">${type}</span>` : ''}
+                                ${p.block_family ? `<span style="font-size: 0.6rem; background: var(--success); color: black; padding: 2px 6px; border-radius: 3px; font-weight: 500;">${p.block_family.replace(/_/g, ' ')}</span>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            pluginList.innerHTML = html;
+        }
+
+        function filterPlugins() {
+            const search = pluginSearchInput.value.toLowerCase();
+            const formatFilter = document.getElementById('pluginFilterFormat').value;
+            const typeFilter = document.getElementById('pluginFilterType').value;
+            const categoryFilter = document.getElementById('pluginFilterCategory').value;
+
+            const filtered = allPlugins.filter(p => {
+                if (search) {
+                    const name = (p.name || '').toLowerCase();
+                    const mfr = (p.manufacturer || '').toLowerCase();
+                    if (!name.includes(search) && !mfr.includes(search)) return false;
+                }
+                if (formatFilter && p.format !== formatFilter) return false;
+                if (typeFilter && p.plugin_type !== typeFilter) return false;
+                if (categoryFilter) {
+                    const cats = p.categories || [];
+                    if (!cats.includes(categoryFilter)) return false;
+                }
+                return true;
+            });
+
+            renderPlugins(filtered);
+        }
+
+        async function rescanPlugins() {
+            rescanPluginsBtn.disabled = true;
+            rescanPluginsBtn.textContent = 'Scanning...';
+            pluginList.innerHTML = '<div class="modal-empty">Scanning for plugins...</div>';
+
+            const LOCAL_URL = 'http://127.0.0.1:7777';
+            try {
+                const resp = await fetch(`${LOCAL_URL}/api/plugins/scan`, { method: 'POST' });
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.type === 'progress') {
+                                    pluginList.innerHTML = `<div class="modal-empty">${data.message}</div>`;
+                                } else if (data.type === 'result') {
+                                    pluginList.innerHTML = `<div class="modal-empty" style="color: var(--success);">Found ${data.plugins_found} plugins (${data.plugins_added} new)</div>`;
+                                } else if (data.type === 'error') {
+                                    pluginList.innerHTML = `<div class="modal-empty" style="color: var(--error);">${data.message}</div>`;
+                                }
+                            } catch {}
+                        }
+                    }
+                }
+
+                // Reload after scan
+                setTimeout(loadPlugins, 500);
+            } catch (e) {
+                pluginList.innerHTML = `<div class="modal-empty" style="color: var(--error);">Scan failed: ${e.message}</div>`;
+            } finally {
+                rescanPluginsBtn.disabled = false;
+                rescanPluginsBtn.textContent = 'Rescan';
+            }
+        }
+
+        // Plugin modal event listeners
+        openPluginsBtn.addEventListener('click', openPluginModal);
+        closePluginsBtn.addEventListener('click', closePluginModal);
+        pluginModal.addEventListener('click', (e) => {
+            if (e.target === pluginModal) closePluginModal();
+        });
+        pluginSearchInput.addEventListener('input', debounce(filterPlugins, 200));
+        document.getElementById('pluginFilterFormat').addEventListener('change', filterPlugins);
+        document.getElementById('pluginFilterType').addEventListener('change', filterPlugins);
+        document.getElementById('pluginFilterCategory').addEventListener('change', filterPlugins);
+        rescanPluginsBtn.addEventListener('click', rescanPlugins);
+
+        // Add Escape key handler for plugin modal
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && pluginModal.classList.contains('active')) {
+                closePluginModal();
+            }
+        });
+
+        // Load plugin count on page load
+        (async function loadPluginCount() {
+            try {
+                const resp = await fetch('http://127.0.0.1:7777/api/plugins/stats');
+                if (resp.ok) {
+                    const stats = await resp.json();
+                    document.getElementById('headerPluginCount').textContent = stats.total || 0;
+                }
+            } catch {}
+        })();
+
+        // ========== Client Status ==========
+        const LOCAL_ENGINE_URL = 'http://127.0.0.1:7777';
+        let localEngineAvailable = false;
+
+        async function checkLocalEngine() {
+            try {
+                const resp = await fetch(`${LOCAL_ENGINE_URL}/health`, { method: 'GET', signal: AbortSignal.timeout(2000) });
+                localEngineAvailable = resp.ok;
+            } catch {
+                localEngineAvailable = false;
+            }
+            // Update shared plugin utility
+            TonePlugins.setAvailable(localEngineAvailable);
+            updateClientStatus();
+        }
+
+        function updateClientStatus() {
+            const statusEl = document.getElementById('clientStatus');
+            const modelStatus = document.getElementById('headerModelStatus');
+
+            if (localEngineAvailable) {
+                statusEl.style.background = 'rgba(74, 222, 128, 0.08)';
+                statusEl.style.borderColor = 'rgba(74, 222, 128, 0.3)';
+                statusEl.innerHTML = `
+                    <span style="color: var(--text-secondary); text-transform: uppercase;">Ready</span>
+                    <span style="color: #4ade80;">●</span>
+                    <span style="color: #4ade80; text-transform: uppercase; font-weight: 500;">Apple Silicon GPU</span>
+                `;
+                statusEl.title = 'Local engine connected - GPU acceleration available';
+
+                // Update model status badge
+                if (modelStatus) {
+                    modelStatus.textContent = '✓';
+                    modelStatus.style.color = '#4ade80';
+                }
+            } else {
+                statusEl.style.background = 'rgba(136, 136, 136, 0.08)';
+                statusEl.style.borderColor = 'rgba(136, 136, 136, 0.3)';
+                statusEl.innerHTML = `
+                    <span style="color: var(--text-secondary); text-transform: uppercase;">Cloud</span>
+                    <span style="color: var(--text-secondary);">○</span>
+                    <span style="color: var(--text-secondary); text-transform: uppercase;">Processing</span>
+                `;
+                statusEl.title = 'Using cloud processing - Click to start local engine';
+
+                // Update model status badge
+                if (modelStatus) {
+                    modelStatus.textContent = 'Offline';
+                    modelStatus.style.color = 'var(--text-dim)';
+                }
+            }
+        }
+
+        // Check local engine on load
+        checkLocalEngine();
+        setInterval(checkLocalEngine, 30000);  // Re-check every 30s
+
+        // ========== Studio Tabs System ==========
+        const StudioTabs = {
+            currentTab: 'overview',
+            initialized: false,
+
+            // Card to tab mapping
+            cardTabs: {
+                // Overview
+                'confidenceCard': 'overview',
+                'roleCard': 'overview',
+                'warningsCard': 'overview',
+                'reasoningCard': 'overview',
+
+                // Tone (guitar-specific)
+                'ampDetailsCard': 'tone',
+                'cabDetailsCard': 'tone',
+                'effectsChainCard': 'tone',
+                'guitarDetailsCard': 'tone',
+
+                // Quality
+                'stemQualityCard': 'quality',
+                'contaminationCard': 'quality',
+                'artifactsCard': 'quality',
+
+                // Stems
+                'midiCard': 'stems',
+                'stemsCard': 'stems',
+                'exportCard': 'stems',
+
+                // Technical
+                'profilingCard': 'technical',
+                'provenanceCard': 'technical',
+            },
+
+            init() {
+                if (this.initialized) return;
+
+                // Set up tab click handlers
+                document.querySelectorAll('.studio-tab').forEach(tab => {
+                    tab.addEventListener('click', () => {
+                        this.switchTab(tab.dataset.tab);
+                    });
+                });
+
+                // Set up transport toggle
+                const toggle = document.getElementById('transportToggle');
+                if (toggle) {
+                    toggle.addEventListener('click', () => {
+                        const transport = document.getElementById('studioTransport');
+                        transport.classList.toggle('studio-transport--collapsed');
+                        localStorage.setItem('transportCollapsed',
+                            transport.classList.contains('studio-transport--collapsed'));
+                    });
+
+                    // Don't auto-collapse - always show transport fully when results load
+                    // User can manually collapse if desired
+                }
+
+                // Keyboard navigation (Ctrl/Cmd + 1-5)
+                document.addEventListener('keydown', (e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '5') {
+                        e.preventDefault();
+                        const tabs = ['overview', 'tone', 'quality', 'stems', 'technical'];
+                        const index = parseInt(e.key) - 1;
+                        if (tabs[index]) {
+                            this.switchTab(tabs[index]);
+                        }
+                    }
+                });
+
+                this.initialized = true;
+            },
+
+            switchTab(tabName) {
+                // Don't switch to empty/disabled tabs
+                const targetTab = document.querySelector(`.studio-tab[data-tab="${tabName}"]`);
+                if (targetTab?.classList.contains('studio-tab--empty')) {
+                    return;
+                }
+
+                // Update tab buttons
+                document.querySelectorAll('.studio-tab').forEach(tab => {
+                    tab.classList.toggle('studio-tab--active', tab.dataset.tab === tabName);
+                });
+
+                // Update panels
+                document.querySelectorAll('.studio-panel').forEach(panel => {
+                    panel.classList.toggle('studio-panel--active', panel.dataset.panel === tabName);
+                });
+
+                this.currentTab = tabName;
+                localStorage.setItem('studioTab', tabName);
+            },
+
+            // Move cards from source to appropriate panels
+            reorganizeCards() {
+                const cardsSource = document.getElementById('cardsSource');
+                const resultsEl = document.getElementById('results');
+                if (!cardsSource || !resultsEl) {
+                    console.warn('StudioTabs: cardsSource or results not found');
+                    return;
+                }
+
+                console.log('StudioTabs: reorganizing cards...');
+
+                // Move each card to its designated panel
+                let movedCount = 0;
+                Object.entries(this.cardTabs).forEach(([cardId, tabName]) => {
+                    const card = document.getElementById(cardId);
+                    const panelGrid = document.getElementById(`${tabName}Grid`);
+                    if (card && panelGrid) {
+                        panelGrid.appendChild(card);
+                        movedCount++;
+                    } else {
+                        console.warn(`StudioTabs: Could not move ${cardId} to ${tabName}Grid`);
+                    }
+                });
+
+                console.log(`StudioTabs: moved ${movedCount} cards`);
+
+                // Move waveform and audio players to transport
+                const transportInner = document.getElementById('transportInner');
+                const transport = document.getElementById('studioTransport');
+                if (transportInner) {
+                    const waveformCard = document.getElementById('waveformCard');
+                    const audioPlayersCard = document.getElementById('audioPlayersCard');
+
+                    // Always move cards to transport (they handle their own visibility)
+                    if (waveformCard) {
+                        transportInner.appendChild(waveformCard);
+                    }
+                    if (audioPlayersCard) {
+                        transportInner.appendChild(audioPlayersCard);
+                    }
+
+                    // Show transport if either card is visible
+                    const waveformVisible = waveformCard && waveformCard.style.display !== 'none';
+                    const playersVisible = audioPlayersCard && audioPlayersCard.style.display !== 'none';
+
+                    if (waveformVisible || playersVisible) {
+                        transport.style.display = '';
+                        resultsEl.classList.add('has-transport');
+                    } else {
+                        transport.style.display = 'none';
+                    }
+
+                    console.log('Transport visibility:', { waveformVisible, playersVisible });
+                }
+
+                // Mark tabs as ready (hides cardsSource via CSS)
+                resultsEl.classList.add('tabs-ready');
+
+                // Update tab indicators and visibility
+                this.updateTabIndicators();
+
+                // Restore last used tab, or use first tab with content
+                const savedTab = localStorage.getItem('studioTab');
+                const savedTabEl = document.querySelector(`.studio-tab[data-tab="${savedTab}"]`);
+                if (savedTab && savedTabEl && !savedTabEl.classList.contains('studio-tab--empty')) {
+                    this.switchTab(savedTab);
+                } else {
+                    // Fall back to first tab with content
+                    const firstWithContent = document.querySelector('.studio-tab--has-content');
+                    if (firstWithContent) {
+                        this.switchTab(firstWithContent.dataset.tab);
+                    }
+                }
+            },
+
+            // Update tab indicators based on visible content
+            updateTabIndicators() {
+                const tabCards = {
+                    'overview': ['confidenceCard', 'roleCard', 'warningsCard', 'reasoningCard'],
+                    'tone': ['ampDetailsCard', 'cabDetailsCard', 'effectsChainCard', 'guitarDetailsCard'],
+                    'quality': ['stemQualityCard', 'contaminationCard', 'artifactsCard'],
+                    'stems': ['midiCard', 'stemsCard', 'exportCard'],
+                    'technical': ['profilingCard'],
+                };
+
+                Object.entries(tabCards).forEach(([tabName, cardIds]) => {
+                    const tab = document.querySelector(`.studio-tab[data-tab="${tabName}"]`);
+                    if (!tab) return;
+
+                    // Check if any cards in this tab are visible
+                    const hasVisibleContent = cardIds.some(cardId => {
+                        const card = document.getElementById(cardId);
+                        return card && card.style.display !== 'none';
+                    });
+
+                    tab.classList.toggle('studio-tab--has-content', hasVisibleContent);
+                    tab.classList.toggle('studio-tab--empty', !hasVisibleContent);
+
+                    // If current tab is now empty, switch to first tab with content
+                    if (!hasVisibleContent && this.currentTab === tabName) {
+                        const firstWithContent = document.querySelector('.studio-tab--has-content');
+                        if (firstWithContent) {
+                            this.switchTab(firstWithContent.dataset.tab);
+                        }
+                    }
+                });
+
+                // Hide Tone tab entirely if no guitar content (synth-dominant)
+                const toneTab = document.querySelector('.studio-tab[data-tab="tone"]');
+                if (toneTab) {
+                    const hasGuitarContent = ['ampDetailsCard', 'cabDetailsCard', 'effectsChainCard', 'guitarDetailsCard']
+                        .some(id => {
+                            const card = document.getElementById(id);
+                            return card && card.style.display !== 'none';
+                        });
+                    toneTab.style.display = hasGuitarContent ? '' : 'none';
+                }
+            }
+        };
+
+        // Initialize tabs when DOM is ready
+        StudioTabs.init();
+
+        // ========== Models Modal ==========
+        const ModelsManager = {
+            modal: null,
+            eventSource: null,
+            downloadAbortController: null,
+
+            init() {
+                this.modal = document.getElementById('modelsModal');
+
+                // Open button
+                document.getElementById('openModelsBtn')?.addEventListener('click', () => {
+                    this.openModal();
+                });
+
+                // Close button
+                document.getElementById('closeModelsBtn')?.addEventListener('click', () => {
+                    this.closeModal();
+                });
+
+                // Close on overlay click
+                this.modal?.addEventListener('click', (e) => {
+                    if (e.target === this.modal) {
+                        this.closeModal();
+                    }
+                });
+
+                // Download button
+                document.getElementById('downloadModelsBtn')?.addEventListener('click', () => {
+                    this.downloadModels();
+                });
+
+                // Cancel button
+                document.getElementById('cancelDownloadBtn')?.addEventListener('click', () => {
+                    this.cancelDownload();
+                });
+            },
+
+            openModal() {
+                if (this.modal) {
+                    this.modal.classList.add('active');
+                    this.checkModelStatus();
+                }
+            },
+
+            closeModal() {
+                if (this.modal) {
+                    this.modal.classList.remove('active');
+                    this.cancelDownload();
+                }
+            },
+
+            async checkModelStatus() {
+                const modelsList = document.getElementById('modelsList');
+                const cacheInfo = document.getElementById('modelsCacheInfo');
+                const downloadBtn = document.getElementById('downloadModelsBtn');
+
+                modelsList.innerHTML = '<div class="modal-empty">Checking models...</div>';
+
+                try {
+                    const resp = await fetch(`${LOCAL_ENGINE_URL}/api/models/status`);
+                    if (!resp.ok) throw new Error('Failed to fetch model status');
+
+                    const data = await resp.json();
+
+                    // Convert models object to array
+                    const modelsArray = Object.values(data.models || {});
+
+                    // Render model list
+                    modelsList.innerHTML = modelsArray.map(model => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: var(--bg-input); border-radius: 8px;">
+                            <div>
+                                <div style="font-weight: 500;">${model.name}</div>
+                                <div style="font-size: 0.8rem; color: var(--text-secondary);">${model.description} (~${model.size_mb}MB)</div>
+                            </div>
+                            <span class="status-badge ${model.cached ? 'good' : 'info'}">${model.cached ? 'Cached' : 'Not Downloaded'}</span>
+                        </div>
+                    `).join('');
+
+                    // Update cache info
+                    cacheInfo.textContent = data.cache_dir ? `Cache: ${data.cache_dir}` : '';
+
+                    // Update download button
+                    const allCached = modelsArray.every(m => m.cached);
+                    downloadBtn.textContent = allCached ? 'Re-download All' : 'Download All';
+                    downloadBtn.disabled = false;
+
+                } catch (err) {
+                    console.error('Failed to check model status:', err);
+                    modelsList.innerHTML = `
+                        <div class="modal-empty" style="color: var(--error);">
+                            Could not connect to local engine.<br>
+                            <span style="font-size: 0.85rem; color: var(--text-secondary);">Make sure the local engine is running on port 7777.</span>
+                        </div>
+                    `;
+                    cacheInfo.textContent = 'Local engine not available';
+                    downloadBtn.disabled = true;
+                }
+            },
+
+            async downloadModels() {
+                const progressDiv = document.getElementById('modelsProgress');
+                const progressBar = document.getElementById('modelsProgressBar');
+                const progressLabel = document.getElementById('modelsProgressLabel');
+                const downloadBtn = document.getElementById('downloadModelsBtn');
+
+                progressDiv.style.display = 'block';
+                downloadBtn.disabled = true;
+                progressBar.style.width = '0%';
+                progressLabel.textContent = 'Starting download...';
+
+                try {
+                    // Use SSE for progress updates
+                    this.eventSource = new EventSource(`${LOCAL_ENGINE_URL}/api/models/download`);
+                    let modelIndex = 0;
+                    const totalModels = 2; // htdemucs and htdemucs_6s
+
+                    this.eventSource.onmessage = (event) => {
+                        console.log('SSE message:', event.data);
+                        const data = JSON.parse(event.data);
+
+                        if (data.type === 'progress') {
+                            // Calculate overall progress based on stage
+                            const stageProgress = data.cached ? 100 : 50;
+                            const overallPercent = Math.round(((modelIndex * 100) + stageProgress) / totalModels);
+                            progressBar.style.width = `${overallPercent}%`;
+                            progressLabel.textContent = data.message || `Downloading ${data.stage}...`;
+                            if (data.cached) modelIndex++;
+                        } else if (data.type === 'complete') {
+                            progressLabel.textContent = 'All models downloaded!';
+                            progressBar.style.width = '100%';
+                            this.eventSource.close();
+                            this.eventSource = null;
+
+                            setTimeout(() => {
+                                progressDiv.style.display = 'none';
+                                this.checkModelStatus();
+                            }, 1500);
+                        } else if (data.type === 'error') {
+                            progressLabel.textContent = `Error: ${data.message}`;
+                            progressBar.style.background = 'var(--error)';
+                            this.eventSource.close();
+                            this.eventSource = null;
+                            downloadBtn.disabled = false;
+                        } else if (data.type === 'cancelled') {
+                            progressLabel.textContent = 'Download cancelled';
+                            progressDiv.style.display = 'none';
+                            downloadBtn.disabled = false;
+                            this.eventSource.close();
+                            this.eventSource = null;
+                        }
+                    };
+
+                    this.eventSource.onerror = (e) => {
+                        console.error('SSE error:', e);
+                        progressLabel.textContent = 'Connection error';
+                        progressDiv.style.display = 'none';
+                        downloadBtn.disabled = false;
+                        this.eventSource?.close();
+                        this.eventSource = null;
+                    };
+
+                } catch (err) {
+                    console.error('Download failed:', err);
+                    progressLabel.textContent = 'Download failed';
+                    progressDiv.style.display = 'none';
+                    downloadBtn.disabled = false;
+                }
+            },
+
+            cancelDownload() {
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.eventSource = null;
+
+                    // Try to cancel on server
+                    fetch(`${LOCAL_ENGINE_URL}/api/models/cancel`, { method: 'POST' }).catch(() => {});
+
+                    document.getElementById('modelsProgress').style.display = 'none';
+                    document.getElementById('downloadModelsBtn').disabled = false;
+                }
+            }
+        };
+
+        // Initialize Models Manager
+        ModelsManager.init();
+
+        // Client Control Modal
+        const ClientControl = {
+            modal: document.getElementById('clientModal'),
+            stopping: false,
+
+            init() {
+                // Open on status click
+                document.getElementById('clientStatus')?.addEventListener('click', () => this.open());
+
+                // Close button
+                document.getElementById('closeClientBtn')?.addEventListener('click', () => this.close());
+
+                // Close on overlay click
+                this.modal?.addEventListener('click', (e) => {
+                    if (e.target === this.modal) this.close();
+                });
+
+                // Refresh button
+                document.getElementById('refreshClientBtn')?.addEventListener('click', async () => {
+                    const btn = document.getElementById('refreshClientBtn');
+                    btn.disabled = true;
+                    btn.textContent = 'Checking...';
+                    await checkLocalEngine();
+                    this.updateStatus();
+                    btn.disabled = false;
+                    btn.textContent = 'Refresh Status';
+                });
+
+                // Stop Engine button
+                document.getElementById('stopEngineBtn')?.addEventListener('click', () => this.stopEngine());
+
+                // Start Engine button - calls main backend to start local engine
+                document.getElementById('startEngineBtn')?.addEventListener('click', async () => {
+                    const btn = document.getElementById('startEngineBtn');
+                    const waiting = document.getElementById('waitingForEngine');
+                    const manual = document.getElementById('manualStartDetails');
+
+                    btn.disabled = true;
+                    btn.innerHTML = '<span class="spinner" style="width: 18px; height: 18px; border-width: 2px;"></span> Starting...';
+                    waiting.style.display = 'block';
+
+                    try {
+                        const resp = await fetch('/api/local-engine/start', { method: 'POST' });
+                        const data = await resp.json();
+
+                        if (data.status === 'already_running') {
+                            btn.innerHTML = '✓ Already Running';
+                            btn.style.background = '#22c55e';
+                            await checkLocalEngine();
+                            this.updateStatus();
+                        } else if (data.status === 'started') {
+                            btn.innerHTML = '✓ Starting...';
+                            btn.style.background = '#22c55e';
+                            this.startPolling();
+                        } else {
+                            throw new Error(data.detail || 'Unknown error');
+                        }
+                    } catch (err) {
+                        console.error('Failed to start engine:', err);
+                        btn.innerHTML = '⚠ Failed';
+                        btn.style.background = '#dc2626';
+                        waiting.style.display = 'none';
+                        if (manual) manual.style.display = 'block';
+                    }
+
+                    setTimeout(() => {
+                        btn.disabled = false;
+                        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><polygon points="5,3 19,12 5,21"/></svg> Start Engine';
+                        btn.style.background = '';
+                    }, 3000);
+                });
+
+                // Manual start - click to copy command
+                document.getElementById('startCommand')?.addEventListener('click', (e) => {
+                    navigator.clipboard.writeText(e.target.textContent).then(() => {
+                        const original = e.target.textContent;
+                        e.target.textContent = '✓ Copied!';
+                        e.target.style.color = '#4ade80';
+                        setTimeout(() => {
+                            e.target.textContent = original;
+                            e.target.style.color = '';
+                        }, 1500);
+                    });
+                });
+
+                // Copy command on click
+                document.getElementById('startCommand')?.addEventListener('click', (e) => {
+                    navigator.clipboard.writeText(e.target.textContent).then(() => {
+                        const original = e.target.textContent;
+                        e.target.textContent = '✓ Copied!';
+                        e.target.style.color = '#4ade80';
+                        setTimeout(() => {
+                            e.target.textContent = original;
+                            e.target.style.color = '';
+                        }, 1500);
+                    });
+                });
+            },
+
+            open() {
+                this.modal?.classList.add('active');
+                this.updateStatus();
+            },
+
+            close() {
+                this.modal?.classList.remove('active');
+            },
+
+            async stopEngine() {
+                if (this.stopping) return;
+                this.stopping = true;
+
+                const btn = document.getElementById('stopEngineBtn');
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner" style="width: 18px; height: 18px; border-width: 2px;"></span> Stopping...';
+
+                try {
+                    await fetch(`${LOCAL_ENGINE_URL}/api/engine/shutdown`, { method: 'POST' });
+                } catch (err) {
+                    // Expected - connection will fail as server shuts down
+                    console.log('Engine shutdown initiated');
+                }
+
+                // Engine will shut down - update UI after a moment
+                setTimeout(() => {
+                    localEngineAvailable = false;
+                    this.stopping = false;
+                    this.updateStatus();
+                    checkLocalEngine();
+                }, 1000);
+            },
+
+            updateStatus() {
+                const detail = document.getElementById('clientStatusDetail');
+                const stopBtn = document.getElementById('stopEngineBtn');
+                const startBtn = document.getElementById('startEngineBtn');
+                const manual = document.getElementById('manualStartDetails');
+                const waiting = document.getElementById('waitingForEngine');
+
+                if (!detail) return;
+
+                if (localEngineAvailable) {
+                    detail.innerHTML = `
+                        <div style="display: flex; align-items: center; gap: 12px; padding: 16px; background: rgba(74, 222, 128, 0.1); border: 1px solid rgba(74, 222, 128, 0.3); border-radius: 8px;">
+                            <span style="color: #4ade80; font-size: 1.5rem;">●</span>
+                            <div>
+                                <div style="font-weight: 500; color: #4ade80;">Engine Running</div>
+                                <div style="font-size: 0.85rem; color: var(--text-secondary);">Connected to ${LOCAL_ENGINE_URL}</div>
+                            </div>
+                        </div>
+                    `;
+                    // Show stop, hide start
+                    if (stopBtn) {
+                        stopBtn.style.display = 'flex';
+                        stopBtn.disabled = false;
+                        stopBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> Stop Engine';
+                        stopBtn.style.background = '#c73e3e';
+                    }
+                    if (startBtn) startBtn.style.display = 'none';
+                    if (manual) manual.style.display = 'none';
+                    if (waiting) waiting.style.display = 'none';
+                    this.stopPolling();
+                } else {
+                    detail.innerHTML = `
+                        <div style="display: flex; align-items: center; gap: 12px; padding: 16px; background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.3); border-radius: 8px;">
+                            <span style="color: #f87171; font-size: 1.5rem;">○</span>
+                            <div>
+                                <div style="font-weight: 500; color: #f87171;">Engine Not Running</div>
+                                <div style="font-size: 0.85rem; color: var(--text-secondary);">Start the engine to enable GPU acceleration</div>
+                            </div>
+                        </div>
+                    `;
+                    // Hide stop, show start
+                    if (stopBtn) stopBtn.style.display = 'none';
+                    if (startBtn) {
+                        startBtn.style.display = 'flex';
+                        startBtn.disabled = false;
+                        startBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><polygon points="5,3 19,12 5,21"/></svg> Start Engine';
+                        startBtn.style.background = '';
+                    }
+                }
+            },
+
+            pollingInterval: null,
+
+            startPolling() {
+                if (this.pollingInterval) return; // Already polling
+
+                const waiting = document.getElementById('waitingForEngine');
+                if (waiting) waiting.style.display = 'block';
+
+                this.pollingInterval = setInterval(async () => {
+                    await checkLocalEngine();
+                    if (localEngineAvailable) {
+                        this.updateStatus();
+                        this.stopPolling();
+                    }
+                }, 2000); // Check every 2 seconds
+            },
+
+            stopPolling() {
+                if (this.pollingInterval) {
+                    clearInterval(this.pollingInterval);
+                    this.pollingInterval = null;
+                }
+                const waiting = document.getElementById('waitingForEngine');
+                if (waiting) waiting.style.display = 'none';
+            }
+        };
+
+        ClientControl.init();
+
+        // Cancel Analysis button
+        document.getElementById('cancelAnalysisBtn')?.addEventListener('click', () => {
+            if (analysisAbortController) {
+                analysisAbortController.abort();
+                analysisAbortController = null;
+            }
+            loading.classList.remove('active');
+            document.getElementById('loadingText').textContent = 'Analysis cancelled';
+            document.getElementById('progressContainer').classList.remove('active');
+        });
+
+        // New Analysis button
+        document.getElementById('newAnalysisBtn')?.addEventListener('click', () => {
+            // Hide results
+            results.classList.remove('active', 'tabs-ready', 'has-transport');
+
+            // Hide transport
+            document.getElementById('studioTransport').style.display = 'none';
+
+            // Show upload section (CSS handles this via :has selector, but also explicitly)
+            document.querySelector('.upload-section').style.display = '';
+
+            // Clear URL params
+            window.history.replaceState({}, '', window.location.pathname);
+
+            // Reset form
+            document.getElementById('fileInput').value = '';
+        });
+    </script>
+</body>
+</html>

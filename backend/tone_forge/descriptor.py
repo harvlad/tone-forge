@@ -7,7 +7,7 @@ are for ergonomic use inside the Python pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Literal
+from typing import Any, Optional, Literal
 
 
 AmpFamily = Literal[
@@ -120,9 +120,32 @@ class ToneDescriptor:
     effects: Effects
     confidence: Confidence
     version: str = "0.1.0"
+    reasoning: Optional[Any] = field(default=None, repr=False)  # DescriptorReasoning when captured
+    provenance: Optional[dict] = field(default=None, repr=False)  # Provenance tracking summary
 
     def to_dict(self) -> dict:
+        # Temporarily clear complex objects to avoid asdict issues
+        reasoning = self.reasoning
+        provenance = self.provenance
+        self.reasoning = None
+        self.provenance = None
         d = asdict(self)
+        self.reasoning = reasoning
+        self.provenance = provenance
+
         # Strip None effect blocks for cleaner JSON.
         d["effects"] = {k: v for k, v in d["effects"].items() if v is not None}
+
+        # Convert reasoning to dict if present
+        if reasoning is not None:
+            try:
+                d["reasoning"] = reasoning.to_dict() if hasattr(reasoning, "to_dict") else None
+            except Exception:
+                d["reasoning"] = None
+        else:
+            d["reasoning"] = None
+
+        # Include provenance if present
+        d["provenance"] = provenance
+
         return d

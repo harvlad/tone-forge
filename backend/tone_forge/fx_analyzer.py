@@ -18,6 +18,14 @@ from scipy import signal
 
 logger = logging.getLogger(__name__)
 
+# Provenance tracking (optional)
+_PROVENANCE_AVAILABLE = False
+try:
+    from .provenance import ProvenanceChain, DecisionDomain, DecisionAction
+    _PROVENANCE_AVAILABLE = True
+except ImportError:
+    pass
+
 
 @dataclass
 class ModulationFX:
@@ -93,6 +101,7 @@ def analyze_fx_chain(
     y: np.ndarray,
     sr: int,
     y_stereo: Optional[np.ndarray] = None,
+    provenance_chain: Optional["ProvenanceChain"] = None,
 ) -> FXChainAnalysis:
     """
     Analyze audio for FX chain characteristics.
@@ -101,6 +110,7 @@ def analyze_fx_chain(
         y: Mono audio signal
         sr: Sample rate
         y_stereo: Optional stereo audio (2, N) for stereo analysis
+        provenance_chain: Optional provenance chain for tracking decisions
 
     Returns:
         FXChainAnalysis with detected effects
@@ -108,11 +118,11 @@ def analyze_fx_chain(
     result = FXChainAnalysis()
 
     # Analyze each effect type
-    result.modulation = detect_modulation(y, sr)
-    result.delay = detect_delay(y, sr)
-    result.reverb = detect_reverb(y, sr)
-    result.compression = detect_compression(y, sr)
-    result.saturation = detect_saturation(y, sr)
+    result.modulation = detect_modulation(y, sr, provenance_chain=provenance_chain)
+    result.delay = detect_delay(y, sr, provenance_chain=provenance_chain)
+    result.reverb = detect_reverb(y, sr, provenance_chain=provenance_chain)
+    result.compression = detect_compression(y, sr, provenance_chain=provenance_chain)
+    result.saturation = detect_saturation(y, sr, provenance_chain=provenance_chain)
 
     if y_stereo is not None and y_stereo.ndim == 2:
         result.stereo = analyze_stereo_image(y_stereo, sr)
@@ -127,7 +137,9 @@ def analyze_fx_chain(
     return result
 
 
-def detect_modulation(y: np.ndarray, sr: int) -> Optional[ModulationFX]:
+def detect_modulation(
+    y: np.ndarray, sr: int, provenance_chain=None
+) -> Optional[ModulationFX]:
     """
     Detect modulation effects (chorus, flanger, vibrato, tremolo).
 
@@ -147,6 +159,8 @@ def detect_modulation(y: np.ndarray, sr: int) -> Optional[ModulationFX]:
     # Look for periodic modulation in amplitude (tremolo)
     amp_mod_rate, amp_mod_depth = _find_modulation_rate(rms, sr)
 
+    result = None
+
     # Determine modulation type
     if pitch_mod_rate > 0 and pitch_mod_depth > 0.05:
         # Pitch modulation detected
@@ -157,26 +171,60 @@ def detect_modulation(y: np.ndarray, sr: int) -> Optional[ModulationFX]:
         else:
             mod_type = 'vibrato'
 
-        return ModulationFX(
+        confidence = 0.6 + pitch_mod_depth * 0.3
+        result = ModulationFX(
             type=mod_type,
             rate_hz=pitch_mod_rate,
             depth=min(pitch_mod_depth, 1.0),
-            confidence=0.6 + pitch_mod_depth * 0.3,
+            confidence=confidence,
         )
+
+        # Track provenance
+        if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+            record = provenance_chain.create_record(
+                action=DecisionAction.CLASSIFIED,
+                stage="modulation_detector",
+                entity_type="effect",
+                entity_id=f"modulation_{mod_type}",
+                entity_data={"type": mod_type, "rate_hz": pitch_mod_rate, "depth": pitch_mod_depth},
+            )
+            record.reason.add_factor("pitch_mod_rate", pitch_mod_rate, weight=0.4)
+            record.reason.add_factor("pitch_mod_depth", pitch_mod_depth, weight=0.6, threshold=0.05)
+            record.reason.summary = f"Detected {mod_type} (rate={pitch_mod_rate:.1f}Hz, depth={pitch_mod_depth:.2f})"
+            record.reason.confidence = confidence
+            provenance_chain.add(record)
 
     elif amp_mod_rate > 0 and amp_mod_depth > 0.1:
         # Amplitude modulation (tremolo)
-        return ModulationFX(
+        confidence = 0.5 + amp_mod_depth * 0.3
+        result = ModulationFX(
             type='tremolo',
             rate_hz=amp_mod_rate,
             depth=min(amp_mod_depth, 1.0),
-            confidence=0.5 + amp_mod_depth * 0.3,
+            confidence=confidence,
         )
 
-    return None
+        # Track provenance
+        if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+            record = provenance_chain.create_record(
+                action=DecisionAction.CLASSIFIED,
+                stage="modulation_detector",
+                entity_type="effect",
+                entity_id="modulation_tremolo",
+                entity_data={"type": "tremolo", "rate_hz": amp_mod_rate, "depth": amp_mod_depth},
+            )
+            record.reason.add_factor("amp_mod_rate", amp_mod_rate, weight=0.4)
+            record.reason.add_factor("amp_mod_depth", amp_mod_depth, weight=0.6, threshold=0.1)
+            record.reason.summary = f"Detected tremolo (rate={amp_mod_rate:.1f}Hz, depth={amp_mod_depth:.2f})"
+            record.reason.confidence = confidence
+            provenance_chain.add(record)
+
+    return result
 
 
-def detect_delay(y: np.ndarray, sr: int, tempo_bpm: float = 120.0) -> Optional[DelayFX]:
+def detect_delay(
+    y: np.ndarray, sr: int, tempo_bpm: float = 120.0, provenance_chain=None
+) -> Optional[DelayFX]:
     """
     Detect delay/echo effects using autocorrelation.
 
@@ -244,18 +292,43 @@ def detect_delay(y: np.ndarray, sr: int, tempo_bpm: float = 120.0) -> Optional[D
         feedback = min(second_height / (peak_strength + 1e-6), 0.9)
 
     if peak_strength > 0.15:  # Significant delay detected
-        return DelayFX(
+        confidence = min(peak_strength + 0.2, 1.0)
+        result = DelayFX(
             time_ms=delay_ms,
             feedback=feedback,
             sync_note=sync_note,
             is_stereo=False,  # Can't determine from mono
-            confidence=min(peak_strength + 0.2, 1.0),
+            confidence=confidence,
         )
+
+        # Track provenance
+        if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+            record = provenance_chain.create_record(
+                action=DecisionAction.CLASSIFIED,
+                stage="delay_detector",
+                entity_type="effect",
+                entity_id="delay",
+                entity_data={
+                    "time_ms": delay_ms,
+                    "feedback": feedback,
+                    "sync_note": sync_note,
+                },
+            )
+            record.reason.add_factor("peak_strength", float(peak_strength), weight=0.6, threshold=0.15)
+            record.reason.add_factor("delay_ms", delay_ms, weight=0.2)
+            record.reason.add_factor("feedback", feedback, weight=0.2)
+            record.reason.summary = f"Detected delay ({delay_ms:.0f}ms, fb={feedback:.1f})"
+            if sync_note:
+                record.reason.summary += f" synced to {sync_note}"
+            record.reason.confidence = confidence
+            provenance_chain.add(record)
+
+        return result
 
     return None
 
 
-def detect_reverb(y: np.ndarray, sr: int) -> Optional[ReverbFX]:
+def detect_reverb(y: np.ndarray, sr: int, provenance_chain=None) -> Optional[ReverbFX]:
     """
     Detect reverb characteristics from audio.
 
@@ -320,16 +393,35 @@ def detect_reverb(y: np.ndarray, sr: int) -> Optional[ReverbFX]:
     total_energy = np.mean(rms)
     wet_dry = min(tail_energy / (total_energy + 1e-6) * 2, 1.0)
 
-    return ReverbFX(
+    confidence = 0.5 + min(len(decay_times) / 10, 0.3)
+    result = ReverbFX(
         type=reverb_type,
         decay_sec=avg_decay,
         pre_delay_ms=20.0,  # Hard to detect accurately
         wet_dry_mix=wet_dry,
-        confidence=0.5 + min(len(decay_times) / 10, 0.3),
+        confidence=confidence,
     )
 
+    # Track provenance
+    if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+        record = provenance_chain.create_record(
+            action=DecisionAction.CLASSIFIED,
+            stage="reverb_detector",
+            entity_type="effect",
+            entity_id=f"reverb_{reverb_type}",
+            entity_data={"type": reverb_type, "decay_sec": avg_decay, "wet_dry": wet_dry},
+        )
+        record.reason.add_factor("avg_decay", avg_decay, weight=0.5)
+        record.reason.add_factor("decay_samples", len(decay_times), weight=0.3)
+        record.reason.add_factor("wet_dry_mix", wet_dry, weight=0.2)
+        record.reason.summary = f"Detected {reverb_type} reverb (decay={avg_decay:.2f}s)"
+        record.reason.confidence = confidence
+        provenance_chain.add(record)
 
-def detect_compression(y: np.ndarray, sr: int) -> Optional[CompressionFX]:
+    return result
+
+
+def detect_compression(y: np.ndarray, sr: int, provenance_chain=None) -> Optional[CompressionFX]:
     """
     Detect compression characteristics from dynamic range analysis.
     """
@@ -378,17 +470,41 @@ def detect_compression(y: np.ndarray, sr: int) -> Optional[CompressionFX]:
     else:
         attack_ms = 1.0  # Fast attack
 
-    return CompressionFX(
+    confidence = 0.6 if dynamic_range < 15 else 0.4
+    result = CompressionFX(
         ratio=ratio,
         attack_ms=attack_ms,
         release_ms=100.0,  # Hard to detect
         threshold_db=-20.0,  # Estimated
         is_heavy=is_heavy,
-        confidence=0.6 if dynamic_range < 15 else 0.4,
+        confidence=confidence,
     )
 
+    # Track provenance
+    if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+        record = provenance_chain.create_record(
+            action=DecisionAction.CLASSIFIED,
+            stage="compression_detector",
+            entity_type="effect",
+            entity_id="compression",
+            entity_data={
+                "ratio": ratio,
+                "attack_ms": attack_ms,
+                "is_heavy": is_heavy,
+                "dynamic_range_db": dynamic_range,
+            },
+        )
+        record.reason.add_factor("dynamic_range", dynamic_range, weight=0.5, threshold=18.0)
+        record.reason.add_factor("crest_factor_db", crest_factor_db, weight=0.3)
+        record.reason.add_factor("transient_ratio", transient_ratio, weight=0.2)
+        record.reason.summary = f"Detected {ratio}:1 compression (DR={dynamic_range:.1f}dB)"
+        record.reason.confidence = confidence
+        provenance_chain.add(record)
 
-def detect_saturation(y: np.ndarray, sr: int) -> Optional[SaturationFX]:
+    return result
+
+
+def detect_saturation(y: np.ndarray, sr: int, provenance_chain=None) -> Optional[SaturationFX]:
     """
     Detect saturation/distortion from harmonic analysis.
     """
@@ -437,13 +553,36 @@ def detect_saturation(y: np.ndarray, sr: int) -> Optional[SaturationFX]:
         character = 'mixed'
 
     amount = min(harmonic_ratio * 3, 1.0)
+    confidence = 0.5 + amount * 0.3
 
-    return SaturationFX(
+    result = SaturationFX(
         type=sat_type,
         amount=amount,
         harmonic_character=character,
-        confidence=0.5 + amount * 0.3,
+        confidence=confidence,
     )
+
+    # Track provenance
+    if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+        record = provenance_chain.create_record(
+            action=DecisionAction.CLASSIFIED,
+            stage="saturation_detector",
+            entity_type="effect",
+            entity_id=f"saturation_{sat_type}",
+            entity_data={
+                "type": sat_type,
+                "amount": amount,
+                "harmonic_character": character,
+            },
+        )
+        record.reason.add_factor("harmonic_ratio", harmonic_ratio, weight=0.5, threshold=0.1)
+        record.reason.add_factor("mid_energy_ratio", mid_energy / total_energy, weight=0.25)
+        record.reason.add_factor("ultra_high_ratio", ultra_high_energy / (high_energy + 1e-6), weight=0.25)
+        record.reason.summary = f"Detected {sat_type} saturation (amount={amount:.2f}, {character} harmonics)"
+        record.reason.confidence = confidence
+        provenance_chain.add(record)
+
+    return result
 
 
 def analyze_stereo_image(y_stereo: np.ndarray, sr: int) -> StereoImage:

@@ -74,6 +74,34 @@ except ImportError:
     StemQuality = None
     ContaminationAnalysis = None
 
+# Explainability imports (optional)
+_EXPLAINABILITY_AVAILABLE = False
+try:
+    from .explainability import (
+        DescriptorReasoning,
+        DescriptorDecision,
+        create_descriptor_reasoning,
+        ConfidenceReasoning,
+        create_confidence_reasoning,
+        AdjustmentReason,
+    )
+    _EXPLAINABILITY_AVAILABLE = True
+except ImportError:
+    DescriptorReasoning = None
+    DescriptorDecision = None
+    create_descriptor_reasoning = None
+    ConfidenceReasoning = None
+    create_confidence_reasoning = None
+    AdjustmentReason = None
+
+# Provenance tracking (optional)
+_PROVENANCE_AVAILABLE = False
+try:
+    from .provenance import ProvenanceChain, DecisionDomain, DecisionAction
+    _PROVENANCE_AVAILABLE = True
+except ImportError:
+    pass
+
 
 _SR = 22050  # analysis sample rate; plenty for guitar
 _N_FFT = 2048
@@ -92,6 +120,8 @@ def analyze(
     index_for_similarity: bool = False,
     stem_quality: Optional["StemQuality"] = None,
     contamination: Optional["ContaminationAnalysis"] = None,
+    capture_reasoning: bool = False,
+    track_provenance: bool = True,
 ) -> ToneDescriptor:
     """Analyze an audio file and return a descriptor.
 
@@ -113,9 +143,18 @@ def analyze(
             better decisions about alternate picks and tweak hints.
         contamination: Optional ContaminationAnalysis from reconstruction
             module. Provides additional signal about cross-stem bleed.
+        capture_reasoning: If True, captures detailed reasoning for each
+            classification decision. Access via descriptor.reasoning attribute.
+        track_provenance: If True, tracks provenance for each classification
+            decision. Access via descriptor.provenance attribute.
     """
     path = Path(path)
     analysis_path = path  # May be overridden by stem separation
+
+    # Initialize provenance tracking if available
+    provenance_chain = None
+    if track_provenance and _PROVENANCE_AVAILABLE:
+        provenance_chain = ProvenanceChain(domain=DecisionDomain.AMP_DETECTION)
 
     # For full mix input, run stem separation first to isolate guitar
     if source_kind == "full_mix":
@@ -133,12 +172,28 @@ def analyze(
     y, sr = librosa.load(str(analysis_path), sr=_SR, mono=True)
     feats = _compute_features(y, sr)
 
+    # Initialize reasoning capture if requested
+    reasoning = None
+    if capture_reasoning and _EXPLAINABILITY_AVAILABLE:
+        reasoning = create_descriptor_reasoning()
+
     gain, gain_conf = _estimate_gain(feats)
     voicing = _estimate_voicing(feats)
-    amp_family, amp_conf, amp_alternates = _classify_amp_family(voicing, gain, feats)
-    cab, cab_conf = _classify_cab(voicing, feats, amp_family)
+    amp_family, amp_conf, amp_alternates = _classify_amp_family(
+        voicing, gain, feats, provenance_chain=provenance_chain
+    )
+    cab, cab_conf = _classify_cab(
+        voicing, feats, amp_family, provenance_chain=provenance_chain
+    )
     effects, fx_conf = _detect_effects(feats)
     guitar = _infer_guitar_context(feats)
+
+    # Capture reasoning for each decision
+    if reasoning is not None:
+        _capture_gain_reasoning(reasoning, feats, gain, gain_conf)
+        _capture_amp_reasoning(reasoning, feats, voicing, gain, amp_family, amp_conf, amp_alternates)
+        _capture_cab_reasoning(reasoning, feats, voicing, amp_family, cab, cab_conf)
+        _capture_effects_reasoning(reasoning, feats, effects, fx_conf)
 
     amp = Amp(family=amp_family, gain=gain, voicing=voicing, alternates=amp_alternates)  # type: ignore[arg-type]
 
@@ -172,6 +227,16 @@ def analyze(
         effects=effects,
         confidence=confidence,
     )
+
+    # Attach reasoning if captured
+    if reasoning is not None:
+        reasoning.compute_overall_confidence()
+        reasoning.summary = _generate_reasoning_summary(amp_family, gain, cab, effects)
+        descriptor.reasoning = reasoning
+
+    # Attach provenance if tracked
+    if provenance_chain is not None:
+        descriptor.provenance = provenance_chain.to_summary()
 
     # Optionally index for similarity search
     if index_for_similarity and _ML_AVAILABLE and is_encoder_ready():
@@ -513,7 +578,9 @@ def _estimate_voicing(f: _Features) -> Voicing:
     )
 
 
-def _classify_amp_family(v: Voicing, gain: float, f: _Features) -> Tuple[str, float, list]:
+def _classify_amp_family(
+    v: Voicing, gain: float, f: _Features, provenance_chain=None
+) -> Tuple[str, float, list]:
     """Returns (family, confidence, alternates).
 
     `alternates` is a list of up to 2 runner-up families with their scores,
@@ -544,6 +611,33 @@ def _classify_amp_family(v: Voicing, gain: float, f: _Features) -> Tuple[str, fl
         for name, score in sorted_items[1:3]
         if score > top_score * 0.4
     ]
+
+    result_name = top_name if top_score >= 0.02 else "unknown"
+    result_confidence = confidence if top_score >= 0.02 else 0.3
+
+    # Track provenance if available
+    if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+        record = provenance_chain.create_record(
+            action=DecisionAction.CLASSIFIED,
+            stage="amp_classifier",
+            entity_type="amp",
+            entity_id=result_name,
+            entity_data={
+                "family": result_name,
+                "score": float(top_score),
+                "alternates": alternates,
+            },
+        )
+        record.reason.add_factor("gain", gain, weight=0.3)
+        record.reason.add_factor("voicing_bass", v.bass, weight=0.15)
+        record.reason.add_factor("voicing_mid", v.mid, weight=0.2)
+        record.reason.add_factor("voicing_treble", v.treble, weight=0.15)
+        record.reason.add_factor("mid_scoop", v.mid_scoop, weight=0.1)
+        record.reason.add_factor("crest_db", f.crest_db, weight=0.1)
+        record.reason.add_factor("score_margin", margin, weight=0.3, threshold=0.2)
+        record.reason.summary = f"Classified as {result_name} (score {top_score:.2f}, margin {margin:.2f})"
+        record.reason.confidence = result_confidence
+        provenance_chain.add(record)
 
     if top_score < 0.02:
         return "unknown", 0.3, alternates
@@ -625,7 +719,9 @@ def _gain_pref(gain: float, lo: float, hi: float) -> float:
 
 # ---------------------------------------------------------------------------
 
-def _classify_cab(v: Voicing, f: _Features, amp_family: str) -> Tuple[Cab, float]:
+def _classify_cab(
+    v: Voicing, f: _Features, amp_family: str, provenance_chain=None
+) -> Tuple[Cab, float]:
     """Speaker character from how energy is distributed in 500 Hz–10 kHz.
 
     Earlier versions used raw band ratios. That broke on clean signals
@@ -660,6 +756,20 @@ def _classify_cab(v: Voicing, f: _Features, amp_family: str) -> Tuple[Cab, float
     upper_fraction = upper_total / total_all
     if upper_fraction < 0.05:
         char = char_prior.get(amp_family, "v30_like")
+        # Track provenance for prior-based decision
+        if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+            record = provenance_chain.create_record(
+                action=DecisionAction.CLASSIFIED,
+                stage="cab_classifier",
+                entity_type="cab",
+                entity_id=char,
+                entity_data={"speaker_character": char, "used_prior": True},
+            )
+            record.reason.add_factor("upper_fraction", upper_fraction, weight=1.0, threshold=0.05)
+            record.reason.add_factor("amp_family_prior", amp_family, weight=0.5)
+            record.reason.summary = f"Used {amp_family} prior (upper_fraction={upper_fraction:.3f} < 0.05)"
+            record.reason.confidence = 0.35
+            provenance_chain.add(record)
         return _build_cab(char, amp_family, mic="on_axis_cap"), 0.35
 
     # Work in fractions of upper-band energy — no risk of tiny-over-tiny.
@@ -689,10 +799,46 @@ def _classify_cab(v: Voicing, f: _Features, amp_family: str) -> Tuple[Cab, float
     # prior instead of forcing a noisy pick.
     if top_score < 0.05:
         char = char_prior.get(amp_family, "v30_like")
+        # Track provenance for weak-score fallback
+        if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+            record = provenance_chain.create_record(
+                action=DecisionAction.CLASSIFIED,
+                stage="cab_classifier",
+                entity_type="cab",
+                entity_id=char,
+                entity_data={"speaker_character": char, "used_prior": True, "reason": "weak_score"},
+            )
+            record.reason.add_factor("top_score", top_score, weight=1.0, threshold=0.05)
+            record.reason.summary = f"Used prior (top_score={top_score:.3f} < 0.05)"
+            record.reason.confidence = 0.4
+            provenance_chain.add(record)
         return _build_cab(char, amp_family, mic="on_axis_cap"), 0.4
 
     margin = (top_score - second_score) / (top_score + 1e-6)
     confidence = float(np.clip(0.35 + margin, 0.0, 0.85))
+
+    # Track provenance for spectral-based decision
+    if provenance_chain is not None and _PROVENANCE_AVAILABLE:
+        record = provenance_chain.create_record(
+            action=DecisionAction.CLASSIFIED,
+            stage="cab_classifier",
+            entity_type="cab",
+            entity_id=char,
+            entity_data={
+                "speaker_character": char,
+                "score": float(top_score),
+                "alternates": [{"char": n, "score": float(s)} for n, s in sorted_items[1:3]],
+            },
+        )
+        record.reason.add_factor("mid_fraction", mid_f, weight=0.2)
+        record.reason.add_factor("upper_mid_fraction", upper_mid_f, weight=0.3)
+        record.reason.add_factor("treble_fraction", treble_f, weight=0.25)
+        record.reason.add_factor("presence_fraction", presence_f, weight=0.25)
+        record.reason.add_factor("score_margin", margin, weight=0.3, threshold=0.2)
+        record.reason.summary = f"Classified as {char} (score {top_score:.2f}, margin {margin:.2f})"
+        record.reason.confidence = confidence
+        provenance_chain.add(record)
+
     return _build_cab(char, amp_family, mic="on_axis_cap"), confidence
 
 
@@ -889,6 +1035,246 @@ def _infer_guitar_context(f: _Features) -> Guitar:
     else:
         style = "clean_strum"
     return Guitar(pickup_brightness=brightness, playing_style=style, estimated_tuning="unknown")
+
+
+# ---------------------------------------------------------------------------
+# Reasoning capture helpers
+# ---------------------------------------------------------------------------
+
+def _capture_gain_reasoning(
+    reasoning: "DescriptorReasoning",
+    feats: _Features,
+    gain: float,
+    confidence: float,
+) -> None:
+    """Capture reasoning for gain estimation."""
+    decision = DescriptorDecision(
+        category="gain",
+        selected=f"{gain:.2f}",
+        confidence=confidence,
+    )
+
+    # Add reasoning factors
+    decision.add_reasoning(
+        factor_name="spectral_flatness",
+        value=feats.flatness,
+        contribution=0.55,
+        description=f"Spectral flatness {feats.flatness:.3f} indicates {'high distortion' if feats.flatness > 0.15 else 'moderate' if feats.flatness > 0.08 else 'clean signal'}",
+    )
+    decision.add_reasoning(
+        factor_name="crest_factor",
+        value=feats.crest_db_median,
+        contribution=0.45,
+        description=f"Crest factor {feats.crest_db_median:.1f}dB indicates {'compressed/distorted' if feats.crest_db_median < 10 else 'moderate dynamics' if feats.crest_db_median < 16 else 'clean/dynamic'} signal",
+    )
+
+    if feats.quiet_loud_ratio > 0.15:
+        decision.add_reasoning(
+            factor_name="reverb_correction",
+            value=feats.quiet_loud_ratio,
+            contribution=0.2,
+            description=f"Reverb presence ({feats.quiet_loud_ratio:.2f}) applied correction to crest factor",
+        )
+
+    reasoning.add_decision(decision)
+
+
+def _capture_amp_reasoning(
+    reasoning: "DescriptorReasoning",
+    feats: _Features,
+    voicing: Voicing,
+    gain: float,
+    amp_family: str,
+    confidence: float,
+    alternates: list,
+) -> None:
+    """Capture reasoning for amp family classification."""
+    decision = DescriptorDecision(
+        category="amp_family",
+        selected=amp_family,
+        confidence=confidence,
+    )
+
+    # Add reasoning factors based on what drove the classification
+    decision.add_reasoning(
+        factor_name="gain_level",
+        value=gain,
+        contribution=0.4,
+        description=f"Gain level {gain:.2f} fits {'high-gain' if gain > 0.7 else 'medium-gain' if gain > 0.4 else 'clean/crunch'} amp profile",
+    )
+    decision.add_reasoning(
+        factor_name="mid_content",
+        value=voicing.mid,
+        contribution=0.25,
+        description=f"Mid presence {voicing.mid:.2f} {'favors Marshall/Dumble' if voicing.mid > 0.5 else 'suggests scooped tone'}",
+    )
+    decision.add_reasoning(
+        factor_name="mid_scoop",
+        value=voicing.mid_scoop,
+        contribution=0.2,
+        description=f"Mid scoop {voicing.mid_scoop:.2f} {'typical of Mesa/modern metal' if voicing.mid_scoop > 0.4 else 'suggests vintage amp'}",
+    )
+    decision.add_reasoning(
+        factor_name="treble_presence",
+        value=voicing.treble,
+        contribution=0.15,
+        description=f"Treble {voicing.treble:.2f} and presence {voicing.presence:.2f} shape tonal character",
+    )
+
+    # Add alternates
+    for alt in alternates:
+        decision.add_alternative(
+            name=alt["family"],
+            score=alt["score"],
+            reason_not_selected=f"Score {alt['score']:.2f} lower than {amp_family}",
+        )
+
+    reasoning.add_decision(decision)
+
+
+def _capture_cab_reasoning(
+    reasoning: "DescriptorReasoning",
+    feats: _Features,
+    voicing: Voicing,
+    amp_family: str,
+    cab: Cab,
+    confidence: float,
+) -> None:
+    """Capture reasoning for cabinet classification."""
+    decision = DescriptorDecision(
+        category="cab_config",
+        selected=f"{cab.configuration} {cab.speaker_character}",
+        confidence=confidence,
+    )
+
+    be = feats.band_energy
+    upper_total = be["mid"] + be["upper_mid"] + be["treble"] + be["presence"] + 1e-9
+    upper_mid_ratio = be["upper_mid"] / upper_total
+    treble_ratio = be["treble"] / upper_total
+
+    decision.add_reasoning(
+        factor_name="upper_mid_peak",
+        value=upper_mid_ratio,
+        contribution=0.35,
+        description=f"Upper-mid ratio {upper_mid_ratio:.2f} {'suggests V30 peak' if upper_mid_ratio > 0.35 else 'indicates flatter response'}",
+    )
+    decision.add_reasoning(
+        factor_name="treble_content",
+        value=treble_ratio,
+        contribution=0.25,
+        description=f"Treble ratio {treble_ratio:.2f} shapes speaker character estimation",
+    )
+    decision.add_reasoning(
+        factor_name="amp_family_prior",
+        value=amp_family,
+        contribution=0.3,
+        description=f"Amp family {amp_family} suggests typical {cab.configuration} configuration",
+    )
+
+    reasoning.add_decision(decision)
+
+
+def _capture_effects_reasoning(
+    reasoning: "DescriptorReasoning",
+    feats: _Features,
+    effects: Effects,
+    confidence: float,
+) -> None:
+    """Capture reasoning for effects detection."""
+    decision = DescriptorDecision(
+        category="effects",
+        selected=_summarize_effects(effects),
+        confidence=confidence,
+    )
+
+    # Reverb detection reasoning
+    if effects.reverb:
+        decision.add_reasoning(
+            factor_name="quiet_loud_ratio",
+            value=feats.quiet_loud_ratio,
+            contribution=0.4,
+            description=f"Quiet/loud ratio {feats.quiet_loud_ratio:.2f} indicates reverb presence",
+        )
+
+    # Delay detection reasoning
+    if effects.delay:
+        decision.add_reasoning(
+            factor_name="autocorr_peak",
+            value=effects.delay.time_ms,
+            contribution=0.3,
+            description=f"Envelope autocorrelation peak at {effects.delay.time_ms:.0f}ms suggests delay",
+        )
+
+    # Compression detection reasoning
+    if effects.compressor:
+        decision.add_reasoning(
+            factor_name="dynamic_range",
+            value=effects.compressor.amount,
+            contribution=0.25,
+            description=f"Reduced dynamic range indicates compression (amount: {effects.compressor.amount:.2f})",
+        )
+
+    # Modulation detection reasoning
+    if effects.modulation:
+        decision.add_reasoning(
+            factor_name="envelope_lfo",
+            value=effects.modulation.rate,
+            contribution=0.2,
+            description=f"Envelope LFO detected at rate {effects.modulation.rate:.2f}, suggesting {effects.modulation.type}",
+        )
+
+    if not any([effects.reverb, effects.delay, effects.compressor, effects.modulation]):
+        decision.add_reasoning(
+            factor_name="no_effects",
+            value=True,
+            contribution=1.0,
+            description="No significant effects detected in signal",
+        )
+
+    reasoning.add_decision(decision)
+
+
+def _summarize_effects(effects: Effects) -> str:
+    """Generate a summary string of detected effects."""
+    detected = []
+    if effects.reverb:
+        detected.append(f"{effects.reverb.type} reverb")
+    if effects.delay:
+        detected.append(f"{effects.delay.type} delay")
+    if effects.modulation:
+        detected.append(effects.modulation.type)
+    if effects.compressor:
+        detected.append("compression")
+    return ", ".join(detected) if detected else "none detected"
+
+
+def _generate_reasoning_summary(
+    amp_family: str,
+    gain: float,
+    cab: Cab,
+    effects: Effects,
+) -> str:
+    """Generate a human-readable summary of the analysis reasoning."""
+    lines = []
+
+    # Amp characterization
+    if gain < 0.3:
+        gain_desc = "clean"
+    elif gain < 0.5:
+        gain_desc = "crunch"
+    elif gain < 0.7:
+        gain_desc = "medium-gain"
+    else:
+        gain_desc = "high-gain"
+
+    lines.append(f"Detected {gain_desc} {amp_family.replace('_', ' ')} tone")
+    lines.append(f"Cabinet: {cab.configuration} with {cab.speaker_character.replace('_', ' ')}")
+
+    fx_summary = _summarize_effects(effects)
+    if fx_summary != "none detected":
+        lines.append(f"Effects: {fx_summary}")
+
+    return ". ".join(lines) + "."
 
 
 # ---------------------------------------------------------------------------

@@ -497,9 +497,51 @@ def correct_timing(
     notes: List[Tuple[int, float, float, int]],
     tempo_bpm: float,
     strength: float = 0.7,
+    provenance_chain=None,  # Optional ProvenanceChain for tracking
 ) -> List[Tuple[int, float, float, int]]:
-    """Correct note timing using the global corrector."""
-    return get_corrector().correct_timing(notes, tempo_bpm, strength)
+    """Correct note timing using the global corrector.
+
+    Args:
+        notes: List of (pitch, start, end, velocity) tuples
+        tempo_bpm: Detected tempo
+        strength: Quantization strength (0-1)
+        provenance_chain: Optional ProvenanceChain for decision tracking
+
+    Returns:
+        Timing-corrected notes
+    """
+    corrected = get_corrector().correct_timing(notes, tempo_bpm, strength)
+
+    # Record timing corrections in provenance
+    if provenance_chain is not None and len(notes) == len(corrected):
+        from tone_forge.provenance import DecisionAction, DecisionDomain, ReasonGraph
+
+        for i, (orig, fixed) in enumerate(zip(notes, corrected)):
+            if orig[1] != fixed[1] or orig[2] != fixed[2]:  # Timing changed
+                time_delta = fixed[1] - orig[1]
+                record = provenance_chain.create_record(
+                    action=DecisionAction.MODIFIED,
+                    stage="timing_corrector",
+                    entity_type="note",
+                    entity_id=f"n{i}",
+                    entity_data={
+                        "pitch": orig[0],
+                        "original_start": orig[1],
+                        "original_end": orig[2],
+                        "corrected_start": fixed[1],
+                        "corrected_end": fixed[2],
+                    },
+                    domain=DecisionDomain.MIDI_REFINEMENT,
+                )
+                record.reason = ReasonGraph(
+                    summary=f"Timing adjusted by {time_delta*1000:.1f}ms",
+                    confidence=strength,
+                    model_used="timing_corrector",
+                )
+                record.reason.add_factor("time_delta_ms", abs(time_delta) * 1000)
+                record.reason.add_factor("quantize_strength", strength)
+
+    return corrected
 
 
 def detect_groove(

@@ -73,10 +73,13 @@ def refine_midi_notes(
     process_velocities: bool = True,
     timing_strength: float = 0.7,
     velocity_range: tuple = (60, 110),
+    provenance_chain=None,  # Optional ProvenanceChain for decision tracking
 ) -> list:
-    """Full MIDI refinement pipeline.
+    """Full MIDI refinement pipeline with provenance tracking.
 
     Convenience function that applies all refinement steps.
+    Optionally tracks every decision with full provenance for
+    explainable reconstruction editing.
 
     Args:
         notes: List of (pitch, start, end, velocity) tuples
@@ -90,9 +93,24 @@ def refine_midi_notes(
         process_velocities: Whether to process dynamics
         timing_strength: Strength of timing correction (0-1)
         velocity_range: Target velocity range
+        provenance_chain: Optional ProvenanceChain for tracking WHY each
+                         decision was made (what happened AND why)
 
     Returns:
         Refined list of notes
+
+    Example provenance output:
+        {
+            "note_id": "n142",
+            "action": "removed",
+            "stage": "ghost_note_classifier",
+            "reason": {
+                "harmonic_overlap": 0.91,
+                "temporal_isolation": true,
+                "velocity_outlier": true,
+                "contamination_score": 0.82
+            }
+        }
     """
     if not notes:
         return notes
@@ -107,6 +125,7 @@ def refine_midi_notes(
             sr=sr,
             tempo_bpm=tempo_bpm,
             detected_key=detected_key,
+            provenance_chain=provenance_chain,
         )
 
     # Step 2: Correct timing
@@ -115,6 +134,7 @@ def refine_midi_notes(
             refined,
             tempo_bpm=tempo_bpm,
             strength=timing_strength,
+            provenance_chain=provenance_chain,
         )
 
     # Step 3: Process dynamics
@@ -124,6 +144,7 @@ def refine_midi_notes(
             tempo_bpm=tempo_bpm,
             instrument_type=instrument_type,
             target_range=velocity_range,
+            provenance_chain=provenance_chain,
         )
 
     return refined

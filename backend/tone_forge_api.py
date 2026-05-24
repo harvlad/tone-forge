@@ -46,16 +46,74 @@ def _convert_numpy_types(obj):
         return {k: _convert_numpy_types(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [_convert_numpy_types(v) for v in obj]
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
     elif isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
+        # Handle NaN and Inf which aren't valid JSON
+        if np.isnan(obj):
+            return None
+        if np.isinf(obj):
+            return None
         return float(obj)
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
+    elif isinstance(obj, float):
+        # Handle Python float NaN/Inf too
+        if obj != obj:  # NaN check
+            return None
+        if obj == float('inf') or obj == float('-inf'):
+            return None
     return obj
 
+
+def _compute_waveform_peaks(y: np.ndarray, num_points: int = 1000) -> dict:
+    """Compute waveform peaks for visualization.
+
+    Downsamples audio to a fixed number of points showing min/max envelope.
+
+    Args:
+        y: Audio samples (mono)
+        num_points: Number of points for visualization
+
+    Returns:
+        Dict with 'peaks_positive', 'peaks_negative', 'rms' arrays
+    """
+    if len(y) == 0:
+        return {"peaks_positive": [], "peaks_negative": [], "rms": []}
+
+    # Ensure we don't have more points than samples
+    num_points = min(num_points, len(y))
+
+    # Compute chunk size
+    chunk_size = max(1, len(y) // num_points)
+    actual_points = len(y) // chunk_size
+
+    peaks_pos = []
+    peaks_neg = []
+    rms_values = []
+
+    for i in range(actual_points):
+        start = i * chunk_size
+        end = start + chunk_size
+        chunk = y[start:end]
+
+        peaks_pos.append(float(np.max(chunk)))
+        peaks_neg.append(float(np.min(chunk)))
+        rms_values.append(float(np.sqrt(np.mean(chunk ** 2))))
+
+    return {
+        "peaks_positive": peaks_pos,
+        "peaks_negative": peaks_neg,
+        "rms": rms_values,
+        "sample_rate": None,  # Will be set by caller
+        "duration_sec": None,  # Will be set by caller
+    }
+
+
 import asyncio
-from fastapi import FastAPI, File, HTTPException, UploadFile, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -188,6 +246,17 @@ async def analyze_endpoint(
         is_drums = detection.is_drums
         is_guitar = detection.is_guitar
         actual_source_kind = detection.recommended_source_kind
+
+        # Mutual exclusion: skip guitar analysis if synth is clearly dominant
+        # This prevents synthwave from getting amp/cab recommendations
+        skip_guitar = (
+            detection.synth_confidence > 0.5 and
+            detection.guitar_confidence < 0.25
+        )
+        if skip_guitar:
+            is_guitar = False
+            logger.info("Skipping guitar analysis - synth dominant (synth: %.2f, guitar: %.2f)",
+                       detection.synth_confidence, detection.guitar_confidence)
 
         # Initialize result containers
         synth_result = None
@@ -325,6 +394,9 @@ async def analyze_endpoint(
                         "highest": midi_data.pitch_range[1],
                     },
                 }
+                # Include provenance if available
+                if midi_data.provenance:
+                    midi_result["provenance"] = midi_data.provenance
             except Exception as e:
                 logger.warning(f"MIDI extraction failed: {e}")
                 # Non-fatal - continue without MIDI
@@ -360,6 +432,10 @@ async def analyze_endpoint(
             "confidence": {
                 "mix": detection.mix_confidence,
                 "instrument": detection.instrument_confidence,
+                "drums": detection.drums_confidence,
+                "synth": detection.synth_confidence,
+                "bass": detection.bass_confidence,
+                "guitar": detection.guitar_confidence,
             },
         },
         "synth": synth_result,
@@ -419,6 +495,353 @@ async def analyze_endpoint(
     response["history_id"] = history_entry["id"]
 
     return JSONResponse(_convert_numpy_types(response))
+
+
+@app.post("/api/analyze-stream")
+async def analyze_stream_endpoint(
+    file: UploadFile = File(...),
+    source_kind: str = Form("auto"),
+    platform: str = Form("auto"),
+    extract_midi: str = Form("true"),  # Form data is string
+    fast_mode: str = Form("true"),  # Set to "false" for deep analysis with stem separation
+) -> StreamingResponse:
+    """Analyze with SSE progress streaming for real-time status updates.
+
+    Args:
+        fast_mode: If "true" (default), skip stem separation for speed.
+                   If "false", perform deep analysis with stem separation and MIDI extraction.
+    """
+    # Convert string form params to booleans
+    extract_midi_bool = extract_midi.lower() not in ("false", "0", "no")
+    fast_mode_bool = fast_mode.lower() not in ("false", "0", "no")
+
+    async def generate():
+        def send_progress(message: str, percent: int = 0):
+            return f"data: {json.dumps({'type': 'progress', 'message': message, 'percent': percent})}\n\n"
+
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix and suffix not in _ACCEPTED_SUFFIXES:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Unsupported file type {suffix}'})}\n\n"
+            return
+
+        yield send_progress("Uploading file...", 5)
+        await asyncio.sleep(0)
+
+        # Write to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".wav") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+
+        try:
+            yield send_progress("Loading audio...", 15)
+            await asyncio.sleep(0)
+
+            from tone_forge import synth_analyzer, auto_detect
+
+            yield send_progress("Detecting instrument types...", 25)
+            await asyncio.sleep(0)
+
+            detection = auto_detect.detect_audio_type(str(tmp_path))
+            is_synth = detection.is_synth
+            is_bass = detection.is_bass
+            is_drums = detection.is_drums
+            is_guitar = detection.is_guitar
+            actual_source_kind = detection.recommended_source_kind
+
+            # Mutual exclusion: skip guitar analysis if synth is clearly dominant
+            skip_guitar = (
+                detection.synth_confidence > 0.5 and
+                detection.guitar_confidence < 0.25
+            )
+            if skip_guitar:
+                is_guitar = False
+                logger.info("Skipping guitar analysis - synth dominant")
+
+            # Report detection
+            detected = []
+            if is_drums: detected.append("drums")
+            if is_synth: detected.append("synth")
+            if is_bass: detected.append("bass")
+            if is_guitar: detected.append("guitar")
+            yield send_progress(f"Detected: {', '.join(detected) or 'unknown'}", 30)
+            await asyncio.sleep(0)
+
+            # Deep analysis: stem separation and MIDI extraction
+            stem_paths = {}
+            stems_paths_output = {}
+            midi_stems = None
+            guitar_audio_path = tmp_path  # Default to original file
+
+            if not fast_mode_bool and detection.is_full_mix:
+                yield send_progress("Separating stems (GPU)...", 35)
+                await asyncio.sleep(0)
+
+                try:
+                    from tone_forge import stem_separator
+                    import concurrent.futures
+                    loop = asyncio.get_event_loop()
+
+                    def run_stem_separation():
+                        return stem_separator.separate_all_stems(
+                            str(tmp_path),
+                            model_name="htdemucs_6s",
+                        )
+
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        stem_paths = await loop.run_in_executor(pool, run_stem_separation)
+
+                    # Prepare output paths for client
+                    for stem_name, stem_path in stem_paths.items():
+                        stems_paths_output[stem_name] = str(stem_path)
+
+                    # Use guitar stem for guitar analysis if available
+                    if "guitar" in stem_paths:
+                        guitar_audio_path = Path(stem_paths["guitar"])
+                        actual_source_kind = "isolated_guitar"
+                    elif "other" in stem_paths:
+                        guitar_audio_path = Path(stem_paths["other"])
+                        actual_source_kind = "isolated_guitar"
+
+                    logger.info(f"Stem separation complete: {list(stem_paths.keys())}")
+
+                except Exception as e:
+                    logger.warning(f"Stem separation failed: {e}")
+
+                # Extract MIDI from stems
+                if stem_paths and extract_midi_bool:
+                    yield send_progress("Extracting MIDI from stems...", 38)
+                    await asyncio.sleep(0)
+
+                    try:
+                        from tone_forge.midi_extractor import extract_midi
+                        import concurrent.futures
+                        import base64
+
+                        midi_stems = {}
+                        midi_dir = Path(tempfile.mkdtemp(prefix="toneforge_midi_"))
+
+                        for stem_name, stem_path in stem_paths.items():
+                            if stem_name in ("drums", "bass", "guitar", "piano", "vocals", "other"):
+                                try:
+                                    def extract_stem_midi(path=stem_path, name=stem_name, out_dir=midi_dir):
+                                        result = extract_midi(str(path), stem_type=name)
+                                        if result and result.content:
+                                            # Save base64 content to file
+                                            midi_path = out_dir / f"{name}.mid"
+                                            midi_data = base64.b64decode(result.content)
+                                            with open(midi_path, 'wb') as f:
+                                                f.write(midi_data)
+                                            return str(midi_path)
+                                        return None
+
+                                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                                        midi_path = await loop.run_in_executor(pool, extract_stem_midi)
+
+                                    if midi_path:
+                                        midi_stems[stem_name] = midi_path
+                                except Exception as e:
+                                    logger.warning(f"MIDI extraction failed for {stem_name}: {e}")
+
+                        logger.info(f"MIDI extraction complete: {list(midi_stems.keys())}")
+
+                    except Exception as e:
+                        logger.warning(f"MIDI extraction failed: {e}")
+
+            synth_result = None
+            guitar_result = None
+            bass_result = None
+            drums_result = None
+
+            # Analyze each detected type
+            if is_drums:
+                yield send_progress("Analyzing drums...", 40)
+                await asyncio.sleep(0)
+                from tone_forge import drum_analyzer
+                drum_desc = drum_analyzer.analyze_drums(str(tmp_path))
+                drums_result = {
+                    "descriptor": _drum_descriptor_to_dict(drum_desc),
+                    "machine_match": drum_analyzer.match_drum_machine(drum_desc),
+                    "tweak_hints": _generate_drum_hints(drum_desc),
+                }
+
+            if is_synth:
+                yield send_progress("Analyzing synth parameters...", 50)
+                await asyncio.sleep(0)
+                synth_desc = synth_analyzer.analyze_synth(str(tmp_path))
+                synth_result = {
+                    "descriptor": synth_desc.to_dict(),
+                    "chain": [],
+                    "tweak_hints": _generate_synth_hints(synth_desc),
+                }
+
+            if is_bass:
+                yield send_progress("Analyzing bass tone...", 60)
+                await asyncio.sleep(0)
+                from tone_forge import bass_analyzer
+                # Use separated bass stem if available
+                bass_audio_path = stem_paths.get("bass", tmp_path)
+                bass_desc = bass_analyzer.analyze_bass(str(bass_audio_path))
+                bass_result = {
+                    "descriptor": _bass_descriptor_to_dict(bass_desc),
+                    "recommendations": _get_bass_recommendations(bass_desc),
+                    "tweak_hints": _generate_bass_hints(bass_desc),
+                }
+
+            if is_guitar:
+                yield send_progress("Analyzing guitar tone...", 70)
+                await asyncio.sleep(0)
+
+                if source_kind != "auto":
+                    actual_source_kind = source_kind
+
+                from tone_forge import analyzer
+                # Use separated guitar stem if available (set in stem separation above)
+                descriptor = analyzer.analyze(str(guitar_audio_path), source_kind=actual_source_kind)
+
+                yield send_progress("Generating recommendations...", 85)
+                await asyncio.sleep(0)
+
+                helix_card = helix_translator.translate(descriptor)
+                pedals_card = translator.translate_for_pedals(descriptor)
+
+                # Convert to list of dicts (same format as non-streaming endpoint)
+                helix_chain = [asdict(p) for p in helix_card.picks]
+                pedals_chain = [asdict(p) for p in pedals_card.picks]
+
+                guitar_result = {
+                    "descriptor": descriptor.to_dict(),
+                    "platforms": {
+                        "helix": helix_chain,
+                        "pedals": pedals_chain,
+                    },
+                    "tweak_hints": helix_card.tweak_hints,
+                }
+
+            # Also provide synth analysis for non-synth audio
+            if not is_synth and synth_result is None:
+                yield send_progress("Running synth parameter extraction...", 90)
+                await asyncio.sleep(0)
+                synth_desc = synth_analyzer.analyze_synth(str(tmp_path))
+                synth_result = {
+                    "descriptor": synth_desc.to_dict(),
+                    "chain": [],
+                    "tweak_hints": _generate_synth_hints(synth_desc),
+                }
+
+            yield send_progress("Finalizing...", 95)
+            await asyncio.sleep(0)
+
+            # Determine detected type priority
+            if drums_result:
+                detected_type = "drums"
+            elif bass_result:
+                detected_type = "bass"
+            elif is_synth:
+                detected_type = "synth"
+            else:
+                detected_type = "guitar"
+
+            # Build response
+            response = {
+                "filename": file.filename,
+                "source_kind": actual_source_kind,
+                "detected_type": detected_type,
+                "detection": {
+                    "is_full_mix": detection.is_full_mix,
+                    "is_synth": detection.is_synth,
+                    "is_bass": detection.is_bass,
+                    "is_drums": detection.is_drums,
+                    "is_guitar": detection.is_guitar,
+                    "summary": detection.summary,
+                    "confidence": {
+                        "mix": detection.mix_confidence,
+                        "instrument": detection.instrument_confidence,
+                        "drums": detection.drums_confidence,
+                        "synth": detection.synth_confidence,
+                        "bass": detection.bass_confidence,
+                        "guitar": detection.guitar_confidence,
+                    },
+                },
+            }
+
+            if guitar_result:
+                response["guitar"] = guitar_result
+            if synth_result:
+                response["synth"] = synth_result
+            if bass_result:
+                response["bass"] = bass_result
+            if drums_result:
+                response["drums"] = drums_result
+
+            # Add deep analysis data (stem paths and MIDI)
+            if stems_paths_output:
+                response["stems_paths"] = stems_paths_output
+                response["deep_analysis"] = True
+            if midi_stems:
+                response["midi_stems"] = midi_stems
+
+            # Set primary descriptor/chain based on detected type
+            if detected_type == "drums" and drums_result:
+                response["descriptor"] = drums_result["descriptor"]
+                response["chain"] = drums_result.get("machine_match", {})
+                response["tweak_hints"] = drums_result["tweak_hints"]
+            elif detected_type == "bass" and bass_result:
+                response["descriptor"] = bass_result["descriptor"]
+                response["chain"] = bass_result.get("recommendations", [])
+                response["tweak_hints"] = bass_result["tweak_hints"]
+            elif detected_type == "synth" and synth_result:
+                response["descriptor"] = synth_result["descriptor"]
+                response["chain"] = synth_result.get("chain", [])
+                response["tweak_hints"] = synth_result["tweak_hints"]
+            elif guitar_result:
+                response["descriptor"] = guitar_result["descriptor"]
+                response["chain"] = guitar_result["platforms"]["helix"]["picks"]
+                response["tweak_hints"] = guitar_result.get("tweak_hints", [])
+
+            # Get duration
+            duration = None
+            if guitar_result:
+                duration = guitar_result["descriptor"].get("source", {}).get("duration_sec")
+            elif synth_result:
+                duration = synth_result["descriptor"].get("duration_sec")
+            elif bass_result:
+                duration = bass_result["descriptor"].get("source", {}).get("duration_sec")
+            elif drums_result:
+                duration = drums_result["descriptor"].get("source", {}).get("duration_sec")
+
+            # Add to history
+            history_entry = _add_to_history({
+                "name": file.filename or "Uploaded file",
+                "detected_type": detected_type,
+                "summary": response.get("detection", {}).get("summary", ""),
+                "amp_family": guitar_result["descriptor"].get("amp", {}).get("family") if guitar_result else None,
+                "gain": guitar_result["descriptor"].get("amp", {}).get("gain") if guitar_result else None,
+                "duration": duration,
+            }, full_result=response)
+
+            response["history_id"] = history_entry["id"]
+
+            yield send_progress("Analysis complete", 100)
+            await asyncio.sleep(0)
+
+            # Send final result
+            yield f"data: {json.dumps({'type': 'result', 'data': _convert_numpy_types(response)})}\n\n"
+
+        except Exception as e:
+            logger.exception("Stream analysis failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _generate_synth_hints(desc) -> list[str]:
@@ -691,36 +1114,97 @@ async def health() -> dict:
     return {"status": "ok", "version": app.version}
 
 
-@app.get("/admin")
+@app.get("/studio")
 async def admin_page():
     """Serve the admin UI."""
-    return FileResponse("static/admin.html")
+    return FileResponse("static/studio.html")
+
+
+@app.get("/api/admin/serve-file")
+async def admin_serve_file(
+    path: str = Query(..., description="Path to the file to serve"),
+    download: bool = Query(False, description="Force download instead of streaming"),
+):
+    """Serve stem files or other generated files for playback/download.
+
+    Security: Only serves files from allowed directories (temp dirs, demucs output).
+    """
+    from pathlib import Path
+    import os
+
+    file_path = Path(path)
+
+    # Security: only allow serving from specific directories
+    allowed_prefixes = [
+        "/tmp/",
+        "/private/tmp/",  # macOS /tmp symlink target
+        "/var/folders/",  # macOS temp
+        "/private/var/folders/",  # macOS /var symlink target
+        str(Path.home() / ".cache"),
+    ]
+
+    path_str = str(file_path.resolve())
+    if not any(path_str.startswith(prefix) for prefix in allowed_prefixes):
+        raise HTTPException(status_code=403, detail="Access denied: file not in allowed directory")
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Determine content type
+    suffix = file_path.suffix.lower()
+    content_types = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".flac": "audio/flac",
+        ".mid": "audio/midi",
+        ".midi": "audio/midi",
+    }
+    content_type = content_types.get(suffix, "application/octet-stream")
+
+    if download:
+        return FileResponse(
+            path=str(file_path),
+            filename=file_path.name,
+            media_type="application/octet-stream",  # Force download, not playback
+            headers={"Content-Disposition": f'attachment; filename="{file_path.name}"'},
+        )
+    else:
+        return FileResponse(
+            path=str(file_path),
+            media_type=content_type,
+        )
 
 
 @app.post("/api/admin/analyze-quality")
 async def admin_analyze_quality(
     file: UploadFile = File(...),
+    quick: bool = False,
 ) -> JSONResponse:
     """Deep quality analysis for admin view.
 
     Returns detailed stem quality metrics, confidence maps,
     MIDI pass statistics, and archetype information.
     """
+    logger.info(f"Admin analyze-quality: received file {file.filename}")
     suffix = Path(file.filename or "").suffix.lower()
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".wav") as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = Path(tmp.name)
 
+    logger.info(f"Admin analyze-quality: saved to {tmp_path}, size={tmp_path.stat().st_size} bytes")
+
     try:
         import librosa
         import time
 
         start_time = time.time()
+        logger.info("Admin analyze-quality: loading audio...")
 
         # Load audio
         audio, sr = librosa.load(str(tmp_path), sr=22050, mono=True)
         load_time = time.time() - start_time
+        logger.info(f"Admin analyze-quality: loaded {len(audio)/sr:.1f}s audio in {load_time*1000:.0f}ms")
 
         result = {
             "filename": file.filename,
@@ -735,13 +1219,19 @@ async def admin_analyze_quality(
 
         if _RECONSTRUCTION_AVAILABLE:
             analysis_start = time.time()
+            logger.info("Admin analyze-quality: starting reconstruction analysis...")
 
-            # Run full reconstruction analysis
-            config = ReconstructionConfig(
-                extract_midi=False,
-                analyze_continuity=True,  # Include continuity for admin
-            )
+            # Run reconstruction analysis
+            if quick:
+                config = ReconstructionConfig.fast()
+                config.extract_midi = False
+            else:
+                config = ReconstructionConfig(
+                    extract_midi=False,
+                    analyze_continuity=False,
+                )
             pipeline = get_pipeline(config)
+            logger.info("Admin analyze-quality: running analyze_only...")
             analysis, quality_report = pipeline.analyze_only(
                 audio=audio,
                 sr=sr,
@@ -874,6 +1364,702 @@ async def admin_analyze_quality(
         tmp_path.unlink(missing_ok=True)
 
 
+@app.post("/api/admin/analyze-deep")
+async def admin_analyze_deep(
+    file: UploadFile = File(...),
+) -> StreamingResponse:
+    """Deep GPU-powered analysis with live progress streaming via SSE.
+
+    Performs:
+    1. Stem separation (demucs - GPU)
+    2. Quality analysis (CPU)
+    3. MIDI extraction (basic_pitch - GPU)
+
+    Returns Server-Sent Events with progress updates.
+    """
+    import asyncio
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    suffix = Path(file.filename or "").suffix.lower()
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".wav") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    # Thread pool for CPU/GPU bound operations
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    async def event_stream():
+        """Generate SSE events during processing."""
+        loop = asyncio.get_event_loop()
+
+        def sse_event(event_type: str, data: dict) -> str:
+            return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+        try:
+            yield sse_event("start", {
+                "filename": file.filename,
+                "file_size": tmp_path.stat().st_size,
+                "timestamp": datetime.now().isoformat(),
+            })
+            await asyncio.sleep(0)  # Flush
+
+            # Timing accumulator for profiling
+            stage_timings = {}
+            pipeline_start = time.time()
+
+            # Stage 1: Load audio
+            stage_start = time.time()
+            yield sse_event("progress", {
+                "stage": "loading",
+                "message": "Loading audio file...",
+                "percent": 5,
+            })
+            await asyncio.sleep(0)
+
+            import librosa
+
+            def load_audio():
+                return librosa.load(str(tmp_path), sr=22050, mono=True)
+
+            audio, sr = await loop.run_in_executor(executor, load_audio)
+            duration_sec = len(audio) / sr
+            stage_timings["loading"] = {"duration_ms": (time.time() - stage_start) * 1000}
+
+            # Compute waveform peaks for visualization
+            waveform_data = _compute_waveform_peaks(audio, num_points=1000)
+            waveform_data["sample_rate"] = int(sr)
+            waveform_data["duration_sec"] = duration_sec
+
+            yield sse_event("progress", {
+                "stage": "loading",
+                "message": f"Loaded {duration_sec:.1f}s audio",
+                "percent": 10,
+                "duration_sec": duration_sec,
+                "stage_duration_ms": stage_timings["loading"]["duration_ms"],
+            })
+            await asyncio.sleep(0)
+
+            # Stage 2: Stem separation (GPU)
+            stage_start = time.time()
+            yield sse_event("progress", {
+                "stage": "stem_separation",
+                "message": "Starting stem separation (GPU)...",
+                "percent": 15,
+            })
+            await asyncio.sleep(0)
+
+            stem_result = None
+            try:
+                from tone_forge.stem_separator import separate_all_stems, is_available
+                if is_available():
+                    yield sse_event("progress", {
+                        "stage": "stem_separation",
+                        "message": "Running Demucs model on GPU...",
+                        "percent": 20,
+                    })
+                    await asyncio.sleep(0)
+
+                    def run_stem_sep():
+                        # Use 6-stem model for better separation (guitar, piano, other, drums, bass, vocals)
+                        return separate_all_stems(tmp_path, model_name="htdemucs_6s")
+
+                    stem_paths = await loop.run_in_executor(executor, run_stem_sep)
+                    stem_result = {name: str(path) for name, path in stem_paths.items()}
+                    stage_timings["stem_separation"] = {
+                        "duration_ms": (time.time() - stage_start) * 1000,
+                        "gpu_used": True,
+                    }
+
+                    yield sse_event("progress", {
+                        "stage": "stem_separation",
+                        "message": f"Separated {len(stem_paths)} stems",
+                        "percent": 40,
+                        "stems": list(stem_paths.keys()),
+                        "stage_duration_ms": stage_timings["stem_separation"]["duration_ms"],
+                    })
+                    await asyncio.sleep(0)
+                else:
+                    stage_timings["stem_separation"] = {"duration_ms": 0, "skipped": True}
+                    yield sse_event("progress", {
+                        "stage": "stem_separation",
+                        "message": "Demucs not available, skipping stem separation",
+                        "percent": 40,
+                        "skipped": True,
+                    })
+                    await asyncio.sleep(0)
+            except Exception as e:
+                stage_timings["stem_separation"] = {
+                    "duration_ms": (time.time() - stage_start) * 1000,
+                    "error": str(e),
+                }
+                yield sse_event("progress", {
+                    "stage": "stem_separation",
+                    "message": f"Stem separation failed: {e}",
+                    "percent": 40,
+                    "error": str(e),
+                })
+                await asyncio.sleep(0)
+
+            # Stage 3: Quality analysis (broken into sub-steps for progress)
+            quality_result = {}
+            analysis_results = {}
+            quality_report = None
+
+            # Load guitar stem if available for better quality analysis
+            guitar_audio = audio  # Default to original mix
+            guitar_sr = sr
+            if stem_result and "guitar" in stem_result:
+                yield sse_event("progress", {
+                    "stage": "loading_stem",
+                    "message": "Loading separated guitar stem for analysis...",
+                    "percent": 42,
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    def load_guitar_stem():
+                        return librosa.load(stem_result["guitar"], sr=22050, mono=True)
+                    guitar_audio, guitar_sr = await loop.run_in_executor(executor, load_guitar_stem)
+                except Exception as e:
+                    logger.warning(f"Failed to load guitar stem, using original mix: {e}")
+
+            if _RECONSTRUCTION_AVAILABLE:
+                from tone_forge.reconstruction import (
+                    get_analyzer as get_stem_analyzer,
+                    get_detector as get_contamination_detector,
+                    get_artifact_detector,
+                    get_confidence_mapper,
+                    get_role_classifier,
+                    get_continuity_analyzer,
+                    get_quality_reporter,
+                )
+
+                # Step 3a: Stem quality
+                stage_start = time.time()
+                yield sse_event("progress", {
+                    "stage": "stem_quality",
+                    "message": "Analyzing stem quality...",
+                    "percent": 45,
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    def run_stem_quality():
+                        return get_stem_analyzer().analyze(guitar_audio, guitar_sr, "guitar")
+                    analysis_results["stem_quality"] = await loop.run_in_executor(executor, run_stem_quality)
+                    stage_timings["stem_quality"] = {"duration_ms": (time.time() - stage_start) * 1000}
+                except Exception as e:
+                    logger.warning(f"Stem quality failed: {e}")
+                    stage_timings["stem_quality"] = {"duration_ms": (time.time() - stage_start) * 1000, "error": str(e)}
+
+                # Step 3b: Contamination
+                stage_start = time.time()
+                yield sse_event("progress", {
+                    "stage": "contamination",
+                    "message": "Detecting contamination...",
+                    "percent": 48,
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    def run_contamination():
+                        return get_contamination_detector().detect(guitar_audio, guitar_sr, "guitar")
+                    analysis_results["contamination"] = await loop.run_in_executor(executor, run_contamination)
+                    stage_timings["contamination"] = {"duration_ms": (time.time() - stage_start) * 1000}
+                except Exception as e:
+                    logger.warning(f"Contamination detection failed: {e}")
+                    stage_timings["contamination"] = {"duration_ms": (time.time() - stage_start) * 1000, "error": str(e)}
+
+                # Step 3c: Artifacts
+                stage_start = time.time()
+                yield sse_event("progress", {
+                    "stage": "artifacts",
+                    "message": "Detecting artifacts...",
+                    "percent": 50,
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    def run_artifacts():
+                        return get_artifact_detector().detect(guitar_audio, guitar_sr, "guitar")
+                    analysis_results["artifacts"] = await loop.run_in_executor(executor, run_artifacts)
+                    stage_timings["artifacts"] = {"duration_ms": (time.time() - stage_start) * 1000}
+                except Exception as e:
+                    logger.warning(f"Artifact detection failed: {e}")
+                    stage_timings["artifacts"] = {"duration_ms": (time.time() - stage_start) * 1000, "error": str(e)}
+
+                # Step 3d: Role classification
+                stage_start = time.time()
+                yield sse_event("progress", {
+                    "stage": "role",
+                    "message": "Classifying role...",
+                    "percent": 52,
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    def run_role():
+                        return get_role_classifier().classify(guitar_audio, guitar_sr, "guitar")
+                    analysis_results["role"] = await loop.run_in_executor(executor, run_role)
+                    stage_timings["role"] = {"duration_ms": (time.time() - stage_start) * 1000}
+                except Exception as e:
+                    logger.warning(f"Role classification failed: {e}")
+                    stage_timings["role"] = {"duration_ms": (time.time() - stage_start) * 1000, "error": str(e)}
+
+                # Step 3e: Continuity analysis (the slow one)
+                stage_start = time.time()
+                yield sse_event("progress", {
+                    "stage": "continuity",
+                    "message": "Analyzing temporal continuity...",
+                    "percent": 54,
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    def run_continuity():
+                        return get_continuity_analyzer().analyze(guitar_audio, guitar_sr)
+                    analysis_results["continuity"] = await loop.run_in_executor(executor, run_continuity)
+                    stage_timings["continuity"] = {"duration_ms": (time.time() - stage_start) * 1000}
+
+                    yield sse_event("progress", {
+                        "stage": "continuity",
+                        "message": "Continuity analysis complete",
+                        "percent": 58,
+                        "stage_duration_ms": stage_timings["continuity"]["duration_ms"],
+                    })
+                    await asyncio.sleep(0)
+                except Exception as e:
+                    logger.warning(f"Continuity analysis failed: {e}")
+                    stage_timings["continuity"] = {"duration_ms": (time.time() - stage_start) * 1000, "error": str(e)}
+                    yield sse_event("progress", {
+                        "stage": "continuity",
+                        "message": f"Continuity analysis failed: {e}",
+                        "percent": 58,
+                        "error": str(e),
+                    })
+                    await asyncio.sleep(0)
+
+                # Step 3f: Confidence map
+                stage_start = time.time()
+                yield sse_event("progress", {
+                    "stage": "confidence_map",
+                    "message": "Building confidence map...",
+                    "percent": 59,
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    def run_confidence_map():
+                        return get_confidence_mapper().build_map(
+                            audio, sr, "guitar",
+                            stem_quality=analysis_results.get("stem_quality"),
+                            contamination=analysis_results.get("contamination"),
+                            artifacts=analysis_results.get("artifacts"),
+                        )
+                    analysis_results["confidence_map"] = await loop.run_in_executor(executor, run_confidence_map)
+                    stage_timings["confidence_map"] = {"duration_ms": (time.time() - stage_start) * 1000}
+                except Exception as e:
+                    logger.warning(f"Confidence map failed: {e}")
+                    stage_timings["confidence_map"] = {"duration_ms": (time.time() - stage_start) * 1000, "error": str(e)}
+
+                # Step 3g: Quality report
+                stage_start = time.time()
+                yield sse_event("progress", {
+                    "stage": "quality_report",
+                    "message": "Generating quality report...",
+                    "percent": 60,
+                })
+                await asyncio.sleep(0)
+
+                try:
+                    reporter = get_quality_reporter()
+                    quality_report = reporter.generate_report(
+                        stem_type="guitar",
+                        stem_quality=analysis_results.get("stem_quality"),
+                        contamination=analysis_results.get("contamination"),
+                        artifacts=analysis_results.get("artifacts"),
+                        confidence_map=analysis_results.get("confidence_map"),
+                    )
+                    stage_timings["quality_report"] = {"duration_ms": (time.time() - stage_start) * 1000}
+                except Exception as e:
+                    logger.warning(f"Quality report failed: {e}")
+                    stage_timings["quality_report"] = {"duration_ms": (time.time() - stage_start) * 1000, "error": str(e)}
+
+                # Collect results
+                if analysis_results.get("stem_quality"):
+                    sq = analysis_results["stem_quality"]
+                    quality_result["stem_quality"] = {
+                        "overall_quality": getattr(sq, 'overall_quality', None),
+                        "contamination_score": getattr(sq, 'contamination_score', None),
+                        "transient_integrity": getattr(sq, 'transient_integrity', None),
+                        "harmonic_purity": getattr(sq, 'harmonic_purity', None),
+                    }
+
+                if analysis_results.get("contamination"):
+                    ct = analysis_results["contamination"]
+                    # Extract contamination regions for waveform overlay
+                    contamination_regions = []
+                    for e in getattr(ct, 'events', []):
+                        contamination_regions.append({
+                            "type": e.contamination_type.value if hasattr(e.contamination_type, 'value') else str(e.contamination_type),
+                            "start": e.time_start,
+                            "end": e.time_end,
+                            "severity": e.severity,
+                            "confidence": e.confidence,
+                            "source": e.source_stem,
+                        })
+                    quality_result["contamination"] = {
+                        "overall_score": getattr(ct, 'overall_contamination', None),
+                        "drum_bleed": getattr(ct, 'drum_bleed', None),
+                        "vocal_bleed": getattr(ct, 'vocal_bleed', None),
+                        "regions": contamination_regions,  # For waveform overlay
+                    }
+
+                if analysis_results.get("continuity"):
+                    cont = analysis_results["continuity"]
+                    quality_result["continuity"] = {
+                        "sustained_ratio": getattr(cont, 'sustained_ratio', None),
+                        "average_stability": getattr(cont, 'average_stability', None),
+                        "phrase_count": getattr(cont, 'phrase_count', None),
+                        "dominant_envelope": getattr(cont, 'dominant_envelope', None),
+                    }
+                    if hasattr(quality_result["continuity"]["dominant_envelope"], 'value'):
+                        quality_result["continuity"]["dominant_envelope"] = quality_result["continuity"]["dominant_envelope"].value
+
+                if analysis_results.get("artifacts"):
+                    art = analysis_results["artifacts"]
+                    # Extract artifact regions for waveform overlay
+                    artifact_regions = []
+                    for a in getattr(art, 'artifacts', []):
+                        artifact_regions.append({
+                            "type": a.artifact_type.value if hasattr(a.artifact_type, 'value') else str(a.artifact_type),
+                            "start": a.time_start,
+                            "end": a.time_end,
+                            "severity": a.severity,
+                            "confidence": a.confidence,
+                        })
+                    quality_result["artifacts"] = {
+                        "overall_score": getattr(art, 'overall_artifact_score', None),
+                        "artifact_count": getattr(art, 'artifact_count', None),
+                        "clipping_detected": any(
+                            a.artifact_type.value == "clipping"
+                            for a in getattr(art, 'artifacts', [])
+                        ),
+                        "noise_floor_db": None,  # Not directly available
+                        "dc_offset": None,
+                        "phase_issues": any(
+                            a.artifact_type.value == "phase_artifact"
+                            for a in getattr(art, 'artifacts', [])
+                        ),
+                        "regions": artifact_regions,  # For waveform overlay
+                    }
+
+                if analysis_results.get("role"):
+                    role = analysis_results["role"]
+                    quality_result["role"] = {
+                        "primary_role": role.primary_role.value if hasattr(role.primary_role, 'value') else str(role.primary_role),
+                        "confidence": role.confidence,
+                        "spectral_profile": role.spectral_profile.value if hasattr(role.spectral_profile, 'value') else str(role.spectral_profile),
+                        "temporal_profile": role.temporal_profile.value if hasattr(role.temporal_profile, 'value') else str(role.temporal_profile),
+                    }
+
+                if quality_report:
+                    quality_result["quality_report"] = {
+                        "overall_quality": quality_report.overall_quality,
+                        "overall_confidence": quality_report.overall_confidence,
+                        "should_proceed": quality_report.should_proceed,
+                        "warning_count": quality_report.total_warnings,
+                        "warnings": [
+                            {
+                                "level": w.level.value if hasattr(w.level, 'value') else str(w.level),
+                                "category": w.category.value if hasattr(w.category, 'value') else str(w.category),
+                                "message": w.message,
+                                "recommendation": w.recommendation,
+                            }
+                            for w in quality_report.warnings
+                        ],
+                    }
+
+            # Create a mock analysis object for downstream use
+            class AnalysisHolder:
+                pass
+            analysis = AnalysisHolder()
+            analysis.stem_quality = analysis_results.get("stem_quality")
+            analysis.contamination = analysis_results.get("contamination")
+
+            # Stage 4: Per-stem MIDI extraction (GPU)
+            # Extract MIDI from each separated stem for cleaner results
+            stage_start = time.time()
+            yield sse_event("progress", {
+                "stage": "midi_extraction",
+                "message": "Starting per-stem MIDI extraction...",
+                "percent": 65,
+            })
+            await asyncio.sleep(0)
+
+            midi_result = {}
+            midi_stems = {}
+            try:
+                from tone_forge import midi_extractor
+
+                # Define which stems to extract MIDI from and their display names
+                # (stem_key, display_label, is_drums, stem_type_for_profile)
+                stem_configs = [
+                    ("drums", "Drums", True, "drums"),
+                    ("bass", "Bass", False, "bass"),
+                    ("guitar", "Guitar", False, "lead"),
+                    ("piano", "Keys", False, "pad"),
+                    ("other", "Synth", False, "synth"),
+                    ("vocals", "Vocals", False, "vocals"),
+                ]
+
+                if stem_result:
+                    # Extract MIDI from each available stem
+                    available_stems = [cfg for cfg in stem_configs if cfg[0] in stem_result]
+                    total_stems = len(available_stems)
+
+                    for idx, (stem_key, stem_label, is_drums, stem_type) in enumerate(available_stems):
+                        progress = 65 + int(((idx + 1) / total_stems) * 20)  # 65-85%
+                        yield sse_event("progress", {
+                            "stage": "midi_extraction",
+                            "message": f"Extracting {stem_label} MIDI ({idx + 1}/{total_stems})...",
+                            "percent": progress,
+                        })
+                        await asyncio.sleep(0)
+
+                        stem_path = stem_result[stem_key]
+                        display_name = file.filename or 'Track'
+
+                        try:
+                            if is_drums:
+                                def extract_fn(path=stem_path, name=display_name, label=stem_label):
+                                    return midi_extractor.extract_drum_midi(
+                                        str(path),
+                                        preset_name=f"{name} - {label}",
+                                    )
+                            else:
+                                def extract_fn(path=stem_path, name=display_name, label=stem_label, stype=stem_type):
+                                    return midi_extractor.extract_midi(
+                                        str(path),
+                                        preset_name=f"{name} - {label}",
+                                        stem_type=stype,
+                                    )
+
+                            stem_midi = await loop.run_in_executor(executor, extract_fn)
+
+                            # Only include stems that have notes
+                            if stem_midi.note_count > 0:
+                                stem_midi_data = {
+                                    "label": stem_label,
+                                    "filename": stem_midi.filename,
+                                    "content": stem_midi.content,
+                                    "note_count": stem_midi.note_count,
+                                    "duration_seconds": stem_midi.duration_seconds,
+                                    "tempo_bpm": stem_midi.tempo_bpm,
+                                    "pitch_range": {
+                                        "lowest": int(stem_midi.pitch_range[0]),
+                                        "highest": int(stem_midi.pitch_range[1]),
+                                    },
+                                }
+                                if stem_midi.provenance:
+                                    stem_midi_data["provenance"] = stem_midi.provenance
+                                midi_stems[stem_key] = stem_midi_data
+                                logger.info(f"{stem_label} MIDI: {stem_midi.note_count} notes")
+                        except Exception as e:
+                            logger.warning(f"MIDI extraction failed for {stem_label}: {e}")
+
+                    # Summary
+                    total_notes = sum(s.get("note_count", 0) for s in midi_stems.values())
+                    stem_summary = ", ".join(f"{v['label']}" for v in midi_stems.values())
+                    yield sse_event("progress", {
+                        "stage": "midi_extraction",
+                        "message": f"MIDI extracted: {total_notes} notes ({stem_summary})",
+                        "percent": 85,
+                    })
+                    await asyncio.sleep(0)
+
+                    # Set midi_result for backward compatibility (priority: guitar > piano > other > bass)
+                    for stem_key in ["guitar", "piano", "other", "bass", "vocals"]:
+                        if stem_key in midi_stems:
+                            midi_result = midi_stems[stem_key]
+                            break
+
+                stage_timings["midi_extraction"] = {"duration_ms": (time.time() - stage_start) * 1000, "gpu_used": True}
+
+            except Exception as e:
+                stage_timings["midi_extraction"] = {"duration_ms": (time.time() - stage_start) * 1000, "error": str(e)}
+                yield sse_event("progress", {
+                    "stage": "midi_extraction",
+                    "message": f"MIDI extraction error: {e}",
+                    "percent": 85,
+                    "error": str(e),
+                })
+                await asyncio.sleep(0)
+
+            # Stage 5: Tone analysis
+            stage_start = time.time()
+            # Use separated guitar stem if available for better accuracy
+            tone_audio_path = stem_result.get("guitar", str(tmp_path)) if stem_result else str(tmp_path)
+            tone_source_kind = "isolated_guitar" if stem_result and "guitar" in stem_result else "full_mix"
+
+            yield sse_event("progress", {
+                "stage": "tone_analysis",
+                "message": f"Running tone analysis on {'guitar stem' if tone_source_kind == 'isolated_guitar' else 'original mix'}...",
+                "percent": 90,
+            })
+            await asyncio.sleep(0)
+
+            tone_result = {}
+            try:
+                def run_tone_analysis():
+                    return analyzer.analyze(
+                        tone_audio_path,
+                        source_kind=tone_source_kind,
+                        stem_quality=analysis.stem_quality if analysis else None,
+                        contamination=analysis.contamination if analysis else None,
+                        capture_reasoning=True,  # Enable explainability
+                    )
+
+                descriptor = await loop.run_in_executor(executor, run_tone_analysis)
+
+                tone_result = {
+                    "amp_family": descriptor.amp.family,
+                    "gain": descriptor.amp.gain,
+                    "amp": {
+                        "family": descriptor.amp.family,
+                        "gain": descriptor.amp.gain,
+                        "voicing": {
+                            "bass": descriptor.amp.voicing.bass,
+                            "mid": descriptor.amp.voicing.mid,
+                            "treble": descriptor.amp.voicing.treble,
+                            "presence": descriptor.amp.voicing.presence,
+                            "mid_scoop": descriptor.amp.voicing.mid_scoop,
+                        },
+                        "alternates": descriptor.amp.alternates,
+                    },
+                    "cab": {
+                        "configuration": descriptor.cab.configuration,
+                        "speaker_character": descriptor.cab.speaker_character,
+                        "mic_position": descriptor.cab.mic_position,
+                    },
+                    "effects": {
+                        "overdrive": {
+                            "style": descriptor.effects.overdrive_pedal.style if descriptor.effects.overdrive_pedal else None,
+                            "drive": descriptor.effects.overdrive_pedal.drive if descriptor.effects.overdrive_pedal else 0,
+                        } if descriptor.effects.overdrive_pedal else None,
+                        "compressor": {
+                            "amount": descriptor.effects.compressor.amount if descriptor.effects.compressor else 0,
+                            "character": descriptor.effects.compressor.character if descriptor.effects.compressor else None,
+                        } if descriptor.effects.compressor else None,
+                        "modulation": {
+                            "type": descriptor.effects.modulation.type if descriptor.effects.modulation else "none",
+                            "rate": descriptor.effects.modulation.rate if descriptor.effects.modulation else 0,
+                            "depth": descriptor.effects.modulation.depth if descriptor.effects.modulation else 0,
+                        } if descriptor.effects.modulation else None,
+                        "delay": {
+                            "type": descriptor.effects.delay.type if descriptor.effects.delay else "none",
+                            "time_ms": descriptor.effects.delay.time_ms if descriptor.effects.delay else 0,
+                            "feedback": descriptor.effects.delay.feedback if descriptor.effects.delay else 0,
+                            "mix": descriptor.effects.delay.mix if descriptor.effects.delay else 0,
+                        } if descriptor.effects.delay else None,
+                        "reverb": {
+                            "type": descriptor.effects.reverb.type if descriptor.effects.reverb else "none",
+                            "size": descriptor.effects.reverb.size if descriptor.effects.reverb else 0,
+                            "mix": descriptor.effects.reverb.mix if descriptor.effects.reverb else 0,
+                        } if descriptor.effects.reverb else None,
+                    },
+                    "guitar": {
+                        "pickup_brightness": descriptor.guitar.pickup_brightness,
+                        "playing_style": descriptor.guitar.playing_style,
+                        "estimated_tuning": descriptor.guitar.estimated_tuning,
+                    },
+                    "confidence": {
+                        "amp_family": descriptor.confidence.amp_family,
+                        "gain": descriptor.confidence.gain,
+                        "cab": descriptor.confidence.cab,
+                        "effects": descriptor.confidence.effects,
+                    },
+                    "reasoning": descriptor.reasoning.to_dict() if descriptor.reasoning else None,
+                }
+                stage_timings["tone_analysis"] = {"duration_ms": (time.time() - stage_start) * 1000}
+            except Exception as e:
+                stage_timings["tone_analysis"] = {"duration_ms": (time.time() - stage_start) * 1000, "error": str(e)}
+                yield sse_event("progress", {
+                    "stage": "tone_analysis",
+                    "message": f"Tone analysis error: {e}",
+                    "percent": 95,
+                    "error": str(e),
+                })
+                await asyncio.sleep(0)
+
+            # Complete
+            total_time = time.time() - pipeline_start
+
+            # Calculate audio processing ratio
+            audio_ratio = total_time / duration_sec if duration_sec > 0 else 0
+
+            # Build final response
+            final_response = _convert_numpy_types({
+                "success": True,
+                "total_time_sec": total_time,
+                "duration_sec": duration_sec,
+                "sample_rate": sr,
+                "filename": file.filename or "Unknown",
+                "stems": stem_result,
+                "quality": quality_result,
+                "midi": midi_result,
+                "midi_stems": midi_stems,  # Per-stem MIDI for export
+                "tone": tone_result,
+                "waveform": waveform_data,
+                "profiling": {
+                    "total_ms": total_time * 1000,
+                    "audio_duration_sec": duration_sec,
+                    "processing_ratio": audio_ratio,  # time to process / audio duration
+                    "stages": stage_timings,
+                },
+            })
+
+            # Save to history
+            history_entry = _add_to_history({
+                "name": file.filename or "Admin upload",
+                "detected_type": "guitar",
+                "summary": f"Deep analysis: {tone_result.get('amp_family', 'unknown')} amp",
+                "amp_family": tone_result.get("amp_family"),
+                "gain": tone_result.get("gain"),
+                "duration": duration_sec,
+                "deep_analysis": True,
+                "has_quality_data": bool(quality_result),
+                "has_reasoning": bool(tone_result.get("reasoning")),
+            }, full_result=final_response)
+
+            # Add history ID and admin URL to response
+            final_response["history_id"] = history_entry["id"]
+            final_response["admin_url"] = f"/studio?analysis={history_entry['id']}"
+
+            yield sse_event("complete", final_response)
+
+        except Exception as e:
+            logger.exception("Deep analysis failed")
+            yield sse_event("error", {
+                "message": str(e),
+            })
+        finally:
+            tmp_path.unlink(missing_ok=True)
+            executor.shutdown(wait=False)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/api/history")
 async def get_history(
     q: Optional[str] = Query(None, description="Search query"),
@@ -909,6 +2095,32 @@ async def delete_history_entry(entry_id: str) -> JSONResponse:
     history = [e for e in history if e.get("id") != entry_id]
     _save_history(history)
     return JSONResponse({"status": "deleted"})
+
+
+@app.post("/api/history/save")
+async def save_to_history(request: Request) -> JSONResponse:
+    """Save a local engine result to history for admin access."""
+    data = await request.json()
+    filename = data.get("filename", "Unknown")
+    result = data.get("result", {})
+
+    # Extract metadata from the result
+    detected_type = result.get("detected_type", "unknown")
+    detection = result.get("detection", {})
+    guitar = result.get("guitar", {})
+    descriptor = guitar.get("descriptor", {}) if guitar else {}
+
+    entry = _add_to_history({
+        "filename": filename,
+        "detected_type": detected_type,
+        "summary": detection.get("summary", ""),
+        "amp_family": descriptor.get("amp", {}).get("family") if descriptor else None,
+        "gain": descriptor.get("amp", {}).get("gain") if descriptor else None,
+        "duration": descriptor.get("source", {}).get("duration_sec") if descriptor else None,
+        "source": "local_engine",
+    }, full_result=result)
+
+    return JSONResponse({"id": entry["id"], "status": "saved"})
 
 
 @app.get("/api/history/{entry_id}")
@@ -1185,9 +2397,13 @@ async def generate_tone_preview(request: Request) -> JSONResponse:
 
     try:
         body = await request.json()
-        descriptor = body.get("descriptor", {})
+        descriptor = body.get("descriptor")
         midi_content = body.get("midi_content")
         preset_type = body.get("preset_type", "guitar")
+
+        # Validate descriptor
+        if not descriptor:
+            raise HTTPException(status_code=400, detail="No tone descriptor provided for preview")
 
         # Generate preview
         result = tone_preview.generate_preview_response(
@@ -1431,6 +2647,51 @@ async def download_local_engine():
     return HTMLResponse(content=html)
 
 
+@app.post("/api/local-engine/start")
+async def start_local_engine():
+    """
+    Start the local GPU engine process.
+
+    Spawns the local engine server as a background process.
+    Returns immediately; use /health check on port 7777 to verify it started.
+    """
+    import subprocess
+    import sys
+
+    # Check if already running
+    try:
+        import httpx
+        resp = httpx.get("http://127.0.0.1:7777/health", timeout=1.0)
+        if resp.status_code == 200:
+            return JSONResponse({"status": "already_running", "message": "Local engine is already running"})
+    except Exception:
+        pass  # Not running, proceed to start
+
+    # Start the local engine
+    backend_dir = Path(__file__).parent
+    server_script = backend_dir / "local_engine" / "server.py"
+
+    if not server_script.exists():
+        raise HTTPException(status_code=404, detail="Local engine server.py not found")
+
+    try:
+        # Use nohup to keep it running after this process ends
+        process = subprocess.Popen(
+            [sys.executable, str(server_script)],
+            cwd=str(backend_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,  # Detach from parent process
+        )
+        return JSONResponse({
+            "status": "started",
+            "message": "Local engine starting...",
+            "pid": process.pid
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start local engine: {e}")
+
+
 @app.post("/api/adapt-to-hardware")
 async def adapt_to_hardware(request: Request) -> JSONResponse:
     """
@@ -1493,11 +2754,11 @@ async def extract_midi_endpoint(
     min_note_duration_ms: float = 50,
     velocity_sensitivity: float = 1.0,
     quantize_to: Optional[int] = None,
+    stem_type: str = "other",  # bass, drums, synth, pad, lead, vocals, other
 ) -> JSONResponse:
     """Extract MIDI notes from uploaded audio.
 
-    Works best with monophonic audio (single notes at a time).
-    For polyphonic content, consider using stem separation first.
+    Uses stem-specific extraction profiles for optimal results.
 
     Args:
         file: Audio file (WAV, MP3, etc.)
@@ -1505,6 +2766,7 @@ async def extract_midi_endpoint(
         min_note_duration_ms: Minimum note duration in milliseconds
         velocity_sensitivity: Scale factor for velocity (1.0 = normal)
         quantize_to: If set, quantize to this note division (e.g., 16 = 16th notes)
+        stem_type: Type of audio (bass, drums, synth, pad, lead, vocals, other)
 
     Returns:
         JSON with filename, content (base64), and extraction metadata
@@ -1530,9 +2792,10 @@ async def extract_midi_endpoint(
             min_note_duration_ms=min_note_duration_ms,
             velocity_sensitivity=velocity_sensitivity,
             quantize_to=quantize_to,
+            stem_type=stem_type,
         )
 
-        return JSONResponse({
+        return JSONResponse(_convert_numpy_types({
             "filename": result.filename,
             "content": result.content,
             "content_type": "audio/midi",
@@ -1543,7 +2806,7 @@ async def extract_midi_endpoint(
                 "lowest": result.pitch_range[0],
                 "highest": result.pitch_range[1],
             },
-        })
+        }))
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MIDI extraction failed: {e}") from e
@@ -1928,6 +3191,16 @@ async def analyze_url_endpoint(request: UrlAnalyzeRequest) -> JSONResponse:
         is_guitar = detection.is_guitar
         actual_source_kind = detection.recommended_source_kind
 
+        # Mutual exclusion: skip guitar analysis if synth is clearly dominant
+        skip_guitar = (
+            detection.synth_confidence > 0.5 and
+            detection.guitar_confidence < 0.25
+        )
+        if skip_guitar:
+            is_guitar = False
+            logger.info("Skipping guitar analysis - synth dominant (synth: %.2f, guitar: %.2f)",
+                       detection.synth_confidence, detection.guitar_confidence)
+
         # In fast mode, skip stem separation (treat full_mix as isolated for speed)
         if fast_mode and actual_source_kind == "full_mix":
             actual_source_kind = "isolated_guitar"
@@ -2020,6 +3293,9 @@ async def analyze_url_endpoint(request: UrlAnalyzeRequest) -> JSONResponse:
                         "highest": midi_data.pitch_range[1],
                     },
                 }
+                # Include provenance if available
+                if midi_data.provenance:
+                    midi_result["provenance"] = midi_data.provenance
             except Exception as e:
                 logger.warning(f"MIDI extraction failed: {e}")
                 # Non-fatal - continue without MIDI
@@ -2061,6 +3337,10 @@ async def analyze_url_endpoint(request: UrlAnalyzeRequest) -> JSONResponse:
             "confidence": {
                 "mix": detection.mix_confidence,
                 "instrument": detection.instrument_confidence,
+                "drums": detection.drums_confidence,
+                "synth": detection.synth_confidence,
+                "bass": detection.bass_confidence,
+                "guitar": detection.guitar_confidence,
             },
         },
         "synth": synth_result,
@@ -2153,7 +3433,25 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
 
             from tone_forge import synth_analyzer, auto_detect
             import librosa
+            import time as time_module
+
+            # Track profiling for deep mode
+            stage_timings = {} if not fast_mode else None
+            pipeline_start = time_module.time() if not fast_mode else None
+
+            stage_start = time_module.time() if not fast_mode else None
             y, sr = librosa.load(str(audio_path), sr=22050, mono=True)
+            duration_sec = len(y) / sr
+
+            if stage_timings is not None:
+                stage_timings["loading"] = {"duration_ms": (time_module.time() - stage_start) * 1000}
+
+            # Compute waveform peaks for visualization (deep mode only)
+            waveform_data = None
+            if not fast_mode:
+                waveform_data = _compute_waveform_peaks(y, num_points=1000)
+                waveform_data["sample_rate"] = int(sr)
+                waveform_data["duration_sec"] = duration_sec
 
             # Step 3: Detect type
             yield send_progress("Detecting instrument types...", 35)
@@ -2166,6 +3464,15 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
             is_guitar = detection.is_guitar
             actual_source_kind = detection.recommended_source_kind
 
+            # Mutual exclusion: skip guitar analysis if synth is clearly dominant
+            skip_guitar = (
+                detection.synth_confidence > 0.5 and
+                detection.guitar_confidence < 0.25
+            )
+            if skip_guitar:
+                is_guitar = False
+                logger.info("Skipping guitar analysis - synth dominant")
+
             # Report what was detected
             detected_types = []
             if is_drums: detected_types.append("drums")
@@ -2177,6 +3484,121 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
 
             if fast_mode and actual_source_kind == "full_mix":
                 actual_source_kind = "isolated_guitar"
+
+            # Deep analysis: stem separation and quality analysis
+            quality_result = {}
+            stem_paths = {}
+            guitar_audio = y
+            guitar_sr = sr
+            analysis_holder = None
+
+            if not fast_mode and detection.is_full_mix:
+                yield send_progress("Separating stems (GPU)...", 45)
+                await asyncio.sleep(0)
+
+                if stage_timings is not None:
+                    stage_start = time_module.time()
+
+                try:
+                    from tone_forge import stem_separator
+                    import concurrent.futures
+                    loop = asyncio.get_event_loop()
+
+                    def run_stem_separation():
+                        return stem_separator.separate_all_stems(
+                            str(audio_path),
+                            model_name="htdemucs_6s",
+                        )
+
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        stem_paths = await loop.run_in_executor(pool, run_stem_separation)
+
+                    if stage_timings is not None:
+                        stage_timings["stem_separation"] = {"duration_ms": (time_module.time() - stage_start) * 1000, "gpu_used": True}
+
+                    # Load guitar stem for analysis
+                    if "guitar" in stem_paths:
+                        guitar_audio, guitar_sr = librosa.load(str(stem_paths["guitar"]), sr=22050, mono=True)
+                        actual_source_kind = "isolated_guitar"
+                    elif "other" in stem_paths:
+                        guitar_audio, guitar_sr = librosa.load(str(stem_paths["other"]), sr=22050, mono=True)
+                        actual_source_kind = "isolated_guitar"
+
+                except Exception as e:
+                    logger.warning(f"Stem separation failed: {e}")
+                    if stage_timings is not None:
+                        stage_timings["stem_separation"] = {"duration_ms": (time_module.time() - stage_start) * 1000, "error": str(e)}
+
+                # Quality analysis on separated stem
+                if _RECONSTRUCTION_AVAILABLE and stem_paths:
+                    yield send_progress("Analyzing stem quality...", 50)
+                    await asyncio.sleep(0)
+
+                    try:
+                        from tone_forge.reconstruction import ReconstructionPipeline
+                        import concurrent.futures
+
+                        if stage_timings is not None:
+                            stage_start = time_module.time()
+
+                        def run_quality_analysis():
+                            pipeline = ReconstructionPipeline()
+                            return pipeline.analyze_only(
+                                guitar_audio,
+                                guitar_sr,
+                                stem_type="guitar",
+                            )
+
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            analysis_holder = await loop.run_in_executor(pool, run_quality_analysis)
+
+                        if stage_timings is not None:
+                            stage_timings["quality_analysis"] = {"duration_ms": (time_module.time() - stage_start) * 1000}
+
+                        # Extract quality results
+                        if analysis_holder:
+                            if analysis_holder.stem_quality:
+                                sq = analysis_holder.stem_quality
+                                quality_result["stem_quality"] = {
+                                    "overall_quality": getattr(sq, 'overall_quality', None),
+                                    "contamination_score": getattr(sq, 'contamination_score', None),
+                                    "transient_integrity": getattr(sq, 'transient_integrity', None),
+                                    "harmonic_purity": getattr(sq, 'harmonic_purity', None),
+                                }
+                            if analysis_holder.contamination:
+                                ct = analysis_holder.contamination
+                                contamination_regions = []
+                                for e in getattr(ct, 'events', []):
+                                    contamination_regions.append({
+                                        "type": e.contamination_type.value if hasattr(e.contamination_type, 'value') else str(e.contamination_type),
+                                        "start": e.time_start,
+                                        "end": e.time_end,
+                                        "severity": e.severity,
+                                    })
+                                quality_result["contamination"] = {
+                                    "overall_score": getattr(ct, 'overall_contamination', None),
+                                    "regions": contamination_regions,
+                                }
+                            if analysis_holder.artifacts:
+                                art = analysis_holder.artifacts
+                                artifact_regions = []
+                                for a in getattr(art, 'artifacts', []):
+                                    artifact_regions.append({
+                                        "type": a.artifact_type.value if hasattr(a.artifact_type, 'value') else str(a.artifact_type),
+                                        "start": a.time_start,
+                                        "end": a.time_end,
+                                        "severity": a.severity,
+                                    })
+                                quality_result["artifacts"] = {
+                                    "overall_score": getattr(art, 'overall_artifact_score', None),
+                                    "artifact_count": getattr(art, 'artifact_count', None),
+                                    "regions": artifact_regions,
+                                }
+
+                    except Exception as e:
+                        logger.warning(f"Quality analysis failed: {e}")
+                        if stage_timings is not None:
+                            stage_timings["quality_analysis"] = {"duration_ms": 0, "error": str(e)}
 
             # Step 4: Analyze synth
             yield send_progress("Analyzing synth characteristics...", 50)
@@ -2195,17 +3617,29 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                 yield send_progress("Analyzing guitar tone...", 60)
                 await asyncio.sleep(0)
 
+                if stage_timings is not None:
+                    stage_start = time_module.time()
+
                 if source_kind not in ("auto", "synth"):
                     if fast_mode and source_kind == "full_mix":
                         actual_source_kind = "isolated_guitar"
                     else:
                         actual_source_kind = source_kind
 
+                # Use guitar stem if available, otherwise original audio
+                analysis_audio_path = str(stem_paths.get("guitar", stem_paths.get("other", audio_path)))
+
                 descriptor = analyzer.analyze(
-                    str(audio_path),
+                    analysis_audio_path,
                     source_kind=actual_source_kind if actual_source_kind != "synth" else "isolated_guitar",
                     display_name=display_name,
+                    stem_quality=analysis_holder.stem_quality if analysis_holder else None,
+                    contamination=analysis_holder.contamination if analysis_holder else None,
+                    capture_reasoning=not fast_mode,  # Capture reasoning in deep mode
                 )
+
+                if stage_timings is not None:
+                    stage_timings["tone_analysis"] = {"duration_ms": (time_module.time() - stage_start) * 1000}
 
                 helix_card = helix_translator.translate(descriptor)
                 helix_chain = [asdict(p) for p in helix_card.picks]
@@ -2220,6 +3654,10 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                         "pedals": pedal_chain,
                     }
                 }
+
+                # Add reasoning in deep mode
+                if not fast_mode and descriptor.reasoning:
+                    guitar_result["reasoning"] = descriptor.reasoning.to_dict()
 
             # Step 6: Analyze bass if detected
             bass_result = None
@@ -2340,7 +3778,7 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
 
                         # Only include stems that have notes
                         if stem_midi.note_count > 0:
-                            midi_stems[stem_key] = {
+                            stem_midi_data = {
                                 "label": stem_label,
                                 "filename": stem_midi.filename,
                                 "content": stem_midi.content,
@@ -2352,6 +3790,9 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                                     "highest": int(stem_midi.pitch_range[1]),
                                 },
                             }
+                            if stem_midi.provenance:
+                                stem_midi_data["provenance"] = stem_midi.provenance
+                            midi_stems[stem_key] = stem_midi_data
                             logger.info(f"{stem_label} MIDI: {stem_midi.note_count} notes")
 
                     # Summary
@@ -2398,6 +3839,8 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                 "source_name": display_name,  # Video title for export naming
                 "source_url": url,  # Original URL for linking back
                 "source_timestamp": start_timestamp if start_timestamp > 0 else None,
+                "deep_analysis": not fast_mode,  # Flag indicating deep analysis was used
+                "duration_sec": duration_sec,
                 "detection": {
                     "is_full_mix": detection.is_full_mix,
                     "is_guitar": detection.is_guitar,
@@ -2408,10 +3851,35 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                     "confidence": {
                         "mix": detection.mix_confidence,
                         "instrument": detection.instrument_confidence,
+                        "drums": detection.drums_confidence,
+                        "synth": detection.synth_confidence,
+                        "bass": detection.bass_confidence,
+                        "guitar": detection.guitar_confidence,
                     },
                 },
                 "synth": synth_result,
             }
+
+            # Add deep analysis data if available
+            if not fast_mode:
+                if quality_result:
+                    response["quality"] = quality_result
+                if waveform_data:
+                    response["waveform"] = _convert_numpy_types(waveform_data)
+                if stage_timings:
+                    total_time = time_module.time() - pipeline_start
+                    response["profiling"] = {
+                        "total_ms": total_time * 1000,
+                        "audio_duration_sec": duration_sec,
+                        "processing_ratio": total_time / duration_sec if duration_sec > 0 else 0,
+                        "stages": stage_timings,
+                    }
+                # Keep stem paths for admin playback (convert to URLs)
+                if stem_paths:
+                    response["stems"] = {
+                        stem_type: f"/api/serve-file?path={str(path)}"
+                        for stem_type, path in stem_paths.items()
+                    }
 
             if guitar_result:
                 response["guitar"] = guitar_result
@@ -2455,12 +3923,19 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                 "summary": response.get("detection", {}).get("summary", ""),
                 "amp_family": guitar_result["descriptor"].get("amp", {}).get("family") if guitar_result else None,
                 "gain": guitar_result["descriptor"].get("amp", {}).get("gain") if guitar_result else None,
-                "duration": guitar_result["descriptor"].get("source", {}).get("duration_sec") if guitar_result else synth_result["descriptor"].get("duration_sec"),
+                "duration": duration_sec,
                 "source_url": url,
+                "deep_analysis": not fast_mode,
+                "has_quality_data": bool(quality_result),
+                "has_reasoning": bool(guitar_result and guitar_result.get("reasoning")),
             }, full_result=response)
 
             # Include history ID for shareable URL
             response["history_id"] = history_entry["id"]
+
+            # Include admin analysis URL for deep analysis
+            if not fast_mode:
+                response["admin_url"] = f"/studio?analysis={history_entry['id']}"
 
             yield send_progress("Complete!", 100)
             yield f"data: {json.dumps({'type': 'result', 'data': response})}\n\n"

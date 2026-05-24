@@ -550,8 +550,91 @@ def filter_ghost_notes(
     tempo_bpm: float = 120.0,
     detected_key: Optional[Tuple[int, str]] = None,
     min_confidence: float = 0.5,
+    provenance_chain=None,  # Optional ProvenanceChain for tracking
 ) -> List[Tuple[int, float, float, int]]:
-    """Filter ghost notes using the global classifier."""
-    return get_classifier().filter_to_real_notes(
-        notes, audio, sr, tempo_bpm, detected_key, min_confidence
+    """Filter ghost notes using the global classifier.
+
+    Args:
+        notes: List of (pitch, start, end, velocity) tuples
+        audio: Audio array (optional)
+        sr: Sample rate
+        tempo_bpm: Detected tempo
+        detected_key: (root, scale) tuple
+        min_confidence: Minimum confidence for real classification
+        provenance_chain: Optional ProvenanceChain for decision tracking
+
+    Returns:
+        Filtered list of notes (and populates provenance_chain if provided)
+    """
+    classifier = get_classifier()
+    classified = classifier.classify_notes(notes, audio, sr, tempo_bpm, detected_key)
+
+    real_notes = []
+    for i, c in enumerate(classified):
+        note_tuple = (c.pitch, c.start_time, c.end_time, c.velocity)
+        note_id = f"n{i}"
+
+        if c.classification == "real" and c.confidence >= min_confidence:
+            real_notes.append(note_tuple)
+
+            # Record retention decision with provenance
+            if provenance_chain is not None:
+                from tone_forge.provenance import (
+                    DecisionAction, DecisionDomain, ReasonGraph
+                )
+                record = provenance_chain.create_record(
+                    action=DecisionAction.RETAINED,
+                    stage="ghost_note_classifier",
+                    entity_type="note",
+                    entity_id=note_id,
+                    entity_data={
+                        "pitch": c.pitch, "start": c.start_time,
+                        "end": c.end_time, "velocity": c.velocity
+                    },
+                    domain=DecisionDomain.MIDI_REFINEMENT,
+                )
+                record.reason = ReasonGraph(
+                    summary=f"Retained: classified as '{c.classification}'",
+                    confidence=c.confidence,
+                    model_used="note_classifier_heuristic" if not classifier.is_ml_ready() else "note_classifier_ml",
+                )
+                record.reason.add_factor("classification", c.classification)
+                record.reason.add_factor("classification_confidence", c.confidence, threshold=min_confidence)
+                record.reason.add_factor("onset_strength", c.context.onset_strength)
+                record.reason.add_factor("beat_alignment", c.context.beat_alignment)
+                record.reason.add_factor("in_detected_key", c.context.in_detected_key)
+        else:
+            # Record removal decision with provenance
+            if provenance_chain is not None:
+                from tone_forge.provenance import (
+                    DecisionAction, DecisionDomain, ReasonGraph
+                )
+                record = provenance_chain.create_record(
+                    action=DecisionAction.REMOVED,
+                    stage="ghost_note_classifier",
+                    entity_type="note",
+                    entity_id=note_id,
+                    entity_data={
+                        "pitch": c.pitch, "start": c.start_time,
+                        "end": c.end_time, "velocity": c.velocity
+                    },
+                    domain=DecisionDomain.MIDI_REFINEMENT,
+                )
+                record.reason = ReasonGraph(
+                    summary=f"Removed: classified as '{c.classification}'",
+                    confidence=c.confidence,
+                    model_used="note_classifier_heuristic" if not classifier.is_ml_ready() else "note_classifier_ml",
+                )
+                record.reason.add_factor("classification", c.classification)
+                record.reason.add_factor("classification_confidence", c.confidence, threshold=min_confidence)
+                record.reason.add_factor("matches_delay_pattern", c.context.matches_delay_pattern)
+                record.reason.add_factor("velocity_vs_prior", c.context.velocity_vs_prior)
+                record.reason.add_factor("harmonic_ratio", c.context.harmonic_ratio)
+                record.reason.add_factor("temporal_isolation", c.context.time_since_last_note > 1.0)
+
+    logger.info(
+        "Note classifier: %d -> %d notes (filtered %d ghost/fragment)",
+        len(notes), len(real_notes), len(notes) - len(real_notes)
     )
+
+    return real_notes

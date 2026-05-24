@@ -549,11 +549,53 @@ def process_dynamics(
     tempo_bpm: float = 120.0,
     instrument_type: str = "unknown",
     target_range: Tuple[int, int] = (60, 110),
+    provenance_chain=None,  # Optional ProvenanceChain for tracking
 ) -> List[Tuple[int, float, float, int]]:
-    """Process note dynamics using the global model."""
-    return get_dynamics_model().process_dynamics(
+    """Process note dynamics using the global model.
+
+    Args:
+        notes: List of (pitch, start, end, velocity) tuples
+        tempo_bpm: Detected tempo
+        instrument_type: Type of instrument for context
+        target_range: Target velocity range (min, max)
+        provenance_chain: Optional ProvenanceChain for decision tracking
+
+    Returns:
+        Notes with processed dynamics
+    """
+    processed = get_dynamics_model().process_dynamics(
         notes, tempo_bpm, instrument_type, target_range
     )
+
+    # Record dynamics adjustments in provenance
+    if provenance_chain is not None and len(notes) == len(processed):
+        from tone_forge.provenance import DecisionAction, DecisionDomain, ReasonGraph
+
+        for i, (orig, adjusted) in enumerate(zip(notes, processed)):
+            if orig[3] != adjusted[3]:  # Velocity changed
+                vel_delta = adjusted[3] - orig[3]
+                record = provenance_chain.create_record(
+                    action=DecisionAction.MODIFIED,
+                    stage="dynamics_processor",
+                    entity_type="note",
+                    entity_id=f"n{i}",
+                    entity_data={
+                        "pitch": orig[0],
+                        "original_velocity": orig[3],
+                        "adjusted_velocity": adjusted[3],
+                    },
+                    domain=DecisionDomain.MIDI_REFINEMENT,
+                )
+                record.reason = ReasonGraph(
+                    summary=f"Velocity adjusted by {vel_delta:+d}",
+                    model_used="dynamics_model",
+                )
+                record.reason.add_factor("velocity_delta", vel_delta)
+                record.reason.add_factor("target_min", target_range[0])
+                record.reason.add_factor("target_max", target_range[1])
+                record.reason.add_factor("instrument_type", instrument_type)
+
+    return processed
 
 
 def analyze_dynamics(

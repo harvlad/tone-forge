@@ -18,14 +18,23 @@ import io
 import base64
 import tempfile
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 from collections import Counter
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Provenance tracking (optional but recommended)
+_PROVENANCE_AVAILABLE = False
+try:
+    from .provenance import ProvenanceChain, DecisionDomain
+    _PROVENANCE_AVAILABLE = True
+    logger.info("Provenance tracking available")
+except ImportError:
+    logger.debug("Provenance module not available")
 
 # ML MIDI refinement (optional, graceful degradation)
 _ML_MIDI_AVAILABLE = False
@@ -78,15 +87,15 @@ DEFAULT_PROFILE = {
 # Synthwave-optimized profiles per stem type
 SYNTHWAVE_PROFILES = {
     'bass': {
-        'onset_threshold': 0.35,      # Lower - bass has soft attacks
-        'frame_threshold': 0.25,      # Lower - sustain is important for sub-bass
-        'min_note_ms': 150,           # Bass notes are longer
-        'min_velocity': 20,           # Keep quiet notes
+        'onset_threshold': 0.3,       # Lower - bass has soft attacks
+        'frame_threshold': 0.2,       # Lower - sustain is important for sub-bass
+        'min_note_ms': 50,            # Synth bass can have fast notes
+        'min_velocity': 15,           # Keep quiet notes
         'key_filter_strictness': 0.3, # Bass often uses chromatic passing tones
         'isolated_min_neighbors': 0,  # Bass notes CAN be isolated
         'isolated_time_window': 3.0,
         'quantize_strength': 0.8,     # Bass should be tight
-        'merge_max_gap': 0.15,        # Aggressively merge fragmented bass notes
+        'merge_max_gap': 0.03,        # Only merge notes <30ms apart (fragmented detections)
         'octave_shift_if_low': True,  # Shift up octave if detected too low
     },
     'drums': {
@@ -98,15 +107,16 @@ SYNTHWAVE_PROFILES = {
         'quantize_strength': 0.9,     # Drums should be quantized
     },
     'pad': {
-        'onset_threshold': 0.25,      # Very low - pads have slow attacks
-        'frame_threshold': 0.2,       # Capture all sustain
-        'min_note_ms': 500,           # Pads are LONG
-        'min_velocity': 15,           # Very quiet layers matter
-        'key_filter_strictness': 0.2, # Pads use lots of extensions
+        'onset_threshold': 0.45,      # Higher - reduce harmonic false positives
+        'frame_threshold': 0.4,       # Higher - only strong sustained notes
+        'min_note_ms': 300,           # Pads are long but not always 500ms
+        'min_velocity': 25,           # Filter out very quiet harmonics
+        'key_filter_strictness': 0.4, # Pads use extensions but filter obvious wrong notes
         'isolated_min_neighbors': 0,  # Single pad notes are valid
         'isolated_time_window': 5.0,
         'quantize_strength': 0.3,     # Pads are loose/free
         'merge_max_gap': 0.1,         # Merge sustained pad layers
+        'filter_harmonics': True,     # Remove harmonic overtones (crucial for pads)
     },
     'lead': {
         'onset_threshold': 0.4,
@@ -147,10 +157,21 @@ SYNTHWAVE_PROFILES = {
 }
 
 def get_extraction_profile(stem_type: str, genre: str = 'default') -> dict:
-    """Get extraction parameters for a specific stem type and genre."""
-    if genre == 'synthwave':
-        return SYNTHWAVE_PROFILES.get(stem_type, DEFAULT_PROFILE)
-    return DEFAULT_PROFILE
+    """Get extraction parameters for a specific stem type and genre.
+
+    Always applies stem-type specific profiles since they improve extraction
+    quality regardless of genre. Genre-specific tweaks can be layered on top.
+    """
+    # Always use stem-specific profiles - they improve extraction for all genres
+    profile = SYNTHWAVE_PROFILES.get(stem_type, DEFAULT_PROFILE).copy()
+
+    # For non-synthwave genres, use slightly higher thresholds to reduce false positives
+    if genre != 'synthwave' and stem_type in ('pad', 'synth'):
+        # Pads and synths tend to over-detect harmonics - be stricter
+        profile['onset_threshold'] = max(profile.get('onset_threshold', 0.5), 0.4)
+        profile['frame_threshold'] = max(profile.get('frame_threshold', 0.4), 0.35)
+
+    return profile
 
 
 def detect_genre_from_audio(y: np.ndarray, sr: int) -> str:
@@ -208,6 +229,90 @@ def detect_genre_from_audio(y: np.ndarray, sr: int) -> str:
     return 'default'
 
 
+def detect_optimal_extraction_method(y: np.ndarray, sr: int, stem_type: str = 'other') -> dict:
+    """
+    Auto-detect the optimal MIDI extraction method based on audio characteristics.
+
+    Returns a dict with:
+        - method: 'monophonic' or 'polyphonic'
+        - reason: explanation for the choice
+        - is_bass: whether audio appears to be bass
+        - polyphony_estimate: estimated number of simultaneous voices
+    """
+    import librosa
+
+    # Analyze frequency content
+    spec = np.abs(librosa.stft(y))
+    freqs = librosa.fft_frequencies(sr=sr)
+
+    # Calculate energy in different bands
+    sub_bass_mask = freqs < 100  # Sub-bass: 20-100 Hz
+    bass_mask = (freqs >= 100) & (freqs < 300)  # Bass: 100-300 Hz
+    mid_mask = (freqs >= 300) & (freqs < 2000)  # Mids: 300-2000 Hz
+    high_mask = freqs >= 2000  # Highs: 2000+ Hz
+
+    sub_bass_energy = spec[sub_bass_mask, :].sum() if sub_bass_mask.any() else 0
+    bass_energy = spec[bass_mask, :].sum() if bass_mask.any() else 0
+    mid_energy = spec[mid_mask, :].sum() if mid_mask.any() else 0
+    high_energy = spec[high_mask, :].sum() if high_mask.any() else 0
+    total_energy = sub_bass_energy + bass_energy + mid_energy + high_energy
+
+    if total_energy == 0:
+        return {'method': 'polyphonic', 'reason': 'No audio content', 'is_bass': False, 'polyphony_estimate': 1}
+
+    low_ratio = (sub_bass_energy + bass_energy) / total_energy
+    sub_bass_ratio = sub_bass_energy / total_energy
+
+    # Check if this is bass-like audio
+    is_bass_audio = (
+        low_ratio > 0.6 or  # Dominated by low frequencies
+        sub_bass_ratio > 0.3 or  # Strong sub-bass
+        stem_type == 'bass'  # Explicitly marked as bass
+    )
+
+    # Estimate polyphony using chroma features
+    # For truly monophonic audio, usually only 1-2 strong chroma bins at a time
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+
+    # Count how many chroma bins are active (above threshold) per frame
+    chroma_threshold = 0.3
+    active_per_frame = (chroma > chroma_threshold).sum(axis=0)
+
+    # Average and max simultaneous notes
+    avg_polyphony = active_per_frame.mean()
+    max_polyphony = active_per_frame.max()
+
+    # Determine if monophonic
+    # Bass is typically monophonic, but layered bass (multiple bass tracks) needs polyphonic
+    # If avg_polyphony is high (>4), even bass should use polyphonic extraction
+    is_truly_monophonic = avg_polyphony < 2.5
+
+    if is_bass_audio and avg_polyphony < 6.0:
+        # Simple bass - use monophonic for better pitch tracking
+        method = 'monophonic'
+        reason = f"Bass-like audio (low_ratio={low_ratio:.2f}, polyphony={avg_polyphony:.1f}) - using pYIN for better pitch tracking"
+    elif is_bass_audio and avg_polyphony >= 6.0:
+        # Layered/polyphonic bass (multiple bass tracks) - use polyphonic
+        method = 'polyphonic'
+        reason = f"Polyphonic bass detected (polyphony={avg_polyphony:.1f}) - using basic-pitch for layered bass"
+    elif is_truly_monophonic and avg_polyphony < 2.0:
+        method = 'monophonic'
+        reason = f"Monophonic audio detected (avg_polyphony={avg_polyphony:.1f}) - using pYIN"
+    else:
+        method = 'polyphonic'
+        reason = f"Polyphonic audio detected (avg_polyphony={avg_polyphony:.1f}) - using basic-pitch"
+
+    logger.info(f"Auto-detection: {method} ({reason})")
+
+    return {
+        'method': method,
+        'reason': reason,
+        'is_bass': is_bass_audio,
+        'polyphony_estimate': avg_polyphony,
+        'low_ratio': low_ratio,
+    }
+
+
 @dataclass
 class MIDIExtractionResult:
     """Result of MIDI extraction."""
@@ -217,6 +322,7 @@ class MIDIExtractionResult:
     duration_seconds: float
     tempo_bpm: float
     pitch_range: tuple[int, int]  # (lowest_note, highest_note)
+    provenance: Optional[Dict[str, Any]] = field(default=None)  # Provenance tracking summary
 
 
 def _sanitize_name(name: str) -> str:
@@ -516,6 +622,98 @@ def shift_octave_if_too_low(
     return notes
 
 
+def filter_harmonic_overtones(
+    notes: List[Tuple[int, float, float, int]],
+    time_tolerance: float = 0.1,
+    velocity_ratio: float = 0.8,
+) -> List[Tuple[int, float, float, int]]:
+    """
+    Filter out harmonic overtones that are detected as separate notes.
+
+    When a pad or sustained sound plays, the ML model often detects harmonics
+    (octave, 5th, major 3rd) as separate notes. This filters them out by
+    identifying notes that:
+    1. Start at nearly the same time as a lower note
+    2. Are at harmonic intervals (octave: +12, fifth: +7/+19, third: +4/+16)
+    3. Have lower velocity than the fundamental
+
+    Args:
+        notes: List of (pitch, start, end, velocity) tuples
+        time_tolerance: Max time difference to consider simultaneous (seconds)
+        velocity_ratio: Harmonic must have velocity <= this ratio of fundamental
+
+    Returns:
+        Filtered notes with harmonics removed
+    """
+    if len(notes) < 2:
+        return notes
+
+    # Harmonic intervals in semitones (relative to fundamental)
+    # Octave: 12, Perfect 5th: 7, Major 3rd: 4, and their octave equivalents
+    HARMONIC_INTERVALS = {12, 19, 24, 7, 4, 16, 28, 31}
+
+    # Sort by start time, then by pitch (lowest first)
+    sorted_notes = sorted(notes, key=lambda x: (x[1], x[0]))
+
+    # Group notes by approximate start time
+    time_groups = []
+    current_group = [sorted_notes[0]]
+
+    for note in sorted_notes[1:]:
+        if abs(note[1] - current_group[0][1]) <= time_tolerance:
+            current_group.append(note)
+        else:
+            time_groups.append(current_group)
+            current_group = [note]
+    time_groups.append(current_group)
+
+    # For each group, identify and remove harmonics
+    filtered = []
+    harmonics_removed = 0
+
+    for group in time_groups:
+        if len(group) == 1:
+            filtered.append(group[0])
+            continue
+
+        # Sort group by pitch (lowest = likely fundamental)
+        group_by_pitch = sorted(group, key=lambda x: x[0])
+
+        # Mark which notes are likely harmonics
+        is_harmonic = [False] * len(group_by_pitch)
+
+        for i, note in enumerate(group_by_pitch):
+            if is_harmonic[i]:
+                continue
+
+            pitch_i, start_i, end_i, vel_i = note
+
+            # Check if higher notes are harmonics of this note
+            for j in range(i + 1, len(group_by_pitch)):
+                if is_harmonic[j]:
+                    continue
+
+                pitch_j, start_j, end_j, vel_j = group_by_pitch[j]
+                interval = pitch_j - pitch_i
+
+                # Check if interval matches a harmonic
+                if interval in HARMONIC_INTERVALS:
+                    # Check velocity - harmonic should be quieter
+                    if vel_j <= vel_i * velocity_ratio:
+                        is_harmonic[j] = True
+                        harmonics_removed += 1
+
+        # Keep non-harmonic notes
+        for i, note in enumerate(group_by_pitch):
+            if not is_harmonic[i]:
+                filtered.append(note)
+
+    if harmonics_removed > 0:
+        logger.info(f"Harmonic filter: removed {harmonics_removed} overtones, {len(notes)} -> {len(filtered)} notes")
+
+    return filtered
+
+
 def filter_delay_repeats(
     notes: List[Tuple[int, float, float, int]],
     tempo_bpm: float,
@@ -598,7 +796,8 @@ def post_process_midi(
     use_ml: bool = True,
     audio: np.ndarray = None,
     sr: int = 22050,
-) -> None:
+    track_provenance: bool = True,
+) -> Optional[Dict[str, Any]]:
     """
     Apply full post-processing pipeline to MIDI data (modifies in place).
 
@@ -615,7 +814,15 @@ def post_process_midi(
         use_ml: Whether to use ML refinement when available
         audio: Audio array for ML context features (optional)
         sr: Sample rate for audio
+        track_provenance: Whether to track processing decisions (default True)
+
+    Returns:
+        Optional provenance summary dict if track_provenance is True
     """
+    # Initialize provenance chain if available
+    provenance_chain = None
+    if track_provenance and _PROVENANCE_AVAILABLE:
+        provenance_chain = ProvenanceChain(domain=DecisionDomain.MIDI_EXTRACTION)
     # Use profile values if provided, otherwise use defaults
     if profile is None:
         profile = DEFAULT_PROFILE
@@ -627,6 +834,7 @@ def post_process_midi(
     merge_gap = profile.get('merge_max_gap', 0.01)
     filter_delays = profile.get('filter_delay_repeats', filter_delays)
     octave_shift = profile.get('octave_shift_if_low', False)
+    filter_harmonics = profile.get('filter_harmonics', False)
 
     # ML refinement settings
     use_ml_refinement = use_ml and _ML_MIDI_AVAILABLE
@@ -646,7 +854,11 @@ def post_process_midi(
 
         original_count = len(notes)
 
-        # 0. Filter delay repeats (for lead synths)
+        # 0a. Filter harmonic overtones (for pads - before other processing)
+        if filter_harmonics:
+            notes = filter_harmonic_overtones(notes)
+
+        # 0b. Filter delay repeats (for lead synths)
         if filter_delays:
             notes = filter_delay_repeats(notes, tempo_bpm)
 
@@ -683,7 +895,7 @@ def post_process_midi(
                 if detect_and_filter_key and key_strictness > 0:
                     ml_key = detect_key(notes)
 
-                # Apply ML refinement pipeline
+                # Apply ML refinement pipeline with provenance tracking
                 notes = refine_midi_notes(
                     notes,
                     audio=audio,
@@ -696,6 +908,7 @@ def post_process_midi(
                     process_velocities=normalize_vel,
                     timing_strength=quant_strength,
                     velocity_range=(60, 110),
+                    provenance_chain=provenance_chain,
                 )
                 logger.info(f"ML refinement applied: {len(notes)} notes")
             except Exception as e:
@@ -714,6 +927,11 @@ def post_process_midi(
         ]
 
         logger.info(f"Post-processing: {original_count} -> {len(instrument.notes)} notes")
+
+    # Return provenance summary if tracking
+    if provenance_chain:
+        return provenance_chain.to_summary()
+    return None
 
 
 def extract_midi_polyphonic(
@@ -846,7 +1064,7 @@ def extract_midi_polyphonic(
 
     # Apply comprehensive post-processing pipeline with profile
     logger.info(f"Applying post-processing pipeline for {stem_type}...")
-    post_process_midi(
+    provenance_summary = post_process_midi(
         midi_data,
         tempo_bpm=tempo,
         profile=profile,
@@ -859,6 +1077,7 @@ def extract_midi_polyphonic(
         use_ml=True,  # Enable ML refinement when available
         audio=y,
         sr=sr,
+        track_provenance=True,
     )
 
     # Update track name in the MIDI data
@@ -896,7 +1115,8 @@ def extract_midi_polyphonic(
         note_count=note_count,
         duration_seconds=duration,
         tempo_bpm=tempo,
-        pitch_range=pitch_range
+        pitch_range=pitch_range,
+        provenance=provenance_summary,
     )
 
 
@@ -1019,14 +1239,15 @@ def extract_midi_monophonic(
         note_count=len(notes_added),
         duration_seconds=duration,
         tempo_bpm=tempo,
-        pitch_range=pitch_range
+        pitch_range=pitch_range,
+        provenance=None,  # Monophonic extraction uses simpler heuristics
     )
 
 
 def extract_midi(
     audio_path: str,
     preset_name: str = "Extracted MIDI",
-    polyphonic: bool = True,
+    polyphonic: bool = None,  # None = auto-detect (recommended)
     min_note_duration_ms: float = 50,
     velocity_sensitivity: float = 1.0,
     quantize_to: Optional[int] = None,
@@ -1036,10 +1257,16 @@ def extract_midi(
     """
     Extract MIDI notes from audio file.
 
+    Auto-detects the best extraction method based on audio characteristics:
+    - Bass-like audio (strong low frequencies) -> monophonic (pYIN) for better pitch tracking
+    - Monophonic melodies -> monophonic (pYIN)
+    - Polyphonic content (chords, pads) -> polyphonic (basic-pitch)
+
     Args:
         audio_path: Path to audio file
         preset_name: Name for the MIDI file
-        polyphonic: Use polyphonic extraction (basic-pitch). Set False for monophonic.
+        polyphonic: Force extraction method. None = auto-detect (recommended),
+                   True = force polyphonic (basic-pitch), False = force monophonic (pYIN)
         min_note_duration_ms: Minimum note duration in milliseconds
         velocity_sensitivity: Scale factor for velocity (monophonic only)
         quantize_to: Quantize to note division (monophonic only, e.g., 16 = 16th notes)
@@ -1049,7 +1276,23 @@ def extract_midi(
     Returns:
         MIDIExtractionResult with base64-encoded MIDI data
     """
-    if polyphonic:
+    import librosa
+
+    # Auto-detect extraction method if not specified
+    use_polyphonic = polyphonic
+    detection_info = None
+
+    if polyphonic is None:
+        # Load audio for analysis
+        y, sr = librosa.load(audio_path, sr=22050, mono=True, duration=30)  # Analyze first 30s
+
+        # Auto-detect optimal method
+        detection_info = detect_optimal_extraction_method(y, sr, stem_type)
+        use_polyphonic = (detection_info['method'] == 'polyphonic')
+
+        logger.info(f"MIDI extraction auto-detection for '{preset_name}': {detection_info['reason']}")
+
+    if use_polyphonic:
         try:
             return extract_midi_polyphonic(
                 audio_path,
@@ -1060,8 +1303,7 @@ def extract_midi(
             )
         except Exception as e:
             # Fall back to monophonic if basic-pitch fails
-            import logging
-            logging.warning(f"Polyphonic extraction failed, falling back to monophonic: {e}")
+            logger.warning(f"Polyphonic extraction failed, falling back to monophonic: {e}")
 
     return extract_midi_monophonic(
         audio_path,
