@@ -27,7 +27,27 @@ from .passes.genre_refinement import GenreRefinementPass
 from .passes.confidence_quantizer import ConfidenceQuantizationPass
 from .passes.musicality import MusicalityCheckPass
 
+# Profile-aware cleanup passes (Sprint 3)
+from .passes.harmonic_suppression import HarmonicSuppressionPass
+from .passes.delay_cleanup import DelayCleanupPass
+from .passes.octave_correction import OctaveCorrectionPass
+from .passes.beat_grid_filter import BeatGridFilterPass
+from .passes.key_conformity import KeyConformityPass
+
+from .profiles import ExtractionProfile, get_profile, get_default_profile_for_stem
+
 logger = logging.getLogger(__name__)
+
+# Optional: profile classifier for auto-classification
+try:
+    from .profile_classifier import (
+        classify_profile,
+        classify_profile_from_role,
+        ProfileClassification,
+    )
+    _CLASSIFIER_AVAILABLE = True
+except ImportError:
+    _CLASSIFIER_AVAILABLE = False
 
 
 @dataclass
@@ -158,6 +178,9 @@ class MultiPassExtractor:
         frame_threshold: float = 0.4,
         min_note_ms: float = 50.0,
         min_velocity: int = 20,
+        profile: Optional[ExtractionProfile] = None,
+        profile_name: Optional[str] = None,
+        auto_classify: bool = False,
     ) -> MIDIExtractionResult:
         """Run full multi-pass extraction.
 
@@ -177,15 +200,51 @@ class MultiPassExtractor:
             frame_threshold: Base frame threshold
             min_note_ms: Minimum note duration in milliseconds
             min_velocity: Minimum MIDI velocity
+            profile: ExtractionProfile to use (overrides thresholds)
+            profile_name: Name of profile to use (alternative to profile)
+            auto_classify: If True, auto-classify profile from audio features
 
         Returns:
             MIDIExtractionResult with notes and statistics
         """
         start_time = time.time()
+        all_warnings: List[str] = []
+        profile_classification = None
 
         # Ensure mono audio
         if audio.ndim > 1:
             audio = np.mean(audio, axis=0)
+
+        # Resolve profile: explicit profile > profile_name > auto-classify > stem default
+        if profile is None and profile_name is not None:
+            profile = get_profile(profile_name)
+            if profile is None:
+                all_warnings.append(f"Profile '{profile_name}' not found, using defaults")
+
+        if profile is None and auto_classify and _CLASSIFIER_AVAILABLE:
+            # Auto-classify from audio or role classification
+            if role_classification is not None:
+                profile_name_classified = classify_profile_from_role(role_classification)
+                profile = get_profile(profile_name_classified)
+                logger.debug(f"Auto-classified from role: {profile_name_classified}")
+            else:
+                profile_classification = classify_profile(audio, sr, stem_type)
+                profile = get_profile(profile_classification.profile_name)
+                logger.debug(
+                    f"Auto-classified profile: {profile_classification.profile_name} "
+                    f"(confidence: {profile_classification.confidence:.2f})"
+                )
+
+        if profile is None and stem_type is not None:
+            profile = get_default_profile_for_stem(stem_type)
+
+        # Apply profile parameters if available
+        if profile is not None:
+            onset_threshold = profile.onset_threshold
+            frame_threshold = profile.frame_threshold
+            min_note_ms = profile.min_note_ms
+            min_velocity = profile.min_velocity
+            logger.debug(f"Using profile: {profile.name}")
 
         # Build context
         context = ExtractionContext(
@@ -209,7 +268,6 @@ class MultiPassExtractor:
         # Run passes
         notes: List[ExtractedNote] = []
         pass_results: List[PassResult] = []
-        all_warnings: List[str] = []
 
         for extraction_pass in self.passes:
             logger.debug(f"Running pass {extraction_pass.pass_number}: {extraction_pass.name}")
@@ -271,6 +329,11 @@ class MultiPassExtractor:
                 "stem_type": stem_type,
                 "genre": genre,
                 "passes_run": [p.name for p in self.passes],
+                "profile_used": profile.name if profile else None,
+                "profile_auto_classified": profile_classification is not None,
+                "profile_classification": (
+                    profile_classification.to_dict() if profile_classification else None
+                ),
             },
         )
 
@@ -465,3 +528,130 @@ def create_extractor(
 
     else:
         raise ValueError(f"Unknown profile: {profile}")
+
+
+def create_extractor_for_profile(
+    extraction_profile: ExtractionProfile,
+    **kwargs,
+) -> MultiPassExtractor:
+    """Create an extractor configured for a specific ExtractionProfile.
+
+    This creates a pass pipeline based on the profile's cleanup toggles:
+    - Always includes HighConfidencePass
+    - Conditionally includes cleanup passes based on profile settings
+    - Always includes MusicalityCheckPass at the end
+
+    Profile toggles respected:
+    - enable_harmonic_suppression: HarmonicSuppressionPass
+    - enable_delay_cleanup: DelayCleanupPass (probabilistic)
+    - enable_octave_correction: OctaveCorrectionPass
+    - enable_beat_grid_filter: BeatGridFilterPass
+    - enable_key_conformity: KeyConformityPass
+
+    Args:
+        extraction_profile: ExtractionProfile to configure from
+        **kwargs: Additional arguments for MultiPassExtractor
+
+    Returns:
+        Configured MultiPassExtractor with profile-driven passes
+    """
+    passes: List[ExtractionPass] = []
+    pass_num = 0
+
+    # Pass 1: High confidence extraction with profile thresholds
+    pass_num += 1
+    passes.append(
+        HighConfidencePass(
+            pass_number=pass_num,
+            min_confidence=0.4,  # Base confidence threshold
+            onset_threshold=extraction_profile.onset_threshold,
+            frame_threshold=extraction_profile.frame_threshold,
+        )
+    )
+
+    # Pass 2: Harmonic recovery (always run - recovery != suppression)
+    pass_num += 1
+    passes.append(HarmonicRecoveryPass(pass_number=pass_num))
+
+    # Pass 3: Phrase grouping
+    pass_num += 1
+    passes.append(PhraseGroupingPass(pass_number=pass_num))
+
+    # Profile-driven cleanup passes (Sprint 3)
+
+    # Octave correction (for bass stems primarily)
+    if extraction_profile.enable_octave_correction:
+        pass_num += 1
+        passes.append(
+            OctaveCorrectionPass(
+                pass_number=pass_num,
+                min_correction_probability=0.7,
+            )
+        )
+
+    # Harmonic suppression (removes octave/fifth artifacts)
+    if extraction_profile.enable_harmonic_suppression:
+        pass_num += 1
+        passes.append(
+            HarmonicSuppressionPass(
+                pass_number=pass_num,
+                octave_enabled=True,
+                fifth_enabled=True,
+                third_enabled=False,  # Conservative by default
+                min_harmonic_probability=0.7,
+            )
+        )
+
+    # Probabilistic delay cleanup (replaces binary effect suppression)
+    if extraction_profile.enable_delay_cleanup:
+        pass_num += 1
+        passes.append(
+            DelayCleanupPass(
+                pass_number=pass_num,
+                min_suppression_probability=0.85,  # High threshold - preserve real notes
+            )
+        )
+
+    # Beat grid filter
+    if extraction_profile.enable_beat_grid_filter:
+        pass_num += 1
+        passes.append(
+            BeatGridFilterPass(
+                pass_number=pass_num,
+                grid_strength=extraction_profile.quantize_strength,
+                grid_divisions=16,
+            )
+        )
+
+    # Key conformity validation
+    if extraction_profile.enable_key_conformity:
+        pass_num += 1
+        passes.append(
+            KeyConformityPass(
+                pass_number=pass_num,
+                strictness=extraction_profile.key_filter_strictness,
+            )
+        )
+
+    # Genre refinement
+    pass_num += 1
+    passes.append(GenreRefinementPass(pass_number=pass_num))
+
+    # Confidence quantization (final timing adjustment)
+    pass_num += 1
+    passes.append(
+        ConfidenceQuantizationPass(
+            pass_number=pass_num,
+            base_strength=extraction_profile.quantize_strength,
+        )
+    )
+
+    # Musicality check (always last)
+    pass_num += 1
+    passes.append(MusicalityCheckPass(pass_number=pass_num))
+
+    # Renumber passes sequentially
+    for i, p in enumerate(passes):
+        p.pass_number = i + 1
+
+    return MultiPassExtractor(passes=passes, **kwargs)

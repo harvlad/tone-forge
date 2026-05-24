@@ -31,6 +31,85 @@ class NoteFlag(str, Enum):
 
 
 @dataclass
+class NoteProvenance:
+    """Per-note provenance tracking for extraction decisions.
+
+    Tracks the complete history of how a note was extracted and processed,
+    enabling debugging, ML training, and user transparency.
+    """
+
+    # Extraction source
+    source: str = "basic-pitch"  # "basic-pitch", "pyin", "harmonic_recovery"
+    profile_used: str = ""  # Profile name used for extraction
+
+    # Confidence tracking
+    initial_confidence: float = 1.0  # Confidence at extraction
+    final_confidence: float = 1.0  # Confidence after all processing
+
+    # Processing history
+    cleanup_passes: List[str] = field(default_factory=list)  # Passes applied
+    suppression_reasons: List[str] = field(default_factory=list)  # If suppressed, why
+
+    # Value adjustments
+    timing_adjusted_by_ms: float = 0.0  # Timing correction amount
+    velocity_adjusted_by: int = 0  # Velocity adjustment amount
+    pitch_corrected: bool = False  # Was pitch corrected?
+    original_pitch: Optional[int] = None  # Original pitch if corrected
+
+    # Classification
+    classification: Optional[str] = None  # "real", "ghost", "harmonic_fragment"
+    classification_confidence: float = 1.0
+
+    def add_cleanup_pass(self, pass_name: str):
+        """Record that a cleanup pass was applied."""
+        if pass_name not in self.cleanup_passes:
+            self.cleanup_passes.append(pass_name)
+
+    def add_suppression_reason(self, reason: str):
+        """Record a reason for potential suppression."""
+        if reason not in self.suppression_reasons:
+            self.suppression_reasons.append(reason)
+
+    def update_confidence(self, new_confidence: float):
+        """Update final confidence."""
+        self.final_confidence = new_confidence
+
+    @property
+    def confidence_delta(self) -> float:
+        """Change in confidence from initial to final."""
+        return self.final_confidence - self.initial_confidence
+
+    @property
+    def was_modified(self) -> bool:
+        """Whether the note was modified in any way."""
+        return (
+            len(self.cleanup_passes) > 0 or
+            self.timing_adjusted_by_ms != 0 or
+            self.velocity_adjusted_by != 0 or
+            self.pitch_corrected
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "source": self.source,
+            "profile_used": self.profile_used,
+            "initial_confidence": self.initial_confidence,
+            "final_confidence": self.final_confidence,
+            "confidence_delta": self.confidence_delta,
+            "cleanup_passes": self.cleanup_passes,
+            "suppression_reasons": self.suppression_reasons,
+            "timing_adjusted_by_ms": self.timing_adjusted_by_ms,
+            "velocity_adjusted_by": self.velocity_adjusted_by,
+            "pitch_corrected": self.pitch_corrected,
+            "original_pitch": self.original_pitch,
+            "classification": self.classification,
+            "classification_confidence": self.classification_confidence,
+            "was_modified": self.was_modified,
+        }
+
+
+@dataclass
 class ExtractedNote:
     """A note extracted from audio with confidence and metadata."""
 
@@ -46,6 +125,9 @@ class ExtractedNote:
     original_start: Optional[float] = None  # Before quantization
     original_end: Optional[float] = None
     harmonic_context: Optional[Dict[str, Any]] = None
+
+    # Per-note provenance tracking
+    provenance: Optional[NoteProvenance] = None
 
     @property
     def duration(self) -> float:
@@ -63,7 +145,7 @@ class ExtractedNote:
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
-        return {
+        result = {
             "pitch": self.pitch,
             "start": self.start,
             "end": self.end,
@@ -73,6 +155,9 @@ class ExtractedNote:
             "flags": [f.value for f in self.flags],
             "duration_ms": self.duration_ms,
         }
+        if self.provenance is not None:
+            result["provenance"] = self.provenance.to_dict()
+        return result
 
     @classmethod
     def from_tuple(
