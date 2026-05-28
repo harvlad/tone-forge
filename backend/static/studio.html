@@ -127,6 +127,162 @@
             margin-top: 10px;
         }
 
+        /* URL Input Section */
+        .input-divider {
+            display: flex;
+            align-items: center;
+            margin: 20px 0;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+
+        .input-divider::before,
+        .input-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #333;
+        }
+
+        .input-divider span {
+            padding: 0 12px;
+        }
+
+        .url-input-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .url-input {
+            flex: 1;
+            padding: 12px 16px;
+            background: var(--bg-input);
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.9rem;
+            transition: border-color 0.2s;
+        }
+
+        .url-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .url-input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .url-submit-btn {
+            padding: 12px 24px;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-family: inherit;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .url-submit-btn:hover:not(:disabled) {
+            background: var(--accent-hover);
+        }
+
+        .url-submit-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Trim Preview Section */
+        .trim-preview-section {
+            margin-bottom: 30px;
+        }
+
+        .trim-preview-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+        }
+
+        .trim-preview-card h3 {
+            margin: 0 0 16px 0;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .trim-canvas-container {
+            background: var(--bg-input);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .trim-canvas-container canvas {
+            display: block;
+            width: 100%;
+            height: 120px;
+        }
+
+        .trim-info-bar {
+            margin-top: 12px;
+            text-align: center;
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .trim-actions-bar {
+            margin-top: 16px;
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .trim-btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .trim-btn-primary {
+            background: var(--accent);
+            color: white;
+            border: none;
+        }
+
+        .trim-btn-primary:hover {
+            background: #d13d55;
+        }
+
+        .trim-btn-secondary {
+            background: var(--bg-input);
+            color: var(--text);
+            border: 1px solid #444;
+        }
+
+        .trim-btn-secondary:hover {
+            background: #333;
+            border-color: #555;
+        }
+
+        .trim-btn-ghost {
+            background: transparent;
+            color: var(--text-secondary);
+            border: none;
+        }
+
+        .trim-btn-ghost:hover {
+            color: var(--text);
+        }
+
         .loading {
             display: none;
             text-align: center;
@@ -309,6 +465,7 @@
             display: flex;
             gap: 24px;
             margin-bottom: 16px;
+            flex-wrap: wrap;
         }
         .provenance-stat {
             display: flex;
@@ -342,33 +499,352 @@
             display: flex;
             flex-direction: column;
             gap: 8px;
-            max-height: 300px;
+            max-height: 600px;
             overflow-y: auto;
+        }
+        .provenance-breakdown {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .provenance-breakdown-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .provenance-breakdown-group .group-label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .provenance-breakdown-group .group-items {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .provenance-breakdown-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background: var(--bg-input);
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+        .provenance-breakdown-item .item-count {
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .provenance-breakdown-item .item-label {
+            color: var(--text-primary);
+            text-transform: capitalize;
+        }
+        .provenance-breakdown-item.action-retained .item-count { color: #e74c3c; }
+        .provenance-breakdown-item.action-removed .item-count { color: #7f8c8d; }
+        .provenance-breakdown-item.action-corrected .item-count { color: #e74c3c; }
+        .provenance-breakdown-item.action-refined .item-count { color: #3498db; }
+        .provenance-breakdown-item.action-adjusted .item-count { color: #9b59b6; }
+        .provenance-breakdown-item.severity-critical .item-count { color: #e74c3c; }
+        .provenance-breakdown-item.severity-significant .item-count { color: #f39c12; }
+        .provenance-breakdown-item.severity-minor .item-count { color: #3498db; }
+        .provenance-breakdown-item.severity-cosmetic .item-count { color: #95a5a6; }
+
+        /* Provenance filters */
+        .provenance-filters {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .provenance-filter {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .provenance-filter label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+        .provenance-filter select {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.8rem;
+            color: var(--text-primary);
+        }
+
+        /* Stage groups */
+        .provenance-stage-group {
+            margin-bottom: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .provenance-stage-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-input);
+            cursor: pointer;
+            user-select: none;
+        }
+        .provenance-stage-header:hover {
+            background: rgba(255,255,255,0.08);
+        }
+        .provenance-stage-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .provenance-stage-name {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .provenance-stage-count {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            background: var(--accent);
+            color: var(--bg-primary);
+            border-radius: 10px;
+        }
+        .provenance-stage-stats {
+            display: flex;
+            gap: 12px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        .provenance-stage-stat {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .provenance-stage-stat .stat-value {
+            color: var(--accent);
+            font-weight: 500;
+        }
+        .provenance-stage-chevron {
+            color: var(--text-secondary);
+            transition: transform 0.2s;
+        }
+        .provenance-stage-group.expanded .provenance-stage-chevron {
+            transform: rotate(90deg);
+        }
+        .provenance-stage-decisions {
+            display: none;
+            padding: 8px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .provenance-stage-group.expanded .provenance-stage-decisions {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        /* Aggregated decision */
+        .provenance-aggregated {
+            background: var(--bg-input);
+            border-radius: 6px;
+            padding: 10px 14px;
+            border-left: 3px solid var(--accent);
+        }
+        .provenance-aggregated .agg-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .provenance-aggregated .agg-summary {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .provenance-aggregated .agg-count {
+            font-weight: 700;
+            color: var(--accent);
+            font-size: 1.1rem;
+        }
+        .provenance-aggregated .agg-action {
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+        .provenance-aggregated .agg-description {
+            color: var(--text-primary);
+            font-size: 0.85rem;
+        }
+        .provenance-aggregated .agg-confidence {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        .provenance-aggregated .agg-expand {
+            font-size: 0.7rem;
+            color: var(--accent);
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        .provenance-aggregated .agg-details {
+            display: none;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .provenance-aggregated.expanded .agg-details {
+            display: block;
         }
         .provenance-decision {
             background: var(--bg-input);
             border-radius: 6px;
-            padding: 10px 12px;
+            padding: 12px 14px;
             border-left: 3px solid var(--accent);
         }
+        .provenance-decision.severity-critical { border-left-color: #e74c3c; }
+        .provenance-decision.severity-significant { border-left-color: #f39c12; }
+        .provenance-decision.severity-minor { border-left-color: #3498db; }
+        .provenance-decision.severity-cosmetic { border-left-color: #95a5a6; }
+        .provenance-decision.severity-info { border-left-color: var(--accent); }
+
         .provenance-decision .decision-header {
             display: flex;
             justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 6px;
+            gap: 8px;
+        }
+        .provenance-decision .decision-badges {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
             align-items: center;
-            margin-bottom: 4px;
         }
         .provenance-decision .decision-action {
             font-weight: 600;
-            text-transform: capitalize;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+        .provenance-decision .decision-action.action-corrected { background: #e74c3c; }
+        .provenance-decision .decision-action.action-refined { background: #3498db; }
+        .provenance-decision .decision-action.action-adjusted { background: #9b59b6; }
+        .provenance-decision .decision-action.action-detected { background: #27ae60; }
+        .provenance-decision .decision-action.action-suppressed { background: #7f8c8d; }
+        .provenance-decision .decision-action.action-reconstructed { background: #e67e22; }
+        .provenance-decision .decision-action.action-interpolated { background: #1abc9c; }
+        .provenance-decision .decision-action.action-merged { background: #8e44ad; }
+
+        .provenance-decision .decision-severity {
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+        .provenance-decision .decision-severity.severity-critical { background: rgba(231,76,60,0.2); color: #e74c3c; }
+        .provenance-decision .decision-severity.severity-significant { background: rgba(243,156,18,0.2); color: #f39c12; }
+        .provenance-decision .decision-severity.severity-minor { background: rgba(52,152,219,0.2); color: #3498db; }
+        .provenance-decision .decision-severity.severity-cosmetic { background: rgba(149,165,166,0.2); color: #95a5a6; }
+
+        .provenance-decision .decision-meta {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 2px;
         }
         .provenance-decision .decision-stage {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: var(--text-secondary);
+        }
+        .provenance-decision .decision-subsystem {
+            font-size: 0.65rem;
+            color: var(--text-dim);
+            font-style: italic;
         }
         .provenance-decision .decision-reason {
             font-size: 0.85rem;
             color: var(--text-primary);
-            margin-bottom: 5px;
+            margin-bottom: 8px;
+        }
+
+        /* Confidence and value deltas */
+        .provenance-decision .decision-deltas {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+        .provenance-decision .delta-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.8rem;
+            padding: 4px 8px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 4px;
+        }
+        .provenance-decision .delta-label {
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+        }
+        .provenance-decision .delta-arrow {
+            color: var(--text-dim);
+        }
+        .provenance-decision .delta-value {
+            font-family: var(--mono);
+            font-weight: 500;
+        }
+        .provenance-decision .delta-value.improved { color: #27ae60; }
+        .provenance-decision .delta-value.degraded { color: #e74c3c; }
+        .provenance-decision .delta-change {
+            font-size: 0.7rem;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+        .provenance-decision .delta-change.positive { background: rgba(39,174,96,0.2); color: #27ae60; }
+        .provenance-decision .delta-change.negative { background: rgba(231,76,60,0.2); color: #e74c3c; }
+
+        /* Expandable reasoning */
+        .provenance-decision .decision-reasoning {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        .provenance-decision .reasoning-header {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .provenance-decision .reasoning-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .provenance-decision .reasoning-list li {
+            font-size: 0.8rem;
+            color: var(--text-primary);
+            padding: 2px 0 2px 16px;
+            position: relative;
+        }
+        .provenance-decision .reasoning-list li::before {
+            content: "•";
+            position: absolute;
+            left: 4px;
+            color: var(--accent);
         }
 
         .warning-recommendation {
@@ -526,9 +1002,26 @@
             font-size: 0.75rem;
         }
 
-        .progress-log {
+        .verbose-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
             margin-top: 12px;
-            max-height: 150px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .verbose-toggle input {
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+
+        .progress-log {
+            display: none;
+            margin-top: 12px;
+            max-height: 200px;
             overflow-y: auto;
             font-size: 0.8rem;
             font-family: 'SF Mono', monospace;
@@ -557,6 +1050,12 @@
 
         .progress-log .log-msg.success {
             color: var(--success);
+        }
+
+        .progress-log .log-msg.detail {
+            color: #666;
+            font-size: 0.7rem;
+            font-family: monospace;
         }
 
         /* Search Modal */
@@ -1036,10 +1535,15 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="/static/arrangement.css?v=4">
+    <link rel="stylesheet" href="/static/intelligence.css?v=4">
     <script src="/static/preview-shared.js"></script>
     <script src="/static/export-shared.js"></script>
     <script src="/static/plugin-shared.js"></script>
     <script src="/static/detection-shared.js"></script>
+    <script src="/static/waveform-trim.js"></script>
+    <script src="/static/arrangement.js?v=4"></script>
+    <script src="/static/intelligence.js?v=4"></script>
 </head>
 <body>
     <div class="container">
@@ -1264,6 +1768,14 @@
                 <p>Drop audio file here or click to upload</p>
                 <input type="file" id="fileInput" accept=".wav,.mp3,.flac,.ogg,.m4a">
             </div>
+
+            <div class="input-divider"><span>or</span></div>
+
+            <div class="url-input-row">
+                <input type="url" id="urlInput" class="url-input" placeholder="Paste YouTube URL..." />
+                <button type="button" id="urlSubmit" class="url-submit-btn">Analyze</button>
+            </div>
+
             <div class="options-row">
                 <label class="checkbox-label">
                     <input type="radio" name="analysisMode" id="quickMode" value="quick" checked>
@@ -1280,6 +1792,24 @@
             </div>
         </div>
 
+        <!-- Trim Preview Section -->
+        <div class="trim-preview-section" id="trimPreviewSection" style="display: none;">
+            <div class="trim-preview-card">
+                <h3>Select Region to Analyze</h3>
+                <div class="trim-canvas-container">
+                    <canvas id="studioTrimCanvas"></canvas>
+                </div>
+                <div class="trim-info-bar">
+                    <span id="studioTrimRange">0:00 - 0:00 (0:00 selected)</span>
+                </div>
+                <div class="trim-actions-bar">
+                    <button class="trim-btn trim-btn-primary" id="studioAnalyzeSelection">Analyze Selection</button>
+                    <button class="trim-btn trim-btn-secondary" id="studioAnalyzeFull">Analyze Full Track</button>
+                    <button class="trim-btn trim-btn-ghost" id="studioCancelTrim">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <div class="loading" id="loading">
             <div class="spinner"></div>
             <p id="loadingText">Analyzing quality...</p>
@@ -1291,6 +1821,10 @@
                     <span class="stage-name" id="stageName">Starting...</span>
                     <span id="progressPercent">0%</span>
                 </div>
+                <label class="verbose-toggle">
+                    <input type="checkbox" id="verboseOutput">
+                    <span>Show verbose output</span>
+                </label>
                 <div class="progress-log" id="progressLog"></div>
             </div>
             <button class="cancel-analysis-btn" id="cancelAnalysisBtn">Cancel Analysis</button>
@@ -1313,16 +1847,21 @@
             <!-- Tab Navigation -->
             <div class="studio-tabs" id="studioTabs">
                 <button class="studio-tab studio-tab--active" data-tab="overview">Overview</button>
+                <button class="studio-tab" data-tab="arrangement">Arrangement</button>
                 <button class="studio-tab" data-tab="tone">Tone</button>
                 <button class="studio-tab" data-tab="quality">Quality</button>
                 <button class="studio-tab" data-tab="stems">Stems</button>
                 <button class="studio-tab" data-tab="technical">Technical</button>
+                <button class="studio-tab" data-tab="intelligence">Intelligence</button>
             </div>
 
             <!-- Tab Panels -->
             <div class="studio-panels" id="studioPanels">
                 <div class="studio-panel studio-panel--active" data-panel="overview">
                     <div class="grid" id="overviewGrid"></div>
+                </div>
+                <div class="studio-panel" data-panel="arrangement">
+                    <div id="arrangementContainer" class="tone-arrangement"></div>
                 </div>
                 <div class="studio-panel" data-panel="tone">
                     <div class="grid" id="toneGrid"></div>
@@ -1335,6 +1874,9 @@
                 </div>
                 <div class="studio-panel" data-panel="technical">
                     <div class="grid" id="technicalGrid"></div>
+                </div>
+                <div class="studio-panel" data-panel="intelligence">
+                    <div id="intelligenceContainer"></div>
                 </div>
             </div>
 
@@ -1458,10 +2000,27 @@
                                 <span class="stat-value" id="provenanceDomain">-</span>
                             </div>
                         </div>
-                        <details class="provenance-details">
-                            <summary>View Decisions</summary>
-                            <div class="provenance-decisions" id="provenanceDecisions"></div>
-                        </details>
+                        <div class="provenance-breakdown" id="provenanceBreakdown"></div>
+                        <div class="provenance-filters" id="provenanceFilters">
+                            <div class="provenance-filter">
+                                <label>Severity</label>
+                                <select id="provenanceFilterSeverity">
+                                    <option value="all">All</option>
+                                    <option value="critical">Critical</option>
+                                    <option value="significant">Significant</option>
+                                    <option value="minor">Minor</option>
+                                    <option value="cosmetic">Cosmetic</option>
+                                    <option value="info">Info</option>
+                                </select>
+                            </div>
+                            <div class="provenance-filter">
+                                <label>Action</label>
+                                <select id="provenanceFilterAction">
+                                    <option value="all">All</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="provenance-decisions" id="provenanceDecisions"></div>
                     </div>
                 </div>
 
@@ -1491,10 +2050,117 @@
     </div>
 
     <script>
+        // Local engine config - declared early for use throughout
+        const LOCAL_ENGINE_URL = 'http://127.0.0.1:7777';
+        let localEngineAvailable = false;
+
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
+        const urlInput = document.getElementById('urlInput');
+        const urlSubmit = document.getElementById('urlSubmit');
         const loading = document.getElementById('loading');
         const results = document.getElementById('results');
+
+        // Trim preview state
+        const trimPreviewSection = document.getElementById('trimPreviewSection');
+        const studioTrimCanvas = document.getElementById('studioTrimCanvas');
+        const studioTrimRange = document.getElementById('studioTrimRange');
+        let studioTrimState = {
+            file: null,
+            url: null,
+            waveformData: null,
+            trimmerInstance: null
+        };
+
+        // Persist the current analysis file for playback
+        let currentAnalysisFile = null;
+
+        function formatStudioTrimTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            const ms = Math.floor((seconds % 1) * 100);
+            if (mins > 0) {
+                return `${mins}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+            }
+            return `${secs}.${ms.toString().padStart(2, '0')}`;
+        }
+
+        function showStudioTrimPreview(waveformData, file, url = null) {
+            studioTrimState.file = file;
+            studioTrimState.url = url;
+            studioTrimState.waveformData = waveformData;
+
+            trimPreviewSection.style.display = 'block';
+            document.querySelector('.upload-section').style.display = 'none';
+
+            if (studioTrimCanvas && typeof WaveformTrimmer !== 'undefined') {
+                if (studioTrimState.trimmerInstance) {
+                    WaveformTrimmer.destroy(studioTrimCanvas);
+                }
+
+                studioTrimState.trimmerInstance = WaveformTrimmer.init(studioTrimCanvas, waveformData, {
+                    mode: 'trim',
+                    initialStart: 0,
+                    initialEnd: waveformData.duration_sec,
+                    onChange: updateStudioTrimInfo,
+                });
+
+                updateStudioTrimInfo(studioTrimState.trimmerInstance.getSelection());
+            }
+        }
+
+        function updateStudioTrimInfo(selection) {
+            if (studioTrimRange) {
+                const start = formatStudioTrimTime(selection.startTime);
+                const end = formatStudioTrimTime(selection.endTime);
+                const dur = formatStudioTrimTime(selection.duration);
+                studioTrimRange.textContent = `${start} - ${end} (${dur} selected)`;
+            }
+        }
+
+        function hideStudioTrimPreview() {
+            trimPreviewSection.style.display = 'none';
+            document.querySelector('.upload-section').style.display = '';
+
+            if (studioTrimState.trimmerInstance && studioTrimCanvas) {
+                WaveformTrimmer.destroy(studioTrimCanvas);
+                studioTrimState.trimmerInstance = null;
+            }
+
+            studioTrimState.file = null;
+            studioTrimState.url = null;
+            studioTrimState.waveformData = null;
+        }
+
+        // Trim button handlers
+        document.getElementById('studioAnalyzeSelection')?.addEventListener('click', () => {
+            if (studioTrimState.trimmerInstance) {
+                const sel = studioTrimState.trimmerInstance.getSelection();
+                const file = studioTrimState.file;
+                const url = studioTrimState.url;
+                hideStudioTrimPreview();
+                if (file) {
+                    runAnalysis(file, sel.startTime, sel.endTime);
+                } else if (url) {
+                    runUrlAnalysis(url, sel.startTime, sel.endTime);
+                }
+            }
+        });
+
+        document.getElementById('studioAnalyzeFull')?.addEventListener('click', () => {
+            const file = studioTrimState.file;
+            const url = studioTrimState.url;
+            hideStudioTrimPreview();
+            if (file) {
+                runAnalysis(file, null, null);
+            } else if (url) {
+                runUrlAnalysis(url, null, null);
+            }
+        });
+
+        document.getElementById('studioCancelTrim')?.addEventListener('click', () => {
+            hideStudioTrimPreview();
+        });
 
         // Check for analysis ID in query string and load it
         async function loadAnalysisFromQuery() {
@@ -1528,6 +2194,204 @@
         // Load analysis from query string on page load
         loadAnalysisFromQuery();
 
+        // URL input handlers
+        async function handleUrl() {
+            const url = urlInput.value.trim();
+            if (!url) return;
+
+            loading.classList.add('active');
+            document.getElementById('loadingText').textContent = 'Downloading preview...';
+            urlSubmit.disabled = true;
+
+            try {
+                const previewResp = await fetch('/api/preview-waveform-url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url }),
+                });
+
+                if (!previewResp.ok) {
+                    const body = await previewResp.json().catch(() => ({}));
+                    throw new Error(body.detail || `Preview failed: HTTP ${previewResp.status}`);
+                }
+
+                const waveformData = await previewResp.json();
+                loading.classList.remove('active');
+
+                // Show trim preview with URL source
+                showStudioTrimPreview(waveformData, null, url);
+
+            } catch (err) {
+                console.error('URL preview failed:', err);
+                document.getElementById('loadingText').textContent = `Error: ${err.message}`;
+                setTimeout(() => loading.classList.remove('active'), 3000);
+            } finally {
+                urlSubmit.disabled = false;
+            }
+        }
+
+        async function runUrlAnalysis(url, startTime, endTime) {
+            const mode = document.querySelector('input[name="analysisMode"]:checked')?.value || 'quick';
+
+            loading.classList.add('active');
+            results.classList.remove('active');
+            document.getElementById('loadingText').textContent = 'Analyzing...';
+            document.getElementById('progressContainer').classList.add('active');
+
+            // Reset progress bar and log
+            const progressBar = document.getElementById('progressBar');
+            const progressPercent = document.getElementById('progressPercent');
+            const stageName = document.getElementById('stageName');
+            const progressLog = document.getElementById('progressLog');
+            if (progressBar) progressBar.style.width = '0%';
+            if (progressPercent) progressPercent.textContent = '0%';
+            if (stageName) stageName.textContent = 'STARTING...';
+            if (progressLog) progressLog.innerHTML = '';
+
+            // Deep analysis REQUIRES local engine to avoid blocking the server
+            if (mode === 'deep' && !localEngineAvailable) {
+                loading.classList.remove('active');
+                document.getElementById('progressContainer').classList.remove('active');
+                alert('Deep analysis requires local GPU engine.\n\nPlease start the local engine or select Quick/Standard mode.');
+                return;
+            }
+
+            // Use local GPU engine for deep analysis
+            const useLocalEngine = localEngineAvailable && mode === 'deep';
+            console.log('[ToneForge] Analysis config:', {
+                mode,
+                localEngineAvailable,
+                useLocalEngine,
+                selectedRadio: document.querySelector('input[name="analysisMode"]:checked')?.id
+            });
+
+            const requestBody = {
+                url,
+                source_kind: 'auto',
+                platform: 'auto',
+                fast_mode: mode === 'quick',
+                analysis_mode: mode,
+                use_local_engine: useLocalEngine,
+            };
+
+            if (startTime !== null && startTime !== undefined) {
+                requestBody.start_time = startTime;
+            }
+            if (endTime !== null && endTime !== undefined) {
+                requestBody.end_time = endTime;
+            }
+
+            // Show which engine is processing
+            const urlProgressLog = document.getElementById('progressLog');
+            function earlyLog(msg, type = '') {
+                const time = new Date().toLocaleTimeString();
+                urlProgressLog.innerHTML += `<div class="log-entry"><span class="log-time">${time}</span><span class="log-msg ${type}">${msg}</span></div>`;
+            }
+
+            if (useLocalEngine) {
+                document.getElementById('loadingText').textContent = 'Deep analysis (local GPU)...';
+                earlyLog('Using LOCAL ENGINE for GPU processing', 'success');
+            } else if (mode === 'deep') {
+                document.getElementById('loadingText').textContent = 'Deep analysis (server)...';
+                earlyLog('Local engine not detected - running on server', 'error');
+                earlyLog('Start local engine for faster, non-blocking analysis', 'detail');
+            }
+
+            try {
+                // For deep mode, call local engine directly (no proxy buffering issues)
+                const analyzeEndpoint = useLocalEngine
+                    ? `${LOCAL_ENGINE_URL}/api/analyze-url`
+                    : '/api/analyze-url-stream';
+
+                const resp = await fetch(analyzeEndpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(useLocalEngine ? { url, start_time: startTime, end_time: endTime } : requestBody),
+                });
+
+                if (!resp.ok) {
+                    const body = await resp.json().catch(() => ({}));
+                    // Special handling for local engine required error
+                    if (body.error_code === 'LOCAL_ENGINE_REQUIRED') {
+                        addVerboseLog('Deep analysis requires local GPU engine', 'error');
+                        addVerboseLog('Start the local engine or select Quick/Standard mode', 'detail');
+                        throw new Error('Local GPU engine required for Deep analysis');
+                    }
+                    throw new Error(body.detail || `HTTP ${resp.status}`);
+                }
+
+                // Read SSE stream
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                const urlProgressLog = document.getElementById('progressLog');
+
+                function addVerboseLog(msg, type = '') {
+                    const time = new Date().toLocaleTimeString();
+                    urlProgressLog.innerHTML += `<div class="log-entry"><span class="log-time">${time}</span><span class="log-msg ${type}">${msg}</span></div>`;
+                    urlProgressLog.scrollTop = urlProgressLog.scrollHeight;
+                }
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.type === 'progress') {
+                                document.getElementById('loadingText').textContent = data.message || 'Processing...';
+                                const bar = document.getElementById('progressBar');
+                                const percentEl = document.getElementById('progressPercent');
+                                const stageEl = document.getElementById('stageName');
+                                if (bar && data.percent !== undefined) {
+                                    bar.style.width = `${data.percent}%`;
+                                }
+                                if (percentEl && data.percent !== undefined) {
+                                    percentEl.textContent = `${data.percent}%`;
+                                }
+                                if (stageEl && data.message) {
+                                    stageEl.textContent = data.message;
+                                }
+                                // Add to verbose log
+                                addVerboseLog(`[${data.stage || 'progress'}] ${data.message}${data.percent ? ` (${data.percent}%)` : ''}`);
+                                // Add extra details if present
+                                if (data.data) {
+                                    const details = typeof data.data === 'object' ? JSON.stringify(data.data) : data.data;
+                                    addVerboseLog(`  → ${details}`, 'detail');
+                                }
+                            } else if (data.type === 'result') {
+                                addVerboseLog('Analysis complete!', 'success');
+                                loading.classList.remove('active');
+                                displayDeepResults(data.data);
+                            } else if (data.type === 'error') {
+                                addVerboseLog(`Error: ${data.message}`, 'error');
+                                throw new Error(data.message);
+                            }
+                        } catch (e) {
+                            if (e.message !== 'Unexpected end of JSON input') {
+                                console.error('Parse error:', e);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('URL analysis failed:', err);
+                document.getElementById('loadingText').textContent = `Error: ${err.message}`;
+                setTimeout(() => loading.classList.remove('active'), 3000);
+            }
+        }
+
+        urlSubmit.addEventListener('click', handleUrl);
+        urlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleUrl();
+        });
+
         // Drag and drop handlers
         dropZone.addEventListener('click', () => fileInput.click());
 
@@ -1558,6 +2422,42 @@
         let analysisAbortController = null;
 
         async function handleFile(file) {
+            // Show loading while generating preview
+            loading.classList.add('active');
+            results.classList.remove('active');
+            document.getElementById('loadingText').textContent = 'Generating preview...';
+            document.getElementById('progressContainer').classList.remove('active');
+
+            try {
+                // Generate waveform preview first
+                const previewForm = new FormData();
+                previewForm.append('file', file);
+
+                const previewResp = await fetch('/api/preview-waveform', {
+                    method: 'POST',
+                    body: previewForm,
+                });
+
+                if (!previewResp.ok) {
+                    throw new Error(`Preview failed: ${previewResp.status}`);
+                }
+
+                const waveformData = await previewResp.json();
+
+                // Hide loading and show trim preview
+                loading.classList.remove('active');
+                showStudioTrimPreview(waveformData, file);
+
+            } catch (error) {
+                loading.classList.remove('active');
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function runAnalysis(file, startTime, endTime) {
+            // Store file for playback in arrangement view
+            currentAnalysisFile = file;
+
             loading.classList.add('active');
             results.classList.remove('active');
 
@@ -1577,15 +2477,25 @@
             progressLog.innerHTML = '';
 
             if (mode === 'deep') {
-                // Use SSE for deep analysis
-                document.getElementById('loadingText').textContent = 'Deep GPU analysis...';
+                // Deep analysis REQUIRES local engine to avoid blocking the server
+                if (!localEngineAvailable) {
+                    loading.classList.remove('active');
+                    alert('Deep analysis requires local GPU engine.\n\nPlease start the local engine or select Quick/Standard mode.');
+                    return;
+                }
+
+                const analyzeUrl = `${LOCAL_ENGINE_URL}/api/analyze-deep`;
+
+                document.getElementById('loadingText').textContent = 'Deep GPU analysis (local engine)...';
                 progressContainer.classList.add('active');
 
                 const formData = new FormData();
                 formData.append('file', file);
+                if (startTime !== null) formData.append('start_time', startTime);
+                if (endTime !== null) formData.append('end_time', endTime);
 
                 try {
-                    const response = await fetch('/api/admin/analyze-deep', {
+                    const response = await fetch(analyzeUrl, {
                         method: 'POST',
                         body: formData,
                         signal: analysisAbortController.signal
@@ -1645,18 +2555,20 @@
                     progressContainer.classList.remove('active');
                 }
             } else {
-                // Use standard API for quick/standard modes
-                progressContainer.classList.remove('active');
+                // Use unified pipeline for quick/standard modes
+                progressContainer.classList.add('active');
                 document.getElementById('loadingText').textContent =
                     mode === 'quick' ? 'Quick analysis...' : 'Standard analysis...';
 
                 const formData = new FormData();
                 formData.append('file', file);
-
-                const url = '/api/admin/analyze-quality' + (mode === 'quick' ? '?quick=true' : '');
+                formData.append('fast_mode', mode === 'quick' ? 'true' : 'false');
+                formData.append('analysis_mode', mode);
+                if (startTime !== null) formData.append('start_time', startTime.toString());
+                if (endTime !== null) formData.append('end_time', endTime.toString());
 
                 try {
-                    const response = await fetch(url, {
+                    const response = await fetch('/api/analyze-stream', {
                         method: 'POST',
                         body: formData,
                         signal: analysisAbortController.signal
@@ -1666,12 +2578,57 @@
                         throw new Error(`Analysis failed: ${response.status}`);
                     }
 
-                    const data = await response.json();
-                    displayResults(data);
+                    // Process SSE stream (same as main page)
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    function addLog(msg, type = '') {
+                        const time = new Date().toLocaleTimeString();
+                        progressLog.innerHTML += `<div class="log-entry"><span class="log-time">${time}</span><span class="log-msg ${type}">${msg}</span></div>`;
+                        progressLog.scrollTop = progressLog.scrollHeight;
+                    }
+
+                    while (true) {
+                        const {done, value} = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, {stream: true});
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        for (const line of lines) {
+                            if (!line.startsWith('data: ')) continue;
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.type === 'progress') {
+                                    if (data.percent !== undefined) {
+                                        progressBar.style.width = data.percent + '%';
+                                        progressPercent.textContent = data.percent + '%';
+                                    }
+                                    if (data.message) {
+                                        stageName.textContent = data.message;
+                                        addLog(data.message);
+                                    }
+                                } else if (data.type === 'result') {
+                                    addLog('Analysis complete!', 'success');
+                                    displayDeepResults(data.data);
+                                } else if (data.type === 'error') {
+                                    addLog(`Error: ${data.message}`, 'error');
+                                    throw new Error(data.message);
+                                }
+                            } catch (e) {
+                                if (e.message !== 'Unexpected end of JSON input') {
+                                    console.error('Parse error:', e);
+                                }
+                            }
+                        }
+                    }
                 } catch (error) {
                     alert('Error: ' + error.message);
                 } finally {
                     loading.classList.remove('active');
+                    progressContainer.classList.remove('active');
                 }
             }
         }
@@ -1715,8 +2672,8 @@
                 midi_stats: data.midi || {},
                 midi_data: data.midi || null,
                 midi_stems: data.midi_stems || {},
-                stems_available: data.stems ? Object.keys(data.stems) : [],
-                stems_paths: data.stems || {},
+                stems_available: Object.keys(data.stems_paths || data.stems || {}),
+                stems_paths: data.stems_paths || data.stems || {},
                 analysis_time_ms: data.profiling?.total_ms || (data.total_time_sec || data.profiling?.total_time_sec || 0) * 1000,
                 profiling: data.profiling || null,
                 tone_reasoning: tone.reasoning || descriptor.reasoning || null,
@@ -1776,8 +2733,13 @@
             // Confidence scores
             displayMetrics('confidenceMetrics', data.confidence_scores, true);
 
-            // Stem quality
-            displayMetrics('stemQualityMetrics', data.stem_quality, true);
+            // Stem quality (filter out arrays like confidence_regions and issues)
+            const stemQualityMetrics = data.stem_quality ? Object.fromEntries(
+                Object.entries(data.stem_quality).filter(([k, v]) =>
+                    typeof v !== 'object' || v === null
+                )
+            ) : {};
+            displayMetrics('stemQualityMetrics', stemQualityMetrics, true);
 
             // Contamination (filter out regions array for metrics display)
             const contaminationMetrics = data.contamination ? {
@@ -1909,10 +2871,248 @@
             // Export table (uses shared ToneExport utility)
             displayExportTable(data);
 
+            // Initialize arrangement view
+            initArrangementView(data);
+
             // Reorganize cards into tabs after all content is rendered
             requestAnimationFrame(() => {
                 StudioTabs.reorganizeCards();
             });
+        }
+
+        // Store arrangement instance for cleanup
+        let arrangementInstance = null;
+
+        function initArrangementView(data) {
+            const container = document.getElementById('arrangementContainer');
+            if (!container || typeof ToneArrangement === 'undefined') {
+                console.warn('ToneArrangement not available');
+                return;
+            }
+
+            // Clean up previous instance
+            if (arrangementInstance) {
+                ToneArrangement.destroy(arrangementInstance);
+                arrangementInstance = null;
+            }
+
+            // Build analysis result for arrangement view
+            const analysisResult = {
+                duration_sec: data.duration_sec || 0,
+                tempo: data.midi_stats?.tempo || data.tempo || 120,
+                waveform: data.waveform || null,
+                midi_data: data.midi_data || null,
+                midi_stems: data.midi_stems || {},
+                sections: data.sections || null,
+                stems: {},
+            };
+
+            // Add stem data if available
+            const stemTypes = ['drums', 'bass', 'pads', 'leads', 'vocals', 'other'];
+            stemTypes.forEach(stemType => {
+                if (data.midi_stems?.[stemType] || data.waveform) {
+                    analysisResult.stems[stemType] = {
+                        waveform: data.waveform,  // Use main waveform for now
+                        midi: data.midi_stems?.[stemType]?.notes || [],
+                        confidence: data.midi_stems?.[stemType]?.confidence || 0.8,
+                    };
+                }
+            });
+
+            // If no stem data, create a single "main" track
+            if (Object.keys(analysisResult.stems).length === 0 && data.waveform) {
+                analysisResult.stems.other = {
+                    waveform: data.waveform,
+                    midi: data.midi_data?.notes || [],
+                    confidence: data.confidence_scores?.overall || 0.8,
+                };
+            }
+
+            // Initialize arrangement view
+            try {
+                arrangementInstance = ToneArrangement.init('arrangementContainer', analysisResult, {
+                    onRegionSelect: async (selection) => {
+                        const start = selection.start;
+                        const end = selection.end;
+                        console.log('Region selected:', start, end);
+
+                        // Trigger region analysis if file is available
+                        if (currentAnalysisFile) {
+                            const result = await analyzeRegion(currentAnalysisFile, start, end);
+                            if (result) {
+                                console.log('Region analysis:', result);
+                                // Show region details in sidebar
+                                ToneArrangement.showSidebar('arrangementContainer', result);
+                            }
+                        }
+                    },
+                    onPlayheadChange: (time) => {
+                        // Sync with audio playback if available
+                    },
+                });
+
+                // Load stems for multi-track playback with mute/solo (if available)
+                // Stems come from deep analysis mode with Demucs separation
+                const stemsPaths = data.stems_paths || data.stems || {};
+                if (Object.keys(stemsPaths).length > 0) {
+                    console.log('initArrangementView: Loading stems for multi-track playback', Object.keys(stemsPaths));
+                    // Convert file paths to serve URLs
+                    const stemUrls = {};
+                    for (const [stemType, stemPath] of Object.entries(stemsPaths)) {
+                        if (typeof stemPath === 'string') {
+                            // If it's already a URL (starts with /api), use it directly
+                            if (stemPath.startsWith('/api')) {
+                                stemUrls[stemType] = stemPath;
+                            } else {
+                                // Convert file path to serve URL
+                                stemUrls[stemType] = `/api/admin/serve-file?path=${encodeURIComponent(stemPath)}`;
+                            }
+                        }
+                    }
+                    ToneArrangement.loadStems('arrangementContainer', stemUrls);
+                } else {
+                    // Fallback: Set single audio source for playback
+                    console.log('initArrangementView: No stems available, using single audio source', { hasFile: !!currentAnalysisFile, fileName: currentAnalysisFile?.name });
+                    if (currentAnalysisFile) {
+                        ToneArrangement.setAudioSource('arrangementContainer', currentAnalysisFile);
+                    }
+                }
+
+                // Auto-detect sections if file is available
+                if (currentAnalysisFile) {
+                    const tempo = data.midi_stats?.tempo || data.tempo;
+                    detectSections(currentAnalysisFile, tempo).then(sectionData => {
+                        if (sectionData) {
+                            // Merge section data with analysis data for intelligence panel
+                            const enrichedData = {
+                                ...data,
+                                sections: sectionData.sections || [],
+                                energy_curve: sectionData.energy_curve || [],
+                                duration_sec: sectionData.duration || data.duration_sec || 0,
+                                tempo_bpm: sectionData.tempo_bpm || data.midi_stats?.tempo || 120,
+                            };
+                            // Update intelligence panel with section data
+                            if (typeof ToneIntelligence !== 'undefined') {
+                                ToneIntelligence.update(enrichedData);
+                            }
+                        }
+                    });
+                }
+
+                // Mark the arrangement tab as having content
+                const arrangementTab = document.querySelector('.studio-tab[data-tab="arrangement"]');
+                if (arrangementTab && arrangementInstance) {
+                    arrangementTab.classList.add('studio-tab--has-content');
+                }
+            } catch (err) {
+                console.error('Failed to initialize arrangement view:', err);
+            }
+
+            // Initialize intelligence panel (initial render, may update with sections later)
+            initIntelligencePanel(data);
+        }
+
+        // Store intelligence instance
+        let intelligenceInstance = null;
+
+        function initIntelligencePanel(data) {
+            const container = document.getElementById('intelligenceContainer');
+            if (!container || typeof ToneIntelligence === 'undefined') {
+                console.warn('ToneIntelligence not available');
+                return;
+            }
+
+            // Initialize if not already done
+            if (!intelligenceInstance) {
+                intelligenceInstance = ToneIntelligence.init('intelligenceContainer', {
+                    onPluginSelect: (pluginName) => {
+                        console.log('Plugin selected:', pluginName);
+                        // Could open plugin search or preset browser
+                    },
+                    onPresetMatch: (toneId) => {
+                        console.log('Preset match selected:', toneId);
+                        // Could load reference tone
+                    },
+                });
+            }
+
+            // Update with analysis data
+            ToneIntelligence.update(data);
+
+            // Mark intelligence tab as having content
+            const intelligenceTab = document.querySelector('.studio-tab[data-tab="intelligence"]');
+            if (intelligenceTab) {
+                intelligenceTab.classList.add('studio-tab--has-content');
+            }
+        }
+
+        // Detect sections using the backend API
+        async function detectSections(file, tempo = null) {
+            if (!file) {
+                console.warn('No file provided for section detection');
+                return null;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+            if (tempo !== null) {
+                formData.append('tempo', tempo);
+            }
+
+            try {
+                const response = await fetch('/api/detect-sections', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Section detection failed: ${response.status}`);
+                }
+
+                const sections = await response.json();
+
+                // Update arrangement view with sections if initialized
+                if (arrangementInstance && ToneArrangement) {
+                    ToneArrangement.setSections(arrangementInstance, sections.sections || []);
+                }
+
+                return sections;
+            } catch (err) {
+                console.error('Section detection error:', err);
+                return null;
+            }
+        }
+
+        // Analyze a specific region using the backend API
+        async function analyzeRegion(file, startTime, endTime, stemType = 'other') {
+            if (!file) {
+                console.warn('No file provided for region analysis');
+                return null;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('start_time', startTime);
+            formData.append('end_time', endTime);
+            formData.append('stem_type', stemType);
+            formData.append('include_midi', true);
+            formData.append('include_provenance', true);
+
+            try {
+                const response = await fetch('/api/analyze-region', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Region analysis failed: ${response.status}`);
+                }
+
+                return await response.json();
+            } catch (err) {
+                console.error('Region analysis error:', err);
+                return null;
+            }
         }
 
         function displayExportTable(data) {
@@ -2179,28 +3379,311 @@
             document.getElementById('provenanceConfidence').textContent = `${(avgConfidence * 100).toFixed(0)}%`;
             document.getElementById('provenanceDomain').textContent = [...domains].join(', ') || '-';
 
-            // Display decisions
-            const decisionsEl = document.getElementById('provenanceDecisions');
-            let decisionsHtml = '';
-
+            // Build breakdown by action and severity
+            const actionCounts = {};
+            const severityCounts = {};
             provenanceSources.forEach(p => {
-                if (p.decisions && p.decisions.length > 0) {
-                    decisionsHtml += `<div style="margin-bottom: 8px; font-weight: 500; color: var(--text-secondary);">${p.source}</div>`;
+                if (p.decisions) {
                     p.decisions.forEach(d => {
-                        decisionsHtml += `
-                            <div class="provenance-decision">
-                                <div class="decision-header">
-                                    <span class="decision-action">${d.action}</span>
-                                    <span class="decision-stage">${d.stage}</span>
-                                </div>
-                                <div class="decision-reason">${d.reason?.summary || 'No reason provided'}</div>
-                            </div>
-                        `;
+                        const action = d.action || 'unknown';
+                        const severity = d.severity || 'info';
+                        actionCounts[action] = (actionCounts[action] || 0) + 1;
+                        severityCounts[severity] = (severityCounts[severity] || 0) + 1;
                     });
                 }
             });
 
-            decisionsEl.innerHTML = decisionsHtml || '<p>No detailed decisions available</p>';
+            // Render breakdown
+            const breakdownEl = document.getElementById('provenanceBreakdown');
+            let breakdownHtml = '';
+
+            // Action breakdown
+            if (Object.keys(actionCounts).length > 0) {
+                const actionItems = Object.entries(actionCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([action, count]) => `
+                        <div class="provenance-breakdown-item action-${action}">
+                            <span class="item-count">${count}</span>
+                            <span class="item-label">${action}</span>
+                        </div>
+                    `).join('');
+                breakdownHtml += `
+                    <div class="provenance-breakdown-group">
+                        <div class="group-label">By Action</div>
+                        <div class="group-items">${actionItems}</div>
+                    </div>
+                `;
+            }
+
+            // Severity breakdown (exclude 'info' if it's the only one)
+            const nonInfoSeverities = Object.entries(severityCounts).filter(([s]) => s !== 'info');
+            if (nonInfoSeverities.length > 0 || Object.keys(severityCounts).length > 1) {
+                const severityOrder = ['critical', 'significant', 'minor', 'cosmetic', 'info'];
+                const severityItems = Object.entries(severityCounts)
+                    .sort((a, b) => severityOrder.indexOf(a[0]) - severityOrder.indexOf(b[0]))
+                    .map(([severity, count]) => `
+                        <div class="provenance-breakdown-item severity-${severity}">
+                            <span class="item-count">${count}</span>
+                            <span class="item-label">${severity}</span>
+                        </div>
+                    `).join('');
+                breakdownHtml += `
+                    <div class="provenance-breakdown-group">
+                        <div class="group-label">By Severity</div>
+                        <div class="group-items">${severityItems}</div>
+                    </div>
+                `;
+            }
+
+            // Confidence distribution
+            let highConf = 0, medConf = 0, lowConf = 0, totalWithConf = 0;
+            provenanceSources.forEach(p => {
+                if (p.decisions) {
+                    p.decisions.forEach(d => {
+                        if (d.confidence_after != null) {
+                            totalWithConf++;
+                            if (d.confidence_after >= 0.8) highConf++;
+                            else if (d.confidence_after >= 0.5) medConf++;
+                            else lowConf++;
+                        }
+                    });
+                }
+            });
+
+            if (totalWithConf > 0) {
+                const highPct = Math.round(highConf / totalWithConf * 100);
+                const medPct = Math.round(medConf / totalWithConf * 100);
+                const lowPct = Math.round(lowConf / totalWithConf * 100);
+                breakdownHtml += `
+                    <div class="provenance-breakdown-group">
+                        <div class="group-label">Confidence Distribution</div>
+                        <div class="group-items">
+                            <div class="provenance-breakdown-item" style="border-left:3px solid #27ae60;">
+                                <span class="item-count" style="color:#27ae60;">${highPct}%</span>
+                                <span class="item-label">high (≥80%)</span>
+                            </div>
+                            <div class="provenance-breakdown-item" style="border-left:3px solid #f39c12;">
+                                <span class="item-count" style="color:#f39c12;">${medPct}%</span>
+                                <span class="item-label">medium (50-79%)</span>
+                            </div>
+                            <div class="provenance-breakdown-item" style="border-left:3px solid #e74c3c;">
+                                <span class="item-count" style="color:#e74c3c;">${lowPct}%</span>
+                                <span class="item-label">low (<50%)</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            breakdownEl.innerHTML = breakdownHtml;
+
+            // Collect all decisions into flat array
+            let allDecisions = [];
+            provenanceSources.forEach(p => {
+                if (p.decisions) {
+                    p.decisions.forEach(d => {
+                        allDecisions.push({ ...d, source: p.source });
+                    });
+                }
+            });
+
+            // Populate action filter options
+            const uniqueActions = [...new Set(allDecisions.map(d => d.action))].sort();
+            const actionFilter = document.getElementById('provenanceFilterAction');
+            actionFilter.innerHTML = '<option value="all">All</option>' +
+                uniqueActions.map(a => `<option value="${a}">${a}</option>`).join('');
+
+            // Store decisions for filtering
+            window._provenanceDecisions = allDecisions;
+
+            // Render function
+            function renderProvenanceDecisions(decisions) {
+                const decisionsEl = document.getElementById('provenanceDecisions');
+
+                // Group by stage
+                const stageGroups = {};
+                const stageOrder = [
+                    'note_detection', 'ghost_note_classifier', 'harmonic_filter',
+                    'timing_correction', 'dynamics_processor', 'contamination_cleanup',
+                    'genre_refinement', 'export_preparation'
+                ];
+
+                decisions.forEach(d => {
+                    const stage = d.stage || 'unknown';
+                    if (!stageGroups[stage]) {
+                        stageGroups[stage] = [];
+                    }
+                    stageGroups[stage].push(d);
+                });
+
+                // Sort stages
+                const sortedStages = Object.keys(stageGroups).sort((a, b) => {
+                    const aIdx = stageOrder.indexOf(a);
+                    const bIdx = stageOrder.indexOf(b);
+                    if (aIdx === -1 && bIdx === -1) return a.localeCompare(b);
+                    if (aIdx === -1) return 1;
+                    if (bIdx === -1) return -1;
+                    return aIdx - bIdx;
+                });
+
+                // Aggregate similar decisions within each stage
+                function aggregateDecisions(decisions) {
+                    const groups = {};
+                    decisions.forEach(d => {
+                        const key = `${d.action}|${d.reason?.summary || ''}`;
+                        if (!groups[key]) {
+                            groups[key] = {
+                                action: d.action,
+                                summary: d.reason?.summary || 'No reason provided',
+                                decisions: [],
+                                confidenceSum: 0,
+                                confidenceCount: 0
+                            };
+                        }
+                        groups[key].decisions.push(d);
+                        if (d.confidence_after != null) {
+                            groups[key].confidenceSum += d.confidence_after;
+                            groups[key].confidenceCount++;
+                        }
+                    });
+                    return Object.values(groups);
+                }
+
+                // Helper to get action class
+                function getActionClass(action) {
+                    const actionMap = {
+                        'retained': 'action-retained', 'removed': 'action-removed',
+                        'corrected': 'action-corrected', 'refined': 'action-refined',
+                        'adjusted': 'action-adjusted', 'detected': 'action-detected',
+                        'suppressed': 'action-suppressed', 'reconstructed': 'action-reconstructed'
+                    };
+                    return actionMap[action?.toLowerCase()] || '';
+                }
+
+                // Render stage groups
+                let html = '';
+                sortedStages.forEach((stage, idx) => {
+                    const stageDecisions = stageGroups[stage];
+                    const aggregated = aggregateDecisions(stageDecisions);
+
+                    // Calculate stage stats
+                    let avgConfidence = 0;
+                    let confCount = 0;
+                    stageDecisions.forEach(d => {
+                        if (d.confidence_after != null) {
+                            avgConfidence += d.confidence_after;
+                            confCount++;
+                        }
+                    });
+                    avgConfidence = confCount > 0 ? (avgConfidence / confCount * 100).toFixed(0) : null;
+
+                    const stageName = stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+                    html += `
+                        <div class="provenance-stage-group" data-stage="${stage}">
+                            <div class="provenance-stage-header" onclick="this.parentElement.classList.toggle('expanded')">
+                                <div class="provenance-stage-title">
+                                    <span class="provenance-stage-chevron">▶</span>
+                                    <span class="provenance-stage-name">${stageName}</span>
+                                    <span class="provenance-stage-count">${stageDecisions.length}</span>
+                                </div>
+                                <div class="provenance-stage-stats">
+                                    ${avgConfidence ? `<span class="provenance-stage-stat">avg conf: <span class="stat-value">${avgConfidence}%</span></span>` : ''}
+                                    <span class="provenance-stage-stat">${aggregated.length} unique</span>
+                                </div>
+                            </div>
+                            <div class="provenance-stage-decisions">
+                                ${aggregated.map((agg, aggIdx) => {
+                                    const avgConf = agg.confidenceCount > 0
+                                        ? (agg.confidenceSum / agg.confidenceCount * 100).toFixed(0)
+                                        : null;
+                                    const actionClass = getActionClass(agg.action);
+                                    const aggId = `agg-${stage}-${aggIdx}`;
+
+                                    if (agg.decisions.length === 1) {
+                                        // Single decision - show full details
+                                        const d = agg.decisions[0];
+                                        const reasons = d.reasoning_details || [];
+                                        return `
+                                            <div class="provenance-aggregated">
+                                                <div class="agg-header">
+                                                    <div class="agg-summary">
+                                                        <span class="agg-action ${actionClass}">${agg.action}</span>
+                                                        <span class="agg-description">${agg.summary}</span>
+                                                    </div>
+                                                    ${avgConf ? `<span class="agg-confidence">${avgConf}% confidence</span>` : ''}
+                                                </div>
+                                                ${reasons.length > 0 ? `
+                                                    <div class="decision-reasoning" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.1);">
+                                                        <ul class="reasoning-list">${reasons.map(r => `<li>${r}</li>`).join('')}</ul>
+                                                    </div>
+                                                ` : ''}
+                                            </div>
+                                        `;
+                                    } else {
+                                        // Multiple similar decisions - aggregate
+                                        return `
+                                            <div class="provenance-aggregated" id="${aggId}">
+                                                <div class="agg-header">
+                                                    <div class="agg-summary">
+                                                        <span class="agg-count">${agg.decisions.length}×</span>
+                                                        <span class="agg-action ${actionClass}">${agg.action}</span>
+                                                        <span class="agg-description">${agg.summary}</span>
+                                                    </div>
+                                                    <div style="display:flex;gap:12px;align-items:center;">
+                                                        ${avgConf ? `<span class="agg-confidence">avg ${avgConf}%</span>` : ''}
+                                                        <span class="agg-expand" onclick="document.getElementById('${aggId}').classList.toggle('expanded');this.textContent=this.textContent==='expand'?'collapse':'expand'">expand</span>
+                                                    </div>
+                                                </div>
+                                                <div class="agg-details">
+                                                    ${agg.decisions.slice(0, 20).map(d => {
+                                                        const conf = d.confidence_after != null ? `${(d.confidence_after*100).toFixed(0)}%` : '';
+                                                        const reasons = d.reasoning_details || [];
+                                                        return `
+                                                            <div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.8rem;">
+                                                                <span style="color:var(--text-secondary);">${d.entity_type} ${d.entity_id || ''}</span>
+                                                                ${conf ? `<span style="color:var(--accent);margin-left:8px;">${conf}</span>` : ''}
+                                                                ${reasons.length > 0 ? `<div style="color:var(--text-dim);font-size:0.75rem;margin-top:2px;">${reasons.join(' • ')}</div>` : ''}
+                                                            </div>
+                                                        `;
+                                                    }).join('')}
+                                                    ${agg.decisions.length > 20 ? `<div style="padding:6px 0;color:var(--text-dim);font-size:0.75rem;">... and ${agg.decisions.length - 20} more</div>` : ''}
+                                                </div>
+                                            </div>
+                                        `;
+                                    }
+                                }).join('')}
+                            </div>
+                        </div>
+                    `;
+                });
+
+                decisionsEl.innerHTML = html || '<p>No decisions available</p>';
+            }
+
+            // Initial render
+            renderProvenanceDecisions(allDecisions);
+
+            // Filter handlers
+            document.getElementById('provenanceFilterSeverity').onchange = function() {
+                applyProvenanceFilters();
+            };
+            document.getElementById('provenanceFilterAction').onchange = function() {
+                applyProvenanceFilters();
+            };
+
+            function applyProvenanceFilters() {
+                const severity = document.getElementById('provenanceFilterSeverity').value;
+                const action = document.getElementById('provenanceFilterAction').value;
+                let filtered = window._provenanceDecisions;
+                if (severity !== 'all') {
+                    filtered = filtered.filter(d => d.severity === severity);
+                }
+                if (action !== 'all') {
+                    filtered = filtered.filter(d => d.action === action);
+                }
+                renderProvenanceDecisions(filtered);
+            }
         }
 
         function displayAmpDetails(elementId, amp) {
@@ -2440,17 +3923,29 @@
 
                 // Original stem audio player (if available)
                 if (stemPath) {
-                    const encodedPath = encodeURIComponent(stemPath);
+                    // Handle both pre-formatted URLs and raw file paths
+                    let audioSrc, downloadSrc;
+                    if (stemPath.startsWith('/api')) {
+                        // Already a URL - use directly
+                        audioSrc = stemPath;
+                        downloadSrc = stemPath + (stemPath.includes('?') ? '&' : '?') + 'download=true';
+                    } else {
+                        // Raw file path - encode it
+                        const encodedPath = encodeURIComponent(stemPath);
+                        audioSrc = `/api/admin/serve-file?path=${encodedPath}`;
+                        downloadSrc = `/api/admin/serve-file?path=${encodedPath}&download=true`;
+                    }
+
                     const audio = document.createElement('audio');
                     audio.controls = true;
                     audio.style.width = '100%';
                     audio.preload = 'none';
-                    audio.innerHTML = `<source src="/api/admin/serve-file?path=${encodedPath}" type="audio/wav">`;
+                    audio.innerHTML = `<source src="${audioSrc}" type="audio/wav">`;
                     card.appendChild(audio);
 
                     // Download link
                     const downloadLink = document.createElement('a');
-                    downloadLink.href = `/api/admin/serve-file?path=${encodedPath}&download=true`;
+                    downloadLink.href = downloadSrc;
                     downloadLink.style.cssText = 'display: inline-block; margin-top: 0.5rem; color: var(--primary); text-decoration: none; font-size: 0.875rem;';
                     downloadLink.textContent = `📁 Download ${stemName}.wav`;
                     card.appendChild(downloadLink);
@@ -2705,6 +4200,7 @@
 
         // Store waveform data globally for hover interaction
         let currentWaveformData = null;
+        let studioWaveformTrimmer = null;
 
         function displayWaveform(waveform, quality = {}) {
             const card = document.getElementById('waveformCard');
@@ -2715,23 +4211,40 @@
             if (!waveform || !waveform.peaks_positive || waveform.peaks_positive.length === 0) {
                 card.style.display = 'none';
                 currentWaveformData = null;
+                if (studioWaveformTrimmer) {
+                    WaveformTrimmer.destroy(canvas);
+                    studioWaveformTrimmer = null;
+                }
                 return;
             }
             card.style.display = 'block';
 
             const duration_sec = quality.duration_sec || waveform.duration_sec || 1;
 
-            // Store for hover
+            // Store for hover (legacy compatibility)
             currentWaveformData = { waveform, quality, duration_sec };
 
             // Update info
             durationEl.textContent = `Duration: ${(waveform.duration_sec || 0).toFixed(2)}s`;
             sampleRateEl.textContent = `Sample Rate: ${waveform.sample_rate || 22050} Hz`;
 
-            drawWaveform(canvas, waveform, quality, duration_sec);
+            // Use WaveformTrimmer in display mode if available
+            if (typeof WaveformTrimmer !== 'undefined') {
+                // Destroy existing instance
+                if (studioWaveformTrimmer) {
+                    WaveformTrimmer.destroy(canvas);
+                }
 
-            // Setup hover interaction
-            setupWaveformHover(canvas, waveform, duration_sec);
+                // Initialize in display mode with quality overlays
+                studioWaveformTrimmer = WaveformTrimmer.init(canvas, waveform, {
+                    mode: 'display',
+                    quality: quality,
+                });
+            } else {
+                // Fallback to legacy rendering
+                drawWaveform(canvas, waveform, quality, duration_sec);
+                setupWaveformHover(canvas, waveform, duration_sec);
+            }
         }
 
         function drawWaveform(canvas, waveform, quality, duration_sec, hoverX = null) {
@@ -3313,15 +4826,16 @@
         })();
 
         // ========== Client Status ==========
-        const LOCAL_ENGINE_URL = 'http://127.0.0.1:7777';
-        let localEngineAvailable = false;
+        // LOCAL_ENGINE_URL and localEngineAvailable declared at top of script
 
         async function checkLocalEngine() {
             try {
                 const resp = await fetch(`${LOCAL_ENGINE_URL}/health`, { method: 'GET', signal: AbortSignal.timeout(2000) });
                 localEngineAvailable = resp.ok;
-            } catch {
+                console.log('[ToneForge] Local engine health check:', resp.ok ? 'AVAILABLE' : 'NOT OK');
+            } catch (e) {
                 localEngineAvailable = false;
+                console.log('[ToneForge] Local engine health check: NOT AVAILABLE', e.message);
             }
             // Update shared plugin utility
             TonePlugins.setAvailable(localEngineAvailable);
@@ -3427,11 +4941,11 @@
                     // User can manually collapse if desired
                 }
 
-                // Keyboard navigation (Ctrl/Cmd + 1-5)
+                // Keyboard navigation (Ctrl/Cmd + 1-7)
                 document.addEventListener('keydown', (e) => {
-                    if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '5') {
+                    if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '7') {
                         e.preventDefault();
-                        const tabs = ['overview', 'tone', 'quality', 'stems', 'technical'];
+                        const tabs = ['overview', 'arrangement', 'tone', 'quality', 'stems', 'technical', 'intelligence'];
                         const index = parseInt(e.key) - 1;
                         if (tabs[index]) {
                             this.switchTab(tabs[index]);
@@ -3983,6 +5497,13 @@
         };
 
         ClientControl.init();
+
+        // Verbose output toggle
+        const verboseCheckbox = document.getElementById('verboseOutput');
+        const progressLog = document.getElementById('progressLog');
+        verboseCheckbox?.addEventListener('change', (e) => {
+            progressLog.style.display = e.target.checked ? 'block' : 'none';
+        });
 
         // Cancel Analysis button
         document.getElementById('cancelAnalysisBtn')?.addEventListener('click', () => {
