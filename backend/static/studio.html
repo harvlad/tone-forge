@@ -2710,6 +2710,7 @@
                 effects_chain: descriptor?.effects || null,
                 guitar_details: descriptor?.guitar || null,
                 synth_details: descriptor?.synth_family ? descriptor : null,
+                midi: data.midi || null,  // Keep original for provenance
                 midi_stats: data.midi || {},
                 midi_data: data.midi || null,
                 midi_stems: data.midi_stems || {},
@@ -2719,6 +2720,11 @@
                 profiling: data.profiling || null,
                 tone_reasoning: instrumentData?.reasoning || descriptor.reasoning || null,
                 waveform: data.waveform || null,
+                // Arrangement data
+                sections: data.sections || [],
+                energy_curve: data.energy_curve || [],
+                tempo: data.midi?.tempo || data.midi_stats?.tempo || 120,
+                duration_sec: data.duration_sec || 0,
                 // Store descriptor for preview generation
                 descriptor: descriptor,
             };
