@@ -2634,30 +2634,54 @@
         }
 
         async function displayDeepResults(data) {
-            console.log('displayDeepResults raw data:', {
-                has_midi_stems: 'midi_stems' in data,
-                midi_stems_keys: data.midi_stems ? Object.keys(data.midi_stems) : 'undefined',
-                has_midi: 'midi' in data,
-                keys: Object.keys(data).slice(0, 20)
-            });
+            const detectedType = data.detected_type || 'guitar';
+            console.log('displayDeepResults:', { detectedType, keys: Object.keys(data).slice(0, 15) });
 
-            // Handle multiple data formats:
-            // - Unified pipeline: data.guitar.descriptor or data.descriptor (top-level)
-            // - Admin analysis: data.tone
-            // - History: data.guitar
-            const tone = data.tone || data.guitar || {};
-            // Prefer nested descriptor, fall back to top-level descriptor
-            const descriptor = tone?.descriptor || data.descriptor || {};
+            // Get the primary instrument data based on detected type
+            let instrumentData = null;
+            let descriptor = {};
+            let ampInfo = {};
+            let confidence = {};
+            let primaryLabel = 'N/A';
+            let primaryValue = 0;
 
-            // Extract amp info from multiple possible locations
-            const ampInfo = descriptor?.amp || tone?.amp || {};
-            const confidence = descriptor?.confidence || tone?.confidence || {};
+            if (detectedType === 'guitar' && data.guitar) {
+                instrumentData = data.guitar;
+                descriptor = instrumentData?.descriptor || data.descriptor || {};
+                ampInfo = descriptor?.amp || {};
+                confidence = descriptor?.confidence || {};
+                primaryLabel = ampInfo.family || 'N/A';
+                primaryValue = ampInfo.gain || 0;
+            } else if (detectedType === 'synth' && data.synth) {
+                instrumentData = data.synth;
+                descriptor = instrumentData?.descriptor || data.descriptor || {};
+                confidence = descriptor?.confidence || {};
+                // For synth, show synth family instead of amp
+                primaryLabel = descriptor?.synth_family || descriptor?.family || 'Synth';
+                primaryValue = confidence?.synth_family || confidence?.overall || 0.8;
+            } else if (detectedType === 'bass' && data.bass) {
+                instrumentData = data.bass;
+                descriptor = instrumentData?.descriptor || data.descriptor || {};
+                confidence = descriptor?.confidence || {};
+                primaryLabel = descriptor?.bass_type || 'Bass';
+                primaryValue = confidence?.bass_type || 0.8;
+            } else if (detectedType === 'drums' && data.drums) {
+                instrumentData = data.drums;
+                descriptor = instrumentData?.descriptor || data.descriptor || {};
+                confidence = descriptor?.confidence || {};
+                primaryLabel = descriptor?.kit_type || 'Drums';
+                primaryValue = confidence?.kit_type || 0.8;
+            } else {
+                // Fallback to any available data
+                instrumentData = data.tone || data.guitar || data.synth || data.bass || {};
+                descriptor = instrumentData?.descriptor || data.descriptor || {};
+                ampInfo = descriptor?.amp || {};
+                confidence = descriptor?.confidence || {};
+                primaryLabel = ampInfo.family || descriptor?.synth_family || 'Unknown';
+                primaryValue = ampInfo.gain || confidence?.amp_family || 0;
+            }
 
-            console.log('displayDeepResults extracted:', {
-                amp_family: ampInfo.family,
-                gain: ampInfo.gain,
-                confidence_amp: confidence.amp_family
-            });
+            console.log('displayDeepResults extracted:', { detectedType, primaryLabel, primaryValue, confidence });
 
             // Format deep analysis results for display
             const formatted = {
@@ -2672,17 +2696,20 @@
                 quality_report: data.quality?.quality_report || {},
                 confidence_scores: confidence,
                 detected: {
-                    amp_family: ampInfo.family || 'N/A',
-                    gain: ampInfo.gain || 0,
+                    // Dynamic labels based on detected type
+                    amp_family: primaryLabel,
+                    gain: primaryValue,
+                    type: detectedType,
                 },
                 // Detection confidence for showing/hiding sections
                 detection: data.detection || {},
                 detected_type: data.detected_type || 'guitar',
                 // Full detection details from descriptor
                 amp_details: ampInfo,
-                cab_details: descriptor?.cab || tone?.cab || null,
-                effects_chain: descriptor?.effects || tone?.effects || null,
-                guitar_details: descriptor?.guitar || tone?.guitar || null,
+                cab_details: descriptor?.cab || null,
+                effects_chain: descriptor?.effects || null,
+                guitar_details: descriptor?.guitar || null,
+                synth_details: descriptor?.synth_family ? descriptor : null,
                 midi_stats: data.midi || {},
                 midi_data: data.midi || null,
                 midi_stems: data.midi_stems || {},
@@ -2690,7 +2717,7 @@
                 stems_paths: data.stems_paths || data.stems || {},
                 analysis_time_ms: data.profiling?.total_ms || (data.total_time_sec || data.profiling?.total_time_sec || 0) * 1000,
                 profiling: data.profiling || null,
-                tone_reasoning: tone.reasoning || descriptor.reasoning || null,
+                tone_reasoning: instrumentData?.reasoning || descriptor.reasoning || null,
                 waveform: data.waveform || null,
                 // Store descriptor for preview generation
                 descriptor: descriptor,
@@ -2707,26 +2734,41 @@
                 await TonePlugins.fetchMatches(data.descriptor);
             }
 
-            // Overall score
+            // Overall score - use first available confidence value
             const overallScore = document.getElementById('overallScore');
-            const score = data.quality_report?.overall_confidence ?? data.confidence_scores?.amp_family ?? 0;
+            const score = data.quality_report?.overall_confidence
+                ?? data.confidence_scores?.amp_family
+                ?? data.confidence_scores?.synth_family
+                ?? data.confidence_scores?.overall
+                ?? (typeof data.detected?.gain === 'number' && data.detected.gain > 0 ? data.detected.gain : 0)
+                ?? 0;
             const scorePercent = Math.round(score * 100);
             overallScore.querySelector('.score').textContent = scorePercent + '%';
             overallScore.style.borderColor = getScoreColor(score);
 
-            // Summary
+            // Summary - adapt title based on score
             document.getElementById('summaryTitle').textContent =
-                data.quality_report?.should_proceed ? 'Quality Acceptable' : 'Quality Issues Detected';
+                score > 0.5 ? 'Analysis Complete' : (data.quality_report?.should_proceed ? 'Quality Acceptable' : 'Quality Issues Detected');
+
+            // Dynamic labels based on detected type
+            const detectedType = data.detected?.type || data.detected_type || 'guitar';
+            const primaryLabel = detectedType === 'guitar' ? 'Amp Family' :
+                                 detectedType === 'synth' ? 'Synth Type' :
+                                 detectedType === 'bass' ? 'Bass Type' : 'Type';
+            const secondaryLabel = detectedType === 'guitar' ? 'Gain' : 'Confidence';
+            const secondaryValue = detectedType === 'guitar'
+                ? ((data.detected?.gain || 0) * 10).toFixed(1)
+                : (score * 100).toFixed(0) + '%';
 
             const summaryRow = document.getElementById('summaryRow');
             summaryRow.innerHTML = `
                 <div class="summary-item">
                     <div class="value">${data.detected?.amp_family || 'N/A'}</div>
-                    <div class="label">Amp Family</div>
+                    <div class="label">${primaryLabel}</div>
                 </div>
                 <div class="summary-item">
-                    <div class="value">${((data.detected?.gain || 0) * 10).toFixed(1)}</div>
-                    <div class="label">Gain</div>
+                    <div class="value">${secondaryValue}</div>
+                    <div class="label">${secondaryLabel}</div>
                 </div>
                 <div class="summary-item">
                     <div class="value">${data.quality_report?.warning_count || 0}</div>
