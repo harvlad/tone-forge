@@ -2641,9 +2641,23 @@
                 keys: Object.keys(data).slice(0, 20)
             });
 
-            // Handle both formats: direct admin analysis (data.tone) and stored history (data.guitar)
+            // Handle multiple data formats:
+            // - Unified pipeline: data.guitar.descriptor or data.descriptor (top-level)
+            // - Admin analysis: data.tone
+            // - History: data.guitar
             const tone = data.tone || data.guitar || {};
-            const descriptor = tone.descriptor || data.descriptor || {};
+            // Prefer nested descriptor, fall back to top-level descriptor
+            const descriptor = tone?.descriptor || data.descriptor || {};
+
+            // Extract amp info from multiple possible locations
+            const ampInfo = descriptor?.amp || tone?.amp || {};
+            const confidence = descriptor?.confidence || tone?.confidence || {};
+
+            console.log('displayDeepResults extracted:', {
+                amp_family: ampInfo.family,
+                gain: ampInfo.gain,
+                confidence_amp: confidence.amp_family
+            });
 
             // Format deep analysis results for display
             const formatted = {
@@ -2656,19 +2670,19 @@
                 artifacts: data.quality?.artifacts || null,
                 role: data.quality?.role || null,
                 quality_report: data.quality?.quality_report || {},
-                confidence_scores: tone.confidence || descriptor.confidence || {},
+                confidence_scores: confidence,
                 detected: {
-                    amp_family: tone.amp_family || descriptor.amp?.family || 'N/A',
-                    gain: tone.gain || descriptor.amp?.gain || 0,
+                    amp_family: ampInfo.family || 'N/A',
+                    gain: ampInfo.gain || 0,
                 },
                 // Detection confidence for showing/hiding sections
                 detection: data.detection || {},
                 detected_type: data.detected_type || 'guitar',
                 // Full detection details from descriptor
-                amp_details: tone.amp || descriptor.amp || null,
-                cab_details: tone.cab || descriptor.cab || null,
-                effects_chain: tone.effects || descriptor.effects || null,
-                guitar_details: tone.guitar || descriptor.guitar || null,
+                amp_details: ampInfo,
+                cab_details: descriptor?.cab || tone?.cab || null,
+                effects_chain: descriptor?.effects || tone?.effects || null,
+                guitar_details: descriptor?.guitar || tone?.guitar || null,
                 midi_stats: data.midi || {},
                 midi_data: data.midi || null,
                 midi_stems: data.midi_stems || {},
