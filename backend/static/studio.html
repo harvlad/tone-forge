@@ -2960,8 +2960,8 @@
                     const stemUrls = {};
                     for (const [stemType, stemPath] of Object.entries(stemsPaths)) {
                         if (typeof stemPath === 'string') {
-                            // If it's already a URL (starts with /api), use it directly
-                            if (stemPath.startsWith('/api')) {
+                            // If it's already a URL, use it directly
+                            if (stemPath.startsWith('/api') || stemPath.startsWith('http://') || stemPath.startsWith('https://')) {
                                 stemUrls[stemType] = stemPath;
                             } else {
                                 // Convert file path to serve URL
@@ -3925,7 +3925,7 @@
                 if (stemPath) {
                     // Handle both pre-formatted URLs and raw file paths
                     let audioSrc, downloadSrc;
-                    if (stemPath.startsWith('/api')) {
+                    if (stemPath.startsWith('/api') || stemPath.startsWith('http://') || stemPath.startsWith('https://')) {
                         // Already a URL - use directly
                         audioSrc = stemPath;
                         downloadSrc = stemPath + (stemPath.includes('?') ? '&' : '?') + 'download=true';

@@ -17,6 +17,7 @@ import base64
 import concurrent.futures
 import json
 import logging
+import os
 import tempfile
 import time
 from dataclasses import dataclass, field, asdict
@@ -32,6 +33,47 @@ import librosa
 from dataclasses import is_dataclass
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Shared Process Pool for CPU-bound operations (avoids GIL)
+# =============================================================================
+# ProcessPoolExecutor runs work in separate processes, completely bypassing
+# Python's GIL. This keeps the main event loop responsive during heavy CPU work.
+_CPU_WORKERS = int(os.environ.get("TONEFORGE_CPU_WORKERS", "2"))
+_cpu_executor: Optional[concurrent.futures.ProcessPoolExecutor] = None
+_thread_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+
+def get_cpu_executor() -> concurrent.futures.ProcessPoolExecutor:
+    """Get the shared CPU process pool executor."""
+    global _cpu_executor
+    if _cpu_executor is None:
+        _cpu_executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=_CPU_WORKERS,
+        )
+        logger.info(f"Created process pool with {_CPU_WORKERS} workers (GIL-free)")
+    return _cpu_executor
+
+
+def get_thread_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Get a thread pool for I/O-bound or unpicklable operations."""
+    global _thread_executor
+    if _thread_executor is None:
+        _thread_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4,
+            thread_name_prefix="toneforge_io"
+        )
+    return _thread_executor
+
+
+async def run_in_thread(func, *args, **kwargs):
+    """Run a function in thread pool (for I/O or unpicklable closures)."""
+    loop = asyncio.get_event_loop()
+    if kwargs:
+        def wrapper():
+            return func(*args, **kwargs)
+        return await loop.run_in_executor(get_thread_executor(), wrapper)
+    return await loop.run_in_executor(get_thread_executor(), func, *args)
 
 
 def _serialize_obj(obj: Any) -> Any:
@@ -140,7 +182,7 @@ class PipelineConfig:
             include_provenance=True,
             detect_synth_behavior=True,
             include_waveform=False,
-            include_profiling=False,
+            include_profiling=True,  # Enable for Technical tab
         )
 
     @classmethod
@@ -250,6 +292,10 @@ class AnalysisResult:
     # Profiling
     profiling: Optional[Dict[str, Any]] = None
 
+    # Arrangement / sections
+    sections: Optional[List[Dict[str, Any]]] = None
+    energy_curve: Optional[List[float]] = None
+
     # Backward compatibility
     type: Optional[str] = None
     descriptor: Optional[Dict[str, Any]] = None
@@ -273,16 +319,68 @@ class AnalysisResult:
                 "summary": self.detection.summary,
                 "confidence": self.detection.confidence,
             },
+            # Role object for frontend compatibility
+            "role": {
+                "primary_role": self.detected_type,
+                "role": self.detected_type,
+                "confidence": self.detection.confidence.get(self.detected_type, 0.8),
+            },
         }
 
         # Add optional fields
         for field_name in ["guitar", "bass", "drums", "synth", "midi",
                           "midi_stems", "stems", "stems_paths", "quality",
                           "provenance", "waveform", "profiling",
+                          "sections", "energy_curve",
                           "type", "descriptor", "chain", "tweak_hints"]:
             value = getattr(self, field_name)
             if value is not None:
                 result[field_name] = value
+
+        # Add midi_stats for frontend
+        if self.midi:
+            result["midi_stats"] = {
+                "note_count": self.midi.get("note_count", 0),
+                "tempo": self.midi.get("tempo"),
+                "polyphony": self.midi.get("polyphony"),
+                "confidence": self.midi.get("confidence", 0),
+            }
+
+        # Add flattened timbral characteristics for visualization
+        # Extract 0-1 numeric values from nested descriptor structures
+        timbral = {}
+        if self.descriptor:
+            # Guitar descriptor
+            if "guitar" in self.descriptor:
+                guitar = self.descriptor["guitar"]
+                if isinstance(guitar, dict) and "pickup_brightness" in guitar:
+                    timbral["brightness"] = guitar.get("pickup_brightness", 0.5)
+            if "amp" in self.descriptor:
+                amp = self.descriptor["amp"]
+                if isinstance(amp, dict):
+                    timbral["gain"] = amp.get("gain", 0.5)
+                    voicing = amp.get("voicing", {})
+                    if isinstance(voicing, dict):
+                        timbral["bass"] = voicing.get("bass", 0.5)
+                        timbral["mid"] = voicing.get("mid", 0.5)
+                        timbral["treble"] = voicing.get("treble", 0.5)
+                        timbral["presence"] = voicing.get("presence", 0.5)
+            if "effects" in self.descriptor:
+                effects = self.descriptor["effects"]
+                if isinstance(effects, dict):
+                    if "reverb" in effects and isinstance(effects["reverb"], dict):
+                        timbral["reverb"] = effects["reverb"].get("mix", 0.0)
+                    if "delay" in effects and isinstance(effects["delay"], dict):
+                        timbral["delay"] = effects["delay"].get("mix", 0.0)
+            # Synth descriptor values at top level
+            for key in ["brightness", "movement", "stereo_width"]:
+                if key in self.descriptor and isinstance(self.descriptor[key], (int, float)):
+                    val = self.descriptor[key]
+                    if 0 <= val <= 1:
+                        timbral[key] = val
+
+        if timbral:
+            result["timbral"] = timbral
 
         return result
 
@@ -474,13 +572,31 @@ class UnifiedPipeline:
                     {"midi_stems": list(midi_stems.keys())}
                 )
 
-            # 7. Generate waveform visualization
+            # 7. Detect arrangement sections
+            sections = None
+            energy_curve = None
+            yield ProgressEvent("sections", "Analyzing arrangement...", 87)
+            stage_start = time.time()
+            try:
+                section_result = await self._detect_sections(audio_data, midi_stems)
+                if section_result:
+                    sections = section_result.get("sections")
+                    energy_curve = section_result.get("energy_curve")
+            except Exception as e:
+                logger.warning(f"Section detection failed: {e}")
+            if stage_timings is not None:
+                stage_timings["section_detection"] = {
+                    "duration_ms": (time.time() - stage_start) * 1000,
+                    "sections_found": len(sections) if sections else 0,
+                }
+
+            # 8. Generate waveform visualization
             waveform = None
             if config.include_waveform:
-                yield ProgressEvent("waveform", "Generating waveform...", 90)
+                yield ProgressEvent("waveform", "Generating waveform...", 92)
                 waveform = self._generate_waveform(audio_data)
 
-            # 8. Build final result
+            # 9. Build final result
             yield ProgressEvent("finalizing", "Finalizing results...", 95)
 
             if stage_timings is not None:
@@ -493,7 +609,7 @@ class UnifiedPipeline:
 
             result = self._build_result(
                 audio_data, detection, stems, stem_results, instrument_results,
-                midi_stems, waveform, stage_timings, config
+                midi_stems, waveform, sections, energy_curve, stage_timings, config
             )
 
             yield ProgressEvent("complete", "Analysis complete", 100)
@@ -527,8 +643,6 @@ class UnifiedPipeline:
         config: PipelineConfig,
     ) -> AudioData:
         """Load audio from local file."""
-        loop = asyncio.get_event_loop()
-
         def load():
             y, sr = librosa.load(str(path), sr=config.target_sr, mono=True)
 
@@ -545,8 +659,7 @@ class UnifiedPipeline:
 
             return y, sr
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            audio, sr = await loop.run_in_executor(pool, load)
+        audio, sr = await run_in_thread(load)
 
         return AudioData(
             audio=audio,
@@ -566,7 +679,6 @@ class UnifiedPipeline:
         """Load audio from YouTube URL using yt-dlp."""
         import subprocess
 
-        loop = asyncio.get_event_loop()
 
         def download_and_load():
             # Create temp directory for download
@@ -618,8 +730,7 @@ class UnifiedPipeline:
 
             return y, sr, actual_path, title
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            audio, sr, path, title = await loop.run_in_executor(pool, download_and_load)
+        audio, sr, path, title = await run_in_thread(download_and_load)
 
         return AudioData(
             audio=audio,
@@ -639,20 +750,19 @@ class UnifiedPipeline:
         """Detect audio content type."""
         from tone_forge import auto_detect
 
-        loop = asyncio.get_event_loop()
 
         def detect():
             detection = auto_detect.detect_audio_type(str(audio_data.path))
 
-            # Determine primary type
-            if detection.is_drums:
-                detected_type = "drums"
-            elif detection.is_synth:
-                detected_type = "synth"
+            # Determine primary type - prioritize melodic instruments for tone analysis
+            if detection.is_guitar:
+                detected_type = "guitar"
             elif detection.is_bass:
                 detected_type = "bass"
-            elif detection.is_guitar:
-                detected_type = "guitar"
+            elif detection.is_synth:
+                detected_type = "synth"
+            elif detection.is_drums:
+                detected_type = "drums"
             else:
                 detected_type = "guitar"  # Default
 
@@ -683,8 +793,7 @@ class UnifiedPipeline:
                 confidence=getattr(detection, "confidence", {}),
             )
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            return await loop.run_in_executor(pool, detect)
+        return await run_in_thread(detect)
 
     async def _separate_stems(
         self,
@@ -698,7 +807,6 @@ class UnifiedPipeline:
             logger.warning("Stem separator not available")
             return {}
 
-        loop = asyncio.get_event_loop()
 
         def separate():
             try:
@@ -711,8 +819,7 @@ class UnifiedPipeline:
                 logger.warning(f"6-stem model failed, falling back to 4-stem: {e}")
                 return stem_separator.separate_all_stems(str(audio_data.path))
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            stems = await loop.run_in_executor(pool, separate)
+        stems = await run_in_thread(separate)
 
         return {name: Path(path) for name, path in stems.items()}
 
@@ -754,7 +861,6 @@ class UnifiedPipeline:
         """Analyze a single stem or audio file."""
         result = StemResult(stem_type=stem_type, audio_path=audio_path)
 
-        loop = asyncio.get_event_loop()
 
         # Quality analysis (if configured)
         if config.analyze_quality:
@@ -773,8 +879,7 @@ class UnifiedPipeline:
                         "quality_report": quality_report,
                     })
 
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result.quality = await loop.run_in_executor(pool, analyze_quality)
+                result.quality = await run_in_thread(analyze_quality)
             except Exception as e:
                 logger.warning(f"Quality analysis failed for {stem_type}: {e}")
 
@@ -789,8 +894,7 @@ class UnifiedPipeline:
                     behavior = analyzer.analyze(y, sr)
                     return _serialize_obj(behavior)
 
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result.synth_behavior = await loop.run_in_executor(pool, analyze_synth)
+                result.synth_behavior = await run_in_thread(analyze_synth)
             except Exception as e:
                 logger.warning(f"Synth behavior analysis failed: {e}")
 
@@ -805,7 +909,6 @@ class UnifiedPipeline:
     ) -> Dict[str, Dict[str, Any]]:
         """Analyze each detected instrument type."""
         results = {}
-        loop = asyncio.get_event_loop()
 
         # Determine which audio to use for each instrument
         audio_path = audio_data.path
@@ -823,8 +926,7 @@ class UnifiedPipeline:
                         "tweak_hints": self._generate_synth_hints(synth_desc),
                     }
 
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    results["synth"] = await loop.run_in_executor(pool, analyze_synth)
+                results["synth"] = await run_in_thread(analyze_synth)
             except Exception as e:
                 logger.warning(f"Synth analysis failed: {e}")
 
@@ -855,8 +957,7 @@ class UnifiedPipeline:
                         "tweak_hints": helix_card.tweak_hints,
                     }
 
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    results["guitar"] = await loop.run_in_executor(pool, analyze_guitar)
+                results["guitar"] = await run_in_thread(analyze_guitar)
             except Exception as e:
                 logger.warning(f"Guitar analysis failed: {e}")
 
@@ -876,8 +977,7 @@ class UnifiedPipeline:
                         "tweak_hints": self._generate_bass_hints(bass_desc),
                     }
 
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    results["bass"] = await loop.run_in_executor(pool, analyze_bass)
+                results["bass"] = await run_in_thread(analyze_bass)
             except Exception as e:
                 logger.warning(f"Bass analysis failed: {e}")
 
@@ -894,8 +994,7 @@ class UnifiedPipeline:
                         "tweak_hints": self._generate_drum_hints(drum_desc),
                     }
 
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    results["drums"] = await loop.run_in_executor(pool, analyze_drums)
+                results["drums"] = await run_in_thread(analyze_drums)
             except Exception as e:
                 logger.warning(f"Drums analysis failed: {e}")
 
@@ -1042,27 +1141,31 @@ class UnifiedPipeline:
     ) -> Dict[str, Dict[str, Any]]:
         """Extract MIDI from audio or stems."""
         midi_stems = {}
-        loop = asyncio.get_event_loop()
 
         # Determine what to extract from
         sources = stems if stems else {detection.detected_type: audio_data.path}
 
         for stem_type, audio_path in sources.items():
+            midi_data = None
             try:
                 if config.use_ensemble:
                     midi_data = await self._extract_midi_ensemble(
                         audio_path, stem_type, detection.genre, config
                     )
-                else:
+            except Exception as e:
+                logger.warning(f"Ensemble MIDI extraction failed for {stem_type}: {e}, falling back to basic")
+
+            # Fall back to basic extraction if ensemble failed or returned no notes
+            if not midi_data or midi_data.get("note_count", 0) == 0:
+                try:
                     midi_data = await self._extract_midi_basic(
                         audio_path, stem_type, detection.genre
                     )
+                except Exception as e:
+                    logger.warning(f"Basic MIDI extraction also failed for {stem_type}: {e}")
 
-                if midi_data and midi_data.get("note_count", 0) > 0:
-                    midi_stems[stem_type] = midi_data
-
-            except Exception as e:
-                logger.warning(f"MIDI extraction failed for {stem_type}: {e}")
+            if midi_data and midi_data.get("note_count", 0) > 0:
+                midi_stems[stem_type] = midi_data
 
         return midi_stems
 
@@ -1078,7 +1181,6 @@ class UnifiedPipeline:
         from tone_forge.midi import basic_pitch_patch  # noqa: F401
         from tone_forge.midi.ensemble_extractor import PitchEnsembleExtractor
 
-        loop = asyncio.get_event_loop()
 
         def extract():
             y, sr = librosa.load(str(audio_path), sr=22050, mono=True)
@@ -1090,29 +1192,48 @@ class UnifiedPipeline:
                 genre=genre,
             )
 
-            # Convert to MIDI file
-            from tone_forge.midi_extractor import notes_to_midi_file
+            # Convert to MIDI file using pretty_midi
+            import pretty_midi
             import tempfile
+            import io
 
-            midi_path = Path(tempfile.mktemp(suffix=".mid"))
-            notes_to_midi_file(result.notes, str(midi_path))
+            pm = pretty_midi.PrettyMIDI(initial_tempo=result.tempo or 120)
+            instrument = pretty_midi.Instrument(program=0)
 
-            # Read and encode
-            with open(midi_path, "rb") as f:
-                midi_content = base64.b64encode(f.read()).decode()
+            for note_obj in result.notes:
+                # EnsembleNote is a dataclass with pitch, start, end, velocity attributes
+                pitch = int(note_obj.pitch)
+                start = float(note_obj.start)
+                end = float(note_obj.end)
+                velocity = int(note_obj.velocity)
+                note = pretty_midi.Note(velocity=velocity, pitch=pitch, start=start, end=end)
+                instrument.notes.append(note)
+
+            pm.instruments.append(instrument)
+
+            # Write to bytes and encode
+            midi_buffer = io.BytesIO()
+            pm.write(midi_buffer)
+            midi_content = base64.b64encode(midi_buffer.getvalue()).decode()
+
+            # Convert notes to JSON-serializable format for arrangement view
+            notes_list = [
+                {"pitch": int(n.pitch), "start": float(n.start), "end": float(n.end), "velocity": int(n.velocity)}
+                for n in result.notes
+            ]
 
             return {
                 "content": midi_content,
                 "filename": f"{stem_type}.mid",
                 "note_count": len(result.notes),
+                "notes": notes_list,  # Include notes array for arrangement view
                 "confidence": result.overall_confidence,
                 "tempo": result.tempo,
                 "detector_stats": result.detector_stats,
                 "provenance": self._build_midi_provenance(result) if config.include_provenance else None,
             }
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            return await loop.run_in_executor(pool, extract)
+        return await run_in_thread(extract)
 
     async def _extract_midi_basic(
         self,
@@ -1122,8 +1243,9 @@ class UnifiedPipeline:
     ) -> Dict[str, Any]:
         """Extract MIDI using basic-pitch only (faster)."""
         from tone_forge import midi_extractor
+        import pretty_midi
+        import io
 
-        loop = asyncio.get_event_loop()
 
         def extract():
             result = midi_extractor.extract_midi(
@@ -1135,16 +1257,33 @@ class UnifiedPipeline:
             if result is None:
                 return None
 
+            # Parse notes from MIDI content for arrangement view
+            notes_list = []
+            try:
+                midi_bytes = base64.b64decode(result.content)
+                pm = pretty_midi.PrettyMIDI(io.BytesIO(midi_bytes))
+                for instrument in pm.instruments:
+                    for note in instrument.notes:
+                        notes_list.append({
+                            "pitch": note.pitch,
+                            "start": note.start,
+                            "end": note.end,
+                            "velocity": note.velocity
+                        })
+            except Exception as e:
+                logger.warning(f"Failed to parse MIDI notes: {e}")
+
             return {
                 "content": result.content,
                 "filename": result.filename,
                 "note_count": result.note_count,
+                "notes": notes_list,  # Include notes for arrangement view
+                "tempo": getattr(result, "tempo_bpm", 120),
                 "confidence": getattr(result, "confidence", 0.8),
-                "provenance": result.provenance.to_dict() if result.provenance else None,
+                "provenance": result.provenance if result.provenance else None,
             }
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            return await loop.run_in_executor(pool, extract)
+        return await run_in_thread(extract)
 
     def _build_midi_provenance(self, ensemble_result) -> Dict[str, Any]:
         """Build provenance data from ensemble extraction result."""
@@ -1173,6 +1312,37 @@ class UnifiedPipeline:
         else:
             return [float(abs(x)) for x in audio]
 
+    async def _detect_sections(
+        self,
+        audio_data: AudioData,
+        midi_stems: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Detect arrangement sections using section detector."""
+        def detect():
+            from tone_forge.reconstruction.section_detector import SectionDetector
+
+            # Get tempo from MIDI if available
+            tempo = None
+            for stem_type, midi_data in midi_stems.items():
+                if midi_data.get("tempo"):
+                    tempo = midi_data["tempo"]
+                    break
+
+            detector = SectionDetector(sr=audio_data.sr)
+            result = detector.detect_sections(
+                audio_data.audio,
+                sr=audio_data.sr,
+                tempo=tempo,
+            )
+
+            return {
+                "sections": [s.to_dict() for s in result.sections],
+                "energy_curve": result.energy_curve.tolist() if len(result.energy_curve) > 0 else [],
+                "tempo_bpm": result.tempo_bpm,
+            }
+
+        return await run_in_thread(detect)
+
     def _build_result(
         self,
         audio_data: AudioData,
@@ -1182,6 +1352,8 @@ class UnifiedPipeline:
         instrument_results: Dict[str, Dict[str, Any]],
         midi_stems: Dict[str, Dict[str, Any]],
         waveform: Optional[List[float]],
+        sections: Optional[List[Dict[str, Any]]],
+        energy_curve: Optional[List[float]],
         stage_timings: Optional[Dict],
         config: PipelineConfig,
     ) -> AnalysisResult:
@@ -1192,12 +1364,15 @@ class UnifiedPipeline:
         # Aggregate provenance
         provenance = self._aggregate_provenance(stem_results, midi_stems) if config.include_provenance else None
 
-        # Get primary MIDI
+        # Get primary MIDI - prefer melodic instruments, then drums, then any
         primary_midi = None
-        for stem_key in ["guitar", "piano", "other", "bass", "vocals"]:
+        for stem_key in ["guitar", "piano", "other", "bass", "vocals", "drums", "synth"]:
             if stem_key in midi_stems:
                 primary_midi = midi_stems[stem_key]
                 break
+        # Fallback: use any available MIDI data
+        if primary_midi is None and midi_stems:
+            primary_midi = next(iter(midi_stems.values()))
 
         # Get quality data from stem results
         quality = None
@@ -1253,6 +1428,9 @@ class UnifiedPipeline:
             waveform=waveform,
             # Profiling
             profiling={"stages": stage_timings, **stage_timings} if stage_timings else None,
+            # Arrangement sections
+            sections=sections,
+            energy_curve=energy_curve,
             # Provenance
             provenance=provenance,
             # Backward compatibility
