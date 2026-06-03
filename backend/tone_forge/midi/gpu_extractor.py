@@ -13,7 +13,7 @@ import logging
 import tempfile
 import base64
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
 
 import numpy as np
@@ -21,6 +21,620 @@ import torch
 import torchaudio
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# HYBRID MERGE FUNCTIONS (Phase 3 Architecture Evolution)
+# =============================================================================
+
+def _compute_frame_entropy(posteriors: np.ndarray, threshold: float = 0.3) -> np.ndarray:
+    """
+    Compute polyphony indicators from pitch posteriors.
+
+    Instead of traditional entropy (which breaks on sparse posteriors),
+    we compute:
+    1. Count of active pitches (above threshold)
+    2. Dominance ratio (how much the top pitch dominates)
+
+    For monophonic content, there's typically 1-2 active pitches with
+    the top pitch being dominant. For polyphonic, there are 3+ active
+    pitches with more even distribution.
+
+    Args:
+        posteriors: Shape (frames, 88) pitch posteriors from basic_pitch
+        threshold: Minimum probability to consider a pitch active
+
+    Returns:
+        Tuple of (dominance_ratio, active_counts) arrays per frame
+        - dominance_ratio: 0-1 where high = more monophonic
+        - active_counts: number of pitches above threshold
+    """
+    probs = np.clip(posteriors, 0, 1)
+
+    # Count active pitches per frame
+    active_counts = np.sum(probs > threshold, axis=1)
+
+    # Compute dominance ratio: top pitch vs sum of all active
+    # For monophonic, this is high (close to 1)
+    # For polyphonic, this is lower (more spread out)
+    top_pitch_prob = np.max(probs, axis=1)
+    sum_active = np.sum(probs * (probs > threshold), axis=1)
+
+    # Avoid divide by zero - add small epsilon
+    eps = 1e-10
+    dominance_ratio = np.where(
+        sum_active > eps,
+        top_pitch_prob / (sum_active + eps),
+        1.0  # No activity = consider monophonic
+    )
+
+    # Invert dominance so high values = more polyphonic (like entropy was)
+    # But now it's bounded 0-1 and interpretable
+    polyphony_score = 1.0 - dominance_ratio
+
+    return polyphony_score, active_counts
+
+
+def _segment_by_polyphony(
+    polyphony_score: np.ndarray,
+    active_counts: np.ndarray,
+    frame_rate: float,
+    poly_score_threshold: float = 0.5,
+    count_threshold: int = 3,
+    min_segment_duration: float = 0.1,
+) -> List[Tuple[float, float, bool]]:
+    """
+    Segment audio into monophonic and polyphonic regions based on posteriors.
+
+    Args:
+        polyphony_score: Per-frame polyphony score (0-1, higher = more polyphonic)
+        active_counts: Per-frame count of active pitches
+        frame_rate: Frames per second
+        poly_score_threshold: Score above this is polyphonic
+        count_threshold: Active pitch count above this is polyphonic
+        min_segment_duration: Minimum segment duration in seconds
+
+    Returns:
+        List of (start_time, end_time, is_polyphonic) tuples
+    """
+    # Determine polyphony per frame
+    # Both conditions must be met for polyphonic classification
+    is_poly_frame = (polyphony_score > poly_score_threshold) & (active_counts >= count_threshold)
+
+    segments = []
+    current_is_poly = is_poly_frame[0] if len(is_poly_frame) > 0 else False
+    segment_start = 0
+
+    for i, is_poly in enumerate(is_poly_frame):
+        if is_poly != current_is_poly:
+            # Segment boundary
+            start_time = segment_start / frame_rate
+            end_time = i / frame_rate
+            if end_time - start_time >= min_segment_duration:
+                segments.append((start_time, end_time, current_is_poly))
+            segment_start = i
+            current_is_poly = is_poly
+
+    # Final segment
+    if len(is_poly_frame) > 0:
+        start_time = segment_start / frame_rate
+        end_time = len(is_poly_frame) / frame_rate
+        if end_time - start_time >= min_segment_duration:
+            segments.append((start_time, end_time, current_is_poly))
+
+    return segments
+
+
+def _notes_in_timerange(
+    notes: List['MIDINote'],
+    start: float,
+    end: float,
+) -> List['MIDINote']:
+    """Get notes that overlap with the given time range."""
+    result = []
+    for n in notes:
+        # Note overlaps if it starts before end AND ends after start
+        if n.start < end and n.end > start:
+            # Clip to segment boundaries
+            clipped = MIDINote(
+                pitch=n.pitch,
+                start=max(n.start, start),
+                end=min(n.end, end),
+                velocity=n.velocity,
+            )
+            if clipped.end - clipped.start >= 0.03:  # 30ms minimum
+                result.append(clipped)
+    return result
+
+
+def hybrid_merge(
+    mono_notes: List['MIDINote'],
+    poly_notes: List['MIDINote'],
+    posteriors: Optional[dict],
+    duration: float,
+    stem_type: str = "lead",
+) -> Tuple[List['MIDINote'], dict]:
+    """
+    Merge monophonic and polyphonic detector outputs using frame-wise posteriors.
+
+    Instead of binary routing (mono OR poly), this runs both and selects
+    the best source for each segment based on posterior entropy.
+
+    Args:
+        mono_notes: Notes from monophonic detector (pYIN/CREPE)
+        poly_notes: Notes from polyphonic detector (basic_pitch)
+        posteriors: Dict with 'note' posteriors and 'frame_rate' from basic_pitch
+        duration: Audio duration in seconds
+        stem_type: 'bass' or 'lead' - affects polyphony thresholds
+
+    Returns:
+        Tuple of (merged_notes, merge_stats)
+    """
+    # If no posteriors, fall back to count-based heuristic
+    if posteriors is None or posteriors.get('note') is None:
+        logger.warning("No posteriors available, using count-based merge")
+        # Simple heuristic: use poly if it has significantly more notes
+        if len(poly_notes) > len(mono_notes) * 1.5:
+            return poly_notes, {"method": "poly_count_heuristic", "segments": []}
+        return mono_notes, {"method": "mono_count_heuristic", "segments": []}
+
+    note_posteriors = posteriors['note']
+    frame_rate = posteriors.get('frame_rate', 22050 / 256)
+
+    # Compute frame-wise polyphony indicators
+    polyphony_score, active_counts = _compute_frame_entropy(note_posteriors)
+
+    # Stem-type-specific thresholds
+    # Bass is typically monophonic, so use stricter polyphony detection
+    if stem_type == "bass":
+        poly_score_threshold = 0.6  # Higher threshold for bass (monophonic bias)
+        count_threshold = 4         # Need 4+ active pitches to consider polyphonic
+    else:
+        poly_score_threshold = 0.4  # Lower threshold for lead
+        count_threshold = 3         # 3+ active pitches
+
+    # Segment audio by polyphony
+    segments = _segment_by_polyphony(
+        polyphony_score, active_counts, frame_rate,
+        poly_score_threshold=poly_score_threshold,
+        count_threshold=count_threshold,
+    )
+
+    if len(segments) == 0:
+        # No valid segments, use mono by default
+        return mono_notes, {"method": "mono_default", "segments": []}
+
+    # Merge notes from best source per segment
+    merged = []
+    segment_stats = []
+
+    for start, end, is_poly in segments:
+        if is_poly:
+            # Polyphonic segment - use basic_pitch
+            segment_notes = _notes_in_timerange(poly_notes, start, end)
+            source = "poly"
+        else:
+            # Monophonic segment - use pYIN/CREPE
+            segment_notes = _notes_in_timerange(mono_notes, start, end)
+            source = "mono"
+
+        merged.extend(segment_notes)
+        segment_stats.append({
+            "start": start,
+            "end": end,
+            "is_poly": is_poly,
+            "source": source,
+            "note_count": len(segment_notes),
+        })
+
+    # Sort by start time
+    merged.sort(key=lambda n: n.start)
+
+    # Remove duplicates (notes that overlap significantly)
+    if len(merged) > 1:
+        deduplicated = [merged[0]]
+        for note in merged[1:]:
+            prev = deduplicated[-1]
+            # Check for overlap
+            overlap = min(prev.end, note.end) - max(prev.start, note.start)
+            min_duration = min(prev.end - prev.start, note.end - note.start)
+            if overlap > 0 and overlap > min_duration * 0.5:
+                # Significant overlap - keep the longer one
+                if (note.end - note.start) > (prev.end - prev.start):
+                    deduplicated[-1] = note
+            else:
+                deduplicated.append(note)
+        merged = deduplicated
+
+    stats = {
+        "method": "hybrid_merge",
+        "total_segments": len(segments),
+        "mono_segments": sum(1 for s in segments if not s[2]),
+        "poly_segments": sum(1 for s in segments if s[2]),
+        "segments": segment_stats,
+    }
+
+    logger.info(f"Hybrid merge: {stats['mono_segments']} mono + {stats['poly_segments']} poly segments -> {len(merged)} notes")
+
+    return merged, stats
+
+
+# =============================================================================
+# OCTAVE VALIDATION FUNCTIONS (Phase 3 Step 3)
+# =============================================================================
+
+def _compute_cqt_energy(
+    audio: np.ndarray,
+    sr: int,
+    hop_length: int = 512,
+    min_note: int = 24,  # C1
+    n_bins: int = 72,    # 6 octaves
+) -> np.ndarray:
+    """
+    Compute CQT energy per pitch bin.
+
+    Returns:
+        Array of shape (n_bins, frames) with energy per pitch
+    """
+    import librosa
+
+    cqt = np.abs(librosa.cqt(
+        y=audio,
+        sr=sr,
+        hop_length=hop_length,
+        fmin=librosa.note_to_hz(librosa.midi_to_note(min_note)),
+        n_bins=n_bins,
+        bins_per_octave=12,
+    ))
+
+    return cqt
+
+
+def _get_frame_range(
+    start_time: float,
+    end_time: float,
+    hop_length: int,
+    sr: int,
+    max_frames: int,
+) -> Tuple[int, int]:
+    """Convert time range to frame range."""
+    frame_start = int(start_time * sr / hop_length)
+    frame_end = int(end_time * sr / hop_length)
+    frame_start = max(0, min(frame_start, max_frames - 1))
+    frame_end = max(frame_start + 1, min(frame_end, max_frames))
+    return frame_start, frame_end
+
+
+def validate_octave_with_harmonics(
+    notes: List['MIDINote'],
+    audio: np.ndarray,
+    sr: int,
+    min_note: int = 24,
+    hop_length: int = 512,
+) -> Tuple[List['MIDINote'], Dict]:
+    """
+    Validate and correct octave errors using harmonic structure analysis.
+
+    When pYIN detects sub-harmonics (octave below actual pitch), the CQT
+    will show stronger energy at the actual pitch (octave above). This
+    function detects and corrects such cases.
+
+    Args:
+        notes: List of detected MIDINotes
+        audio: Audio signal
+        sr: Sample rate
+        min_note: Minimum MIDI note in CQT (default C1 = 24)
+        hop_length: Hop length for CQT
+
+    Returns:
+        Tuple of (corrected_notes, correction_stats)
+    """
+    if len(notes) == 0:
+        return notes, {"corrections": 0, "total": 0}
+
+    # Compute CQT for the audio
+    cqt = _compute_cqt_energy(audio, sr, hop_length, min_note)
+    n_bins, n_frames = cqt.shape
+
+    corrected = []
+    corrections = 0
+
+    for note in notes:
+        # Get CQT bin for this pitch
+        pitch_bin = note.pitch - min_note
+
+        # Skip if pitch is out of range
+        if pitch_bin < 0 or pitch_bin >= n_bins - 12:
+            corrected.append(note)
+            continue
+
+        # Get frame range for this note
+        frame_start, frame_end = _get_frame_range(
+            note.start, note.end, hop_length, sr, n_frames
+        )
+
+        # Get average energy at detected pitch
+        detected_energy = np.mean(cqt[pitch_bin, frame_start:frame_end])
+
+        # Get average energy at octave above
+        octave_up_bin = pitch_bin + 12
+        if octave_up_bin < n_bins:
+            octave_up_energy = np.mean(cqt[octave_up_bin, frame_start:frame_end])
+        else:
+            octave_up_energy = 0
+
+        # Check harmonic structure
+        # If octave above has significantly more energy, we likely detected sub-harmonic
+        # Also check for presence of expected harmonics (5th = +7, 2nd octave = +24)
+
+        should_correct = False
+
+        if octave_up_energy > detected_energy * 1.5:
+            # Octave above is significantly stronger - likely sub-harmonic error
+            # Additional check: does octave-up have proper harmonic support?
+            fifth_bin = pitch_bin + 12 + 7  # fifth above the corrected pitch
+            if fifth_bin < n_bins:
+                fifth_energy = np.mean(cqt[fifth_bin, frame_start:frame_end])
+                # If fifth is present, octave-up is likely correct
+                if fifth_energy > octave_up_energy * 0.2:
+                    should_correct = True
+            else:
+                # Can't check fifth, use energy ratio alone
+                if octave_up_energy > detected_energy * 2.0:
+                    should_correct = True
+
+        if should_correct:
+            # Correct to octave above
+            corrected.append(MIDINote(
+                pitch=note.pitch + 12,
+                start=note.start,
+                end=note.end,
+                velocity=note.velocity,
+            ))
+            corrections += 1
+            logger.debug(f"Octave correction: {note.pitch} -> {note.pitch + 12} "
+                        f"(energy ratio: {octave_up_energy/detected_energy:.2f})")
+        else:
+            corrected.append(note)
+
+    stats = {
+        "corrections": corrections,
+        "total": len(notes),
+        "correction_rate": corrections / len(notes) if len(notes) > 0 else 0,
+    }
+
+    if corrections > 0:
+        logger.info(f"Octave validation: corrected {corrections}/{len(notes)} notes ({stats['correction_rate']:.1%})")
+
+    return corrected, stats
+
+
+# =============================================================================
+# CHORD-AWARE GAP FILLING (Phase 3 Step 4)
+# =============================================================================
+
+def _find_gaps(
+    notes: List['MIDINote'],
+    min_gap_duration: float = 0.1,
+    max_gap_duration: float = 2.0,
+) -> List[Tuple[float, float]]:
+    """
+    Find temporal gaps between notes.
+
+    Args:
+        notes: Sorted list of notes
+        min_gap_duration: Minimum gap to consider (seconds)
+        max_gap_duration: Maximum gap to fill (seconds)
+
+    Returns:
+        List of (gap_start, gap_end) tuples
+    """
+    if len(notes) < 2:
+        return []
+
+    gaps = []
+    sorted_notes = sorted(notes, key=lambda n: n.start)
+
+    for i in range(len(sorted_notes) - 1):
+        current_end = sorted_notes[i].end
+        next_start = sorted_notes[i + 1].start
+
+        gap_duration = next_start - current_end
+        if min_gap_duration <= gap_duration <= max_gap_duration:
+            gaps.append((current_end, next_start))
+
+    return gaps
+
+
+def _get_chord_at_time(
+    chords: List,  # List of Chord from chord_detector
+    time: float,
+) -> Optional[dict]:
+    """
+    Get the active chord at a specific time.
+
+    Returns:
+        Dict with 'root', 'quality', 'notes' (pitch classes) or None
+    """
+    for chord in chords:
+        if chord.start_time <= time < chord.end_time:
+            return {
+                'root': chord.root,
+                'quality': chord.quality,
+                'notes': chord.notes,  # pitch classes 0-11
+                'confidence': chord.confidence,
+            }
+    return None
+
+
+def _infer_notes_from_chord(
+    chord_info: dict,
+    gap_start: float,
+    gap_end: float,
+    surrounding_notes: List['MIDINote'],
+    stem_type: str = "bass",
+) -> List['MIDINote']:
+    """
+    Infer likely notes for a gap based on chord context.
+
+    Args:
+        chord_info: Dict with chord root, quality, notes (pitch classes)
+        gap_start: Gap start time
+        gap_end: Gap end time
+        surrounding_notes: Notes before and after the gap
+        stem_type: 'bass' or 'lead' affects octave selection
+
+    Returns:
+        List of inferred MIDINotes
+    """
+    if not chord_info or not surrounding_notes:
+        return []
+
+    chord_pitch_classes = set(chord_info['notes'])
+
+    # Get octave context from surrounding notes
+    surrounding_pitches = [n.pitch for n in surrounding_notes]
+    if not surrounding_pitches:
+        return []
+
+    avg_pitch = np.mean(surrounding_pitches)
+
+    # For bass, prefer lower octaves
+    if stem_type == "bass":
+        base_octave = int((avg_pitch - 12) / 12) * 12  # One octave below average
+        base_octave = max(24, min(48, base_octave))  # Clamp to bass range
+    else:
+        base_octave = int(avg_pitch / 12) * 12
+        base_octave = max(48, min(84, base_octave))  # Clamp to lead range
+
+    # Infer likely pitch from chord
+    # Prefer root or fifth
+    root = chord_info['root']
+    inferred_pitches = []
+
+    # Root is most likely
+    root_pitch = base_octave + root
+    if 24 <= root_pitch <= 96:
+        inferred_pitches.append((root_pitch, 0.8))  # Higher confidence
+
+    # Fifth is second most likely
+    fifth = (root + 7) % 12
+    fifth_pitch = base_octave + fifth
+    if 24 <= fifth_pitch <= 96:
+        inferred_pitches.append((fifth_pitch, 0.5))  # Lower confidence
+
+    # Create notes only if gap is appropriate duration
+    gap_duration = gap_end - gap_start
+    if gap_duration < 0.05 or gap_duration > 1.0:
+        return []
+
+    inferred_notes = []
+    for pitch, confidence in inferred_pitches:
+        # Only add if confidence is high enough
+        if confidence >= 0.6 and chord_info['confidence'] > 0.4:
+            inferred_notes.append(MIDINote(
+                pitch=pitch,
+                start=gap_start,
+                end=gap_end,
+                velocity=60,  # Conservative velocity
+            ))
+            break  # Only fill with one note per gap
+
+    return inferred_notes
+
+
+def fill_gaps_with_chord_context(
+    notes: List['MIDINote'],
+    audio: np.ndarray,
+    sr: int,
+    stem_type: str = "bass",
+    min_gap_duration: float = 0.1,
+    max_gap_duration: float = 0.5,
+) -> Tuple[List['MIDINote'], Dict]:
+    """
+    Fill gaps in note sequence using detected chord context.
+
+    When notes are missing (gaps), uses chord detection to infer
+    likely pitches based on harmonic context.
+
+    Args:
+        notes: List of detected MIDINotes
+        audio: Audio signal
+        sr: Sample rate
+        stem_type: 'bass' or 'lead'
+        min_gap_duration: Minimum gap to fill (seconds)
+        max_gap_duration: Maximum gap to fill (seconds)
+
+    Returns:
+        Tuple of (notes_with_fills, fill_stats)
+    """
+    if len(notes) < 3:
+        return notes, {"gaps_found": 0, "gaps_filled": 0}
+
+    try:
+        from tone_forge.chord_detector import detect_chords_from_audio
+    except ImportError:
+        logger.warning("Chord detector not available, skipping gap filling")
+        return notes, {"gaps_found": 0, "gaps_filled": 0, "error": "chord_detector_unavailable"}
+
+    # Detect chords from audio
+    try:
+        chords = detect_chords_from_audio(audio, sr, min_chord_duration=0.3)
+    except Exception as e:
+        logger.warning(f"Chord detection failed: {e}")
+        return notes, {"gaps_found": 0, "gaps_filled": 0, "error": str(e)}
+
+    if not chords:
+        return notes, {"gaps_found": 0, "gaps_filled": 0, "chords_detected": 0}
+
+    # Find gaps
+    gaps = _find_gaps(notes, min_gap_duration, max_gap_duration)
+
+    if not gaps:
+        return notes, {"gaps_found": 0, "gaps_filled": 0, "chords_detected": len(chords)}
+
+    # Fill gaps with chord-inferred notes
+    filled_notes = list(notes)
+    gaps_filled = 0
+
+    sorted_notes = sorted(notes, key=lambda n: n.start)
+
+    for gap_start, gap_end in gaps:
+        # Get chord at this time
+        chord_info = _get_chord_at_time(chords, gap_start)
+
+        if chord_info is None:
+            continue
+
+        # Get surrounding notes for context
+        before_notes = [n for n in sorted_notes if n.end <= gap_start + 0.05][-3:]
+        after_notes = [n for n in sorted_notes if n.start >= gap_end - 0.05][:3]
+        surrounding = before_notes + after_notes
+
+        # Infer notes to fill gap
+        fill_notes = _infer_notes_from_chord(
+            chord_info, gap_start, gap_end, surrounding, stem_type
+        )
+
+        if fill_notes:
+            filled_notes.extend(fill_notes)
+            gaps_filled += 1
+            logger.debug(f"Filled gap [{gap_start:.2f}-{gap_end:.2f}] with {chord_info['root']} {chord_info['quality']}")
+
+    # Sort by start time
+    filled_notes.sort(key=lambda n: n.start)
+
+    stats = {
+        "gaps_found": len(gaps),
+        "gaps_filled": gaps_filled,
+        "chords_detected": len(chords),
+        "fill_rate": gaps_filled / len(gaps) if gaps else 0,
+    }
+
+    if gaps_filled > 0:
+        logger.info(f"Chord gap filling: filled {gaps_filled}/{len(gaps)} gaps using {len(chords)} detected chords")
+
+    return filled_notes, stats
 
 
 def estimate_polyphony(audio_path: str, threshold: float = 0.3) -> Tuple[bool, float]:
@@ -498,64 +1112,259 @@ def extract_midi_pyin(
     return notes, tempo, duration
 
 
+def _get_basic_pitch_notes_for_subdivision(audio_path: str, pitch_range: Tuple[int, int] = (28, 55)) -> List[Tuple[int, float, float]]:
+    """
+    Extract basic_pitch notes in specified pitch range for subdivision.
+
+    Returns list of (pitch, start, end) tuples.
+    """
+    try:
+        from basic_pitch.inference import predict
+        from basic_pitch import ICASSP_2022_MODEL_PATH
+        import tempfile
+        import soundfile as sf
+        import librosa
+        import os
+
+        y, sr = librosa.load(str(audio_path), sr=22050, mono=True)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            sf.write(tmp.name, y, sr)
+            tmp_path = tmp.name
+
+        try:
+            _, _, note_events = predict(
+                tmp_path,
+                ICASSP_2022_MODEL_PATH,
+                onset_threshold=0.5,
+                frame_threshold=0.3,
+                minimum_note_length=50.0,
+            )
+
+            bp_notes = []
+            for start, end, pitch, amplitude, _ in note_events:
+                if pitch_range[0] <= pitch <= pitch_range[1]:
+                    bp_notes.append((int(pitch), float(start), float(end)))
+            bp_notes.sort(key=lambda x: x[1])
+            return bp_notes
+
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+
+    except Exception as e:
+        logger.warning(f"basic_pitch extraction failed for subdivision: {e}")
+        return []
+
+
+def _subdivide_notes_with_basic_pitch(
+    primary_notes: List[MIDINote],
+    bp_notes: List[Tuple[int, float, float]],
+    min_subdivision_gap: float = 0.03,
+) -> List[MIDINote]:
+    """
+    Subdivide primary notes using basic_pitch onset information.
+
+    For each primary note, if basic_pitch has multiple notes starting within
+    that note's timespan, split the primary note at those onsets.
+    """
+    result = []
+
+    for pn in primary_notes:
+        # Find basic_pitch notes that start within this primary note's timespan
+        overlap_margin = 0.07  # 70ms margin - tuned for better recall
+        bp_in_range = [
+            bp for bp in bp_notes
+            if pn.start - overlap_margin <= bp[1] < pn.end + overlap_margin
+        ]
+
+        if len(bp_in_range) <= 1:
+            # No subdivision needed
+            result.append(pn)
+        else:
+            # Multiple basic_pitch notes - subdivide at their onsets
+            bp_onsets = sorted(set([bp[1] for bp in bp_in_range]))
+
+            # Filter out onsets that are too close together
+            filtered_onsets = [bp_onsets[0]]
+            for onset in bp_onsets[1:]:
+                if onset - filtered_onsets[-1] >= min_subdivision_gap:
+                    filtered_onsets.append(onset)
+
+            # Create subdivided notes
+            for i, onset in enumerate(filtered_onsets):
+                sub_start = max(pn.start, onset)
+                if i + 1 < len(filtered_onsets):
+                    sub_end = min(pn.end, filtered_onsets[i + 1])
+                else:
+                    sub_end = pn.end
+
+                if sub_end - sub_start >= 0.05:  # 50ms minimum
+                    result.append(MIDINote(
+                        pitch=pn.pitch,
+                        start=sub_start,
+                        end=sub_end,
+                        velocity=pn.velocity,
+                    ))
+
+    return result
+
+
+def _should_apply_subdivision(
+    pyin_notes: List[MIDINote],
+    bp_notes: List[Tuple[int, float, float]],
+) -> bool:
+    """
+    Determine if subdivision should be applied based on runtime features.
+
+    Triggers when:
+    1. BP median pitch is ~12 semitones above pYIN median (octave error detection)
+    2. BP/pYIN count ratio is between 1.0 and 1.8 (modest difference)
+
+    This catches under-detection due to octave locking while avoiding
+    over-subdivision on samples where pYIN count is already correct.
+    """
+    if len(pyin_notes) < 20 or len(bp_notes) < 20:
+        return False
+
+    pyin_median = np.median([n.pitch for n in pyin_notes])
+    bp_median = np.median([n[0] for n in bp_notes])
+
+    pitch_diff = bp_median - pyin_median
+    count_ratio = len(bp_notes) / len(pyin_notes)
+
+    # Condition: BP is approximately one octave above pYIN AND modest count ratio
+    should_apply = (
+        10 <= pitch_diff <= 14  # ~12 semitones with tolerance
+        and 1.0 <= count_ratio <= 1.8
+    )
+
+    if should_apply:
+        logger.info(f"Subdivision triggered: BP-pYIN pitch diff={pitch_diff:.0f}, "
+                   f"count ratio={count_ratio:.2f}")
+
+    return should_apply
+
+
 def extract_midi_bass_ensemble(
     audio_path: str,
+    use_hybrid_merge: bool = False,  # Disabled - causes regression (2/16 vs 7/16 passing)
 ) -> Tuple[List[MIDINote], float, float, str]:
     """
-    Ensemble bass extraction using both pYIN (DSP) and torchcrepe (ML).
+    Ensemble bass extraction using hybrid mono+poly detection.
 
-    Picks the best detector based on heuristics:
-    - pYIN is better for clean, simple bass lines (can hit 99% F1)
-    - torchcrepe is better for complex/noisy content
+    Phase 3 Architecture: Instead of binary routing (mono OR poly), this runs
+    both detectors in parallel and uses frame-wise posteriors to select the
+    best source for each segment. NOTE: hybrid_merge disabled by default due
+    to regressions - falls back to count-based heuristics with octave validation.
+
+    Args:
+        audio_path: Path to audio file
+        use_hybrid_merge: If True, use frame-wise posterior merging.
+                         If False, fall back to count-based heuristics.
 
     Returns:
         Tuple of (notes, tempo, duration, method_used)
     """
-    # Run both detectors
+    import librosa
+
+    # Load audio for duration
+    y, sr = librosa.load(audio_path, sr=22050, mono=True)
+    duration = len(y) / sr
+
+    # Run pYIN (monophonic detector)
     try:
-        pyin_notes, pyin_tempo, duration = extract_midi_pyin(audio_path, "bass")
+        pyin_notes, pyin_tempo, _ = extract_midi_pyin(audio_path, "bass")
     except Exception as e:
         logger.warning(f"pYIN failed: {e}")
         pyin_notes = []
         pyin_tempo = 120.0
-        duration = 0
 
-    try:
-        tc_notes, tc_tempo, tc_duration = extract_midi_torchcrepe(
-            audio_path, stem_type="bass", model_size="full"
-        )
-        if duration == 0:
-            duration = tc_duration
-    except Exception as e:
-        logger.warning(f"torchcrepe failed: {e}")
-        tc_notes = []
-        tc_tempo = 120.0
+    # Run basic_pitch WITH posteriors (polyphonic detector)
+    bp_notes = []
+    bp_posteriors = None
+
+    if use_hybrid_merge:
+        try:
+            from tone_forge.midi.ensemble_extractor import BasicPitchDetector
+
+            detector = BasicPitchDetector()
+            bp_detected, bp_posteriors = detector.detect_with_posteriors(
+                y, sr,
+                onset_threshold=0.5,
+                frame_threshold=0.3,
+            )
+
+            # Convert DetectedNote to MIDINote
+            bp_notes = [
+                MIDINote(
+                    pitch=n.pitch,
+                    start=n.start,
+                    end=n.end,
+                    velocity=n.velocity,
+                )
+                for n in bp_detected
+            ]
+
+            logger.info(f"basic_pitch: {len(bp_notes)} notes, posteriors shape={bp_posteriors['note'].shape if bp_posteriors and bp_posteriors.get('note') is not None else 'N/A'}")
+
+        except Exception as e:
+            logger.warning(f"basic_pitch with posteriors failed: {e}")
+            bp_notes = []
+            bp_posteriors = None
 
     pyin_count = len(pyin_notes)
-    tc_count = len(tc_notes)
+    bp_count = len(bp_notes)
 
-    # Decision heuristics based on empirical testing:
-    # pYIN is excellent (99%+) on clean bass but fails on complex content
-    # torchcrepe is more robust but can have false positives/negatives
-    #
-    # Key insight: pYIN wins when it detects SIMILAR or MORE notes than torchcrepe
-    # If pYIN detects significantly fewer, it likely failed
+    # HYBRID MERGE: Use frame-wise posteriors to select best source per segment
+    if use_hybrid_merge and bp_posteriors is not None and bp_count > 0:
+        merged_notes, merge_stats = hybrid_merge(
+            mono_notes=pyin_notes,
+            poly_notes=bp_notes,
+            posteriors=bp_posteriors,
+            duration=duration,
+            stem_type="bass",  # Bass-specific polyphony thresholds
+        )
+
+        if len(merged_notes) > 0:
+            notes = merged_notes
+            method = f"hybrid_merge_{merge_stats['mono_segments']}m_{merge_stats['poly_segments']}p"
+            tempo = pyin_tempo
+            logger.info(f"Hybrid merge: {pyin_count} pYIN + {bp_count} BP -> {len(notes)} merged notes")
+
+            # Apply octave validation to correct sub-harmonic errors
+            try:
+                notes, octave_stats = validate_octave_with_harmonics(notes, y, sr)
+                if octave_stats['corrections'] > 0:
+                    method = method + "_octave_validated"
+            except Exception as e:
+                logger.warning(f"Octave validation failed: {e}")
+
+            # Apply chord-aware gap filling
+            try:
+                notes, gap_stats = fill_gaps_with_chord_context(notes, y, sr, "bass")
+                if gap_stats.get('gaps_filled', 0) > 0:
+                    method = method + "_gap_filled"
+            except Exception as e:
+                logger.warning(f"Chord gap filling failed: {e}")
+
+            return notes, tempo, duration, method
+
+    # FALLBACK: Binary routing based on count heuristics (original logic)
+    logger.info("Falling back to count-based heuristics")
 
     use_pyin = False
 
-    if pyin_count >= 15 and tc_count > 0:
-        # pYIN detected reasonable notes - check ratio
-        ratio = pyin_count / tc_count
+    if pyin_count >= 15 and bp_count > 0:
+        ratio = pyin_count / bp_count
         if ratio >= 0.8:
-            # pYIN detected at least 80% as many notes - likely accurate
             use_pyin = True
-            logger.info(f"Ensemble: choosing pYIN ({pyin_count} notes) - ratio {ratio:.2f} vs torchcrepe ({tc_count})")
-        elif pyin_count > tc_count:
-            # pYIN detected more - torchcrepe may have missed notes
+            logger.info(f"Ensemble: choosing pYIN ({pyin_count} notes) - ratio {ratio:.2f}")
+        elif pyin_count > bp_count:
             use_pyin = True
-            logger.info(f"Ensemble: choosing pYIN ({pyin_count} notes) - more than torchcrepe ({tc_count})")
+            logger.info(f"Ensemble: choosing pYIN ({pyin_count} notes) - more than BP ({bp_count})")
     elif pyin_count >= 40:
-        # pYIN detected lots of notes even if torchcrepe detected none/few
         use_pyin = True
         logger.info(f"Ensemble: choosing pYIN ({pyin_count} notes) - strong detection")
 
@@ -564,39 +1373,38 @@ def extract_midi_bass_ensemble(
         method = "pyin_dsp"
         tempo = pyin_tempo
     else:
-        notes = tc_notes
-        method = "torchcrepe_gpu"
-        tempo = tc_tempo
-        logger.info(f"Ensemble: choosing torchcrepe ({tc_count} notes) over pYIN ({pyin_count} notes)")
+        notes = bp_notes if bp_count > 0 else pyin_notes
+        method = "basic_pitch" if bp_count > 0 else "pyin_dsp"
+        tempo = pyin_tempo
+        logger.info(f"Ensemble: choosing BP ({bp_count} notes) over pYIN ({pyin_count} notes)")
 
-    # Octave expansion for layered bass
-    # Some bass tracks layer notes 2 octaves apart (+24 semitones)
-    # Heuristic: expand only when torchcrepe detects significantly more notes than pYIN
-    # This suggests layered/complex content where monophonic detection misses octaves
-    # When pYIN detects more, it's usually clean content where expansion would hurt
-    if tc_count > 0 and pyin_count > 0:
-        tc_to_pyin_ratio = tc_count / pyin_count
+    # Note subdivision using basic_pitch for octave-error cases
+    if use_pyin and len(pyin_notes) >= 20:
+        try:
+            bp_tuples = [(n.pitch, n.start, n.end) for n in bp_notes]
+            if _should_apply_subdivision(pyin_notes, bp_tuples):
+                subdivided = _subdivide_notes_with_basic_pitch(notes, bp_tuples)
+                logger.info(f"Subdivision: {len(notes)} -> {len(subdivided)} notes")
+                notes = subdivided
+                method = "pyin_dsp_subdivided"
+        except Exception as e:
+            logger.warning(f"Note subdivision failed: {e}")
 
-        # Only expand when torchcrepe detects 1.5x+ more notes than pYIN
-        # This indicates complex layered content
-        if tc_to_pyin_ratio >= 1.5 and tc_count >= 50:
-            expanded_notes = []
-            for note in notes:
-                expanded_notes.append(note)
-                # Add octave duplicate if it stays in bass range (MIDI 24-72)
-                upper_octave = note.pitch + 24
-                if upper_octave <= 72:  # Up to C5
-                    expanded_notes.append(MIDINote(
-                        pitch=upper_octave,
-                        start=note.start,
-                        end=note.end,
-                        velocity=note.velocity,
-                    ))
-            logger.info(f"Bass octave expansion: {len(notes)} -> {len(expanded_notes)} notes "
-                       f"(tc/pyin ratio={tc_to_pyin_ratio:.2f})")
-            notes = expanded_notes
-        else:
-            logger.info(f"Bass: no expansion (tc/pyin ratio={tc_to_pyin_ratio:.2f})")
+    # Apply octave validation to correct sub-harmonic errors
+    try:
+        notes, octave_stats = validate_octave_with_harmonics(notes, y, sr)
+        if octave_stats['corrections'] > 0:
+            method = method + "_octave_validated"
+    except Exception as e:
+        logger.warning(f"Octave validation failed: {e}")
+
+    # Apply chord-aware gap filling
+    try:
+        notes, gap_stats = fill_gaps_with_chord_context(notes, y, sr, "bass")
+        if gap_stats.get('gaps_filled', 0) > 0:
+            method = method + "_gap_filled"
+    except Exception as e:
+        logger.warning(f"Chord gap filling failed: {e}")
 
     return notes, tempo, duration, method
 
@@ -604,29 +1412,34 @@ def extract_midi_bass_ensemble(
 def extract_midi_lead_ensemble(
     audio_path: str,
     use_hca_for_polyphony: bool = True,
+    use_hybrid_merge: bool = False,  # Disabled - causes regression on bass benchmark
 ) -> Tuple[List[MIDINote], float, float, str]:
     """
-    Ensemble lead extraction with harmonic ratio-based routing.
+    Ensemble lead extraction with hybrid mono+poly detection.
 
-    Routes to:
-    - HCA (HarmonicClusterAnalyzer) for polyphonic content (chords, strums)
-    - pYIN/torchcrepe ensemble for monophonic content
+    Phase 3 Architecture: Instead of binary routing, runs both mono (pYIN) and
+    poly (basic_pitch) detectors, then uses frame-wise posteriors to select
+    the best source for each segment. NOTE: hybrid_merge disabled by default
+    due to regressions - falls back to HCA/mono routing with octave validation.
 
-    Routing logic based on extensive benchmarking (BabySlakh):
-    - harm_ratio > 0.78 → torchcrepe/pYIN (clean pitched signal)
-    - harm_ratio < 0.75 → HCA (complex polyphonic signal)
-    - Edge cases default to torchcrepe
+    For extremely polyphonic content (harm_ratio < 0.65), still uses HCA
+    as it handles dense chords better than basic_pitch.
+
+    Args:
+        audio_path: Path to audio file
+        use_hca_for_polyphony: If True, use HCA for very polyphonic content
+        use_hybrid_merge: If True, use frame-wise posterior merging
 
     Returns:
         Tuple of (notes, tempo, duration, method_used)
     """
     import librosa
 
-    # Load audio for harmonic ratio analysis
-    y, sr = librosa.load(audio_path, sr=22050, mono=True, duration=30.0)
+    # Load audio
+    y, sr = librosa.load(audio_path, sr=22050, mono=True)
     duration = len(y) / sr
 
-    # Check if HCA should be used based on harmonic ratio
+    # Check for very polyphonic content - use HCA for dense chords
     if use_hca_for_polyphony:
         try:
             from tone_forge.midi.harmonic_cluster_analyzer import (
@@ -636,15 +1449,15 @@ def extract_midi_lead_ensemble(
 
             harm_ratio = estimate_harmonic_ratio(y, sr)
 
-            # Route to HCA for polyphonic content (low harmonic ratio)
-            if harm_ratio < 0.75:
-                logger.info(f"Lead: detected polyphonic content (harm_ratio={harm_ratio:.2f}), using HCA")
+            # Only use HCA for VERY polyphonic content (tighter threshold)
+            # Let hybrid merge handle moderately polyphonic content
+            if harm_ratio < 0.65:
+                logger.info(f"Lead: very polyphonic content (harm_ratio={harm_ratio:.2f}), using HCA")
                 try:
                     analyzer = HarmonicClusterAnalyzer(sr=sr)
                     hca_notes = analyzer.extract(y)
 
                     if len(hca_notes) > 0:
-                        # Convert HCANote to MIDINote
                         notes = [
                             MIDINote(
                                 pitch=n.pitch,
@@ -655,7 +1468,6 @@ def extract_midi_lead_ensemble(
                             for n in hca_notes
                         ]
 
-                        # Estimate tempo from note onsets
                         onsets = sorted([n.start for n in notes])
                         if len(onsets) > 1:
                             iois = np.diff(onsets)
@@ -672,62 +1484,122 @@ def extract_midi_lead_ensemble(
                         return notes, tempo, duration, "hca_polyphonic"
 
                 except Exception as e:
-                    logger.warning(f"HCA failed for polyphonic lead: {e}, falling back to monophonic")
+                    logger.warning(f"HCA failed: {e}, trying hybrid merge")
 
         except ImportError as e:
             logger.warning(f"HCA module not available: {e}")
 
-    # Monophonic path: Run both detectors
+    # Run pYIN (monophonic detector)
     try:
-        pyin_notes, pyin_tempo, duration = extract_midi_pyin(audio_path, "lead")
+        pyin_notes, pyin_tempo, _ = extract_midi_pyin(audio_path, "lead")
     except Exception as e:
         logger.warning(f"pYIN failed for lead: {e}")
         pyin_notes = []
         pyin_tempo = 120.0
-        duration = 0
 
+    # Run basic_pitch WITH posteriors (polyphonic detector)
+    bp_notes = []
+    bp_posteriors = None
+
+    if use_hybrid_merge:
+        try:
+            from tone_forge.midi.ensemble_extractor import BasicPitchDetector
+
+            detector = BasicPitchDetector()
+            bp_detected, bp_posteriors = detector.detect_with_posteriors(
+                y, sr,
+                onset_threshold=0.5,
+                frame_threshold=0.3,
+            )
+
+            # Convert DetectedNote to MIDINote
+            bp_notes = [
+                MIDINote(
+                    pitch=n.pitch,
+                    start=n.start,
+                    end=n.end,
+                    velocity=n.velocity,
+                )
+                for n in bp_detected
+            ]
+
+            logger.info(f"basic_pitch lead: {len(bp_notes)} notes")
+
+        except Exception as e:
+            logger.warning(f"basic_pitch with posteriors failed: {e}")
+            bp_notes = []
+            bp_posteriors = None
+
+    pyin_count = len(pyin_notes)
+    bp_count = len(bp_notes)
+
+    # HYBRID MERGE: Use frame-wise posteriors to select best source per segment
+    if use_hybrid_merge and bp_posteriors is not None and bp_count > 0:
+        merged_notes, merge_stats = hybrid_merge(
+            mono_notes=pyin_notes,
+            poly_notes=bp_notes,
+            posteriors=bp_posteriors,
+            duration=duration,
+            stem_type="lead",  # Lead-specific polyphony thresholds
+        )
+
+        if len(merged_notes) > 0:
+            notes = merged_notes
+            method = f"hybrid_merge_{merge_stats['mono_segments']}m_{merge_stats['poly_segments']}p"
+            logger.info(f"Lead hybrid merge: {pyin_count} pYIN + {bp_count} BP -> {len(notes)} merged notes")
+
+            # Apply octave validation to correct sub-harmonic errors
+            try:
+                notes, octave_stats = validate_octave_with_harmonics(notes, y, sr)
+                if octave_stats['corrections'] > 0:
+                    method = method + "_octave_validated"
+            except Exception as e:
+                logger.warning(f"Octave validation failed: {e}")
+
+            # Apply chord-aware gap filling
+            try:
+                notes, gap_stats = fill_gaps_with_chord_context(notes, y, sr, "lead")
+                if gap_stats.get('gaps_filled', 0) > 0:
+                    method = method + "_gap_filled"
+            except Exception as e:
+                logger.warning(f"Chord gap filling failed: {e}")
+
+            return notes, pyin_tempo, duration, method
+
+    # FALLBACK: Count-based heuristics
+    logger.info("Lead: falling back to count-based heuristics")
+
+    # Run torchcrepe as additional monophonic option
     try:
         tc_notes, tc_tempo, tc_duration = extract_midi_torchcrepe(
             audio_path, stem_type="lead", model_size="full"
         )
-        if duration == 0:
-            duration = tc_duration
     except Exception as e:
         logger.warning(f"torchcrepe failed for lead: {e}")
         tc_notes = []
-        tc_tempo = 120.0
 
-    pyin_count = len(pyin_notes)
     tc_count = len(tc_notes)
 
-    # Lead heuristics (different from bass):
-    # - torchcrepe is more reliable on average for lead (~63% vs ~60% pYIN)
-    # - Only switch to pYIN when torchcrepe is clearly over-detecting
-    # - When pYIN detects MORE notes, it's usually false positives (bad)
-
+    # Choose between pYIN and torchcrepe
     use_pyin = False
 
     if pyin_count > 0 and tc_count > 0:
         ratio = pyin_count / tc_count
-        # Only use pYIN when torchcrepe detects way more notes (over-detecting)
         if ratio <= 0.5 and pyin_count >= 10:
-            # torchcrepe detected 2x+ notes as pYIN - torchcrepe is likely over-detecting
             use_pyin = True
-            logger.info(f"Lead ensemble: choosing pYIN ({pyin_count} notes) - torchcrepe over-detected ({tc_count})")
+            logger.info(f"Lead: choosing pYIN ({pyin_count} notes) - torchcrepe over-detected ({tc_count})")
         elif 0.8 <= ratio <= 1.2 and pyin_count >= 20:
-            # Similar counts with good volume - pYIN might be cleaner
             use_pyin = True
-            logger.info(f"Lead ensemble: choosing pYIN ({pyin_count} notes) - similar count, ratio {ratio:.2f}")
+            logger.info(f"Lead: choosing pYIN ({pyin_count} notes) - similar count, ratio {ratio:.2f}")
     elif pyin_count >= 20 and tc_count < 5:
-        # torchcrepe failed completely, pYIN has reasonable output
         use_pyin = True
-        logger.info(f"Lead ensemble: choosing pYIN ({pyin_count} notes) - torchcrepe failed ({tc_count})")
+        logger.info(f"Lead: choosing pYIN ({pyin_count} notes) - torchcrepe failed")
 
     if use_pyin:
         return pyin_notes, pyin_tempo, duration, "pyin_dsp"
     else:
-        logger.info(f"Lead ensemble: choosing torchcrepe ({tc_count} notes) over pYIN ({pyin_count} notes)")
-        return tc_notes, tc_tempo, duration, "torchcrepe_gpu"
+        logger.info(f"Lead: choosing torchcrepe ({tc_count} notes) over pYIN ({pyin_count} notes)")
+        return tc_notes, pyin_tempo, duration, "torchcrepe_gpu"
 
 
 def pitch_to_notes(
