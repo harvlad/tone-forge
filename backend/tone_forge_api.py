@@ -131,7 +131,7 @@ def _compute_waveform_peaks(y: np.ndarray, num_points: int = 1000) -> dict:
 
 
 import asyncio
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -171,6 +171,9 @@ from tone_forge.unified_pipeline import (
     AnalysisResult,
     get_pipeline as get_unified_pipeline,
 )
+
+# Session engine — canonical SessionBundle assembler (Priority 5).
+from tone_forge.session import build as build_session_bundle, serialize as serialize_session_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -1251,13 +1254,18 @@ async def admin_analyze_deep(
 ) -> StreamingResponse:
     """Deep GPU-powered analysis with live progress streaming via SSE.
 
-    Performs:
-    1. Stem separation (demucs - GPU)
-    2. Quality analysis (CPU)
-    3. MIDI extraction (basic_pitch - GPU)
-
-    Returns Server-Sent Events with progress updates.
+    NOTE: Disabled by default to prevent server blocking. Use local GPU engine instead.
+    Set TONEFORGE_ALLOW_SERVER_DEEP=1 to enable for local development.
     """
+    # Check if server-side deep analysis is allowed (disabled by default for production)
+    if not os.environ.get("TONEFORGE_ALLOW_SERVER_DEEP"):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": "Deep analysis requires local GPU engine. Start the local engine or select Quick/Standard mode.",
+                "error_code": "LOCAL_ENGINE_REQUIRED"
+            }
+        )
     import asyncio
     import time
     from concurrent.futures import ThreadPoolExecutor
@@ -2035,6 +2043,33 @@ async def get_history_entry(entry_id: str) -> JSONResponse:
     return JSONResponse(_convert_numpy_types(entry))
 
 
+@app.get("/api/session/{entry_id}")
+async def get_session_bundle(entry_id: str) -> JSONResponse:
+    """Return the Jam-shaped ``SessionBundle`` for a persisted analysis.
+
+    Studio continues to read ``/api/history/{id}`` and the legacy
+    ``AnalysisResult.to_dict()`` shape; Jam consumes this route. The
+    bundle assembler is in ``tone_forge.session.bundle``; the route
+    handler is a thin lookup-and-translate that stays inside the API
+    composition layer so the session/ subsystem keeps its boundary
+    discipline.
+    """
+    entry = _get_history_item(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="History entry not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        # Entry exists but the full analysis blob was never persisted.
+        # Surface as 422 so the Jam client knows the row is unusable.
+        raise HTTPException(
+            status_code=422,
+            detail="History entry has no analysis result",
+        )
+    bundle = build_session_bundle(result, session_id=entry_id)
+    payload = serialize_session_bundle(bundle)
+    return JSONResponse(_convert_numpy_types(payload))
+
+
 def _check_yt_dlp() -> bool:
     """Check if yt-dlp is available."""
     import sys
@@ -2107,6 +2142,7 @@ class UrlAnalyzeRequest(BaseModel):
     extract_midi: bool = True  # Extract MIDI notes from audio
     start_time: Optional[float] = None  # Trim start in seconds
     end_time: Optional[float] = None  # Trim end in seconds
+    use_local_engine: bool = False  # Proxy processing to local engine for GPU acceleration
 
 
 class ExportRequest(BaseModel):
@@ -2267,6 +2303,23 @@ async def export_preset(request: ExportRequest) -> JSONResponse:
                 synth_desc,
                 request.preset_name,
             )
+        elif format_type == "reconstruction":
+            # End-to-end reconstruction: extracted MIDI + matched preset → .als
+            # Phase 1 uses a fixed Analog preset; Phase 2 will swap in V2 retrieval.
+            if not request.full_result:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Full analysis result required for reconstruction export",
+                )
+            # Carry midi_data forward if it was passed separately (frontend may
+            # send it alongside full_result).
+            full_result = dict(request.full_result)
+            if request.midi_data and not full_result.get("midi_data"):
+                full_result["midi_data"] = request.midi_data
+            result = preset_export.export_reconstruction_als(
+                full_result,
+                request.preset_name,
+            )
         elif format_type == "midi":
             # MIDI export uses stored midi_data from analysis
             if not request.midi_data:
@@ -2382,6 +2435,60 @@ async def get_reference_tones(
         })
 
     return JSONResponse(content={"tones": tones})
+
+
+@app.post("/api/preset-match")
+async def preset_match_endpoint(
+    file: UploadFile = File(...),
+    k: int = 5,
+    instrument: str = "Analog",
+    sound_type: Optional[str] = None,
+) -> JSONResponse:
+    """Match an uploaded audio clip against the rendered preset catalog.
+
+    Returns the top-k closest presets by Euclidean distance over the
+    8-feature catalog fingerprint (brightness/warmth/air/attack/decay/
+    sustain/harmonic/pitch-stability).
+
+    Query params:
+        k: number of matches to return (default 5)
+        instrument: catalog instrument to query (default Analog)
+        sound_type: optional pre-filter (bass/lead/pad/keys/fx/percussion/other)
+    """
+    from tone_forge.preset_catalog.preset_retrieval import match_audio_file
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix and suffix not in _ACCEPTED_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type {suffix}. Accepted: {sorted(_ACCEPTED_SUFFIXES)}.",
+        )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".wav") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    try:
+        matches = match_audio_file(
+            tmp_path,
+            k=k,
+            instrument=instrument,
+            sound_type_filter=sound_type,
+        )
+        return JSONResponse(content={
+            "filename": file.filename,
+            "instrument": instrument,
+            "sound_type_filter": sound_type,
+            "k": k,
+            "matches": matches,
+        })
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
 
 
 @app.get("/api/hardware-profiles")
@@ -2589,15 +2696,27 @@ async def start_local_engine():
     """
     import subprocess
     import sys
+    import signal
 
-    # Check if already running
+    # Check if already running and responsive
     try:
         import httpx
-        resp = httpx.get("http://127.0.0.1:7777/health", timeout=1.0)
+        resp = httpx.get("http://127.0.0.1:7777/health", timeout=2.0)
         if resp.status_code == 200:
             return JSONResponse({"status": "already_running", "message": "Local engine is already running"})
     except Exception:
-        pass  # Not running, proceed to start
+        # Not responding - kill any hung processes before starting fresh
+        try:
+            result = subprocess.run(
+                ["pkill", "-9", "-f", "local_engine/server.py"],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                logger.info("Killed hung local engine process(es)")
+                import time
+                time.sleep(1)  # Wait for port to be released
+        except Exception as e:
+            logger.warning(f"Could not kill hung processes: {e}")
 
     # Start the local engine
     backend_dir = Path(__file__).parent
@@ -3355,7 +3474,26 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
     """Analyze audio from a YouTube URL using unified pipeline with SSE progress.
 
     Returns Server-Sent Events with progress updates, then final result.
+    Deep analysis REQUIRES local engine to avoid blocking the server.
     """
+    import httpx
+
+    analysis_mode = getattr(request, 'analysis_mode', 'quick')
+    is_deep = analysis_mode.lower() == "deep" and not request.fast_mode
+
+    # Debug: Log the incoming request parameters
+    logger.info(f"[analyze-url-stream] use_local_engine={request.use_local_engine}, analysis_mode={analysis_mode}, fast_mode={request.fast_mode}, is_deep={is_deep}")
+
+    # Deep analysis requires local engine to prevent server blocking
+    if is_deep and not request.use_local_engine:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": "Deep analysis requires local GPU engine. Please start the local engine or select Quick/Standard mode.",
+                "error_code": "LOCAL_ENGINE_REQUIRED"
+            }
+        )
+
     # Build unified pipeline config
     if request.fast_mode:
         config = PipelineConfig.fast()
@@ -3387,7 +3525,7 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
 
         try:
             # Download audio first (outside pipeline for better progress reporting)
-            yield send_event("progress", {"message": "Downloading audio...", "percent": 5})
+            yield send_event("progress", {"message": "Downloading audio...", "percent": 5, "stage": "download"})
             await asyncio.sleep(0)
 
             audio_path, start_timestamp, display_name = _download_youtube_audio(
@@ -3395,7 +3533,129 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
             )
             config.source_name = display_name
 
-            # Use unified pipeline
+            # If local engine requested, proxy the downloaded audio there
+            if request.use_local_engine:
+                yield send_event("progress", {"message": "Sending to local GPU engine...", "percent": 10, "stage": "proxy"})
+                await asyncio.sleep(0)
+
+                LOCAL_ENGINE_URL = "http://127.0.0.1:7777"
+
+                try:
+                    import requests
+                    from queue import Queue
+                    import threading
+
+                    # Queue for streaming events from background thread
+                    event_queue: Queue = Queue()
+
+                    async def proxy_to_local_engine_async():
+                        """Async proxy using httpx for proper SSE streaming."""
+                        try:
+                            logger.info(f"[proxy] Uploading {audio_path.name} to local engine...")
+                            event_queue.put(("data", json.dumps({"type": "progress", "stage": "upload", "message": "Uploading to GPU...", "progress": 0.12})))
+
+                            async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+                                with open(audio_path, "rb") as f:
+                                    files = {"file": (audio_path.name, f, "audio/wav")}
+                                    async with client.stream("POST", f"{LOCAL_ENGINE_URL}/api/analyze-deep", files=files) as resp:
+                                        logger.info(f"[proxy] Connected, status={resp.status_code}")
+                                        event_queue.put(("data", json.dumps({"type": "progress", "stage": "processing", "message": "GPU processing...", "progress": 0.15})))
+
+                                        if resp.status_code != 200:
+                                            event_queue.put(("error", f"Local engine error: {resp.status_code}"))
+                                            return
+
+                                        # Stream lines as they arrive
+                                        async for line in resp.aiter_lines():
+                                            if line.startswith("data: "):
+                                                event_queue.put(("data", line[6:]))
+                                                logger.debug(f"[proxy] Got event: {line[:60]}...")
+
+                            event_queue.put(("done", None))
+                            logger.info("[proxy] Local engine stream completed")
+                        except Exception as e:
+                            logger.error(f"[proxy] Error: {e}")
+                            event_queue.put(("error", str(e)))
+
+                    def proxy_to_local_engine():
+                        """Run async proxy in new event loop."""
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            loop.run_until_complete(proxy_to_local_engine_async())
+                        finally:
+                            loop.close()
+
+                    # Start background thread
+                    thread = threading.Thread(target=proxy_to_local_engine)
+                    thread.start()
+
+                    # Process events from queue
+                    while True:
+                        # Non-blocking check with small timeout
+                        await asyncio.sleep(0.1)
+                        while not event_queue.empty():
+                            event_type, event_data = event_queue.get_nowait()
+
+                            if event_type == "error":
+                                yield send_event("error", {"message": event_data})
+                                thread.join()
+                                return
+
+                            if event_type == "done":
+                                thread.join()
+                                return
+
+                            if event_type == "data":
+                                try:
+                                    local_data = json.loads(event_data)
+                                    event_type_local = local_data.get("type")
+
+                                    # Forward progress events
+                                    if event_type_local == "progress" or local_data.get("stage"):
+                                        progress = local_data.get("progress", 0)
+                                        if isinstance(progress, float) and progress <= 1:
+                                            progress = int(progress * 100)
+                                        adjusted = 10 + int(progress * 0.85)
+                                        yield send_event("progress", {
+                                            "message": local_data.get("message", "Processing..."),
+                                            "percent": adjusted,
+                                            "stage": local_data.get("stage", "local"),
+                                        })
+                                    # Forward final result - local engine sends {"type": "result", "data": {...}}
+                                    elif event_type_local == "result":
+                                        result_data = local_data.get("data", local_data)
+                                        # Add source URL to result
+                                        result_data["source_url"] = url
+                                        result_data["source_name"] = display_name or url[:50]
+                                        yield send_event("progress", {"message": "Complete!", "percent": 100})
+                                        yield send_event("result", {"data": _convert_numpy_types(result_data)})
+                                    # Forward early-stems event so the frontend
+                                    # can start decoding audio while MIDI /
+                                    # analysis are still running upstream.
+                                    elif event_type_local == "stems_partial":
+                                        yield send_event("stems_partial", {
+                                            "stem_records": local_data.get("stem_records", []),
+                                            "stems": local_data.get("stems", {}),
+                                        })
+                                    # Handle error events
+                                    elif event_type_local == "error":
+                                        yield send_event("error", {"message": local_data.get("message", "Unknown error")})
+                                except json.JSONDecodeError:
+                                    pass
+
+                        if not thread.is_alive() and event_queue.empty():
+                            break
+
+                    return
+
+                except Exception as e:
+                    logger.error(f"Local engine proxy error: {e}", exc_info=True)
+                    yield send_event("error", {"message": f"Local engine error: {e}"})
+                    return
+
+            # Use unified pipeline (server-side processing)
             pipeline = get_unified_pipeline()
 
             async for event in pipeline.analyze_streaming(audio_path, config):
@@ -3405,6 +3665,7 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                     yield send_event("progress", {
                         "message": event.message,
                         "percent": adjusted_percent,
+                        "stage": event.stage,
                     })
                     await asyncio.sleep(0)
                 elif isinstance(event, AnalysisResult):

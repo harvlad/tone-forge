@@ -15,7 +15,7 @@ incrementally as each stage lands.
 """
 
 from tone_forge.session import bundle, protocol, transport
-from tone_forge.session.bundle import build
+from tone_forge.session.bundle import build, serialize
 from tone_forge.session.protocol import (
     MessageType,
     PROTOCOL_VERSION,
@@ -34,5 +34,6 @@ __all__ = [
     "is_supported_version",
     "protocol",
     "reduce",
+    "serialize",
     "transport",
 ]

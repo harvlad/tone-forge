@@ -31,6 +31,8 @@ fields automatically without code changes.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from enum import Enum
 from typing import Any, Iterable, Mapping, Optional
 
 from tone_forge.contracts import (
@@ -447,4 +449,30 @@ def _nested_get(d: Mapping[str, Any], path: tuple[str, ...]) -> Any:
     return cur
 
 
-__all__ = ["build"]
+# ---------------------------------------------------------------------------
+# Serialization
+# ---------------------------------------------------------------------------
+
+def serialize(bundle: SessionBundle) -> dict:
+    """Convert a SessionBundle to a JSON-ready dict.
+
+    ``dataclasses.asdict`` handles the frozen dataclass tree, but it
+    leaves ``Enum`` instances in place — even our str-Enum subclasses,
+    because ``asdict`` does not unwrap. We walk the resulting tree and
+    convert enums to their ``.value`` so the payload is round-trippable
+    through any JSON encoder (FastAPI's included).
+    """
+    return _jsonify(asdict(bundle))
+
+
+def _jsonify(obj: Any) -> Any:
+    if isinstance(obj, Enum):
+        return obj.value
+    if isinstance(obj, dict):
+        return {k: _jsonify(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonify(v) for v in obj]
+    return obj
+
+
+__all__ = ["build", "serialize"]
