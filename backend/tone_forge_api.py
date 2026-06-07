@@ -175,6 +175,11 @@ from tone_forge.unified_pipeline import (
 # Session engine — canonical SessionBundle assembler (Priority 5).
 from tone_forge.session import build as build_session_bundle, serialize as serialize_session_bundle
 
+# Tone retrieval — calibration + tier classifier + fallback policy (Priority 6).
+# Composition lives at the API edge so session/ stays boundary-clean.
+from tone_forge import tone as tone_retrieval
+from tone_forge.contracts import UserRole as _UserRole
+
 logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
@@ -2065,9 +2070,82 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
             status_code=422,
             detail="History entry has no analysis result",
         )
-    bundle = build_session_bundle(result, session_id=entry_id)
+    tone_match = _retrieve_tone_for_history(result)
+    bundle = build_session_bundle(
+        result, session_id=entry_id, tone_match=tone_match,
+    )
     payload = serialize_session_bundle(bundle)
     return JSONResponse(_convert_numpy_types(payload))
+
+
+def _retrieve_tone_for_history(result: dict) -> Optional["ToneMatch"]:
+    """Project legacy ``preset_matches`` into a tier-aware ``ToneMatch``.
+
+    Composition layer for the tone/ subsystem. Reads the stem-keyed
+    preset_matches blob, picks the entry that best matches the user's
+    role, builds a minimal ``SongUnderstanding`` from the legacy tempo
+    / key fields so the fallback policy can route on it, then hands
+    everything to ``tone.retrieve()``. Returns ``None`` (and the
+    bundle falls back to its conservative UNKNOWN path) if the legacy
+    blob is shaped in a way the cleaner cannot use.
+    """
+    from tone_forge.contracts import SongUnderstanding
+
+    # Resolve the user's role the same way the bundle does so the
+    # tone_match we compute matches the bundle's bundle.user_role.
+    role_value = result.get("detected_type") or result.get("type")
+    role = _UserRole.GUITAR
+    if isinstance(role_value, str):
+        normalized = role_value.strip().lower()
+        if normalized in (r.value for r in _UserRole):
+            role = _UserRole(normalized)
+
+    matches = result.get("preset_matches")
+    candidates: list = []
+    if isinstance(matches, dict):
+        # Prefer the role-keyed entry; fall back to stem-name variants
+        # (``guitar_left`` / ``guitar_right``) since the production
+        # pipeline writes stem names, not role names.
+        preferred_keys = [role.value]
+        if role == _UserRole.GUITAR:
+            preferred_keys += ["guitar_left", "guitar_right"]
+        for key in preferred_keys:
+            block = matches.get(key)
+            if isinstance(block, dict):
+                candidates.append(block)
+
+    # Minimal SongUnderstanding for fallback policy. We only need
+    # tempo + key; the bundle assembler does the full reconstruction.
+    tempo_bpm = 0.0
+    for path in (("descriptor", "tempo"), ("descriptor", "tempo_bpm")):
+        cur: Any = result
+        for k in path:
+            if not isinstance(cur, dict):
+                cur = None
+                break
+            cur = cur.get(k)
+        if isinstance(cur, (int, float)) and float(cur) > 0:
+            tempo_bpm = float(cur)
+            break
+    key_raw = None
+    desc = result.get("descriptor")
+    if isinstance(desc, dict):
+        key_raw = desc.get("key") if isinstance(desc.get("key"), str) else None
+    understanding = SongUnderstanding(
+        tempo_bpm=tempo_bpm,
+        tempo_confidence=0.5 if tempo_bpm else 0.0,
+        time_signature=(4, 4),
+        beats_s=(),
+        downbeats_s=(),
+        sections=(),
+        chords=(),
+        key=key_raw,
+        key_confidence=0.5 if key_raw else 0.0,
+    )
+
+    return tone_retrieval.retrieve(
+        candidates, understanding=understanding, role=role,
+    )
 
 
 def _check_yt_dlp() -> bool:

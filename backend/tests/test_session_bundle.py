@@ -140,14 +140,17 @@ def test_build_populates_user_midi_when_present() -> None:
     assert bundle.user_midi.overall_confidence == pytest.approx(0.78)
 
 
-def test_build_returns_unknown_tier_when_calibration_layer_missing() -> None:
-    """Until Priority 6 lands the tone/ package, every match is UNKNOWN.
-    This test pins that interim contract so the UI fallback path is
-    exercised even when a legacy preset match exists."""
+def test_build_returns_unknown_tier_when_no_tone_match_injected() -> None:
+    """The API edge dependency-injects the ``tone_match`` (P6 lives at
+    the composition layer, not inside session/). When no match is
+    passed, the bundle assembler degrades to a conservative UNKNOWN
+    so the UI takes the curated-chain fallback path. Pinned so the
+    legacy preset_match dict never leaks through as a HIGH/MEDIUM
+    suggestion."""
     bundle = build(_legacy_result(), session_id="x")
     assert bundle.tone.tier == ConfidenceTier.UNKNOWN
     assert bundle.tone.chosen is None
-    assert "Priority 6" in bundle.tone.rationale
+    assert "tone_match" in bundle.tone.rationale
 
 
 def test_build_guidance_mirrors_sections_and_chords() -> None:
@@ -229,6 +232,53 @@ def test_build_explicit_device_caps_override_default() -> None:
     bundle = build(_legacy_result(), session_id="x", device_caps=caps)
     assert bundle.device_caps.cls == DeviceClass.HELIX
     assert bundle.device_caps.display_name == "Line 6 Helix"
+
+
+def test_build_uses_injected_tone_match_verbatim() -> None:
+    """When the API edge passes ``tone_match=``, the bundle carries it
+    through unchanged. This is the P6 wiring path — the assembler must
+    not second-guess the injected match."""
+    from tone_forge.contracts import ToneCandidate, ToneMatch
+
+    chosen = ToneCandidate(
+        preset_id="p1",
+        preset_name="Analog Lead",
+        instrument="Analog",
+        distance=0.1,
+        calibrated_confidence=0.7,
+    )
+    injected = ToneMatch(
+        tier=ConfidenceTier.MEDIUM,
+        chosen=chosen,
+        alternates=(),
+        fallback_chain_id=None,
+        rationale="injected match",
+        debug={"src": "test"},
+    )
+    bundle = build(_legacy_result(), session_id="x", tone_match=injected)
+    assert bundle.tone is injected  # carried verbatim, no copying
+    assert bundle.tone.tier == ConfidenceTier.MEDIUM
+    assert bundle.tone.chosen is not None
+    assert bundle.tone.chosen.preset_id == "p1"
+
+
+def test_build_injected_tone_match_overrides_legacy_blob() -> None:
+    """Even with a legacy preset_matches dict present, an injected
+    tone_match wins. Pins the precedence so a stale on-disk blob
+    can't shadow a freshly-computed tier."""
+    from tone_forge.contracts import ToneMatch
+
+    injected = ToneMatch(
+        tier=ConfidenceTier.LOW,
+        chosen=None,
+        alternates=(),
+        fallback_chain_id="tfc.edge_of_breakup",
+        rationale="low tier",
+        debug={},
+    )
+    bundle = build(_legacy_result(), session_id="x", tone_match=injected)
+    assert bundle.tone.tier == ConfidenceTier.LOW
+    assert bundle.tone.fallback_chain_id == "tfc.edge_of_breakup"
 
 
 def test_build_explicit_transport_override() -> None:

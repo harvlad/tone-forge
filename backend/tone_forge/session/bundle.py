@@ -66,6 +66,7 @@ def build(
     user_role: Optional[UserRole] = None,
     device_caps: Optional[DeviceCaps] = None,
     initial_transport: Optional[TransportState] = None,
+    tone_match: Optional[ToneMatch] = None,
 ) -> SessionBundle:
     """Assemble a ``SessionBundle`` from a persisted ``AnalysisResult`` dict.
 
@@ -86,6 +87,12 @@ def build(
     ``session.transport.initial_state()``. Per §6, reload-restore of
     the last position is a P5d concern; the bundle just carries
     whatever state the dispatch layer hands in.
+
+    ``tone_match`` is dependency-injected from the API edge — that is
+    where ``tone.retrieve()`` runs, since the boundary test forbids
+    the session/ subsystem from importing tone/. When ``None`` (no
+    injection), the assembler falls back to a conservative UNKNOWN
+    tier so legacy callers still get a renderable bundle.
     """
 
     resolved_role = user_role or _resolve_user_role(result)
@@ -99,7 +106,7 @@ def build(
         understanding=_build_understanding(result),
         user_role=resolved_role,
         user_midi=_build_user_midi(result, resolved_role),
-        tone=_build_tone(result, resolved_role),
+        tone=tone_match if tone_match is not None else _build_tone(result, resolved_role),
         guidance=_build_guidance(result),
         device_caps=resolved_caps,
         initial_transport=resolved_transport,
@@ -257,13 +264,13 @@ def _build_user_midi(
 
 
 def _build_tone(result: Mapping[str, Any], role: UserRole) -> ToneMatch:
-    """Read the existing preset-match output and project it into a ToneMatch.
+    """Fallback used only when no ``tone_match`` is dependency-injected.
 
-    Today this is partial: we don't yet have calibrated confidence
-    (Priority 6 lands ``tone/calibration``). For now we emit an
-    UNKNOWN-tier match so the UI renders the curated-chain fallback.
-    When P6 ships, this function reads from the calibrated tone layer
-    instead.
+    The API edge calls ``tone.retrieve()`` and passes the result into
+    ``build(..., tone_match=...)``. This helper covers the path where
+    a caller (legacy test, ad-hoc usage) doesn't inject one — we emit a
+    conservative UNKNOWN tier so the UI takes the curated-chain
+    fallback path rather than rendering a stale top-1 dict.
     """
 
     matches = result.get("preset_matches")
@@ -274,14 +281,14 @@ def _build_tone(result: Mapping[str, Any], role: UserRole) -> ToneMatch:
     if not isinstance(role_block, Mapping):
         return _unknown_tone()
 
-    # Existing shape isn't tier-aware; treat any present match as
-    # UNKNOWN until calibration ships.
+    # Legacy preset_matches shape isn't tier-aware; carry the raw blob
+    # into debug for telemetry but treat the match itself as UNKNOWN.
     return ToneMatch(
         tier=ConfidenceTier.UNKNOWN,
         chosen=None,
         alternates=(),
         fallback_chain_id=None,
-        rationale="Calibrated tone matching not yet wired (Priority 6).",
+        rationale="No tone_match injected; legacy preset_match ignored.",
         debug={"legacy_preset_match": dict(role_block)},
     )
 

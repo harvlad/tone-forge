@@ -163,6 +163,73 @@ def test_session_route_initial_transport_is_stopped_muted() -> None:
     assert t["monitor_gain"] == 0.0
 
 
+def test_session_route_unknown_tier_carries_fallback_chain() -> None:
+    """No preset_matches in the fixture → tone.retrieve() returns
+    UNKNOWN with a fallback chain id picked by the policy from the
+    fixture's tempo/key (120 BPM + 'G major' → clean_strat).
+    Pins the P6 wiring: the route runs the tone retrieval at the
+    composition edge."""
+    resp = client.get("/api/session/sess-real")
+    tone = resp.json()["tone"]
+    assert tone["tier"] == "unknown"
+    assert tone["fallback_chain_id"] == "tfc.clean_strat"
+    assert tone["chosen"] is None
+
+
+def test_session_route_promotes_tier_when_preset_match_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A history row with a usable preset_matches blob must surface as
+    a tier-promoted ToneMatch (HIGH or MEDIUM — never UNKNOWN once a
+    candidate is present). Pre-calibration cap keeps HIGH unreachable,
+    so a close single-candidate match lands at MEDIUM."""
+    entry = _history_entry()
+    entry["result"]["preset_matches"] = {
+        "guitar": {
+            "preset_id": "p1",
+            "preset_name": "Analog Lead",
+            "instrument": "Analog",
+            "distance": 0.1,
+        }
+    }
+    monkeypatch.setattr(
+        tone_forge_api, "_get_history_item", lambda _: entry,
+    )
+
+    resp = client.get("/api/session/sess-real")
+    tone = resp.json()["tone"]
+    assert tone["tier"] in ("medium", "high")
+    assert tone["chosen"] is not None
+    assert tone["chosen"]["preset_id"] == "p1"
+    assert tone["fallback_chain_id"] is None
+
+
+def test_session_route_low_tier_when_match_is_weak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A far-distance preset_match collapses confidence below the
+    MEDIUM threshold; the route must return LOW (chosen None, fallback
+    set) so the UI takes the curated-chain path."""
+    entry = _history_entry()
+    entry["result"]["preset_matches"] = {
+        "guitar": {
+            "preset_id": "weak",
+            "preset_name": "Far Match",
+            "instrument": "Analog",
+            "distance": 12.0,
+        }
+    }
+    monkeypatch.setattr(
+        tone_forge_api, "_get_history_item", lambda _: entry,
+    )
+
+    resp = client.get("/api/session/sess-real")
+    tone = resp.json()["tone"]
+    assert tone["tier"] == "low"
+    assert tone["chosen"] is None
+    assert tone["fallback_chain_id"] == "tfc.clean_strat"
+
+
 # ---------------------------------------------------------------------------
 # Serialization unit coverage
 # ---------------------------------------------------------------------------
