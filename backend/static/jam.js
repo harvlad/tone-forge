@@ -1633,17 +1633,43 @@
   }
 
   // ---------------------------------------------- deep-link: /jam/:id
-  // If the URL carries an analysis id, fetch the stored result and
-  // jump straight to the performance view.
+  //
+  // If the URL carries an analysis id, fetch the canonical SessionBundle
+  // and jump straight to the performance view. SessionBundle is the
+  // Priority-5 contract emitted by ``GET /api/session/:id`` (see
+  // ``backend/tone_forge/session/bundle.py``); ``onAnalysisComplete``
+  // still consumes the legacy AnalysisResult-shaped dict that the
+  // streaming analyze path produces, so we project the bundle back into
+  // that surface before calling it. Future work folds more of the
+  // band-room consumers onto bundle fields directly; until then the
+  // adapter is the bridge.
+  //
+  // Older history rows (pre-result persistence) fall back to
+  // ``/api/history/:id`` so deep-link doesn't regress for legacy data.
   (function maybeDeepLink() {
     const m = window.location.pathname.match(/^\/jam\/([^\/]+)$/);
     if (!m) return;
     const id = m[1];
-    fetch(`/api/history/${id}`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('not found')))
-      .then(result => {
+
+    fetch(`/api/session/${id}`)
+      .then(r => {
+        if (r.ok) return r.json().then(bundle => ({ kind: 'bundle', bundle }));
+        if (r.status === 422) {
+          // Entry exists but never persisted its analysis blob — fall
+          // through to the legacy envelope so deep-link still works.
+          return fetch(`/api/history/${id}`).then(r2 => {
+            if (!r2.ok) throw new Error('not found');
+            return r2.json().then(entry => ({ kind: 'legacy', entry }));
+          });
+        }
+        throw new Error('not found');
+      })
+      .then(({ kind, bundle, entry }) => {
+        const result = kind === 'bundle'
+          ? bundleToLegacyResult(bundle)
+          : entry;
         state.sourceUrl = result.source_url || null;
-        state.userInstrument = 'guitar';
+        state.userInstrument = result.detected_type || 'guitar';
         showView('bandroom');
         onAnalysisComplete(result);
       })
@@ -1651,6 +1677,60 @@
         // Stay on intake on error.
       });
   })();
+
+  // ---------------------------------------------- SessionBundle adapter
+  //
+  // Project a SessionBundle (Priority-5 contract) back onto the legacy
+  // AnalysisResult-shaped dict that ``onAnalysisComplete`` reads. This
+  // is a one-way translation used only on the deep-link path; the
+  // streaming Studio path keeps writing AnalysisResult and skips this.
+  //
+  // The adapter never invents data — empty bundle fields project to
+  // ``null`` / ``[]`` so the consumer's existing ``?? null`` fallbacks
+  // continue to drive the "no data yet" UI.
+  function bundleToLegacyResult(bundle) {
+    if (!bundle || typeof bundle !== 'object') return {};
+    const audio = bundle.audio || {};
+    const understanding = bundle.understanding || {};
+    const stems = bundle.stems || {};
+    const userMidi = bundle.user_midi || null;
+
+    const stemsPaths = {};
+    for (const role of ['drums', 'bass', 'vocals', 'other', 'guitar_left', 'guitar_right']) {
+      const stem = stems[role];
+      if (stem && stem.audio_url) stemsPaths[role] = stem.audio_url;
+    }
+
+    return {
+      // Identity
+      id: bundle.session_id,
+      analysis_id: bundle.session_id,
+      // Acquisition
+      source_url: audio.source_uri || null,
+      source_name: audio.source_title || null,
+      source_title: audio.source_title || null,
+      duration_sec: audio.duration_s ?? null,
+      content_hash: audio.content_hash || null,
+      wav_path: audio.wav_path || null,
+      // Role
+      detected_type: bundle.user_role || 'guitar',
+      // Understanding
+      tempo_bpm: understanding.tempo_bpm || null,
+      detected_key: understanding.key || null,
+      sections: understanding.sections || [],
+      beat_times: understanding.beats_s || [],
+      // Stems
+      stems_paths: stemsPaths,
+      // MIDI
+      midi: userMidi ? {
+        notes: userMidi.notes || [],
+        overall_confidence: userMidi.overall_confidence ?? 0,
+      } : null,
+      // Tone — bundle carries an UNKNOWN-tier ToneMatch in MVP; emit an
+      // empty preset_matches so the "no tone match yet" branch fires.
+      preset_matches: {},
+    };
+  }
 
   // -------------------------------------------------------- learning assistance
   //
