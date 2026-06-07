@@ -38,6 +38,12 @@ public final class PresetBridge {
     /// Status callback for surfacing connection state to the CLI / UI.
     public var onStatus: ((String) -> Void)?
 
+    /// Fired on the main queue when the server reports we are too old.
+    /// The UI should present an update prompt and stop reconnecting —
+    /// the loop would just hammer the same rejection.
+    /// Argument is the version the server requires.
+    public var onVersionMismatch: ((Int) -> Void)?
+
     public private(set) var sessionId: String
     public private(set) var serverURL: URL
     public private(set) var isRunning = false
@@ -85,9 +91,13 @@ public final class PresetBridge {
 
     private func sendHello() {
         let hello: [String: Any] = [
-            "type": "hello",
+            "type": ConnectProtocol.MessageType.hello,
             "role": "connect",
             "session_id": sessionId,
+            // protocol_version is the v1 addition. Server treats a
+            // missing field as v0 for back-compat with older Connect
+            // builds; new builds always send it.
+            "protocol_version": ConnectProtocol.version,
         ]
         sendJSON(hello) { [weak self] err in
             if let err = err {
@@ -141,7 +151,21 @@ public final class PresetBridge {
 
         let type = dict["type"] as? String ?? ""
         switch type {
-        case "joined":
+        case ConnectProtocol.MessageType.helloAck:
+            // Server confirmed it speaks our version. Nothing to do
+            // beyond logging — `joined` will follow with peer count.
+            let sv = dict["protocol_version"] as? Int ?? 0
+            onStatus?("hello_ack (server protocol v\(sv))")
+        case ConnectProtocol.MessageType.versionMismatch:
+            // Server requires a newer client. Stop reconnecting and
+            // hand off to the UI to prompt for an update.
+            let required = dict["required"] as? Int ?? (ConnectProtocol.version + 1)
+            onStatus?("version_mismatch: server requires v\(required), we speak v\(ConnectProtocol.version)")
+            shouldReconnect = false
+            DispatchQueue.main.async { [weak self] in
+                self?.onVersionMismatch?(required)
+            }
+        case ConnectProtocol.MessageType.joined:
             let peers = dict["peers"] as? Int ?? 0
             self.reconnectDelay = 1.0
             onStatus?("joined session \(sessionId) (peers=\(peers))")

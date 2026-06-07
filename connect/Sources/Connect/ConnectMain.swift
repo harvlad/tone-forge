@@ -295,6 +295,13 @@ struct Connect {
         // Remote-controlled monitor gain. The browser's slider pushes
         // these. We don't second-guess: feedback safety is the user's
         // responsibility once they're driving the level.
+        bridge.onVersionMismatch = { required in
+            print("  [bridge] server requires protocol v\(required) — please update Connect")
+            // Bridge already stopped reconnecting. Tear down the engine
+            // so the process can exit cleanly when the run loop unwinds.
+            engine.stop()
+            exit(75)  // EX_TEMPFAIL — recoverable by upgrading the client
+        }
         bridge.onGainChange = { gain in
             engine.inputMonitorGain = gain
             print(String(format: "  [bridge] monitor gain set to %.2f", gain))

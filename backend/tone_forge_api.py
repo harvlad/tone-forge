@@ -246,6 +246,200 @@ async def analysis_page(analysis_id: str) -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
 
 
+@app.get("/jam")
+async def jam_page() -> FileResponse:
+    """ToneForge Jam — paste a song, separate stems, drop into a session."""
+    return FileResponse(_STATIC_DIR / "jam.html")
+
+
+@app.get("/jam/{analysis_id}")
+async def jam_session_page(analysis_id: str) -> FileResponse:
+    """Shareable URL for a Jam session pinned to an existing analysis."""
+    return FileResponse(_STATIC_DIR / "jam.html")
+
+
+# ---------------------------------------------------------------------------
+# Connect bridge — WebSocket hub for browser ↔ Connect (native macOS app).
+#
+# The browser pushes tone-preset payloads here when an analysis lands; the
+# server caches the latest payload and broadcasts it to every other client
+# connected to the same channel. When the Swift Connect app later joins as
+# a peer it receives the cached preset immediately and any subsequent
+# pushes in real time.
+#
+# Protocol versioning (per ONBOARDING_AUDIT §F4.3):
+#   * v0 — pre-versioning hello: {"type":"hello","role":...,"session_id":...}
+#   * v1 — same shape + "protocol_version": 1. Server replies with
+#          {"type":"hello_ack","protocol_version":1} immediately after
+#          the hello and before "joined".
+#   The server accepts v0 hellos for back-compat with the previous
+#   Connect helper, and rejects requested versions strictly greater
+#   than CONNECT_BRIDGE_PROTOCOL_VERSION with a "version_mismatch"
+#   frame and an immediate close.
+#
+# Message envelope (JSON):
+#   { "type": "preset_push", "session_id": "...", "preset": {...} }
+#   { "type": "hello",       "role": "browser" | "connect", "session_id": "...",
+#                            "protocol_version": 1 }
+#   { "type": "hello_ack",   "protocol_version": 1 }
+#   { "type": "version_mismatch", "required": N }
+#   { "type": "ack",         "request_id": "..." }
+# ---------------------------------------------------------------------------
+
+# Bump whenever a required field is added or a message semantic changes.
+# Both the Swift client (ConnectCore.ConnectProtocol.version) and the
+# browser (jam.js CONNECT_PROTOCOL_VERSION) must stay in lockstep.
+CONNECT_BRIDGE_PROTOCOL_VERSION = 1
+
+# In-memory channel state. Survives only as long as the API process runs;
+# clients re-push on reconnect.
+class _ConnectChannel:
+    def __init__(self) -> None:
+        self.clients: set[WebSocket] = set()
+        self.last_preset: dict | None = None
+        # Last requested monitor gain (0.0 = muted, 1.0 = unity). We
+        # cache it the same way as last_preset so a reconnecting Connect
+        # helper restores the gain the user dialed in, instead of
+        # snapping back to the muted default.
+        self.last_gain: float | None = None
+
+    async def join(self, ws: WebSocket) -> None:
+        self.clients.add(ws)
+        if self.last_preset is not None:
+            try:
+                await ws.send_json({"type": "preset_push", "preset": self.last_preset, "replayed": True})
+            except Exception:
+                pass
+        if self.last_gain is not None:
+            try:
+                await ws.send_json({"type": "set_gain", "gain": self.last_gain, "replayed": True})
+            except Exception:
+                pass
+
+    def leave(self, ws: WebSocket) -> None:
+        self.clients.discard(ws)
+
+    async def broadcast(self, sender: WebSocket, message: dict) -> None:
+        dead: list[WebSocket] = []
+        for client in self.clients:
+            if client is sender:
+                continue
+            try:
+                await client.send_json(message)
+            except Exception:
+                dead.append(client)
+        for d in dead:
+            self.leave(d)
+
+
+_connect_channels: dict[str, _ConnectChannel] = {}
+_connect_channels_lock = asyncio.Lock()
+
+
+async def _get_connect_channel(session_id: str) -> _ConnectChannel:
+    async with _connect_channels_lock:
+        chan = _connect_channels.get(session_id)
+        if chan is None:
+            chan = _ConnectChannel()
+            _connect_channels[session_id] = chan
+        return chan
+
+
+@app.websocket("/ws/connect-bridge")
+async def connect_bridge(ws: WebSocket) -> None:
+    """Bidirectional bridge between the browser and the Connect desktop app.
+
+    Both sides connect to this endpoint. The first message must be a
+    ``hello`` frame carrying ``session_id`` and ``role`` so the server can
+    route them onto the same channel.
+    """
+    await ws.accept()
+    channel: _ConnectChannel | None = None
+    role: str | None = None
+    session_id: str | None = None
+    try:
+        # Wait for the hello frame before joining any channel.
+        hello = await ws.receive_json()
+        if not isinstance(hello, dict) or hello.get("type") != "hello":
+            await ws.send_json({"type": "error", "message": "first frame must be hello"})
+            await ws.close()
+            return
+
+        # Protocol version negotiation. A missing field means a pre-v1
+        # client (the original Connect helper) — accept it as v0 so the
+        # upgrade rollout doesn't lock anyone out. A version strictly
+        # greater than what we speak means the server is older than the
+        # client; close with version_mismatch so the helper can surface
+        # an "update ToneForge" prompt instead of looping on rejections.
+        raw_version = hello.get("protocol_version")
+        try:
+            client_version = int(raw_version) if raw_version is not None else 0
+        except (TypeError, ValueError):
+            client_version = 0
+        if client_version > CONNECT_BRIDGE_PROTOCOL_VERSION:
+            await ws.send_json({
+                "type": "version_mismatch",
+                "required": CONNECT_BRIDGE_PROTOCOL_VERSION,
+                "client": client_version,
+            })
+            await ws.close()
+            return
+
+        session_id = str(hello.get("session_id") or "default")
+        role = str(hello.get("role") or "unknown")
+
+        # Acknowledge to v1+ clients so they can confirm the server
+        # speaks their dialect before sending traffic. v0 clients
+        # never sent protocol_version and don't expect hello_ack, so
+        # we stay silent for them.
+        if client_version >= 1:
+            await ws.send_json({
+                "type": "hello_ack",
+                "protocol_version": CONNECT_BRIDGE_PROTOCOL_VERSION,
+            })
+
+        channel = await _get_connect_channel(session_id)
+        await channel.join(ws)
+        await ws.send_json({"type": "joined", "session_id": session_id, "peers": len(channel.clients) - 1})
+
+        while True:
+            msg = await ws.receive_json()
+            if not isinstance(msg, dict):
+                continue
+            mtype = msg.get("type")
+            if mtype == "preset_push":
+                preset = msg.get("preset")
+                if isinstance(preset, dict):
+                    channel.last_preset = preset
+                    await channel.broadcast(ws, {"type": "preset_push", "preset": preset})
+                rid = msg.get("request_id")
+                if rid is not None:
+                    await ws.send_json({"type": "ack", "request_id": rid})
+            elif mtype == "ping":
+                await ws.send_json({"type": "pong"})
+            elif mtype == "set_gain":
+                # Cache + broadcast. Clamp into [0, 1] so a misbehaving
+                # client can't drive the helper's gain out of range.
+                try:
+                    gain = float(msg.get("gain", 0.0))
+                except (TypeError, ValueError):
+                    gain = 0.0
+                gain = max(0.0, min(1.0, gain))
+                channel.last_gain = gain
+                await channel.broadcast(ws, {"type": "set_gain", "gain": gain})
+            else:
+                # Pass-through for any other typed message (status, transport
+                # commands, etc.) so we don't have to keep adding branches.
+                await channel.broadcast(ws, msg)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.warning(f"[connect-bridge] {role or '?'}/{session_id or '?'} disconnected with error: {e}")
+    finally:
+        if channel is not None:
+            channel.leave(ws)
+
+
 _ACCEPTED_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aiff", ".aif", ".webm"}
 
 # Maximum duration for waveform preview (5 minutes)
