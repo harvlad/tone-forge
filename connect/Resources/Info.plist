@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ToneForge Connect — application bundle metadata.
+
+  This file is consumed by build_release.sh when assembling the
+  Connect.app bundle from the SwiftPM-produced executable. See
+  connect/ONBOARDING_AUDIT.md §F1.2 for the rationale behind each
+  key. Changes to user-visible strings ship in the next release.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.toneforge.connect</string>
+
+    <key>CFBundleName</key>
+    <string>Connect</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>ToneForge Connect</string>
+
+    <key>CFBundleExecutable</key>
+    <string>Connect</string>
+
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.music</string>
+
+    <!--
+      Connect ships as a regular Dock app, not LSUIElement. The user
+      needs a Dock icon to right-click → Quit when something goes
+      wrong with the menu-bar item; without it, the only recovery is
+      Activity Monitor (which a non-technical user won't think to use).
+    -->
+    <key>LSUIElement</key>
+    <false/>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!--
+      Required for microphone access under the hardened runtime.
+      First-launch dialog text. Must read as a plain-language reason
+      to a non-technical guitarist.
+    -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>ToneForge Connect listens to your guitar so it can be mixed alongside the song you're jamming with.</string>
+
+    <!--
+      Deep-link pairing handler. The web app opens
+      toneforge://pair?token=…&amp;ws=… to hand a session off without
+      asking the user to copy a session id. See ONBOARDING_AUDIT §F2.2.
+    -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.toneforge.connect.deeplink</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>toneforge</string>
+            </array>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+        </dict>
+    </array>
+
+    <!--
+      SUFeedURL is wired in by the Sparkle integration step (P2e) so
+      we don't ship a half-configured auto-updater before the appcast
+      is hosted. Placeholder key intentionally absent.
+    -->
+</dict>
+</plist>

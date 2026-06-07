@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ToneForge Connect — hardened-runtime entitlements.
+
+  Apple's notary service requires the hardened runtime. The hardened
+  runtime denies privileged access by default; each entitlement below
+  grants exactly one capability Connect actually needs.
+
+  Rationale per key is documented in connect/ONBOARDING_AUDIT.md §F1.3.
+  Keep this file additive — never grant something speculatively.
+-->
+<plist version="1.0">
+<dict>
+    <!--
+      Microphone capture. Without this, the AVAudioEngine input node
+      silently returns zeros under hardened runtime even if
+      NSMicrophoneUsageDescription is set.
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!--
+      Outbound network — WebSocket to the local backend on
+      ws://127.0.0.1:8000/ws/connect-bridge, plus Sparkle update
+      checks against the GitHub Releases appcast.
+    -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!--
+      Reserved for the future drag-and-drop stem-import flow. Granting
+      it now keeps the signing surface stable across the next few
+      releases. The runtime still requires user interaction (the file
+      picker) before any file can be read.
+    -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+
+    <!--
+      Connect is distributed with Developer ID, outside the Mac App
+      Store. The App Sandbox forbids CoreAudio HAL device enumeration
+      (kAudioHardwarePropertyDevices), which Connect needs to display
+      the list of audio interfaces in the menu bar. Disabling the
+      sandbox is the supported path for Developer-ID distribution that
+      requires HAL access.
+    -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+</dict>
+</plist>

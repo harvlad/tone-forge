@@ -1,0 +1,11 @@
+# SwiftPM build artifacts
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj/
+DerivedData/
+
+# Release output (assembled by build_release.sh in P2b)
+dist/
+*.dmg
+*.app
