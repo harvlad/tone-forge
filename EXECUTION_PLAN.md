@@ -1,0 +1,944 @@
+# ToneForge Execution Plan
+
+Strategy is frozen. This document is the execution surface.
+
+It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are archived (see §11).
+
+## Operating Constraints
+
+- One codebase. No rewrites. No microservices. No queues.
+- Reuse existing assets. Move only what crosses a new boundary.
+- `tone_forge_api.py` is the only composition point between subsystems.
+- Subsystems communicate exclusively through `contracts.py` DTOs.
+- Frozen packages get bug fixes only — no new files, no benchmarks, no docs.
+
+## Execution Priority (Locked)
+
+| # | Subsystem | State |
+|---|---|---|
+| 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
+| 2 | Connect hardening | Active |
+| 3 | Monitor Chain Bank | Active |
+| 4 | Chord detection (spike → ship) | Active |
+| 5 | Session Engine consolidation | Active |
+| 6 | Retrieval confidence calibration | Active |
+| 7 | Device Discovery | Active |
+| 8 | Song Understanding expansion | Investigation only |
+| — | MIDI extraction internals | Frozen |
+| — | Reconstruction / ALS export | Frozen |
+| — | Retrieval algorithm / embeddings | Frozen |
+| — | Evaluation harness expansion | Frozen |
+| — | Studio feature development | Frozen |
+| — | Catalog (Suite expansion) | Frozen |
+
+---
+
+## 1. `contracts.py` DTO Definitions
+
+**File**: `backend/tone_forge/contracts.py`
+**Rule**: Every cross-subsystem function signature uses these types. No subsystem imports another subsystem's internals.
+
+### Enums
+
+```python
+class ContentType(str, Enum):
+    SONG_MIX = "song_mix"          # full mix audio
+    ISOLATED_STEM = "isolated_stem"
+
+class UserRole(str, Enum):
+    GUITAR = "guitar"
+    BASS = "bass"                   # Phase 2
+    KEYS = "keys"                   # Phase 2
+    VOCALS = "vocals"               # never (out of scope)
+
+class ConfidenceTier(str, Enum):
+    HIGH = "high"        # auto-apply
+    MEDIUM = "medium"    # suggest top + alternates
+    LOW = "low"          # fall back to curated chain
+    UNKNOWN = "unknown"  # retrieval not attempted / failed
+
+class DeviceClass(str, Enum):
+    INTERFACE_ONLY = "interface_only"
+    HELIX = "helix"
+    QUAD_CORTEX = "quad_cortex"
+    KEMPER = "kemper"
+    FRACTAL = "fractal"
+    TONEX = "tonex"
+    NEURAL_DSP = "neural_dsp"
+    CONNECT_MONITOR = "connect_monitor"
+    NO_HARDWARE = "no_hardware"
+    OTHER = "other"
+
+class MonitorChainFamily(str, Enum):
+    CLEAN = "clean"
+    EDGE_OF_BREAKUP = "edge_of_breakup"
+    CLASSIC_ROCK = "classic_rock"
+    MODERN_GAIN = "modern_gain"
+    AMBIENT = "ambient"
+```
+
+### Dataclasses
+
+```python
+@dataclass(frozen=True)
+class AcquiredAudio:
+    wav_path: str
+    sample_rate: int
+    duration_s: float
+    content_hash: str        # sha256 of normalized PCM
+    source_kind: str         # "url" | "upload"
+    source_uri: Optional[str]
+    source_title: Optional[str]
+
+@dataclass(frozen=True)
+class StemSet:
+    drums: Optional[Stem]    # from existing stem_model.Stem
+    bass: Optional[Stem]
+    vocals: Optional[Stem]
+    other: Optional[Stem]
+    guitar_left: Optional[Stem] = None    # pan-split
+    guitar_right: Optional[Stem] = None
+    content_hash: str = ""    # provenance back to AcquiredAudio
+
+@dataclass(frozen=True)
+class Chord:
+    start_s: float
+    end_s: float
+    symbol: str              # "Cmaj7", "F#m", etc.
+    confidence: float
+
+@dataclass(frozen=True)
+class Section:
+    start_s: float
+    end_s: float
+    label: str               # "intro" | "verse" | "chorus" | etc.
+    confidence: float
+
+@dataclass(frozen=True)
+class SongUnderstanding:
+    tempo_bpm: float
+    tempo_confidence: float
+    key: Optional[str]              # "C major", "A minor", etc.
+    key_confidence: float
+    time_signature: Tuple[int, int] # (4, 4) etc.
+    beats_s: List[float]
+    downbeats_s: List[float]
+    sections: List[Section]
+    chords: List[Chord]
+    # Phase 3 (none of these populated in MVP):
+    tuning: Optional[str] = None     # "standard" | "drop_d" | etc.
+    capo_fret: Optional[int] = None
+    difficulty: Optional[float] = None
+    motifs: List["Motif"] = field(default_factory=list)
+
+@dataclass(frozen=True)
+class InstrumentMIDI:
+    role: UserRole
+    notes: List[Dict[str, Any]]     # wraps existing MIDIExtractionResult.notes
+    overall_confidence: float
+    raw: Dict[str, Any]              # provenance: pass_results, metadata
+
+@dataclass(frozen=True)
+class ToneCandidate:
+    preset_id: str
+    preset_name: str
+    instrument: str                  # "Analog" | "Drift" | etc.
+    distance: float                  # raw retrieval distance
+    calibrated_confidence: float     # [0, 1] after calibration
+    audio_preview_url: Optional[str]
+    parameters: Dict[str, Any]       # device-agnostic shape
+
+@dataclass(frozen=True)
+class ToneMatch:
+    tier: ConfidenceTier
+    chosen: Optional[ToneCandidate]   # None when tier == LOW
+    alternates: List[ToneCandidate]   # populated for MEDIUM/HIGH
+    fallback_chain_id: Optional[str]  # populated for LOW
+    rationale: str                    # human-readable explanation
+    debug: Dict[str, Any]             # margins, raw distances, etc.
+
+@dataclass(frozen=True)
+class MonitorChain:
+    id: str                          # "tfc.clean_strat", etc.
+    family: MonitorChainFamily
+    display_name: str
+    description: str
+    parameters: Dict[str, Any]       # Connect-side graph spec
+
+@dataclass(frozen=True)
+class DeviceCaps:
+    cls: DeviceClass
+    display_name: str
+    can_monitor: bool                # True for Connect path
+    can_receive_preset: bool         # True only for modelers w/ adapter
+    preferred_chain_family: Optional[MonitorChainFamily] = None
+    vendor_hint: Optional[str] = None
+    model_hint: Optional[str] = None
+
+@dataclass(frozen=True)
+class TransportState:
+    playing: bool
+    position_s: float
+    tempo_pct: float                 # 0.5..1.0
+    loop_in_s: Optional[float]
+    loop_out_s: Optional[float]
+    user_mute: bool                  # mute of user_role stem
+    monitor_gain: float              # 0..1
+
+@dataclass(frozen=True)
+class GuidanceTrack:
+    sections: List[Section]
+    chord_lane: List[Chord]
+    # Phase 2:
+    upcoming_chord_lookahead_beats: int = 0
+    # Phase 3:
+    note_highway: List[Dict[str, Any]] = field(default_factory=list)
+
+@dataclass(frozen=True)
+class SessionBundle:
+    """Everything Jam needs to start a session. The Jam UI loads this."""
+    session_id: str
+    audio: AcquiredAudio
+    stems: StemSet
+    understanding: SongUnderstanding
+    user_role: UserRole
+    user_midi: Optional[InstrumentMIDI]
+    tone: ToneMatch
+    guidance: GuidanceTrack
+    device_caps: DeviceCaps
+    initial_transport: TransportState
+```
+
+### Boundary enforcement
+
+A test module fails CI if any subsystem imports across a boundary except through `contracts`:
+
+```
+tests/test_subsystem_boundaries.py
+```
+
+Implementation: AST walk over each subsystem package; collect every `from tone_forge.X import ...`; assert X is either `contracts` or the subsystem's own internal modules. Pin the allow-list in a small dict.
+
+---
+
+## 2. Package Structure
+
+### New packages (created empty, `__init__.py` only at Priority 1)
+
+```
+backend/tone_forge/
+├── contracts.py                  ← NEW (§1)
+├── acquisition/                  ← NEW
+│   ├── __init__.py               (exports: acquire)
+│   ├── youtube.py                (extracted from unified_pipeline._load_from_url)
+│   └── cache.py                  (content-hash cache)
+├── analysis/                     ← EXPAND (currently 2 files)
+│   ├── __init__.py               (exports: analyze, detect_chords, detect_sections)
+│   ├── chords.py                 ← NEW (§5)
+│   ├── sections.py               (lift from reconstruction/section_detector.py)
+│   ├── tempo_key.py              (extracted from unified_pipeline analyses)
+│   ├── synth_behavior.py         (existing)
+│   └── reference_analyzer.py     (existing)
+├── session/                      ← NEW
+│   ├── __init__.py               (exports: build_session, Transport)
+│   ├── protocol.py               (WS message schema v1)
+│   ├── transport.py              (TransportState reducer)
+│   └── bundle.py                 (SessionBundle assembly)
+├── guidance/                     ← NEW
+│   ├── __init__.py               (exports: build_guidance)
+│   └── builder.py
+├── notation/                     ← NEW (Phase 2 placeholder)
+│   ├── __init__.py
+│   └── chord_diagrams.py         (data only; UI renders)
+├── devices/                      ← NEW
+│   ├── __init__.py               (exports: discover, get_adapter)
+│   ├── discovery.py              (§9)
+│   ├── base.py                   (DeviceAdapter protocol)
+│   ├── connect_monitor.py        (wraps Swift Connect)
+│   ├── ableton.py                (wraps als_template + preset_export)
+│   └── no_hardware.py
+├── monitor/                      ← NEW (chain bank specs)
+│   ├── __init__.py               (exports: load_chain, list_chains)
+│   ├── README.md                 (chain authoring guide)
+│   └── chains/                   (one YAML/JSON per chain)
+│       ├── clean_strat.yaml
+│       ├── edge_of_breakup.yaml
+│       ├── classic_rock.yaml
+│       ├── modern_gain.yaml
+│       └── ambient.yaml
+```
+
+### Existing packages (treatment)
+
+| Path | Status |
+|---|---|
+| `tone_forge/midi/` | **Frozen.** Expose only via `__init__.py`. Internals untouched. |
+| `tone_forge/preset_catalog/` | **Frozen.** Wrap via `devices/` adapters and `tone/` confidence layer. |
+| `tone_forge/reconstruction/` | **Frozen.** Keep running. Lift `section_detector.py` to `analysis/sections.py` (re-export). |
+| `tone_forge/evaluation/` | **Frozen.** Keep as QA infra. Stop adding subfolders. |
+| `tone_forge/stem_separator.py` | Wrap as `stems.separate()` in package `stems/` (cheap rename for boundary). |
+| `tone_forge/stem_model.py` | **Untouched.** `contracts.StemSet` composes existing `Stem`. |
+| `tone_forge/auto_detect.py` | Wrap behind `acquisition.detect_content()`. Internals untouched. |
+| `tone_forge/rules_engine.py` | Stays. Becomes engine for `devices.helix` adapter later. |
+| `tone_forge/als_template.py` | Becomes body of `devices.ableton`. |
+| `tone_forge/preset_export.py` | Same — body of `devices.ableton`. |
+| `tone_forge/tone_preview.py` | Stays. Consumed by `devices.connect_monitor`. |
+| `tone_forge/unified_pipeline.py` | Stays during Phase 0. After Priority 5 lands, becomes a thin orchestrator that reads from the new packages. **No deletion in this phase.** |
+| `tone_forge_api.py` | Stays. Becomes the only inter-subsystem composer. |
+
+### Boundary Rules
+
+1. **Cross-package types are `contracts.*` only.** No subsystem imports another subsystem's classes or functions directly. Composition lives in `tone_forge_api.py` (and in `session.bundle.build_session` for Jam's specific composition).
+2. **Frozen packages cannot be imported by anyone except `tone_forge_api`, `unified_pipeline.py` (legacy), or their own wrapper adapter in an active package.** E.g., only `devices.ableton` may import `als_template`.
+3. **No new files inside frozen packages.** Bug fixes edit existing files. New behavior requires a new package or extending an active one.
+4. **The Jam UI may only consume routes that produce `contracts`-shaped JSON.** Existing `studio.html`-shaped `AnalysisResult.to_dict()` stays for Studio; new Jam routes return `SessionBundle.to_dict()`.
+5. **The WS protocol is versioned** (`v1` initial). Every message has `{"v": 1, "type": ..., ...}`. Old clients refuse to send v2; new clients refuse v0.
+6. **CI rule**: `tests/test_subsystem_boundaries.py` must pass. AST-level enforcement.
+
+---
+
+## 3. Connect Hardening Work Breakdown
+
+Connect is product. This is the largest invisible work in the plan.
+
+### A. Install (gate before anything else ships)
+
+- **Bundle target**: `ToneForge Connect.app` at `/Applications/`
+- **Installer**: signed `.pkg` produced by `productbuild`
+- **Tray integration**: `local_engine/tray.py` discovers installed Connect.app via launch-services lookup; no-PATH dependency
+- **Permissions**: microphone (Info.plist `NSMicrophoneUsageDescription`), audio device access
+- **First-run elevation**: prompt for microphone permission via `AVCaptureDevice.requestAccess`
+
+### B. Code Signing + Notarization
+
+- **Cert**: Apple Developer ID Application
+- **Hardened runtime**: enabled with entitlements file
+- **Entitlements**:
+  - `com.apple.security.device.audio-input` = true
+  - `com.apple.security.cs.allow-unsigned-executable-memory` = false
+  - `com.apple.security.cs.disable-library-validation` = false
+- **Notarization**: `xcrun notarytool submit ... --wait`; staple ticket to .pkg
+- **Verification**: `spctl -a -t install ToneForge-Connect.pkg`
+
+### C. Update Path
+
+- **Framework**: Sparkle 2.x with EdDSA signing
+- **Appcast**: `https://toneforge.app/connect/appcast.xml` (RSS XML, version-keyed)
+- **Default**: silent auto-update; settings toggle to opt out
+- **Channel**: `stable` for now; add `beta` once Jam MVP ships
+- **Rollback**: keep prior bundle in `/Library/Application Support/ToneForge/connect-prev/`
+
+### D. Crash Recovery
+
+- **Supervisor**: `backend/local_engine/connect_bridge.py` (exists; harden)
+- **Crash logs**: `~/Library/Logs/ToneForge/connect-crash-<iso-ts>.log` from stderr capture
+- **Backoff**: 1s → 2s → 5s; 3 attempts; then surface UI error with "Try restarting Connect" CTA
+- **Liveness ping**: WS hub sends `ping` every 10s; Connect must `pong` within 3s or supervisor restarts
+
+### E. Reconnect Behavior
+
+- **Already works** at WS level (exponential backoff in `jam.js`). Tightening required:
+  - Persistent `session_id` across Connect restarts (write to `~/Library/Application Support/ToneForge/session.json`)
+  - On reconnect, hub replays `last_gain`, `last_preset`, `last_transport_state` — `last_gain` works today; the rest need wiring
+  - Browser surfaces "Reconnected" toast (1.5s), not just an inline status flip
+- **Audio device loss** (interface unplugged): Connect emits `device_lost` WS frame; browser shows reconnection instructions
+
+### F. Error Handling
+
+- **All errors emit**: `{"v":1,"type":"error","code":"<slug>","message":"<human>","retriable":bool}`
+- **Code taxonomy** (initial):
+  - `audio_device_unavailable`
+  - `audio_input_permission_denied`
+  - `audio_buffer_underrun`
+  - `monitor_chain_load_failed`
+  - `preset_apply_failed`
+  - `ws_handshake_rejected`
+- **Browser handler**: `jam.js` maps `code` → inline status text. Already partially wired via `flashConnectStatus`.
+
+### G. Onboarding
+
+First-run flow when no `session.json` exists:
+
+1. Welcome screen: "Plug your guitar into your interface, put headphones on."
+2. Audio device picker: enumerated via `connect devices`; default to lowest-latency interface
+3. Input level meter: 5 seconds of listening; auto-set input gain to peak −12dBFS
+4. Test tone: play a 2-second clean chord through default `clean_strat` chain
+5. Confirmation: "Did you hear yourself clearly?" → Yes / No (retry)
+6. Latency reading: `connect latency` measured; warn if > 12ms RTT
+7. "I'm ready to play" → stores session, hands off to the Jam UI
+
+### Branching plan
+
+- Branch: `connect/hardening`
+- Sub-branches per section (A–G); merge to `connect/hardening` then to `main`
+- Each section is an independent commit-set; A and B together gate the first signed build
+
+---
+
+## 4. Monitor Chain Bank — Implementation Plan
+
+This is product IP. The hand-tuning work is on the critical path and **must be explicitly owned**.
+
+### Owner
+
+Founder + (optional) one outsourced tone-design contractor. Not an engineering ticket — a listening engagement. Allocate listening hours weekly until signed off.
+
+### Chain Targets (5 chains, MVP)
+
+| ID | Family | Reference vibe | Used when… |
+|---|---|---|---|
+| `tfc.clean_strat` | CLEAN | Twin Reverb clean, neck pickup | LOW-confidence on a clean/jangle song |
+| `tfc.edge_of_breakup` | EDGE_OF_BREAKUP | Deluxe Reverb on 6 | LOW on bluesy/indie |
+| `tfc.classic_rock` | CLASSIC_ROCK | Plexi at 7, treble booster | LOW on rock/punk |
+| `tfc.modern_gain` | MODERN_GAIN | 5150-ish, tight low cut | LOW on metal/hard rock |
+| `tfc.ambient` | AMBIENT | Clean + dotted-eighth delay + hall reverb | LOW on shoegaze/post-rock/ambient |
+
+### Definition format
+
+`backend/tone_forge/monitor/chains/<id>.yaml`:
+
+```yaml
+id: tfc.clean_strat
+family: clean
+display_name: "Clean Strat"
+description: "Bright, low-noise clean. Light comp, small room reverb."
+parameters:
+  input:
+    gain_db: 0
+    high_pass_hz: 80
+  gain_stage:
+    type: tube_clean
+    drive: 0.1
+    bias: 0.5
+  eq:
+    bass_db: 0
+    mid_db: -1
+    treble_db: 2
+    presence_db: 1
+  comp:
+    enabled: true
+    ratio: 2.0
+    threshold_db: -18
+    attack_ms: 5
+    release_ms: 80
+  reverb:
+    type: room
+    size: 0.3
+    mix: 0.15
+  output:
+    trim_db: 0
+preview_audio: "preview/clean_strat.mp3"   # for UI A/B
+```
+
+### Connect execution
+
+`connect/Sources/ConnectCore/MonitorChainLoader.swift` (new):
+
+- Parses YAML chain spec
+- Builds AVAudioEngine graph deterministically
+- Hot-swap on `apply_chain` WS message
+- Exposes `chains list` subcommand for verification
+
+### Curation Process
+
+1. Listen to reference recording on a known interface + headphones
+2. Plug a Strat through the same chain; play along
+3. Adjust until the player feels they "belong"
+4. A/B against the original recording for tonal sit
+5. Lock the chain; commit YAML + preview file
+6. Document the reference song and the listening setup in `monitor/README.md`
+
+### Acceptance gate
+
+Each chain passes if it:
+- Sounds usable on at least 3 reference songs in its target family
+- Sits at a comparable monitor level to the original recording (no normalization required)
+- Doesn't clip with input peaking at −6dBFS
+- Latency ≤ 10ms round-trip on M-series
+
+### Phase 2 expansion
+
+- Per-pickup variants (single-coil vs humbucker presets within each family)
+- Per-amp character (Fender / Marshall / Mesa / Vox archetypes)
+- Bass chains (Phase 2 bass user role)
+
+---
+
+## 5. Chord Detection — Investigation Plan
+
+Timebox: **5 working days**. Decision gate at the end. Ship the picked approach immediately after.
+
+### Day 1–2: Build path (in-house)
+
+- Compute chroma features (librosa `chroma_cqt`) on the `other` stem (or full mix if `other` missing)
+- HMM smoothing over a chord vocabulary: 24 major/minor + 12 dom7 = 36 states
+- Self-transition prior tuned to ~0.95 to enforce stability
+- Constrain to detected key (use `SongUnderstanding.key` to weight in-key chords)
+- Output: `List[Chord]` aligned to beats
+
+Output: working prototype + metrics on labeled set.
+
+### Day 1–2 (parallel): Borrow path
+
+- Evaluate: `madmom.features.chords`, `autochord`, `chordino` (Vamp plugin)
+- License check: madmom is BSD; autochord is MIT; chordino requires Sonic Annotator
+- Dependency footprint: madmom adds ~80MB; autochord is pure Python; chordino needs C++ binary
+- Apple Silicon compatibility check
+- Quick benchmark on the same labeled set
+
+### Day 3: Hybrid
+
+- Use existing MIDI extraction notes (from `other` stem) to confirm/refine chord symbols
+- Pitch-class histogram from extracted notes within each chord window
+- Disambiguate enharmonics and inversions using bass note (from `bass` stem)
+- Likely best quality but most dependencies
+
+### Day 4: Evaluation
+
+- **Labeled set**: 20 songs, hand-annotated bar-by-bar chord labels
+  - Mix of genres: 5 pop/rock, 5 indie, 5 metal, 5 acoustic/folk
+- **Metric**: chord-symbol-correctness at 0.5s tolerance, with two scoring modes:
+  - **Strict**: exact symbol match (Cmaj7 ≠ C)
+  - **Major-minor**: root + quality only (C ≠ Cm, but C = Cmaj7)
+- **Pass criteria**:
+  - Strict ≥ 60% on majors/minors
+  - Major-minor ≥ 80%
+  - Per-song minimum: no song below 50% major-minor
+
+### Day 5: Decision + Ship Plan
+
+- Pick winner based on quality × deps × ship cost
+- If quality below pass criteria on all approaches: ship hybrid at current quality with explicit "beta" badge in UI; document known weak genres
+- Implementation: lands in `backend/tone_forge/analysis/chords.py`
+- Public API: `detect_chords(audio: np.ndarray, sr: int, understanding: SongUnderstanding) -> List[Chord]`
+- Plugged into `SongUnderstanding` produced by the analysis pipeline
+
+### Scope discipline
+
+**In**: chord name on a timeline. Major, minor, dom7, min7, maj7, sus2/sus4 if cheap.
+
+**Explicitly out**: inversions, slash chords, extended jazz harmony, key changes mid-song, modal annotations. Defer all.
+
+---
+
+## 6. Session Engine Ownership Model
+
+The clean separation. Lock these contracts.
+
+### UI (browser, then Tauri, then native shell)
+
+**Owns**:
+- User intent (clicks, drags, key shortcuts)
+- Visualization (band room, transport bar, chord lane, mixer)
+- Local optimistic UI state (animation, hover)
+
+**Does NOT own**:
+- Audio rendering
+- Canonical transport state
+- Tone matching logic
+- Persistence
+
+### Session Engine (Python, `backend/tone_forge/session/`)
+
+**Owns**:
+- Canonical `TransportState` (single source of truth)
+- WS message dispatch to UI and Connect
+- `SessionBundle` assembly
+- Persistence (`/jam/:id` reload restore)
+- Per-session in-memory state cache (existing `_ConnectChannel` extended)
+
+**Does NOT own**:
+- Audio I/O
+- Audio device enumeration
+- DSP
+
+### Connect (Swift, `/connect`)
+
+**Owns**:
+- Audio I/O (CoreAudio)
+- AVAudioEngine graph
+- Monitor chain rendering
+- Input passthrough
+- Stem playback
+- Latency-sensitive scheduling
+- Audio device permission
+
+**Does NOT own**:
+- Transport state authority (consumes; doesn't decide)
+- Tone matching
+- Song understanding
+
+### WS Protocol v1 (`session/protocol.py`)
+
+Message envelope: `{"v":1, "type": "...", ...}`.
+
+**Intent → Engine** (from UI):
+- `hello` (already exists; tighten with `v` and `client_kind`)
+- `set_transport` `{playing, position_s?, tempo_pct?}`
+- `set_loop` `{in_s?, out_s?}` (null clears)
+- `set_user_mute` `{muted: bool}`
+- `set_monitor_gain` `{gain: 0..1}` (already exists as `set_gain`; rename for clarity)
+- `apply_tone` `{candidate_id}` (override the auto-applied match)
+- `apply_chain` `{chain_id}` (override to a curated chain)
+
+**State → Subscribers** (from Engine, broadcast to both UI and Connect):
+- `transport_state` (canonical TransportState snapshot)
+- `tone_applied` `{candidate_id | chain_id, source: "auto"|"user"|"fallback"}`
+
+**Intent → Audio** (from Engine to Connect):
+- `apply_chain` (resolved chain spec)
+- `apply_tone` (resolved tone parameters)
+- `transport_state` (Connect drives audio scheduling from canonical state)
+
+**Events from Connect**:
+- `device_lost`, `device_changed`, `latency_report`, `error` (per §3F taxonomy)
+
+### Migration sequence
+
+1. Define `session/protocol.py` with TypedDict schemas
+2. Add `session/transport.py` reducer producing `TransportState` from intents
+3. In `tone_forge_api.py`, the `/ws/connect-bridge` handler delegates to the reducer
+4. `jam.js` updated to send new intent shapes; existing `set_gain` aliased during transition (one release)
+5. Swift Connect updated to consume `transport_state` broadcasts
+
+### Why this matters for desktop
+
+When the UI eventually moves to native Swift (Phase 3 desktop), only the WS protocol crosses the boundary. The reducer stays in Python. The UI re-implementation is purely a presentation rewrite. Audio is unchanged.
+
+---
+
+## 7. Retrieval Confidence Calibration
+
+Goal: trustworthiness, not accuracy. Existing retrieval (`match_audio_file`) is frozen. We add a layer above it.
+
+### Module
+
+`backend/tone_forge/tone/` (new package, alongside the others):
+
+```
+tone_forge/tone/
+├── __init__.py       (exports: retrieve)
+├── calibration.py    (distance → calibrated_confidence)
+├── tiers.py          (calibrated_confidence + margins → ConfidenceTier)
+└── policy.py         (tier → ToneMatch with fallback selection)
+```
+
+### `retrieve()` signature
+
+```python
+def retrieve(
+    audio_path: str,
+    role: UserRole,
+    device_caps: DeviceCaps,
+    understanding: Optional[SongUnderstanding] = None,
+) -> ToneMatch:
+    ...
+```
+
+### Calibration
+
+- **Raw signal**: top-k distances from `preset_catalog.match_audio_file()` (k=5)
+- **Calibration model**: isotonic regression mapping `d_top → P(match correct)`
+- **Training set**: 100 hand-labeled audio clips
+  - Annotator listens to top match and rates 1–5 ("not at all" → "spot on")
+  - Convert to binary (≥4 = correct)
+- **Output**: `calibrated_confidence ∈ [0, 1]`
+- **Margin signal**: `(d_second - d_top) / d_top` — large margin = unambiguous winner
+- **Refit cadence**: every quarter, or after any catalog expansion
+
+### Tier policy
+
+```
+tier =
+    HIGH    if calibrated_confidence ≥ 0.80 AND margin ≥ 0.20
+    MEDIUM  if calibrated_confidence ≥ 0.55 OR  margin ≥ 0.10
+    LOW     otherwise
+    UNKNOWN if retrieval errored
+```
+
+Thresholds are tuneable; lock initial values, log decisions, adjust quarterly.
+
+### Fallback chain selection
+
+For `LOW` tier: choose `MonitorChainFamily` based on `SongUnderstanding`:
+
+| Heuristic | Chain |
+|---|---|
+| Tempo > 140 + heavy spectral centroid | `modern_gain` |
+| Tempo 90–140 + mid-heavy spectrum | `classic_rock` |
+| Tempo < 100 + sparse texture + reverb tail | `ambient` |
+| Major key + low spectral flux | `clean_strat` |
+| Otherwise | `edge_of_breakup` |
+
+Heuristics live in `tone/policy.py`. Refine based on user data once telemetry is wired.
+
+### UX implications (for the UI team)
+
+| Tier | UI behavior |
+|---|---|
+| HIGH | Auto-apply silently. Badge: "Matched: {preset_name}". |
+| MEDIUM | Apply top. Chip strip with 2 alternates. Badge: "Suggested: {preset_name}". |
+| LOW | Apply chain. Badge: "Default tone: {chain_display_name}". Subtle button: "Try matching anyway". |
+| UNKNOWN | Apply chain. Badge: "Tone matching unavailable". |
+
+The user is never *blocked*. The tier just shapes the surface.
+
+### Telemetry hooks
+
+Every retrieve call emits:
+
+```
+{
+  "event": "tone.retrieve",
+  "tier": ...,
+  "calibrated_confidence": ...,
+  "margin": ...,
+  "user_overrode": bool,        # populated after the session
+  "session_duration_s": float,  # populated after the session
+}
+```
+
+Persisted to `~/Library/Application Support/ToneForge/telemetry.jsonl`. Local only initially; remote opt-in later. Use this for calibration refit.
+
+---
+
+## 8. Device Discovery — MVP Design
+
+Keep it small. Two inputs: one question and one probe.
+
+### Onboarding question
+
+Single screen, single question, single answer required:
+
+> **What are you playing through?**
+>
+> - Just my audio interface
+> - Helix
+> - Quad Cortex
+> - Kemper
+> - Fractal
+> - Tonex
+> - Neural DSP plugin
+> - Something else
+
+Stored as `DeviceClass`. Adjusts the offer:
+
+| Answer | Effect |
+|---|---|
+| Interface only | `can_monitor=True`, route everything through Connect chains |
+| Helix/QC/Kemper/Fractal | `can_monitor=True` via Connect (user uses modeler for tone instead of Connect chains), `can_receive_preset=False` for MVP (export adapters are Phase 2) |
+| Tonex | Same as Helix tier |
+| Neural DSP | `can_monitor=True`, suggest setting plugin between input and Connect |
+| Something else | Default to interface-only behavior |
+
+### CoreAudio probe (background, non-gating)
+
+`devices/discovery.py`:
+
+```python
+def probe() -> DeviceProbe:
+    """Enumerate audio I/O; return hints. Never blocks."""
+```
+
+- Lists input/output devices via existing `connect devices` subcommand
+- Detects known vendor IDs for display hints (Focusrite, UA, Audient, Apogee, Steinberg, MOTU, RME, etc.)
+- Suggests probable interface choice (lowest-latency input)
+- Logs result; UI uses for the onboarding pre-fill
+
+### Storage
+
+`~/Library/Application Support/ToneForge/device.json`:
+
+```json
+{
+  "device_class": "interface_only",
+  "audio_input_name": "Focusrite Scarlett 2i2",
+  "preferred_chain_family": "edge_of_breakup",
+  "first_seen_iso": "...",
+  "last_used_iso": "..."
+}
+```
+
+Re-prompt only when class is `null` or the user explicitly opens device settings.
+
+### Phase 2 expansion (NOT now)
+
+- USB MIDI sysex probing for Helix / Kemper / QC identification
+- Bidirectional preset apply to detected modelers
+- Multiple device profiles (work vs home rig)
+
+---
+
+## 9. Immediate Next Commits (Priority Order)
+
+Each item is a self-contained commit-able unit. Land in this order.
+
+### Boundary freeze (Priority 1)
+
+1. **`docs/_archive/` and move strategy docs**
+   - Move all `backend/*.md` strategy/RCA/plan files to `docs/_archive/`
+   - Exceptions kept at `backend/`: `EXTRACTION_STATUS.md`, `ROADMAP_STATUS.md` (these reflect frozen-system current state)
+   - Add `docs/README.md` pointing to this `EXECUTION_PLAN.md`
+
+2. **`backend/tone_forge/contracts.py`**
+   - All enums and dataclasses from §1
+   - Zero behavior; pure types
+   - Add `__all__` listing public surface
+
+3. **Create empty package skeletons**
+   - `acquisition/`, `session/`, `guidance/`, `notation/`, `devices/`, `monitor/`, `tone/`, `stems/`
+   - Each: `__init__.py` with `__all__ = []`
+   - Each subsystem gets a `README.md` (3 lines: purpose, owner, status)
+
+4. **Boundary test**
+   - `backend/tests/test_subsystem_boundaries.py`
+   - AST walk + allowlist from §2
+   - Fails on illegal cross-imports
+
+5. **Move + re-export: section detector**
+   - Copy `reconstruction/section_detector.py` → `analysis/sections.py`
+   - In `analysis/sections.py`: thin wrapper exposing `detect_sections() -> List[Section]` (contracts type)
+   - `reconstruction/section_detector.py` re-exports from new location for back-compat during transition
+   - One release of dual location, then delete the original
+
+6. **Move + re-export: URL acquisition**
+   - Extract `unified_pipeline._load_from_url` → `acquisition/youtube.py`
+   - Return `AcquiredAudio` (contracts type)
+   - `unified_pipeline._load_from_url` becomes one-line delegator
+   - Add `acquisition/cache.py` with content-hash storage
+
+### Connect hardening (Priority 2)
+
+7. **Branch: `connect/hardening`**
+8. **Signed build CI**
+   - GitHub Action or local script that produces signed + notarized `.pkg`
+   - Test on a clean macOS VM
+9. **First-run flow scaffold**
+   - Swift onboarding view controller
+   - Audio device picker + input meter
+   - Test-tone playback
+10. **Crash supervisor hardening**
+    - `connect_bridge.py` writes crash logs to ~/Library/Logs/ToneForge/
+    - Backoff + max-retries + UI error surfacing
+11. **WS protocol v1 envelope**
+    - `session/protocol.py` defines schemas
+    - Browser + Connect both emit `{"v":1, ...}`
+    - Server validates envelope; rejects v0
+
+### Monitor chains (Priority 3, in parallel with Connect)
+
+12. **`monitor/README.md`** — chain authoring guide
+13. **Reserve 5 chain YAML files** with placeholder parameters
+14. **Swift `MonitorChainLoader`** — parses YAML + builds AVAudioEngine graph
+15. **WS `apply_chain` handler** end-to-end (Browser → Engine → Connect)
+16. **First chain dialed in**: `clean_strat` — committed only after sit-with-reference acceptance
+17. Remaining 4 chains, one per commit, each with reference recording in `monitor/chains/preview/`
+
+### Chord detection (Priority 4)
+
+18. **Spike branch**: `analysis/chords-spike`
+19. **Build prototype** (chroma + HMM) — Day 1–2
+20. **Borrow prototype** (best library) — Day 1–2
+21. **Hybrid prototype** — Day 3
+22. **Labeled eval set** — `tests/fixtures/chord_labels.json` (20 songs)
+23. **Eval report** — Markdown comparison in spike branch
+24. **Pick + merge**: winner lands at `analysis/chords.py`
+25. **API wire-up**: `SongUnderstanding.chords` populated in pipeline
+
+### Session Engine (Priority 5)
+
+26. **`session/transport.py`** — `TransportState` reducer
+27. **`session/protocol.py`** — full v1 schema
+28. **`session/bundle.py`** — `SessionBundle.build()` from existing pipeline outputs
+29. **New API route**: `GET /api/session/:id` returning `SessionBundle.to_dict()`
+30. **Jam UI**: read `SessionBundle` instead of `AnalysisResult`. Studio UI unchanged.
+
+### Retrieval calibration (Priority 6)
+
+31. **`tone/__init__.py`** + `tone/calibration.py` + `tone/tiers.py` + `tone/policy.py`
+32. **Labeled calibration set** — 100 clips + ratings
+33. **Isotonic regression fit** committed as `tone/calibration_v1.joblib`
+34. **New API route**: `POST /api/tone/retrieve` returning `ToneMatch`
+35. **Jam UI**: consume `ToneMatch`; render tier-appropriate UX
+
+### Device Discovery (Priority 7)
+
+36. **`devices/discovery.py`** — CoreAudio probe wrapper around existing `connect devices`
+37. **Onboarding screen** — single question, persisted to `device.json`
+38. **`DeviceCaps` plumbed** into session bundle
+
+### Song Understanding investigation (Priority 8)
+
+39. **`docs/SONG_UNDERSTANDING_INVESTIGATION.md`** — investigation notes (not an implementation commit; pure research output documenting tuning/capo/motif feasibility)
+40. **Place fields in `SongUnderstanding` DTO already** so consumers can stub-render when populated
+
+### Cleanups
+
+41. **Triage repo-root test scripts**:
+    - `backend/test_bass_v2.py` → `backend/tests/test_bass_v2.py` or delete
+    - `backend/test_debug.py` → delete
+    - `backend/test_fresh.py` → delete
+    - `backend/test_octave_fix.py` → `backend/tests/test_octave_fix.py` or delete
+    - `backend/root_cause_analysis.py` → `docs/_archive/` if useful, else delete
+    - `backend/run_samples_benchmark.py`, `backend/run_stem_benchmark.py` → `backend/scripts/` (which exists)
+
+---
+
+## 10. Out of Scope (Explicit Defer / Freeze)
+
+### Frozen — no work
+
+- Reconstruction / ALS export feature work
+- MIDI extraction accuracy improvements
+- Retrieval embedding experimentation
+- Evaluation harness expansion
+- Studio feature development (bug fixes only)
+- 268-preset catalog content changes
+- Ableton Suite catalog expansion
+
+### Deferred — Phase 2+
+
+- Helix / QC / Kemper / Fractal / Tonex / Neural DSP device adapters (preset export)
+- Note highway
+- Performance listener (pitch/timing/chord accuracy)
+- Tablature generation
+- Bass / keys user roles
+- Per-section preset switching
+- Social, leaderboards, sharing
+- Multi-user / collaboration
+- Mobile clients
+- Spotify / Apple Music ingestion (DRM)
+- Plugin hosting inside Connect
+
+### Never
+
+- Vocal role for user (out of scope)
+- Replacing Ableton
+- Replacing Helix / device modelers
+- Replacing Yousician / Rocksmith head-on (we win by being specialists in guitar tone delivery, not by competing on transcription breadth)
+
+---
+
+## Acceptance Gate for Jam MVP
+
+A guitarist:
+
+1. Installs ToneForge (signed installer; opens without warnings)
+2. Pairs Connect (first-run flow completes in < 2 minutes)
+3. Pastes a YouTube URL
+4. Waits ≤ 90 seconds on a typical Mac (not a dev machine)
+5. Sees the band room load with stems mounted
+6. Hears the song play with their guitar muted
+7. Hears themselves through either a matched preset or a curated chain (tier-appropriate)
+8. Loops a chorus
+9. Slows playback to 70%
+10. Sees the current chord name above the timeline
+11. Plays for ≥ 5 minutes and reloads the page — session restores at the right position
+
+If any of the above fails, the MVP is not ready.
+
+---
+
+## Closing
+
+This document is the execution plan. It supersedes prior strategy docs. The next strategic question worth asking is "did Jam MVP ship and did anyone pay for it?" Until then, the only allowed inputs are bug reports and the items above.
