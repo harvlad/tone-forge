@@ -21,15 +21,35 @@
 import AppKit
 import ConnectCore
 import Foundation
+import Sparkle
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
 
+    /// Sparkle updater. Configured at launch with the appcast URL from
+    /// Info.plist (SUFeedURL) and an EdDSA public key (SUPublicEDKey).
+    /// Sparkle handles the entire flow: background check, download,
+    /// signature verify, install-on-quit. We just own the menu item
+    /// that triggers `checkForUpdates(_:)`.
+    private var updaterController: SPUStandardUpdaterController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         installStatusItem()
         registerURLSchemeHandler()
+        installUpdater()
+    }
+
+    private func installUpdater() {
+        // startingUpdater:true kicks off the scheduled background check
+        // on its own timer (Sparkle's default is daily). The user can
+        // still force a check via the menu.
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -124,11 +144,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func checkForUpdates(_ sender: Any?) {
-        // P2e wires this into Sparkle's SPUStandardUpdaterController.
-        let alert = NSAlert()
-        alert.messageText = "Updates not yet wired in this build."
-        alert.informativeText = "Auto-update will arrive in a near-term Connect release."
-        alert.runModal()
+        // Sparkle owns the UI from here — shows a sheet, downloads, and
+        // installs on quit. If installUpdater() somehow didn't run
+        // (shouldn't happen post-launch) we fall back to a transparent
+        // error so the user isn't left clicking into the void.
+        guard let updater = updaterController else {
+            let alert = NSAlert()
+            alert.messageText = "Updater not initialized"
+            alert.informativeText = "Restart ToneForge Connect and try again."
+            alert.runModal()
+            return
+        }
+        updater.checkForUpdates(sender)
     }
 
     // MARK: - URL scheme (toneforge://)

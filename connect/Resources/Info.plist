@@ -83,9 +83,38 @@
     </array>
 
     <!--
-      SUFeedURL is wired in by the Sparkle integration step (P2e) so
-      we don't ship a half-configured auto-updater before the appcast
-      is hosted. Placeholder key intentionally absent.
+      Sparkle auto-update configuration. The appcast is published to
+      GitHub Pages from connect/docs/appcast.xml on each release; the
+      EdDSA public key here pairs with the private key held only as a
+      GitHub Actions secret (SPARKLE_ED_PRIVATE_KEY). See ONBOARDING_AUDIT
+      §F6 and connect/docs/RELEASING.md.
+
+      SUPublicEDKey is the base64-encoded Ed25519 public half. It is
+      embedded in every shipped build so Sparkle can verify the
+      signature on an incoming appcast entry before downloading. A
+      compromised appcast.xml without a matching private key cannot
+      push a malicious update — the binary just fails to install.
+
+      The placeholder value below is replaced by build_release.sh
+      when CONNECT_SPARKLE_PUBLIC_KEY is set in the environment.
+      Local dev builds without the key still launch fine; Sparkle
+      simply logs that no key was configured and disables checks.
     -->
+    <key>SUFeedURL</key>
+    <string>https://mattharvey.github.io/tone-forge/connect/appcast.xml</string>
+
+    <key>SUPublicEDKey</key>
+    <string>__SPARKLE_PUBLIC_KEY__</string>
+
+    <!--
+      Cap how often Sparkle phones home. 86400 = once per day; the
+      user can still force a check from the menu. Avoids the
+      "annoying nag" failure mode reported in the audit.
+    -->
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
 </dict>
 </plist>

@@ -13,6 +13,19 @@
 #   APPLE_TEAM_ID         10-character Apple Developer team id
 #   APPLE_APP_PASSWORD    app-specific password from appleid.apple.com
 #
+# Notarization via API key (used in CI; takes precedence over the
+# app-specific password if all three are set):
+#   NOTARY_KEY_ID         App Store Connect API key id
+#   NOTARY_ISSUER_ID      issuer UUID
+#   NOTARY_KEY_PATH       path to the .p8 private key file
+#
+# Sparkle:
+#   CONNECT_SPARKLE_PUBLIC_KEY  base64 EdDSA public key to embed in
+#                               Info.plist (replaces __SPARKLE_PUBLIC_KEY__).
+#                               If unset, Sparkle still launches but
+#                               auto-update is effectively disabled
+#                               because signature verification fails.
+#
 # Optional flags:
 #   --dry-run             skip codesign / notarize / DMG (build only)
 #   --skip-notarize       sign locally but don't submit to Apple
@@ -69,6 +82,33 @@ log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!! \033[0m%s\n' "$*"; }
 die() { printf '\033[1;31mxx \033[0m%s\n' "$*" >&2; exit 1; }
 
+# Submit $1 (zip or DMG) to Apple's notary service using whichever
+# auth path the pre-flight selected. Blocks until the service
+# returns. The caller is responsible for stapler staple afterward.
+notarize_submit() {
+    local target="$1"
+    case "$NOTARIZE_AUTH" in
+        api)
+            xcrun notarytool submit "$target" \
+                --key "$NOTARY_KEY_PATH" \
+                --key-id "$NOTARY_KEY_ID" \
+                --issuer "$NOTARY_ISSUER_ID" \
+                --team-id "$APPLE_TEAM_ID" \
+                --wait
+            ;;
+        password)
+            xcrun notarytool submit "$target" \
+                --apple-id "$APPLE_ID" \
+                --team-id "$APPLE_TEAM_ID" \
+                --password "$APPLE_APP_PASSWORD" \
+                --wait
+            ;;
+        *)
+            die "notarize_submit called without an auth path configured"
+            ;;
+    esac
+}
+
 # -----------------------------------------------------------------------------
 # Pre-flight: required tools and (when relevant) credentials
 # -----------------------------------------------------------------------------
@@ -84,11 +124,20 @@ if [[ $DRY_RUN -eq 0 ]]; then
     : "${DEVELOPER_ID:?DEVELOPER_ID must be set (e.g. 'Developer ID Application: ToneForge Inc (TEAMID)')}"
 fi
 
+NOTARIZE_AUTH=""  # "api" or "password" — populated below
 if [[ $DRY_RUN -eq 0 && $SKIP_NOTARIZE -eq 0 ]]; then
     command -v xcrun >/dev/null || die "xcrun not found"
-    : "${APPLE_ID:?APPLE_ID must be set}"
     : "${APPLE_TEAM_ID:?APPLE_TEAM_ID must be set (10-char team id)}"
-    : "${APPLE_APP_PASSWORD:?APPLE_APP_PASSWORD must be set (app-specific password)}"
+    # API-key auth (CI path) takes precedence: it's non-interactive,
+    # rotatable, and doesn't require an Apple ID to live in the env.
+    if [[ -n "${NOTARY_KEY_ID:-}" && -n "${NOTARY_ISSUER_ID:-}" && -n "${NOTARY_KEY_PATH:-}" ]]; then
+        [[ -f "$NOTARY_KEY_PATH" ]] || die "NOTARY_KEY_PATH points to a missing file: $NOTARY_KEY_PATH"
+        NOTARIZE_AUTH="api"
+    elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
+        NOTARIZE_AUTH="password"
+    else
+        die "notarization requires either (NOTARY_KEY_ID + NOTARY_ISSUER_ID + NOTARY_KEY_PATH) or (APPLE_ID + APPLE_APP_PASSWORD)"
+    fi
 fi
 
 if [[ $PUBLISH -eq 1 ]]; then
@@ -155,6 +204,21 @@ plutil -replace CFBundleShortVersionString -string "$VERSION" \
 plutil -replace CFBundleVersion -string "$BUILD" \
     "$APP_BUNDLE/Contents/Info.plist"
 
+# Sparkle public key — stamp in the EdDSA public half so a shipped
+# build can verify the signature on incoming appcast entries. The
+# Info.plist on disk holds the literal __SPARKLE_PUBLIC_KEY__
+# placeholder so the source-controlled file never carries a secret
+# (the public key isn't a secret, but keeping the placeholder
+# pattern means a build without CONNECT_SPARKLE_PUBLIC_KEY fails
+# loudly instead of silently shipping with a useless updater).
+if [[ -n "${CONNECT_SPARKLE_PUBLIC_KEY:-}" ]]; then
+    log "Stamping Sparkle public key into bundle Info.plist"
+    plutil -replace SUPublicEDKey -string "$CONNECT_SPARKLE_PUBLIC_KEY" \
+        "$APP_BUNDLE/Contents/Info.plist"
+else
+    warn "CONNECT_SPARKLE_PUBLIC_KEY unset — auto-update will not function in this build"
+fi
+
 # -----------------------------------------------------------------------------
 # Stage 3: codesign with hardened runtime + entitlements
 # -----------------------------------------------------------------------------
@@ -189,11 +253,7 @@ else
     NOTARIZE_ZIP="$DIST_DIR/$APP_NAME-notarize.zip"
     ditto -c -k --keepParent "$APP_BUNDLE" "$NOTARIZE_ZIP"
 
-    xcrun notarytool submit "$NOTARIZE_ZIP" \
-        --apple-id "$APPLE_ID" \
-        --team-id "$APPLE_TEAM_ID" \
-        --password "$APPLE_APP_PASSWORD" \
-        --wait
+    notarize_submit "$NOTARIZE_ZIP"
 
     rm -f "$NOTARIZE_ZIP"
 
@@ -241,11 +301,7 @@ codesign --sign "$DEVELOPER_ID" --timestamp --force "$DMG_PATH"
 
 if [[ $SKIP_NOTARIZE -eq 0 ]]; then
     log "Notarizing DMG"
-    xcrun notarytool submit "$DMG_PATH" \
-        --apple-id "$APPLE_ID" \
-        --team-id "$APPLE_TEAM_ID" \
-        --password "$APPLE_APP_PASSWORD" \
-        --wait
+    notarize_submit "$DMG_PATH"
     xcrun stapler staple "$DMG_PATH"
 fi
 

@@ -1,0 +1,40 @@
+<?xml version="1.0" standalone="yes"?>
+<!--
+  ToneForge Connect — Sparkle appcast.
+
+  This file is served as a static asset at
+    https://mattharvey.github.io/tone-forge/connect/appcast.xml
+  from the /docs directory of the repository default branch
+  (GitHub Pages → Source: main /docs).
+
+  Each <item> describes a single Connect release. Sparkle parses
+  the highest sparkle:version it sees that the local key can
+  verify; older items remain in the file so users on older
+  builds can still walk the upgrade path.
+
+  Updates are appended by build_release.sh --publish, which:
+    1. Reads the new DMG path and version from dist/
+    2. Calls Sparkle's sign_update tool against the DMG, using
+       the EdDSA private key supplied via SPARKLE_ED_PRIVATE_KEY
+    3. Prepends a fresh <item> to this file
+    4. Commits the change to the default branch so Pages picks it up
+
+  Manual edits are tolerated but Sparkle will refuse any item
+  whose sparkle:edSignature does not validate against the
+  embedded public key, so editing this file by hand cannot
+  push a malicious build.
+-->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>ToneForge Connect</title>
+        <link>https://mattharvey.github.io/tone-forge/connect/appcast.xml</link>
+        <description>Auto-update feed for the ToneForge Connect macOS app.</description>
+        <language>en</language>
+        <!--
+          No <item> entries until the first signed release is cut.
+          Sparkle treats an empty feed as "no update available" — it
+          does not error or surface anything to the user. This is the
+          correct pre-release state.
+        -->
+    </channel>
+</rss>

@@ -7,8 +7,12 @@
 //   Connect      — CLI entry point that exercises ConnectCore for latency
 //                  testing and live monitoring.
 //
-// macOS only for the prototype. We deliberately do not depend on any
-// third-party packages so the build stays trivial: `swift run Connect`.
+// macOS only for the prototype. The one external dependency is
+// Sparkle — the de-facto standard auto-update framework for Mac
+// apps distributed outside the App Store. Sparkle 2.x ships as a
+// SwiftPM package and handles EdDSA-signed appcast validation,
+// background download, install-on-quit, and the Check-for-Updates
+// menu item. See connect/ONBOARDING_AUDIT.md §F6.
 
 import PackageDescription
 
@@ -24,7 +28,12 @@ let package = Package(
         .executable(name: "Connect", targets: ["Connect"]),
         .library(name: "ConnectCore", targets: ["ConnectCore"]),
     ],
-    dependencies: [],
+    dependencies: [
+        // Sparkle 2.x — pinned to a known-good minor so a surprise
+        // breaking release in their 2.7 line can't break our update
+        // pipeline. Bump deliberately when we verify a new minor.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+    ],
     targets: [
         .target(
             name: "ConnectCore",
@@ -32,7 +41,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "Connect",
-            dependencies: ["ConnectCore"],
+            dependencies: [
+                "ConnectCore",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/Connect"
         ),
     ]

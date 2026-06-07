@@ -1,0 +1,183 @@
+# ToneForge Connect — release pipeline.
+#
+# Triggered by pushing a tag matching `connect-v*`. Builds the
+# universal .app, signs + notarizes the DMG via Apple's notary
+# service, signs an appcast entry with the Sparkle EdDSA private
+# key, commits the updated appcast to the default branch (which
+# GitHub Pages serves), and uploads the DMG to the GitHub Release.
+#
+# Secrets required (Settings → Secrets and variables → Actions):
+#   APPLE_TEAM_ID                 — 10-char team identifier
+#   APPLE_NOTARY_API_KEY_ID       — App Store Connect key ID
+#   APPLE_NOTARY_API_ISSUER_ID    — issuer UUID
+#   APPLE_NOTARY_API_KEY_P8       — base64-encoded .p8 private key
+#   APPLE_DEVELOPER_ID            — Common Name of the signing cert
+#   APPLE_CERT_P12                — base64 of the Developer ID .p12
+#   APPLE_CERT_P12_PASSWORD       — passphrase for the .p12
+#   SPARKLE_ED_PRIVATE_KEY        — base64 EdDSA private half
+#
+# Variables required (Settings → Secrets and variables → Variables):
+#   CONNECT_SPARKLE_PUBLIC_KEY    — base64 EdDSA public half
+#
+# Failure modes are surfaced as job failures — there is no "ship it
+# anyway" path. A failed notarization or signature blocks the release
+# from landing in the appcast, which is the correct behavior: users
+# never see a half-signed update.
+
+name: connect-release
+
+on:
+  push:
+    tags:
+      - 'connect-v*'
+
+permissions:
+  contents: write  # required for the appcast commit and Release upload
+
+jobs:
+  release:
+    runs-on: macos-14  # Apple Silicon runner; build is universal
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for the appcast commit on the default branch
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_P12_PASSWORD: ${{ secrets.APPLE_CERT_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$APPLE_CERT_P12" | base64 --decode > /tmp/dev_id.p12
+          security create-keychain -p "tmp-pass" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "tmp-pass" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import /tmp/dev_id.p12 -k build.keychain \
+            -P "$APPLE_CERT_P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "tmp-pass" build.keychain
+          rm /tmp/dev_id.p12
+
+      - name: Stage Sparkle public key into Info.plist
+        env:
+          CONNECT_SPARKLE_PUBLIC_KEY: ${{ vars.CONNECT_SPARKLE_PUBLIC_KEY }}
+        run: |
+          # build_release.sh consumes CONNECT_SPARKLE_PUBLIC_KEY and
+          # rewrites the __SPARKLE_PUBLIC_KEY__ placeholder inside the
+          # bundled Info.plist before signing. We stage it as an env
+          # var here so the script can read it without round-tripping
+          # through the filesystem.
+          if [[ -z "${CONNECT_SPARKLE_PUBLIC_KEY:-}" ]]; then
+            echo "::error::CONNECT_SPARKLE_PUBLIC_KEY is unset; cannot ship a Sparkle-aware build"
+            exit 1
+          fi
+
+      - name: Build, sign, notarize, DMG
+        env:
+          DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          NOTARY_KEY_P8_B64: ${{ secrets.APPLE_NOTARY_API_KEY_P8 }}
+          CONNECT_SPARKLE_PUBLIC_KEY: ${{ vars.CONNECT_SPARKLE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          echo "$NOTARY_KEY_P8_B64" | base64 --decode > /tmp/notary.p8
+          export NOTARY_KEY_PATH=/tmp/notary.p8
+          cd connect
+          ./build_release.sh
+
+      - name: Sign appcast entry
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          cd connect
+          DMG_PATH="$(ls dist/*.dmg | head -1)"
+          if [[ -z "$DMG_PATH" ]]; then
+            echo "::error::no DMG produced under connect/dist/"
+            exit 1
+          fi
+          # sign_update ships inside the resolved Sparkle SwiftPM
+          # artifact. The path is stable since 2.6.x.
+          SIGN_TOOL="$(find .build/artifacts -name sign_update -type f | head -1)"
+          if [[ -z "$SIGN_TOOL" ]]; then
+            echo "::error::sign_update not found in resolved Sparkle artifact"
+            exit 1
+          fi
+          # sign_update reads the private key from stdin when -s -
+          # is passed. Output is the signature + length on stdout in
+          # the form: sparkle:edSignature="..." length="..."
+          SIG_LINE=$(echo "$SPARKLE_ED_PRIVATE_KEY" | "$SIGN_TOOL" -s - "$DMG_PATH")
+          echo "::add-mask::$SPARKLE_ED_PRIVATE_KEY"
+          echo "SIG_LINE=$SIG_LINE" >> "$GITHUB_ENV"
+          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
+
+      - name: Prepend appcast item
+        run: |
+          set -euo pipefail
+          cd connect
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" Resources/Info.plist)
+          DMG_NAME=$(basename "$DMG_PATH")
+          PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
+          # Resolve the public download URL from the release tag.
+          REPO="${GITHUB_REPOSITORY}"
+          TAG="${GITHUB_REF_NAME}"
+          DL_URL="https://github.com/${REPO}/releases/download/${TAG}/${DMG_NAME}"
+          # Insert a new <item> immediately after the opening <channel>'s
+          # description so Sparkle reads the newest at the top.
+          python3 <<PY
+          import re, sys
+          path = "docs/appcast.xml"
+          with open(path) as f:
+              xml = f.read()
+          item = f"""        <item>
+                  <title>ToneForge Connect ${VERSION}</title>
+                  <pubDate>${PUB_DATE}</pubDate>
+                  <sparkle:version>${BUILD}</sparkle:version>
+                  <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+                  <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
+                  <enclosure
+                      url="${DL_URL}"
+                      type="application/octet-stream"
+                      ${SIG_LINE} />
+              </item>
+          """
+          new_xml = re.sub(
+              r"(<description>[^<]*</description>\s*)",
+              r"\\1" + item + "\\n        ",
+              xml,
+              count=1,
+          )
+          with open(path, "w") as f:
+              f.write(new_xml)
+          PY
+
+      - name: Commit appcast update
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add connect/docs/appcast.xml
+          git commit -m "Connect ${GITHUB_REF_NAME}: publish appcast entry"
+          # Push to the default branch so Pages picks it up. If the
+          # branch has advanced during the build, the push will fail
+          # and the release manager re-runs the workflow.
+          git push origin HEAD:main
+
+      - name: Upload DMG to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: connect/dist/*.dmg
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
