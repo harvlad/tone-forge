@@ -14,18 +14,22 @@ keep functioning during the transition; this package replaces them
 incrementally as each stage lands.
 """
 
-from tone_forge.session import protocol
+from tone_forge.session import protocol, transport
 from tone_forge.session.protocol import (
     MessageType,
     PROTOCOL_VERSION,
     envelope,
     is_supported_version,
 )
+from tone_forge.session.transport import initial_state, reduce
 
 __all__ = [
     "MessageType",
     "PROTOCOL_VERSION",
     "envelope",
+    "initial_state",
     "is_supported_version",
     "protocol",
+    "reduce",
+    "transport",
 ]
