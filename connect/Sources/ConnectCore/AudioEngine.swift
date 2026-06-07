@@ -34,7 +34,50 @@ public final class AudioEngine {
         public let estimatedRoundTripSec: Double
     }
 
-    public private(set) var isRunning = false
+    /// Lifecycle state surfaced via `onStateChange`. The state machine
+    /// is linear during normal operation:
+    ///
+    ///   stopped → starting → running → reconfiguring → running …
+    ///                              ↘ failed (after retry budget exhausted)
+    ///
+    /// `reconfiguring` is entered when the driver posts
+    /// `AVAudioEngineConfigurationChangeNotification` — typically when
+    /// the user unplugs headphones, switches audio interface, or the
+    /// system swaps the default device. We rebuild the graph against
+    /// the new input format and restart with backoff.
+    public enum State: Equatable {
+        case stopped
+        case starting
+        case running
+        case reconfiguring(reason: String)
+        case failed(error: String)
+    }
+
+    /// Fired on the main queue whenever `state` transitions.
+    public var onStateChange: ((State) -> Void)?
+
+    public private(set) var state: State = .stopped {
+        didSet {
+            guard state != oldValue else { return }
+            let cb = onStateChange
+            let s = state
+            DispatchQueue.main.async { cb?(s) }
+        }
+    }
+
+    /// Back-compat alias for the original boolean. Returns true while
+    /// the engine is actively rendering audio (running or in the brief
+    /// window before a reconfig restart completes).
+    public var isRunning: Bool {
+        if case .running = state { return true }
+        return false
+    }
+
+    /// Max attempts to recover from a configuration change before
+    /// giving up and surfacing `.failed`. Tuned for typical device
+    /// flaps (one or two retries usually clears it); a stuck driver
+    /// shouldn't loop forever.
+    public var maxReconfigAttempts: Int = 5
 
     /// Linear gain applied to the live input as it passes to the output.
     /// 0.0 = mute, 1.0 = unity. Default starts muted so first launch
@@ -76,7 +119,40 @@ public final class AudioEngine {
     private var stemPlayers: [String: AVAudioPlayerNode] = [:]
     private var stemBuffers: [String: AVAudioPCMBuffer] = [:]
 
+    /// Reconfig attempts since the last successful start. Reset to 0 on
+    /// any successful start; incremented per recovery attempt.
+    private var reconfigAttempt: Int = 0
+
+    /// Bounded queue for serializing reconfig work so a flurry of
+    /// AVAudioEngineConfigurationChange notifications can't fight
+    /// each other for the engine. Reconfig is rare and short, so a
+    /// single serial queue is the right tool.
+    private let reconfigQueue = DispatchQueue(label: "com.toneforge.connect.audio-reconfig")
+
+    /// NotificationCenter token for the configuration-change observer.
+    /// Held strongly so it survives across reconfigs.
+    private var configChangeToken: NSObjectProtocol?
+
     public init() {
+        attachAndConnectGraph()
+        inputMixerNode.outputVolume = inputMonitorGain
+        stemsMixerNode.outputVolume = stemsGain
+        configureDefaultAmpSimTone()
+        registerConfigChangeObserver()
+    }
+
+    deinit {
+        if let token = configChangeToken {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
+    /// Wires the graph: input → inputMixer → ampSimEQ → ampSimDistortion → mainMixer
+    ///                 stemsMixer → mainMixer
+    /// Pulled out of init() so it can be re-run after a driver
+    /// configuration change without leaking nodes (AVAudioEngine drops
+    /// pre-change connections on its own; we just re-attach + connect).
+    private func attachAndConnectGraph() {
         // Both mixers feed the engine's main mixer; the engine's main
         // mixer is auto-connected to outputNode.
         engine.attach(inputMixerNode)
@@ -89,6 +165,9 @@ public final class AudioEngine {
         // Use the input node's input format for the input chain to avoid
         // implicit format conversions on the hot path. The mixer downstream
         // takes care of channel/sr matching to the output.
+        // Re-reading the format every time is important: after a
+        // configuration change the format may have flipped sample rate
+        // or channel count, and the previous format becomes invalid.
         let inputFormat = engine.inputNode.outputFormat(forBus: 0)
         engine.connect(engine.inputNode, to: inputMixerNode, format: inputFormat)
         // Insert the amp-sim between the input mixer and the main mixer.
@@ -98,10 +177,81 @@ public final class AudioEngine {
         engine.connect(ampSimEQ, to: ampSimDistortion, format: nil)
         engine.connect(ampSimDistortion, to: mainMixer, format: nil)
         engine.connect(stemsMixerNode, to: mainMixer, format: nil)
+    }
 
-        inputMixerNode.outputVolume = inputMonitorGain
-        stemsMixerNode.outputVolume = stemsGain
-        configureDefaultAmpSimTone()
+    /// Subscribes to AVAudioEngineConfigurationChange so a device flap
+    /// (unplugged headphones, USB interface yank, default-device swap)
+    /// triggers a clean rebuild instead of silently leaving the engine
+    /// stopped. Per AVAudioEngine docs the engine has already stopped
+    /// by the time the notification fires; our job is to put it back.
+    private func registerConfigChangeObserver() {
+        configChangeToken = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            self?.handleConfigurationChange()
+        }
+    }
+
+    /// Serialize all reconfig work onto reconfigQueue. The driver can
+    /// post multiple notifications in quick succession when the user
+    /// unplugs *and* the OS routes to a different default; we want a
+    /// single rebuild, not a race.
+    private func handleConfigurationChange() {
+        reconfigQueue.async { [weak self] in
+            guard let self = self else { return }
+            // Only react if we were running. If the user has already
+            // stopped the engine, leave it stopped.
+            guard self.isRunning || self.state == .starting else { return }
+            self.attemptReconfigRestart(reason: "audio configuration changed")
+        }
+    }
+
+    /// Tries to rebuild the graph and restart the engine, retrying
+    /// with linear backoff (1s, 2s, 3s, …) up to maxReconfigAttempts.
+    /// Called from reconfigQueue.
+    private func attemptReconfigRestart(reason: String) {
+        state = .reconfiguring(reason: reason)
+        reconfigAttempt += 1
+
+        // Engine is already stopped per the notification contract, but
+        // call stop() defensively so any stragglers (stem players) are
+        // also brought down before we rebuild.
+        if engine.isRunning { engine.stop() }
+        for (_, player) in stemPlayers { player.stop() }
+
+        // Re-attach + re-connect against the new input format. The
+        // mixer/EQ/distortion nodes are reused — AVAudioEngine
+        // tolerates re-attach on already-attached nodes silently.
+        attachAndConnectGraph()
+        // Stems need their player nodes re-connected to the stems mixer
+        // because the engine may have dropped those edges during the
+        // device change. The PCM buffers and player instances survive.
+        let format = stemsMixerNode.outputFormat(forBus: 0)
+        for (_, player) in stemPlayers {
+            engine.attach(player)
+            engine.connect(player, to: stemsMixerNode, format: format)
+        }
+
+        do {
+            engine.prepare()
+            try engine.start()
+            reconfigAttempt = 0
+            state = .running
+        } catch {
+            if reconfigAttempt >= maxReconfigAttempts {
+                state = .failed(error: "could not recover audio engine after \(reconfigAttempt) attempts: \(error)")
+                return
+            }
+            // Linear backoff. Exponential here would just delay the
+            // user from hearing themselves again when the driver
+            // settles. We bail on the count, not the wall-clock.
+            let delay = Double(reconfigAttempt)
+            reconfigQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.attemptReconfigRestart(reason: "retry \(self?.reconfigAttempt ?? 0)")
+            }
+        }
     }
 
     /// Programs a generic "clean-with-bite" voicing into the static amp-sim
@@ -211,17 +361,26 @@ public final class AudioEngine {
     // MARK: - Lifecycle
 
     public func start() throws {
-        guard !isRunning else { return }
+        if case .running = state { return }
+        state = .starting
         engine.prepare()
-        try engine.start()
-        isRunning = true
+        do {
+            try engine.start()
+        } catch {
+            state = .failed(error: "engine.start failed: \(error)")
+            throw error
+        }
+        reconfigAttempt = 0
+        state = .running
     }
 
     public func stop() {
-        guard isRunning else { return }
+        // Allow stop() from any non-stopped state so a caller can bail
+        // out of a `.reconfiguring` or `.failed` engine cleanly.
+        if case .stopped = state { return }
         for (_, player) in stemPlayers { player.stop() }
-        engine.stop()
-        isRunning = false
+        if engine.isRunning { engine.stop() }
+        state = .stopped
     }
 
     // MARK: - Stem playback

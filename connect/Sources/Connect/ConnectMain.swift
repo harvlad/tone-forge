@@ -259,6 +259,23 @@ struct Connect {
         let engine = AudioEngine()
         engine.inputMonitorGain = clamped
         engine.ampSimEnabled = true
+        // Surface device-flap recovery to the operator. Without this,
+        // unplugging headphones during a session leaves the user
+        // wondering why they can't hear themselves.
+        engine.onStateChange = { state in
+            switch state {
+            case .stopped:
+                print("  [audio] stopped")
+            case .starting:
+                print("  [audio] starting")
+            case .running:
+                print("  [audio] running")
+            case .reconfiguring(let reason):
+                print("  [audio] reconfiguring (\(reason)) — recovering after device change")
+            case .failed(let error):
+                print("  [audio] FAILED to recover: \(error)")
+            }
+        }
         do {
             try engine.start()
         } catch {
