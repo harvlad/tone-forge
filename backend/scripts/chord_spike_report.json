@@ -1,0 +1,81 @@
+{
+  "sr": 22050,
+  "frame_hop_s": 0.05,
+  "results": [
+    {
+      "progression": "I-V-vi-IV (pop)",
+      "tempo_bpm": 120,
+      "beats_per_chord": 4,
+      "truth": "C > G > Am > F",
+      "detected": "C > G > Am > F",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.99375,
+        "triad_relaxed": 0.99375,
+        "root_only": 0.99375
+      }
+    },
+    {
+      "progression": "I-vi-IV-V (50s)",
+      "tempo_bpm": 110,
+      "beats_per_chord": 4,
+      "truth": "C > Am > F > G",
+      "detected": "C > Am > F > G",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.9942857142857143,
+        "triad_relaxed": 0.9942857142857143,
+        "root_only": 0.9942857142857143
+      }
+    },
+    {
+      "progression": "vi-IV-I-V (anthem)",
+      "tempo_bpm": 100,
+      "beats_per_chord": 4,
+      "truth": "Am > F > C > G",
+      "detected": "Am > F > C > G",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.9947916666666666,
+        "triad_relaxed": 0.9947916666666666,
+        "root_only": 0.9947916666666666
+      }
+    },
+    {
+      "progression": "I-IV-V7-I",
+      "tempo_bpm": 90,
+      "beats_per_chord": 4,
+      "truth": "C > F > Gdom7 > C",
+      "detected": "C > F > C",
+      "n_detected": 3,
+      "scores": {
+        "strict": 0.7523364485981309,
+        "triad_relaxed": 0.7523364485981309,
+        "root_only": 0.7523364485981309
+      }
+    },
+    {
+      "progression": "ii-V-I (jazz cadence)",
+      "tempo_bpm": 130,
+      "beats_per_chord": 4,
+      "truth": "Dm > G > C > C",
+      "detected": "Dm > G > C",
+      "n_detected": 3,
+      "scores": {
+        "strict": 1.0,
+        "triad_relaxed": 1.0,
+        "root_only": 1.0
+      }
+    }
+  ],
+  "average": {
+    "strict": 0.9470327659101023,
+    "triad_relaxed": 0.9470327659101023,
+    "root_only": 0.9470327659101023
+  },
+  "decision_rule": {
+    "ship_as_is": "root_only >= 0.90 AND triad_relaxed >= 0.75",
+    "quality_bug": "root_only >= 0.90 AND triad_relaxed < 0.75",
+    "swap_or_punt": "root_only < 0.90"
+  }
+}
