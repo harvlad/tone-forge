@@ -148,7 +148,14 @@ public final class PresetBridge {
               let obj = try? JSONSerialization.jsonObject(with: data),
               let dict = obj as? [String: Any]
         else { return }
+        dispatch(dict)
+    }
 
+    /// Frame-dispatch core. Pulled out of `handleMessage` so tests can
+    /// exercise every branch without standing up a real WebSocket.
+    /// Marked `internal` (not `private`) so `@testable import
+    /// ConnectCore` can reach it; it stays out of the public API.
+    func dispatch(_ dict: [String: Any]) {
         let type = dict["type"] as? String ?? ""
         switch type {
         case ConnectProtocol.MessageType.helloAck:

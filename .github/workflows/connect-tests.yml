@@ -1,0 +1,57 @@
+# Connect package — fast unit-test gate.
+#
+# Runs on every push and PR that touches the Connect SwiftPM package.
+# Deliberately scoped narrow: the macos-14 runner pool is more
+# expensive than the ubuntu pool, and the Connect tests don't depend
+# on the Python backend, so there's no reason to spin up macOS for an
+# unrelated backend change.
+#
+# Tests cover the pure-value behavior of ConnectCore: protocol
+# constants pinning, AudioEngine.State equality, and PresetBridge
+# frame dispatch (no real WebSocket needed — dispatch(_:) is
+# internal and exercised directly via @testable import).
+#
+
+name: connect-tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "connect/**"
+      - ".github/workflows/connect-tests.yml"
+  pull_request:
+    paths:
+      - "connect/**"
+      - ".github/workflows/connect-tests.yml"
+
+jobs:
+  test:
+    runs-on: macos-14
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: connect
+    steps:
+      - uses: actions/checkout@v4
+
+      # XCTest only ships with full Xcode (not the Command Line
+      # Tools). macos-14 runners include Xcode 15.x preinstalled at
+      # /Applications/Xcode_15.x.app; the `xcode-select` step below
+      # points the toolchain at it so `swift test` can find XCTest.
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Print toolchain versions
+        run: |
+          xcode-select -p
+          swift --version
+
+      - name: Resolve SwiftPM dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build
+
+      - name: Run tests
+        run: swift test

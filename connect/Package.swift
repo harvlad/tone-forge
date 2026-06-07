@@ -47,5 +47,10 @@ let package = Package(
             ],
             path: "Sources/Connect"
         ),
+        .testTarget(
+            name: "ConnectCoreTests",
+            dependencies: ["ConnectCore"],
+            path: "Tests/ConnectCoreTests"
+        ),
     ]
 )
