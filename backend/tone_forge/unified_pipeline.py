@@ -676,59 +676,17 @@ class UnifiedPipeline:
         url: str,
         config: PipelineConfig,
     ) -> AudioData:
-        """Load audio from YouTube URL using yt-dlp."""
-        import subprocess
-
+        """Load audio from a URL via the acquisition subsystem."""
+        from tone_forge.acquisition.youtube import download_audio
 
         def download_and_load():
-            # Create temp directory for download
-            tmp_dir = Path(tempfile.mkdtemp(prefix="toneforge_yt_"))
-
-            # Get video title
-            title_cmd = ["yt-dlp", "--get-title", url]
-            try:
-                title_result = subprocess.run(
-                    title_cmd, capture_output=True, text=True, timeout=30
-                )
-                title = title_result.stdout.strip()[:50] if title_result.returncode == 0 else "YouTube Audio"
-            except Exception:
-                title = "YouTube Audio"
-
-            # Download audio
-            output_path = tmp_dir / f"{title}.wav"
-            download_cmd = [
-                "yt-dlp",
-                "-x",  # Extract audio
-                "--audio-format", "wav",
-                "-o", str(output_path),
+            return download_audio(
                 url,
-            ]
-
-            result = subprocess.run(download_cmd, capture_output=True, timeout=300)
-            if result.returncode != 0:
-                raise RuntimeError(f"yt-dlp failed: {result.stderr.decode()}")
-
-            # Find the actual output file (yt-dlp may modify filename)
-            wav_files = list(tmp_dir.glob("*.wav"))
-            if not wav_files:
-                raise RuntimeError("No audio file found after download")
-            actual_path = wav_files[0]
-
-            # Load audio
-            y, sr = librosa.load(str(actual_path), sr=config.target_sr, mono=True)
-
-            # Apply trim if configured
-            if config.trim_start is not None or config.trim_end is not None:
-                start_sample = int((config.trim_start or 0) * sr)
-                end_sample = int((config.trim_end or len(y) / sr) * sr)
-                y = y[start_sample:end_sample]
-
-            # Apply max duration limit
-            max_samples = int(config.max_duration * sr)
-            if len(y) > max_samples:
-                y = y[:max_samples]
-
-            return y, sr, actual_path, title
+                target_sr=config.target_sr,
+                max_duration_s=config.max_duration,
+                trim_start_s=config.trim_start,
+                trim_end_s=config.trim_end,
+            )
 
         audio, sr, path, title = await run_in_thread(download_and_load)
 
