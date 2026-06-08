@@ -29,7 +29,13 @@ struct Connect {
         let cmd = args.count > 1 ? args[1] : "gui"
         switch cmd {
         case "devices":
-            listDevices()
+            // Optional flag: `connect devices --json` emits a
+            // machine-parseable inventory used by the Python device
+            // discovery probe (Priority 7). Default remains the
+            // human-readable text so existing CLI workflows are
+            // unaffected.
+            let asJSON = args.dropFirst(2).contains("--json")
+            listDevices(asJSON: asJSON)
         case "latency":
             measureLatency()
         case "monitor":
@@ -70,8 +76,7 @@ struct Connect {
 
     // MARK: - devices
 
-    static func listDevices() {
-        print("CoreAudio devices:")
+    static func listDevices(asJSON: Bool = false) {
         var size: UInt32 = 0
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -81,15 +86,51 @@ struct Connect {
         guard AudioObjectGetPropertyDataSize(
             AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size
         ) == noErr else {
-            print("  (could not enumerate)")
+            if asJSON {
+                // Emit a well-formed but empty inventory so the Python
+                // probe can still construct a DeviceProbe with
+                // probe_succeeded=false rather than parse-failing on
+                // an unexpected human-readable error string.
+                print(#"{"devices": [], "error": "could not enumerate"}"#)
+            } else {
+                print("CoreAudio devices:")
+                print("  (could not enumerate)")
+            }
             return
         }
         let count = Int(size) / MemoryLayout<AudioDeviceID>.size
         var ids = [AudioDeviceID](repeating: 0, count: count)
         guard AudioObjectGetPropertyData(
             AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &ids
-        ) == noErr else { return }
+        ) == noErr else {
+            if asJSON {
+                print(#"{"devices": [], "error": "could not read device list"}"#)
+            }
+            return
+        }
 
+        if asJSON {
+            // Hand-rolled JSON keeps the binary free of a JSON-encoder
+            // dependency for a single, tiny payload. The schema mirrors
+            // backend/tone_forge/contracts.py::AudioDeviceInfo.
+            var entries: [String] = []
+            for id in ids {
+                let nm = deviceName(id: id) ?? "(unnamed)"
+                let escaped = nm
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                let inCh = channelCount(id: id, input: true)
+                let outCh = channelCount(id: id, input: false)
+                entries.append(
+                    "{\"device_id\":\(id),\"name\":\"\(escaped)\","
+                    + "\"input_channels\":\(inCh),\"output_channels\":\(outCh)}"
+                )
+            }
+            print("{\"devices\":[" + entries.joined(separator: ",") + "]}")
+            return
+        }
+
+        print("CoreAudio devices:")
         for id in ids {
             let nm = deviceName(id: id) ?? "(unnamed)"
             print("  [\(id)] \(nm) in=\(channelCount(id: id, input: true)) out=\(channelCount(id: id, input: false))")

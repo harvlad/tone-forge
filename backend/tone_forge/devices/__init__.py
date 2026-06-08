@@ -7,4 +7,6 @@ between preset delivery and curated monitor chain fallback.
 Skeleton. MVP scope: INTERFACE_ONLY vs. modeler-class branching only.
 """
 
-__all__: list[str] = []
+from tone_forge.devices.discovery import probe
+
+__all__: list[str] = ["probe"]

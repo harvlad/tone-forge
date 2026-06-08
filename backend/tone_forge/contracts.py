@@ -49,6 +49,8 @@ __all__ = [
     "ToneMatch",
     "MonitorChain",
     "DeviceCaps",
+    "AudioDeviceInfo",
+    "DeviceProbe",
     "TransportState",
     "GuidanceTrack",
     "SessionBundle",
@@ -329,6 +331,44 @@ class DeviceCaps:
     preferred_chain_family: Optional[MonitorChainFamily] = None
     vendor_hint: Optional[str] = None
     model_hint: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class AudioDeviceInfo:
+    """One CoreAudio device as reported by the ``connect devices`` probe.
+
+    The Connect CLI is the source of truth for what the OS sees; the
+    Python probe just parses its JSON output. ``input_channels`` and
+    ``output_channels`` of zero are legal — many devices are one-way.
+    """
+
+    device_id: int
+    name: str
+    input_channels: int
+    output_channels: int
+
+
+@dataclass(frozen=True)
+class DeviceProbe:
+    """Result of the non-blocking discovery probe.
+
+    The plan (EXECUTION_PLAN.md §7) describes this as a hint surface
+    rather than a decision: the UI uses ``suggested_input`` to pre-fill
+    the onboarding question, and ``vendor_hint`` to label the row.
+    ``device_class`` stays ``None`` here — Discovery never *answers*
+    the onboarding question, the user does. The probe just narrows the
+    interface choices.
+
+    Frozen so a probe can be cached and shared without callers
+    accidentally mutating it (the UI tends to keep one in memory for
+    the lifetime of the onboarding flow).
+    """
+
+    devices: Tuple[AudioDeviceInfo, ...]
+    suggested_input: Optional[AudioDeviceInfo] = None
+    vendor_hint: Optional[str] = None
+    probe_succeeded: bool = True
+    error_message: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
