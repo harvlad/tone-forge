@@ -1,0 +1,36 @@
+# Placeholder spec: pre-listening baseline. See clean_strat.yaml for
+# the policy on placeholder vs dialed-in chains.
+#
+# Reference vibe: Plexi at 7 with a treble booster in front. Mid-heavy,
+# punchy, bluesy/rock pocket.
+
+id: tfc.classic_rock
+family: classic_rock
+display_name: "Classic Rock"
+description: "Mid-heavy crunch with bite. Plexi-style. Pre-listening baseline."
+parameters:
+  input:
+    gain_db: 3
+    high_pass_hz: 100
+  gain_stage:
+    type: tube_overdrive
+    drive: 0.6
+    bias: 0.6
+  eq:
+    bass_db: 0
+    mid_db: 3
+    treble_db: 1
+    presence_db: 2
+  comp:
+    enabled: false
+    ratio: 1.0
+    threshold_db: 0
+    attack_ms: 0
+    release_ms: 0
+  reverb:
+    type: spring
+    size: 0.4
+    mix: 0.10
+  output:
+    trim_db: -2
+preview_audio: "preview/classic_rock.mp3"

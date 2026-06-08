@@ -1,0 +1,43 @@
+# Placeholder spec: pre-listening baseline.
+#
+# This file is structurally valid (loader.py validates schema in CI)
+# but the parameter values are baseline defaults, NOT the dialed-in
+# tone. The dial-in happens in the founder's listening engagement
+# (see ../README.md "Curation Process"). Until that engagement
+# delivers a sit-with-reference acceptance, this chain ships only as
+# a routing target — Connect can construct a graph from these values
+# without crashing, but the result is not yet a curated chain.
+#
+# Reference vibe: Twin Reverb clean, neck pickup. Bright, low-noise,
+# light comp, small room reverb.
+
+id: tfc.clean_strat
+family: clean
+display_name: "Clean Strat"
+description: "Bright, low-noise clean. Light comp, small room reverb. Pre-listening baseline."
+parameters:
+  input:
+    gain_db: 0
+    high_pass_hz: 80
+  gain_stage:
+    type: tube_clean
+    drive: 0.1
+    bias: 0.5
+  eq:
+    bass_db: 0
+    mid_db: -1
+    treble_db: 2
+    presence_db: 1
+  comp:
+    enabled: true
+    ratio: 2.0
+    threshold_db: -18
+    attack_ms: 5
+    release_ms: 80
+  reverb:
+    type: room
+    size: 0.3
+    mix: 0.15
+  output:
+    trim_db: 0
+preview_audio: "preview/clean_strat.mp3"

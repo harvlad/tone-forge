@@ -1,0 +1,36 @@
+# Placeholder spec: pre-listening baseline. See clean_strat.yaml for
+# the policy on placeholder vs dialed-in chains.
+#
+# Reference vibe: Deluxe Reverb on 6. The "works on anything" safe
+# default — minimal drive, hint of grit, plate reverb.
+
+id: tfc.edge_of_breakup
+family: edge_of_breakup
+display_name: "Edge of Breakup"
+description: "Just-on-the-edge crunch. Safe default for unknown genre. Pre-listening baseline."
+parameters:
+  input:
+    gain_db: 2
+    high_pass_hz: 90
+  gain_stage:
+    type: tube_break
+    drive: 0.35
+    bias: 0.55
+  eq:
+    bass_db: 1
+    mid_db: 1
+    treble_db: 1
+    presence_db: 0
+  comp:
+    enabled: true
+    ratio: 2.5
+    threshold_db: -16
+    attack_ms: 4
+    release_ms: 100
+  reverb:
+    type: plate
+    size: 0.35
+    mix: 0.12
+  output:
+    trim_db: -1
+preview_audio: "preview/edge_of_breakup.mp3"

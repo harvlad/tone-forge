@@ -1,0 +1,36 @@
+# Placeholder spec: pre-listening baseline. See clean_strat.yaml for
+# the policy on placeholder vs dialed-in chains.
+#
+# Reference vibe: 5150-ish, tight low cut, scooped or flat mids, hot
+# output. The "fast and aggressive" target.
+
+id: tfc.modern_gain
+family: modern_gain
+display_name: "Modern Gain"
+description: "Tight high-gain. Scooped/flat mids, fast attack. Pre-listening baseline."
+parameters:
+  input:
+    gain_db: 2
+    high_pass_hz: 120
+  gain_stage:
+    type: tube_high_gain
+    drive: 0.85
+    bias: 0.7
+  eq:
+    bass_db: 2
+    mid_db: -2
+    treble_db: 3
+    presence_db: 3
+  comp:
+    enabled: false
+    ratio: 1.0
+    threshold_db: 0
+    attack_ms: 0
+    release_ms: 0
+  reverb:
+    type: small_hall
+    size: 0.25
+    mix: 0.08
+  output:
+    trim_db: -3
+preview_audio: "preview/modern_gain.mp3"

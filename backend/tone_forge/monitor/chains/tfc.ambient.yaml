@@ -1,0 +1,36 @@
+# Placeholder spec: pre-listening baseline. See clean_strat.yaml for
+# the policy on placeholder vs dialed-in chains.
+#
+# Reference vibe: Clean + dotted-eighth delay + hall reverb. The "sit
+# inside a wash" target for slow, spacious material.
+
+id: tfc.ambient
+family: ambient
+display_name: "Ambient"
+description: "Clean + spacious. Long delay + hall reverb. Pre-listening baseline."
+parameters:
+  input:
+    gain_db: 0
+    high_pass_hz: 70
+  gain_stage:
+    type: tube_clean
+    drive: 0.05
+    bias: 0.5
+  eq:
+    bass_db: 1
+    mid_db: 0
+    treble_db: 1
+    presence_db: 0
+  comp:
+    enabled: true
+    ratio: 1.8
+    threshold_db: -22
+    attack_ms: 8
+    release_ms: 200
+  reverb:
+    type: hall
+    size: 0.8
+    mix: 0.35
+  output:
+    trim_db: 0
+preview_audio: "preview/ambient.mp3"
