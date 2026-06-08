@@ -51,6 +51,7 @@ __all__ = [
     "DeviceCaps",
     "AudioDeviceInfo",
     "DeviceProbe",
+    "DevicePreferences",
     "TransportState",
     "GuidanceTrack",
     "SessionBundle",
@@ -369,6 +370,26 @@ class DeviceProbe:
     vendor_hint: Optional[str] = None
     probe_succeeded: bool = True
     error_message: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DevicePreferences:
+    """User's persisted answer to the Discovery onboarding question.
+
+    Schema mirrors ``~/Library/Application Support/ToneForge/device.json``
+    as defined in EXECUTION_PLAN.md §8. The plan calls for re-prompting
+    only when ``device_class`` is unset or the user explicitly opens
+    settings, so this dataclass is the single source of truth the UI
+    consults to decide whether to show the onboarding screen.
+
+    Frozen so the persistence layer can return cached instances safely.
+    """
+
+    device_class: DeviceClass
+    audio_input_name: Optional[str] = None
+    preferred_chain_family: Optional[MonitorChainFamily] = None
+    first_seen_iso: Optional[str] = None
+    last_used_iso: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
