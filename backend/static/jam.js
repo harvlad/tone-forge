@@ -851,7 +851,12 @@
   // ---------------------------------------------- transition to performance
   async function onAnalysisComplete(result) {
     state.fullResult = result;
-    state.analysisId = result.analysis_id || result.id || null;
+    // The streaming endpoint attaches the persisted identifier under
+    // ``history_id`` (see tone_forge_api.py); the deep-link / bundle
+    // path uses ``analysis_id`` / ``id``. Accept all three so a fresh
+    // analysis updates the URL bar the same way a reloaded one does.
+    state.analysisId =
+      result.analysis_id || result.id || result.history_id || null;
 
     // Push the analysis id into the URL so a reload restores the jam
     // via the /jam/:id deep-link path (see maybeDeepLink IIFE below).
@@ -1344,10 +1349,15 @@
     //   1. Make sure the browser side of the bridge is alive so the
     //      helper has somewhere to join.
     //   2. Fire the toneforge:// deep link so an installed Connect.app
-    //      launches and joins the same session. If Connect isn't
-    //      installed, the browser silently no-ops on the unknown
-    //      scheme — the WS kick still happens, so re-clicking after a
-    //      manual install works the same way.
+    //      launches and joins the same session. We never assign to
+    //      ``window.location.href`` for this — on macOS Chrome / Safari
+    //      that *navigates the current page* when no handler is
+    //      registered, which wipes the in-memory jam state and looks
+    //      to the user like the server hung. The hidden-iframe trick
+    //      below is the canonical way to hand off a custom URL scheme
+    //      without losing the page: the iframe load fires the OS
+    //      handoff (if a handler exists) or silently fails (if not),
+    //      and the parent document stays put either way.
     ensureConnectBridge();
     const cbAfterKick = state.connectBridge;
     if (cbAfterKick.sessionId) {
@@ -1357,10 +1367,19 @@
         'toneforge://pair'
         + `?session=${encodeURIComponent(cbAfterKick.sessionId)}`
         + `&ws=${encodeURIComponent(wsUrl)}`;
-      // Assigning to location.href is the standard browser handoff to
-      // a custom URL scheme. The page itself does not navigate when
-      // the OS hands the URL to a registered handler.
-      window.location.href = deepLink;
+      try {
+        const ifr = document.createElement('iframe');
+        ifr.style.display = 'none';
+        ifr.src = deepLink;
+        document.body.appendChild(ifr);
+        // 1500 ms is long enough for the OS to claim the URL and short
+        // enough that we don't leak iframes on rapid re-clicks.
+        setTimeout(() => {
+          try { ifr.remove(); } catch {}
+        }, 1500);
+      } catch (e) {
+        console.warn('[connect] deep-link launch failed:', e);
+      }
     }
     flashConnectStatus('Reaching out to the desktop helper…');
   });
