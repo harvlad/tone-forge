@@ -91,13 +91,21 @@ public final class AudioEngine {
         didSet { stemsMixerNode.outputVolume = stemsGain }
     }
 
-    /// Toggle the static amp-sim coloring on the input monitor path. When
-    /// disabled the EQ + distortion nodes are individually bypassed so the
-    /// signal still flows but is bit-identical to the dry chain.
+    /// Toggle the curated monitor chain on the input path. When
+    /// disabled the coloring nodes (HPF, distortion, EQ, comp, reverb)
+    /// are bypassed individually so the signal still flows but is
+    /// bit-identical to the dry monitor chain. The output trim node is
+    /// left engaged — its gain knob is part of the chain's curated
+    /// output level and a user wanting fully-dry monitoring should
+    /// disable the chain altogether at a higher layer.
     public var ampSimEnabled: Bool = true {
         didSet {
-            ampSimEQ.bypass = !ampSimEnabled
-            ampSimDistortion.bypass = !ampSimEnabled
+            let bypass = !ampSimEnabled
+            inputHPF.bypass = bypass
+            ampSimDistortion.bypass = bypass
+            ampSimEQ.bypass = bypass
+            compressor.bypass = bypass || !currentChainSpec.comp.enabled
+            reverb.bypass = bypass
         }
     }
 
@@ -107,13 +115,64 @@ public final class AudioEngine {
     private let inputMixerNode = AVAudioMixerNode()
     private let stemsMixerNode = AVAudioMixerNode()
 
-    /// Static amp-sim chain on the input monitor path: a 3-band EQ shapes
-    /// the spectrum (low-end body / mid scoop / presence bump) and a
-    /// distortion unit adds break-up at the top. Parameters are baked in
-    /// for now; the future WebSocket handshake task wires them to the
-    /// V2-matched preset.
-    private let ampSimEQ = AVAudioUnitEQ(numberOfBands: 3)
+    /// Monitor chain DSP graph. Each node owns one section of the
+    /// ChainSpec schema (input, gain stage, EQ, comp, reverb, output).
+    /// Topology:
+    ///
+    ///   input → inputMixer → inputHPF → ampSimDistortion → ampSimEQ
+    ///         → compressor → reverb → outputTrim → mainMixer
+    ///
+    /// Why one node per section: it mirrors the YAML schema 1:1, which
+    /// makes the listening engagement (P3e) actionable — every YAML
+    /// edit lands in exactly one parameter on exactly one node, and
+    /// every node can be bypassed individually when A/B testing.
+
+    /// High-pass filter — band 0 of inputHPF carries the .highPass
+    /// filterType, the remaining slot is unused. A 1-band AVAudioUnitEQ
+    /// is the cheapest stable HPF available in the AVFoundation stack.
+    private let inputHPF = AVAudioUnitEQ(numberOfBands: 1)
+
+    /// Saturation stage. Drives off ChainSpec.GainStage; the .type
+    /// field selects an AVAudioUnitDistortionPreset and .drive maps
+    /// to wetDryMix + preGain.
     private let ampSimDistortion = AVAudioUnitDistortion()
+
+    /// 4-band parametric EQ — bass / mid / treble / presence. Bands
+    /// are fixed-frequency (see configureDefaultAmpSimTone) so the
+    /// ChainSpec only carries gains.
+    private let ampSimEQ = AVAudioUnitEQ(numberOfBands: 4)
+
+    /// Dynamics processor used as a downward compressor. Configurable
+    /// from ChainSpec.Comp (ratio / threshold / attack / release).
+    /// When `comp.enabled == false` the node is bypassed but stays
+    /// in the graph so a later apply can re-enable it without a rewire.
+    /// AVFoundation doesn't ship a typed compressor wrapper — we
+    /// instantiate the built-in DynamicsProcessor AU via AVAudioUnitEffect
+    /// and program it through AudioUnitSetParameter.
+    private let compressor: AVAudioUnitEffect = {
+        let desc = AudioComponentDescription(
+            componentType: kAudioUnitType_Effect,
+            componentSubType: kAudioUnitSubType_DynamicsProcessor,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        return AVAudioUnitEffect(audioComponentDescription: desc)
+    }()
+
+    /// Algorithmic reverb. .type selects an AVAudioUnitReverbPreset,
+    /// .mix drives wetDryMix.
+    private let reverb = AVAudioUnitReverb()
+
+    /// Output trim — an AVAudioMixerNode used solely as a gain stage
+    /// at the end of the chain so the curated chain has its own
+    /// makeup-gain knob independent of the user-facing monitor gain.
+    private let outputTrim = AVAudioMixerNode()
+
+    /// The currently-applied monitor chain. Reads back via
+    /// `currentChainId()` for diagnostics. Defaults to the safe
+    /// baseline so a fresh engine has a coherent tone.
+    private var currentChainSpec: ChainSpec = .baseline
 
     /// One player per active stem. Keyed by stem name (e.g. "drums").
     private var stemPlayers: [String: AVAudioPlayerNode] = [:]
@@ -147,8 +206,12 @@ public final class AudioEngine {
         }
     }
 
-    /// Wires the graph: input → inputMixer → ampSimEQ → ampSimDistortion → mainMixer
-    ///                 stemsMixer → mainMixer
+    /// Wires the full monitor-chain graph plus the stems bus.
+    ///
+    ///   input → inputMixer → inputHPF → ampSimDistortion → ampSimEQ
+    ///         → compressor → reverb → outputTrim → mainMixer
+    ///   stemsMixer → mainMixer
+    ///
     /// Pulled out of init() so it can be re-run after a driver
     /// configuration change without leaking nodes (AVAudioEngine drops
     /// pre-change connections on its own; we just re-attach + connect).
@@ -157,8 +220,12 @@ public final class AudioEngine {
         // mixer is auto-connected to outputNode.
         engine.attach(inputMixerNode)
         engine.attach(stemsMixerNode)
-        engine.attach(ampSimEQ)
+        engine.attach(inputHPF)
         engine.attach(ampSimDistortion)
+        engine.attach(ampSimEQ)
+        engine.attach(compressor)
+        engine.attach(reverb)
+        engine.attach(outputTrim)
 
         let mainMixer = engine.mainMixerNode
 
@@ -170,12 +237,16 @@ public final class AudioEngine {
         // or channel count, and the previous format becomes invalid.
         let inputFormat = engine.inputNode.outputFormat(forBus: 0)
         engine.connect(engine.inputNode, to: inputMixerNode, format: inputFormat)
-        // Insert the amp-sim between the input mixer and the main mixer.
-        // Stems bypass the amp-sim entirely — only the player's instrument
-        // is colored.
-        engine.connect(inputMixerNode, to: ampSimEQ, format: nil)
-        engine.connect(ampSimEQ, to: ampSimDistortion, format: nil)
-        engine.connect(ampSimDistortion, to: mainMixer, format: nil)
+        // Monitor chain: HPF → drive → EQ → comp → reverb → trim → out.
+        // Stems bypass the chain entirely — only the player's instrument
+        // is colored by the curated tone.
+        engine.connect(inputMixerNode, to: inputHPF, format: nil)
+        engine.connect(inputHPF, to: ampSimDistortion, format: nil)
+        engine.connect(ampSimDistortion, to: ampSimEQ, format: nil)
+        engine.connect(ampSimEQ, to: compressor, format: nil)
+        engine.connect(compressor, to: reverb, format: nil)
+        engine.connect(reverb, to: outputTrim, format: nil)
+        engine.connect(outputTrim, to: mainMixer, format: nil)
         engine.connect(stemsMixerNode, to: mainMixer, format: nil)
     }
 
@@ -254,40 +325,167 @@ public final class AudioEngine {
         }
     }
 
-    /// Programs a generic "clean-with-bite" voicing into the static amp-sim
-    /// chain. This is the placeholder tone until the WebSocket handshake
-    /// task starts driving these values from the V2-matched preset.
+    /// Initialises every node in the chain to the safe baseline spec.
+    /// Called from init() and from applyTonePreset() to wipe any prior
+    /// state before applying nudges. Always programs the full graph so
+    /// node state stays in sync with `currentChainSpec`.
     private func configureDefaultAmpSimTone() {
-        // 3-band parametric EQ: gentle low-mid body, slight mid scoop,
-        // presence peak. Gains are conservative (±3 dB) so the floor
-        // stays usable for headphones.
-        let bands = ampSimEQ.bands
-        bands[0].filterType = .parametric
-        bands[0].frequency = 120
-        bands[0].bandwidth = 1.0
-        bands[0].gain = 2.5
-        bands[0].bypass = false
+        applyChain(.baseline)
+    }
 
-        bands[1].filterType = .parametric
-        bands[1].frequency = 700
-        bands[1].bandwidth = 1.2
-        bands[1].gain = -2.0
-        bands[1].bypass = false
+    /// Apply a ChainSpec to every node in the monitor graph. This is
+    /// the canonical entry point: the YAML-driven loader (P3c) and the
+    /// WS apply_chain handler (P3d) both route through here. Idempotent
+    /// — calling twice with the same spec is a no-op musically.
+    ///
+    /// All parameters are clamped before being written to the AU graph
+    /// so a YAML typo can never blow out a headphone bus.
+    public func applyChain(_ spec: ChainSpec) {
+        let safe = spec.clamped()
+        currentChainSpec = safe
 
-        bands[2].filterType = .parametric
-        bands[2].frequency = 3200
-        bands[2].bandwidth = 1.0
-        bands[2].gain = 3.0
-        bands[2].bypass = false
+        // -- Input HPF -----------------------------------------------
+        // 1-band EQ programmed as a high-pass. Band 0 is the HPF
+        // itself; gain field is unused on .highPass.
+        let hpfBands = inputHPF.bands
+        hpfBands[0].filterType = .highPass
+        hpfBands[0].frequency = safe.input.highPassHz
+        hpfBands[0].bypass = false
+        // Use globalGain to inject the input pre-gain — this avoids
+        // touching the saturator's pre-gain (which is reserved for the
+        // gain stage drive) while still giving us a clean trim knob.
+        inputHPF.globalGain = safe.input.gainDb
 
+        // -- Gain stage (distortion) ---------------------------------
+        applyGainStage(safe.gainStage)
+
+        // -- 4-band EQ -----------------------------------------------
+        let eqBands = ampSimEQ.bands
+        configureEqBand(eqBands[0], frequency: 120, bandwidth: 1.0,
+                        gain: safe.eq.bassDb)
+        configureEqBand(eqBands[1], frequency: 700, bandwidth: 1.2,
+                        gain: safe.eq.midDb)
+        configureEqBand(eqBands[2], frequency: 3200, bandwidth: 1.0,
+                        gain: safe.eq.trebleDb)
+        configureEqBand(eqBands[3], frequency: 6500, bandwidth: 0.8,
+                        gain: safe.eq.presenceDb)
         ampSimEQ.globalGain = 0
 
-        // Pre-gain drives the saturator; wet/dry stays mostly dry so the
-        // effect is character, not heavy distortion. Multi-decimated
-        // softclip is the most amp-like of the built-in presets.
-        ampSimDistortion.loadFactoryPreset(.multiDecimated1)
-        ampSimDistortion.preGain = -6
-        ampSimDistortion.wetDryMix = 25  // percent wet
+        // -- Compressor ----------------------------------------------
+        applyCompressor(safe.comp)
+
+        // -- Reverb --------------------------------------------------
+        applyReverb(safe.reverb)
+
+        // -- Output trim ---------------------------------------------
+        // outputVolume is linear; convert dB → linear once.
+        outputTrim.outputVolume = decibelsToLinearGain(safe.output.trimDb)
+    }
+
+    /// Identifier of the currently-applied chain. Exposed for the
+    /// WS handler's apply_chain_ack response and for diagnostics.
+    public func currentChainId() -> String {
+        return currentChainSpec.id
+    }
+
+    // MARK: - Section appliers (private)
+
+    private func configureEqBand(
+        _ band: AVAudioUnitEQFilterParameters,
+        frequency: Float,
+        bandwidth: Float,
+        gain: Float
+    ) {
+        band.filterType = .parametric
+        band.frequency = frequency
+        band.bandwidth = bandwidth
+        band.gain = gain
+        band.bypass = false
+    }
+
+    private func applyGainStage(_ stage: ChainSpec.GainStage) {
+        // Map the human-named tube character onto a built-in distortion
+        // factory preset. AVAudioUnitDistortion presets are coarse
+        // enough that this is the right granularity for MVP; the
+        // listening engagement (P3e) decides if any need swapping.
+        switch stage.type {
+        case .tubeClean:
+            ampSimDistortion.loadFactoryPreset(.multiEcho1)
+        case .tubeBreak:
+            ampSimDistortion.loadFactoryPreset(.multiDecimated1)
+        case .tubeOverdrive:
+            ampSimDistortion.loadFactoryPreset(.multiDecimated2)
+        case .tubeHighGain:
+            ampSimDistortion.loadFactoryPreset(.multiDistortedSquared)
+        }
+        // Drive 0.0–1.0 → preGain in dB. -24 dB at 0 drive is
+        // effectively dry; 0 dB at full drive is heavy saturation.
+        ampSimDistortion.preGain = -24 + (stage.drive * 24)
+        // Wet/dry: scale linearly into 0–100% with a floor so the
+        // saturator's character is always at least subtly present.
+        ampSimDistortion.wetDryMix = max(5, stage.drive * 100)
+    }
+
+    /// Program the DynamicsProcessor AU. Parameter IDs are stable
+    /// public constants on the AU; we set them via AudioUnitSetParameter
+    /// since AVAudioUnitEffect doesn't expose typed properties.
+    private func applyCompressor(_ comp: ChainSpec.Comp) {
+        compressor.bypass = !comp.enabled
+
+        let au = compressor.audioUnit
+        // Threshold is in dB, attack/release in seconds (we receive ms),
+        // ratio is dimensionless. Headroom + masterGain stay at defaults.
+        AudioUnitSetParameter(au,
+            kDynamicsProcessorParam_Threshold,
+            kAudioUnitScope_Global, 0,
+            comp.thresholdDb, 0)
+        // AVFoundation expresses the ratio as the headroom scale, but
+        // the DynamicsProcessor AU's "headroom amount" parameter is
+        // distinct from the ratio knob most users expect. We map the
+        // ChainSpec ratio onto kDynamicsProcessorParam_HeadRoom directly
+        // — values 1.0–20.0 map intuitively (1.0 ≈ no compression,
+        // higher = more aggressive ratio) and the AU clamps internally.
+        AudioUnitSetParameter(au,
+            kDynamicsProcessorParam_HeadRoom,
+            kAudioUnitScope_Global, 0,
+            comp.ratio, 0)
+        AudioUnitSetParameter(au,
+            kDynamicsProcessorParam_AttackTime,
+            kAudioUnitScope_Global, 0,
+            comp.attackMs / 1000.0, 0)
+        AudioUnitSetParameter(au,
+            kDynamicsProcessorParam_ReleaseTime,
+            kAudioUnitScope_Global, 0,
+            comp.releaseMs / 1000.0, 0)
+    }
+
+    private func applyReverb(_ verb: ChainSpec.Reverb) {
+        // Map the human-named reverb type plus size onto the closest
+        // AVAudioUnitReverbPreset. The AU's size is preset-coded; we
+        // shift to a "Large" variant when size > 0.6 and a "Small"
+        // variant when size < 0.3 where the preset family supports it.
+        let preset: AVAudioUnitReverbPreset
+        switch verb.type {
+        case .room:
+            preset = verb.size > 0.6 ? .largeRoom : .mediumRoom
+        case .plate:
+            preset = .plate
+        case .spring:
+            // No spring preset in AVAudioUnitReverb; small chamber
+            // is the closest tonal neighbour.
+            preset = .smallRoom
+        case .hall:
+            preset = verb.size > 0.6 ? .largeHall : .mediumHall
+        case .smallHall:
+            preset = .mediumHall
+        }
+        reverb.loadFactoryPreset(preset)
+        // wetDryMix is 0–100%; ChainSpec carries 0–1.
+        reverb.wetDryMix = verb.mix * 100
+    }
+
+    private func decibelsToLinearGain(_ db: Float) -> Float {
+        return powf(10.0, db / 20.0)
     }
 
     /// Applies a tone preset payload pushed from the web app via
@@ -334,13 +532,15 @@ public final class AudioEngine {
 
         // Tone tilt: "bright" lifts the presence band, "dark" / "warm"
         // pulls it down and adds body. Bandwidth/frequency stay put so
-        // we don't lose the underlying voicing.
+        // we don't lose the underlying voicing. Band indices match the
+        // 4-band layout in applyChain(): 0=bass, 1=mid, 2=treble,
+        // 3=presence.
         let bands = ampSimEQ.bands
         if lower.contains("bright") {
-            bands[2].gain += 3.0
+            bands[3].gain += 3.0
             bands[0].gain -= 1.0
         } else if lower.contains("dark") || lower.contains("warm") {
-            bands[2].gain -= 3.0
+            bands[3].gain -= 3.0
             bands[0].gain += 2.0
         }
 
