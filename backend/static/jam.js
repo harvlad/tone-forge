@@ -281,6 +281,14 @@
     if (statusEl) {
       let text = '';
       let ok = false;
+      // showLauncherLink: render a visible "Open Connect helper →"
+      // anchor below the status text when we're waiting for the helper
+      // to join. The synthesised anchor.click() inside the button
+      // handler works in Chrome but Safari silently drops
+      // programmatically-clicked custom-scheme URLs. A real
+      // user-clicked <a href="toneforge://…"> is the universal escape
+      // hatch — every browser treats it as a direct user gesture.
+      let showLauncherLink = false;
       if (paired && cb.lastPreset) {
         text = 'Tone preset synced with Connect.';
         ok = true;
@@ -290,10 +298,27 @@
         text = 'Connecting to the desktop helper…';
       } else if (cb.status === 'open') {
         text = 'Waiting for the desktop helper to join.';
+        showLauncherLink = !!cb.sessionId;
       } else if (cb.status === 'closed') {
         text = 'Desktop helper offline. Restart it from the tray menu.';
       }
       statusEl.textContent = text;
+      if (showLauncherLink) {
+        const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${scheme}//${window.location.host}/ws/connect-bridge`;
+        const deepLink =
+          'toneforge://pair'
+          + `?session=${encodeURIComponent(cb.sessionId)}`
+          + `&ws=${encodeURIComponent(wsUrl)}`;
+        const launcher = document.createElement('a');
+        launcher.href = deepLink;
+        launcher.textContent = 'Open Connect helper →';
+        launcher.className = 'connect-launcher-link';
+        // Space the link onto its own line so it's distinguishable
+        // from the status copy above it.
+        statusEl.appendChild(document.createElement('br'));
+        statusEl.appendChild(launcher);
+      }
       statusEl.hidden = !text;
       statusEl.classList.toggle('ok', ok);
     }
@@ -1349,15 +1374,22 @@
     //   1. Make sure the browser side of the bridge is alive so the
     //      helper has somewhere to join.
     //   2. Fire the toneforge:// deep link so an installed Connect.app
-    //      launches and joins the same session. We never assign to
-    //      ``window.location.href`` for this — on macOS Chrome / Safari
-    //      that *navigates the current page* when no handler is
-    //      registered, which wipes the in-memory jam state and looks
-    //      to the user like the server hung. The hidden-iframe trick
-    //      below is the canonical way to hand off a custom URL scheme
-    //      without losing the page: the iframe load fires the OS
-    //      handoff (if a handler exists) or silently fails (if not),
-    //      and the parent document stays put either way.
+    //      launches and joins the same session.
+    //
+    // Launcher choice: an anchor element with a synthetic ``.click()``
+    // inside this user-gesture handler. We tried two other patterns
+    // first and both failed in real browsers:
+    //   * ``window.location.href = deepLink`` (P2i) — on Brave/Chrome
+    //     this *navigates the current page* when no handler is
+    //     registered, wiping the jam UI and reloading bare ``/jam``.
+    //   * Hidden ``<iframe src=deepLink>`` (P2j) — Brave silently
+    //     drops iframe-initiated custom-scheme launches, so Connect
+    //     never opened even when it was installed and registered.
+    // An anchor click is treated by Brave/Chrome/Safari as a direct
+    // user action (inheriting the surrounding click's gesture), so
+    // the OS handoff fires when a handler is installed; when no
+    // handler is registered the click is a silent no-op and the
+    // parent document stays put. Same shape pattern Slack / Zoom use.
     ensureConnectBridge();
     const cbAfterKick = state.connectBridge;
     if (cbAfterKick.sessionId) {
@@ -1368,15 +1400,17 @@
         + `?session=${encodeURIComponent(cbAfterKick.sessionId)}`
         + `&ws=${encodeURIComponent(wsUrl)}`;
       try {
-        const ifr = document.createElement('iframe');
-        ifr.style.display = 'none';
-        ifr.src = deepLink;
-        document.body.appendChild(ifr);
-        // 1500 ms is long enough for the OS to claim the URL and short
-        // enough that we don't leak iframes on rapid re-clicks.
-        setTimeout(() => {
-          try { ifr.remove(); } catch {}
-        }, 1500);
+        const a = document.createElement('a');
+        a.href = deepLink;
+        a.style.display = 'none';
+        // ``rel=noopener`` keeps any handler-side window.open semantics
+        // from looking back at our document. ``target=_self`` keeps the
+        // click from being routed through any popup-blocker path.
+        a.rel = 'noopener';
+        a.target = '_self';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
       } catch (e) {
         console.warn('[connect] deep-link launch failed:', e);
       }

@@ -3797,6 +3797,24 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                                         # Add source URL to result
                                         result_data["source_url"] = url
                                         result_data["source_name"] = display_name or url[:50]
+                                        # P2k: persist to history so the Jam UI can
+                                        # write history_id into the URL bar — same
+                                        # contract as the server-pipeline branch
+                                        # below. Without this the local-engine path
+                                        # produces no id, the URL stays bare /jam,
+                                        # and a refresh drops the song.
+                                        try:
+                                            history_entry = _add_to_history({
+                                                "name": display_name or url[:50],
+                                                "detected_type": result_data.get("detected_type", "guitar"),
+                                                "summary": result_data.get("detection", {}).get("summary", ""),
+                                                "duration": result_data.get("duration_sec"),
+                                                "source_url": url,
+                                                "deep_analysis": is_deep,
+                                            }, full_result=result_data)
+                                            result_data["history_id"] = history_entry["id"]
+                                        except Exception as hist_err:
+                                            logger.warning(f"[analyze-url-stream] history persist failed on local-engine path: {hist_err}")
                                         yield send_event("progress", {"message": "Complete!", "percent": 100})
                                         yield send_event("result", {"data": _convert_numpy_types(result_data)})
                                     # Forward early-stems event so the frontend
