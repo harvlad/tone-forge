@@ -6,19 +6,25 @@
 // When launched from Finder with no subcommand, main.swift routes
 // here, which installs an NSStatusItem and starts an AppKit run loop.
 //
-// This file is the *skeleton*. The menu items below are stubs; each
-// becomes wired up in subsequent priority steps:
-//   * "Pair with browser…"  → P2c (WS v1 + toneforge:// deep-link)
-//   * "Microphone…"          → F3.1 (permission-denial recovery)
-//   * "Input / Output…"      → later (device picker UI)
-//   * "Check for Updates…"   → P2e (Sparkle)
-//   * Engine status text     → P2d (config-change recovery)
+// Wiring status:
+//   * "Pair with browser…"  → opens the web app; pairing completes
+//                              when the browser fires toneforge://pair
+//   * "Microphone…"         → F3.1 (permission-denial recovery)
+//   * "Input / Output…"     → later (device picker UI)
+//   * "Check for Updates…"  → P2e (Sparkle, shipped)
+//   * Engine status text    → live state from AudioEngine.onStateChange
 //
-// The skeleton's job today: make the .app bundle launch cleanly,
-// show a Dock + menu-bar presence, and quit cleanly. Nothing more.
+// Pairing handoff (P2h):
+//   The browser advertises an "Open in Connect" button that fires
+//   `toneforge://pair?session=<id>&ws=<encoded-url>` (token= reserved
+//   for a future signed handoff). macOS routes the URL to
+//   handleURLEvent below, which builds an AudioEngine + PresetBridge
+//   pair against the supplied session and surfaces live status
+//   through the menu-bar item — no Terminal required.
 //
 
 import AppKit
+import AVFoundation
 import ConnectCore
 import Foundation
 import Sparkle
@@ -35,18 +41,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// that triggers `checkForUpdates(_:)`.
     private var updaterController: SPUStandardUpdaterController?
 
+    // MARK: - Bridge / engine state (P2h)
+    //
+    // The GUI delegate owns the AudioEngine + PresetBridge once a
+    // deep-link pairs us with the browser. Stays nil until the user
+    // either picks "Pair with browser…" and completes the handoff, or
+    // arrives via `toneforge://pair?…` directly.
+    private var engine: AudioEngine?
+    private var bridge: PresetBridge?
+    private var currentSessionId: String?
+    private var currentServerURL: URL?
+
+    /// Header menu item that doubles as the live status line. We
+    /// rewrite its title from "idle" → "waiting" → "paired" → audio
+    /// state so the user can confirm pairing without opening Terminal.
+    private var statusMenuItem: NSMenuItem?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // URL events fire BEFORE applicationDidFinishLaunching when the
+        // app is cold-launched via a toneforge:// click — register the
+        // AppleEvent handler here or the very first deep link is
+        // silently dropped. (Apple Technical Note TN2106.)
+        registerURLSchemeHandler()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         installStatusItem()
-        registerURLSchemeHandler()
         installUpdater()
     }
 
     private func installUpdater() {
-        // startingUpdater:true kicks off the scheduled background check
-        // on its own timer (Sparkle's default is daily). The user can
-        // still force a check via the menu.
+        // Dev builds ship with the literal "__SPARKLE_PUBLIC_KEY__"
+        // placeholder still in Info.plist (build_release.sh stamps the
+        // real key only when CONNECT_SPARKLE_PUBLIC_KEY is set). In
+        // that case Sparkle's XPC updater can't validate appcast
+        // signatures, fires an "Unable to Check For Updates" alert on
+        // every cold launch, and blocks the menu-bar app from being
+        // usable. Detect the placeholder and start the controller with
+        // automatic checks disabled — the user can still force a check
+        // from the menu, but the dev session isn't interrupted.
+        let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? ""
+        let isDevBuild = key.isEmpty || key.contains("__")
+        if isDevBuild {
+            NSLog("[Connect] Sparkle: dev build (no SUPublicEDKey stamped) — auto-check disabled")
+        }
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: !isDevBuild,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
@@ -57,6 +97,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Returning false keeps the app alive until the user explicitly
         // quits from the status menu or Dock.
         return false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Belt-and-braces: tear down audio nodes before AppKit unwinds
+        // so AVAudioEngine doesn't log a "stopped without stop()" warning.
+        stopPairedBridge()
     }
 
     // MARK: - Status bar
@@ -77,17 +123,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
-        let statusItem = NSMenuItem(
+        let status = NSMenuItem(
             title: "Connect — idle",
             action: nil,
             keyEquivalent: ""
         )
-        statusItem.isEnabled = false
-        menu.addItem(statusItem)
+        status.isEnabled = false
+        menu.addItem(status)
+        statusMenuItem = status
 
         menu.addItem(.separator())
 
-        // P2c will replace this with a real pairing flow.
         let pair = NSMenuItem(
             title: "Pair with browser…",
             action: #selector(pairWithBrowser(_:)),
@@ -107,7 +153,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        // P2e will replace this with a Sparkle-backed check.
         let update = NSMenuItem(
             title: "Check for Updates…",
             action: #selector(checkForUpdates(_:)),
@@ -128,11 +173,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    // MARK: - Menu actions (stubs)
+    /// Push a one-liner into the status menu so the user sees
+    /// connection / audio state without opening Terminal.
+    private func setStatus(_ text: String) {
+        statusMenuItem?.title = "Connect — \(text)"
+    }
+
+    // MARK: - Menu actions
 
     @objc private func pairWithBrowser(_ sender: Any?) {
-        // P2c lands the real flow. Until then, surface a transparent
-        // message so an internal tester knows where the work is going.
+        // The pairing flow runs from the browser: it generates the
+        // toneforge:// deep link and macOS routes it back to
+        // handleURLEvent below. Until that link fires we just open
+        // the web app and surface a waiting hint in the menu so the
+        // user knows we're alive and watching for the handoff.
+        setStatus("waiting to pair…")
         NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8000/")!)
     }
 
@@ -158,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater.checkForUpdates(sender)
     }
 
-    // MARK: - URL scheme (toneforge://)
+    // MARK: - URL scheme (toneforge://) — P2h
 
     private func registerURLSchemeHandler() {
         NSAppleEventManager.shared().setEventHandler(
@@ -178,11 +233,182 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let url = URL(string: urlString)
         else { return }
 
-        // toneforge://pair?token=…&ws=…
-        // Real handling lands in P2c. Today we just log it so the
-        // path through deep-link → app is verifiable end-to-end.
-        let scheme = url.scheme ?? "(no-scheme)"
-        let host = url.host ?? "(no-host)"
-        NSLog("[Connect] received deep link scheme=\(scheme) host=\(host)")
+        // toneforge://pair?session=…&ws=…&token=…
+        // token= is reserved for a future signed-handoff phase; we
+        // accept and ignore it today so the browser can roll the
+        // signed flow out without breaking older Connect builds.
+        guard url.scheme == "toneforge", url.host == "pair" else {
+            NSLog("[Connect] ignoring deep link scheme=\(url.scheme ?? "?") host=\(url.host ?? "?")")
+            return
+        }
+        guard
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            NSLog("[Connect] deep link parse failed: \(urlString)")
+            return
+        }
+        var query: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            if let value = item.value {
+                query[item.name] = value
+            }
+        }
+        let session = query["session"] ?? "default"
+        let wsString = query["ws"] ?? "ws://127.0.0.1:8000/ws/connect-bridge"
+        guard let wsURL = URL(string: wsString) else {
+            NSLog("[Connect] deep link has invalid ws URL: \(wsString)")
+            setStatus("pair failed: bad ws URL")
+            return
+        }
+        NSLog("[Connect] deep-link pair session=\(session) ws=\(wsString)")
+        startPairedBridge(sessionId: session, serverURL: wsURL)
+    }
+
+    // MARK: - Bridge lifecycle (P2h)
+    //
+    // Mirrors ConnectMain.startBridge() but lives inside the GUI
+    // delegate so the AppKit run loop drives the engine instead of
+    // RunLoop.current.run(). Status messages route to the menu bar.
+
+    private func startPairedBridge(sessionId: String, serverURL: URL) {
+        // Idempotent: don't tear down a healthy session if the user
+        // re-fires the same deep link (clicking "Open in Connect"
+        // twice is the most likely cause).
+        if currentSessionId == sessionId,
+           currentServerURL == serverURL,
+           bridge != nil {
+            setStatus("already paired: \(sessionId)")
+            return
+        }
+
+        // Different params → stop the prior session before starting
+        // fresh. Otherwise we'd run two engines competing for the
+        // microphone.
+        stopPairedBridge()
+
+        // Microphone gate. We can't start the engine without the
+        // user's blessing, and starting silently after a "Don't
+        // Allow" leaves the user wondering why nothing works.
+        let auth = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch auth {
+        case .authorized:
+            launchEngineAndBridge(sessionId: sessionId, serverURL: serverURL)
+        case .notDetermined:
+            setStatus("requesting microphone access…")
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async { [weak self] in
+                    if granted {
+                        self?.launchEngineAndBridge(sessionId: sessionId, serverURL: serverURL)
+                    } else {
+                        self?.surfaceMicrophoneDenied()
+                    }
+                }
+            }
+        case .denied, .restricted:
+            surfaceMicrophoneDenied()
+        @unknown default:
+            surfaceMicrophoneDenied()
+        }
+    }
+
+    private func surfaceMicrophoneDenied() {
+        setStatus("microphone denied")
+        let alert = NSAlert()
+        alert.messageText = "ToneForge Connect needs microphone access"
+        alert.informativeText = "Connect listens to your guitar to apply matched tone. Grant access in System Settings → Privacy & Security → Microphone, then try pairing again."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            openMicrophoneSettings(nil)
+        }
+    }
+
+    private func launchEngineAndBridge(sessionId: String, serverURL: URL) {
+        let engine = AudioEngine()
+        // Default monitor gain matches the CLI bridge subcommand —
+        // muted is safest; the browser's slider drives it up.
+        engine.inputMonitorGain = 0.0
+        engine.ampSimEnabled = true
+        engine.onStateChange = { [weak self] state in
+            // Translate the state to a status string at the call site
+            // so we don't have to capture `self` into a switch that
+            // straddles the actor boundary; the main-queue dispatch
+            // below just calls setStatus with the prepared string.
+            let title: String
+            switch state {
+            case .stopped:
+                title = "audio stopped"
+            case .starting:
+                title = "audio starting…"
+            case .running:
+                title = "paired: \(sessionId)"
+            case .reconfiguring(let reason):
+                title = "audio reconfiguring (\(reason))"
+            case .failed(let error):
+                title = "audio failed: \(error)"
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.setStatus(title)
+            }
+        }
+
+        do {
+            try engine.start()
+        } catch {
+            setStatus("audio failed: \(error.localizedDescription)")
+            NSLog("[Connect] engine failed to start: \(error)")
+            return
+        }
+
+        let bridge = PresetBridge(serverURL: serverURL, sessionId: sessionId)
+        bridge.onStatus = { msg in
+            NSLog("[Connect] [bridge] \(msg)")
+        }
+        bridge.onPresetPush = { [weak engine] preset in
+            engine?.applyTonePreset(preset)
+        }
+        bridge.onGainChange = { [weak engine] gain in
+            engine?.inputMonitorGain = gain
+        }
+        bridge.onChainApply = { [weak engine] spec in
+            engine?.applyChain(spec)
+        }
+        bridge.onVersionMismatch = { [weak self] required in
+            NSLog("[Connect] version mismatch: server requires v\(required)")
+            DispatchQueue.main.async { [weak self] in
+                self?.stopPairedBridge()
+                self?.surfaceVersionMismatch(required: required)
+            }
+        }
+        bridge.start()
+
+        self.engine = engine
+        self.bridge = bridge
+        self.currentSessionId = sessionId
+        self.currentServerURL = serverURL
+        setStatus("paired: \(sessionId)")
+    }
+
+    private func surfaceVersionMismatch(required: Int) {
+        let alert = NSAlert()
+        alert.messageText = "ToneForge Connect is out of date"
+        alert.informativeText = "The ToneForge server requires protocol v\(required). Update Connect to continue."
+        alert.addButton(withTitle: "Check for Updates")
+        alert.addButton(withTitle: "Quit")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            updaterController?.checkForUpdates(nil)
+        } else {
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
+    private func stopPairedBridge() {
+        bridge?.stop()
+        engine?.stop()
+        bridge = nil
+        engine = nil
+        currentSessionId = nil
+        currentServerURL = nil
     }
 }

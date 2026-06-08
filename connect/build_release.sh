@@ -204,6 +204,24 @@ plutil -replace CFBundleShortVersionString -string "$VERSION" \
 plutil -replace CFBundleVersion -string "$BUILD" \
     "$APP_BUNDLE/Contents/Info.plist"
 
+# Sparkle.framework — the Connect binary is linked with
+# @rpath/Sparkle.framework/... and rpath is @executable_path/../lib, so
+# the framework MUST land at Contents/lib/Sparkle.framework or the app
+# aborts at launch with "Library not loaded: @rpath/Sparkle.framework".
+# Source it from the same swift build directory we just compiled out
+# of so the bundled Sparkle matches what the binary was linked against.
+SPARKLE_SRC="$(dirname "$BIN_PATH")/Sparkle.framework"
+if [[ -d "$SPARKLE_SRC" ]]; then
+    log "Embedding Sparkle.framework from $SPARKLE_SRC"
+    mkdir -p "$APP_BUNDLE/Contents/lib"
+    # -R preserves the framework's symlink structure (Versions/Current,
+    # top-level Sparkle → Versions/B/Sparkle, etc.). cp -r would
+    # dereference the symlinks and produce an invalid framework.
+    cp -R "$SPARKLE_SRC" "$APP_BUNDLE/Contents/lib/"
+else
+    die "Sparkle.framework not found at $SPARKLE_SRC — swift build must produce it alongside the binary"
+fi
+
 # Sparkle public key — stamp in the EdDSA public half so a shipped
 # build can verify the signature on incoming appcast entries. The
 # Info.plist on disk holds the literal __SPARKLE_PUBLIC_KEY__
