@@ -1339,10 +1339,29 @@
       flashConnectStatus('Still connecting — give it a sec.');
       return;
     }
-    // Not paired (open w/ no peers, or closed). Kick the socket and let
-    // renderConnectStatus take over once state changes. Tell the user
-    // what we just did so the click registers.
+    // Not paired (open w/ no peers, or closed). Two things have to
+    // happen here:
+    //   1. Make sure the browser side of the bridge is alive so the
+    //      helper has somewhere to join.
+    //   2. Fire the toneforge:// deep link so an installed Connect.app
+    //      launches and joins the same session. If Connect isn't
+    //      installed, the browser silently no-ops on the unknown
+    //      scheme — the WS kick still happens, so re-clicking after a
+    //      manual install works the same way.
     ensureConnectBridge();
+    const cbAfterKick = state.connectBridge;
+    if (cbAfterKick.sessionId) {
+      const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${scheme}//${window.location.host}/ws/connect-bridge`;
+      const deepLink =
+        'toneforge://pair'
+        + `?session=${encodeURIComponent(cbAfterKick.sessionId)}`
+        + `&ws=${encodeURIComponent(wsUrl)}`;
+      // Assigning to location.href is the standard browser handoff to
+      // a custom URL scheme. The page itself does not navigate when
+      // the OS hands the URL to a registered handler.
+      window.location.href = deepLink;
+    }
     flashConnectStatus('Reaching out to the desktop helper…');
   });
 
