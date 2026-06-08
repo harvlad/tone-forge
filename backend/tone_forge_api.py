@@ -180,6 +180,34 @@ from tone_forge.session import build as build_session_bundle, serialize as seria
 from tone_forge import tone as tone_retrieval
 from tone_forge.contracts import UserRole as _UserRole
 
+# Monitor chain bank — curated fallback chains (Priority 3). Resolved at
+# the API edge so the Connect side ships without a YAML parser.
+from tone_forge.contracts import MonitorChain as _MonitorChain
+from tone_forge.monitor import (
+    ChainNotFoundError as _ChainNotFoundError,
+    ChainSpecError as _ChainSpecError,
+    load_chain as _load_monitor_chain,
+)
+
+
+def _monitor_chain_to_wire(chain: _MonitorChain) -> dict:
+    """Project a ``MonitorChain`` dataclass into the JSON-safe shape that
+    crosses the connect-bridge socket.
+
+    The ``MonitorChainFamily`` enum is collapsed to its string value so
+    the Swift side doesn't need to mirror the enum's symbol space.
+    ``parameters`` is forwarded verbatim — the loader already proved
+    it's a plain dict.
+    """
+
+    return {
+        "id": chain.id,
+        "family": chain.family.value,
+        "display_name": chain.display_name,
+        "description": chain.description,
+        "parameters": chain.parameters,
+    }
+
 logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
@@ -310,6 +338,12 @@ class _ConnectChannel:
         # helper restores the gain the user dialed in, instead of
         # snapping back to the muted default.
         self.last_gain: float | None = None
+        # Last applied monitor chain (resolved spec, not just the id).
+        # Same replay rationale: a reconnecting Connect helper rebuilds
+        # the AVAudioEngine graph from this cached spec without needing
+        # to query the server again. ``None`` means "no chain applied
+        # this session" — Connect falls back to its dry passthrough.
+        self.last_chain: dict | None = None
 
     async def join(self, ws: WebSocket) -> None:
         self.clients.add(ws)
@@ -321,6 +355,16 @@ class _ConnectChannel:
         if self.last_gain is not None:
             try:
                 await ws.send_json({"type": "set_gain", "gain": self.last_gain, "replayed": True})
+            except Exception:
+                pass
+        if self.last_chain is not None:
+            try:
+                await ws.send_json({
+                    "type": "apply_chain",
+                    "chain_id": self.last_chain.get("id"),
+                    "chain": self.last_chain,
+                    "replayed": True,
+                })
             except Exception:
                 pass
 
@@ -435,6 +479,52 @@ async def connect_bridge(ws: WebSocket) -> None:
                 gain = max(0.0, min(1.0, gain))
                 channel.last_gain = gain
                 await channel.broadcast(ws, {"type": "set_gain", "gain": gain})
+            elif mtype == "apply_chain":
+                # UI overrides auto-applied tone with a curated monitor
+                # chain. The server resolves the id → spec here so
+                # Connect doesn't carry a YAML parser, and so an invalid
+                # id surfaces as an explicit error frame instead of a
+                # silent passthrough to a confused helper.
+                rid = msg.get("request_id")
+                chain_id = msg.get("chain_id")
+                if not isinstance(chain_id, str) or not chain_id:
+                    await ws.send_json({
+                        "type": "error",
+                        "code": "chain_id_missing",
+                        "message": "apply_chain frame requires a non-empty chain_id",
+                        "retriable": False,
+                    })
+                    continue
+                try:
+                    chain = _load_monitor_chain(chain_id)
+                except _ChainNotFoundError as exc:
+                    await ws.send_json({
+                        "type": "error",
+                        "code": "chain_not_found",
+                        "message": str(exc),
+                        "retriable": False,
+                    })
+                    continue
+                except _ChainSpecError as exc:
+                    # A malformed YAML in the bundled bank is a
+                    # ship-blocking bug. Surface it; don't broadcast.
+                    logger.error(f"[connect-bridge] chain spec invalid for {chain_id}: {exc}")
+                    await ws.send_json({
+                        "type": "error",
+                        "code": "chain_spec_invalid",
+                        "message": str(exc),
+                        "retriable": False,
+                    })
+                    continue
+                spec = _monitor_chain_to_wire(chain)
+                channel.last_chain = spec
+                await channel.broadcast(ws, {
+                    "type": "apply_chain",
+                    "chain_id": spec["id"],
+                    "chain": spec,
+                })
+                if rid is not None:
+                    await ws.send_json({"type": "ack", "request_id": rid})
             else:
                 # Pass-through for any other typed message (status, transport
                 # commands, etc.) so we don't have to keep adding branches.

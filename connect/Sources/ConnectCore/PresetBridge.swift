@@ -44,6 +44,13 @@ public final class PresetBridge {
     /// Argument is the version the server requires.
     public var onVersionMismatch: ((Int) -> Void)?
 
+    /// Fired on the main queue when an ``apply_chain`` frame arrives
+    /// with a decodable spec. The CLI/UI is expected to forward the
+    /// spec to ``AudioEngine.applyChain(_:)``. Malformed frames
+    /// (missing parameters, wrong types) are dropped silently — see
+    /// ``ChainSpec.decode(fromWireDict:)``.
+    public var onChainApply: ((ChainSpec) -> Void)?
+
     public private(set) var sessionId: String
     public private(set) var serverURL: URL
     public private(set) var isRunning = false
@@ -183,6 +190,21 @@ public final class PresetBridge {
                 DispatchQueue.main.async { [weak self] in
                     self?.onPresetPush?(preset)
                 }
+            }
+        case ConnectProtocol.MessageType.applyChain:
+            // The server has resolved a chain_id into a fully-populated
+            // spec. Decode it; on success forward to the audio engine.
+            // We accept either an embedded "chain" envelope (current
+            // protocol) or — defensively — the spec at the top level.
+            let raw = (dict["chain"] as? [String: Any]) ?? dict
+            if let spec = ChainSpec.decode(fromWireDict: raw) {
+                let replayed = (dict["replayed"] as? Bool) ?? false
+                onStatus?("apply_chain received id=\(spec.id) (replayed=\(replayed))")
+                DispatchQueue.main.async { [weak self] in
+                    self?.onChainApply?(spec)
+                }
+            } else {
+                onStatus?("apply_chain frame failed to decode; dropping")
             }
         case "set_gain":
             // The server sends the gain as a JSON number; JSONSerialization

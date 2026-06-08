@@ -31,6 +31,13 @@ public enum ConnectProtocol {
         public static let joined            = "joined"
         public static let presetPush        = "preset_push"
         public static let setGain           = "set_gain"
+        /// Monitor chain applied at the API edge. Frame shape:
+        ///   { "type": "apply_chain", "chain_id": "...", "chain": {...} }
+        /// The server resolves chain_id → spec from the bundled bank
+        /// (backend/tone_forge/monitor/chains/*.yaml) so Connect does
+        /// not ship a YAML parser. Spec round-trip: load_chain →
+        /// _monitor_chain_to_wire → ChainSpec.decode(fromWireDict:).
+        public static let applyChain        = "apply_chain"
         public static let ping              = "ping"
         public static let pong              = "pong"
         public static let ack               = "ack"

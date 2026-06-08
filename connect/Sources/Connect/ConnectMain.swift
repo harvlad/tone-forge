@@ -323,6 +323,14 @@ struct Connect {
             engine.inputMonitorGain = gain
             print(String(format: "  [bridge] monitor gain set to %.2f", gain))
         }
+        bridge.onChainApply = { spec in
+            // Curated monitor chain selected upstream (UI fallback list
+            // or retrieval LOW-tier auto-pick). Replaces whatever the
+            // preset heuristic last set; subsequent presetPush still
+            // works — applyTonePreset() resets to baseline first.
+            print("  [bridge] applying chain \(spec.id) (\(spec.displayName))")
+            engine.applyChain(spec)
+        }
         bridge.start()
 
         // Keep the process alive until Ctrl-C.
