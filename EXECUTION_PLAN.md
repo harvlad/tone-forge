@@ -20,8 +20,8 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 2 | Connect hardening | Active — focused-pass landed (see §0) |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
-| 5 | Session Engine consolidation | Active |
-| 6 | Retrieval confidence calibration | Active |
+| 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
+| 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; isotonic refit deferred (see §0) |
 | 7 | Device Discovery | Active — P7/P7e/P7f scaffold landed |
 | 8 | Song Understanding expansion | Investigation only |
 | — | MIDI extraction internals | Frozen |
@@ -162,6 +162,103 @@ Commits 7976576, 190680e, f5a0449:
 - Helper joins on Safari + URL id on the local-engine path
 - Fix deep-link nuking page; accept `history_id` for `/jam` URL
 - Fire `toneforge://pair` from the Jam Connect button
+
+### Session Engine consolidation (Priority 5) — complete in main
+
+All 5 commits in §9 #26–30 are shipped and tested. Survey
+confirmed no remaining scope in this track.
+
+- `backend/tone_forge/session/protocol.py` (270 L) —
+  `PROTOCOL_VERSION = 1`, `envelope()`, 19 message types
+  (`hello`, `hello_ack`, `joined`, `ack`, `error`, `ping`, `pong`,
+  `set_transport`, `set_loop`, `set_user_mute`, `set_monitor_gain`,
+  `set_gain` legacy alias, `apply_tone`, `apply_chain`,
+  `transport_state`, `tone_applied`, `peer_left`, `device_lost`,
+  `device_changed`, `latency_report`).
+- `backend/tone_forge/session/transport.py` (256 L) —
+  `TransportState` reducer with identity-preserving debounce.
+  Handles play/pause/position/tempo, loop in/out, user mute,
+  monitor gain. Tempo clamped 0.5–1.0. Gain clamped 0–1. Malformed
+  frames are dropped silently.
+- `backend/tone_forge/session/bundle.py` (485 L) —
+  `SessionBundle.build()` translates legacy `AnalysisResult` dict
+  into the new contract; `serialize()` writes JSON-safe output.
+  Lenient: missing/bad data projects to sensible defaults instead
+  of raising.
+- `GET /api/session/{entry_id}` at `tone_forge_api.py:2222` —
+  404 on missing entry, 422 on entries without `result` blob, 200
+  with serialized bundle. Composes with Priority 6 via
+  `_retrieve_tone_for_history()` injecting `ToneMatch`.
+- Jam UI `static/jam.js:1864–1960` — deep-link route fetches
+  `/api/session/:id`, adapter `bundleToLegacyResult()` projects
+  back onto legacy shape so the rest of the UI didn't need to
+  rewrite for this pass. Studio UI unchanged per §6.
+
+Tests: `test_session_protocol.py` (13), `test_session_transport.py`
+(27), `test_session_bundle.py` (21), `test_session_route.py` (13).
+74/74 PASS.
+
+Cross-subsystem boundary check: session/ has no cross-imports of
+other subsystem internals; consumers reach in via the
+`tone_forge.session` package surface only.
+
+### Retrieval confidence calibration (Priority 6) — shipped surface
+
+Shipped in `main` (4 modules / 660 L) and now lands the in-flight
+matcher + instrumentation:
+
+- `backend/tone_forge/tone/__init__.py` (235 L) — package surface,
+  `ToneMatch` DTO, `Calibrator` Protocol, `_CALIBRATOR` indirection
+  so the placeholder model can be swapped for a fitted isotonic
+  regression without touching call sites.
+- `backend/tone_forge/tone/calibration.py` (135 L) — placeholder
+  calibrator `exp(-d / tau)` with `tau` retuned per call-site; caps
+  output at 0.79 (just below `HIGH_MIN`) so HIGH only fires once
+  the fitted model lands.
+- `backend/tone_forge/tone/tiers.py` (126 L) — `classify()` returns
+  HIGH if confidence ≥ 0.80 AND margin ≥ 0.20; MEDIUM if
+  confidence ≥ 0.55 OR margin ≥ 0.10; otherwise LOW; UNKNOWN on
+  retrieval failure.
+- `backend/tone_forge/tone/policy.py` (164 L) —
+  `select_fallback_chain(tempo, key)`: tempo > 140 → modern_gain,
+  tempo < 90 → ambient, 90–140 + major → clean_strat, 90–140 +
+  minor/unknown → classic_rock, no tempo → edge_of_breakup.
+
+Landing now (uncommitted; this commit):
+
+- `backend/tone_forge/tone/guitar_catalog.py` (968 L) — monitor-chain
+  matcher. Extracts an 8-feature DSP fingerprint, z-normalizes
+  against the catalog distribution, picks the nearest chain,
+  inlines `exp(-d / TAU)` with `DISTANCE_TAU = 14.0` (different
+  scale than `tone.calibration` because of z-normalization), reuses
+  `tone.tiers.classify` and `tone.policy.select_fallback_chain`
+  verbatim. Public surface: `recommend()`,
+  `recommend_from_tempo_key()`, `to_wire_dict()`.
+- `backend/tone_forge/tone/instrumentation.py` (197 L) — append-only
+  JSONL telemetry at `backend/data/tone_log.jsonl`. Three event
+  types: `recommendation`, `applied`, `ignored`. Each line is a
+  self-contained event. Wire format is flat to keep
+  `pandas.read_json(lines=True)` consumption trivial at refit time.
+
+Composition (not changing — already in main): the API seam
+`tone_forge_api.py:_retrieve_tone_for_history` injects `ToneMatch`
+into `/api/session/:id`. There is no standalone `/api/tone/retrieve`
+endpoint and that is intentional per §7.
+
+Deferred (operator's call, not this commit):
+- Collect ≥100 hand-labeled clips (chain, tempo, key, perceived
+  confidence) — input to the calibration refit.
+- Fit isotonic regression on those labels; ship as
+  `backend/tone_forge/tone/calibration_v1.joblib`. Drop-in via
+  `_CALIBRATOR` rebind — no caller changes.
+
+Tests: 89/89 tone tests green
+(`test_tone_calibration.py` 23, `test_tone_tiers.py` 23,
+`test_tone_policy.py` 22, `test_tone_retrieve.py` 21).
+
+Boundary check: `tone/` does not import `preset_catalog/`; the only
+cross-subsystem composition lives at the API seam, exactly as §7
+specifies.
 
 ### Chord detection (Priority 4) — MVP shipped, validation in-flight
 
