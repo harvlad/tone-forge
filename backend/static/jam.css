@@ -480,6 +480,40 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
   font-size: 13px;
   margin-top: 4px;
 }
+.onboarding-input-row[hidden],
+.onboarding-input-picker[hidden] { display: none !important; }
+.onboarding-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim, #aaa);
+  margin-top: 4px;
+}
+.onboarding-input-name { color: var(--text); font-weight: 600; }
+.onboarding-input-change-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font-size: 13px;
+  text-decoration: underline;
+}
+.onboarding-input-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.onboarding-input-picker-label { font-size: 13px; color: var(--text-dim, #aaa); }
+.onboarding-input-picker select {
+  padding: 8px;
+  background: var(--panel, #1a1a1a);
+  color: var(--text);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+}
 #onboarding-submit { margin-top: 8px; align-self: flex-end; }
 
 /* ----------------------------------------------- Settings popover */

@@ -2361,6 +2361,43 @@
     }
   }
 
+  // Latest probe result; populated asynchronously after the modal opens.
+  // The submit handler reads from it to compose `audio_input_name`.
+  let _devicesProbeResult = null;
+
+  async function fetchDeviceProbe() {
+    try {
+      const res = await fetch('/api/device/probe');
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      console.warn('[onboarding] GET /api/device/probe failed:', e);
+      return null;
+    }
+  }
+
+  function populateOnboardingProbeUI(probe) {
+    if (!probe || !probe.probe_succeeded || !probe.suggested_input) return;
+    const detectedRow = $('onboarding-input-detected');
+    const nameEl = $('onboarding-input-name');
+    const select = $('onboarding-input-select');
+    if (!detectedRow || !nameEl || !select) return;
+    nameEl.textContent = probe.suggested_input.name;
+    // Repopulate the <select> from probe.devices, suggested input first.
+    select.innerHTML = '';
+    const devices = Array.isArray(probe.devices) ? probe.devices : [];
+    for (const d of devices) {
+      const opt = document.createElement('option');
+      opt.value = d.name;
+      opt.textContent = d.name;
+      if (probe.suggested_input && d.name === probe.suggested_input.name) {
+        opt.selected = true;
+      }
+      select.appendChild(opt);
+    }
+    detectedRow.hidden = false;
+  }
+
   function showOnboardingModal() {
     const modal = $('onboarding-modal');
     if (!modal) return;
@@ -2368,6 +2405,13 @@
     // Focus the first option for keyboard users.
     const first = modal.querySelector('input[name="device-class"]');
     if (first) first.focus();
+    // Kick off the probe — do NOT await; the modal is interactive
+    // immediately, and the Detected row simply appears later when /
+    // if the probe resolves successfully.
+    fetchDeviceProbe().then((probe) => {
+      _devicesProbeResult = probe;
+      populateOnboardingProbeUI(probe);
+    });
   }
 
   function hideOnboardingModal() {
@@ -2380,11 +2424,43 @@
     if (form) form.reset();
     const err = $('onboarding-error');
     if (err) { err.hidden = true; err.textContent = ''; }
+    // Hide the probe rows; the next show() will re-fetch and reveal.
+    const detectedRow = $('onboarding-input-detected');
+    if (detectedRow) detectedRow.hidden = true;
+    const picker = $('onboarding-input-picker');
+    if (picker) picker.hidden = true;
+    _devicesProbeResult = null;
+  }
+
+  function chosenAudioInputName() {
+    // Returns the audio input name the user has either accepted
+    // (Detected row visible) or picked from the dropdown, or null
+    // when the probe row never appeared.
+    const detectedRow = $('onboarding-input-detected');
+    const picker = $('onboarding-input-picker');
+    if (picker && !picker.hidden) {
+      const select = $('onboarding-input-select');
+      return select && select.value ? select.value : null;
+    }
+    if (detectedRow && !detectedRow.hidden) {
+      const nameEl = $('onboarding-input-name');
+      return nameEl && nameEl.textContent ? nameEl.textContent : null;
+    }
+    return null;
   }
 
   function initOnboardingUI() {
     const form = $('onboarding-form');
     if (!form) return;
+    const changeBtn = $('onboarding-input-change');
+    if (changeBtn) {
+      changeBtn.addEventListener('click', () => {
+        const detectedRow = $('onboarding-input-detected');
+        const picker = $('onboarding-input-picker');
+        if (detectedRow) detectedRow.hidden = true;
+        if (picker) picker.hidden = false;
+      });
+    }
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const selected = form.querySelector('input[name="device-class"]:checked');
@@ -2396,14 +2472,17 @@
       const submitBtn = $('onboarding-submit');
       if (submitBtn) submitBtn.disabled = true;
       try {
+        const reqBody = { device_class: selected.value };
+        const inputName = chosenAudioInputName();
+        if (inputName) reqBody.audio_input_name = inputName;
         const res = await fetch('/api/device/preferences', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_class: selected.value }),
+          body: JSON.stringify(reqBody),
         });
         if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail || `HTTP ${res.status}`);
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.detail || `HTTP ${res.status}`);
         }
         const prefs = await res.json();
         updateDeviceSettingLabel(prefs);

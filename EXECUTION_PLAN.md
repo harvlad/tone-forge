@@ -22,7 +22,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed (see §0); isotonic refit deferred |
-| 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) landed (see §0); CoreAudio probe pre-fill (item #36) still deferred |
+| 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) all landed (see §0) |
 | 8 | Song Understanding expansion | Investigation only |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
@@ -39,6 +39,52 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### CoreAudio probe pre-fill (Priority 7 — item #36)
+
+The §7 plan called for the onboarding modal to seed
+`audio_input_name` from the existing `discovery.probe()` rather than
+leaving the field `null` until the user opens settings later. The
+probe function (shells out to `connect devices --json`) and the
+`audio_input_name` field on `DevicePreferences` had been in place
+since the P7 scaffold; this entry closes the UX gap.
+
+| Change | File |
+|---|---|
+| `GET /api/device/probe` endpoint + serializer for `DeviceProbe` / `AudioDeviceInfo`. Belt-and-braces try/except: even if `probe()` ever raises, the route returns 200 with `probe_succeeded=False` so the modal is never 500'd. | `backend/tone_forge_api.py` |
+| Onboarding modal markup: new "Detected: <name> — Change" row + hidden `<select>` picker, both initially `hidden` so the modal still renders the moment it opens. | `backend/static/jam.html` |
+| Minimal CSS for the new rows; matches the existing onboarding panel idiom. | `backend/static/jam.css` |
+| Probe fetched async on modal open; UI populates the Detected row only on `probe_succeeded`. `Change` link swaps Detected for the `<select>`. Submit handler now includes `audio_input_name` (from Detected or picker) when the row is visible; omits it when the probe failed or the helper isn't installed, preserving the existing `audio_input_name=null` path. | `backend/static/jam.js` |
+| New endpoint tests: success path, `probe_succeeded=False` path, contract-violation `probe()` raise path. | `backend/tests/test_api_device_probe.py` |
+
+UX decisions documented in the plan file
+(`~/.claude/plans/ancient-mixing-turing.md`):
+- **Detected + Change reveal** over an always-visible dropdown
+  (minimum visual weight in the modal; default Just Works).
+- **Render modal immediately, pre-fill async** — the probe takes
+  hundreds of ms when the helper isn't on PATH, and we never want
+  the modal to block on it.
+
+Verification:
+- `tests/test_api_device_probe.py` — 3/3 PASS.
+- `tests/test_api_device_preferences.py` — 9/9 PASS
+  (unchanged; the POST endpoint already accepted `audio_input_name`).
+- `tests/test_devices_discovery.py` — full probe-internal coverage
+  unchanged. PASS.
+- Broader sweep (probe + preferences + devices + session + tone +
+  connect bridge): 275/275 PASS.
+
+Not in this entry:
+- Runtime consumption of `audio_input_name` by the audio pipeline.
+  The onboarding loop now captures the value; downstream wiring is
+  the next P7 surface.
+- Re-prompt when the detected device changes between sessions. Per
+  the §8 spec, re-prompt is gated on `device_class === null` or an
+  explicit settings reset; an interface swap alone does not trigger
+  it.
+- Vendor-hint surfacing in the modal. The probe returns
+  `vendor_hint` but no downstream consumer needs it yet; it stays
+  on the wire for future use.
 
 ### DeviceCaps consumer wiring (Priority 7 — item #38)
 
@@ -79,14 +125,17 @@ Verification:
   connect_bridge / tone_* suites — 145/145 PASS.
 
 Not in this entry:
-- CoreAudio probe pre-fill (item #36). The onboarding modal still
-  takes a single answer with no probed input-name hint.
+- CoreAudio probe pre-fill (item #36) — landed in the entry above
+  this one, where the onboarding modal now surfaces the probed
+  interface name and the chosen `audio_input_name` is persisted.
 - Connect-side consumption of `preferred_chain_family`. The bridge
   exposes `apply_chain` keyed by chain id; if Jam handed it the
   bundle's `tone.fallback_chain_id` the user's pinned family would
   already route, so no bridge-side change was needed. Mentioned here
   for the audit trail.
-- Honoring `audio_input_name` from prefs (queued behind the probe).
+- Runtime consumption of `audio_input_name` by the audio pipeline.
+  Onboarding now captures the value (see #36 entry above) but
+  nothing downstream reads it yet.
 
 ### Jam onboarding modal (Priority 7 — item #37)
 
@@ -119,8 +168,9 @@ Verification:
 Not in this entry:
 - `DeviceCaps` consumer wiring (item #38) — landed in the entry
   above; the modal-only commit just got the answer persisted.
-- CoreAudio probe pre-fill (item #36). Single-question modal alone;
-  no probed input-name hint is shown.
+- CoreAudio probe pre-fill (item #36) — landed in a later entry.
+  At the time of this entry the modal was a single answer with no
+  probed input-name hint.
 
 ### tone → monitor boundary fix (follow-up to Priority 6)
 

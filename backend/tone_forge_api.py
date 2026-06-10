@@ -182,12 +182,15 @@ from tone_forge.devices import (
     caps_from_preferences as _caps_from_preferences,
     clear_preferences as _clear_device_preferences,
     load_preferences as _load_device_preferences,
+    probe as _device_probe,
     save_preferences as _save_device_preferences,
 )
 from tone_forge.contracts import (
+    AudioDeviceInfo as _AudioDeviceInfo,
     DeviceCaps as _DeviceCaps,
     DeviceClass as _DeviceClass,
     DevicePreferences as _DevicePreferences,
+    DeviceProbe as _DeviceProbe,
     MonitorChainFamily as _MonitorChainFamily,
 )
 
@@ -2397,6 +2400,61 @@ async def delete_device_preferences_endpoint() -> JSONResponse:
     """
     _clear_device_preferences()
     return JSONResponse(content={"ok": True})
+
+
+def _serialize_audio_device_info(info: Optional[_AudioDeviceInfo]) -> Optional[dict]:
+    """Wire shape for one CoreAudio device in the probe response."""
+    if info is None:
+        return None
+    return {
+        "device_id": info.device_id,
+        "name": info.name,
+        "input_channels": info.input_channels,
+        "output_channels": info.output_channels,
+    }
+
+
+def _serialize_device_probe(probe: _DeviceProbe) -> dict:
+    """Wire shape for ``GET /api/device/probe``.
+
+    The probe contract guarantees never-raise; if the binary is
+    missing or the JSON malformed, the probe still returns a
+    ``DeviceProbe`` with ``probe_succeeded=False``. The serializer
+    just projects the dataclass into JSON-friendly shape — the UI
+    decides how to render based on ``probe_succeeded``.
+    """
+    return {
+        "devices": [_serialize_audio_device_info(d) for d in probe.devices],
+        "suggested_input": _serialize_audio_device_info(probe.suggested_input),
+        "vendor_hint": probe.vendor_hint,
+        "probe_succeeded": probe.probe_succeeded,
+        "error_message": probe.error_message,
+    }
+
+
+@app.get("/api/device/probe")
+async def get_device_probe_endpoint() -> JSONResponse:
+    """Run the CoreAudio probe and return the result.
+
+    Telemetry / hint surface for the onboarding modal. The probe
+    itself never raises (contract in devices/discovery.py). The
+    try/except below is a belt-and-braces second line of defense
+    so a future contract violation never 500s the modal — the UI
+    treats an empty / failed probe the same as "no hint", and the
+    user falls back to the manual radio answer.
+    """
+    try:
+        probe_result = _device_probe()
+    except Exception as exc:  # pragma: no cover - probe() should not raise
+        logger.warning(f"[devices] probe() raised unexpectedly: {exc}")
+        probe_result = _DeviceProbe(
+            devices=tuple(),
+            suggested_input=None,
+            vendor_hint=None,
+            probe_succeeded=False,
+            error_message=f"probe raised: {type(exc).__name__}",
+        )
+    return JSONResponse(content=_serialize_device_probe(probe_result))
 
 
 def _retrieve_tone_for_history(
