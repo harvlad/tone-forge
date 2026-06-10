@@ -2594,6 +2594,15 @@
     intakeChangeBtn.addEventListener('click', () => { resetDeviceChoice(); });
   }
 
+  // Same affordance on the perform view — users mid-session who
+  // realize they want a different interface shouldn't have to dig
+  // into the settings popover. Reuses the same reset flow, which
+  // re-opens the onboarding modal.
+  const performChangeBtn = $('perform-change-device');
+  if (performChangeBtn) {
+    performChangeBtn.addEventListener('click', () => { resetDeviceChoice(); });
+  }
+
   // ---- settings popover wiring ----
   function initSettingsUI() {
     loadSettings();
