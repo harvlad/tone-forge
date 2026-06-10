@@ -573,6 +573,16 @@ async def connect_bridge(ws: WebSocket) -> None:
                     "chain_id": spec["id"],
                     "chain": spec,
                 })
+                # Telemetry: positive label for the calibrator refit.
+                # Best-effort — log failures must not break the apply path.
+                try:
+                    from tone_forge.tone.instrumentation import log_applied as _log_applied
+                    _log_applied(
+                        spec["id"],
+                        session_id=getattr(channel, "session_id", None),
+                    )
+                except Exception as _apply_log_exc:
+                    logger.warning(f"[connect-bridge] tone applied log failed: {_apply_log_exc}")
                 if rid is not None:
                     await ws.send_json({"type": "ack", "request_id": rid})
             else:
@@ -586,6 +596,43 @@ async def connect_bridge(ws: WebSocket) -> None:
     finally:
         if channel is not None:
             await channel.leave(ws)
+
+
+class ToneIgnoredRequest(BaseModel):
+    """Payload for `/api/tone/ignored`.
+
+    `chain_id` is the chain the user dismissed. `reason` is a short
+    UX-path identifier (`"card_closed"`, `"song_switched"`,
+    `"other_chain_applied"`). `session_id` and `source_url` are
+    optional join keys for the calibration refit.
+    """
+
+    chain_id: str
+    reason: Optional[str] = None
+    session_id: Optional[str] = None
+    source_url: Optional[str] = None
+
+
+@app.post("/api/tone/ignored")
+async def tone_ignored_endpoint(request: ToneIgnoredRequest) -> JSONResponse:
+    """Record a tone-card dismissal as a negative label.
+
+    Telemetry-only; never returns a hard failure. The log writer
+    already swallows exceptions, but we double-wrap here so a missing
+    instrumentation module (e.g., partial install) doesn't 500 the
+    Jam UI.
+    """
+    try:
+        from tone_forge.tone.instrumentation import log_ignored as _log_ignored
+        _log_ignored(
+            request.chain_id,
+            session_id=request.session_id,
+            source_url=request.source_url,
+            reason=request.reason,
+        )
+    except Exception as exc:
+        logger.warning(f"[tone] /api/tone/ignored log failed: {exc}")
+    return JSONResponse(content={"ok": True})
 
 
 _ACCEPTED_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aiff", ".aif", ".webm"}
@@ -4058,6 +4105,34 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                     response["source_timestamp"] = start_timestamp if start_timestamp > 0 else None
                     response["analysis_mode"] = config.mode.value
                     response["deep_analysis"] = config.mode == UnifiedAnalysisMode.DEEP
+
+                    # Guitar tone recommendation — mirrors the worker-side
+                    # injection in local_engine/analysis_worker.py so both
+                    # backends emit the same wire shape. Failures here
+                    # never break analysis.
+                    try:
+                        from tone_forge.tone import guitar_catalog as _gc
+                        from tone_forge.tone import instrumentation as _tone_log
+
+                        _stems_map = response.get("stems_paths") or response.get("stems") or {}
+                        _raw_stem_path = (
+                            _stems_map.get("other")
+                            or _stems_map.get("guitar")
+                            or audio_path
+                        )
+                        # Unwrap a "<url-base>?path=<abspath>" stem URL.
+                        if isinstance(_raw_stem_path, str) and "?path=" in _raw_stem_path:
+                            _raw_stem_path = _raw_stem_path.split("?path=", 1)[1]
+                        _tone_rec = _gc.recommend_from_tempo_key(
+                            Path(_raw_stem_path) if _raw_stem_path else None,
+                            tempo_bpm=response.get("tempo_bpm"),
+                            key=response.get("detected_key"),
+                        )
+                        response["tone"] = _gc.to_wire_dict(_tone_rec)
+                        _tone_log.log_recommendation(_tone_rec, source_url=url)
+                    except Exception as _tone_exc:
+                        logger.warning(f"[analyze-url-stream] tone recommendation failed (server path): {_tone_exc}")
+                        response["tone"] = None
 
                     # Add to history
                     history_entry = _add_to_history({
