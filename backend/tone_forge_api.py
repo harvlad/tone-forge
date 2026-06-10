@@ -330,7 +330,11 @@ CONNECT_BRIDGE_PROTOCOL_VERSION = 1
 # In-memory channel state. Survives only as long as the API process runs;
 # clients re-push on reconnect.
 class _ConnectChannel:
-    def __init__(self) -> None:
+    def __init__(self, session_id: str | None = None) -> None:
+        # Session id this channel was created for. Carried so downstream
+        # helpers (telemetry, logs) can attribute events without
+        # threading the id through every call site.
+        self.session_id: str | None = session_id
         self.clients: set[WebSocket] = set()
         self.last_preset: dict | None = None
         # Last requested monitor gain (0.0 = muted, 1.0 = unity). We
@@ -368,12 +372,27 @@ class _ConnectChannel:
             except Exception:
                 pass
 
-    def leave(self, ws: WebSocket) -> None:
+    async def leave(self, ws: WebSocket) -> None:
         self.clients.discard(ws)
+        # When the last peer leaves, drop the channel from the registry
+        # so per-session state (last_preset/last_gain/last_chain) does
+        # not accumulate. Every browser reload picks a fresh session id;
+        # without this reap we'd leak ~1KB plus the cached chain spec
+        # per reload.
+        #
+        # No lock here: the asyncio event loop is single-threaded and
+        # there is no await between the dict ``get`` and ``pop`` below,
+        # so no other task can interleave a competing modification.
+        if not self.clients and self.session_id is not None:
+            existing = _connect_channels.get(self.session_id)
+            if existing is self:
+                _connect_channels.pop(self.session_id, None)
 
     async def broadcast(self, sender: WebSocket, message: dict) -> None:
         dead: list[WebSocket] = []
-        for client in self.clients:
+        # Snapshot the client set so concurrent leave() calls don't
+        # mutate it under iteration.
+        for client in list(self.clients):
             if client is sender:
                 continue
             try:
@@ -381,7 +400,22 @@ class _ConnectChannel:
             except Exception:
                 dead.append(client)
         for d in dead:
-            self.leave(d)
+            await self.leave(d)
+        # Tell the survivors that a peer dropped so their UI flips out
+        # of the "paired" state immediately instead of waiting for the
+        # next reconnect tick (~30s under the browser's exponential
+        # backoff).
+        if dead and self.clients:
+            notice = {
+                "type": "peer_left",
+                "peers": len(self.clients),
+                "reason": "send_failed",
+            }
+            for client in list(self.clients):
+                try:
+                    await client.send_json(notice)
+                except Exception:
+                    pass
 
 
 _connect_channels: dict[str, _ConnectChannel] = {}
@@ -392,7 +426,7 @@ async def _get_connect_channel(session_id: str) -> _ConnectChannel:
     async with _connect_channels_lock:
         chan = _connect_channels.get(session_id)
         if chan is None:
-            chan = _ConnectChannel()
+            chan = _ConnectChannel(session_id=session_id)
             _connect_channels[session_id] = chan
         return chan
 
@@ -535,7 +569,7 @@ async def connect_bridge(ws: WebSocket) -> None:
         logger.warning(f"[connect-bridge] {role or '?'}/{session_id or '?'} disconnected with error: {e}")
     finally:
         if channel is not None:
-            channel.leave(ws)
+            await channel.leave(ws)
 
 
 _ACCEPTED_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aiff", ".aif", ".webm"}

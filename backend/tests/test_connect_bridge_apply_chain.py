@@ -47,6 +47,29 @@ def _drain_handshake(ws) -> None:
     ws.receive_json()  # joined
 
 
+def _drive_server(ws) -> None:
+    """Force the TestClient portal to process queued frames on ``ws``.
+
+    starlette's TestClient bridges sync test code to the async server via a
+    single blocking portal. ``send_json`` enqueues a frame but does not
+    drive the server's event loop; the loop only advances when a
+    ``receive_*`` on the same socket is awaiting a server-produced frame.
+
+    When a test sends a fire-and-forget message (no ``request_id`` → no
+    ack to read) and then tries to read on a *different* socket for the
+    forwarded broadcast, the server never gets a chance to run the
+    handler that would produce that broadcast, so the read hangs.
+
+    Sending ``ping`` and consuming ``pong`` on the sender's socket forces
+    the server to drain its inbound queue (the prior no-rid frame first,
+    then the ping), which produces the side effects the cross-socket
+    read is waiting on.
+    """
+    ws.send_json({"type": "ping"})
+    pong = ws.receive_json()
+    assert pong.get("type") == "pong"
+
+
 # ---------------------------------------------------------------------------
 # Happy path
 # ---------------------------------------------------------------------------
@@ -104,6 +127,9 @@ def test_apply_chain_ack_omitted_when_no_request_id() -> None:
                 "type": "apply_chain",
                 "chain_id": "tfc.ambient",
             })
+            # No request_id → no ack. Drive the server to flush the
+            # apply_chain handler so the broadcast reaches connect_ws.
+            _drive_server(browser_ws)
 
             forwarded = connect_ws.receive_json()
             assert forwarded["type"] == "apply_chain"
@@ -172,6 +198,9 @@ def test_apply_chain_unknown_id_returns_not_found() -> None:
                 "type": "apply_chain",
                 "chain_id": "tfc.clean_strat",
             })
+            # No request_id on the follow-up → drive the portal so the
+            # successful broadcast reaches connect_ws.
+            _drive_server(browser_ws)
             forwarded = connect_ws.receive_json()
             assert forwarded["type"] == "apply_chain"
             assert forwarded["chain_id"] == "tfc.clean_strat"

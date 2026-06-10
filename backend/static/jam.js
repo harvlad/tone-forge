@@ -210,6 +210,14 @@
         cb.peers = data.peers || 0;
         renderConnectStatus();
         console.log(`[connect] joined session ${data.session_id} (peers=${data.peers})`);
+      } else if (data.type === 'peer_left') {
+        // Server detected a dead peer on its last broadcast attempt
+        // and is telling us the new survivor count. Without this our
+        // "paired" badge would stay green until the next reconnect
+        // tick (up to 30s of stale UI).
+        cb.peers = Number(data.peers) || 0;
+        renderConnectStatus();
+        console.log(`[connect] peer_left (peers=${cb.peers}, reason=${data.reason || 'unknown'})`);
       } else if (data.type === 'set_gain') {
         // Server replayed the cached gain (e.g. after we reconnected).
         // Sync local state and slider so the UI matches.
