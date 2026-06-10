@@ -19,7 +19,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
 | 2 | Connect hardening | Active — focused-pass landed (see §0) |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
-| 4 | Chord detection (spike → ship) | Active |
+| 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
 | 5 | Session Engine consolidation | Active |
 | 6 | Retrieval confidence calibration | Active |
 | 7 | Device Discovery | Active — P7/P7e/P7f scaffold landed |
@@ -162,6 +162,43 @@ Commits 7976576, 190680e, f5a0449:
 - Helper joins on Safari + URL id on the local-engine path
 - Fix deep-link nuking page; accept `history_id` for `/jam` URL
 - Fire `toneforge://pair` from the Jam Connect button
+
+### Chord detection (Priority 4) — MVP shipped, validation in-flight
+
+Already in `main` (not from this session):
+- `backend/tone_forge/analysis/chord_detector.py` — librosa
+  `chroma_cqt` + HMM template-matching engine
+- `backend/tone_forge/analysis/chords.py` — public boundary wrapper
+  emitting `contracts.Chord` tuples
+- `backend/tone_forge/chord_detector.py` — back-compat shim for
+  pre-freeze callers in `midi` and `ableton_session`
+- `Chord` DTO in `contracts.py` (`{start_s, end_s, symbol, confidence}`)
+- `UnifiedPipeline._detect_chord_lane()` integrated at stage 7;
+  `AnalysisResult.chords` field populated
+- `SessionBundle.guidance.chord_lane` plumbed for UI consumption
+
+Working tree (uncommitted — operator's parallel track, not this
+session's work):
+- `backend/scripts/chord_validation.py` — production quality gate
+- `backend/scripts/chord_validation_report.json` — latest run
+  PASSES: 97.2% root-only, 74.8% strict, all 10 progressions above
+  the 50% per-song floor
+- `backend/tests/test_chord_lane_wireup.py` — three-contract
+  integration tests
+- Small `contracts.py` and `analysis/__init__.py` modifications
+
+Per §5 acceptance criteria (strict ≥60% on majors/minors,
+major-minor ≥80%, per-song minimum 50%): the major-minor floor is
+not met by the strict score (74.8% < 80%) but is comfortably met by
+the root-only score (97.2% ≥ 80%). The dom7 weakness documented in
+the spike report is the known cause; out-of-scope per §5
+"Scope discipline" until a separate decision.
+
+Remaining work (operator's call, not auto-driven):
+- Commit the validation harness + test wire-up + small contract
+  edits.
+- Decide whether dom7 accuracy needs a follow-up pass or if MVP
+  ships as-is with the documented weakness.
 
 ---
 

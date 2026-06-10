@@ -1,0 +1,170 @@
+{
+  "sr": 22050,
+  "frame_hop_s": 0.05,
+  "rows": [
+    {
+      "progression": "I-V-vi-IV in G (pop)",
+      "key_signature": "G major",
+      "tempo_bpm": 110,
+      "beats_per_chord": 4,
+      "truth": "G > D > Em > C",
+      "detected": "G > D > Em > C",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.7542857142857143,
+        "triad_relaxed": 0.7542857142857143,
+        "root_only": 1.0
+      },
+      "passes_per_progression_floor": true
+    },
+    {
+      "progression": "I-V-vi-IV in D (pop)",
+      "key_signature": "D major",
+      "tempo_bpm": 120,
+      "beats_per_chord": 4,
+      "truth": "D > A > Bm > G",
+      "detected": "D > A > Bm > G",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.74375,
+        "triad_relaxed": 0.74375,
+        "root_only": 0.99375
+      },
+      "passes_per_progression_floor": true
+    },
+    {
+      "progression": "vi-IV-I-V in C (anthem)",
+      "key_signature": "C major",
+      "tempo_bpm": 100,
+      "beats_per_chord": 4,
+      "truth": "Am > F > C > G",
+      "detected": "Am > F > C > G",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.7447916666666666,
+        "triad_relaxed": 0.7447916666666666,
+        "root_only": 0.9947916666666666
+      },
+      "passes_per_progression_floor": true
+    },
+    {
+      "progression": "I-vi-IV-V in C (50s)",
+      "key_signature": "C major",
+      "tempo_bpm": 108,
+      "beats_per_chord": 4,
+      "truth": "C > Am > F > G",
+      "detected": "C > Am > F > G",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.7528089887640449,
+        "triad_relaxed": 0.7528089887640449,
+        "root_only": 1.0
+      },
+      "passes_per_progression_floor": true
+    },
+    {
+      "progression": "I-IV-V in E (blues)",
+      "key_signature": "E major",
+      "tempo_bpm": 88,
+      "beats_per_chord": 4,
+      "truth": "E > A > B > E",
+      "detected": "E > A > B > E",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.9954337899543378,
+        "triad_relaxed": 0.9954337899543378,
+        "root_only": 0.9954337899543378
+      },
+      "passes_per_progression_floor": true
+    },
+    {
+      "progression": "I-IV-V7-I in A (blues)",
+      "key_signature": "A major",
+      "tempo_bpm": 96,
+      "beats_per_chord": 4,
+      "truth": "A > D > Edom7 > A",
+      "detected": "A > D > A",
+      "n_detected": 3,
+      "scores": {
+        "strict": 0.745,
+        "triad_relaxed": 0.745,
+        "root_only": 0.745
+      },
+      "passes_per_progression_floor": true
+    },
+    {
+      "progression": "i-VII-VI-VII in Am (rock minor)",
+      "key_signature": "A minor",
+      "tempo_bpm": 130,
+      "beats_per_chord": 4,
+      "truth": "Am > G > F > G",
+      "detected": "Am > G > F > G",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.75,
+        "triad_relaxed": 0.75,
+        "root_only": 1.0
+      },
+      "passes_per_progression_floor": true
+    },
+    {
+      "progression": "i-iv-V in Em (minor loop)",
+      "key_signature": "E minor",
+      "tempo_bpm": 100,
+      "beats_per_chord": 4,
+      "truth": "Em > Am > B > Em",
+      "detected": "Em > Am > B > Em",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.24479166666666666,
+        "triad_relaxed": 0.24479166666666666,
+        "root_only": 0.9947916666666666
+      },
+      "passes_per_progression_floor": true
+    },
+    {
+      "progression": "I-bVII-IV in A (rock)",
+      "key_signature": "A major",
+      "tempo_bpm": 118,
+      "beats_per_chord": 4,
+      "truth": "A > G > D > A",
+      "detected": "A > G > D > A",
+      "n_detected": 4,
+      "scores": {
+        "strict": 1.0,
+        "triad_relaxed": 1.0,
+        "root_only": 1.0
+      },
+      "passes_per_progression_floor": true
+    },
+    {
+      "progression": "I-IV-vi-V in D (modern pop)",
+      "key_signature": "D major",
+      "tempo_bpm": 115,
+      "beats_per_chord": 4,
+      "truth": "D > G > Bm > A",
+      "detected": "D > G > Bm > A",
+      "n_detected": 4,
+      "scores": {
+        "strict": 0.7485029940119761,
+        "triad_relaxed": 0.7485029940119761,
+        "root_only": 1.0
+      },
+      "passes_per_progression_floor": true
+    }
+  ],
+  "average": {
+    "strict": 0.7479364820349407,
+    "triad_relaxed": 0.7479364820349407,
+    "root_only": 0.9723767123287672
+  },
+  "pass_criteria": {
+    "aggregate_root_only": 0.75,
+    "aggregate_triad_relaxed": 0.6,
+    "per_progression_root_only": 0.5
+  },
+  "pass_aggregate": true,
+  "pass_per_progression": true,
+  "overall_pass": true,
+  "failing_progressions": []
+}
