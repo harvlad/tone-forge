@@ -1,36 +1,49 @@
-# Placeholder spec: pre-listening baseline. See clean_strat.yaml for
-# the policy on placeholder vs dialed-in chains.
+# Pre-listening baseline — REDESIGN PASS 1.
 #
-# Reference vibe: Clean + dotted-eighth delay + hall reverb. The "sit
-# inside a wash" target for slow, spacious material.
+# Background: the previous values rendered as bass-heavy (~0.42 band
+# energy) and airless (~0 in the 8 kHz+ band), which is the opposite
+# of the shoegaze/wash target this family is supposed to serve. The
+# polyphony gate already (correctly) invalidates attack/decay/sustain/
+# pitch_stability for ambient renders, so retrieval against shoegaze
+# queries leans on brightness / warmth / air / harmonic_ratio. Those
+# four were all pointing the wrong direction.
+#
+# Reference vibe target: Alcest / shoegaze — slow, polyphonic, lush
+# wash; long sustained chords sitting inside a bright reverb bed.
+# Picking pattern is unchanged (open D + B chord, dampened, ~8 s).
+# External delay on the rendering rig stays as it was; that's an
+# operator-side effect not represented in this schema.
+#
+# Deltas vs prior values (commented in-line). No new sections, no
+# new keys, no schema changes.
 
 id: tfc.ambient
 family: ambient
 display_name: "Ambient"
-description: "Clean + spacious. Long delay + hall reverb. Pre-listening baseline."
+description: "Bright clean wash. Hall reverb forward, presence-boosted, low-bass tamed. Pre-listening baseline."
 parameters:
   input:
     gain_db: 0
-    high_pass_hz: 70
+    high_pass_hz: 140       # was 70 — cut sub-bass + room rumble
   gain_stage:
     type: tube_clean
-    drive: 0.05
+    drive: 0.15             # was 0.05 — light saturation lifts harmonic_ratio
     bias: 0.5
   eq:
-    bass_db: 1
-    mid_db: 0
-    treble_db: 1
-    presence_db: 0
+    bass_db: -2             # was +1 — actively pull bass band down
+    mid_db: -1              # was 0  — slight scoop, lets wash breathe
+    treble_db: 3            # was +1 — drives the air band
+    presence_db: 3          # was 0  — high-mid sheen
   comp:
     enabled: true
-    ratio: 1.8
-    threshold_db: -22
-    attack_ms: 8
-    release_ms: 200
+    ratio: 2.5              # was 1.8 — more sustain on long held chords
+    threshold_db: -24       # was -22 — catches more of the wash
+    attack_ms: 15           # was 8  — let transients open, then squash
+    release_ms: 350         # was 200 — long release keeps the wash alive
   reverb:
-    type: hall
-    size: 0.8
-    mix: 0.35
+    type: hall              # unchanged — preserves ambient identity
+    size: 0.7               # was 0.8 — slightly smaller, less LF buildup
+    mix: 0.55               # was 0.35 — wet content forward
   output:
-    trim_db: 0
+    trim_db: -2             # was 0 — headroom for higher reverb mix
 preview_audio: "preview/ambient.mp3"

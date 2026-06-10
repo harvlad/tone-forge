@@ -1,0 +1,27 @@
+{
+  "chain_id": "tfc.ambient",
+  "source": "rendered_reference",
+  "source_note": "Measured by scripts/render_chain_references.py from tfc.ambient.wav. Replaces hand-authored placeholder. Re-render and re-run this script after any chain parameter change.",
+  "rendered_at": "2026-06-10T20:26:44Z",
+  "rendered_from": "tfc.ambient.wav",
+  "features": {
+    "brightness": 0.08801547951555312,
+    "warmth": 0.7584999157955652,
+    "air": 8.542570627182977e-05,
+    "attack_ms": 2710.249433106576,
+    "decay_ms": 249.61451247165533,
+    "sustain_ratio": 0.39623543050949694,
+    "harmonic_ratio": 0.0003152381776037688,
+    "pitch_stability": 0.0007893742043250307
+  },
+  "feature_validity": {
+    "brightness": true,
+    "warmth": true,
+    "air": true,
+    "attack_ms": false,
+    "decay_ms": false,
+    "sustain_ratio": false,
+    "harmonic_ratio": true,
+    "pitch_stability": false
+  }
+}

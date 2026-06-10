@@ -17,12 +17,12 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | # | Subsystem | State |
 |---|---|---|
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
-| 2 | Connect hardening | Active |
-| 3 | Monitor Chain Bank | Active |
+| 2 | Connect hardening | Active — focused-pass landed (see §0) |
+| 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | Active |
 | 5 | Session Engine consolidation | Active |
 | 6 | Retrieval confidence calibration | Active |
-| 7 | Device Discovery | Active |
+| 7 | Device Discovery | Active — P7/P7e/P7f scaffold landed |
 | 8 | Song Understanding expansion | Investigation only |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
@@ -30,6 +30,138 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | — | Evaluation harness expansion | Frozen |
 | — | Studio feature development | Frozen |
 | — | Catalog (Suite expansion) | Frozen |
+
+---
+
+## 0. Completion Log
+
+Most-recent landings first. Each entry is concrete enough to point an
+auditor at the diff + verification artifact. This log is the ground
+truth on "what's actually shipped" relative to the priority table; the
+section-level notes below (§3, §4, …) explain what remains.
+
+### Connect hardening — focused pass (Priority 2)
+
+Closes the three real failure modes in the bridge that were unhandled.
+Plan file: `~/.claude/plans/ancient-mixing-turing.md` ("Connect
+Hardening — Focused Pass"). Not the full §3 surface — install /
+signing / Sparkle update / first-run onboarding remain.
+
+| Failure | Fix | File |
+|---|---|---|
+| `_ConnectChannel` leaked per `session_id` reload | `leave()` now async; drops empty channel under `_connect_channels_lock` | `backend/tone_forge_api.py` |
+| Survivor peer not told when broadcast drops a dead client | `broadcast()` emits `{"type":"peer_left","peers":n,"reason":"send_failed"}` to remaining clients | `backend/tone_forge_api.py` |
+| Helper crash → manual tray click required | `ConnectSupervisor._reap()` schedules bounded auto-restart (4 attempts, exp backoff capped at 60 s, healthy-uptime reset at 30 s) via `threading.Timer`; respects `_wanted_running` flag set by `stop()` | `backend/local_engine/connect_bridge.py` |
+| Browser ignored `peer_left` | `switch(msg.type)` branch updates peer count + flips "Helper connected" badge | `backend/static/jam.js` |
+
+Regression coverage: `backend/tests/test_connect_bridge_lifecycle.py`
+(new, 8 tests — channel reap, broadcast survivor notify, supervisor
+auto-restart + suppression under `stop()`).
+
+Test-suite hang fix during this work:
+`tests/test_connect_bridge_apply_chain.py` gained a `_drive_server()`
+ping/pong helper to advance the starlette TestClient event loop on
+no-`request_id` sends. Two tests fixed
+(`test_apply_chain_ack_omitted_when_no_request_id`,
+`test_apply_chain_unknown_id_returns_not_found`). 14/14 apply-chain
+tests now green.
+
+Out-of-scope for this pass (explicit, see plan file §"Out of scope"):
+heartbeat / mandatory ping-pong, rate limiting, mandatory
+`request_id` on every message, structured logging migration, native
+Connect helper changes.
+
+### Monitor Chain Bank — ambient redesign Path 1 (Priority 3)
+
+The hand-authored `tfc.ambient` placeholder rendered bass-heavy
+(~0.42 band energy) and airless (~0 in 8 kHz+), so the operator's
+own ambient render was being misclassified as `classic_rock` at
+HIGH confidence 0.97. Path 1 (YAML tighten within existing schema —
+no delay block, no schema change) was executed and accepted.
+
+YAML deltas at `backend/tone_forge/monitor/chains/tfc.ambient.yaml`:
+
+| Param | Old | New | Direction |
+|---|---|---|---|
+| `input.high_pass_hz` | 70 | 140 | cut sub-bass + room rumble |
+| `gain_stage.drive` | 0.05 | 0.15 | lift harmonic_ratio |
+| `eq.bass_db` | +1 | −2 | actively pull bass band down |
+| `eq.mid_db` | 0 | −1 | slight scoop, lets wash breathe |
+| `eq.treble_db` | +1 | +3 | drive the air band |
+| `eq.presence_db` | 0 | +3 | high-mid sheen |
+| `comp.ratio` | 1.8 | 2.5 | more sustain on held chords |
+| `comp.threshold_db` | −22 | −24 | catches more of the wash |
+| `comp.attack_ms` | 8 | 15 | let transients open, then squash |
+| `comp.release_ms` | 200 | 350 | long release keeps the wash alive |
+| `reverb.size` | 0.8 | 0.7 | less LF buildup |
+| `reverb.mix` | 0.35 | 0.55 | wet content forward |
+| `output.trim_db` | 0 | −2 | headroom for higher reverb mix |
+
+Asset changes:
+- `tone_forge/monitor/chains/tfc.ambient.wav` — operator re-rendered
+  through the live rig (Valhalla Supermassive, Cirrus Minor / 80s
+  Space Verb; routed through A Reverb + B Delay returns). Cropped
+  leading 0.5 s of silence, normalized to RMS 0.09. Old wav backed
+  up to `/tmp/tfc.ambient.OLD.wav`.
+- `tone_forge/monitor/chains/tfc.ambient.fingerprint.json` —
+  regenerated via `scripts/render_chain_references.py`. Old
+  fingerprint backed up to `/tmp/tfc.ambient.fingerprint.OLD.json`.
+
+Fingerprint delta on valid features (polyphony gate correctly
+invalidates attack/decay/sustain/pitch_stability — unchanged):
+
+| feature | OLD | NEW |
+|---|---|---|
+| brightness | 0.0657 | 0.0880 |
+| warmth | 0.4904 | 0.7585 |
+| air | 1.99e-06 | 8.5e-05 |
+| harmonic_ratio | 4.8e-04 | 3.1e-04 |
+
+Retrieval validation result (operator's ambient render as self-test
+query):
+
+- Before: matched `tfc.classic_rock` at HIGH conf 0.97 (false positive)
+- After: matches `tfc.ambient` at rank 1, distance 0 (correct)
+- Non-ambient cross-checks: every other catalog chain still
+  self-matches at rank 1
+- Test suite: 134/134 tone+catalog+monitor tests green
+
+Validation harness: `/tmp/ambient_retrieval_validation.py` (OLD vs
+NEW fingerprint swap + `recommend()` across 9 query candidates). Not
+committed to repo — it lives in tmp by design as a one-shot tool.
+
+Documented structural limits (not Path 1 problems):
+- `air` axis (8 kHz+ band at QUERY_SAMPLE_RATE=22050) has near-zero
+  variance across the catalog (std ≈ 0.00026) → distance math
+  explodes on any wet+bright query. Operator's Valhalla
+  Supermassive has EQ High cut at 6 kHz, so the reverb engine
+  itself produces nothing above 6 kHz.
+- These would not be solved by adding a `delay` block to the
+  schema. They are retrieval-math + downstream-reverb-engine
+  properties.
+
+Explicitly **not** done in this pass (and pre-committed not to do
+without separate authorization): retrieval algorithm changes,
+threshold changes, τ calibration changes, new fingerprint features,
+monitor-bank expansion beyond the 5 existing chains, delay /
+modulation / shimmer schema extension, Connect changes.
+
+### Device Discovery (Priority 7) — scaffold landed
+
+Recent commits 51d0780 + 736b512 added:
+- `device.json` persistence layer for onboarding answers
+- CLI `--json` probe scaffold + tests
+- Contracts in place for `DeviceCaps` flow
+
+Remaining (per §8 below): Onboarding screen wiring, `DeviceCaps`
+plumbed into session bundle.
+
+### P2 series — Jam Connect deep-link UX
+
+Commits 7976576, 190680e, f5a0449:
+- Helper joins on Safari + URL id on the local-engine path
+- Fix deep-link nuking page; accept `history_id` for `/jam` URL
+- Fire `toneforge://pair` from the Jam Connect button
 
 ---
 
