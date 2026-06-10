@@ -22,6 +22,23 @@ from tone_forge.contracts import AudioDeviceInfo, DeviceProbe
 # only to humans reading the list; matching is first-hit-wins on the
 # lowest-id input device (which is typically the active interface).
 _VENDOR_HINTS: Tuple[Tuple[str, str], ...] = (
+    # Modelers / amp sims first — they ARE the guitar's audio
+    # interface in most rigs, so they should win the "suggested
+    # input" race over generic interfaces and built-in mics.
+    ("helix", "Line 6"),
+    ("hx stomp", "Line 6"),
+    ("hx effects", "Line 6"),
+    ("line 6", "Line 6"),
+    ("quad cortex", "Neural DSP"),
+    ("qcortex", "Neural DSP"),
+    ("kemper", "Kemper"),
+    ("profiler", "Kemper"),
+    ("axe-fx", "Fractal"),
+    ("axefx", "Fractal"),
+    ("fm3", "Fractal"),
+    ("fm9", "Fractal"),
+    ("tonex", "IK Multimedia"),
+    # Standalone audio interfaces.
     ("focusrite", "Focusrite"),
     ("scarlett", "Focusrite"),
     ("clarett", "Focusrite"),

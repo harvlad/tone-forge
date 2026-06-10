@@ -53,6 +53,18 @@ from tone_forge.devices.discovery import (
         ("PreSonus Studio 24c", "PreSonus"),
         ("Native Instruments Komplete Audio 6", "Native Instruments"),
         ("Komplete Audio 1", "Native Instruments"),
+        # Modelers — recognized as inputs (P7 #36 follow-up): a Helix /
+        # QC / Kemper / Fractal / Tonex plugged in IS the guitar's audio
+        # interface, so it should win the vendor-match race.
+        ("Line 6 HX Stomp", "Line 6"),
+        ("HX Effects", "Line 6"),
+        ("Helix Native", "Line 6"),
+        ("Quad Cortex", "Neural DSP"),
+        ("Kemper Profiler Stage", "Kemper"),
+        ("Fractal Axe-Fx III", "Fractal"),
+        ("FM3", "Fractal"),
+        ("FM9 Turbo", "Fractal"),
+        ("IK Multimedia ToneX", "IK Multimedia"),
     ],
 )
 def test_vendor_hint_matches_known_devices(name: str, expected: str) -> None:
@@ -87,6 +99,20 @@ def test_choose_suggested_input_prefers_vendor_match() -> None:
     chosen, hint = _choose_suggested_input(devices)
     assert chosen is not None and chosen.device_id == 2
     assert hint == "Focusrite"
+
+
+def test_choose_suggested_input_prefers_modeler_over_builtin_mic() -> None:
+    # Regression: probe order put the iPhone mic before the HX Stomp,
+    # which previously won the fallback. Modelers are now in the
+    # vendor-hint list so they outrank generic built-in inputs.
+    devices = (
+        AudioDeviceInfo(97, "Matt's iPhone Microphone", 1, 0),
+        AudioDeviceInfo(92, "MacBook Pro Microphone", 1, 0),
+        AudioDeviceInfo(129, "Line 6 HX Stomp", 8, 8),
+    )
+    chosen, hint = _choose_suggested_input(devices)
+    assert chosen is not None and chosen.device_id == 129
+    assert hint == "Line 6"
 
 
 def test_choose_suggested_input_falls_back_to_first_input() -> None:
