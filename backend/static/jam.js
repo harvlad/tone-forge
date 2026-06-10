@@ -755,7 +755,16 @@
     state.sections = [];
     state.duration = 0;
     state.playOffset = 0;
+    state.analysisId = null;
     $('t-play').textContent = 'Play';
+    // Reset the URL to the bare /jam path. onAnalysisComplete() pushes
+    // /jam/:id and the Connect-bridge pairing flow appends
+    // ?session=<id>; both should disappear when the user explicitly
+    // starts a new jam so a reload doesn't bounce them back into the
+    // dead analysis or rejoin a stale Connect channel.
+    try {
+      window.history.replaceState(null, '', '/jam');
+    } catch {}
     showView('intake');
   });
 
