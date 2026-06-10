@@ -185,6 +185,7 @@ from tone_forge.devices import (
     save_preferences as _save_device_preferences,
 )
 from tone_forge.contracts import (
+    DeviceCaps as _DeviceCaps,
     DeviceClass as _DeviceClass,
     DevicePreferences as _DevicePreferences,
     MonitorChainFamily as _MonitorChainFamily,
@@ -2209,8 +2210,8 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
             status_code=422,
             detail="History entry has no analysis result",
         )
-    tone_match = _retrieve_tone_for_history(result)
     device_caps = _device_caps_for_session()
+    tone_match = _retrieve_tone_for_history(result, device_caps=device_caps)
     bundle = build_session_bundle(
         result,
         session_id=entry_id,
@@ -2351,7 +2352,11 @@ async def delete_device_preferences_endpoint() -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
-def _retrieve_tone_for_history(result: dict) -> Optional["ToneMatch"]:
+def _retrieve_tone_for_history(
+    result: dict,
+    *,
+    device_caps: Optional[_DeviceCaps] = None,
+) -> Optional["ToneMatch"]:
     """Project legacy ``preset_matches`` into a tier-aware ``ToneMatch``.
 
     Composition layer for the tone/ subsystem. Reads the stem-keyed
@@ -2361,6 +2366,11 @@ def _retrieve_tone_for_history(result: dict) -> Optional["ToneMatch"]:
     everything to ``tone.retrieve()``. Returns ``None`` (and the
     bundle falls back to its conservative UNKNOWN path) if the legacy
     blob is shaped in a way the cleaner cannot use.
+
+    ``device_caps``, when supplied, carries the user's persisted
+    Discovery answer; its ``preferred_chain_family`` is forwarded to
+    ``tone.retrieve`` so the LOW / UNKNOWN fallback chain id honors
+    the user's explicit pin rather than the tempo / key heuristic.
     """
     from tone_forge.contracts import SongUnderstanding
 
@@ -2416,8 +2426,12 @@ def _retrieve_tone_for_history(result: dict) -> Optional["ToneMatch"]:
         key_confidence=0.5 if key_raw else 0.0,
     )
 
+    preferred_family = device_caps.preferred_chain_family if device_caps else None
     return tone_retrieval.retrieve(
-        candidates, understanding=understanding, role=role,
+        candidates,
+        understanding=understanding,
+        role=role,
+        preferred_family=preferred_family,
     )
 
 

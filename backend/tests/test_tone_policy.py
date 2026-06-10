@@ -182,3 +182,38 @@ def test_select_fallback_chain_matrix(
     a one-line diff in this matrix."""
     u = _understanding(tempo=tempo, key=key)
     assert policy.select_fallback_chain(u) == expected_id
+
+
+# ---------------------------------------------------------------------------
+# preferred_family override (Priority 7 — DeviceCaps consumer wiring)
+# ---------------------------------------------------------------------------
+
+def test_preferred_family_overrides_tempo_heuristic() -> None:
+    """User pinned AMBIENT in onboarding; even a fast song must route
+    to AMBIENT instead of MODERN_GAIN. The persisted answer always
+    wins because the heuristic is a guess and the answer is not."""
+    u = _understanding(tempo=160.0)
+    family = policy.select_fallback_family(
+        u, preferred_family=MonitorChainFamily.AMBIENT,
+    )
+    assert family is MonitorChainFamily.AMBIENT
+    assert policy.select_fallback_chain(
+        u, preferred_family=MonitorChainFamily.AMBIENT,
+    ) == policy.CHAIN_ID_AMBIENT
+
+
+def test_preferred_family_overrides_missing_understanding() -> None:
+    """``understanding=None`` would default to EDGE_OF_BREAKUP, but a
+    pinned family must still take precedence on the LOW path."""
+    assert policy.select_fallback_chain(
+        None, preferred_family=MonitorChainFamily.CLASSIC_ROCK,
+    ) == policy.CHAIN_ID_CLASSIC_ROCK
+
+
+def test_preferred_family_none_falls_back_to_heuristic() -> None:
+    """The override is opt-in — ``preferred_family=None`` (the default)
+    must leave the existing decision surface untouched."""
+    u = _understanding(tempo=160.0)
+    assert policy.select_fallback_chain(
+        u, preferred_family=None,
+    ) == policy.CHAIN_ID_MODERN_GAIN

@@ -22,7 +22,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed (see §0); isotonic refit deferred |
-| 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal landed (see §0); DeviceCaps plumb-through into SessionBundle still deferred |
+| 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) landed (see §0); CoreAudio probe pre-fill (item #36) still deferred |
 | 8 | Song Understanding expansion | Investigation only |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
@@ -39,6 +39,54 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### DeviceCaps consumer wiring (Priority 7 — item #38)
+
+`SessionBundle.device_caps` has been populated from persisted
+preferences since `3b92ccc` (the API edge runs
+`_device_caps_for_session()` and passes the result into
+`build_session_bundle`). The plumb-through was complete *into* the
+bundle but no downstream consumer read it — the user's pinned
+`preferred_chain_family` had no effect on what Jam actually played.
+This entry closes the consumer side: `tone.retrieve()` now forwards
+`preferred_family` into the fallback policy, and the API edge passes
+`device_caps.preferred_chain_family` through. The user's explicit
+onboarding answer always beats the tempo / key heuristic on LOW /
+UNKNOWN tiers; HIGH / MEDIUM (preset chosen from retrieval) are
+untouched.
+
+| Change | File |
+|---|---|
+| `select_fallback_chain` / `select_fallback_family` now accept `preferred_family: Optional[MonitorChainFamily]`; when set to a known family, short-circuits the tempo/key heuristic. Unknown values fall through to the heuristic (defensive against older persisted prefs) | `backend/tone_forge/tone/policy.py` |
+| `tone.retrieve()` signature gains `preferred_family`; forwards to `policy.select_fallback_chain`. HIGH / MEDIUM paths unchanged (only fallback ids are influenced) | `backend/tone_forge/tone/__init__.py` |
+| `_retrieve_tone_for_history` accepts `device_caps` and extracts `preferred_chain_family`; the session route now computes `device_caps` once and shares it between retrieval and bundle assembly so the two cannot disagree | `backend/tone_forge_api.py` |
+| Autouse fixture in `test_session_route.py` sets `TONEFORGE_DEVICE_PREFS_PATH` to a tmp path so a dev machine with real persisted prefs no longer leaks `helix` into unrelated assertions | `backend/tests/test_session_route.py` |
+
+Verification:
+- `tests/test_tone_policy.py` — 3 new tests for `preferred_family`
+  override (beats fast-tempo heuristic; beats `None` understanding;
+  `preferred_family=None` keeps the existing decision surface).
+  Total 22/22 PASS.
+- `tests/test_tone_retrieve.py` — 3 new tests for forwarding the
+  hint through `retrieve()` on UNKNOWN, LOW, and HIGH/MEDIUM paths
+  (HIGH/MEDIUM proves the override only touches `fallback_chain_id`,
+  not `chosen`). Total PASS.
+- `tests/test_session_route.py` — 1 new end-to-end test: persisting
+  `preferred_chain_family=ambient` flips the fallback id from the
+  tempo-default `tfc.clean_strat` to `tfc.ambient`. All session-route
+  tests PASS.
+- `tests/test_subsystem_boundaries.py` + sibling devices /
+  connect_bridge / tone_* suites — 145/145 PASS.
+
+Not in this entry:
+- CoreAudio probe pre-fill (item #36). The onboarding modal still
+  takes a single answer with no probed input-name hint.
+- Connect-side consumption of `preferred_chain_family`. The bridge
+  exposes `apply_chain` keyed by chain id; if Jam handed it the
+  bundle's `tone.fallback_chain_id` the user's pinned family would
+  already route, so no bridge-side change was needed. Mentioned here
+  for the audit trail.
+- Honoring `audio_input_name` from prefs (queued behind the probe).
 
 ### Jam onboarding modal (Priority 7 — item #37)
 
@@ -69,9 +117,8 @@ Verification:
 - `node --check backend/static/jam.js` — OK.
 
 Not in this entry:
-- `DeviceCaps` plumb-through into `SessionBundle` (item #38). The
-  saved `device_class` is reachable via `GET /api/device/preferences`
-  but session-time consumers haven't been wired yet.
+- `DeviceCaps` consumer wiring (item #38) — landed in the entry
+  above; the modal-only commit just got the answer persisted.
 - CoreAudio probe pre-fill (item #36). Single-question modal alone;
   no probed input-name hint is shown.
 

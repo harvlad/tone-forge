@@ -23,6 +23,7 @@ from typing import Any, List, Mapping, Optional, Sequence
 
 from tone_forge.contracts import (
     ConfidenceTier,
+    MonitorChainFamily,
     SongUnderstanding,
     ToneCandidate,
     ToneMatch,
@@ -38,6 +39,7 @@ def retrieve(
     *,
     understanding: Optional[SongUnderstanding] = None,
     role: Optional[UserRole] = None,
+    preferred_family: Optional[MonitorChainFamily] = None,
 ) -> ToneMatch:
     """Project a list of retrieval candidates onto a tier-aware ``ToneMatch``.
 
@@ -59,6 +61,14 @@ def retrieve(
         block for telemetry attribution; the policy does not branch
         on role. Kept in the signature so future role-specific
         calibration (e.g. bass models) is a non-breaking change.
+    preferred_family
+        Optional ``MonitorChainFamily`` from the user's persisted
+        Discovery answer (``DeviceCaps.preferred_chain_family``).
+        When set, the fallback-chain selector short-circuits to this
+        family on LOW / UNKNOWN tiers — the user's explicit pin
+        always beats the tempo / key heuristic. The HIGH / MEDIUM
+        paths still pick the retrieved preset; only the fallback id
+        is affected.
 
     Returns
     -------
@@ -71,7 +81,9 @@ def retrieve(
           * ``tier == UNKNOWN``  → ``chosen`` None, ``fallback_chain_id`` set.
     """
     cleaned = _clean_candidates(candidates)
-    fallback = policy.select_fallback_chain(understanding)
+    fallback = policy.select_fallback_chain(
+        understanding, preferred_family=preferred_family,
+    )
     base_debug = _base_debug(role, cleaned)
 
     if not cleaned:

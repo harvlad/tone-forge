@@ -73,8 +73,17 @@ def _no_result_entry() -> dict:
 
 
 @pytest.fixture(autouse=True)
-def _stub_history(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the history lookup so tests don't touch disk."""
+def _stub_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replace the history lookup and isolate device prefs.
+
+    Without ``TONEFORGE_DEVICE_PREFS_PATH`` set, ``load_preferences``
+    reads the real user's ``device.json``; a dev machine that has
+    completed onboarding leaks ``device_class="helix"`` into tests
+    that assert the default ``interface_only`` shape. Point every
+    test at an isolated path so the suite is deterministic.
+    """
 
     rows = {
         "sess-real": _history_entry(),
@@ -85,6 +94,9 @@ def _stub_history(monkeypatch: pytest.MonkeyPatch) -> None:
         return rows.get(entry_id)
 
     monkeypatch.setattr(tone_forge_api, "_get_history_item", fake_get)
+    monkeypatch.setenv(
+        "TONEFORGE_DEVICE_PREFS_PATH", str(tmp_path / "device.json"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -298,3 +310,33 @@ def test_session_route_hydrates_device_caps_from_preferences(
     assert caps["can_monitor"] is True
     assert caps["can_receive_preset"] is False
     assert caps["preferred_chain_family"] == "edge_of_breakup"
+
+def test_session_route_persisted_preferred_chain_overrides_tempo_heuristic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the Priority 7 consumer wiring end-to-end.
+
+    Fixture tempo is 120 + 'G major', which the policy would route to
+    ``tfc.clean_strat`` (see test_session_route_unknown_tier_carries_
+    fallback_chain). Persisting ``preferred_chain_family=ambient``
+    must beat that heuristic — the user's explicit pin wins because
+    the heuristic is a guess and the answer is not."""
+    monkeypatch.setenv(
+        "TONEFORGE_DEVICE_PREFS_PATH", str(tmp_path / "device.json"),
+    )
+
+    post = client.post(
+        "/api/device/preferences",
+        json={
+            "device_class": "helix",
+            "preferred_chain_family": "ambient",
+        },
+    )
+    assert post.status_code == 200
+
+    resp = client.get("/api/session/sess-real")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tone"]["tier"] == "unknown"
+    assert body["tone"]["fallback_chain_id"] == "tfc.ambient"
+    assert body["device_caps"]["preferred_chain_family"] == "ambient"

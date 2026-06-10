@@ -342,3 +342,50 @@ def test_tier_invariants(candidates: List[dict]) -> None:
         assert match.chosen is None
         assert match.alternates == ()
         assert match.fallback_chain_id is not None
+
+
+# ---------------------------------------------------------------------------
+# preferred_family forwarding (Priority 7 — DeviceCaps consumer wiring)
+# ---------------------------------------------------------------------------
+
+def test_preferred_family_overrides_fallback_chain_on_unknown() -> None:
+    """Empty candidates → UNKNOWN; the pinned family must beat the
+    EDGE_OF_BREAKUP default. Covers the path the API edge takes when
+    the user has answered the onboarding question."""
+    from tone_forge.contracts import MonitorChainFamily
+
+    match = retrieve(
+        [],
+        understanding=_understanding(),
+        preferred_family=MonitorChainFamily.AMBIENT,
+    )
+    assert match.tier == ConfidenceTier.UNKNOWN
+    assert match.fallback_chain_id == policy.CHAIN_ID_AMBIENT
+
+
+def test_preferred_family_overrides_fallback_chain_on_low() -> None:
+    """Far-distance candidates → LOW; same override behavior applies."""
+    from tone_forge.contracts import MonitorChainFamily
+
+    match = retrieve(
+        [_candidate("far", 10.0)],
+        understanding=_understanding(tempo=160.0),
+        preferred_family=MonitorChainFamily.CLASSIC_ROCK,
+    )
+    assert match.tier == ConfidenceTier.LOW
+    assert match.fallback_chain_id == policy.CHAIN_ID_CLASSIC_ROCK
+
+
+def test_preferred_family_does_not_affect_high_tier() -> None:
+    """HIGH-tier matches still emit ``chosen``; the override only
+    influences fallback ids, not preset selection."""
+    from tone_forge.contracts import MonitorChainFamily
+
+    match = retrieve(
+        [_candidate("top", 0.1), _candidate("alt", 5.0)],
+        understanding=_understanding(),
+        preferred_family=MonitorChainFamily.AMBIENT,
+    )
+    assert match.tier in (ConfidenceTier.HIGH, ConfidenceTier.MEDIUM)
+    assert match.chosen is not None
+    assert match.fallback_chain_id is None

@@ -59,23 +59,45 @@ DEFAULT_CHAIN_ID: str = CHAIN_ID_EDGE_OF_BREAKUP
 
 def select_fallback_chain(
     understanding: Optional[SongUnderstanding],
+    *,
+    preferred_family: Optional[MonitorChainFamily] = None,
 ) -> str:
     """Pick a monitor-chain id from what we know about the song.
 
     Returns a chain id string. Never returns ``None`` — Jam always
     needs *some* sound on the LOW path, so missing signals route to
     the always-safe ``edge_of_breakup`` default.
+
+    ``preferred_family``, when provided, short-circuits the heuristic.
+    The user's persisted onboarding answer (Priority 7) carries this
+    via ``DeviceCaps.preferred_chain_family``; the API edge passes it
+    through so the user's explicit choice always wins over the tempo
+    / key heuristic.
     """
-    family = select_fallback_family(understanding)
+    family = select_fallback_family(
+        understanding, preferred_family=preferred_family,
+    )
     return FAMILY_TO_CHAIN_ID[family]
 
 
 def select_fallback_family(
     understanding: Optional[SongUnderstanding],
+    *,
+    preferred_family: Optional[MonitorChainFamily] = None,
 ) -> MonitorChainFamily:
     """Same decision as ``select_fallback_chain`` but typed as the
     family enum. Useful when the caller wants to read the policy
-    decision without coupling to the chain-id string format."""
+    decision without coupling to the chain-id string format.
+
+    ``preferred_family`` is honored verbatim when set to a known
+    family. Unknown values are ignored (the heuristic still runs)
+    rather than raising — defensive against persisted preferences
+    written by an older client that may carry a family the current
+    enum no longer recognises.
+    """
+    if preferred_family is not None and preferred_family in FAMILY_TO_CHAIN_ID:
+        return preferred_family
+
     if understanding is None:
         return MonitorChainFamily.EDGE_OF_BREAKUP
 
