@@ -61,7 +61,6 @@ from tone_forge.contracts import (
     ToneRecMatch,
     ToneRecommendation,
 )
-from tone_forge.monitor.loader import list_chain_ids, load_chain
 from tone_forge.tone import policy, tiers
 
 
@@ -206,26 +205,21 @@ def _get_catalog() -> _Catalog:
         return _CATALOG_CACHE
 
     entries: List[_CatalogEntry] = []
-    for chain_id in list_chain_ids():
-        fingerprint_path = _CHAINS_ROOT / f"{chain_id}.fingerprint.json"
-        if not fingerprint_path.is_file():
-            # Chain has no fingerprint yet — skip (will be filled in by
-            # the render script). Logging at info so partial catalogs
-            # during onboarding are visible without being noisy.
-            logger.info(
-                "guitar_catalog: skipping %s (no fingerprint at %s)",
-                chain_id, fingerprint_path,
-            )
-            continue
-        try:
-            entry = _load_entry(chain_id, fingerprint_path)
-        except Exception as exc:
-            logger.warning(
-                "guitar_catalog: failed to load fingerprint for %s: %s",
-                chain_id, exc,
-            )
-            continue
-        entries.append(entry)
+    # Enumerate fingerprints directly from disk rather than asking
+    # ``monitor/`` for chain ids. Each fingerprint JSON carries its own
+    # ``chain_id``, ``display_name`` and ``family`` — enough to populate
+    # a catalog entry without crossing the tone→monitor boundary.
+    if _CHAINS_ROOT.is_dir():
+        for fingerprint_path in sorted(_CHAINS_ROOT.glob("*.fingerprint.json")):
+            try:
+                entry = _load_entry(fingerprint_path)
+            except Exception as exc:
+                logger.warning(
+                    "guitar_catalog: failed to load fingerprint %s: %s",
+                    fingerprint_path, exc,
+                )
+                continue
+            entries.append(entry)
 
     if not entries:
         # Catalog is empty. The recommend() path falls through to a
@@ -256,18 +250,41 @@ def _reset_catalog_cache() -> None:
     _CATALOG_CACHE = None
 
 
-def _load_entry(chain_id: str, fingerprint_path: Path) -> _CatalogEntry:
-    """Parse one ``<chain_id>.fingerprint.json`` and resolve display_name/family
-    by also parsing the YAML next to it.
+def _load_entry(fingerprint_path: Path) -> _CatalogEntry:
+    """Parse one ``<chain_id>.fingerprint.json`` into a ``_CatalogEntry``.
+
+    The JSON is the single source of truth for the catalog: it carries
+    ``chain_id``, ``display_name``, ``family``, the feature vector, and
+    the optional ``feature_validity`` mask. We do not also parse the
+    sibling YAML — that would re-introduce the tone→monitor import that
+    the boundary discipline forbids.
 
     Backwards compatibility: a fingerprint JSON without the optional
     ``feature_validity`` block is treated as all-valid. This is the
-    contract that lets us validate the new distance code against the
-    *existing* on-disk catalog before re-rendering.
+    contract that lets the new distance code run against legacy on-disk
+    fingerprints before they are re-rendered.
     """
     raw = json.loads(fingerprint_path.read_text(encoding="utf-8"))
-    features = raw.get("features") or {}
 
+    chain_id = raw.get("chain_id")
+    if not isinstance(chain_id, str) or not chain_id:
+        raise ValueError(f"missing chain_id in {fingerprint_path}")
+
+    display_name = raw.get("display_name")
+    if not isinstance(display_name, str) or not display_name:
+        raise ValueError(f"missing display_name in {fingerprint_path}")
+
+    family_raw = raw.get("family")
+    if not isinstance(family_raw, str) or not family_raw:
+        raise ValueError(f"missing family in {fingerprint_path}")
+    try:
+        family = MonitorChainFamily(family_raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"family {family_raw!r} not a valid MonitorChainFamily in {fingerprint_path}"
+        ) from exc
+
+    features = raw.get("features") or {}
     vector = np.array(
         [_coerce_feature(features.get(key), key=key) for key in _FEATURE_KEYS],
         dtype=np.float64,
@@ -276,11 +293,10 @@ def _load_entry(chain_id: str, fingerprint_path: Path) -> _CatalogEntry:
     validity_block = raw.get(_FEATURE_VALIDITY_KEY)
     validity = _coerce_validity_block(validity_block, where=str(fingerprint_path))
 
-    chain = load_chain(chain_id)  # raises on malformed YAML — surfaces in caller
     return _CatalogEntry(
         chain_id=chain_id,
-        display_name=chain.display_name,
-        family=chain.family,
+        display_name=display_name,
+        family=family,
         vector=vector,
         validity=validity,
     )
@@ -823,12 +839,20 @@ def to_wire_dict(rec: ToneRecommendation) -> Dict[str, object]:
 def _resolve_fallback_meta(chain_id: str) -> Tuple[str, str]:
     """Return ``(display_name, archetype)`` for a chain id.
 
-    Robust to the chain YAML missing — degrades to the id so the
-    fallback path never raises.
+    Reads the fingerprint JSON directly to avoid the tone→monitor
+    import boundary. Robust to the JSON missing or malformed — degrades
+    to the id so the fallback path never raises.
     """
+    fingerprint_path = _CHAINS_ROOT / f"{chain_id}.fingerprint.json"
     try:
-        chain = load_chain(chain_id)
-        return chain.display_name, chain.family.value
+        raw = json.loads(fingerprint_path.read_text(encoding="utf-8"))
+        display_name = raw.get("display_name")
+        family = raw.get("family")
+        if not isinstance(display_name, str) or not display_name:
+            display_name = chain_id
+        if not isinstance(family, str):
+            family = ""
+        return display_name, family
     except Exception as exc:
         logger.warning(
             "guitar_catalog: failed to resolve fallback chain %s: %s",

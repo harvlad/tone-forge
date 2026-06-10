@@ -1,0 +1,29 @@
+{
+  "chain_id": "tfc.edge_of_breakup",
+  "display_name": "Edge of Breakup",
+  "family": "edge_of_breakup",
+  "source": "rendered_reference",
+  "source_note": "Measured by scripts/render_chain_references.py from tfc.edge_of_breakup.wav. Replaces hand-authored placeholder. Re-render and re-run this script after any chain parameter change.",
+  "rendered_at": "2026-06-10T17:54:58Z",
+  "rendered_from": "tfc.edge_of_breakup.wav",
+  "features": {
+    "brightness": 0.1550669167763426,
+    "warmth": 0.40640815213732007,
+    "air": 2.2741856217515e-06,
+    "attack_ms": 17.142857142857142,
+    "decay_ms": 485.4875283446712,
+    "sustain_ratio": 0.09385366707598534,
+    "harmonic_ratio": 0.00042826689562393554,
+    "pitch_stability": 9.11093759958147e-12
+  },
+  "feature_validity": {
+    "brightness": true,
+    "warmth": true,
+    "air": true,
+    "attack_ms": true,
+    "decay_ms": true,
+    "sustain_ratio": true,
+    "harmonic_ratio": true,
+    "pitch_stability": true
+  }
+}

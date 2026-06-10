@@ -1,0 +1,29 @@
+{
+  "chain_id": "tfc.clean_strat",
+  "display_name": "Clean Strat",
+  "family": "clean",
+  "source": "rendered_reference",
+  "source_note": "Measured by scripts/render_chain_references.py from tfc.clean_strat.wav. Replaces hand-authored placeholder. Re-render and re-run this script after any chain parameter change.",
+  "rendered_at": "2026-06-10T17:54:56Z",
+  "rendered_from": "tfc.clean_strat.wav",
+  "features": {
+    "brightness": 0.20970002017670994,
+    "warmth": 0.45943300998952213,
+    "air": 0.000144620580343112,
+    "attack_ms": 17.142857142857142,
+    "decay_ms": 483.265306122449,
+    "sustain_ratio": 0.09205109352996083,
+    "harmonic_ratio": 0.0004327111735163808,
+    "pitch_stability": 7.48065570472064e-11
+  },
+  "feature_validity": {
+    "brightness": true,
+    "warmth": true,
+    "air": true,
+    "attack_ms": true,
+    "decay_ms": true,
+    "sustain_ratio": true,
+    "harmonic_ratio": true,
+    "pitch_stability": true
+  }
+}

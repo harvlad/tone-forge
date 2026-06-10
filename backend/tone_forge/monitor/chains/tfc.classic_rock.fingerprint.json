@@ -1,0 +1,29 @@
+{
+  "chain_id": "tfc.classic_rock",
+  "display_name": "Classic Rock",
+  "family": "classic_rock",
+  "source": "rendered_reference",
+  "source_note": "Measured by scripts/render_chain_references.py from tfc.classic_rock.wav. Replaces hand-authored placeholder. Re-render and re-run this script after any chain parameter change.",
+  "rendered_at": "2026-06-10T17:54:54Z",
+  "rendered_from": "tfc.classic_rock.wav",
+  "features": {
+    "brightness": 0.11221627081049604,
+    "warmth": 0.7339564190163108,
+    "air": 1.741931928093909e-06,
+    "attack_ms": 16.91609977324263,
+    "decay_ms": 1185.9863945578231,
+    "sustain_ratio": 0.1425738094033333,
+    "harmonic_ratio": 0.0004387272538996285,
+    "pitch_stability": 6.694284306382616e-11
+  },
+  "feature_validity": {
+    "brightness": true,
+    "warmth": true,
+    "air": true,
+    "attack_ms": true,
+    "decay_ms": true,
+    "sustain_ratio": true,
+    "harmonic_ratio": true,
+    "pitch_stability": true
+  }
+}

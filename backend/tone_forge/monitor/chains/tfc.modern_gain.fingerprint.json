@@ -1,0 +1,29 @@
+{
+  "chain_id": "tfc.modern_gain",
+  "display_name": "Modern Gain",
+  "family": "modern_gain",
+  "source": "rendered_reference",
+  "source_note": "Measured by scripts/render_chain_references.py from tfc.modern_gain.wav. Replaces hand-authored placeholder. Re-render and re-run this script after any chain parameter change.",
+  "rendered_at": "2026-06-10T17:55:00Z",
+  "rendered_from": "tfc.modern_gain.wav",
+  "features": {
+    "brightness": 0.21622013407710594,
+    "warmth": 0.5677793204686844,
+    "air": 0.0006730067791779291,
+    "attack_ms": 33.42403628117914,
+    "decay_ms": 527.2108843537416,
+    "sustain_ratio": 0.1330123252588554,
+    "harmonic_ratio": 0.0003761587691053448,
+    "pitch_stability": 1.5008129404860107e-10
+  },
+  "feature_validity": {
+    "brightness": true,
+    "warmth": true,
+    "air": true,
+    "attack_ms": true,
+    "decay_ms": true,
+    "sustain_ratio": true,
+    "harmonic_ratio": true,
+    "pitch_stability": true
+  }
+}

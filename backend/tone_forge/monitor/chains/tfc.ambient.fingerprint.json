@@ -1,5 +1,7 @@
 {
   "chain_id": "tfc.ambient",
+  "display_name": "Ambient",
+  "family": "ambient",
   "source": "rendered_reference",
   "source_note": "Measured by scripts/render_chain_references.py from tfc.ambient.wav. Replaces hand-authored placeholder. Re-render and re-run this script after any chain parameter change.",
   "rendered_at": "2026-06-10T20:26:44Z",
