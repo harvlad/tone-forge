@@ -21,7 +21,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
-| 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; isotonic refit deferred (see §0) |
+| 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed (see §0); isotonic refit deferred |
 | 7 | Device Discovery | Active — scaffold + persistence + API edge landed; onboarding UI deferred (see §0) |
 | 8 | Song Understanding expansion | Investigation only |
 | — | MIDI extraction internals | Frozen |
@@ -39,6 +39,38 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### tone → monitor boundary fix (follow-up to Priority 6)
+
+`tests/test_subsystem_boundaries.py [tone]` had been red since the P6
+matcher landed (commit `44207a3`): `tone/guitar_catalog.py` imported
+`tone_forge.monitor.loader` for `list_chain_ids()` + `load_chain()` to
+resolve each chain's `display_name` and `family`. Path (b) chosen over
+Path (a) because the fingerprint JSON is already the authoritative
+on-disk artefact the matcher consumes — carrying two more strings has
+zero cost; routing through a composition edge would have spread
+`monitor/`'s surface across more callers for no win.
+
+| Change | File | Commit |
+|---|---|---|
+| Extended fingerprint JSON schema: added `display_name` + `family` top-level keys to all 5 rendered fingerprints (`tfc.{ambient, classic_rock, clean_strat, edge_of_breakup, modern_gain}.fingerprint.json`); the 4 non-ambient JSONs were untracked working-tree state from the prior P3 render pass and shipped with this commit | `backend/tone_forge/monitor/chains/*.fingerprint.json` | `c6ff8d1` |
+| `_get_catalog()` now globs `_CHAINS_ROOT/*.fingerprint.json` directly; `_load_entry()` reads `chain_id`/`display_name`/`family` from the JSON (raises with file path on missing/invalid field); `_resolve_fallback_meta()` reads the fingerprint JSON instead of the YAML. `from tone_forge.monitor.loader import …` removed. | `backend/tone_forge/tone/guitar_catalog.py` | `c6ff8d1` |
+| `_render_fingerprint()` now bakes `display_name` + `family` into emitted JSON; driver passes `chain.display_name` + `chain.family.value`. Was untracked working-tree state from the prior render pass; landed now so the schema contract is captured | `backend/scripts/render_chain_references.py` | `c1119fb` |
+
+Verification:
+- `tests/test_subsystem_boundaries.py` — 10/10 PASS (previously `[tone]`
+  was red).
+- `python3 -m pytest tests/ -k "tone or monitor or boundary or session
+  or device"` — 321 PASS, 0 FAIL.
+- Catalog smoke-loads all 5 entries with the expected display_names +
+  families; result is byte-equivalent to the prior YAML-derived path.
+
+Not in this entry:
+- Re-rendering existing 5 fingerprints (already carry the new fields
+  from `c6ff8d1`).
+- `monitor/loader.py` itself — untouched. Its `list_chain_ids()` /
+  `load_chain()` surface remains for the Connect `apply_chain` path
+  (still needs YAML parameters) and the render scripts.
 
 ### Connect hardening — focused pass (Priority 2)
 
