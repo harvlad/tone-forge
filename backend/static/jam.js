@@ -2376,8 +2376,69 @@
     }
   }
 
+  // Substring patterns that map a CoreAudio device name to a
+  // device_class radio value. Hint surface only — the user still
+  // confirms; nothing auto-selects.
+  const DEVICE_CLASS_DETECT_PATTERNS = {
+    helix: ['helix', 'hx stomp', 'hx effects'],
+    quad_cortex: ['quad cortex', 'qcortex'],
+    kemper: ['kemper', 'profiler'],
+    fractal: ['axe-fx', 'fm3', 'fm9', 'axefx'],
+    tonex: ['tonex'],
+    neural_dsp: ['neural dsp', 'cortex mobile'],
+  };
+
+  function detectedDeviceClasses(devices) {
+    // Returns a Set of device_class values whose detection patterns
+    // match at least one probed device name.
+    const hits = new Set();
+    if (!Array.isArray(devices)) return hits;
+    for (const d of devices) {
+      const name = (d && d.name) ? d.name.toLowerCase() : '';
+      if (!name) continue;
+      for (const [klass, patterns] of Object.entries(DEVICE_CLASS_DETECT_PATTERNS)) {
+        if (patterns.some(p => name.includes(p))) hits.add(klass);
+      }
+    }
+    return hits;
+  }
+
+  function clearOnboardingDetectedBadges() {
+    for (const badge of document.querySelectorAll('.onboarding-detected-badge')) {
+      badge.remove();
+    }
+  }
+
+  function markOnboardingDetectedClasses(hits) {
+    clearOnboardingDetectedBadges();
+    if (!hits || hits.size === 0) return;
+    for (const klass of hits) {
+      const radio = document.querySelector(
+        `#onboarding-form input[name="device-class"][value="${klass}"]`,
+      );
+      if (!radio) continue;
+      const label = radio.closest('.onboarding-option');
+      if (!label) continue;
+      const badge = document.createElement('span');
+      badge.className = 'onboarding-detected-badge';
+      badge.textContent = 'Detected';
+      label.appendChild(badge);
+    }
+  }
+
   function populateOnboardingProbeUI(probe) {
-    if (!probe || !probe.probe_succeeded || !probe.suggested_input) return;
+    if (!probe || !probe.probe_succeeded) {
+      clearOnboardingDetectedBadges();
+      return;
+    }
+    // Per-option "Detected" badges (independent of suggested_input —
+    // we can flag a modeler even when no vendor-known interface is
+    // present, and vice versa).
+    markOnboardingDetectedClasses(detectedDeviceClasses(probe.devices));
+    // Global Detected row reflects the suggested *audio interface*
+    // (for audio_input_name capture). Only shown when probe gave us
+    // a suggested_input.
+    if (!probe.suggested_input) return;
     const detectedRow = $('onboarding-input-detected');
     const nameEl = $('onboarding-input-name');
     const select = $('onboarding-input-select');

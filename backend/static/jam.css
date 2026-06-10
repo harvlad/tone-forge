@@ -484,6 +484,18 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
   margin: 0;
 }
 .onboarding-option input[type="radio"]:checked + span { color: var(--text); font-weight: 600; }
+.onboarding-detected-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(80, 200, 120, 0.15);
+  color: var(--good, #5c8);
+  border: 1px solid rgba(80, 200, 120, 0.4);
+}
 .onboarding-error {
   color: var(--bad);
   font-size: 13px;
