@@ -1556,7 +1556,22 @@
     // parent document stays put. Same shape pattern Slack / Zoom use.
     ensureConnectBridge();
     const cbAfterKick = state.connectBridge;
-    if (cbAfterKick.sessionId) {
+    // Safari 26.x has a crash in its banner-management code when a
+    // programmatically-clicked anchor targets an unregistered custom
+    // scheme (radar via Safari-2026-06-11-010546.ips:
+    // -[BannerContainerView uninstallBanner:withAnimation:] nil-derefs
+    // through -[__NSArrayM insertObject:atIndex:] on the next
+    // didCommitLoadForFrame:). Beyond that, Safari already silently
+    // drops the synthetic launch — see the comment above. So on
+    // Safari we skip the auto-launch entirely and rely on the visible
+    // "Open Connect helper →" link that renderConnectStatus surfaces;
+    // a real user-clicked anchor still works on Safari when
+    // Connect.app IS installed, and falls through to a graceful
+    // "no app" prompt when it isn't, without queueing the broken
+    // banner uninstall.
+    const isSafari =
+      /^((?!chrome|android).)*safari/i.test(navigator.userAgent || '');
+    if (cbAfterKick.sessionId && !isSafari) {
       const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${scheme}//${window.location.host}/ws/connect-bridge`;
       const deepLink =
@@ -1579,7 +1594,11 @@
         console.warn('[connect] deep-link launch failed:', e);
       }
     }
-    flashConnectStatus('Reaching out to the desktop helper…');
+    flashConnectStatus(
+      isSafari
+        ? 'Bridge ready — click "Open Connect helper →" below to pair.'
+        : 'Reaching out to the desktop helper…',
+    );
   });
 
   // Open the bridge proactively when the user lands on the perform
