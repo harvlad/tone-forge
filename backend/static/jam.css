@@ -150,6 +150,15 @@ html, body {
 }
 .intake button:hover { background: var(--accent-2); }
 .hint { color: var(--text-dim); font-size: 14px; margin-top: 16px; }
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
 
 /* ------------------------------------------------------- band-room view */
 .bandroom-header { margin-bottom: 28px; }

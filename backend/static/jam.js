@@ -2524,6 +2524,15 @@
   })();
   initOnboardingUI();
 
+  // Surface-level "Change audio interface" link on the intake page —
+  // same flow as the settings popover's Reset button, just more
+  // discoverable for users who want to re-pick without digging into
+  // settings.
+  const intakeChangeBtn = $('intake-change-device');
+  if (intakeChangeBtn) {
+    intakeChangeBtn.addEventListener('click', () => { resetDeviceChoice(); });
+  }
+
   // ---- settings popover wiring ----
   function initSettingsUI() {
     loadSettings();
