@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ToneForge Jam — Play inside the song</title>
+<link rel="stylesheet" href="/static/jam.css" />
+</head>
+<body>
+<header class="jam-header">
+  <a class="brand" href="/">ToneForge</a>
+  <nav>
+    <a class="active" href="/jam">Jam</a>
+    <a href="/">Studio</a>
+  </nav>
+</header>
+
+<!-- ============================ ONBOARDING ============================ -->
+<!--
+  Device-discovery onboarding (§8). Shown on first jam-page load when
+  GET /api/device/preferences returns null. A single required question
+  drives the DeviceClass enum; the answer is persisted server-side via
+  POST /api/device/preferences and surfaces later as DeviceCaps for the
+  session bundle.
+
+  The modal is rendered as a sibling of <main> so its fixed-position
+  backdrop covers the jam app without inheriting #jam-app's padding /
+  max-width. It is hidden by default; jam.js reveals it after the
+  GET probe resolves to null.
+-->
+<div id="onboarding-modal" class="onboarding-modal" hidden role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+  <div class="onboarding-backdrop"></div>
+  <form id="onboarding-form" class="onboarding-panel">
+    <h2 class="onboarding-title" id="onboarding-title">What are you playing through?</h2>
+    <p class="onboarding-sub">We use this to tune your monitoring path. You can change it later in settings.</p>
+    <div class="onboarding-options">
+      <label class="onboarding-option">
+        <input type="radio" name="device-class" value="interface_only" required />
+        <span>Just my audio interface</span>
+      </label>
+      <label class="onboarding-option">
+        <input type="radio" name="device-class" value="helix" />
+        <span>Helix</span>
+      </label>
+      <label class="onboarding-option">
+        <input type="radio" name="device-class" value="quad_cortex" />
+        <span>Quad Cortex</span>
+      </label>
+      <label class="onboarding-option">
+        <input type="radio" name="device-class" value="kemper" />
+        <span>Kemper</span>
+      </label>
+      <label class="onboarding-option">
+        <input type="radio" name="device-class" value="fractal" />
+        <span>Fractal</span>
+      </label>
+      <label class="onboarding-option">
+        <input type="radio" name="device-class" value="tonex" />
+        <span>Tonex</span>
+      </label>
+      <label class="onboarding-option">
+        <input type="radio" name="device-class" value="neural_dsp" />
+        <span>Neural DSP plugin</span>
+      </label>
+      <label class="onboarding-option">
+        <input type="radio" name="device-class" value="other" />
+        <span>Something else</span>
+      </label>
+    </div>
+    <div id="onboarding-error" class="onboarding-error" hidden></div>
+    <button type="submit" id="onboarding-submit" class="primary big">Continue</button>
+  </form>
+</div>
+
+<main id="jam-app">
+  <!-- ============================== INTAKE ============================== -->
+  <section id="view-intake" class="view active">
+    <h1 class="hero">Play inside the song.</h1>
+    <p class="sub">Paste a YouTube link. Pick the part you play. We'll handle the band.</p>
+
+    <div id="engine-banner" class="engine-banner engine-banner--unknown">
+      <div class="engine-banner-dot"></div>
+      <div class="engine-banner-text">
+        <strong id="engine-banner-title">Checking local engine…</strong>
+        <span id="engine-banner-detail">Stem separation runs on your machine for speed and privacy.</span>
+      </div>
+      <button id="engine-start-btn" class="ghost" style="display:none;">Start engine</button>
+      <button id="engine-stop-btn" class="ghost" style="display:none;">Stop engine</button>
+    </div>
+
+    <form id="intake-form" class="intake">
+      <input
+        id="intake-url"
+        type="url"
+        placeholder="https://youtube.com/watch?v=…"
+        autocomplete="off"
+        required />
+      <select id="intake-instrument">
+        <option value="guitar" selected>I play guitar</option>
+        <option value="bass" disabled>I play bass (coming soon)</option>
+        <option value="keys" disabled>I play keys (coming soon)</option>
+      </select>
+      <button type="submit" id="intake-submit" disabled>Start jam</button>
+    </form>
+
+    <div id="intake-error" class="intake-error" hidden></div>
+
+    <p class="hint">First jam takes about a minute. Subsequent jams of the same song are instant.</p>
+  </section>
+
+  <!-- ============================ BAND ROOM ============================= -->
+  <section id="view-bandroom" class="view">
+    <div class="bandroom-header">
+      <div class="song-meta">
+        <h2 id="bandroom-title">Setting up your band…</h2>
+        <div id="bandroom-status" class="status">Downloading audio</div>
+      </div>
+      <div class="progress">
+        <div id="bandroom-bar" class="progress-bar"></div>
+      </div>
+    </div>
+
+    <div class="bandroom-stage">
+      <!-- Slots are filled in by JS as stems land -->
+      <div class="slot" data-stem="vocals">
+        <div class="slot-icon">🎤</div>
+        <div class="slot-name">Vocals</div>
+        <div class="slot-state">Waiting</div>
+      </div>
+      <div class="slot" data-stem="keys">
+        <div class="slot-icon">🎹</div>
+        <div class="slot-name">Keys</div>
+        <div class="slot-state">Waiting</div>
+      </div>
+      <div class="slot center user-slot" data-stem="user">
+        <div class="slot-icon">⚡</div>
+        <div class="slot-name">You</div>
+        <div class="slot-state">Holding your spot</div>
+      </div>
+      <div class="slot" data-stem="bass">
+        <div class="slot-icon">🎸</div>
+        <div class="slot-name">Bass</div>
+        <div class="slot-state">Waiting</div>
+      </div>
+      <div class="slot" data-stem="drums">
+        <div class="slot-icon">🥁</div>
+        <div class="slot-name">Drums</div>
+        <div class="slot-state">Waiting</div>
+      </div>
+    </div>
+
+    <button id="bandroom-cancel" class="ghost">Cancel</button>
+  </section>
+
+  <!-- =========================== PERFORMANCE ============================ -->
+  <section id="view-perform" class="view">
+    <div class="perform-top">
+      <div class="now-playing">
+        <div class="np-title" id="np-title">Untitled jam</div>
+        <div class="np-meta" id="np-meta">— bpm · — key</div>
+      </div>
+      <div class="perform-actions">
+        <button id="perform-settings" class="ghost" title="Settings">⚙</button>
+        <button id="perform-back" class="ghost">New jam</button>
+      </div>
+    </div>
+
+    <div id="settings-popover" class="settings-popover" hidden>
+      <div class="settings-row">
+        <label>
+          <input type="checkbox" id="setting-listen-enabled" />
+          Listen to my playing
+        </label>
+        <div class="settings-hint">Uses your microphone to score intonation. Wear headphones — otherwise the mic picks up the song playback and scores that instead of you.</div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-label">Feedback view</div>
+        <label><input type="radio" name="feedback-view" value="cents" /> Cents meter + note name</label>
+        <label><input type="radio" name="feedback-view" value="rolling" /> + rolling % in tune</label>
+        <label><input type="radio" name="feedback-view" value="full" /> Full panel</label>
+      </div>
+      <div class="settings-row">
+        <div class="settings-label">Device</div>
+        <div id="setting-device-current" class="settings-hint settings-hint--inline">Not set</div>
+        <button type="button" id="setting-device-reset" class="ghost">Reset device choice</button>
+      </div>
+    </div>
+
+    <div id="intonation-panel" class="intonation-panel" hidden>
+      <div class="intonation-main">
+        <div class="intonation-note">
+          <div class="intonation-note-name" id="into-note">—</div>
+          <div class="intonation-cents" id="into-cents">0¢</div>
+        </div>
+        <div class="intonation-meter">
+          <div class="intonation-meter-track"></div>
+          <div class="intonation-meter-needle" id="into-needle"></div>
+          <div class="intonation-meter-center"></div>
+        </div>
+        <div class="intonation-status" id="into-status">Idle</div>
+      </div>
+      <div class="intonation-rolling" id="into-rolling" hidden>
+        <div class="intonation-rolling-label">In tune (5s)</div>
+        <div class="intonation-rolling-pct" id="into-rolling-pct">—</div>
+      </div>
+      <div class="intonation-full" id="into-full" hidden>
+        <div class="intonation-full-row">
+          <span class="intonation-full-label">In key</span>
+          <span id="into-in-key" class="intonation-full-val">—</span>
+        </div>
+        <div class="intonation-full-row">
+          <span class="intonation-full-label">Stable pitch %</span>
+          <span id="into-stable" class="intonation-full-val">—</span>
+        </div>
+        <div class="intonation-full-divider"></div>
+        <div class="intonation-full-row">
+          <span class="intonation-full-label">Last hit</span>
+          <span id="into-timing-last" class="intonation-full-val">—</span>
+        </div>
+        <div class="intonation-full-row">
+          <span class="intonation-full-label">Within ±50ms</span>
+          <span id="into-timing-tight" class="intonation-full-val">—</span>
+        </div>
+        <div class="intonation-full-row">
+          <span class="intonation-full-label">Within ±100ms</span>
+          <span id="into-timing-loose" class="intonation-full-val">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="perform-stage">
+      <div class="user-card">
+        <div class="user-card-label">Your slot</div>
+        <div class="user-card-tone" id="user-tone-name">No tone yet</div>
+        <div class="user-card-meta" id="user-tone-meta">—</div>
+        <!-- Tone recommendation card (P3a/P6e+). Populated from
+             result.tone by jam.js renderToneCard(). Hidden until a
+             recommendation lands so legacy responses without a tone
+             field don't render an empty shell. -->
+        <div class="tone-card" id="tone-card" hidden>
+          <div class="tone-card-header">
+            <span class="tone-tier-badge" id="tone-tier-badge">—</span>
+            <span class="tone-card-title" id="tone-card-title">—</span>
+          </div>
+          <div class="tone-card-rationale" id="tone-card-rationale">—</div>
+          <div class="tone-card-actions">
+            <button id="tone-apply-btn" class="primary" type="button">Apply</button>
+            <button id="tone-dismiss-btn" class="ghost" type="button">Dismiss</button>
+          </div>
+          <div class="tone-card-alternates" id="tone-card-alternates" hidden>
+            <div class="tone-card-alternates-label">Alternatives</div>
+            <div class="tone-card-alternates-list" id="tone-card-alternates-list"></div>
+          </div>
+        </div>
+        <div class="user-card-controls">
+          <button id="connect-btn" class="primary">Connect to play</button>
+          <div id="connect-status" class="connect-status" hidden></div>
+          <button id="user-mute-original" class="ghost">Mute original guitar</button>
+          <div class="connect-gain" id="connect-gain-wrap" hidden>
+            <label for="connect-gain">Monitor</label>
+            <input id="connect-gain" type="range" min="0" max="1" step="0.01" value="0" />
+            <span id="connect-gain-readout" class="connect-gain-readout">muted</span>
+            <div class="connect-gain-hint">Set above 0 only when wearing headphones — laptop speakers will feed back.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stem-rack" id="stem-rack">
+        <!-- Per-stem rows injected by JS -->
+      </div>
+    </div>
+
+    <div class="transport">
+      <div class="transport-row">
+        <button id="t-play" class="primary big">Play</button>
+        <button id="t-stop" class="ghost big">Stop</button>
+        <button id="t-click" class="ghost" title="Toggle click track">Click: off</button>
+        <div id="t-time" class="time">0:00 / 0:00</div>
+      </div>
+      <div class="section-bar" id="section-bar">
+        <!-- Section pills injected by JS -->
+      </div>
+      <div id="loop-status" class="loop-status">Loop: off</div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/jam.js"></script>
+</body>
+</html>

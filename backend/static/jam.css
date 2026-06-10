@@ -1,0 +1,646 @@
+/*
+ * jam.css
+ *
+ * Visual language for ToneForge Jam.
+ *
+ * The page lives in three states (intake → band room → performance) and
+ * the layout is intentionally calm — large type, generous spacing, no
+ * gradients. The product promise is "be inside the song", so chrome stays
+ * out of the way.
+ */
+
+:root {
+  --bg: #0b0d10;
+  --panel: #14181d;
+  --panel-2: #1c2128;
+  --text: #f3f4f6;
+  --text-dim: #8b95a5;
+  --accent: #f97316;       /* warm orange */
+  --accent-2: #fdba74;
+  --good: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --border: #232a33;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue",
+               Arial, sans-serif;
+  font-size: 16px;
+  height: 100%;
+}
+
+/* ---------------------------------------------------------------- header */
+.jam-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.5px;
+  color: var(--text);
+  text-decoration: none;
+}
+.jam-header nav { display: flex; gap: 18px; }
+.jam-header nav a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.jam-header nav a.active {
+  color: var(--text);
+  background: var(--panel);
+}
+
+/* ---------------------------------------------------------------- views */
+#jam-app { padding: 32px 28px 80px; max-width: 1100px; margin: 0 auto; }
+.view { display: none; }
+.view.active { display: block; }
+
+/* ---------------------------------------------------------- intake view */
+.hero {
+  font-size: 56px;
+  font-weight: 700;
+  margin: 56px 0 12px;
+  line-height: 1.05;
+}
+.sub { color: var(--text-dim); font-size: 20px; margin: 0 0 24px; }
+
+/* engine banner --------------------------------------------------------- */
+.engine-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin: 0 0 18px;
+  max-width: 880px;
+}
+.engine-banner-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+.engine-banner-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.engine-banner-text strong { font-size: 14px; font-weight: 600; }
+.engine-banner-text span { font-size: 12px; color: var(--text-dim); }
+.engine-banner--unknown .engine-banner-dot { background: var(--text-dim); }
+.engine-banner--off .engine-banner-dot { background: var(--bad); }
+.engine-banner--starting .engine-banner-dot {
+  background: var(--warn);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.engine-banner--on { border-color: rgba(74, 222, 128, 0.35); }
+.engine-banner--on .engine-banner-dot { background: var(--good); }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.intake {
+  display: grid;
+  grid-template-columns: 1fr 220px auto;
+  gap: 12px;
+  align-items: stretch;
+  max-width: 880px;
+}
+.intake input, .intake select {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 16px;
+  height: 52px;
+  font-family: inherit;
+}
+.intake input:focus, .intake select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.intake button {
+  background: var(--accent);
+  color: #1a0f06;
+  border: none;
+  border-radius: 10px;
+  padding: 0 22px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  height: 52px;
+}
+.intake button:hover { background: var(--accent-2); }
+.hint { color: var(--text-dim); font-size: 14px; margin-top: 16px; }
+
+/* ------------------------------------------------------- band-room view */
+.bandroom-header { margin-bottom: 28px; }
+.song-meta h2 { margin: 0 0 6px; font-size: 28px; }
+.status { color: var(--text-dim); font-size: 15px; }
+.progress {
+  margin-top: 14px;
+  height: 4px;
+  background: var(--panel);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.bandroom-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 18px;
+  aspect-ratio: 16 / 10;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.slot {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  transition: background 0.3s, border-color 0.3s, transform 0.3s;
+  opacity: 0.55;
+}
+.slot.ready { opacity: 1; border-color: var(--good); }
+.slot.user-slot {
+  background: var(--panel-2);
+  border-color: var(--accent);
+  opacity: 1;
+}
+/* Pin the user slot to dead center of the 3x3 grid */
+.slot.center { grid-column: 2; grid-row: 2; }
+/* Place the remaining four around the user */
+.slot[data-stem="vocals"] { grid-column: 2; grid-row: 1; }
+.slot[data-stem="keys"]   { grid-column: 1; grid-row: 1; }
+.slot[data-stem="bass"]   { grid-column: 1; grid-row: 3; }
+.slot[data-stem="drums"]  { grid-column: 3; grid-row: 3; }
+
+.slot-icon { font-size: 36px; margin-bottom: 6px; }
+.slot-name { font-size: 16px; font-weight: 600; }
+.slot-state { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.slot.ready .slot-state { color: var(--good); }
+
+#bandroom-cancel { margin: 28px auto 0; display: block; }
+
+/* ------------------------------------------------------- performance view */
+.perform-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.np-title { font-size: 22px; font-weight: 700; }
+.np-meta { color: var(--text-dim); font-size: 14px; margin-top: 4px; }
+
+.perform-stage {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+.user-card {
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  border-radius: 16px;
+  padding: 20px;
+}
+.user-card-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.user-card-tone { font-size: 22px; font-weight: 700; margin: 6px 0; }
+.user-card-meta { color: var(--text-dim); font-size: 13px; margin-bottom: 16px; }
+.user-card-controls { display: flex; flex-direction: column; gap: 8px; }
+#connect-btn.connected {
+  background: var(--accent, #4ade80);
+  color: #0a0a0a;
+  border-color: var(--accent, #4ade80);
+}
+.connect-status {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  padding: 2px 2px;
+}
+.connect-status.ok { color: var(--accent, #4ade80); }
+.connect-launcher-link {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--accent, #ff7a00);
+  text-decoration: underline;
+  font-weight: 500;
+}
+.connect-launcher-link:hover { text-decoration: none; }
+.connect-gain {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.connect-gain label {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.connect-gain input[type="range"] {
+  width: 100%;
+}
+.connect-gain-readout {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 48px;
+  text-align: right;
+}
+.connect-gain-hint {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.stem-rack {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stem-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 60px 60px;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.stem-row:last-child { border-bottom: none; }
+.stem-row .name { font-weight: 600; font-size: 15px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stem-row .name.original-instrument { color: var(--accent); }
+.stem-row .stem-match {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stem-row .gain { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--border); }
+.stem-row .gain::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------- transport */
+.transport {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 20px;
+}
+.transport-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.section-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.section-pill {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.section-pill:hover { border-color: var(--accent); }
+.section-pill.active { background: var(--accent); color: #1a0f06; border-color: var(--accent); }
+.loop-status { color: var(--text-dim); font-size: 13px; margin-top: 10px; }
+
+/* ---------------------------------------------------------- buttons */
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+button.primary {
+  background: var(--accent);
+  color: #1a0f06;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 600;
+}
+button.primary:hover { background: var(--accent-2); }
+button.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 18px;
+}
+button.ghost:hover { border-color: var(--accent); }
+button.big { font-size: 16px; padding: 12px 22px; }
+button[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+.intake-error {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: rgba(211, 106, 69, 0.12);
+  border: 1px solid #d36a45;
+  border-radius: 10px;
+  color: #f0a585;
+  font-size: 14px;
+}
+
+/* ----------------------------------------------- Onboarding modal */
+/* Device-discovery first-run prompt (§8). The modal sits as a sibling of
+   <main> so the backdrop covers the whole viewport without inheriting the
+   jam-app padding. Visible only when jam.js detects no persisted device
+   preferences (GET /api/device/preferences → null). */
+.onboarding-modal[hidden] { display: none !important; }
+.onboarding-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.onboarding-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(2px);
+}
+.onboarding-panel {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px 28px 22px;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.onboarding-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.2;
+}
+.onboarding-sub {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.onboarding-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.onboarding-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--panel-2);
+  font-size: 15px;
+  transition: border-color 120ms, background 120ms;
+}
+.onboarding-option:hover { border-color: var(--accent); }
+.onboarding-option input[type="radio"] {
+  accent-color: var(--accent);
+  margin: 0;
+}
+.onboarding-option input[type="radio"]:checked + span { color: var(--text); font-weight: 600; }
+.onboarding-error {
+  color: var(--bad);
+  font-size: 13px;
+  margin-top: 4px;
+}
+#onboarding-submit { margin-top: 8px; align-self: flex-end; }
+
+/* ----------------------------------------------- Settings popover */
+.settings-popover {
+  position: absolute;
+  right: 20px;
+  top: 70px;
+  z-index: 20;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  min-width: 260px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.settings-row + .settings-row { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.settings-row label { display: block; font-size: 14px; padding: 3px 0; cursor: pointer; }
+.settings-label { font-weight: 600; font-size: 13px; margin-bottom: 6px; color: var(--text-dim); }
+.settings-hint { font-size: 11px; color: var(--text-dim); margin-top: 2px; padding-left: 22px; }
+.settings-hint--inline { padding-left: 0; margin: 0 0 6px; }
+#setting-device-reset { font-size: 12px; padding: 4px 10px; }
+
+/* ----------------------------------------------- Intonation panel */
+.intonation-panel {
+  margin: 12px 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 18px;
+  align-items: center;
+}
+.intonation-main { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; }
+.intonation-note { text-align: center; min-width: 70px; }
+.intonation-note-name { font-size: 28px; font-weight: 700; color: var(--text); line-height: 1; }
+.intonation-cents { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.intonation-meter {
+  position: relative;
+  height: 18px;
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+}
+.intonation-meter-track {
+  position: absolute;
+  inset: 8px 0;
+  background: var(--border);
+  border-radius: 2px;
+}
+.intonation-meter-center {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text-dim);
+  transform: translateX(-50%);
+  opacity: 0.5;
+}
+.intonation-meter-needle {
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  bottom: 2px;
+  width: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+  transform: translateX(-50%);
+  transition: left 80ms ease-out, background 200ms;
+}
+.intonation-meter-needle.flat { background: #d36a45; }
+.intonation-meter-needle.sharp { background: #d36a45; }
+.intonation-meter-needle.in-tune { background: #58c47a; }
+.intonation-status { font-size: 11px; color: var(--text-dim); grid-column: 1 / -1; margin-top: 4px; }
+.intonation-rolling { text-align: center; padding-left: 14px; border-left: 1px solid var(--border); }
+.intonation-rolling-label { font-size: 11px; color: var(--text-dim); }
+.intonation-rolling-pct { font-size: 20px; font-weight: 700; margin-top: 2px; }
+.intonation-full { padding-left: 14px; border-left: 1px solid var(--border); font-size: 12px; min-width: 180px; }
+.intonation-full-row { display: flex; justify-content: space-between; gap: 14px; padding: 2px 0; }
+.intonation-full-label { color: var(--text-dim); }
+.intonation-full-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.intonation-full-divider { height: 1px; background: var(--border); margin: 6px 0; opacity: 0.6; }
+
+/* ============================== tone card ============================== */
+/* Monitor-chain ToneRecommendation surface inside .user-card. Tier
+   badge colour communicates the confidence band at a glance:
+     --tone-high   = green, ready to apply
+     --tone-medium = amber, suggested
+     --tone-low    = muted, low confidence
+     --tone-unknown= grey, default chain
+*/
+.tone-card {
+  margin: 12px 0 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border, #2a2a2a);
+}
+.tone-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.tone-tier-badge {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  background: #2a2a2a;
+  color: var(--text, #eee);
+}
+.tone-tier-badge--high    { background: #14532d; color: #bbf7d0; }
+.tone-tier-badge--medium  { background: #78350f; color: #fde68a; }
+.tone-tier-badge--low     { background: #3a3a3a; color: #d4d4d4; }
+.tone-tier-badge--unknown { background: #2a2a2a; color: #9ca3af; }
+.tone-card-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.tone-card-rationale {
+  color: var(--text-dim, #aaa);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 4px 0 10px;
+}
+.tone-card-actions {
+  display: flex;
+  gap: 8px;
+}
+.tone-card-alternates {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #2a2a2a);
+}
+.tone-card-alternates-label {
+  font-size: 10px;
+  color: var(--text-dim, #aaa);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.tone-card-alternates-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tone-alternate-chip {
+  border: 1px solid var(--border, #2a2a2a);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text, #eee);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.tone-alternate-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

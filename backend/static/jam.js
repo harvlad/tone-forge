@@ -77,6 +77,14 @@
     clickNextBeatIdx: 0,       // next beat index to schedule
     // V2 preset matches per stem (keyed by legacy stem name).
     presetMatches: {},
+    // Tone-card state. `rec` is the raw wire-form ToneRecommendation
+    // dict from `result.tone` (see backend/tone_forge/tone/guitar_catalog.py
+    // `to_wire_dict`). Dismissed is set when the user closes the card; we
+    // remember it so re-renders within the same session don't pop it back.
+    tone: {
+      rec: null,
+      dismissed: false,
+    },
     // Detected key from analysis result, parsed once per jam.
     //   { root: int 0-11, scale: 'Major'|'Minor', pitchClasses: Set<int> }
     songKey: null,
@@ -400,6 +408,121 @@
       .replaceAll("'", '&#39;');
   }
 
+  // -------------------------------------------------------- tone card
+  //
+  // Tier-aware rendering for the monitor-chain ToneRecommendation.
+  // Three visual states map 1:1 to the backend tiers:
+  //
+  //   high     — pre-applied (we still show "Apply" so the user can
+  //              confirm even when we auto-pushed); badge: "High match"
+  //   medium   — suggested + alternates; badge: "Suggested match"
+  //   low /
+  //   unknown  — fallback rationale; badge: "Default chain"
+  //
+  // The rec passed in is the wire dict produced by
+  // `guitar_catalog.to_wire_dict`. Hides the card entirely when null
+  // so legacy responses (no `tone` field) leave the slot empty.
+  function renderToneCard(rec) {
+    const card = $('tone-card');
+    if (!card) return;
+    if (!rec || state.tone.dismissed) {
+      card.hidden = true;
+      return;
+    }
+    const tier = String(rec.tier || 'unknown').toLowerCase();
+    const badge = $('tone-tier-badge');
+    const title = $('tone-card-title');
+    const rationale = $('tone-card-rationale');
+    const alternates = $('tone-card-alternates');
+    const alternatesList = $('tone-card-alternates-list');
+
+    // Pick the human title. apply.chain_id is always present; match
+    // gives us a friendlier chain name when there was a real hit.
+    const matchName = rec.match && rec.match.chain_id
+      ? toneChainDisplayName(rec.match.chain_id)
+      : null;
+    const applyName = toneChainDisplayName(rec.apply && rec.apply.chain_id);
+    title.textContent = matchName || applyName || 'Default chain';
+
+    // Tier badge text + colour class. CSS handles the palette; we
+    // just toggle the modifier.
+    const badgeText = ({
+      high: 'High match',
+      medium: 'Suggested',
+      low: 'Low confidence',
+      unknown: 'Default',
+    })[tier] || 'Default';
+    badge.textContent = badgeText;
+    badge.className = 'tone-tier-badge tone-tier-badge--' + tier;
+
+    rationale.textContent = rec.rationale || '';
+
+    // Alternates row — only shown when we have any.
+    const alts = Array.isArray(rec.alternates) ? rec.alternates : [];
+    if (alts.length) {
+      alternatesList.innerHTML = '';
+      for (const alt of alts) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'tone-alternate-chip';
+        chip.textContent = toneChainDisplayName(alt.chain_id);
+        chip.title = `Distance ${Number(alt.distance || 0).toFixed(2)}`;
+        chip.addEventListener('click', () => applyToneChain(alt.chain_id));
+        alternatesList.appendChild(chip);
+      }
+      alternates.hidden = false;
+    } else {
+      alternates.hidden = true;
+    }
+    card.hidden = false;
+  }
+
+  // Best-effort human label from a chain id. The catalog ids follow
+  // the `tfc.<slug>` convention; strip the prefix and title-case.
+  function toneChainDisplayName(chainId) {
+    if (!chainId) return '';
+    const s = String(chainId).replace(/^tfc\./, '');
+    return s.split(/[_\-]/).map(p => p ? p[0].toUpperCase() + p.slice(1) : p).join(' ');
+  }
+
+  // Push an apply_chain frame over the Connect WS bridge. The backend
+  // (`tone_forge_api._handle_apply_chain`) is the source of truth for
+  // the positive-label log: it emits `log_applied` after the broadcast
+  // succeeds. We don't double-log from the browser.
+  function applyToneChain(chainId) {
+    if (!chainId) return;
+    sendOrQueueBridgeMessage({
+      type: 'apply_chain',
+      chain_id: chainId,
+      request_id: 'apply_' + Date.now().toString(36),
+    });
+  }
+
+  // Dismiss handler. POSTs a negative-label event and hides the card
+  // for the remainder of this jam (until a new song is loaded).
+  async function dismissToneCard(reason) {
+    const rec = state.tone.rec;
+    state.tone.dismissed = true;
+    const card = $('tone-card');
+    if (card) card.hidden = true;
+    if (!rec || !rec.apply || !rec.apply.chain_id) return;
+    try {
+      await fetch('/api/tone/ignored', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chain_id: rec.apply.chain_id,
+          reason: reason || 'card_closed',
+          session_id: state.analysisId || null,
+          source_url: state.sourceUrl || null,
+        }),
+      });
+    } catch (err) {
+      // Telemetry only — never block the UI on a failed log.
+      console.warn('[tone] ignored log failed:', err);
+    }
+  }
+
   // -------------------------------------------------------- intake form
   $('intake-form').addEventListener('submit', (ev) => {
     ev.preventDefault();
@@ -601,6 +724,23 @@
     }
     showView('intake');
   });
+
+  // Tone card buttons. Bound once at startup; the per-jam state lives
+  // on `state.tone`.
+  const _toneApplyBtn = $('tone-apply-btn');
+  if (_toneApplyBtn) {
+    _toneApplyBtn.addEventListener('click', () => {
+      const rec = state.tone.rec;
+      const chainId = rec && rec.apply && rec.apply.chain_id;
+      if (chainId) applyToneChain(chainId);
+    });
+  }
+  const _toneDismissBtn = $('tone-dismiss-btn');
+  if (_toneDismissBtn) {
+    _toneDismissBtn.addEventListener('click', () => {
+      dismissToneCard('card_closed');
+    });
+  }
 
   $('perform-back').addEventListener('click', () => {
     stopAllStems();
@@ -977,6 +1117,13 @@
       $('user-tone-name').textContent = 'No tone match yet';
       $('user-tone-meta').textContent = 'Default monitoring preset will be used';
     }
+
+    // Phase-1 monitor-chain Tone card. `result.tone` is the wire form
+    // of a ToneRecommendation. Renders the tier/title/rationale and
+    // wires Apply -> Connect bridge / Dismiss -> /api/tone/ignored.
+    state.tone.dismissed = false;
+    state.tone.rec = result.tone || null;
+    renderToneCard(state.tone.rec);
 
     // Build the stem rack rows
     buildStemRack();
@@ -2156,6 +2303,139 @@
     full.hidden = state.settings.feedbackView !== 'full';
   }
 
+  // ---- device-discovery onboarding (§8) ----
+  // The Jam page is the first surface a new user sees, so it owns the
+  // single-question onboarding modal. The persistence + DeviceCaps
+  // mapping live server-side (tone_forge_api.py `/api/device/preferences`);
+  // this module is purely the UI gate.
+  //
+  // Display labels mirror the EXECUTION_PLAN.md §8 spec verbatim so the
+  // settings "current" line matches what the user originally picked.
+  const DEVICE_CLASS_LABELS = {
+    interface_only: 'Just my audio interface',
+    helix: 'Helix',
+    quad_cortex: 'Quad Cortex',
+    kemper: 'Kemper',
+    fractal: 'Fractal',
+    tonex: 'Tonex',
+    neural_dsp: 'Neural DSP plugin',
+    // The enum has additional values (connect_monitor, no_hardware) that
+    // the onboarding screen does not surface; if they show up server-side
+    // (e.g. via a future CLI) we still want to render a readable label.
+    connect_monitor: 'Connect monitor',
+    no_hardware: 'No hardware',
+    other: 'Something else',
+  };
+
+  function deviceLabelFor(deviceClass) {
+    return DEVICE_CLASS_LABELS[deviceClass] || deviceClass || 'Not set';
+  }
+
+  function updateDeviceSettingLabel(prefs) {
+    const el = $('setting-device-current');
+    if (!el) return;
+    if (prefs && prefs.device_class) {
+      el.textContent = `Currently: ${deviceLabelFor(prefs.device_class)}`;
+    } else {
+      el.textContent = 'Not set';
+    }
+  }
+
+  async function fetchDevicePreferences() {
+    try {
+      const res = await fetch('/api/device/preferences');
+      if (!res.ok) return null;
+      return await res.json(); // null when nothing persisted
+    } catch (e) {
+      console.warn('[onboarding] GET /api/device/preferences failed:', e);
+      return null;
+    }
+  }
+
+  function showOnboardingModal() {
+    const modal = $('onboarding-modal');
+    if (!modal) return;
+    modal.hidden = false;
+    // Focus the first option for keyboard users.
+    const first = modal.querySelector('input[name="device-class"]');
+    if (first) first.focus();
+  }
+
+  function hideOnboardingModal() {
+    const modal = $('onboarding-modal');
+    if (!modal) return;
+    modal.hidden = true;
+    // Reset selection so a future re-prompt (after Reset device choice)
+    // doesn't keep the prior answer pre-checked.
+    const form = $('onboarding-form');
+    if (form) form.reset();
+    const err = $('onboarding-error');
+    if (err) { err.hidden = true; err.textContent = ''; }
+  }
+
+  function initOnboardingUI() {
+    const form = $('onboarding-form');
+    if (!form) return;
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const selected = form.querySelector('input[name="device-class"]:checked');
+      const err = $('onboarding-error');
+      if (!selected) {
+        if (err) { err.textContent = 'Pick one to continue.'; err.hidden = false; }
+        return;
+      }
+      const submitBtn = $('onboarding-submit');
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        const res = await fetch('/api/device/preferences', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_class: selected.value }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `HTTP ${res.status}`);
+        }
+        const prefs = await res.json();
+        updateDeviceSettingLabel(prefs);
+        hideOnboardingModal();
+      } catch (e) {
+        console.warn('[onboarding] POST /api/device/preferences failed:', e);
+        if (err) {
+          err.textContent = `Couldn't save your choice (${e.message || e}). Try again.`;
+          err.hidden = false;
+        }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+
+  async function resetDeviceChoice() {
+    try {
+      const res = await fetch('/api/device/preferences', { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      console.warn('[onboarding] DELETE /api/device/preferences failed:', e);
+      return;
+    }
+    updateDeviceSettingLabel(null);
+    // Close the popover so the modal isn't competing for attention.
+    const popover = $('settings-popover');
+    if (popover) popover.hidden = true;
+    showOnboardingModal();
+  }
+
+  // Probe on startup. Modal shows only when nothing is persisted; the
+  // intake view stays interactive underneath in case the user dismisses
+  // via the browser back button (the next page load re-prompts).
+  (async () => {
+    const prefs = await fetchDevicePreferences();
+    updateDeviceSettingLabel(prefs);
+    if (prefs === null) showOnboardingModal();
+  })();
+  initOnboardingUI();
+
   // ---- settings popover wiring ----
   function initSettingsUI() {
     loadSettings();
@@ -2193,6 +2473,10 @@
           applyFeedbackView();
         }
       });
+    }
+    const deviceReset = $('setting-device-reset');
+    if (deviceReset) {
+      deviceReset.addEventListener('click', () => { resetDeviceChoice(); });
     }
   }
 

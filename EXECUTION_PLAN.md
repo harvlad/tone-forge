@@ -22,7 +22,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed (see §0); isotonic refit deferred |
-| 7 | Device Discovery | Active — scaffold + persistence + API edge landed; onboarding UI deferred (see §0) |
+| 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal landed (see §0); DeviceCaps plumb-through into SessionBundle still deferred |
 | 8 | Song Understanding expansion | Investigation only |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
@@ -39,6 +39,41 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Jam onboarding modal (Priority 7 — item #37)
+
+The §8 single-question device-discovery prompt now ships in the Jam UI.
+Sits as a sibling of `<main id="jam-app">` so the fixed-position
+backdrop covers the page without inheriting `#jam-app`'s padding /
+max-width. On startup the Jam page calls `GET /api/device/preferences`
+and reveals the modal when the response is `null`; the answer is
+persisted via `POST /api/device/preferences` (existing P7 edge, no
+server-side changes). Re-prompt is wired through "Reset device choice"
+in the settings popover, which calls `DELETE` then re-shows the modal.
+
+| Surface | File |
+|---|---|
+| Modal markup (8 radio options mapped to `DeviceClass`: `interface_only`, `helix`, `quad_cortex`, `kemper`, `fractal`, `tonex`, `neural_dsp`, `other`) | `backend/static/jam.html` |
+| Modal styles (backdrop, panel, option list, "Reset device choice" affordance) | `backend/static/jam.css` |
+| Probe-on-startup + submit handler + reset wiring; `DEVICE_CLASS_LABELS` mirrors §8 spec labels verbatim so "Currently: …" line in settings matches what the user picked | `backend/static/jam.js` |
+
+`backend/static/jam.html` and `backend/static/jam.css` were untracked
+working-tree state from the earlier P2 jam-page work and ship in this
+commit alongside the onboarding additions; tracking them now closes a
+stale gap between the working tree and git history.
+
+Verification:
+- `tests/test_api_device_preferences.py` — 9/9 PASS (unchanged).
+- `tests/test_subsystem_boundaries.py` — 10/10 PASS.
+- `tests/test_connect_bridge_lifecycle.py` + apply_chain — 14/14 PASS.
+- `node --check backend/static/jam.js` — OK.
+
+Not in this entry:
+- `DeviceCaps` plumb-through into `SessionBundle` (item #38). The
+  saved `device_class` is reachable via `GET /api/device/preferences`
+  but session-time consumers haven't been wired yet.
+- CoreAudio probe pre-fill (item #36). Single-question modal alone;
+  no probed input-name hint is shown.
 
 ### tone → monitor boundary fix (follow-up to Priority 6)
 
