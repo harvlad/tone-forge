@@ -7,6 +7,7 @@ between preset delivery and curated monitor chain fallback.
 Skeleton. MVP scope: INTERFACE_ONLY vs. modeler-class branching only.
 """
 
+from tone_forge.devices.caps import caps_from_class, caps_from_preferences
 from tone_forge.devices.discovery import probe
 from tone_forge.devices.preferences import (
     clear_preferences,
@@ -21,4 +22,6 @@ __all__: list[str] = [
     "save_preferences",
     "clear_preferences",
     "preferences_path",
+    "caps_from_class",
+    "caps_from_preferences",
 ]

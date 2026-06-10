@@ -22,7 +22,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; isotonic refit deferred (see §0) |
-| 7 | Device Discovery | Active — P7/P7e/P7f scaffold landed |
+| 7 | Device Discovery | Active — scaffold + persistence + API edge landed; onboarding UI deferred (see §0) |
 | 8 | Song Understanding expansion | Investigation only |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
@@ -146,15 +146,69 @@ threshold changes, τ calibration changes, new fingerprint features,
 monitor-bank expansion beyond the 5 existing chains, delay /
 modulation / shimmer schema extension, Connect changes.
 
-### Device Discovery (Priority 7) — scaffold landed
+### Device Discovery (Priority 7) — scaffold + persistence + API edge
 
-Recent commits 51d0780 + 736b512 added:
+Commits 51d0780 + 736b512 (in main) added:
 - `device.json` persistence layer for onboarding answers
 - CLI `--json` probe scaffold + tests
 - Contracts in place for `DeviceCaps` flow
 
-Remaining (per §8 below): Onboarding screen wiring, `DeviceCaps`
-plumbed into session bundle.
+This pass closes the back end: the persisted answer now flows
+through to ``SessionBundle.device_caps`` and is reachable from the
+browser without UI work.
+
+- `backend/tone_forge/devices/caps.py` (new) — `caps_from_class`
+  + `caps_from_preferences`. Maps each `DeviceClass` to a
+  `DeviceCaps` per the §8 table: every modeler class advertises
+  `can_monitor=True` and `can_receive_preset=False` at MVP
+  (preset adapters deferred to Phase 2 per §10). `NO_HARDWARE`
+  is the one `can_monitor=False`. Boundary-clean — imports only
+  from `contracts`.
+- `GET /api/device/preferences` — returns the persisted record
+  or `null` so the Jam UI can short-circuit to onboarding with
+  one check.
+- `POST /api/device/preferences` — persists, stamps timestamps,
+  returns the canonical record. 400 on unknown `device_class` /
+  `preferred_chain_family` so the UI fails fast instead of
+  writing a record `load_preferences` later rejects.
+- `DELETE /api/device/preferences` — "Reset device choice"
+  surface; idempotent.
+- Session route hydration: `GET /api/session/:id` now calls
+  `_device_caps_for_session()` which loads `device.json` and
+  projects to `DeviceCaps`. Falls back to interface-only when
+  nothing is persisted, exactly as `session.bundle.build`
+  expected. Composition stays at the API edge so `devices/`
+  keeps its empty allow-list per §2.
+
+Tests:
+- `test_devices_caps.py` (new, 46 tests) — every `DeviceClass`
+  enum value maps to a sane `DeviceCaps`; display names match
+  the §8 prompt strings; `caps_from_preferences(None) -> None`;
+  `preferred_chain_family` is carried forward.
+- `test_api_device_preferences.py` (new, 9 tests) — GET/POST/DELETE
+  round-trip via FastAPI TestClient, env-overridden prefs path,
+  first_seen preservation, 400 on unknown enum values, 422 on
+  missing required field, DELETE idempotency.
+- `test_session_route.py` (extended, +2 tests) — bundle defaults
+  to interface-only when no prefs; bundle hydrates from saved
+  prefs (POST then GET).
+
+Remaining (per §8 / §9 #37): The onboarding screen UI in
+`static/jam.html` / `static/jam.js`. All wiring it needs is in
+place — fetch `GET /api/device/preferences`, show modal if
+`null`, `POST` the answer, refresh `device_caps` from
+`GET /api/session/:id`.
+
+Known pre-existing boundary regression (not introduced by this
+pass): `test_subsystem_boundaries.py::test_subsystem_imports_are_within_allowlist[tone]`
+fails because `tone/guitar_catalog.py` (landed in commit 44207a3,
+the P6 matcher) imports `tone_forge.monitor.loader.list_chain_ids`
+and `load_chain` to enumerate the chain bank and resolve
+`display_name` / `family`. Fix is a separate small refactor:
+either parameterize the catalog source via the composition layer
+or extend the fingerprint JSON schema to carry `display_name` +
+`family` so `tone/` can read JSONs directly. This pass does not
+touch `tone/`, so the regression neither widens nor narrows.
 
 ### P2 series — Jam Connect deep-link UX
 

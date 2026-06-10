@@ -249,3 +249,52 @@ def test_serialize_handles_nested_enums() -> None:
     # Tuples become lists for JSON.
     assert isinstance(payload["understanding"]["sections"], list)
     assert isinstance(payload["understanding"]["chords"], list)
+
+
+# ---------------------------------------------------------------------------
+# Device caps hydration (Priority 7)
+# ---------------------------------------------------------------------------
+
+
+def test_session_route_defaults_device_caps_when_no_prefs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absent ``device.json`` -> interface-only caps in the bundle."""
+    monkeypatch.setenv(
+        "TONEFORGE_DEVICE_PREFS_PATH", str(tmp_path / "device.json"),
+    )
+    resp = client.get("/api/session/sess-real")
+    assert resp.status_code == 200
+    caps = resp.json()["device_caps"]
+    assert caps["cls"] == "interface_only"
+    assert caps["display_name"] == "Audio interface"
+    assert caps["can_monitor"] is True
+    assert caps["can_receive_preset"] is False
+
+
+def test_session_route_hydrates_device_caps_from_preferences(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persisted ``device_class`` flows through to ``device_caps``."""
+    monkeypatch.setenv(
+        "TONEFORGE_DEVICE_PREFS_PATH", str(tmp_path / "device.json"),
+    )
+
+    # Persist via the same route the UI uses.
+    post = client.post(
+        "/api/device/preferences",
+        json={
+            "device_class": "helix",
+            "preferred_chain_family": "edge_of_breakup",
+        },
+    )
+    assert post.status_code == 200
+
+    resp = client.get("/api/session/sess-real")
+    assert resp.status_code == 200
+    caps = resp.json()["device_caps"]
+    assert caps["cls"] == "helix"
+    assert caps["display_name"] == "Line 6 Helix"
+    assert caps["can_monitor"] is True
+    assert caps["can_receive_preset"] is False
+    assert caps["preferred_chain_family"] == "edge_of_breakup"

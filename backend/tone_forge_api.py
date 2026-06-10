@@ -175,6 +175,21 @@ from tone_forge.unified_pipeline import (
 # Session engine — canonical SessionBundle assembler (Priority 5).
 from tone_forge.session import build as build_session_bundle, serialize as serialize_session_bundle
 
+# Device discovery — onboarding preferences + DeviceCaps mapping (Priority 7).
+# Composition lives at the API edge so devices/ stays boundary-clean
+# (devices/ only imports from contracts, not from session/).
+from tone_forge.devices import (
+    caps_from_preferences as _caps_from_preferences,
+    clear_preferences as _clear_device_preferences,
+    load_preferences as _load_device_preferences,
+    save_preferences as _save_device_preferences,
+)
+from tone_forge.contracts import (
+    DeviceClass as _DeviceClass,
+    DevicePreferences as _DevicePreferences,
+    MonitorChainFamily as _MonitorChainFamily,
+)
+
 # Tone retrieval — calibration + tier classifier + fallback policy (Priority 6).
 # Composition lives at the API edge so session/ stays boundary-clean.
 from tone_forge import tone as tone_retrieval
@@ -2195,11 +2210,145 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
             detail="History entry has no analysis result",
         )
     tone_match = _retrieve_tone_for_history(result)
+    device_caps = _device_caps_for_session()
     bundle = build_session_bundle(
-        result, session_id=entry_id, tone_match=tone_match,
+        result,
+        session_id=entry_id,
+        tone_match=tone_match,
+        device_caps=device_caps,
     )
     payload = serialize_session_bundle(bundle)
     return JSONResponse(_convert_numpy_types(payload))
+
+
+def _device_caps_for_session():
+    """Hydrate ``DeviceCaps`` from the persisted onboarding answer.
+
+    Composition layer for the devices/ subsystem. Reads
+    ``device.json`` and projects the user's selected ``DeviceClass``
+    into ``DeviceCaps``. Returns ``None`` when nothing is persisted
+    so ``session.bundle.build`` falls back to its interface-only
+    default. Never raises — a corrupted preferences file already
+    causes ``load_preferences`` to return ``None`` per its docstring.
+    """
+    try:
+        prefs = _load_device_preferences()
+    except Exception as exc:
+        logger.warning(f"[devices] load_preferences failed: {exc}")
+        return None
+    return _caps_from_preferences(prefs)
+
+
+class DevicePreferencesRequest(BaseModel):
+    """Payload for ``POST /api/device/preferences``.
+
+    Mirrors the ``DevicePreferences`` contract but accepts the enum
+    values as raw strings so the browser doesn't need to know the
+    Python enum surface. ``first_seen_iso`` / ``last_used_iso`` are
+    not accepted from the client — the persistence layer stamps them.
+    """
+
+    device_class: str
+    audio_input_name: Optional[str] = None
+    preferred_chain_family: Optional[str] = None
+
+
+def _serialize_device_preferences(prefs: Optional[_DevicePreferences]) -> Optional[dict]:
+    """Wire shape for `/api/device/preferences` responses.
+
+    Returns ``None`` when nothing is persisted so the browser can
+    short-circuit to the onboarding screen with a single check.
+    """
+    if prefs is None:
+        return None
+    return {
+        "device_class": prefs.device_class.value,
+        "audio_input_name": prefs.audio_input_name,
+        "preferred_chain_family": (
+            prefs.preferred_chain_family.value
+            if prefs.preferred_chain_family is not None
+            else None
+        ),
+        "first_seen_iso": prefs.first_seen_iso,
+        "last_used_iso": prefs.last_used_iso,
+    }
+
+
+@app.get("/api/device/preferences")
+async def get_device_preferences_endpoint() -> JSONResponse:
+    """Return the persisted onboarding answer, or ``null`` if absent.
+
+    The Jam UI checks this on startup. ``null`` means "show the
+    onboarding screen". A populated payload means "the user already
+    answered; use it to seed ``DeviceCaps``".
+    """
+    try:
+        prefs = _load_device_preferences()
+    except Exception as exc:
+        logger.warning(f"[devices] GET /api/device/preferences failed: {exc}")
+        prefs = None
+    return JSONResponse(content=_serialize_device_preferences(prefs))
+
+
+@app.post("/api/device/preferences")
+async def set_device_preferences_endpoint(
+    request: DevicePreferencesRequest,
+) -> JSONResponse:
+    """Persist the user's onboarding answer.
+
+    Returns 400 on unknown ``device_class`` / ``preferred_chain_family``
+    values so the UI sees a fast error rather than silently writing
+    a record that ``load_preferences`` will later reject. Returns the
+    stamped canonical record on success so the client doesn't need to
+    re-GET to see the assigned timestamps.
+    """
+    try:
+        device_class = _DeviceClass(request.device_class)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown device_class: {request.device_class!r}",
+        )
+
+    family: Optional[_MonitorChainFamily]
+    if request.preferred_chain_family is None:
+        family = None
+    else:
+        try:
+            family = _MonitorChainFamily(request.preferred_chain_family)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Unknown preferred_chain_family: "
+                    f"{request.preferred_chain_family!r}"
+                ),
+            )
+
+    # Preserve first_seen_iso if a record already exists.
+    existing = _load_device_preferences()
+    first_seen = existing.first_seen_iso if existing is not None else None
+
+    prefs = _DevicePreferences(
+        device_class=device_class,
+        audio_input_name=request.audio_input_name,
+        preferred_chain_family=family,
+        first_seen_iso=first_seen,
+        last_used_iso=None,  # save_preferences stamps this
+    )
+    stamped = _save_device_preferences(prefs)
+    return JSONResponse(content=_serialize_device_preferences(stamped))
+
+
+@app.delete("/api/device/preferences")
+async def delete_device_preferences_endpoint() -> JSONResponse:
+    """Forget the onboarding answer (re-prompt on next session).
+
+    The Jam UI exposes this as 'Reset device choice' in settings.
+    Idempotent: deleting a non-existent file is not an error.
+    """
+    _clear_device_preferences()
+    return JSONResponse(content={"ok": True})
 
 
 def _retrieve_tone_for_history(result: dict) -> Optional["ToneMatch"]:
