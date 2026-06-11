@@ -430,8 +430,11 @@
       if (paired && cb.lastPreset) {
         text = 'Tone preset synced with Connect.';
         ok = true;
+      } else if (paired && cb.lastAppliedChainId) {
+        text = 'Monitor chain synced with Connect.';
+        ok = true;
       } else if (paired) {
-        text = 'Paired — no matching preset for this song.';
+        text = 'Paired — no tone match for this song.';
       } else if (cb.status === 'connecting') {
         text = 'Connecting to the desktop helper…';
       } else if (cb.status === 'open') {
