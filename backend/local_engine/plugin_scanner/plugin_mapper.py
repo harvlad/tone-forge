@@ -37,6 +37,16 @@ class BlockMapping:
 # Known manufacturer mappings
 MANUFACTURER_MAPPINGS = {
     # Amp plugin manufacturers
+    "igniteamps": {
+        "emissary": "high_gain_modern",
+        "nadir": "ir_loader",
+        "the anvil": "high_gain_modern",
+        "ptseq": "eq_parametric",
+    },
+    "ignite amps": {
+        "emissary": "high_gain_modern",
+        "nadir": "ir_loader",
+    },
     "neural dsp": {
         "fortin": "fortin_satan",
         "soldano": "soldano_slo",

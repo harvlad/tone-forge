@@ -672,6 +672,7 @@ class TestPluginScannerIntegration:
             scan_au=False,
             scan_vst3=True,
             scan_vst2=False,
+            scan_ableton=False,
         )
 
         assert stats["plugins_found"] == 1

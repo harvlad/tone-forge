@@ -193,6 +193,61 @@ class PluginDatabase:
 
         return added, errors
 
+    def add_plugin_dict(self, plugin_dict: Dict[str, Any]) -> bool:
+        """Add or update a plugin from a dictionary.
+
+        Used for Ableton devices and other sources that return dicts.
+
+        Args:
+            plugin_dict: Plugin data as dictionary
+
+        Returns:
+            True if added/updated, False on error
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO plugins (
+                        plugin_id, name, manufacturer, version, path, format,
+                        plugin_type, categories, description, website,
+                        is_64bit, supports_mono, supports_stereo,
+                        modified_time, scan_time, is_available
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    plugin_dict.get('plugin_id', ''),
+                    plugin_dict.get('name', ''),
+                    plugin_dict.get('manufacturer', ''),
+                    plugin_dict.get('version', ''),
+                    str(plugin_dict.get('path', '')),
+                    plugin_dict.get('format', ''),
+                    plugin_dict.get('plugin_type', ''),
+                    json.dumps(plugin_dict.get('categories', [])),
+                    plugin_dict.get('description', ''),
+                    plugin_dict.get('website', ''),
+                    1 if plugin_dict.get('is_64bit', True) else 0,
+                    1 if plugin_dict.get('supports_mono', True) else 0,
+                    1 if plugin_dict.get('supports_stereo', True) else 0,
+                    plugin_dict.get('modified_time', 0.0),
+                    datetime.now().isoformat(),
+                    1,
+                ))
+                conn.commit()
+
+                # Store block_family mapping if provided
+                if plugin_dict.get('block_family'):
+                    self.set_block_mapping(
+                        plugin_id=plugin_dict['plugin_id'],
+                        block_family=plugin_dict['block_family'],
+                        block_type=plugin_dict.get('plugin_type', 'effect'),
+                        confidence=0.9,
+                        is_user_defined=False,
+                    )
+
+                return True
+        except Exception as e:
+            logger.error("Failed to add plugin dict %s: %s", plugin_dict.get('plugin_id'), e)
+            return False
+
     def get_plugin(self, plugin_id: str) -> Optional[Dict[str, Any]]:
         """Get a plugin by ID.
 
@@ -288,10 +343,12 @@ class PluginDatabase:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         sql = f"""
-            SELECT p.*, f.added_time as favorite_time, u.use_count, u.last_used
+            SELECT p.*, f.added_time as favorite_time, u.use_count, u.last_used,
+                   m.block_family, m.block_type, m.confidence as mapping_confidence
             FROM plugins p
             LEFT JOIN favorites f ON p.plugin_id = f.plugin_id
             LEFT JOIN usage_stats u ON p.plugin_id = u.plugin_id
+            LEFT JOIN block_mappings m ON p.plugin_id = m.plugin_id
             WHERE {where_clause}
         """
 
@@ -303,7 +360,18 @@ class PluginDatabase:
 
         with self._get_connection() as conn:
             rows = conn.execute(sql, params).fetchall()
-            return [self._row_to_dict(row) for row in rows]
+            results = []
+            for row in rows:
+                plugin = self._row_to_dict(row)
+                # Add block_mapping if present
+                if row['block_family']:
+                    plugin['block_mapping'] = {
+                        'block_family': row['block_family'],
+                        'block_type': row['block_type'],
+                        'confidence': row['mapping_confidence'],
+                    }
+                results.append(plugin)
+            return results
 
     def get_all_plugins(
         self,
@@ -636,6 +704,23 @@ class PluginDatabase:
                 LIMIT ?
             """, (limit,)).fetchall()
             return [dict(row) for row in rows]
+
+    def get_last_scan_time(self) -> Optional[datetime]:
+        """Get the time of the last scan.
+
+        Returns:
+            datetime of last scan, or None if never scanned
+        """
+        with self._get_connection() as conn:
+            row = conn.execute("""
+                SELECT scan_time FROM scan_history
+                ORDER BY scan_time DESC
+                LIMIT 1
+            """).fetchone()
+
+            if row and row['scan_time']:
+                return datetime.fromisoformat(row['scan_time'])
+            return None
 
     def get_stats(self) -> Dict[str, Any]:
         """Get database statistics.

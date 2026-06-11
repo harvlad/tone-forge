@@ -73,6 +73,17 @@ else:
         def scan(self):
             return []
 
+# Import Ableton scanner (macOS only for now)
+if _system == "Darwin":
+    try:
+        from .scanner_ableton import AbletonScanner, scan_ableton_devices
+    except ImportError:
+        AbletonScanner = None
+        scan_ableton_devices = lambda: []
+else:
+    AbletonScanner = None
+    scan_ableton_devices = lambda: []
+
 
 __all__ = [
     # Database
@@ -159,6 +170,7 @@ def scan_and_register(
     scan_au: bool = True,
     scan_vst3: bool = True,
     scan_vst2: bool = False,
+    scan_ableton: bool = True,
     custom_paths: Optional[List[Path]] = None,
     update_mappings: bool = True,
 ) -> Dict[str, Any]:
@@ -170,6 +182,7 @@ def scan_and_register(
         scan_au: Whether to scan Audio Units (macOS only)
         scan_vst3: Whether to scan VST3 plugins
         scan_vst2: Whether to scan VST2 plugins
+        scan_ableton: Whether to scan Ableton Live devices
         custom_paths: Additional paths to scan
         update_mappings: Whether to compute block mappings
 
@@ -179,8 +192,8 @@ def scan_and_register(
     start_time = time.time()
     db = _get_database()
 
-    # Get existing plugins to track changes
-    existing = {p['path']: p for p in db.get_all_plugins(available_only=False)}
+    # Get existing plugins to track changes (use string paths as keys)
+    existing = {str(p['path']): p for p in db.get_all_plugins(available_only=False)}
 
     # Scan for plugins
     plugins = scan_plugins(
@@ -190,7 +203,16 @@ def scan_and_register(
         custom_paths=custom_paths,
     )
 
-    # Track found paths
+    # Scan Ableton devices
+    ableton_devices = []
+    if scan_ableton and AbletonScanner is not None:
+        try:
+            ableton_devices = scan_ableton_devices()
+            logger.info(f"Found {len(ableton_devices)} Ableton devices")
+        except Exception as e:
+            logger.warning(f"Ableton scanning failed: {e}")
+
+    # Track found paths (as strings)
     found_paths = set()
 
     # Register plugins
@@ -201,7 +223,7 @@ def scan_and_register(
         path_str = str(plugin.path)
         found_paths.add(path_str)
 
-        existing_plugin = existing.get(Path(path_str))
+        existing_plugin = existing.get(path_str)
 
         if existing_plugin is None:
             # New plugin
@@ -215,6 +237,21 @@ def scan_and_register(
             # Was unavailable, now found
             db.mark_available(plugin.plugin_id)
             updated += 1
+
+    # Register Ableton devices (they're dicts, not PluginInfo)
+    ableton_added = 0
+    for device in ableton_devices:
+        path_str = str(device.get('path', device['plugin_id']))
+        found_paths.add(path_str)
+
+        existing_plugin = existing.get(path_str)
+
+        if existing_plugin is None:
+            # New device - add as dict
+            db.add_plugin_dict(device)
+            ableton_added += 1
+
+    added += ableton_added
 
     # Mark missing plugins as unavailable
     removed = 0
@@ -240,6 +277,8 @@ def scan_and_register(
         formats_scanned.append("vst3")
     if scan_vst2:
         formats_scanned.append("vst2")
+    if scan_ableton and ableton_devices:
+        formats_scanned.append("ableton_device")
 
     # Record scan in history
     db.record_scan(
