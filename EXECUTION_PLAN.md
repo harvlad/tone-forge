@@ -23,7 +23,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); fitted artifact still blocked on 100 hand-labeled clips |
 | 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) + audio_input_name → Connect helper env (Python plumb of item #38) all landed (see §0) |
-| 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` + broader capability map `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` (see §0); no implementation work auto-driven |
+| 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` + capability map `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` + product roadmap `docs/JAM_PRODUCT_ROADMAP.md` (see §0); no implementation work auto-driven |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
 | — | Retrieval algorithm / embeddings | Frozen |
@@ -39,6 +39,39 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Jam product roadmap (Priority 8 — third-pass research artifact, product lens)
+
+The first P8 pass
+(`docs/SONG_UNDERSTANDING_INVESTIGATION.md`) audited the
+`SongUnderstanding` contract; the second
+(`docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md`) widened the lens to
+"which features can we ship without inventing new analysis." Both
+remained signal-centric — *given the signals, what can we compute*.
+
+This third pass inverts the question: *given a guitarist using Jam,
+what would actually feel like joining the band faster*, and which of
+the 16 candidate features earn shelf space against that north-star?
+New file: `docs/JAM_PRODUCT_ROADMAP.md` (~450 lines). Evaluates each
+feature on user value, engineering effort, strategic differentiation
+vs. Moises / Yousician / Ultimate Guitar / Rocksmith, category, and
+release phase. Answers five product meta-questions
+(year-one wins, long-term moat, engineering traps, 30-second
+"notice" features, willingness-to-pay drivers). Produces an
+opinionated 3-phase roadmap (Phase 1 "core Jam fundamentals" /
+Phase 2 "Song Understanding moat" / Phase 3 "differentiation
+layers") and a kill list.
+
+This pass disagrees with the capability map on several sequencing
+calls — most notably it kills capo detection outright (UX dropdown
+wins), pulls tone-to-rig translation forward as the
+under-appreciated WTP driver, and treats riff extraction as a
+Phase-2 feature gated on guitar-stem MIDI quality being measurably
+stable (not an assumption).
+
+The doc is a planning artifact, not a commitment. No code, no
+contracts, no tests. EXECUTION_PLAN priority table row 8 is amended
+to reference all three P8 docs.
 
 ### Song Understanding capability map (Priority 8 — second-pass research artifact)
 
