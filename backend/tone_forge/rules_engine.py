@@ -33,6 +33,7 @@ class BlockPick:
     display: str
     params: dict         # parameter name -> value (display units, 0-10 etc.)
     rationale: str       # one-line reason this was chosen
+    block_family: str = None  # normalized family for plugin matching (e.g., "marshall_plexi", "reverb_plate")
 
 
 @dataclass
@@ -64,6 +65,7 @@ def pick_amp(d: ToneDescriptor, catalog: list[dict]) -> BlockPick:
         display=chosen["display"],
         params=params,
         rationale=f"Amp family detected as {family}; matched on the `families` index.",
+        block_family=family,  # e.g., "marshall_plexi", "fender_blackface"
     )
 
 
@@ -91,6 +93,7 @@ def pick_cab(d: ToneDescriptor, catalog: list[dict]) -> BlockPick:
         display=chosen["display"],
         params={"mic": "57 Dynamic", "distance": 1.0, "low_cut": 80, "high_cut": 9000},
         rationale=rationale,
+        block_family="cab_ir",  # cab/IR loader
     )
 
 
@@ -105,6 +108,7 @@ def pick_drive(d: ToneDescriptor, catalog: list[dict]) -> Optional[BlockPick]:
         display=match["display"],
         params={"drive": round(od.drive * 10, 1), "tone": 5.5, "level": round(od.level * 10, 1)},
         rationale=f"Detected {od.style} overdrive in front of amp.",
+        block_family=f"overdrive_{od.style}",  # e.g., "overdrive_tube_screamer"
     )
 
 
@@ -119,6 +123,7 @@ def pick_delay(d: ToneDescriptor, catalog: list[dict]) -> Optional[BlockPick]:
         display=match["display"],
         params={"time_ms": round(dl.time_ms), "feedback": round(dl.feedback * 10, 1), "mix": round(dl.mix * 100)},
         rationale=f"{dl.type} delay around {round(dl.time_ms)}ms.",
+        block_family=f"delay_{dl.type}",  # e.g., "delay_tape", "delay_digital"
     )
 
 
@@ -133,6 +138,7 @@ def pick_reverb(d: ToneDescriptor, catalog: list[dict]) -> Optional[BlockPick]:
         display=match["display"],
         params={"decay": round(rv.size * 10, 1), "mix": round(rv.mix * 100)},
         rationale=f"{rv.type} reverb, moderate size.",
+        block_family=f"reverb_{rv.type}",  # e.g., "reverb_plate", "reverb_hall"
     )
 
 
@@ -147,6 +153,7 @@ def pick_modulation(d: ToneDescriptor, catalog: list[dict]) -> Optional[BlockPic
         display=match["display"],
         params={"rate": round(mod.rate * 10, 1), "depth": round(mod.depth * 10, 1), "mix": 50},
         rationale=f"{mod.type} modulation detected.",
+        block_family=f"modulation_{mod.type}",  # e.g., "modulation_chorus", "modulation_flanger"
     )
 
 
@@ -182,6 +189,7 @@ def pick_amp_alternates(d: ToneDescriptor, catalog: list[dict]) -> list[BlockPic
             display=chosen["display"],
             params=params,
             rationale=f"Alternate to audition: {family} (score {alt['score']:.2f}).",
+            block_family=family,  # alternate amp family
         ))
     return picks
 

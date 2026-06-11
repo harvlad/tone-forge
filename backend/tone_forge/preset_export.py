@@ -1041,6 +1041,7 @@ def export_ableton_live_set(
 
     # Get MIDI stems data
     midi_stems = full_result.get("midi_stems", {})
+    logger.info(f"ALS export - midi_stems keys: {list(midi_stems.keys())}")
 
     # Get chords if available
     chords = full_result.get("chords", [])
@@ -1599,6 +1600,388 @@ def export_ableton_analog(
     )
 
 
+# ---------------------------------------------------------------------------
+# End-to-end reconstruction export (Phase 1: hardcoded preset)
+# ---------------------------------------------------------------------------
+#
+# Audio → MIDI → (fixed Analog preset) → downloadable .als
+#
+# Phase 1 wires the full export path with a single pinned Analog preset so we
+# can validate the workflow before depending on retrieval. Phase 2 replaces
+# `_phase1_default_preset()` with a V2 retrieval call; nothing else in this
+# module changes.
+#
+# The default preset is `Thick Chord Pad` from the Live 12 Standard core
+# library. It is one of the 99 Analog presets in the V2 catalog and is known
+# to render cleanly via the existing splice path
+# (see preset_als_generator.create_preset_als).
+
+_PHASE1_DEFAULT_ADV_PATH = (
+    "/Applications/Ableton Live 12 Standard.app/Contents/App-Resources/"
+    "Core Library/Devices/Instruments/Analog/Synth Pad/Thick Chord Pad.adv"
+)
+
+
+def _phase1_default_preset():
+    """Return the pinned Phase 1 PresetInfo (Thick Chord Pad)."""
+    from pathlib import Path
+    from .preset_catalog.preset_discovery import PresetInfo
+
+    return PresetInfo(
+        preset_id="analog_thick_chord_pad",
+        name="Thick Chord Pad",
+        instrument="Analog",
+        category="Synth Pad",
+        sound_type="pad",
+        path=Path(_PHASE1_DEFAULT_ADV_PATH),
+        source="core",
+    )
+
+
+def _fallback_notes(tempo: float):
+    """Return a 4-note C-major sanity sequence if MIDI extraction is absent.
+
+    Used so the reconstruction export path exits cleanly during early testing
+    even when no analysis MIDI is available.
+    """
+    from .preset_catalog.test_sequence import TestNote
+
+    # Four quarter notes: C4, E4, G4, C5
+    return [
+        TestNote(pitch=60, start_beats=0.0, duration_beats=1.0, velocity=100),
+        TestNote(pitch=64, start_beats=1.0, duration_beats=1.0, velocity=100),
+        TestNote(pitch=67, start_beats=2.0, duration_beats=1.0, velocity=100),
+        TestNote(pitch=72, start_beats=3.0, duration_beats=1.0, velocity=100),
+    ]
+
+
+def _notes_from_full_result(full_result: dict, tempo: float):
+    """Convert the analysis `midi_data` blob into a list of TestNote.
+
+    The `midi_data.content` field is a base64-encoded standard MIDI file
+    written by `tone_forge.midi_extractor`. We parse it with `pretty_midi`,
+    flatten all instrument tracks, and convert each note's seconds-based
+    timing into beats using the supplied tempo.
+
+    Returns the fallback C-major sequence if MIDI is missing or unparseable.
+    """
+    import io
+    from .preset_catalog.test_sequence import TestNote
+
+    midi_data = full_result.get("midi_data")
+    if not midi_data:
+        # Fall back to midi_stems (multi-stem analyses store notes there)
+        midi_stems = full_result.get("midi_stems") or {}
+        # Prefer melodic stems in a stable order
+        for key in ("bass", "vocals", "other", "drums"):
+            if key in midi_stems and midi_stems[key].get("content"):
+                midi_data = midi_stems[key]
+                break
+
+    if not midi_data or not midi_data.get("content"):
+        logger.info("reconstruction: no midi_data, using fallback sequence")
+        return _fallback_notes(tempo)
+
+    try:
+        import pretty_midi  # already a transitive dep via midi_extractor
+        raw = base64.b64decode(midi_data["content"])
+        pm = pretty_midi.PrettyMIDI(io.BytesIO(raw))
+    except Exception as e:
+        logger.warning(f"reconstruction: MIDI parse failed ({e}); using fallback")
+        return _fallback_notes(tempo)
+
+    notes: list = []
+    beats_per_sec = tempo / 60.0
+    for instrument in pm.instruments:
+        if instrument.is_drum:
+            continue
+        for n in instrument.notes:
+            duration = max(0.0, n.end - n.start)
+            if duration <= 0:
+                continue
+            notes.append(TestNote(
+                pitch=int(n.pitch),
+                start_beats=float(n.start * beats_per_sec),
+                duration_beats=float(duration * beats_per_sec),
+                velocity=int(max(1, min(127, n.velocity))),
+            ))
+
+    if not notes:
+        logger.info("reconstruction: MIDI parsed but contained no melodic notes; using fallback")
+        return _fallback_notes(tempo)
+
+    # Stable order by start time so the ALS clip view is predictable.
+    notes.sort(key=lambda n: (n.start_beats, n.pitch))
+    return notes
+
+
+def _resolve_tempo(full_result: dict) -> float:
+    """Pull a tempo from the analysis result, defaulting to 120 BPM."""
+    for key in ("tempo_bpm", "tempo"):
+        v = full_result.get(key)
+        if isinstance(v, (int, float)) and v > 0:
+            return float(v)
+    midi_data = full_result.get("midi_data") or {}
+    v = midi_data.get("tempo_bpm")
+    if isinstance(v, (int, float)) and v > 0:
+        return float(v)
+    return 120.0
+
+
+def _resolve_key(full_result: dict) -> tuple[int, str]:
+    """Pull (key_root, key_scale) from the analysis result.
+
+    Mirrors the parsing done by `export_ableton_als` so reconstruction
+    sets pick up the same C-major default when nothing is detected.
+    """
+    key_root = 0
+    key_scale = "Major"
+    synth = full_result.get("synth") or {}
+    descriptor = synth.get("descriptor") or {}
+    detected = (
+        descriptor.get("detected_key")
+        or full_result.get("detected_key")
+    )
+    if detected:
+        parts = str(detected).split()
+        if parts:
+            note_map = {
+                'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
+                'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
+                'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11,
+            }
+            key_root = note_map.get(parts[0], 0)
+        if len(parts) >= 2:
+            key_scale = "Minor" if "minor" in parts[1].lower() else "Major"
+    return key_root, key_scale
+
+
+_RECONSTRUCTION_TOTAL_BUDGET_SEC = 120.0
+
+# Hardcoded Drum Rack used for the drums stem (V2 catalog has no kits).
+_RECONSTRUCTION_DRUM_RACK_PATH = (
+    "/Users/mattharvey/Music/Ableton/Factory Packs/Singularities/Drums/709 Kit.adg"
+)
+
+# Stem → V2 catalog sound_type filter (mirrors
+# `unified_pipeline.UnifiedPipeline._STEM_SOUND_TYPE_FILTER`).
+_EXPORT_STEM_SOUND_TYPE_FILTER: dict[str, Optional[str]] = {
+    "bass": "bass",
+    "vocals": "lead",
+    "guitar": None,
+    "other": None,
+    "piano": "keys",
+}
+
+
+def _resolve_stem_local_path(stem_url_or_path) -> Optional[str]:
+    """Resolve a stem entry to a local filesystem path if possible.
+
+    `stems_paths` may contain either a raw filesystem path (cloud/CPU
+    pipeline) or a local-engine serve URL of the form
+    `http://127.0.0.1:7777/api/serve-file?path=<fs path>` (GPU pipeline).
+    Returns the local path or `None` if it can't be resolved.
+    """
+    from pathlib import Path
+    from urllib.parse import urlparse, parse_qs
+
+    if not stem_url_or_path:
+        return None
+    s = str(stem_url_or_path)
+    if s.startswith("http://") or s.startswith("https://"):
+        try:
+            qs = parse_qs(urlparse(s).query)
+            path = qs.get("path", [None])[0]
+        except Exception:
+            return None
+        if path and Path(path).exists():
+            return path
+        return None
+    if Path(s).exists():
+        return s
+    return None
+
+
+def _retrieve_preset_matches_at_export(
+    stems_paths: dict,
+) -> dict:
+    """Run V2 preset retrieval per stem at export time.
+
+    Used as a fallback when the analysis result did not include
+    `preset_matches` (e.g. when results come from the local GPU engine
+    pipeline which bypasses `UnifiedPipeline._build_result`).
+
+    Returns a dict of stem-name → match metadata, matching the shape used
+    by `unified_pipeline.UnifiedPipeline._match_presets_per_stem`. Stems
+    that fail or have no local file are simply omitted.
+    """
+    import time
+    from pathlib import Path
+    from .preset_catalog import preset_retrieval
+
+    matches: dict = {}
+    for stem_name, stem_entry in (stems_paths or {}).items():
+        if stem_name == "drums":
+            continue
+        local_path = _resolve_stem_local_path(stem_entry)
+        if not local_path:
+            logger.info(
+                "[reconstruction] preset retrieval: %s has no local file (%r); "
+                "skipping", stem_name, stem_entry,
+            )
+            continue
+        sound_type = _EXPORT_STEM_SOUND_TYPE_FILTER.get(stem_name)
+        t0 = time.perf_counter()
+        try:
+            results = preset_retrieval.match_audio_file(
+                Path(local_path),
+                k=1,
+                instrument="Analog",
+                sound_type_filter=sound_type,
+            )
+        except Exception as e:
+            logger.warning(
+                "[reconstruction] preset retrieval failed for %s: %s",
+                stem_name, e,
+            )
+            continue
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        if not results:
+            logger.info(
+                "[reconstruction] preset retrieval: %s no match (%.0f ms)",
+                stem_name, elapsed_ms,
+            )
+            continue
+        top = results[0]
+        matches[stem_name] = {
+            "preset_id": top["preset_id"],
+            "preset_name": top["preset_name"],
+            "preset_path": top["preset_path"],
+            "instrument": top["instrument"],
+            "category": top["category"],
+            "sound_type": top["sound_type"],
+            "distance": top["distance"],
+        }
+        logger.info(
+            "[reconstruction] preset retrieval: %s -> %s (distance=%.3f, %.0f ms)",
+            stem_name, top["preset_name"], top["distance"], elapsed_ms,
+        )
+    return matches
+
+
+def export_reconstruction_als(
+    full_result: dict,
+    preset_name: str = "Tone Forge Reconstruction",
+) -> ExportedPreset:
+    """Phase 2 multi-stem reconstruction export.
+
+    Builds an Ableton Live `.als` with one MIDI track per stem:
+      - drums → hardcoded Drum Rack (`_RECONSTRUCTION_DRUM_RACK_PATH`)
+      - bass / vocals / guitar / piano / other → V2-retrieved preset from
+        `full_result["preset_matches"]`, with Thick Chord Pad as fallback.
+
+    Returns an `ExportedPreset` whose `content` is base64-encoded gzipped
+    ALS bytes ready to download.
+
+    Per-stage timings (resolve / build_als) are logged so we can confirm
+    the export stays well under the 2-minute e2e budget.
+    """
+    import time
+    from pathlib import Path
+    from . import als_template
+
+    t0 = time.perf_counter()
+
+    default_preset_path = Path(_PHASE1_DEFAULT_ADV_PATH)
+    if not default_preset_path.exists():
+        raise FileNotFoundError(
+            "Default reconstruction preset .adv not found at "
+            f"{default_preset_path}. Install Ableton Live 12 Standard "
+            "with the Core Library at the standard path, or update "
+            "_PHASE1_DEFAULT_ADV_PATH in preset_export.py."
+        )
+
+    tempo = _resolve_tempo(full_result)
+    key_root, key_scale = _resolve_key(full_result)
+    midi_stems = full_result.get("midi_stems") or {}
+    preset_matches = full_result.get("preset_matches") or {}
+    chords = full_result.get("chords") or []
+
+    if not midi_stems:
+        raise ValueError(
+            "Reconstruction export requires `midi_stems` in the analysis "
+            "result; none were present."
+        )
+
+    # Fallback: when `preset_matches` is absent (local GPU engine path
+    # bypasses `UnifiedPipeline._build_result`), run V2 retrieval here so
+    # the export still gets per-stem matched devices instead of every
+    # track defaulting to Thick Chord Pad.
+    if not preset_matches:
+        stems_paths = full_result.get("stems_paths") or {}
+        if stems_paths:
+            preset_matches = _retrieve_preset_matches_at_export(stems_paths)
+
+    drum_rack_path = Path(_RECONSTRUCTION_DRUM_RACK_PATH)
+    if not drum_rack_path.exists():
+        logger.info(
+            "[reconstruction] drum rack not found at %s; drums track will "
+            "ship without a device chain.", drum_rack_path,
+        )
+        drum_rack_path = None
+
+    t_resolve = time.perf_counter()
+
+    als_bytes, filename = als_template.create_reconstruction_als(
+        name=preset_name,
+        tempo_bpm=tempo,
+        key_root=key_root,
+        key_scale=key_scale,
+        midi_stems=midi_stems,
+        preset_matches=preset_matches,
+        chords=chords,
+        drum_rack_path=drum_rack_path,
+        default_preset_path=default_preset_path,
+        default_preset_name="Thick Chord Pad",
+        default_instrument="Analog",
+    )
+    als_b64 = base64.b64encode(als_bytes).decode("ascii")
+    t_als = time.perf_counter()
+
+    # Optionally absorb upstream analysis timings so the log line can defend
+    # the 2-minute end-to-end claim in one place.
+    analysis_elapsed = float(full_result.get("analysis_elapsed_sec") or 0.0)
+    total_export_sec = t_als - t0
+    total_e2e_sec = analysis_elapsed + total_export_sec
+
+    matched_stems = sorted(
+        k for k, v in preset_matches.items() if v and v.get("preset_path")
+    )
+    logger.info(
+        "[reconstruction] resolve=%.3fs build_als=%.3fs export_total=%.3fs "
+        "analysis=%.3fs e2e=%.3fs stems=%d matched=%s",
+        t_resolve - t0,
+        t_als - t_resolve,
+        total_export_sec,
+        analysis_elapsed,
+        total_e2e_sec,
+        len(midi_stems),
+        matched_stems or "none",
+    )
+    if total_e2e_sec > _RECONSTRUCTION_TOTAL_BUDGET_SEC:
+        logger.warning(
+            "[reconstruction] e2e budget exceeded: %.1fs > %.0fs target",
+            total_e2e_sec, _RECONSTRUCTION_TOTAL_BUDGET_SEC,
+        )
+
+    return ExportedPreset(
+        filename=filename,
+        format="reconstruction",
+        content=als_b64,
+        content_type="application/octet-stream",
+    )
+
+
 # Supported export formats
 EXPORT_FORMATS = {
     "text": "Text Analysis (.txt)",
@@ -1616,4 +1999,5 @@ EXPORT_FORMATS = {
     "ableton_live_set": "Ableton Live Set (Full Project)",
     "ableton_wavetable": "Ableton Wavetable (.adv) [Suite only]",
     "ableton_analog": "Ableton Analog (.adv)",
+    "reconstruction": "Reconstruction (.als) — MIDI + matched preset",
 }

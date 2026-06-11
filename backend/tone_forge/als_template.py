@@ -9,7 +9,9 @@ import gzip
 import base64
 import io
 import logging
-from typing import Dict, List, Tuple
+import re
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -101,6 +103,13 @@ def create_als_from_analysis(
 
     stem_order = ['drums', 'bass', 'guitar', 'piano', 'other', 'vocals']
 
+    # Normalize: rename "other" to "guitar" if guitar doesn't exist
+    # This handles legacy data where Demucs "other" stem wasn't renamed
+    if 'other' in midi_stems and 'guitar' not in midi_stems:
+        midi_stems = dict(midi_stems)  # Don't mutate original
+        midi_stems['guitar'] = midi_stems.pop('other')
+        logger.info("ALS: Renamed 'other' stem to 'guitar'")
+
     for stem_key in stem_order:
         if stem_key not in midi_stems:
             continue
@@ -188,8 +197,14 @@ def _create_midi_track(
     color: int,
     notes: List[MidiNote],
     auto_id_start: int,
+    device_xml: str = "",
 ) -> Tuple[str, int]:
-    """Create a MIDI track XML with notes."""
+    """Create a MIDI track XML with notes.
+
+    If ``device_xml`` is provided, it is embedded inside the track's
+    ``<Devices>`` chain. Otherwise the chain is emitted empty (matches
+    legacy behaviour used by the multi-stem Live Set export).
+    """
 
     auto_id = auto_id_start
 
@@ -571,7 +586,7 @@ def _create_midi_track(
 				<TakeCounter Value="0"/>
 			</Recorder>
 		</FreezeSequencer>
-		<Devices/>
+		<Devices>{device_xml}</Devices>
 	</DeviceChain>
 </MidiTrack>'''
 
@@ -837,3 +852,308 @@ def _build_als_xml(tracks: str, tempo: float, key_root: int, key_scale: str, loc
 		<ColorSequenceIndex Value="0"/>
 	</LiveSet>
 </Ableton>'''
+
+
+# =============================================================================
+# Phase 2: Multi-stem reconstruction (V2-retrieved preset per stem)
+# =============================================================================
+
+# Per-stem Ableton device-Id ranges. Each embedded device gets a unique
+# opening-tag Id (device_id) plus an internal renumber base
+# (internal_id_start) for its child Id="0" → unique remapping. The Plan-agent
+# audit established the safe layout below (NextPointeeId in _build_als_xml
+# is 20000, so all ranges stay well clear).
+_STEM_DEVICE_IDS: Dict[str, Tuple[int, int]] = {
+    "drums":  (500,  1000),
+    "bass":   (600,  3000),
+    "guitar": (700,  5000),
+    "piano":  (800,  7000),
+    "other":  (900,  9000),
+    "vocals": (1000, 11000),
+}
+
+
+def _load_adg_drumrack(
+    adg_path: Path,
+    device_id: int = 500,
+    internal_id_start: int = 1000,
+) -> Optional[str]:
+    """Extract the <DrumGroupDevice> block from an `.adg` Drum Rack and
+    prepare it for embedding into an ALS track.
+
+    Same renumbering strategy as ``_load_adv_device`` but anchored on the
+    drum-rack root tag. Returns ``None`` if the path is missing so the
+    caller can gracefully skip the drum track on operator systems that
+    don't have the hardcoded factory pack installed.
+    """
+    if not adg_path.exists():
+        logger.info(
+            "[reconstruction] drum rack not found at %s, skipping drum track",
+            adg_path,
+        )
+        return None
+
+    try:
+        raw = gzip.decompress(adg_path.read_bytes()).decode(
+            "utf-8", errors="replace"
+        )
+    except Exception as exc:
+        logger.warning(
+            "[reconstruction] failed to gunzip drum rack %s: %s", adg_path, exc
+        )
+        return None
+
+    tag = "DrumGroupDevice"
+    boundary = r"(?=[\s/>])"
+    block_re = re.compile(rf"<{tag}{boundary}[\s\S]*?</{tag}>")
+    match = block_re.search(raw)
+    if not match:
+        logger.warning(
+            "[reconstruction] no <%s> block in %s", tag, adg_path
+        )
+        return None
+
+    block = match.group(0)
+
+    # Ensure the device opening tag carries an Id (Ableton refuses otherwise).
+    if not re.match(rf'<{tag}\b[^>]*\bId\s*=', block):
+        block = re.sub(
+            rf'<{tag}\b',
+            f'<{tag} Id="{device_id}"',
+            block,
+            count=1,
+        )
+
+    # Renumber Id="0" -> unique IDs starting at internal_id_start.
+    id_counter = [internal_id_start]
+
+    def _renumber(_m: "re.Match[str]") -> str:
+        new_id = id_counter[0]
+        id_counter[0] += 1
+        return f'Id="{new_id}"'
+
+    block = re.sub(r'Id="0"', _renumber, block)
+
+    # Inject Ids on list-suffixed members (<Foo.0>, ...) that lack one.
+    def _inject_list_id(m: "re.Match[str]") -> str:
+        name = m.group(1)
+        attrs = m.group(2)
+        closer = m.group(3)
+        if re.search(r'\bId\s*=', attrs):
+            return m.group(0)
+        new_id = id_counter[0]
+        id_counter[0] += 1
+        attrs_trimmed = attrs.strip()
+        sep = " " if attrs_trimmed else ""
+        return f'<{name} Id="{new_id}"{sep}{attrs_trimmed}{closer}>'
+
+    block = re.sub(
+        r'<([A-Za-z_][\w]*\.\d+)\b([^>]*?)(/?)>',
+        _inject_list_id,
+        block,
+    )
+
+    # Neutralise embedded <LastPresetRef> paths (Ableton's build paths).
+    def _neutralise_path(m: "re.Match[str]") -> str:
+        body = m.group(0)
+        body = re.sub(r'<Path Value="[^"]*"', '<Path Value=""', body)
+        body = re.sub(
+            r'<RelativePath Value="[^"]*"', '<RelativePath Value=""', body
+        )
+        return body
+
+    block = re.sub(
+        r'<LastPresetRef\b[\s\S]*?</LastPresetRef>',
+        _neutralise_path,
+        block,
+    )
+
+    return block
+
+
+def _notes_for_stem(stem_data: Dict, tempo_bpm: float) -> List[MidiNote]:
+    """Resolve the MidiNote list for a stem from its midi_stems entry.
+
+    Accepts either the dict shape emitted by `unified_pipeline._extract_midi`
+    (`{"pitch", "start", "end", "velocity"}`) or the tuple shape
+    `(pitch, start_sec, end_sec, velocity)` used in tests. Falls back to
+    decoding the base64 MIDI `content` when no notes are supplied.
+    """
+    notes_raw = stem_data.get('notes', [])
+    if not notes_raw and stem_data.get('content'):
+        notes_raw = _extract_notes_from_midi_content(stem_data['content'])
+    if not notes_raw:
+        return []
+
+    notes: List[MidiNote] = []
+    for note_data in notes_raw:
+        if isinstance(note_data, dict):
+            try:
+                pitch = note_data['pitch']
+                start_sec = note_data['start']
+                end_sec = note_data['end']
+                vel = note_data.get('velocity', 100)
+            except KeyError:
+                continue
+        else:
+            if len(note_data) < 4:
+                continue
+            pitch, start_sec, end_sec, vel = note_data[:4]
+        start_beats = (float(start_sec) / 60.0) * tempo_bpm
+        duration_beats = ((float(end_sec) - float(start_sec)) / 60.0) * tempo_bpm
+        notes.append(MidiNote(
+            pitch=int(pitch),
+            start_beats=start_beats,
+            duration_beats=max(0.0625, duration_beats),
+            velocity=int(vel),
+        ))
+    return notes
+
+
+def create_reconstruction_als(
+    name: str,
+    tempo_bpm: float,
+    key_root: int,
+    key_scale: str,
+    midi_stems: Dict[str, Dict],
+    preset_matches: Optional[Dict[str, Dict]] = None,
+    chords: Optional[List] = None,
+    drum_rack_path: Optional[Path] = None,
+    default_preset_path: Optional[Path] = None,
+    default_preset_name: str = "Thick Chord Pad",
+    default_instrument: str = "Analog",
+) -> Tuple[bytes, str]:
+    """Phase 2 multi-stem reconstruction ALS.
+
+    For each melodic stem present in ``midi_stems``: extract notes, look
+    up a V2 preset match in ``preset_matches`` (fall back to
+    ``default_preset_path``), splice the preset's device XML into the
+    track's device chain.
+
+    Drums get a hardcoded Drum Rack from ``drum_rack_path`` (or are
+    skipped if the path is missing — V2 catalog has no drum kits).
+    """
+    from .preset_catalog.preset_als_generator import (
+        _load_adv_device,
+        _assert_device_nontrivial,
+        get_device_config,
+        AdvEmbedError,
+        AlsValidationError,
+    )
+    from .preset_catalog.preset_discovery import PresetInfo
+
+    preset_matches = preset_matches or {}
+
+    # Track colors and stem ordering (same as create_als_from_analysis).
+    STEM_COLORS = {
+        'drums': 1, 'bass': 3, 'guitar': 2,
+        'piano': 9, 'other': 10, 'vocals': 12,
+    }
+    stem_order = ['drums', 'bass', 'guitar', 'piano', 'other', 'vocals']
+
+    # Normalise: legacy data sometimes carries 'other' but no 'guitar'.
+    if 'other' in midi_stems and 'guitar' not in midi_stems:
+        midi_stems = dict(midi_stems)
+        midi_stems['guitar'] = midi_stems.pop('other')
+
+    tracks_xml: List[str] = []
+    track_id = 3
+    auto_id = 100
+
+    for stem_key in stem_order:
+        if stem_key not in midi_stems:
+            continue
+        notes = _notes_for_stem(midi_stems[stem_key], tempo_bpm)
+        if not notes:
+            continue
+
+        device_id, internal_id_start = _STEM_DEVICE_IDS.get(
+            stem_key, (1500, 13000)
+        )
+
+        # Resolve device XML per stem.
+        device_xml = ""
+        device_label_for_log = ""
+        if stem_key == "drums":
+            if drum_rack_path is not None:
+                device_xml = _load_adg_drumrack(
+                    drum_rack_path,
+                    device_id=device_id,
+                    internal_id_start=internal_id_start,
+                ) or ""
+                if device_xml:
+                    device_label_for_log = f"drum_rack={drum_rack_path.name}"
+            if not device_xml:
+                # No drum rack available — emit an empty drum track so the
+                # MIDI clip is still there for the user to route manually.
+                device_label_for_log = "drum_rack=<missing>"
+        else:
+            match = preset_matches.get(stem_key)
+            chosen_path: Optional[Path] = None
+            chosen_name = default_preset_name
+            chosen_instrument = default_instrument
+            if match and match.get("preset_path"):
+                chosen_path = Path(match["preset_path"])
+                chosen_name = match.get("preset_name") or chosen_name
+                chosen_instrument = match.get("instrument") or chosen_instrument
+            elif default_preset_path is not None:
+                chosen_path = default_preset_path
+
+            if chosen_path is not None and chosen_path.exists():
+                try:
+                    cfg = get_device_config(chosen_instrument)
+                    shim = PresetInfo(
+                        preset_id=f"reconstruction_{stem_key}",
+                        name=chosen_name,
+                        instrument=chosen_instrument,
+                        category="",
+                        sound_type="",
+                        path=chosen_path,
+                        source="reconstruction",
+                    )
+                    device_xml = _load_adv_device(
+                        chosen_path, shim, cfg,
+                        device_id=device_id,
+                        internal_id_start=internal_id_start,
+                    )
+                    _assert_device_nontrivial(device_xml, cfg)
+                    device_label_for_log = f"{chosen_instrument}={chosen_name}"
+                except (AdvEmbedError, AlsValidationError, ValueError) as exc:
+                    logger.warning(
+                        "[reconstruction] %s preset embed failed (%s); "
+                        "falling back to empty device chain",
+                        stem_key, exc,
+                    )
+                    device_xml = ""
+
+        label = midi_stems[stem_key].get('label', stem_key.title())
+        color = STEM_COLORS.get(stem_key, -1)
+        track_xml, auto_id = _create_midi_track(
+            track_id, f"{label} MIDI", color, notes, auto_id,
+            device_xml=device_xml,
+        )
+        tracks_xml.append(track_xml)
+        logger.info(
+            "[reconstruction] track %d: %s (%d notes, %s)",
+            track_id, label, len(notes),
+            device_label_for_log or "no_device",
+        )
+        track_id += 1
+
+    locators_xml = _build_locators_xml(chords or [], tempo_bpm)
+    als_xml = _build_als_xml(
+        tracks="\n".join(tracks_xml),
+        tempo=tempo_bpm,
+        key_root=key_root,
+        key_scale=key_scale,
+        locators_xml=locators_xml,
+    )
+    als_bytes = gzip.compress(als_xml.encode('utf-8'))
+
+    safe_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in name)[:50]
+    filename = f"{safe_name}.als"
+    logger.info(
+        "[reconstruction] %s: %d tracks, %d bytes",
+        filename, len(tracks_xml), len(als_bytes),
+    )
+    return als_bytes, filename

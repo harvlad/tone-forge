@@ -411,6 +411,138 @@ def separate_drums(
         raise RuntimeError(f"Drums stem separation failed: {e}") from e
 
 
+def split_stem_by_pan(
+    stem_path: str | Path,
+    output_dir: str | Path | None = None,
+    side_threshold: float = 0.10,
+    correlation_threshold: float = 0.70,
+) -> dict[str, Path]:
+    """Decompose a stereo stem into center + sides using mid/side encoding.
+
+    Why this exists:
+        Demucs' ``other`` stem is a single bucket containing every
+        non-drums-bass-vocals instrument — typically a mix of rhythm
+        guitars (panned wide), lead guitar (centre), synths, etc. For the
+        Jam UX we want the rhythm guitarist to be able to mute the doubled
+        rhythm parts while keeping the lead, and vice versa. The cheapest
+        win is a mid/side split: doubled rhythm parts panned ±100% live in
+        the side signal; centre content (lead, vox doubles bleeding into
+        ``other``) lives in mid.
+
+    Strategy:
+        Compute ``mid = 0.5*(L+R)`` and ``side = 0.5*(L-R)``. If the
+        stem's side energy is below ``side_threshold`` (fraction of total),
+        the stem is effectively mono and we don't split. Otherwise emit
+        two mono WAVs alongside the original.
+
+    Output format (critical):
+        Both files are written as STEREO so that, when played back
+        and mixed at unity gain, ``center + sides == original``:
+            center -> [mid, mid]        (stereo-mono)
+            sides  -> [side, -side]     (phase-inverted on right)
+        Sum on left channel:  mid + side  = (L+R)/2 + (L-R)/2 = L
+        Sum on right channel: mid + -side = (L+R)/2 - (L-R)/2 = R
+        Writing ``side`` as a mono channel would make Web Audio
+        broadcast it to both speakers, collapsing the mix to L-only.
+
+    Caveats:
+        - Mid/side cannot recover content that *both* L and R contain
+          (correlated stereo). For that you'd need a time-frequency
+          masking approach (pan-angle classification per TF bin). That's
+          a follow-up.
+
+    Args:
+        stem_path: Path to the source stereo WAV (typically Demucs
+            ``other`` output).
+        output_dir: Where to write the split files. Defaults to the
+            stem_path's parent directory.
+        side_threshold: Minimum side-energy ratio to perform the split.
+            Songs with mostly-mono ``other`` content fall back to a
+            single output keyed as ``center``.
+
+    Returns:
+        Dict mapping pan-label to file path. Either ``{"center": <orig>}``
+        when no split is meaningful, or ``{"center": Path, "sides": Path}``.
+    """
+    import soundfile as sf
+
+    stem_path = Path(stem_path)
+    if not stem_path.exists():
+        raise FileNotFoundError(f"Stem not found: {stem_path}")
+
+    if output_dir is None:
+        output_dir = stem_path.parent
+    else:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    audio, sr = sf.read(str(stem_path))
+    # soundfile returns (samples,) for mono or (samples, channels) for multi.
+    if audio.ndim == 1 or (audio.ndim == 2 and audio.shape[1] == 1):
+        logger.info(f"Stem {stem_path.name} is mono — pan split skipped.")
+        return {"center": stem_path}
+    if audio.shape[1] < 2:
+        return {"center": stem_path}
+
+    L = audio[:, 0].astype(np.float32)
+    R = audio[:, 1].astype(np.float32)
+    mid = 0.5 * (L + R)
+    side = 0.5 * (L - R)
+
+    mid_energy = float(np.mean(mid * mid))
+    side_energy = float(np.mean(side * side))
+    total_energy = mid_energy + side_energy + 1e-12
+    side_ratio = side_energy / total_energy
+
+    # L/R correlation is the real discriminator between "one source with
+    # stereo widening" (high correlation) and "two independent
+    # double-tracked sources" (low correlation). Side energy alone fires
+    # on any stereo guitar recording — including a single source widened
+    # with a Haas/chorus effect — which we don't want to split.
+    L_std = float(np.std(L))
+    R_std = float(np.std(R))
+    if L_std < 1e-6 or R_std < 1e-6:
+        correlation = 1.0  # one channel silent => effectively mono
+    else:
+        correlation = float(np.corrcoef(L, R)[0, 1])
+
+    logger.info(
+        f"Pan analysis for {stem_path.name}: "
+        f"side_ratio={side_ratio:.3f}, LR_corr={correlation:.3f}"
+    )
+
+    if side_ratio < side_threshold:
+        logger.info(
+            f"Side ratio {side_ratio:.3f} below threshold {side_threshold} — "
+            "treating as single source."
+        )
+        return {"center": stem_path}
+
+    if correlation > correlation_threshold:
+        # Highly correlated L/R = one source with stereo widening, not
+        # two independent parts. Skip the split — Jam doesn't care about
+        # stereo image for monitoring.
+        logger.info(
+            f"LR correlation {correlation:.3f} above threshold "
+            f"{correlation_threshold} — single source with stereo width, "
+            "skipping pan-split."
+        )
+        return {"center": stem_path}
+
+    # Write as proper stereo so center + sides reconstructs original L/R.
+    center_path = output_dir / f"{stem_path.stem}_center.wav"
+    sides_path = output_dir / f"{stem_path.stem}_sides.wav"
+    center_stereo = np.stack([mid, mid], axis=1)
+    sides_stereo = np.stack([side, -side], axis=1)
+    sf.write(str(center_path), center_stereo, sr)
+    sf.write(str(sides_path), sides_stereo, sr)
+    logger.info(
+        f"Split {stem_path.name} -> center ({mid_energy:.4f}) + sides "
+        f"({side_energy:.4f}); LR_corr={correlation:.3f}"
+    )
+    return {"center": center_path, "sides": sides_path}
+
+
 def is_available() -> bool:
     """Check if stem separation is available (Demucs installed)."""
     return _check_demucs()

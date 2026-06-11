@@ -41,6 +41,13 @@ class AudioDetection:
     mix_confidence: float = 0.5
     instrument_confidence: float = 0.5
 
+    # Per-instrument confidence scores (0-1)
+    drums_confidence: float = 0.0
+    synth_confidence: float = 0.0
+    bass_confidence: float = 0.0
+    guitar_confidence: float = 0.0
+    vocal_confidence: float = 0.0
+
     # Recommended processing
     needs_stem_separation: bool = False
     recommended_source_kind: str = "isolated_guitar"
@@ -75,12 +82,13 @@ def detect_audio_type(audio_path: str | Path, sr: int = 22050) -> AudioDetection
     # Detect if full mix or isolated
     is_mix, mix_conf = _detect_full_mix(y, sr)
 
-    # Detect instrument type (now includes bass and drums)
+    # Detect instrument type (now includes bass, drums, and vocals)
     detection_result = _detect_instrument_type(y, sr)
     is_guitar = detection_result["is_guitar"]
     is_synth = detection_result["is_synth"]
     is_bass = detection_result["is_bass"]
     is_drums = detection_result["is_drums"]
+    is_vocal = detection_result.get("is_vocal", False)
     inst_conf = detection_result["confidence"]
 
     # Determine recommendations based on detected types
@@ -96,6 +104,8 @@ def detect_audio_type(audio_path: str | Path, sr: int = 22050) -> AudioDetection
         detected_types.append("bass")
     if is_guitar:
         detected_types.append("guitar")
+    if is_vocal:
+        detected_types.append("vocals")
 
     # Primary type determines source_kind
     primary = detection_result.get("primary", "guitar")
@@ -105,6 +115,8 @@ def detect_audio_type(audio_path: str | Path, sr: int = 22050) -> AudioDetection
         source_kind = "synth"
     elif primary == "bass":
         source_kind = "bass"
+    elif primary == "vocals":
+        source_kind = "vocals"
     elif is_mix:
         source_kind = "full_mix"
     else:
@@ -118,11 +130,15 @@ def detect_audio_type(audio_path: str | Path, sr: int = 22050) -> AudioDetection
             "drums": "Drums/percussion",
             "synth": "Synthesizer/electronic",
             "bass": "Bass guitar",
-            "guitar": "Guitar"
+            "guitar": "Guitar",
+            "vocals": "Vocals"
         }
         summary = f"{type_names.get(detected_types[0], detected_types[0])} detected"
     else:
         summary = "Audio analyzed"
+
+    # Get per-instrument confidence scores
+    scores = detection_result.get("scores", {})
 
     return AudioDetection(
         is_full_mix=is_mix,
@@ -131,8 +147,14 @@ def detect_audio_type(audio_path: str | Path, sr: int = 22050) -> AudioDetection
         is_synth=is_synth,
         is_bass=is_bass,
         is_drums=is_drums,
+        is_vocal=is_vocal,
         mix_confidence=mix_conf,
         instrument_confidence=inst_conf,
+        drums_confidence=scores.get("drums", 0.0),
+        synth_confidence=scores.get("synth", 0.0),
+        bass_confidence=scores.get("bass", 0.0),
+        guitar_confidence=scores.get("guitar", 0.0),
+        vocal_confidence=scores.get("vocals", 0.0),
         needs_stem_separation=needs_separation,
         recommended_source_kind=source_kind,
         summary=summary,
@@ -397,22 +419,68 @@ def _detect_instrument_type(y: np.ndarray, sr: int) -> dict:
     # - Some pitch variation (vibrato, bends)
     # - Moderate spectral flatness (strings have noise)
     # - Natural attack/decay patterns
-    # - Centroid typically 1000-4000 Hz
+    # - Centroid typically 800-4000 Hz (lower for clean guitars)
+    # - Clean/ambient guitars: higher harmonic ratio, smoother playing
     # =========================================================================
     guitar_score = 0.0
+    # Pitch stability - guitars have some variation but not as much as vocals
     if 0.5 < pitch_stability < 0.95:
         guitar_score += 0.25
+    elif 0.4 < pitch_stability < 0.98:  # Clean guitars can be more stable
+        guitar_score += 0.15
+    # Spectral flatness - strings have moderate noise
     if 0.01 < avg_flatness < 0.15:
         guitar_score += 0.2
+    elif 0.005 < avg_flatness < 0.20:  # Wider range for clean guitars
+        guitar_score += 0.1
+    # Harmonic ratio - guitars are very harmonic
     if 0.6 < harm_ratio < 0.95:
         guitar_score += 0.2
-    if 1000 < avg_centroid < 4000:
+    elif harm_ratio > 0.5:  # Clean guitars with effects can be more harmonic
+        guitar_score += 0.1
+    # Spectral centroid - clean guitars can be darker (lower centroid)
+    if 800 < avg_centroid < 4000:  # Widened range for clean guitars
         guitar_score += 0.2
+    elif 500 < avg_centroid < 5000:  # Even wider for effects-heavy guitars
+        guitar_score += 0.1
+    # Onset variation - clean guitars can have smoother attack
     if onset_var > 0.2:
         guitar_score += 0.15
+    elif onset_var > 0.1:  # Clean/fingerstyle guitars
+        guitar_score += 0.08
+    # Mid-frequency harmonic content (guitar body resonance)
+    if 0.2 < harm_mid_ratio < 0.6:
+        guitar_score += 0.1
 
     # =========================================================================
-    # Determine winner (priority: drums > synth > bass > guitar)
+    # VOCALS DETECTION
+    # - Formant structure (vowel resonances ~500-3000 Hz)
+    # - Pitch variation (melody)
+    # - Harmonic with some breathiness
+    # - Mid-range dominant
+    # =========================================================================
+    vocal_score = 0.0
+    # Vocals have pitch variation but with melodic patterns
+    if 0.3 < pitch_stability < 0.85:
+        vocal_score += 0.25
+    # Mid-frequency dominant (vocal formants)
+    if 0.3 < mid_ratio < 0.65:
+        vocal_score += 0.2
+    # Harmonic content (voiced sounds)
+    if 0.5 < harm_ratio < 0.9:
+        vocal_score += 0.2
+    # Moderate flatness (mix of voiced/unvoiced)
+    if 0.02 < avg_flatness < 0.12:
+        vocal_score += 0.15
+    # Centroid in vocal range
+    if 800 < avg_centroid < 3500:
+        vocal_score += 0.15
+    # Not too much sub-bass (unlike bass instruments)
+    if sub_bass_ratio < 0.1:
+        vocal_score += 0.05
+
+    # =========================================================================
+    # Determine winner (priority: drums > synth > bass > guitar > vocals)
     # Drums are most distinct, then synth, then bass vs guitar
     # =========================================================================
     scores = {
@@ -420,6 +488,7 @@ def _detect_instrument_type(y: np.ndarray, sr: int) -> dict:
         "synth": synth_score,
         "bass": bass_score,
         "guitar": guitar_score,
+        "vocals": vocal_score,
     }
 
     # Find the highest scoring type (for primary detection)
@@ -427,33 +496,45 @@ def _detect_instrument_type(y: np.ndarray, sr: int) -> dict:
     max_score = scores[max_type]
 
     # For full mixes, detect ALL instruments above threshold independently
-    # This allows showing multiple tabs (drums, bass, synth, guitar)
+    # This allows showing multiple tabs (drums, bass, synth, guitar, vocals)
     # Lower thresholds to detect multiple instruments in mixed tracks
     is_drums = drums_score > 0.15  # Very low threshold - drums are hard to detect in mixes
     is_synth = synth_score > 0.2
     is_bass = bass_score > 0.2
-    is_guitar = guitar_score > 0.2
+    is_guitar = guitar_score > 0.15  # Lowered from 0.2 for clean/ambient guitars
+    is_vocal = vocal_score > 0.25  # Higher threshold to avoid false positives
 
     # If nothing detected above threshold, fall back to highest scorer
-    if not (is_drums or is_synth or is_bass or is_guitar):
+    if not (is_drums or is_synth or is_bass or is_guitar or is_vocal):
         if max_type == "drums":
             is_drums = True
         elif max_type == "synth":
             is_synth = True
         elif max_type == "bass":
             is_bass = True
+        elif max_type == "vocals":
+            is_vocal = True
         else:
             is_guitar = True
 
     logger.info(f"Detection scores - drums: {drums_score:.2f}, synth: {synth_score:.2f}, "
-                f"bass: {bass_score:.2f}, guitar: {guitar_score:.2f}")
-    logger.info(f"Detected - drums: {is_drums}, synth: {is_synth}, bass: {is_bass}, guitar: {is_guitar}")
+                f"bass: {bass_score:.2f}, guitar: {guitar_score:.2f}, vocals: {vocal_score:.2f}")
+    logger.info(f"Detected - drums: {is_drums}, synth: {is_synth}, bass: {is_bass}, "
+                f"guitar: {is_guitar}, vocals: {is_vocal}")
 
     return {
         "is_guitar": is_guitar,
         "is_bass": is_bass,
         "is_synth": is_synth,
         "is_drums": is_drums,
+        "is_vocal": is_vocal,
         "confidence": max_score,
         "primary": max_type,  # Which type scored highest
+        "scores": {
+            "drums": drums_score,
+            "synth": synth_score,
+            "bass": bass_score,
+            "guitar": guitar_score,
+            "vocals": vocal_score,
+        },
     }

@@ -449,25 +449,27 @@ def apply_effects(
     sr: int = PREVIEW_SR,
 ) -> np.ndarray:
     """Apply detected effects to audio."""
+    if not effects:
+        return audio
 
     # Reverb
-    if 'reverb' in effects:
-        reverb = effects['reverb']
+    reverb = effects.get('reverb')
+    if reverb:
         decay = reverb.get('decay', 1.5)
         mix = reverb.get('mix', 0.3)
         audio = apply_simple_reverb(audio, decay, mix, sr)
 
     # Delay
-    if 'delay' in effects:
-        delay = effects['delay']
+    delay = effects.get('delay')
+    if delay:
         time_ms = delay.get('time_ms', 400)
         feedback = delay.get('feedback', 0.4)
         mix = delay.get('mix', 0.3)
         audio = apply_simple_delay(audio, time_ms, feedback, mix, sr)
 
     # Chorus
-    if 'chorus' in effects:
-        chorus = effects['chorus']
+    chorus = effects.get('chorus')
+    if chorus:
         rate = chorus.get('rate', 1.0)
         depth = chorus.get('depth', 0.5)
         mix = chorus.get('mix', 0.3)

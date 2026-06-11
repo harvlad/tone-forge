@@ -135,6 +135,7 @@ class PipelineConfig:
 
     # Feature flags
     separate_stems: bool = False      # Demucs stem separation
+    force_stem_separation: bool = False  # Separate stems even for non-full-mix content
     extract_midi: bool = True         # MIDI extraction
     use_ensemble: bool = True         # Multi-detector ensemble (vs basic-pitch only)
     analyze_quality: bool = True      # Reconstruction quality analysis
@@ -150,6 +151,7 @@ class PipelineConfig:
     # Output options
     include_waveform: bool = False    # Return waveform data for visualization
     include_profiling: bool = False   # Return timing data
+    stem_serve_url_base: Optional[str] = None  # Base URL for serving stem files (e.g., "/api/admin/serve-file")
 
     # Source metadata
     source_url: Optional[str] = None
@@ -181,7 +183,7 @@ class PipelineConfig:
             analyze_quality=True,
             include_provenance=True,
             detect_synth_behavior=True,
-            include_waveform=False,
+            include_waveform=True,  # Enable for studio visualization
             include_profiling=True,  # Enable for Technical tab
         )
 
@@ -191,6 +193,7 @@ class PipelineConfig:
         return cls(
             mode=AnalysisMode.DEEP,
             separate_stems=True,
+            force_stem_separation=True,  # Always separate, even for isolated content
             extract_midi=True,
             use_ensemble=True,
             analyze_quality=True,
@@ -198,6 +201,7 @@ class PipelineConfig:
             detect_synth_behavior=True,
             include_waveform=True,
             include_profiling=True,
+            stem_serve_url_base="/api/admin/serve-file",  # Default for web playback
         )
 
 
@@ -280,14 +284,17 @@ class AnalysisResult:
     stems: Optional[Dict[str, str]] = None
     stems_paths: Optional[Dict[str, str]] = None  # Alias for compatibility
 
+    # V2 preset matches per stem (for reconstruction export)
+    preset_matches: Optional[Dict[str, Dict[str, Any]]] = None
+
     # Quality
     quality: Optional[Dict[str, Any]] = None
 
     # Aggregated provenance
     provenance: Optional[Dict[str, Any]] = None
 
-    # Visualization
-    waveform: Optional[List[float]] = None
+    # Visualization (peaks_positive, peaks_negative, rms, duration_sec, sample_rate)
+    waveform: Optional[Dict[str, Any]] = None
 
     # Profiling
     profiling: Optional[Dict[str, Any]] = None
@@ -295,6 +302,12 @@ class AnalysisResult:
     # Arrangement / sections
     sections: Optional[List[Dict[str, Any]]] = None
     energy_curve: Optional[List[float]] = None
+
+    # Chord lane (P4a wire-up).
+    # Persisted shape matches ``analysis.chords.detect_chords`` -> contracts.Chord:
+    # ``[{"start_s": float, "end_s": float, "symbol": str, "confidence": float}, ...]``.
+    # Bundle assembler reads this directly into ``SongUnderstanding.chords``.
+    chords: Optional[List[Dict[str, Any]]] = None
 
     # Backward compatibility
     type: Optional[str] = None
@@ -329,9 +342,10 @@ class AnalysisResult:
 
         # Add optional fields
         for field_name in ["guitar", "bass", "drums", "synth", "midi",
-                          "midi_stems", "stems", "stems_paths", "quality",
+                          "midi_stems", "stems", "stems_paths", "preset_matches",
+                          "quality",
                           "provenance", "waveform", "profiling",
-                          "sections", "energy_curve",
+                          "sections", "energy_curve", "chords",
                           "type", "descriptor", "chain", "tweak_hints"]:
             value = getattr(self, field_name)
             if value is not None:
@@ -510,7 +524,8 @@ class UnifiedPipeline:
 
             # 3. Separate stems (if configured)
             stems = {}
-            if config.separate_stems and detection.is_full_mix:
+            should_separate = config.separate_stems and (detection.is_full_mix or config.force_stem_separation)
+            if should_separate:
                 yield ProgressEvent("stems", "Separating stems (GPU)...", 20)
                 stage_start = time.time()
                 stems = await self._separate_stems(audio_data, config)
@@ -590,6 +605,24 @@ class UnifiedPipeline:
                     "sections_found": len(sections) if sections else 0,
                 }
 
+            # 7.5 Detect chord lane (P4a wire-up — analysis subsystem).
+            # Cheap librosa chroma+template pass. Skipped when the audio is
+            # not a full mix / not guitar-y (e.g. drum-only stems) because
+            # the result would be noise and Jam wouldn't display it.
+            chords = None
+            if detection.is_full_mix or detection.is_guitar:
+                yield ProgressEvent("chords", "Detecting chord lane...", 89)
+                stage_start = time.time()
+                try:
+                    chords = await self._detect_chord_lane(audio_data)
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(f"Chord detection failed: {e}")
+                if stage_timings is not None:
+                    stage_timings["chord_detection"] = {
+                        "duration_ms": (time.time() - stage_start) * 1000,
+                        "chords_found": len(chords) if chords else 0,
+                    }
+
             # 8. Generate waveform visualization
             waveform = None
             if config.include_waveform:
@@ -609,7 +642,8 @@ class UnifiedPipeline:
 
             result = self._build_result(
                 audio_data, detection, stems, stem_results, instrument_results,
-                midi_stems, waveform, sections, energy_curve, stage_timings, config
+                midi_stems, waveform, sections, energy_curve, chords,
+                stage_timings, config,
             )
 
             yield ProgressEvent("complete", "Analysis complete", 100)
@@ -1255,20 +1289,48 @@ class UnifiedPipeline:
             },
         }
 
-    def _generate_waveform(self, audio_data: AudioData, num_points: int = 200) -> List[float]:
-        """Generate waveform data for visualization."""
+    def _generate_waveform(self, audio_data: AudioData, num_points: int = 200) -> Dict[str, Any]:
+        """Generate waveform data for visualization.
+
+        Returns format expected by studio.html displayWaveform:
+        {
+            peaks_positive: [...],
+            peaks_negative: [...],
+            rms: [...],
+            duration_sec: float,
+            sample_rate: int
+        }
+        """
         audio = audio_data.audio
+
+        peaks_positive = []
+        peaks_negative = []
+        rms_values = []
 
         # Downsample to target number of points
         if len(audio) > num_points:
             step = len(audio) // num_points
-            peaks = []
             for i in range(0, len(audio), step):
                 chunk = audio[i:i + step]
-                peaks.append(float(np.max(np.abs(chunk))))
-            return peaks[:num_points]
+                peaks_positive.append(float(np.max(chunk)))
+                peaks_negative.append(float(np.min(chunk)))
+                rms_values.append(float(np.sqrt(np.mean(chunk ** 2))))
+            # Trim to exact count
+            peaks_positive = peaks_positive[:num_points]
+            peaks_negative = peaks_negative[:num_points]
+            rms_values = rms_values[:num_points]
         else:
-            return [float(abs(x)) for x in audio]
+            peaks_positive = [float(x) if x > 0 else 0.0 for x in audio]
+            peaks_negative = [float(x) if x < 0 else 0.0 for x in audio]
+            rms_values = [float(abs(x)) for x in audio]
+
+        return {
+            "peaks_positive": peaks_positive,
+            "peaks_negative": peaks_negative,
+            "rms": rms_values,
+            "duration_sec": audio_data.duration,
+            "sample_rate": audio_data.sr,
+        }
 
     async def _detect_sections(
         self,
@@ -1301,6 +1363,40 @@ class UnifiedPipeline:
 
         return await run_in_thread(detect)
 
+    async def _detect_chord_lane(
+        self,
+        audio_data: AudioData,
+    ) -> List[Dict[str, Any]]:
+        """Detect the chord lane via the analysis subsystem (P4a).
+
+        Delegates to ``tone_forge.analysis.detect_chords`` (the public
+        contracts-shaped entry point) and serializes each ``Chord`` to
+        the dict shape persisted in history results and consumed by
+        ``session.bundle._iter_chords``.
+
+        Returns an empty list on failure rather than raising — the
+        caller logs and skips the field. The chord lane is not on the
+        critical path for analysis; absence is a soft degradation.
+        """
+        def detect() -> List[Dict[str, Any]]:
+            from tone_forge.analysis import detect_chords
+
+            # Use the full mix audio; the chroma-template pipeline is
+            # robust enough that stem isolation is not required for the
+            # Jam MVP. (Per execution plan §5 scope discipline.)
+            chord_records = detect_chords(audio_data.audio, audio_data.sr)
+            return [
+                {
+                    "start_s": c.start_s,
+                    "end_s": c.end_s,
+                    "symbol": c.symbol,
+                    "confidence": c.confidence,
+                }
+                for c in chord_records
+            ]
+
+        return await run_in_thread(detect)
+
     def _build_result(
         self,
         audio_data: AudioData,
@@ -1309,18 +1405,33 @@ class UnifiedPipeline:
         stem_results: Dict[str, StemResult],
         instrument_results: Dict[str, Dict[str, Any]],
         midi_stems: Dict[str, Dict[str, Any]],
-        waveform: Optional[List[float]],
+        waveform: Optional[Dict[str, Any]],
         sections: Optional[List[Dict[str, Any]]],
         energy_curve: Optional[List[float]],
+        chords: Optional[List[Dict[str, Any]]],
         stage_timings: Optional[Dict],
         config: PipelineConfig,
     ) -> AnalysisResult:
         """Build the final analysis result."""
-        # Build stems paths dict
-        stems_paths = {name: str(path) for name, path in stems.items()} if stems else None
+        # Build stems paths dict - optionally as URLs for web playback
+        stems_paths = None
+        if stems:
+            if config.stem_serve_url_base:
+                # Generate URLs for web playback
+                from urllib.parse import quote
+                stems_paths = {
+                    name: f"{config.stem_serve_url_base}?path={quote(str(path))}"
+                    for name, path in stems.items()
+                }
+            else:
+                # Use raw file paths
+                stems_paths = {name: str(path) for name, path in stems.items()}
 
         # Aggregate provenance
         provenance = self._aggregate_provenance(stem_results, midi_stems) if config.include_provenance else None
+
+        # Per-stem V2 preset retrieval (for reconstruction export)
+        preset_matches = self._match_presets_per_stem(stems) if stems else None
 
         # Get primary MIDI - prefer melodic instruments, then drums, then any
         primary_midi = None
@@ -1380,6 +1491,8 @@ class UnifiedPipeline:
             # Stems
             stems=stems_paths,
             stems_paths=stems_paths,  # Alias
+            # V2 preset matches per stem
+            preset_matches=preset_matches,
             # Quality
             quality=quality,
             # Visualization
@@ -1389,6 +1502,8 @@ class UnifiedPipeline:
             # Arrangement sections
             sections=sections,
             energy_curve=energy_curve,
+            # Chord lane (P4a)
+            chords=chords,
             # Provenance
             provenance=provenance,
             # Backward compatibility
@@ -1429,6 +1544,72 @@ class UnifiedPipeline:
             "domains": list(set(d.get("domain", "unknown") for d in decisions)),
             "decisions": decisions[:100],  # Limit for response size
         }
+
+    # Stem → V2 catalog sound_type filter for retrieval.
+    # None means "no filter — pick best Analog match".
+    _STEM_SOUND_TYPE_FILTER: Dict[str, Optional[str]] = {
+        "bass": "bass",
+        "vocals": "lead",
+        "guitar": None,
+        "other": None,
+        "piano": "keys",
+    }
+
+    def _match_presets_per_stem(
+        self,
+        stems: Dict[str, Path],
+    ) -> Optional[Dict[str, Dict[str, Any]]]:
+        """Run V2 preset retrieval per melodic stem (used by reconstruction export).
+
+        Returns a dict keyed by stem name, each entry containing the top-1
+        match metadata. Drums are skipped (no drum kits in the V2 catalog).
+        Failures on a single stem are logged and that stem omitted — the
+        export path falls back to the Phase 1 default for missing stems.
+        """
+        from .preset_catalog import preset_retrieval
+
+        matches: Dict[str, Dict[str, Any]] = {}
+        for stem_name, stem_path in stems.items():
+            if stem_name == "drums":
+                continue
+            sound_type = self._STEM_SOUND_TYPE_FILTER.get(stem_name)
+            t0 = time.perf_counter()
+            try:
+                results = preset_retrieval.match_audio_file(
+                    Path(stem_path),
+                    k=1,
+                    instrument="Analog",
+                    sound_type_filter=sound_type,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[preset_match] %s failed: %s", stem_name, e
+                )
+                continue
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if not results:
+                logger.info(
+                    "[preset_match] %s: no match (%.0f ms)", stem_name, elapsed_ms
+                )
+                continue
+            top = results[0]
+            matches[stem_name] = {
+                "preset_id": top["preset_id"],
+                "preset_name": top["preset_name"],
+                "preset_path": top["preset_path"],
+                "instrument": top["instrument"],
+                "category": top["category"],
+                "sound_type": top["sound_type"],
+                "distance": top["distance"],
+            }
+            logger.info(
+                "[preset_match] %s -> %s (distance=%.3f, %.0f ms)",
+                stem_name,
+                top["preset_name"],
+                top["distance"],
+                elapsed_ms,
+            )
+        return matches or None
 
 
 # =============================================================================
