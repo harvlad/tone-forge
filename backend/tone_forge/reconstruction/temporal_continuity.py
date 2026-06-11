@@ -213,6 +213,38 @@ class HarmonicTracker:
             logger.warning("librosa not available, returning empty tracks")
             return []
 
+        # For long audio, process in chunks to avoid slow pyin
+        # pyin is O(n) but with high constant factor
+        max_chunk_seconds = 30
+        max_chunk_samples = max_chunk_seconds * sr
+        n_samples = len(audio)
+
+        if n_samples > max_chunk_samples:
+            # Process multiple chunks and combine results
+            all_tracks = []
+            chunk_starts = list(range(0, n_samples, max_chunk_samples))
+
+            for chunk_idx, chunk_start in enumerate(chunk_starts):
+                chunk_end = min(chunk_start + max_chunk_samples, n_samples)
+                chunk_audio = audio[chunk_start:chunk_end]
+                time_offset = chunk_start / sr
+
+                chunk_tracks = self._track_chunk(chunk_audio, sr, time_offset)
+                all_tracks.extend(chunk_tracks)
+
+            return all_tracks
+        else:
+            return self._track_chunk(audio, sr, 0.0)
+
+    def _track_chunk(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        time_offset: float = 0.0,
+    ) -> List[HarmonicTrack]:
+        """Track harmonics in a single chunk."""
+        import librosa
+
         # Get pitch estimates
         f0, voiced_flag, voiced_probs = librosa.pyin(
             audio,
@@ -251,7 +283,7 @@ class HarmonicTracker:
                     else:
                         # New pitch - finish current track and start new
                         tracks.append(self._finalize_track(
-                            current_track, spec, freqs, sr, track_start_frame
+                            current_track, spec, freqs, sr, track_start_frame, time_offset
                         ))
                         current_track = {
                             "fundamental": f0[i],
@@ -264,14 +296,14 @@ class HarmonicTracker:
                 # Unvoiced/silence
                 if current_track is not None:
                     tracks.append(self._finalize_track(
-                        current_track, spec, freqs, sr, track_start_frame
+                        current_track, spec, freqs, sr, track_start_frame, time_offset
                     ))
                     current_track = None
 
         # Finalize last track
         if current_track is not None:
             tracks.append(self._finalize_track(
-                current_track, spec, freqs, sr, track_start_frame
+                current_track, spec, freqs, sr, track_start_frame, time_offset
             ))
 
         # Filter short tracks
@@ -287,6 +319,7 @@ class HarmonicTracker:
         freqs: np.ndarray,
         sr: int,
         start_frame: int,
+        time_offset: float = 0.0,
     ) -> Optional[HarmonicTrack]:
         """Convert track data to HarmonicTrack."""
         f0_values = np.array(track_data["f0_values"])
@@ -321,8 +354,8 @@ class HarmonicTracker:
         else:
             stability = 0.0
 
-        start_time = start_frame * self.hop_length / sr
-        end_time = end_frame * self.hop_length / sr
+        start_time = start_frame * self.hop_length / sr + time_offset
+        end_time = end_frame * self.hop_length / sr + time_offset
 
         return HarmonicTrack(
             fundamental_hz=float(fundamental),

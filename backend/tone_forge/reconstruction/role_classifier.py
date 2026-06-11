@@ -36,6 +36,7 @@ class MusicalRole(str, Enum):
     TEXTURE_LAYER = "texture_layer"
     TRANSIENT_FX = "transient_fx"
     RHYTHMIC_ELEMENT = "rhythmic_element"
+    DRUMS = "drums"  # Percussive drum content
     UNKNOWN = "unknown"
 
 
@@ -622,6 +623,14 @@ class RoleClassifier:
                 scores[MusicalRole.TRANSIENT_FX] += 0.1
             elif stem_type == "vocals":
                 scores[MusicalRole.LEAD_MELODY] += 0.2
+            elif stem_type == "guitar":
+                # Guitar is typically melodic - lead, pad, or arp
+                scores[MusicalRole.LEAD_MELODY] += 0.15
+                scores[MusicalRole.PAD_ATMOSPHERE] += 0.1
+                scores[MusicalRole.ARP_RHYTHM] += 0.1
+                # Reduce unlikely roles for guitar
+                scores[MusicalRole.BASS_FOUNDATION] *= 0.5
+                scores[MusicalRole.TEXTURE_LAYER] *= 0.7
             elif stem_type == "other":
                 # Could be anything, slight boost to melodic roles
                 scores[MusicalRole.LEAD_MELODY] += 0.05

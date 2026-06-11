@@ -413,9 +413,27 @@ class ContaminationDetector:
         min_delay_samples = int(0.05 * sr)  # 50ms minimum
         max_delay_samples = int(1.0 * sr)   # 1s maximum
 
-        # Compute autocorrelation
-        autocorr = np.correlate(audio, audio, mode='full')
-        autocorr = autocorr[len(autocorr)//2:]  # Keep positive lags
+        # Use FFT-based autocorrelation for efficiency (O(n log n) instead of O(n²))
+        # Only compute for the lag range we care about
+        n = len(audio)
+
+        # For very long audio, use a representative chunk to avoid memory issues
+        max_samples = 30 * sr  # Analyze max 30 seconds
+        if n > max_samples:
+            # Use middle 30 seconds
+            start = (n - max_samples) // 2
+            audio_chunk = audio[start:start + max_samples]
+        else:
+            audio_chunk = audio
+
+        # FFT-based autocorrelation (much faster)
+        n_chunk = len(audio_chunk)
+        fft_size = 2 ** int(np.ceil(np.log2(2 * n_chunk - 1)))
+        fft_audio = np.fft.rfft(audio_chunk, n=fft_size)
+        autocorr_full = np.fft.irfft(fft_audio * np.conj(fft_audio), n=fft_size)
+
+        # Only keep positive lags up to max_delay_samples
+        autocorr = autocorr_full[:min(max_delay_samples + 1, len(autocorr_full))]
 
         # Normalize
         autocorr = autocorr / (autocorr[0] + 1e-10)
@@ -494,9 +512,21 @@ class ContaminationDetector:
         if stem_type not in ("bass", "other"):
             return events
 
-        # Use pitch tracking
+        # For long audio, analyze a representative chunk to avoid slow pyin
+        max_samples = 30 * sr  # Max 30 seconds
+        n = len(audio)
+        if n > max_samples:
+            # Use middle 30 seconds
+            start = (n - max_samples) // 2
+            audio_chunk = audio[start:start + max_samples]
+            time_offset = start / sr
+        else:
+            audio_chunk = audio
+            time_offset = 0.0
+
+        # Use pitch tracking (pyin can be slow for long audio)
         f0, voiced_flag, voiced_probs = librosa.pyin(
-            audio,
+            audio_chunk,
             fmin=librosa.note_to_hz('C1'),
             fmax=librosa.note_to_hz('C6'),
             sr=sr,
@@ -547,8 +577,8 @@ class ContaminationDetector:
 
                 events.append(ContaminationEvent(
                     contamination_type=ContaminationType.HARMONIC_CONFUSION,
-                    time_start=start,
-                    time_end=end,
+                    time_start=start + time_offset,
+                    time_end=end + time_offset,
                     severity=float(severity),
                     confidence=0.6,
                     frequency_range=(expected_max, avg_f0) if avg_f0 > 0 else None,
