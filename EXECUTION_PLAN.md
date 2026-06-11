@@ -23,7 +23,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); fitted artifact still blocked on 100 hand-labeled clips |
 | 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) + audio_input_name → Connect helper env (Python plumb of item #38) all landed (see §0) |
-| 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` (see §0); no implementation work auto-driven |
+| 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` + broader capability map `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` (see §0); no implementation work auto-driven |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
 | — | Retrieval algorithm / embeddings | Frozen |
@@ -39,6 +39,66 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Song Understanding capability map (Priority 8 — second-pass research artifact)
+
+The first P8 investigation
+(`docs/SONG_UNDERSTANDING_INVESTIGATION.md`) audited the 13-field
+`SongUnderstanding` DTO and produced per-field feasibility verdicts
+against three producers and two consumers. It was tightly scoped to
+"which existing DTO field can we fill." This second pass widens the
+lens to "which guitarist-facing features can we ship without
+inventing new analysis," using the full signal surface (tempo,
+chord lane, sections, per-note MIDI provenance, profile
+classification, pitch stability, stem fingerprint, tone fingerprint
++ retrieval geometry, `reference_analyzer.ProductionStyle`).
+
+New file: `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` (~400 lines).
+Structure: master signal inventory → capability question → per-
+target-feature deep dives for the seven prompt features (tuning,
+capo, difficulty, motif, riff, section similarity, practice
+guidance) → eleven adjacent opportunities → ranking matrix →
+ASCII dependency graph → recommended sequencing → open product
+questions → non-goals → source-of-truth pointers.
+
+The capability map does **not** retract the prior doc's findings.
+It revises one judgement: the prior pass concluded
+`difficulty` was out of scope because no contract consumer existed;
+this pass identifies that difficulty's *real* consumer is the
+practice-guidance UX loop and that a composite rubric over signals
+the platform already computes (tempo, IOI variance, chord vocab,
+note density, polyphony, bend/vibrato flags, per-section
+`ClassificationFeatures`) is achievable as a wiring exercise, not
+new analysis. Promoted from "out of scope" to a P8.x candidate
+with a calibration cost of ~30 hand-ranked songs.
+
+Headline findings:
+
+1. None of the seven target features is signal-bounded. Two
+   (tuning, capo) are label-bounded; the other five are wiring or
+   orchestration.
+2. Riff extraction is the highest-leverage guitarist-specific
+   feature — guitar-stem MIDI + section boundaries + sub-sequence
+   matching, none of which Spotify or Yousician can compose at
+   this level.
+3. Practice guidance is the strategic anchor; everything else is
+   a component of it. The composition is the moat, not any single
+   feature.
+4. Capo detection cascades on tuning and on fret-position
+   estimation we don't have — defer indefinitely; ship a UX
+   dropdown.
+5. `reference_analyzer.ProductionStyle` (reverb/delay/groove/
+   layering/FX) remains a dormant reservoir on a parallel pipeline
+   that doesn't reach `SongUnderstanding`. The prior doc already
+   flagged this; the capability map reinforces it as the largest
+   single dormant signal block.
+
+No code changes. No contract changes. No tests. This commit ships
+only `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` and this §0 entry
+plus a one-line update to the Priority 8 row of the priority
+table. Implementation of any feature on the map requires its own
+design pass (contract change, producer wiring, consumer surface,
+tests) — the map is a planning artifact, not a commitment.
 
 ### Monitor chain bank: WAV ↔ fingerprint exact-equality integration test (Priority 3 — fourth layer)
 
