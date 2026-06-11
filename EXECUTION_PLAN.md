@@ -17,7 +17,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | # | Subsystem | State |
 |---|---|---|
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
-| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) landed (see §0) |
+| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) + join-time state replay coverage (last_gain / last_preset / targeted-no-broadcast / fresh-channel pins) landed (see §0) |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
@@ -39,6 +39,67 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Connect hardening — join-time state replay coverage (Priority 2)
+
+The connect-bridge endpoint has cached "last applied" state on the
+in-memory ``_ConnectChannel`` since the chain-replay commit landed:
+``last_preset``, ``last_gain``, ``last_chain``. ``_ConnectChannel.join()``
+already replays all three to a fresh peer with ``"replayed": true``
+tagging. Only the ``apply_chain`` replay path had a regression test
+(``test_last_chain_replayed_to_late_joining_peer``). The
+``set_gain`` and ``preset_push`` replay paths were implemented in the
+same block but untested — a refactor that broke either would have
+shipped silently.
+
+EXECUTION_PLAN §3E also carried stale narrative: it described
+``last_gain`` as the only replay path that worked, when in fact all
+three did. And it included ``last_transport_state`` in the list,
+which is a Session Engine concept (not a connect-bridge one) and
+belongs on the Session Engine route's reconnect surface, not here.
+
+**What ships:**
+
+* ``backend/tests/test_connect_bridge_replay.py`` — new, 5 tests,
+  10.28s:
+  - ``test_last_gain_replayed_to_late_joining_peer`` — basic
+    set_gain replay carries ``replayed: True``.
+  - ``test_last_gain_replay_carries_clamped_value`` — out-of-range
+    gain values round-trip as their server-clamped form (the cache
+    holds the post-validation value, not the raw client one).
+  - ``test_last_preset_replayed_to_late_joining_peer`` — preset_push
+    replay carries the cached preset dict verbatim plus
+    ``replayed: True``.
+  - ``test_replay_does_not_re_broadcast_to_existing_peers`` — a
+    new joiner triggers replay *to the joiner*, not a duplicate
+    broadcast back to peers who already saw the original frame.
+  - ``test_fresh_channel_replays_nothing`` — a peer joining a
+    channel that has never cached state sees ``hello_ack`` +
+    ``joined`` and nothing else; future refactors that eagerly
+    emit empty replay frames are caught.
+
+* ``EXECUTION_PLAN.md`` §3E rewritten:
+  - Replaced the "``last_gain`` works, the rest need wiring"
+    narrative with the actual landed-state breakdown (all three
+    replay paths working, each pinned by a named test).
+  - Moved ``last_transport_state`` out of the connect-bridge
+    surface and into a deferred-to-Session-Engine note. The
+    connect-bridge endpoint stays monitor-only by design (gain /
+    preset / chain).
+  - Pruned the "tightening required" list to what actually
+    remains (persistent session_id on disk, "Reconnected" toast).
+
+**Verification:** Connect-adjacent sweep — lifecycle, apply_chain,
+heartbeat, parity, error_codes, replay, session protocol, session
+route, session bundle, session transport, subsystem boundaries —
+**137/137 passing in ~12s**.
+
+**What this commit does NOT do:** No new behavior. Pure
+test-coverage + doc correction. The two cached replay paths
+(``set_gain``, ``preset_push``) worked in production; they were
+load-bearing-with-no-net, and now they have a net. No persistent
+session_id, no "Reconnected" toast, no Session Engine transport
+replay — those remain on §3E's "still to wire" list.
 
 ### Connect hardening — error-code taxonomy + drift gate (Priority 2)
 
@@ -1775,11 +1836,33 @@ Connect is product. This is the largest invisible work in the plan.
 
 ### E. Reconnect Behavior
 
-- **Already works** at WS level (exponential backoff in `jam.js`). Tightening required:
-  - Persistent `session_id` across Connect restarts (write to `~/Library/Application Support/ToneForge/session.json`)
-  - On reconnect, hub replays `last_gain`, `last_preset`, `last_transport_state` — `last_gain` works today; the rest need wiring
-  - Browser surfaces "Reconnected" toast (1.5s), not just an inline status flip
-- **Audio device loss** (interface unplugged): Connect emits `device_lost` WS frame; browser shows reconnection instructions
+- **Already works** at WS level (exponential backoff in `jam.js`).
+- **Join-time state replay** (`_ConnectChannel.join()` in
+  `tone_forge_api.py:398-417`, drift-gated by
+  `backend/tests/test_connect_bridge_replay.py` + the existing
+  apply_chain replay test). A peer joining a channel that has cached
+  state receives the cached frames before any further broadcasts,
+  each tagged ``"replayed": true`` so the consumer can branch on it.
+  - `last_gain` — pinned by `test_last_gain_replayed_to_late_joining_peer`
+    (basic) + `test_last_gain_replay_carries_clamped_value` (post-clamp).
+  - `last_preset` — pinned by `test_last_preset_replayed_to_late_joining_peer`.
+  - `last_chain` — pinned by `test_last_chain_replayed_to_late_joining_peer`
+    in `test_connect_bridge_apply_chain.py`.
+  - Replay is targeted (joiner only, not re-broadcast to existing
+    peers) — `test_replay_does_not_re_broadcast_to_existing_peers`.
+  - Fresh channels replay nothing — `test_fresh_channel_replays_nothing`.
+- **`last_transport_state`** is *not* a connect-bridge concern.
+  Transport state lives on the Session Engine (Priority 5); when
+  Session Engine grows a reconnect-replay surface it lives there,
+  not here. The connect-bridge endpoint deliberately stays
+  monitor-only (gain / preset / chain).
+- **Still to wire:**
+  - Persistent `session_id` across Connect restarts (write to
+    `~/Library/Application Support/ToneForge/session.json`)
+  - Browser surfaces "Reconnected" toast (1.5s), not just an inline
+    status flip
+- **Audio device loss** (interface unplugged): Connect emits
+  `device_lost` WS frame; browser shows reconnection instructions
 
 ### F. Error Handling
 
