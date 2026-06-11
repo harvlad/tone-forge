@@ -23,7 +23,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); fitted artifact still blocked on 100 hand-labeled clips |
 | 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) + audio_input_name → Connect helper env (Python plumb of item #38) all landed (see §0) |
-| 8 | Song Understanding expansion | Investigation only |
+| 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` (see §0); no implementation work auto-driven |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
 | — | Retrieval algorithm / embeddings | Frozen |
@@ -39,6 +39,59 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Song Understanding investigation (Priority 8) — research artifact landed
+
+Priority 8 sits in the priority table as "Investigation only" — the
+deliverable is research output, not implementation. This commit lands
+that artifact as `docs/SONG_UNDERSTANDING_INVESTIGATION.md`. No code
+changes; the Phase-3 fields on `SongUnderstanding`
+(`tuning`, `capo_fret`, `difficulty`, `motifs`) remain declared but
+unpopulated, exactly as they have been since the contract froze.
+
+The document covers, with line-numbered references into the repo:
+
+- **Contract audit** — 13 fields, 9 MVP / 4 Phase-3; which fields
+  are actually populated today and which fall back to hardcoded
+  defaults (`time_signature=(4,4)`, `tempo_confidence=0.5`).
+- **Producer audit** — three call sites build `SongUnderstanding`
+  (`session/bundle.py:246`, `tone_forge_api.py:2536`,
+  `tone/guitar_catalog.py:82`); a fourth analyzer
+  (`analysis/reference_analyzer.py`) computes richer spectral output
+  into a separate `ProductionStyle` dataclass that does not feed
+  the bundle.
+- **Consumer audit** — only two real consumers:
+  `tone/policy.py:104-130` (reads `tempo_bpm` + `key`; has four
+  spectral-feature branches documented in code that are unreachable
+  because the bundle doesn't carry the signals) and
+  `static/jam.js:2093,2116-2117` (tempo, key, sections, beats for
+  UI rendering). Nothing reads any Phase-3 field today.
+- **Per-field feasibility** —
+  beats from librosa is a free win;
+  the four spectral-feature fields are the highest-leverage
+  promotion because they unlock four dormant policy branches that
+  are already written;
+  tuning + capo are blocked on labeled data and a MIDI subsystem
+  that is frozen;
+  difficulty has no consumer and no definition;
+  motifs need a UI hook before any detection work is justified.
+- **Concrete next-step priority list** if P8 is ever promoted from
+  investigation to active — four ordered, independent items, none
+  blocking current P6 / P7 work.
+- **Explicit deferrals** with rationale per Phase-3 field, so a
+  future maintainer doesn't re-discover the same blockers.
+
+Verification: the document only cites code paths and line numbers
+that exist on the current `main` (`SongUnderstanding` contract,
+`_build_understanding`, `select_fallback_family`'s documented
+dormant branches, `_detect_chord_lane` wiring, `reference_analyzer`'s
+reverb / delay code). No test changes; no Python changes.
+
+This closes item #39 from the §0 planned-work list ("`docs/SONG_
+UNDERSTANDING_INVESTIGATION.md` — investigation notes"). Item #40
+("Place fields in `SongUnderstanding` DTO already") was already
+satisfied before this session (the four Phase-3 fields are in
+`contracts.py:248-252` with safe defaults).
 
 ### Isotonic calibration loader infrastructure (Priority 6 — refit prep)
 
