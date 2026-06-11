@@ -17,7 +17,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | # | Subsystem | State |
 |---|---|---|
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
-| 2 | Connect hardening | Active — focused-pass landed (see §0) |
+| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) landed (see §0) |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
@@ -39,6 +39,88 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Connect hardening — second wave: heartbeat + protocol parity gate (Priority 2)
+
+The focused-pass hardening commit closed the *broadcast-failure* path:
+a peer whose `send` raised was reaped, survivors were notified. This
+pass closes the two remaining silent-failure classes the post-P8
+investigation identified.
+
+**O1 — Server-side heartbeat (silent-drop detection).** Before this
+pass, a peer whose TCP socket went dead without an OS-level teardown
+(laptop lid, NAT timeout, browser tab killed) sat in `clients`
+invisibly until the next outbound frame happened to fail. The Connect
+helper can go for hours without unsolicited frames, so the gap was
+real. New constants `CONNECT_BRIDGE_RECV_TIMEOUT_SEC` (default 30s)
+and `CONNECT_BRIDGE_PONG_TIMEOUT_SEC` (default 10s), both
+env-overridable, drive a probe inside the existing receive loop:
+after the recv window of silence the server emits a `ping`, then
+waits another window for *any* inbound frame (a `pong` is the
+expected reply, but any frame counts as proof of life). A second
+timeout breaks the loop and emits `peer_left { reason:
+"heartbeat_timeout" }` to the survivors before tearing down. A
+chatty client never enters the probe path — receive activity is
+itself the liveness signal. No background tasks per socket; the
+heartbeat is woven into the loop that already exists.
+
+**O2 — Swift ↔ Python protocol parity gate.** Three sources of truth
+for the wire protocol — `PROTOCOL_VERSION` in
+`backend/tone_forge/session/protocol.py`,
+`CONNECT_BRIDGE_PROTOCOL_VERSION` in `backend/tone_forge_api.py`,
+`ConnectProtocol.version` in
+`connect/Sources/ConnectCore/Protocol.swift` — were documented as
+"bump them together" but nothing forced it. Now: a schema-only
+pytest file (`tests/test_connect_protocol_parity.py`, 15 tests,
+0.06s) parses the Swift source as text (no Xcode toolchain
+involvement), asserts the three versions agree, and verifies every
+wire-string Swift declares is also declared on the Python side
+with the same value. Python is permitted to be ahead of Swift
+(session-engine intents, transport state, Connect-emitted device
+events) — the asymmetry is intentional and documented in the
+test's module docstring. A camelCase ↔ snake_case naming check and
+an anchor-set parametrize over the 11 currently-shared message
+types round out the gate.
+
+Files touched / created:
+
+- `backend/tone_forge_api.py` — new constants block (env-overridable
+  timeouts) plus the receive-loop edit. ~50 LoC net.
+- `backend/tests/test_connect_bridge_heartbeat.py` — new, 3 tests
+  (pong-within-window keeps alive; silent peer triggers
+  heartbeat-timeout drop + survivor notify; chatty peer never
+  probed). Monkeypatched 0.2s windows so the file runs in ~10s.
+- `backend/tests/test_connect_protocol_parity.py` — new, 15 tests.
+
+Verification:
+
+```
+python3 -m pytest tests/test_connect_bridge_lifecycle.py \
+                  tests/test_connect_bridge_apply_chain.py \
+                  tests/test_connect_bridge_heartbeat.py \
+                  tests/test_connect_protocol_parity.py \
+                  tests/test_session_protocol.py \
+                  tests/test_session_route.py \
+                  tests/test_session_bundle.py \
+                  tests/test_session_transport.py \
+                  tests/test_subsystem_boundaries.py
+  -> 127 passed in 12.90s
+```
+
+Explicitly **not** done in this pass: rate limiting at the WS layer
+(no observed need), mandatory `request_id` on every message
+(current optional-ack pattern is adequate), formal error-code
+taxonomy in `contracts.py` (codes work as ad-hoc strings; promote
+when a UI consumer needs structured handling), in-memory channel
+state persistence across API restarts (separate design decision —
+the replay-on-join machinery is correct, the question is whether
+last-applied chain should survive process death). The Swift-side
+device picker UI + input meter + test-tone (item §9 #9 remainder)
+is not in this pass — requires Swift cycle, deferred until the
+operator wants a UX-side iteration.
+
+EXECUTION_PLAN priority table row 2 amended to reference this
+second-wave landing.
 
 ### Founder Validation Corpus harness (post-P8 synthesis — Task #4)
 

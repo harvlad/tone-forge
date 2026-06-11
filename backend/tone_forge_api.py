@@ -346,6 +346,30 @@ async def jam_session_page(analysis_id: str) -> FileResponse:
 # browser (jam.js CONNECT_PROTOCOL_VERSION) must stay in lockstep.
 CONNECT_BRIDGE_PROTOCOL_VERSION = 1
 
+# Heartbeat / liveness detection for the WS bridge.
+#
+# The focused hardening pass plugged the broadcast-failure path: when a send
+# raises, the dead client is reaped and surviving peers are notified. But a
+# silently-dropped peer (laptop lid closed, network NAT timeout, browser tab
+# killed without an OS-level teardown) does not trigger a send failure on
+# its own — it just sits in `clients` until the next outbound frame happens
+# to fail. Connect can go for hours without sending unsolicited frames, so
+# the gap is real.
+#
+# The pattern below ties liveness to the existing receive loop instead of
+# spawning a parallel task per socket. After RECV_TIMEOUT_SEC of silence we
+# probe with a ping; if no frame at all comes back within PONG_TIMEOUT_SEC
+# (a pong is enough, but any frame counts as proof of life), we treat the
+# peer as gone, notify the survivors, and tear the socket down. A chatty
+# client never hits the probe path — receive activity is itself the
+# liveness signal.
+CONNECT_BRIDGE_RECV_TIMEOUT_SEC = float(
+    os.environ.get("TONEFORGE_CONNECT_RECV_TIMEOUT_SEC", "30")
+)
+CONNECT_BRIDGE_PONG_TIMEOUT_SEC = float(
+    os.environ.get("TONEFORGE_CONNECT_PONG_TIMEOUT_SEC", "10")
+)
+
 # In-memory channel state. Survives only as long as the API process runs;
 # clients re-push on reconnect.
 class _ConnectChannel:
@@ -508,7 +532,50 @@ async def connect_bridge(ws: WebSocket) -> None:
         await ws.send_json({"type": "joined", "session_id": session_id, "peers": len(channel.clients) - 1})
 
         while True:
-            msg = await ws.receive_json()
+            try:
+                msg = await asyncio.wait_for(
+                    ws.receive_json(),
+                    timeout=CONNECT_BRIDGE_RECV_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                # No traffic for the recv window. Probe the peer with a
+                # ping. If the ping send itself fails the peer is already
+                # gone — fall through to the outbound disconnect path.
+                try:
+                    await ws.send_json({"type": "ping"})
+                except Exception:
+                    break
+                # Wait for *any* frame (a pong is the expected reply, but
+                # an unsolicited frame is equally good proof of life).
+                # A second timeout means the peer is dead.
+                try:
+                    msg = await asyncio.wait_for(
+                        ws.receive_json(),
+                        timeout=CONNECT_BRIDGE_PONG_TIMEOUT_SEC,
+                    )
+                except asyncio.TimeoutError:
+                    # Heartbeat-detected drop. Tell the survivors before
+                    # tearing down so their UI flips out of paired state
+                    # without waiting for the next outbound frame.
+                    notice = {
+                        "type": "peer_left",
+                        "peers": max(0, len(channel.clients) - 1),
+                        "reason": "heartbeat_timeout",
+                    }
+                    for client in list(channel.clients):
+                        if client is ws:
+                            continue
+                        try:
+                            await client.send_json(notice)
+                        except Exception:
+                            pass
+                    break
+                # If we got the expected pong, eat it and resume the
+                # main wait. Any other frame falls through to dispatch
+                # below — the peer self-identified as alive by sending
+                # it, which is all we needed to know.
+                if isinstance(msg, dict) and msg.get("type") == "pong":
+                    continue
             if not isinstance(msg, dict):
                 continue
             mtype = msg.get("type")
