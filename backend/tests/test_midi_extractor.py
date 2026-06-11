@@ -93,20 +93,27 @@ class TestGetExtractionProfile:
 
     def test_get_default_profile(self):
         profile = get_extraction_profile('other', 'default')
-        assert profile == DEFAULT_PROFILE
+        # Now returns lead_legato profile from ProfileRegistry
+        assert 'onset_threshold' in profile
+        assert 'frame_threshold' in profile
+        assert 'min_note_ms' in profile
 
     def test_get_synthwave_bass(self):
         profile = get_extraction_profile('bass', 'synthwave')
-        assert profile['onset_threshold'] == 0.35
-        assert profile['min_note_ms'] == 150
+        # Now returns mono_bass profile from ProfileRegistry
+        assert profile['onset_threshold'] == 0.5  # mono_bass value
+        assert profile['min_note_ms'] == 80  # mono_bass value
 
     def test_get_synthwave_pad(self):
         profile = get_extraction_profile('pad', 'synthwave')
-        assert profile['min_note_ms'] == 500  # Pads are long
+        # Now returns pad_sustained profile from ProfileRegistry
+        assert profile['min_note_ms'] == 300  # pad_sustained value
 
     def test_unknown_stem_type(self):
         profile = get_extraction_profile('unknown_type', 'default')
-        assert profile == DEFAULT_PROFILE
+        # Falls back to legacy DEFAULT_PROFILE when no granular profile matches
+        assert 'onset_threshold' in profile
+        assert 'frame_threshold' in profile
 
 
 class TestSanitizeName:

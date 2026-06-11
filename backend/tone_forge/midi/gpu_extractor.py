@@ -155,10 +155,20 @@ def hybrid_merge(
     stem_type: str = "lead",
 ) -> Tuple[List['MIDINote'], dict]:
     """
+    [EXPERIMENTAL — DISABLED BY DEFAULT — KNOWN REGRESSION]
+
     Merge monophonic and polyphonic detector outputs using frame-wise posteriors.
 
     Instead of binary routing (mono OR poly), this runs both and selects
     the best source for each segment based on posterior entropy.
+
+    STATUS: This implementation is a known regression vs. the baseline
+    (pYIN + octave validation + gap filling) on the current benchmark:
+      - Baseline:     7/16 passing (43.8%), 65.5% avg F1
+      - Hybrid merge: 2/16 passing (12.5%), 36.8% avg F1
+    It is retained for future research only and MUST NOT be enabled in
+    production extraction paths. See backend/EXTRACTION_STATUS.md and the
+    "Extraction Floor Achieved" milestone for context.
 
     Args:
         mono_notes: Notes from monophonic detector (pYIN/CREPE)
@@ -1249,20 +1259,22 @@ def _should_apply_subdivision(
 
 def extract_midi_bass_ensemble(
     audio_path: str,
-    use_hybrid_merge: bool = False,  # Disabled - causes regression (2/16 vs 7/16 passing)
+    use_hybrid_merge: bool = False,  # EXPERIMENTAL — DISABLED — regression (2/16 vs 7/16)
 ) -> Tuple[List[MIDINote], float, float, str]:
     """
-    Ensemble bass extraction using hybrid mono+poly detection.
+    Ensemble bass extraction. Production path uses pYIN + octave validation
+    + chord-aware gap filling (the count-based fallback below).
 
-    Phase 3 Architecture: Instead of binary routing (mono OR poly), this runs
-    both detectors in parallel and uses frame-wise posteriors to select the
-    best source for each segment. NOTE: hybrid_merge disabled by default due
-    to regressions - falls back to count-based heuristics with octave validation.
+    The hybrid mono+poly merge path (`use_hybrid_merge=True`) is
+    [EXPERIMENTAL — DISABLED BY DEFAULT — KNOWN REGRESSION] and MUST NOT
+    be re-enabled in production without fresh benchmark evidence. Current
+    benchmark: hybrid 2/16 (12.5%) vs baseline 7/16 (43.8%).
 
     Args:
         audio_path: Path to audio file
-        use_hybrid_merge: If True, use frame-wise posterior merging.
-                         If False, fall back to count-based heuristics.
+        use_hybrid_merge: EXPERIMENTAL. Keep False for production.
+                         If True, attempts frame-wise posterior merging
+                         (known regression on bass benchmark).
 
     Returns:
         Tuple of (notes, tempo, duration, method_used)
@@ -1412,23 +1424,22 @@ def extract_midi_bass_ensemble(
 def extract_midi_lead_ensemble(
     audio_path: str,
     use_hca_for_polyphony: bool = True,
-    use_hybrid_merge: bool = False,  # Disabled - causes regression on bass benchmark
+    use_hybrid_merge: bool = False,  # EXPERIMENTAL — DISABLED — known regression
 ) -> Tuple[List[MIDINote], float, float, str]:
     """
-    Ensemble lead extraction with hybrid mono+poly detection.
+    Ensemble lead extraction. Production path is HCA for very polyphonic
+    content (harm_ratio < 0.65) and pYIN/torchcrepe routing with octave
+    validation + chord-aware gap filling otherwise.
 
-    Phase 3 Architecture: Instead of binary routing, runs both mono (pYIN) and
-    poly (basic_pitch) detectors, then uses frame-wise posteriors to select
-    the best source for each segment. NOTE: hybrid_merge disabled by default
-    due to regressions - falls back to HCA/mono routing with octave validation.
-
-    For extremely polyphonic content (harm_ratio < 0.65), still uses HCA
-    as it handles dense chords better than basic_pitch.
+    The hybrid mono+poly merge path (`use_hybrid_merge=True`) is
+    [EXPERIMENTAL — DISABLED BY DEFAULT — KNOWN REGRESSION] and MUST NOT
+    be re-enabled in production without fresh benchmark evidence. See
+    backend/EXTRACTION_STATUS.md for context.
 
     Args:
         audio_path: Path to audio file
         use_hca_for_polyphony: If True, use HCA for very polyphonic content
-        use_hybrid_merge: If True, use frame-wise posterior merging
+        use_hybrid_merge: EXPERIMENTAL. Keep False for production.
 
     Returns:
         Tuple of (notes, tempo, duration, method_used)

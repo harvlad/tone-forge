@@ -25,6 +25,8 @@ from .extraction_pipeline import (
     MultiPassExtractor,
     create_extractor,
     create_extractor_for_profile,
+    create_synth_aware_extractor,
+    extract_with_synth_awareness,
 )
 from .passes import (
     ExtractionPass,
@@ -67,6 +69,8 @@ __all__ = [
     "MultiPassExtractor",
     "create_extractor",
     "create_extractor_for_profile",
+    "create_synth_aware_extractor",
+    "extract_with_synth_awareness",
     # Base types
     "ExtractionPass",
     "PassResult",

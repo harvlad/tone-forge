@@ -28,6 +28,8 @@ class NoteFlag(str, Enum):
     SPLIT = "split"
     VELOCITY_ADJUSTED = "velocity_adjusted"
     LOW_CONFIDENCE = "low_confidence"
+    SYNTHETIC = "synthetic"  # Added by heuristic passes (e.g., octave doubling)
+    OCTAVE_DOUBLED = "octave_doubled"  # Upper octave created from lower note
 
 
 @dataclass

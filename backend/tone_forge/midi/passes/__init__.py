@@ -41,6 +41,8 @@ from .delay_cleanup import DelayCleanupPass
 from .octave_correction import OctaveCorrectionPass
 from .beat_grid_filter import BeatGridFilterPass
 from .key_conformity import KeyConformityPass
+from .subharmonic_suppression import SubHarmonicSuppressionPass
+from .octave_doubling import OctaveDoublingPass
 
 __all__ = [
     # Base
@@ -66,4 +68,6 @@ __all__ = [
     "OctaveCorrectionPass",
     "BeatGridFilterPass",
     "KeyConformityPass",
+    "SubHarmonicSuppressionPass",
+    "OctaveDoublingPass",
 ]

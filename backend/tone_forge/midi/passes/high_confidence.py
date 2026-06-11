@@ -35,7 +35,7 @@ class HighConfidencePass(ExtractionPass):
     def __init__(
         self,
         pass_number: int = 1,
-        min_confidence: float = 0.6,
+        min_confidence: float = 0.5,  # Balanced for good recall
         onset_threshold: float = 0.5,
         frame_threshold: float = 0.4,
         min_note_ms: float = 50.0,
@@ -185,9 +185,12 @@ class HighConfidencePass(ExtractionPass):
         frame_threshold: float,
     ) -> List[ExtractedNote]:
         """Extract notes using basic_pitch library."""
+        import tempfile
+        import os
+        import soundfile as sf
+
         try:
             from basic_pitch.inference import predict
-            from basic_pitch import ICASSP_2022_MODEL_PATH
 
             # Ensure mono
             if audio.ndim > 1:
@@ -196,31 +199,42 @@ class HighConfidencePass(ExtractionPass):
             # basic_pitch expects float32
             audio = audio.astype(np.float32)
 
-            # Run prediction
-            model_output, midi_data, note_events = predict(
-                audio,
-                sr,
-                onset_threshold=onset_threshold,
-                frame_threshold=frame_threshold,
-                minimum_note_length=self.min_note_ms,
-            )
+            # basic_pitch requires a file path, so write to temp file
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+                tmp_path = tmp.name
+                sf.write(tmp_path, audio, sr)
+
+            try:
+                # Run prediction on temp file
+                model_output, midi_data, note_events = predict(
+                    tmp_path,
+                    onset_threshold=onset_threshold,
+                    frame_threshold=frame_threshold,
+                    minimum_note_length=self.min_note_ms,
+                )
+            finally:
+                # Clean up temp file
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
 
             # Convert to ExtractedNote
             notes = []
             for note in note_events:
-                # note format: (start_time, end_time, pitch, velocity, confidence)
-                start, end, pitch, velocity, confidence = note
+                # note format: (start_time, end_time, pitch, amplitude, pitch_bends)
+                # pitch_bends is a list, amplitude is 0-1 scale
+                start, end, pitch, amplitude, pitch_bends = note
 
                 # Skip short notes
                 if (end - start) * 1000 < self.min_note_ms:
                     continue
 
+                # Use amplitude as both velocity and confidence
                 notes.append(ExtractedNote(
                     pitch=int(pitch),
                     start=float(start),
                     end=float(end),
-                    velocity=int(velocity * 127) if velocity <= 1 else int(velocity),
-                    confidence=float(confidence),
+                    velocity=int(amplitude * 127) if amplitude <= 1 else int(amplitude),
+                    confidence=float(amplitude),  # Use amplitude as confidence proxy
                     source_pass=self.pass_number,
                 ))
 

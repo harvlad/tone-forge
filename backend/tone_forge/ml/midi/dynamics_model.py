@@ -567,32 +567,89 @@ def process_dynamics(
         notes, tempo_bpm, instrument_type, target_range
     )
 
-    # Record dynamics adjustments in provenance
+    # Record dynamics adjustments in provenance with full semantic tracking
     if provenance_chain is not None and len(notes) == len(processed):
-        from tone_forge.provenance import DecisionAction, DecisionDomain, ReasonGraph
+        from tone_forge.provenance import (
+            DecisionAction, DecisionDomain, DecisionSeverity, ReasonGraph
+        )
+
+        # Pre-compute context for confidence estimation
+        model = get_dynamics_model()
+        dynamics_analysis = model.analyze_dynamics(notes)
+        avg_vel = dynamics_analysis.get("avg_velocity", 64)
+        vel_std = dynamics_analysis.get("velocity_std", 20)
 
         for i, (orig, adjusted) in enumerate(zip(notes, processed)):
             if orig[3] != adjusted[3]:  # Velocity changed
                 vel_delta = adjusted[3] - orig[3]
-                record = provenance_chain.create_record(
-                    action=DecisionAction.MODIFIED,
+                abs_delta = abs(vel_delta)
+
+                # Compute confidence delta based on context
+                # Higher confidence when adjustment moves toward average
+                dist_before = abs(orig[3] - avg_vel)
+                dist_after = abs(adjusted[3] - avg_vel)
+                confidence_before = max(0.3, 1.0 - (dist_before / 64))
+                confidence_after = max(0.4, 1.0 - (dist_after / 64))
+
+                # Determine severity based on magnitude of change
+                if abs_delta > 20:
+                    severity = DecisionSeverity.SIGNIFICANT
+                elif abs_delta > 10:
+                    severity = DecisionSeverity.MINOR
+                else:
+                    severity = DecisionSeverity.COSMETIC
+
+                # Determine action type based on context
+                if abs_delta > 15 and dist_after < dist_before:
+                    action = DecisionAction.CORRECTED
+                elif abs_delta <= 10:
+                    action = DecisionAction.REFINED
+                else:
+                    action = DecisionAction.ADJUSTED
+
+                # Build reasoning details
+                reasoning = []
+                if vel_delta > 0:
+                    reasoning.append(f"increased velocity by {vel_delta}")
+                else:
+                    reasoning.append(f"decreased velocity by {abs_delta}")
+
+                # Add contextual reasoning
+                context = model.extract_context(
+                    orig, notes, tempo_bpm, instrument_type
+                )
+                if context.is_accent:
+                    reasoning.append("accent preserved")
+                if context.is_downbeat:
+                    reasoning.append("downbeat emphasis applied")
+                if context.is_chord_note:
+                    reasoning.append("chord note reduction")
+                if dist_after < dist_before:
+                    reasoning.append(f"moved closer to phrase average ({avg_vel:.0f})")
+
+                reasoning.append(f"target range: {target_range[0]}-{target_range[1]}")
+
+                # Create rich provenance record
+                record = provenance_chain.record_value_change(
                     stage="dynamics_processor",
+                    subsystem="velocity_adjustment",
                     entity_type="note",
                     entity_id=f"n{i}",
-                    entity_data={
-                        "pitch": orig[0],
-                        "original_velocity": orig[3],
-                        "adjusted_velocity": adjusted[3],
-                    },
-                    domain=DecisionDomain.MIDI_REFINEMENT,
+                    field_name="velocity",
+                    value_before=orig[3],
+                    value_after=adjusted[3],
+                    confidence_before=confidence_before,
+                    confidence_after=confidence_after,
+                    reasoning=reasoning,
+                    severity=severity,
+                    action=action,
                 )
-                record.reason = ReasonGraph(
-                    summary=f"Velocity adjusted by {vel_delta:+d}",
-                    model_used="dynamics_model",
-                )
+                record.reason.model_used = "dynamics_model"
+                record.reason.summary = f"Velocity {action.value}: {orig[3]} → {adjusted[3]}"
                 record.reason.add_factor("velocity_delta", vel_delta)
-                record.reason.add_factor("target_min", target_range[0])
-                record.reason.add_factor("target_max", target_range[1])
+                record.reason.add_factor("distance_to_avg_before", dist_before)
+                record.reason.add_factor("distance_to_avg_after", dist_after)
+                record.reason.add_factor("phrase_avg_velocity", avg_vel)
                 record.reason.add_factor("instrument_type", instrument_type)
 
     return processed

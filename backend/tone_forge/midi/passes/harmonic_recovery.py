@@ -101,23 +101,27 @@ class HarmonicRecoveryPass(ExtractionPass):
 
         recovered_notes = []
 
-        # Strategy 1: Octave recovery
-        if self.octave_search_enabled:
+        # Skip harmonic recovery for lead stems - leads are monophonic melodies
+        # where octave/fifth recovery adds false positives
+        is_lead = context.stem_type and context.stem_type.lower() in ("lead", "guitar", "other", "vocals")
+
+        # Strategy 1: Octave recovery (skip for leads)
+        if self.octave_search_enabled and not is_lead:
             octave_notes = self._recover_octaves(notes, context, harmonic_context)
             recovered_notes.extend(octave_notes)
 
-        # Strategy 2: Fifth recovery
-        if self.fifth_search_enabled:
+        # Strategy 2: Fifth recovery (skip for leads)
+        if self.fifth_search_enabled and not is_lead:
             fifth_notes = self._recover_fifths(notes, context, harmonic_context)
             recovered_notes.extend(fifth_notes)
 
-        # Strategy 3: Gap filling
-        if self.gap_fill_enabled:
+        # Strategy 3: Gap filling (skip for leads - gaps are intentional)
+        if self.gap_fill_enabled and not is_lead:
             gap_notes = self._fill_gaps(notes, context, harmonic_context)
             recovered_notes.extend(gap_notes)
 
-        # Strategy 4: Envelope continuation
-        extended_notes = self._extend_truncated(notes, context)
+        # Strategy 4: Envelope continuation (can still apply to leads)
+        extended_notes = self._extend_truncated(notes, context) if not is_lead else []
 
         # Merge all notes, removing duplicates
         all_notes = self._merge_notes(notes, recovered_notes, extended_notes)

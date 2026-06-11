@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -31,6 +31,8 @@ from .passes.musicality import MusicalityCheckPass
 from .passes.harmonic_suppression import HarmonicSuppressionPass
 from .passes.delay_cleanup import DelayCleanupPass
 from .passes.octave_correction import OctaveCorrectionPass
+from .passes.subharmonic_suppression import SubHarmonicSuppressionPass
+from .passes.octave_doubling import OctaveDoublingPass
 from .passes.beat_grid_filter import BeatGridFilterPass
 from .passes.key_conformity import KeyConformityPass
 
@@ -48,6 +50,17 @@ try:
     _CLASSIFIER_AVAILABLE = True
 except ImportError:
     _CLASSIFIER_AVAILABLE = False
+
+# Optional: synth behavior analyzer for synth-aware extraction
+try:
+    from ..analysis.synth_behavior import (
+        SynthBehavior,
+        SynthBehaviorAnalyzer,
+        analyze_synth_behavior,
+    )
+    _SYNTH_ANALYZER_AVAILABLE = True
+except ImportError:
+    _SYNTH_ANALYZER_AVAILABLE = False
 
 
 @dataclass
@@ -161,6 +174,84 @@ class MultiPassExtractor:
             MusicalityCheckPass(pass_number=7),
         ]
 
+    def _extract_drums(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        tempo: Optional[float] = None,
+    ) -> "MIDIExtractionResult":
+        """Extract drum MIDI using specialized onset detection.
+
+        Drums require onset-based detection rather than pitch-based.
+        Uses bandpass filtering and spectral classification.
+
+        Args:
+            audio: Audio signal
+            sr: Sample rate
+            tempo: Tempo in BPM (estimated if not provided)
+
+        Returns:
+            MIDIExtractionResult with drum notes
+        """
+        import tempfile
+        import soundfile as sf
+
+        # Write audio to temp file for drum extractor
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            sf.write(f.name, audio, sr)
+            audio_path = f.name
+
+        try:
+            from ..midi_extractor import extract_drum_midi
+
+            result = extract_drum_midi(audio_path, "Drums")
+
+            # Convert to notes format for consistency
+            # Drums use GM mapping: kick=36, snare=38, hihat=42
+            notes = []
+            if hasattr(result, 'notes') and result.notes:
+                notes = result.notes
+            elif result.content:
+                # Decode MIDI and extract notes
+                import base64
+                import io
+                try:
+                    import pretty_midi
+                    midi_bytes = base64.b64decode(result.content)
+                    pm = pretty_midi.PrettyMIDI(io.BytesIO(midi_bytes))
+                    for inst in pm.instruments:
+                        for note in inst.notes:
+                            notes.append(
+                                ExtractedNote(
+                                    pitch=note.pitch,
+                                    start=note.start,
+                                    end=note.end,
+                                    velocity=note.velocity,
+                                    confidence=0.8,  # Default confidence for drums
+                                    source_pass=0,  # Drum extraction pass
+                                )
+                            )
+                except ImportError:
+                    logger.warning("pretty_midi not available for drum MIDI parsing")
+
+            return MIDIExtractionResult(
+                notes=notes,
+                tempo=result.tempo_bpm or 120.0,
+                key=(0, "major"),
+                time_signature=(4, 4),
+                overall_confidence=0.8,
+                pass_results=[],
+                total_execution_time_ms=0.0,
+                warnings=[],
+                metadata={"profile_used": "drums", "stem_type": "drums"},
+            )
+        finally:
+            import os
+            try:
+                os.unlink(audio_path)
+            except Exception:
+                pass
+
     def extract(
         self,
         audio: np.ndarray,
@@ -181,6 +272,8 @@ class MultiPassExtractor:
         profile: Optional[ExtractionProfile] = None,
         profile_name: Optional[str] = None,
         auto_classify: bool = False,
+        synth_behavior: Optional[Any] = None,
+        analyze_synth: bool = False,
     ) -> MIDIExtractionResult:
         """Run full multi-pass extraction.
 
@@ -203,17 +296,35 @@ class MultiPassExtractor:
             profile: ExtractionProfile to use (overrides thresholds)
             profile_name: Name of profile to use (alternative to profile)
             auto_classify: If True, auto-classify profile from audio features
+            synth_behavior: Pre-analyzed SynthBehavior (optional)
+            analyze_synth: If True, analyze synth behavior automatically
 
         Returns:
             MIDIExtractionResult with notes and statistics
         """
         start_time = time.time()
         all_warnings: List[str] = []
+        synth_analysis = None
         profile_classification = None
 
         # Ensure mono audio
         if audio.ndim > 1:
             audio = np.mean(audio, axis=0)
+
+        # Synth behavior analysis
+        if synth_behavior is not None:
+            synth_analysis = synth_behavior
+        elif analyze_synth and _SYNTH_ANALYZER_AVAILABLE:
+            try:
+                synth_analysis = analyze_synth_behavior(audio, sr, tempo)
+                logger.debug(
+                    f"Synth behavior: dominant={synth_analysis.dominant_behavior}, "
+                    f"supersaw={synth_analysis.supersaw_detected}, "
+                    f"glide={synth_analysis.glide_detected}, "
+                    f"arp={synth_analysis.arpeggiator_detected}"
+                )
+            except Exception as e:
+                all_warnings.append(f"Synth analysis failed: {e}")
 
         # Resolve profile: explicit profile > profile_name > auto-classify > stem default
         if profile is None and profile_name is not None:
@@ -237,6 +348,10 @@ class MultiPassExtractor:
 
         if profile is None and stem_type is not None:
             profile = get_default_profile_for_stem(stem_type)
+
+        # Drums use specialized onset-based extraction, not melodic pipeline
+        if stem_type == "drums":
+            return self._extract_drums(audio, sr, tempo)
 
         # Apply profile parameters if available
         if profile is not None:
@@ -303,6 +418,16 @@ class MultiPassExtractor:
                     min_velocity=context.min_velocity,
                 )
 
+        # Apply pitch offset if specified in profile
+        # Bass synths often sound an octave lower than written, so this corrects the octave
+        pitch_offset = getattr(profile, 'pitch_offset', 0) if profile else 0
+        if pitch_offset != 0:
+            notes = [
+                replace(n, pitch=n.pitch + pitch_offset)
+                for n in notes
+            ]
+            logger.debug(f"Applied pitch offset of {pitch_offset} semitones to {len(notes)} notes")
+
         # Sort notes by start time
         notes = sorted(notes, key=lambda n: (n.start, n.pitch))
 
@@ -333,6 +458,10 @@ class MultiPassExtractor:
                 "profile_auto_classified": profile_classification is not None,
                 "profile_classification": (
                     profile_classification.to_dict() if profile_classification else None
+                ),
+                "synth_analyzed": synth_analysis is not None,
+                "synth_behavior": (
+                    synth_analysis.to_dict() if synth_analysis else None
                 ),
             },
         )
@@ -582,10 +711,39 @@ def create_extractor_for_profile(
     # Octave correction (for bass stems primarily)
     if extraction_profile.enable_octave_correction:
         pass_num += 1
+        # Use aggressive settings for bass stems
+        is_bass_stem = extraction_profile.stem_type and extraction_profile.stem_type.lower() in (
+            "bass", "sub_bass", "mono_bass", "poly_bass"
+        )
         passes.append(
             OctaveCorrectionPass(
                 pass_number=pass_num,
-                min_correction_probability=0.7,
+                min_correction_probability=0.5 if is_bass_stem else 0.6,
+                check_double_octave=True,
+                aggressive_bass_correction=is_bass_stem,
+            )
+        )
+
+    # Sub-harmonic suppression (removes sub-octave artifacts)
+    if getattr(extraction_profile, 'enable_subharmonic_suppression', False):
+        pass_num += 1
+        passes.append(
+            SubHarmonicSuppressionPass(
+                pass_number=pass_num,
+                timing_tolerance_ms=50.0,
+                min_suppression_probability=0.6,
+                apply_pitch_floor=True,
+            )
+        )
+
+    # Octave doubling (adds missing upper octave notes for bass)
+    if getattr(extraction_profile, 'enable_octave_doubling', False):
+        pass_num += 1
+        passes.append(
+            OctaveDoublingPass(
+                pass_number=pass_num,
+                min_confidence_for_doubling=0.5,
+                doubling_confidence_factor=0.7,
             )
         )
 
@@ -655,3 +813,260 @@ def create_extractor_for_profile(
         p.pass_number = i + 1
 
     return MultiPassExtractor(passes=passes, **kwargs)
+
+
+def create_synth_aware_extractor(
+    synth_behavior: Any,
+    base_profile: Optional[ExtractionProfile] = None,
+    stem_type: Optional[str] = None,
+    **kwargs,
+) -> MultiPassExtractor:
+    """Create an extractor adapted to synth behavior.
+
+    Adapts the extraction pipeline based on detected synth characteristics:
+    - Supersaw: Disable harmonic suppression, preserve octave layering
+    - Glide: Enable pitch smoothing, reduce onset sensitivity
+    - Arpeggiator: Use tight timing, high rhythmic precision
+    - Sidechain: Modulate velocity with pump pattern awareness
+    - Pad: Lower onset threshold, longer sustains
+    - Bass: Aggressive octave correction, sub-harmonic awareness
+
+    Args:
+        synth_behavior: SynthBehavior from analysis
+        base_profile: Optional base ExtractionProfile
+        stem_type: Type of stem for fallback defaults
+        **kwargs: Additional arguments for MultiPassExtractor
+
+    Returns:
+        Configured MultiPassExtractor with synth-aware passes
+    """
+    if not _SYNTH_ANALYZER_AVAILABLE:
+        # Fallback to default extractor
+        return MultiPassExtractor(**kwargs)
+
+    passes: List[ExtractionPass] = []
+    pass_num = 0
+
+    # Determine behavior characteristics
+    dominant = getattr(synth_behavior, 'dominant_behavior', 'standard')
+    is_supersaw = getattr(synth_behavior, 'supersaw_detected', False)
+    has_glide = getattr(synth_behavior, 'glide_detected', False)
+    has_arp = getattr(synth_behavior, 'arpeggiator_detected', False)
+    has_sidechain = getattr(synth_behavior, 'sidechain_detected', False)
+    has_octave_layers = getattr(synth_behavior, 'octave_layering', False)
+    is_monophonic = getattr(synth_behavior, 'is_monophonic', True)
+
+    # Calculate adjusted thresholds based on synth behavior
+    onset_threshold = 0.5
+    frame_threshold = 0.4
+    min_note_ms = 50.0
+
+    if dominant == "pad" or is_supersaw:
+        # Pads/supersaws have soft attacks
+        onset_threshold = 0.35
+        frame_threshold = 0.30
+        min_note_ms = 100.0
+
+    if has_arp:
+        # Arps need tight timing
+        onset_threshold = 0.55
+        min_note_ms = 30.0
+
+    if has_glide:
+        # Glide notes need looser onset detection
+        onset_threshold = 0.40
+        min_note_ms = 80.0
+
+    if dominant == "bass":
+        onset_threshold = 0.50
+        frame_threshold = 0.45
+        min_note_ms = 60.0
+
+    # Override with base profile if provided
+    if base_profile:
+        onset_threshold = base_profile.onset_threshold
+        frame_threshold = base_profile.frame_threshold
+        min_note_ms = base_profile.min_note_ms
+
+    # Pass 1: High confidence extraction with synth-aware thresholds
+    pass_num += 1
+    passes.append(
+        HighConfidencePass(
+            pass_number=pass_num,
+            min_confidence=0.4,
+            onset_threshold=onset_threshold,
+            frame_threshold=frame_threshold,
+        )
+    )
+
+    # Pass 2: Harmonic recovery (always)
+    pass_num += 1
+    passes.append(HarmonicRecoveryPass(pass_number=pass_num))
+
+    # Pass 3: Phrase grouping
+    pass_num += 1
+    if has_arp:
+        # Tighter phrase grouping for arps
+        passes.append(PhraseGroupingPass(pass_number=pass_num, gap_threshold_ms=150))
+    else:
+        passes.append(PhraseGroupingPass(pass_number=pass_num))
+
+    # Synth-specific passes
+
+    # Octave correction (skip for supersaw/layered sounds)
+    if dominant == "bass" and not has_octave_layers:
+        pass_num += 1
+        passes.append(
+            OctaveCorrectionPass(
+                pass_number=pass_num,
+                min_correction_probability=0.5,
+                aggressive_bass_correction=True,
+            )
+        )
+    elif is_monophonic and not is_supersaw and not has_octave_layers:
+        pass_num += 1
+        passes.append(
+            OctaveCorrectionPass(
+                pass_number=pass_num,
+                min_correction_probability=0.6,
+            )
+        )
+
+    # Harmonic suppression (SKIP for supersaw and octave-layered sounds)
+    if not is_supersaw and not has_octave_layers:
+        pass_num += 1
+        passes.append(
+            HarmonicSuppressionPass(
+                pass_number=pass_num,
+                octave_enabled=True,
+                fifth_enabled=True,
+                # Be less aggressive for lead synths with vibrato
+                min_harmonic_probability=0.8 if dominant == "lead" else 0.7,
+            )
+        )
+
+    # Effect suppression for delay/reverb
+    # Less aggressive for pads and supersaws
+    if not (dominant == "pad" or is_supersaw):
+        pass_num += 1
+        passes.append(
+            EffectSuppressionPass(
+                pass_number=pass_num,
+                min_delay_repeats=3 if has_sidechain else 2,
+                reverb_decay_threshold=0.2,
+            )
+        )
+
+    # Delay cleanup (skip if sidechain is dominant - pumping can look like delay)
+    if not has_sidechain or (has_sidechain and synth_behavior.sidechain_depth < 0.5):
+        pass_num += 1
+        passes.append(
+            DelayCleanupPass(
+                pass_number=pass_num,
+                min_suppression_probability=0.85,
+            )
+        )
+
+    # Genre refinement
+    pass_num += 1
+    passes.append(GenreRefinementPass(pass_number=pass_num))
+
+    # Beat grid filter (tighter for arps)
+    pass_num += 1
+    if has_arp:
+        passes.append(
+            BeatGridFilterPass(
+                pass_number=pass_num,
+                grid_strength=0.9,
+                grid_divisions=32,  # Tighter grid for arps
+            )
+        )
+    else:
+        passes.append(
+            BeatGridFilterPass(
+                pass_number=pass_num,
+                grid_strength=0.7,
+                grid_divisions=16,
+            )
+        )
+
+    # Confidence quantization
+    pass_num += 1
+    quantize_strength = 0.7
+    if has_arp:
+        quantize_strength = 0.9  # Tight quantization for arps
+    elif dominant == "pad":
+        quantize_strength = 0.5  # Looser for pads
+
+    passes.append(
+        ConfidenceQuantizationPass(
+            pass_number=pass_num,
+            base_strength=quantize_strength,
+        )
+    )
+
+    # Musicality check (always last)
+    pass_num += 1
+    passes.append(
+        MusicalityCheckPass(
+            pass_number=pass_num,
+            # More lenient for pads and supersaws
+            min_final_confidence=0.25 if (dominant == "pad" or is_supersaw) else 0.3,
+        )
+    )
+
+    # Renumber passes sequentially
+    for i, p in enumerate(passes):
+        p.pass_number = i + 1
+
+    return MultiPassExtractor(passes=passes, **kwargs)
+
+
+def extract_with_synth_awareness(
+    audio: np.ndarray,
+    sr: int,
+    stem_type: Optional[str] = None,
+    genre: Optional[str] = None,
+    tempo: Optional[float] = None,
+    **kwargs,
+) -> MIDIExtractionResult:
+    """Convenience function for synth-aware extraction.
+
+    Analyzes audio for synth behavior first, then creates an
+    appropriate extractor and runs extraction.
+
+    Args:
+        audio: Audio signal
+        sr: Sample rate
+        stem_type: Type of stem
+        genre: Detected genre
+        tempo: Tempo hint
+        **kwargs: Additional extraction arguments
+
+    Returns:
+        MIDIExtractionResult
+    """
+    if not _SYNTH_ANALYZER_AVAILABLE:
+        # Fallback to standard extraction
+        extractor = MultiPassExtractor()
+        return extractor.extract(audio, sr, stem_type=stem_type, genre=genre, tempo=tempo, **kwargs)
+
+    # Analyze synth behavior
+    synth_behavior = analyze_synth_behavior(audio, sr, tempo)
+
+    # Create synth-aware extractor
+    extractor = create_synth_aware_extractor(
+        synth_behavior,
+        stem_type=stem_type,
+    )
+
+    # Run extraction with synth behavior info
+    return extractor.extract(
+        audio,
+        sr,
+        stem_type=stem_type,
+        genre=genre,
+        tempo=tempo,
+        synth_behavior=synth_behavior,
+        **kwargs,
+    )

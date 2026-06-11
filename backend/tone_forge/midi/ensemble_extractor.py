@@ -224,6 +224,96 @@ class BasicPitchDetector(PitchDetectorWrapper):
             logger.error(f"basic-pitch detection failed: {e}")
             return []
 
+    def detect_with_posteriors(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        onset_threshold: float = 0.5,
+        frame_threshold: float = 0.4,
+        min_note_ms: float = 50.0,
+        **kwargs,
+    ) -> Tuple[List[DetectedNote], Optional[Dict[str, np.ndarray]]]:
+        """
+        Detect notes AND return raw frame-wise posteriors.
+
+        The posteriors contain frame-by-frame pitch probabilities that can be
+        used for segment-level confidence decisions in hybrid detection.
+
+        Returns:
+            Tuple of (notes, posteriors_dict) where posteriors_dict contains:
+            - 'note': (frames, 88) - per-pitch activation probability
+            - 'onset': (frames, 88) - per-pitch onset probability
+            - 'contour': (frames, 360) - pitch contour posteriors
+            Returns ([], None) on failure.
+        """
+        if not self.available:
+            return [], None
+
+        try:
+            from basic_pitch.inference import predict
+            from basic_pitch import ICASSP_2022_MODEL_PATH
+            import tempfile
+            import soundfile as sf
+
+            # Resample if needed
+            target_sr = 22050
+            if sr != target_sr:
+                import librosa
+                audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
+
+            # Write to temp file - basic-pitch needs a file path
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                sf.write(tmp.name, audio, target_sr)
+                tmp_path = tmp.name
+
+            try:
+                # Run basic-pitch with file path
+                model_output, midi_data, note_events = predict(
+                    tmp_path,
+                    ICASSP_2022_MODEL_PATH,
+                    onset_threshold=onset_threshold,
+                    frame_threshold=frame_threshold,
+                    minimum_note_length=min_note_ms,
+                )
+            finally:
+                # Clean up temp file
+                import os
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+
+            # Convert to DetectedNote
+            notes = []
+            for note in note_events:
+                start_time, end_time, pitch, amplitude, _bends = note
+                notes.append(DetectedNote(
+                    pitch=int(pitch),
+                    start=float(start_time),
+                    end=float(end_time),
+                    velocity=int(float(amplitude) * 127),
+                    confidence=float(amplitude),
+                    detector=self.detector_type,
+                ))
+
+            # Extract posteriors from model_output
+            # model_output is a dict with keys: 'note', 'onset', 'contour'
+            # Each is a numpy array with shape (frames, pitches)
+            posteriors = {
+                'note': model_output.get('note'),      # (frames, 88) A0-C8
+                'onset': model_output.get('onset'),    # (frames, 88)
+                'contour': model_output.get('contour'),  # (frames, 360)
+                'frame_rate': 22050 / 256,  # basic_pitch uses 256 hop at 22050
+            }
+
+            logger.debug(f"basic-pitch posteriors: note shape={posteriors['note'].shape if posteriors['note'] is not None else None}")
+
+            return notes, posteriors
+
+        except Exception as e:
+            logger.error(f"basic-pitch detection with posteriors failed: {e}")
+            return [], None
+
 
 class CrepeDetector(PitchDetectorWrapper):
     """Wrapper for CREPE monophonic pitch detector using torchcrepe (GPU)."""
@@ -918,13 +1008,13 @@ class PitchEnsembleExtractor:
             ArbitrationStrategy,
         )
 
-        # Use UNION_MERGE for maximum recall
-        # This takes all detections and only merges true duplicates
+        # Use CONFIDENCE_WEIGHTED for balanced precision/recall
+        # Filter out low-confidence notes to reduce false positives
         arbitrator = DetectorArbitrator(
-            strategy=ArbitrationStrategy.UNION_MERGE,
+            strategy=ArbitrationStrategy.CONFIDENCE_WEIGHTED,
             time_tolerance=0.05,  # 50ms overlap window
             octave_correction=is_bass,  # Only for bass
-            min_agreement=0.0,  # Don't filter by agreement
+            min_agreement=0.3,  # Require 30% agreement to reduce false positives
         )
 
         return arbitrator.arbitrate(detector_results)

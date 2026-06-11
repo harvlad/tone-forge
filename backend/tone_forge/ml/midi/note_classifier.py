@@ -580,11 +580,32 @@ def filter_ghost_notes(
             # Record retention decision with provenance
             if provenance_chain is not None:
                 from tone_forge.provenance import (
-                    DecisionAction, DecisionDomain, ReasonGraph
+                    DecisionAction, DecisionDomain, DecisionSeverity, ReasonGraph
                 )
+
+                # Build reasoning details from classification factors
+                reasoning = []
+                if c.confidence >= 0.9:
+                    reasoning.append(f"high confidence classification ({c.confidence:.0%})")
+                elif c.confidence >= 0.7:
+                    reasoning.append(f"good confidence classification ({c.confidence:.0%})")
+                else:
+                    reasoning.append(f"marginal confidence ({c.confidence:.0%})")
+
+                if c.context.onset_strength > 0.5:
+                    reasoning.append(f"strong onset detected ({c.context.onset_strength:.2f})")
+                if c.context.beat_alignment > 0.7:
+                    reasoning.append("well-aligned with beat grid")
+                if c.context.in_detected_key:
+                    reasoning.append("pitch fits detected key")
+
+                # Severity based on confidence
+                severity = DecisionSeverity.INFO if c.confidence >= 0.8 else DecisionSeverity.MINOR
+
                 record = provenance_chain.create_record(
                     action=DecisionAction.RETAINED,
                     stage="ghost_note_classifier",
+                    subsystem="note_validation",
                     entity_type="note",
                     entity_id=note_id,
                     entity_data={
@@ -592,6 +613,9 @@ def filter_ghost_notes(
                         "end": c.end_time, "velocity": c.velocity
                     },
                     domain=DecisionDomain.MIDI_REFINEMENT,
+                    confidence_after=c.confidence,
+                    reasoning=reasoning,
+                    severity=severity,
                 )
                 record.reason = ReasonGraph(
                     summary=f"Retained: classified as '{c.classification}'",
@@ -607,11 +631,43 @@ def filter_ghost_notes(
             # Record removal decision with provenance
             if provenance_chain is not None:
                 from tone_forge.provenance import (
-                    DecisionAction, DecisionDomain, ReasonGraph
+                    DecisionAction, DecisionDomain, DecisionSeverity, ReasonGraph
                 )
+
+                # Build reasoning details explaining why note was removed
+                reasoning = []
+                if c.classification == "ghost":
+                    reasoning.append("detected as ghost note (reverb/delay artifact)")
+                elif c.classification == "harmonic":
+                    reasoning.append("detected as harmonic overtone")
+                elif c.classification == "fragment":
+                    reasoning.append("detected as note fragment")
+                else:
+                    reasoning.append(f"classified as '{c.classification}'")
+
+                if c.confidence < min_confidence:
+                    reasoning.append(f"confidence below threshold ({c.confidence:.0%} < {min_confidence:.0%})")
+                if c.context.matches_delay_pattern:
+                    reasoning.append("timing matches delay pattern")
+                if c.context.velocity_vs_prior < 0.5:
+                    reasoning.append(f"velocity much lower than prior note ({c.context.velocity_vs_prior:.0%})")
+                if c.context.harmonic_ratio > 0.7:
+                    reasoning.append(f"high harmonic relationship ({c.context.harmonic_ratio:.2f})")
+                if c.context.time_since_last_note > 1.0:
+                    reasoning.append("temporally isolated")
+
+                # Severity based on classification type and confidence
+                if c.classification == "ghost" and c.context.matches_delay_pattern:
+                    severity = DecisionSeverity.SIGNIFICANT
+                elif c.confidence < 0.3:
+                    severity = DecisionSeverity.MINOR
+                else:
+                    severity = DecisionSeverity.COSMETIC
+
                 record = provenance_chain.create_record(
                     action=DecisionAction.REMOVED,
                     stage="ghost_note_classifier",
+                    subsystem="noise_filtering",
                     entity_type="note",
                     entity_id=note_id,
                     entity_data={
@@ -619,6 +675,9 @@ def filter_ghost_notes(
                         "end": c.end_time, "velocity": c.velocity
                     },
                     domain=DecisionDomain.MIDI_REFINEMENT,
+                    confidence_after=1.0 - c.confidence,  # Confidence in removal decision
+                    reasoning=reasoning,
+                    severity=severity,
                 )
                 record.reason = ReasonGraph(
                     summary=f"Removed: classified as '{c.classification}'",

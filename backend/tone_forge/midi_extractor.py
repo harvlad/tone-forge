@@ -15,6 +15,7 @@ Includes advanced post-processing:
 """
 
 import io
+import os
 import base64
 import tempfile
 import logging
@@ -24,6 +25,24 @@ from typing import Optional, List, Tuple, Dict, Any
 from collections import Counter
 
 import numpy as np
+
+# Suppress ONNX Runtime verbose logging (causes huge slowdown with debug prints)
+os.environ.setdefault("ORT_LOGGING_LEVEL", "3")  # ERROR only
+os.environ.setdefault("ONNX_LOG_LEVEL", "3")
+
+try:
+    import onnxruntime as ort
+    # Set ONNX runtime to only log errors (suppresses per-frame debug output)
+    ort.set_default_logger_severity(3)
+except ImportError:
+    pass
+
+# Patch basic-pitch to remove debug prints in CoreML inference
+# Must be done before basic_pitch is imported
+try:
+    from .midi import basic_pitch_patch  # noqa: F401
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +54,15 @@ try:
     logger.info("Provenance tracking available")
 except ImportError:
     logger.debug("Provenance module not available")
+
+# Granular extraction profiles (optional)
+_PROFILE_REGISTRY_AVAILABLE = False
+try:
+    from .midi.profiles import get_profile_registry, get_profile, get_default_profile_for_stem
+    _PROFILE_REGISTRY_AVAILABLE = True
+    logger.info("Profile registry available")
+except ImportError:
+    logger.debug("Profile registry not available, using legacy profiles")
 
 # ML MIDI refinement (optional, graceful degradation)
 _ML_MIDI_AVAILABLE = False
@@ -119,16 +147,16 @@ SYNTHWAVE_PROFILES = {
         'filter_harmonics': True,     # Remove harmonic overtones (crucial for pads)
     },
     'lead': {
-        'onset_threshold': 0.4,
-        'frame_threshold': 0.3,
+        'onset_threshold': 0.6,        # INCREASED from 0.4: Helps detect repeated note articulations
+        'frame_threshold': 0.4,        # INCREASED from 0.3: Reduces note bleeding
         'min_note_ms': 60,
         'min_velocity': 25,
         'key_filter_strictness': 0.5,
         'isolated_min_neighbors': 0,   # Lead lines can have isolated notes
         'isolated_time_window': 2.0,
         'quantize_strength': 0.5,      # Lead can be expressive
-        'merge_max_gap': 0.08,         # Merge legato phrases
-        'filter_delay_repeats': True,  # Remove echo/delay artifacts
+        'merge_max_gap': 0.0,          # DISABLED: Merging destroys repeated staccato notes
+        'filter_delay_repeats': False, # DISABLED: Was destroying repeated melody notes
     },
     'synth': {
         # Generic synth - optimized for synthwave arps and pads
@@ -156,13 +184,41 @@ SYNTHWAVE_PROFILES = {
     'other': DEFAULT_PROFILE,
 }
 
-def get_extraction_profile(stem_type: str, genre: str = 'default') -> dict:
+def get_extraction_profile(
+    stem_type: str,
+    genre: str = 'default',
+    profile_name: Optional[str] = None,
+) -> dict:
     """Get extraction parameters for a specific stem type and genre.
 
-    Always applies stem-type specific profiles since they improve extraction
-    quality regardless of genre. Genre-specific tweaks can be layered on top.
+    Args:
+        stem_type: Type of stem (bass, lead, synth, pad, etc.)
+        genre: Genre hint (synthwave, default, etc.)
+        profile_name: Optional explicit profile name (e.g., "lead_staccato")
+                     If provided, uses that profile directly.
+
+    Returns:
+        Dictionary of extraction parameters.
+
+    The function uses the new profile registry if available, with fallback
+    to legacy SYNTHWAVE_PROFILES for backward compatibility.
     """
-    # Always use stem-specific profiles - they improve extraction for all genres
+    # Try granular profile first if available
+    if _PROFILE_REGISTRY_AVAILABLE:
+        # If explicit profile name provided, use it
+        if profile_name:
+            granular = get_profile(profile_name)
+            if granular:
+                logger.info(f"Using explicit profile: {profile_name}")
+                return granular.to_legacy_dict()
+
+        # Otherwise try default profile for stem type
+        granular = get_default_profile_for_stem(stem_type)
+        if granular:
+            logger.info(f"Using default profile for {stem_type}: {granular.name}")
+            return granular.to_legacy_dict()
+
+    # Fall back to legacy profiles
     profile = SYNTHWAVE_PROFILES.get(stem_type, DEFAULT_PROFILE).copy()
 
     # For non-synthwave genres, use slightly higher thresholds to reduce false positives
