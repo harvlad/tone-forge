@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "song_id": "synth_clean_strum",
+  "source_notes": "Synthetic test fixture (tests/_generated/clean_strum.wav). Seed entry: only fields measurable from the WAV itself are hard-gated. Founder should replace this with curated real-music entries.",
+
+  "duration_s":             {"value": 4.90, "tolerance_s": 0.20, "gate": "hard"},
+  "chord_count":            {"min": 0, "max": 50, "gate": "soft"},
+  "guitar_midi_note_count": {"min": 0, "max": 500, "gate": "soft"}
+}

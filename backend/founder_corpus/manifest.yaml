@@ -1,0 +1,51 @@
+# Founder Validation Corpus — manifest
+#
+# This file is the source of truth for which songs the founder has
+# personally audited as "the analyzer got this right." Every entry here
+# is something we will defend on a per-commit basis. Adding an entry is
+# a deliberate decision: the founder has listened, the pipeline has
+# been run, and the expected/<id>.json captures what "right" looks like.
+#
+# Adding a new entry:
+#   1. Drop the WAV somewhere reachable from this directory. By
+#      convention we point at ../tests/_generated/ for synthetic test
+#      audio and at audio/ (gitignored) for founder-curated real music.
+#   2. Create expected/<id>.json with the fields you are willing to
+#      defend. Every field declared is checked; omitted fields are
+#      not. Default gate is "soft" (warn); promote to "hard" only
+#      once the founder is willing to fail CI on a regression.
+#   3. Pick a tier: 'smoke' for entries fast enough to run on every
+#      commit; 'full' for everything else (runs in the nightly lane).
+#   4. Add the entry below.
+#
+# Removing an entry is also a deliberate decision: it means the founder
+# no longer treats this as a regression-worthy reference. Do not delete
+# entries to silence failing tests.
+#
+# See backend/founder_corpus/README.md for the full operator guide.
+schema_version: 1
+
+entries:
+  - id: synth_clean_strum
+    audio: ../tests/_generated/clean_strum.wav
+    expected: expected/synth_clean_strum.json
+    tier: smoke
+    notes: "Synthetic clean strummed chords; ~4.9s. Smoke baseline for pipeline runability."
+
+  - id: synth_clean_with_delay
+    audio: ../tests/_generated/clean_with_delay.wav
+    expected: expected/synth_clean_with_delay.json
+    tier: smoke
+    notes: "Synthetic clean tone with delay; ~6.3s. Covers delay-effect content path."
+
+  - id: synth_crunch_riff
+    audio: ../tests/_generated/crunch_riff.wav
+    expected: expected/synth_crunch_riff.json
+    tier: smoke
+    notes: "Synthetic crunch riff; ~6.2s. Covers edge-of-breakup detector branch."
+
+  - id: synth_high_gain_scooped
+    audio: ../tests/_generated/high_gain_scooped.wav
+    expected: expected/synth_high_gain_scooped.json
+    tier: smoke
+    notes: "Synthetic high-gain scooped tone; ~3.2s. Covers high-gain detector branch."

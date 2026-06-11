@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "song_id": "synth_clean_with_delay",
+  "source_notes": "Synthetic test fixture (tests/_generated/clean_with_delay.wav). Seed entry; replace with founder-validated content.",
+
+  "duration_s":             {"value": 6.32, "tolerance_s": 0.20, "gate": "hard"},
+  "chord_count":            {"min": 0, "max": 50, "gate": "soft"},
+  "guitar_midi_note_count": {"min": 0, "max": 500, "gate": "soft"}
+}

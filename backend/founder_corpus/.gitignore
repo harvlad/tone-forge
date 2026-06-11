@@ -1,0 +1,13 @@
+# Timestamped reports: only `latest.md` is tracked; all timestamped runs
+# are local artifacts that the operator can prune at will.
+reports/*.md
+!reports/latest.md
+!reports/.gitkeep
+
+# Founder-curated real-music audio is NOT committed (size, licensing).
+# Only the synthetic test fixtures in tests/_generated/ are in-tree.
+audio/
+
+# Per-entry baselines used by future regression-diff functionality.
+# Tracked when intentional, ignored by default during local fiddling.
+baselines/*.local.json

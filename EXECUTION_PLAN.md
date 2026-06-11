@@ -23,7 +23,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); fitted artifact still blocked on 100 hand-labeled clips |
 | 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) + audio_input_name → Connect helper env (Python plumb of item #38) all landed (see §0) |
-| 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` + capability map `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` + product roadmap `docs/JAM_PRODUCT_ROADMAP.md` (see §0); no implementation work auto-driven |
+| 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` + capability map `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` + product roadmap `docs/JAM_PRODUCT_ROADMAP.md` (see §0). Founder Validation Corpus harness landed as post-synthesis Task #4 (`backend/founder_corpus/`, `backend/scripts/run_founder_validation.py`, `backend/tone_forge/evaluation/founder_corpus.py`, 52/52 tests green). No feature implementation auto-driven. |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
 | — | Retrieval algorithm / embeddings | Frozen |
@@ -39,6 +39,118 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Founder Validation Corpus harness (post-P8 synthesis — Task #4)
+
+The P8 strategy work (`docs/SONG_UNDERSTANDING_INVESTIGATION.md`,
+`docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md`,
+`docs/JAM_PRODUCT_ROADMAP.md`) converged on a single highest-
+leverage *engineering* task: not any feature, but the trust
+artifact that gates every claim. A small, fixed set of songs the
+founder has personally validated as "the analyzer got this right,"
+re-run end-to-end through the pipeline, with per-field deltas
+reported. Anything that drifts on this corpus is a regression in
+something guitar-facing — by construction.
+
+This commit lands that harness end-to-end. **Executable code, not
+another strategy document.**
+
+New module: `backend/tone_forge/evaluation/founder_corpus.py` (~370
+lines). Pure-logic comparators (no I/O), manifest + expected-output
+loaders, per-field `FieldResult` dataclass, exit-code rollup,
+Markdown report formatter. Comparator registry covers `duration_s`,
+`tempo_bpm`, `key` (with optional relative-minor equivalence),
+`detected_type`, `section_count`, `chord_count`,
+`guitar_midi_note_count`. Each field can declare `hard` (fails CI)
+or `soft` (warns only) gating; default is `soft`. Adding a new
+gated field is a one-line change to the registry plus a comparator
+function.
+
+New CLI: `backend/scripts/run_founder_validation.py` (~165 lines).
+Runs the full `UnifiedPipeline.analyze()` in standard mode on each
+manifest entry, diffs against the expected JSON, writes a Markdown
+report to `backend/founder_corpus/reports/latest.md` plus a
+timestamped sibling. Exit codes: 0 (all hard gates pass),
+1 (hard-gate regression), 2 (harness error — missing audio,
+unparseable manifest, etc.). Supports `--tier {smoke|full|all}`,
+`--manifest`, `--report-path`, `--quiet`.
+
+New corpus directory: `backend/founder_corpus/`:
+
+  - `manifest.yaml` — single source of truth; seeded with the four
+    `tests/_generated/*.wav` synthetic fixtures so the harness is
+    runnable on day one. Real founder-curated entries replace these
+    over time. Each entry declares `tier: smoke|full` (smoke for
+    fast entries suitable for an eventual every-commit lane).
+  - `expected/<id>.json` × 4 — per-entry ground-truth JSONs.
+    Permissive schema: only declared fields are checked. Seeded
+    entries hard-gate `duration_s` only (the only property
+    measurable from the WAV without founder ear); everything else
+    is soft-warn with generous bounds.
+  - `reports/latest.md` — seeded baseline report (4 entries, 12
+    fields, all PASS, 64.0s wall time on this machine).
+  - `reports/.gitkeep` + `.gitignore` — only `latest.md` is tracked;
+    timestamped runs and operator audio (`audio/`) stay local.
+  - `README.md` — operator guide: how to add an entry, how to
+    remove one, what the corpus is and explicitly is not (not a
+    training set, not a marketing benchmark, not a substitute for
+    the founder's ear).
+
+CI integration: two new pytest files, both schema-only (no pipeline
+runs, ~0.6s on a default `pytest backend/tests/` invocation):
+
+  - `tests/test_founder_corpus_integrity.py` (23 parametrized
+    tests across the 4 seeded entries + 3 global tests) — verifies
+    the manifest parses, every audio path exists, every expected
+    JSON parses + validates, every key is a recognised comparator
+    (no typos), every spec is well-formed (gate valid, min ≤ max,
+    value non-null), entry ids are unique.
+  - `tests/test_founder_corpus_comparators.py` (29 tests) — pure
+    unit coverage of each comparator's pass/fail/missing-field
+    branches, gate roll-up, exit-code computation, and the
+    Markdown formatter (passing-run, error-section, and
+    overall-fail rendering).
+
+Verification:
+
+```
+python3 -m pytest tests/test_founder_corpus_integrity.py \
+                  tests/test_founder_corpus_comparators.py
+  -> 52 passed in 0.62s
+
+python3 backend/scripts/run_founder_validation.py
+  -> [harness] done in 64.0s (hard-fail=0 warn=0 errors=0 exit=0)
+```
+
+What this commit does **not** do:
+
+  - No founder-curated real-music entries. The seeded entries are
+    the four synthetic fixtures with conservative bounds on
+    duration only. Adding real music is a deliberate per-entry
+    decision the founder makes by ear; the harness exists so that
+    decision has somewhere to land. The seeded report is the
+    "the harness is wired" baseline, not the "regression catcher"
+    baseline.
+  - No baselines / regression-diff against the previous `latest.md`.
+    A `baselines/` slot is reserved in the layout for this; wiring
+    is a separate small commit once the corpus has at least one
+    real entry to baseline against.
+  - No CI lane that *runs the pipeline* on every commit. The
+    integrity test runs cheaply on every commit; the pipeline run
+    is the operator's job (manual `python3 backend/scripts/
+    run_founder_validation.py` or a future nightly job). This is
+    intentional — running Demucs + ensemble MIDI on every push
+    would quadruple CI time for a signal that's stable enough to
+    read on demand.
+  - No competitor / accuracy claims. The corpus is held out
+    exclusively for human-arbitrated regression detection.
+
+This artifact is load-bearing for every other Jam feature in the
+revised release sequence. R1 ("plug in and play"), R2 ("find the
+riff"), R3 ("know what to practice") all assume "stem quality is
+stable" and "MIDI quality is stable" — without this corpus those
+assumptions are unverified. EXECUTION_PLAN priority table row 8
+amended to reference the harness alongside the three planning docs.
 
 ### Jam product roadmap (Priority 8 — third-pass research artifact, product lens)
 

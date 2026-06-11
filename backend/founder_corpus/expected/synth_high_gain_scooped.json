@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "song_id": "synth_high_gain_scooped",
+  "source_notes": "Synthetic test fixture (tests/_generated/high_gain_scooped.wav). Seed entry; replace with founder-validated content.",
+
+  "duration_s":             {"value": 3.20, "tolerance_s": 0.20, "gate": "hard"},
+  "chord_count":            {"min": 0, "max": 50, "gate": "soft"},
+  "guitar_midi_note_count": {"min": 0, "max": 500, "gate": "soft"}
+}
