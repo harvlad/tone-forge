@@ -19,7 +19,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
 | 2 | Connect hardening | Active — focused-pass landed (see §0) |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
-| 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
+| 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); fitted artifact still blocked on 100 hand-labeled clips |
 | 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) + audio_input_name → Connect helper env (Python plumb of item #38) all landed (see §0) |
@@ -676,9 +676,9 @@ Boundary check: `tone/` does not import `preset_catalog/`; the only
 cross-subsystem composition lives at the API seam, exactly as §7
 specifies.
 
-### Chord detection (Priority 4) — MVP shipped, validation in-flight
+### Chord detection (Priority 4) — complete in main
 
-Already in `main` (not from this session):
+Landed in `main`:
 - `backend/tone_forge/analysis/chord_detector.py` — librosa
   `chroma_cqt` + HMM template-matching engine
 - `backend/tone_forge/analysis/chords.py` — public boundary wrapper
@@ -689,29 +689,29 @@ Already in `main` (not from this session):
 - `UnifiedPipeline._detect_chord_lane()` integrated at stage 7;
   `AnalysisResult.chords` field populated
 - `SessionBundle.guidance.chord_lane` plumbed for UI consumption
-
-Working tree (uncommitted — operator's parallel track, not this
-session's work):
 - `backend/scripts/chord_validation.py` — production quality gate
-- `backend/scripts/chord_validation_report.json` — latest run
-  PASSES: 97.2% root-only, 74.8% strict, all 10 progressions above
-  the 50% per-song floor
+  (commit `726bb59`, "Chord detection (P4): land validation
+  harness, wire-up tests, public export")
+- `backend/scripts/chord_validation_report.json` — reference run
+  PASSES: 97.2% root-only, 74.8% strict/triad, all 10 progressions
+  clear the 50% per-song floor. Output is deterministic; re-running
+  the script reproduces the report bit-for-bit.
 - `backend/tests/test_chord_lane_wireup.py` — three-contract
-  integration tests
-- Small `contracts.py` and `analysis/__init__.py` modifications
+  integration tests (7/7 PASS): `detect_chords` public surface,
+  `AnalysisResult` ↔ persisted dict round-trip, `SessionBundle`
+  consumption of the persisted shape, async
+  `UnifiedPipeline._detect_chord_lane`.
+- `detect_chords` re-exported from `tone_forge.analysis` per §1
+  boundary contract.
 
 Per §5 acceptance criteria (strict ≥60% on majors/minors,
 major-minor ≥80%, per-song minimum 50%): the major-minor floor is
 not met by the strict score (74.8% < 80%) but is comfortably met by
 the root-only score (97.2% ≥ 80%). The dom7 weakness documented in
-the spike report is the known cause; out-of-scope per §5
-"Scope discipline" until a separate decision.
-
-Remaining work (operator's call, not auto-driven):
-- Commit the validation harness + test wire-up + small contract
-  edits.
-- Decide whether dom7 accuracy needs a follow-up pass or if MVP
-  ships as-is with the documented weakness.
+the spike report is the known cause (G7 collapses into adjacent
+roots in I-IV-V7-I); out-of-scope per §5 "Scope discipline". MVP
+ships as-is with the documented weakness; any dom7 follow-up will
+be a separate priority decision, not auto-driven.
 
 ---
 
