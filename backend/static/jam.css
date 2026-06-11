@@ -286,6 +286,27 @@ html, body {
   font-weight: 500;
 }
 .connect-launcher-link:hover { text-decoration: none; }
+.connect-restart-btn {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim, #aaa);
+  background: transparent;
+  border: 1px solid var(--text-dim, #aaa);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.connect-restart-btn:hover {
+  color: var(--accent, #ff7a00);
+  border-color: var(--accent, #ff7a00);
+}
+.connect-restart-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .connect-gain {
   display: grid;
   grid-template-columns: auto 1fr auto;

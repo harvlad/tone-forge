@@ -17,7 +17,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | # | Subsystem | State |
 |---|---|---|
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
-| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) + join-time state replay coverage (last_gain / last_preset / targeted-no-broadcast / fresh-channel pins) + §3 doc sweep (§3A–G rewritten against landed reality; install/signing/update/crash-recovery/onboarding) + "Reconnected" toast (jam.js replay-frame latch closes §3E still-to-wire item) landed (see §0) |
+| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) + join-time state replay coverage (last_gain / last_preset / targeted-no-broadcast / fresh-channel pins) + §3 doc sweep (§3A–G rewritten against landed reality; install/signing/update/crash-recovery/onboarding) + "Reconnected" toast (jam.js replay-frame latch closes §3E still-to-wire item) + "Try restarting Connect" CTA (jam.js renderConnectStatus button → `/api/connect/restart` → `ConnectSupervisor.restart()`; closes §3D budget-exhausted UX item; drift-gated by `test_api_connect_restart.py`) landed (see §0) |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
@@ -39,6 +39,113 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Connect hardening — "Try restarting Connect" CTA (Priority 2)
+
+The §3D doc sweep flagged one still-to-wire item under the
+crash-recovery section: *"A dedicated 'Try restarting Connect' CTA
+in the browser is not yet wired — pending UX work."* The supervisor
+already exhausts its 4-attempt restart budget gracefully and leaves
+`last_error` populated, but the browser had no in-place affordance
+to ask the supervisor to try again — the only path was clicking
+the tray icon. This commit closes the §3D item.
+
+Background. `POST /api/connect/restart` already exists on the
+local-engine app (`backend/local_engine/server.py:238`) and calls
+`_get_connect_supervisor().restart()`, which is the single
+pending-restart-cancel + budget-reset + intent-flip entry point on
+`ConnectSupervisor` (`backend/local_engine/connect_bridge.py:280`).
+The supervisor's restart() semantics are already drift-gated by
+`test_connect_bridge_lifecycle.py`. What was missing was a browser
+CTA that hits the endpoint.
+
+What ships
+----------
+
+`backend/static/jam.js`:
+
+- `renderConnectStatus` paints a `Try restarting Connect` button
+  inside the existing `showLauncherLink` branch — i.e. whenever
+  the supervisor hasn't joined the WS channel (status `open` with
+  zero peers). The button sits underneath the existing
+  `Open Connect helper →` deep link; both affordances are visible
+  side-by-side so the user can try either path.
+- New `restartConnectHelper()` async function. Module-scope
+  `_restartInFlight` latch prevents double-fire while a request
+  is in flight. POSTs `${LOCAL_ENGINE_URL}/api/connect/restart`,
+  reads the status-shaped response, and flashes one of three
+  toasts: optimistic *"Restarting Connect…"* up front,
+  positive-success *"Connect supervisor respawned the helper."*
+  when the response carries `running: true`, or failure
+  *"Couldn't start Connect: <last_error>"* / network-error
+  fallback otherwise.
+
+`backend/static/jam.css`:
+
+- New `.connect-restart-btn` class. Outlined-secondary look so it
+  doesn't compete with the primary apply / connect actions; same
+  accent-on-hover treatment as the deep-link line; standard
+  disabled state for the in-flight window.
+
+`backend/tests/test_api_connect_restart.py` (new):
+
+- Two focused endpoint contract tests, both using FastAPI
+  `TestClient` against the local-engine `app` and patching
+  `local_engine.server._get_connect_supervisor` so no real
+  Connect helper spawns in the test process:
+  - `test_connect_restart_endpoint_returns_status_dict` — pins the
+    response status (200) and the two keys the browser CTA
+    branches on: `running` (used to decide success vs failure
+    toast) and `last_error` (used as the failure-toast reason
+    text). A future endpoint refactor that drops or renames either
+    field fails here, not in the field.
+  - `test_connect_restart_endpoint_calls_supervisor_restart` —
+    pins that the endpoint goes through `restart()`, not an inline
+    `stop()` + `start()` pair. `restart()` is what cancels pending
+    auto-restart timers, resets the attempt budget, and flips
+    intent atomically; bypassing it would silently break §3D.
+
+`EXECUTION_PLAN.md`:
+
+- §3D "Budget-exhausted UX" bullet rewritten from "not yet wired
+  — pending UX work" to "landed" with pointers to the jam.js
+  surface, the endpoint, and the new drift gate.
+- Priority 2 row amended.
+- This §0 entry above the Reconnected-toast entry.
+
+Verification
+------------
+
+- `backend/tests/test_api_connect_restart.py`: **2 passed in 0.45s**
+  (8 FastAPI on_event deprecation warnings; pre-existing,
+  unrelated).
+- Connect-adjacent sweep — lifecycle, apply_chain, heartbeat,
+  parity, error_codes, replay, restart, session protocol, session
+  route, session bundle, session transport, subsystem boundaries:
+  see Verification command in commit body.
+- `jam.js` parses cleanly under `node --check` (no JS test harness
+  in this repo; the server-side contract that the CTA relies on is
+  drift-pinned by the new endpoint test).
+
+What this commit does NOT do
+----------------------------
+
+- No JS test infrastructure added. The button surfaces only in the
+  `showLauncherLink` branch of `renderConnectStatus`, which is
+  unit-impossible without a JS runner. If the button regresses
+  visually, the bug surfaces in the field; the server-side
+  endpoint shape is pinned by the new tests.
+- No supervisor-budget-exhausted signal added to the WS protocol.
+  We deliberately show the CTA whenever the helper is "open with
+  no peers" rather than only after `_restart_attempts` reaches
+  `_MAX_RESTART_ATTEMPTS`. Reasoning: the CTA is idempotent
+  (`restart()` is safe to call even if the supervisor is mid-spawn
+  via the pending-restart-cancel branch), and surfacing it earlier
+  gives the user a way to recover from "stuck mid-spawn" states
+  that don't strictly trip the exhausted-budget branch.
+- No tray-side change. The tray's existing "manual restart
+  required" log line stays as-is; the browser CTA is additive,
+  not a replacement.
 
 ### Connect hardening — "Reconnected" toast (Priority 2)
 
@@ -2065,7 +2172,15 @@ divergence).
 - **Budget-exhausted UX**: supervisor logs a "manual restart
   required" message and leaves `last_error` populated; the tray
   surfaces the status. A dedicated "Try restarting Connect" CTA
-  in the browser is **not yet wired** — pending UX work.
+  in the browser is **landed** — `renderConnectStatus` in
+  `backend/static/jam.js` paints a button alongside the existing
+  "Open Connect helper →" deep link whenever the supervisor hasn't
+  joined the WS channel; the click POSTs `/api/connect/restart` on
+  the local engine (`backend/local_engine/server.py:238`) which
+  calls `_get_connect_supervisor().restart()` (the single
+  pending-restart-cancel + budget-reset + intent-flip entry point).
+  Endpoint shape + supervisor-entry contract are drift-gated by
+  `backend/tests/test_api_connect_restart.py`.
 - **Supervisor vs WS heartbeat — boundary**: the supervisor restarts
   *processes* based on `Popen.poll()` (the child exited). The WS
   heartbeat (`recv` timeout 30s + pong-wait 10s) added in the

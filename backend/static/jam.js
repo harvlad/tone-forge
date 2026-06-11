@@ -424,9 +424,77 @@
         // from the status copy above it.
         statusEl.appendChild(document.createElement('br'));
         statusEl.appendChild(launcher);
+        // Second affordance: ask the *supervisor* to respawn the
+        // helper. This is the §3D "Try restarting Connect" CTA — used
+        // when the supervisor exhausted its 4-attempt auto-restart
+        // budget (`backend/local_engine/connect_bridge.py:307-313`)
+        // and the user needs to manually re-arm it. The deep link
+        // above launches the helper via macOS LaunchServices; this
+        // button asks the local-engine supervisor to spawn the
+        // already-known child. Both are idempotent — try one, then
+        // the other.
+        const restartBtn = document.createElement('button');
+        restartBtn.type = 'button';
+        restartBtn.textContent = 'Try restarting Connect';
+        restartBtn.className = 'connect-restart-btn';
+        restartBtn.addEventListener('click', restartConnectHelper);
+        statusEl.appendChild(document.createElement('br'));
+        statusEl.appendChild(restartBtn);
       }
       statusEl.hidden = !text;
       statusEl.classList.toggle('ok', ok);
+    }
+  }
+
+  // Click handler for the "Try restarting Connect" CTA rendered inside
+  // renderConnectStatus(). POSTs to the local-engine supervisor's
+  // restart endpoint (defined in backend/local_engine/server.py:238).
+  // The supervisor's restart() is stop+start; both reset the
+  // _restart_attempts budget, so the next crash gets a full 4
+  // attempts again. We flash a toast for either outcome — the WS
+  // 'joined' handler is what actually confirms the helper came back
+  // (peers > 0 → "paired"), so this toast is just acknowledgement of
+  // the click.
+  let _restartInFlight = false;
+  async function restartConnectHelper() {
+    if (_restartInFlight) return;
+    _restartInFlight = true;
+    flashConnectStatus('Restarting Connect…', false, 4000);
+    try {
+      const resp = await fetch(
+        `${LOCAL_ENGINE_URL}/api/connect/restart`,
+        { method: 'POST' },
+      );
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json().catch(() => ({}));
+      if (data && data.running) {
+        flashConnectStatus(
+          'Connect supervisor respawned the helper.',
+          true,
+          2500,
+        );
+      } else {
+        // Supervisor returned, but the child isn't running — usually
+        // means binary discovery failed (no installed Connect.app).
+        // Surface last_error if present so the user has a clue.
+        const err = (data && data.last_error)
+          ? `: ${data.last_error}`
+          : '';
+        flashConnectStatus(
+          `Couldn't start Connect${err}`,
+          false,
+          5000,
+        );
+      }
+    } catch (err) {
+      console.warn('[connect] restart failed:', err);
+      flashConnectStatus(
+        `Restart failed: ${err.message || 'local engine unreachable'}`,
+        false,
+        5000,
+      );
+    } finally {
+      _restartInFlight = false;
     }
   }
 
