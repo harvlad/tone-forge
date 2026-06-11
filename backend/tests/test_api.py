@@ -212,9 +212,11 @@ class TestAnalyzeEndpoint:
         data = response.json()
         _, chain = _get_descriptor_and_chain(data)
         for pick in chain:
-            # Different types have slightly different fields
-            assert "slot" in pick or "category" in pick
-            assert "display" in pick or "models" in pick
+            # Different types have slightly different fields. Guitar chain
+            # picks use slot/category + display/models; bass recommendations
+            # use type + name. Accept either shape.
+            assert "slot" in pick or "category" in pick or "type" in pick
+            assert "display" in pick or "models" in pick or "name" in pick
 
 
 class TestAnalyzeSourceKind:
