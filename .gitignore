@@ -60,6 +60,12 @@ backend/uploads/
 *.mp3
 *.flac
 
+# ToneForge runtime artifacts
+backend/benchmark_results/
+backend/profile_results/
+backend/preset_catalog_output/
+backend/data/tone_log.jsonl
+
 # Node (frontend)
 node_modules/
 .next/
