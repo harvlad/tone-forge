@@ -379,11 +379,98 @@ def create_menu():
             visible=lambda item: server_running,
         ),
         pystray.Menu.SEPARATOR,
+        # Connect (Swift audio bridge) — supervised as a child of the
+        # local engine. We re-query state on every menu draw so the
+        # label tracks reality even when the bridge crashes or exits.
+        pystray.MenuItem(
+            lambda text: f"Audio bridge: {_connect_state_label()}",
+            None,
+            enabled=False,
+        ),
+        pystray.MenuItem(
+            "Start audio bridge",
+            lambda: _connect_start(),
+            visible=lambda item: not _connect_is_running(),
+        ),
+        pystray.MenuItem(
+            "Restart audio bridge",
+            lambda: _connect_restart(),
+            visible=lambda item: _connect_is_running(),
+        ),
+        pystray.MenuItem(
+            "Stop audio bridge",
+            lambda: _connect_stop(),
+            visible=lambda item: _connect_is_running(),
+        ),
+        pystray.MenuItem(
+            "Open bridge log",
+            lambda: _connect_open_log(),
+        ),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem(
             "Quit",
             lambda icon, item: icon.stop(),
         ),
     )
+
+
+# ---- Connect bridge tray helpers --------------------------------------------
+# These wrap the local_engine.connect_bridge supervisor so the menu can
+# render and mutate state without dragging the import into the module
+# header (the tray runs even when the server isn't ready yet).
+
+def _connect_supervisor_safe():
+    try:
+        from local_engine.connect_bridge import get_supervisor
+        return get_supervisor()
+    except Exception:
+        return None
+
+
+def _connect_is_running() -> bool:
+    sup = _connect_supervisor_safe()
+    return bool(sup and sup.status().running)
+
+
+def _connect_state_label() -> str:
+    sup = _connect_supervisor_safe()
+    if sup is None:
+        return "unavailable"
+    s = sup.status()
+    if s.running:
+        return f"running (pid {s.pid})"
+    if s.binary is None:
+        return "needs build"
+    if s.last_error:
+        return "stopped"
+    return "stopped"
+
+
+def _connect_start():
+    sup = _connect_supervisor_safe()
+    if sup is not None:
+        sup.start()
+
+
+def _connect_stop():
+    sup = _connect_supervisor_safe()
+    if sup is not None:
+        sup.stop()
+
+
+def _connect_restart():
+    sup = _connect_supervisor_safe()
+    if sup is not None:
+        sup.restart()
+
+
+def _connect_open_log():
+    sup = _connect_supervisor_safe()
+    if sup is None:
+        return
+    log_path = sup.status().log_path
+    if log_path:
+        subprocess.Popen(["open", log_path])
 
 
 def main():

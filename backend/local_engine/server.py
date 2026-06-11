@@ -22,9 +22,12 @@ The web app will automatically detect and use this when available.
 import asyncio
 import json
 import logging
+import multiprocessing
 import sys
 import tempfile
 import time
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -40,11 +43,64 @@ import uvicorn
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("toneforge.local")
 
+# Track active analysis processes for cleanup
+_active_analyses: dict[str, multiprocessing.Process] = {}
+_analysis_lock = asyncio.Lock()
+
+# Timeout for analysis (10 minutes)
+ANALYSIS_TIMEOUT = 600
+
+
+async def cleanup_process(analysis_id: str, process: multiprocessing.Process, timeout: int = ANALYSIS_TIMEOUT):
+    """Kill a process if it runs too long."""
+    await asyncio.sleep(timeout)
+    if process.is_alive():
+        logger.warning(f"Analysis {analysis_id} timed out, killing process")
+        process.terminate()
+        await asyncio.sleep(2)
+        if process.is_alive():
+            process.kill()
+    async with _analysis_lock:
+        _active_analyses.pop(analysis_id, None)
+
 app = FastAPI(
     title="ToneForge Local Engine",
     description="GPU-accelerated audio processing for ToneForge",
     version="0.1.0",
 )
+
+# Import the Connect supervisor lazily — it has no heavyweight imports
+# of its own, but keeping it next to the other module-local helpers
+# documents the boundary.
+from local_engine.connect_bridge import get_supervisor as _get_connect_supervisor
+
+
+@app.on_event("startup")
+async def _spawn_connect_bridge() -> None:
+    """Auto-launch the Connect audio bridge on local engine startup.
+
+    The local engine is what the user installs; the Connect helper is
+    bundled with it. We don't error out if the Connect binary isn't
+    built yet — the supervisor surfaces that via /api/connect/status
+    so the UI can guide the user to run `swift build` once.
+    """
+    try:
+        status = _get_connect_supervisor().start()
+        if status.running:
+            logger.info("Connect bridge auto-started pid=%s", status.pid)
+        else:
+            logger.info("Connect bridge not started: %s", status.last_error or "binary missing")
+    except Exception as e:
+        logger.warning("Connect bridge auto-start failed: %s", e)
+
+
+@app.on_event("shutdown")
+async def _stop_connect_bridge() -> None:
+    """Tear the Connect bridge down with the local engine."""
+    try:
+        _get_connect_supervisor().stop()
+    except Exception as e:
+        logger.warning("Connect bridge stop failed: %s", e)
 
 # Allow CORS from any origin (needed for browser to call localhost)
 app.add_middleware(
@@ -104,6 +160,101 @@ async def root():
 async def health():
     """Simple health check for detection."""
     return {"status": "ok", "service": "toneforge-local"}
+
+
+@app.get("/api/serve-file")
+async def serve_file(path: str):
+    """Serve a file from the local filesystem (for stem playback)."""
+    from fastapi.responses import FileResponse
+    import urllib.parse
+
+    # Decode URL-encoded path
+    file_path = urllib.parse.unquote(path)
+    file_path = Path(file_path)
+
+    # Security: only allow serving from temp directories
+    allowed_prefixes = ["/var/folders", "/tmp", tempfile.gettempdir()]
+    is_allowed = any(str(file_path).startswith(prefix) for prefix in allowed_prefixes)
+
+    if not is_allowed:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+
+    # Determine media type
+    suffix = file_path.suffix.lower()
+    media_types = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".mid": "audio/midi",
+        ".midi": "audio/midi",
+    }
+    media_type = media_types.get(suffix, "application/octet-stream")
+
+    return FileResponse(file_path, media_type=media_type)
+
+
+# -----------------------------------------------------------------------------
+# Connect bridge — control surface for the Swift audio helper.
+#
+# The browser hits these to inspect / nudge the supervised process. The
+# happy path is fully automatic (startup hook spawns it), so these are
+# mostly for the tray UI and recovery.
+# -----------------------------------------------------------------------------
+
+def _connect_status_dict() -> dict:
+    s = _get_connect_supervisor().status()
+    return {
+        "running": s.running,
+        "pid": s.pid,
+        "session_id": s.session_id,
+        "binary": s.binary,
+        "last_error": s.last_error,
+        "log_path": s.log_path,
+    }
+
+
+@app.get("/api/connect/status")
+async def connect_status():
+    """Current state of the supervised Connect bridge child."""
+    return _connect_status_dict()
+
+
+@app.post("/api/connect/start")
+async def connect_start():
+    """Spawn the Connect bridge child if it isn't already running."""
+    _get_connect_supervisor().start()
+    return _connect_status_dict()
+
+
+@app.post("/api/connect/stop")
+async def connect_stop():
+    """Stop the supervised Connect bridge child (SIGTERM then SIGKILL)."""
+    _get_connect_supervisor().stop()
+    return _connect_status_dict()
+
+
+@app.post("/api/connect/restart")
+async def connect_restart():
+    """Stop + start in one call. Useful when the bridge gets wedged."""
+    _get_connect_supervisor().restart()
+    return _connect_status_dict()
+
+
+@app.post("/api/engine/shutdown")
+async def shutdown_engine():
+    """Gracefully shutdown the local engine server."""
+    import asyncio
+    import os
+
+    async def delayed_shutdown():
+        await asyncio.sleep(0.5)  # Give time for response to be sent
+        logger.info("Shutting down server...")
+        os._exit(0)
+
+    asyncio.create_task(delayed_shutdown())
+    return {"status": "shutting_down", "message": "Server will stop in 0.5 seconds"}
 
 
 # -----------------------------------------------------------------------------
@@ -195,12 +346,14 @@ async def extract_midi_endpoint(file: UploadFile = File(...), profile: str = "de
 
             yield f"data: {json.dumps({'type': 'progress', 'stage': 'upload', 'message': 'File received'})}\n\n"
 
-            from tone_forge.midi_extractor import extract_midi_from_file
+            import librosa
+            from tone_forge.midi_extractor import extract_midi
 
             yield f"data: {json.dumps({'type': 'progress', 'stage': 'extracting', 'message': 'Extracting MIDI...'})}\n\n"
 
             start_time = time.time()
-            midi_result = extract_midi_from_file(tmp_path, profile=profile)
+            y, sr = librosa.load(tmp_path, sr=22050, mono=True)
+            midi_result = extract_midi(y, sr, profile=profile)
             elapsed = time.time() - start_time
 
             yield f"data: {json.dumps({'type': 'progress', 'stage': 'complete', 'message': f'Extraction complete ({elapsed:.1f}s)'})}\n\n"
@@ -230,7 +383,7 @@ async def extract_midi_endpoint(file: UploadFile = File(...), profile: str = "de
 
 
 # -----------------------------------------------------------------------------
-# Full Analysis (Deep)
+# Full Analysis (Deep) - Subprocess-based for isolation
 # -----------------------------------------------------------------------------
 
 @app.post("/api/analyze-deep")
@@ -238,138 +391,213 @@ async def analyze_deep_endpoint(file: UploadFile = File(...)):
     """
     Full deep analysis with stem separation + MIDI extraction.
 
-    This is the GPU-heavy operation that benefits most from local processing.
+    Runs in a subprocess to prevent GPU hangs from blocking the server.
     Returns SSE stream with progress and complete analysis result.
     """
+    from local_engine.analysis_worker import run_file_analysis
+
+    # Store original filename before saving to temp
+    original_filename = file.filename
+
+    # Save uploaded file
+    with tempfile.NamedTemporaryFile(suffix=Path(file.filename).suffix, delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    analysis_id = str(uuid.uuid4())[:8]
+
     async def generate():
+        # Create queue for inter-process communication
+        queue = multiprocessing.Queue()
+
+        # Start analysis in subprocess - pass original filename
+        process = multiprocessing.Process(
+            target=run_file_analysis,
+            args=(tmp_path, queue, None, original_filename),  # Add filename parameter
+            daemon=True
+        )
+
+        async with _analysis_lock:
+            _active_analyses[analysis_id] = process
+
+        process.start()
+        logger.info(f"Started analysis {analysis_id} in subprocess {process.pid}")
+
+        # Start cleanup task
+        cleanup_task = asyncio.create_task(cleanup_process(analysis_id, process))
+
+        yield f"data: {json.dumps({'type': 'progress', 'stage': 'starting', 'progress': 0.01, 'message': 'Starting analysis...'})}\n\n"
+
         try:
-            # Save uploaded file
-            with tempfile.NamedTemporaryFile(suffix=Path(file.filename).suffix, delete=False) as tmp:
-                content = await file.read()
-                tmp.write(content)
-                tmp_path = tmp.name
+            # Read events from queue
+            while True:
+                # Non-blocking check with timeout
+                try:
+                    # Check queue in a thread to avoid blocking
+                    event = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: queue.get(timeout=0.5)
+                    )
 
-            filename = file.filename or "audio"
-            yield f"data: {json.dumps({'type': 'progress', 'stage': 'upload', 'message': f'Processing {filename}...'})}\n\n"
+                    if event["type"] == "done":
+                        break
+                    elif event["type"] == "error":
+                        yield f"data: {json.dumps(event)}\n\n"
+                        break
+                    elif event["type"] == "result":
+                        yield f"data: {json.dumps(event)}\n\n"
+                    else:
+                        # Progress event
+                        yield f"data: {json.dumps(event)}\n\n"
 
-            # Import modules
-            from tone_forge.stem_separator import separate_all_stems
-            from tone_forge.midi_extractor import extract_midi_from_file
-            from tone_forge import analyzer
-            from tone_forge.auto_detect import detect_audio_type
+                except Exception:
+                    # Queue empty or timeout, check if process still alive
+                    if not process.is_alive():
+                        break
+                    continue
 
-            device_info = _get_device_info()
-            device_name = device_info["device_name"]
-
-            # Step 1: Stem separation
-            yield f"data: {json.dumps({'type': 'progress', 'stage': 'stems', 'progress': 0.1, 'message': f'Separating stems on {device_name}...'})}\n\n"
-
-            start_time = time.time()
-            stems = separate_all_stems(tmp_path)
-            stem_time = time.time() - start_time
-
-            yield f"data: {json.dumps({'type': 'progress', 'stage': 'stems', 'progress': 0.5, 'message': f'Stems separated ({stem_time:.1f}s)'})}\n\n"
-
-            # Step 2: MIDI extraction for each relevant stem
-            midi_stems = {}
-            stem_profiles = {
-                "drums": "drums",
-                "bass": "bass",
-                "other": "synth",
-                "guitar": "default",
-            }
-
-            for stem_name, stem_path in stems.items():
-                if stem_name in stem_profiles:
-                    yield f"data: {json.dumps({'type': 'progress', 'stage': 'midi', 'progress': 0.6, 'message': f'Extracting {stem_name} MIDI...'})}\n\n"
-
-                    try:
-                        profile = stem_profiles[stem_name]
-                        midi_result = extract_midi_from_file(str(stem_path), profile=profile)
-                        midi_stems[stem_name] = midi_result
-                    except Exception as e:
-                        logger.warning(f"MIDI extraction failed for {stem_name}: {e}")
-
-            # Step 3: Analysis
-            yield f"data: {json.dumps({'type': 'progress', 'stage': 'analysis', 'progress': 0.8, 'message': 'Analyzing tone...'})}\n\n"
-
-            # Detect type and analyze
-            detection = detect_audio_type(tmp_path)
-
-            # Run appropriate analyzers based on detection
-            result = {
-                "detected_type": detection.primary_type,
-                "detection": {
-                    "is_guitar": detection.is_guitar,
-                    "is_synth": detection.is_synth,
-                    "is_bass": detection.is_bass,
-                    "is_drums": detection.is_drums,
-                    "summary": detection.summary,
-                },
-                "midi_stems": midi_stems,
-                "stems_available": list(stems.keys()),
-                "processing": {
-                    "device": device_info["device"],
-                    "device_name": device_name,
-                    "stem_separation_seconds": stem_time,
-                    "total_seconds": time.time() - start_time,
-                },
-            }
-
-            # Add guitar analysis if detected
-            if detection.is_guitar:
-                from tone_forge import helix_translator, pedal_translator
-                guitar_path = stems.get("guitar") or stems.get("other")
-                if guitar_path:
-                    descriptor = analyzer.analyze(str(guitar_path))
-                    result["guitar"] = {
-                        "descriptor": descriptor,
-                        "platforms": {
-                            "helix": helix_translator.translate(descriptor),
-                            "pedals": pedal_translator.translate(descriptor),
-                        },
-                    }
-
-            # Add bass analysis if detected
-            if detection.is_bass and "bass" in stems:
-                from tone_forge import bass_analyzer, bass_translator
-                bass_desc = bass_analyzer.analyze(str(stems["bass"]))
-                result["bass"] = {
-                    "descriptor": bass_desc,
-                    "recommendations": bass_translator.translate(bass_desc),
-                }
-
-            # Add drum analysis if detected
-            if detection.is_drums and "drums" in stems:
-                from tone_forge import drum_analyzer, drum_translator
-                drum_desc = drum_analyzer.analyze(str(stems["drums"]))
-                result["drums"] = {
-                    "descriptor": drum_desc,
-                    "machine_match": drum_translator.translate(drum_desc),
-                }
-
-            # Add synth analysis if detected
-            if detection.is_synth:
-                from tone_forge import synth_analyzer
-                synth_path = stems.get("other") or tmp_path
-                synth_desc = synth_analyzer.analyze(str(synth_path))
-                result["synth"] = {
-                    "descriptor": synth_desc,
-                }
-
-            yield f"data: {json.dumps({'type': 'progress', 'stage': 'complete', 'progress': 1.0, 'message': 'Analysis complete'})}\n\n"
-
-            # Send final result
-            yield f"data: {json.dumps({'type': 'result', 'data': result})}\n\n"
-
-            # Cleanup
+        finally:
+            cleanup_task.cancel()
+            if process.is_alive():
+                process.terminate()
+            async with _analysis_lock:
+                _active_analyses.pop(analysis_id, None)
+            # Cleanup temp file
             Path(tmp_path).unlink(missing_ok=True)
-            for stem_path in stems.values():
-                Path(stem_path).unlink(missing_ok=True)
 
-        except Exception as e:
-            logger.exception("Deep analysis failed")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+class UrlAnalyzeRequest(BaseModel):
+    """Request for URL-based analysis."""
+    url: str
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+
+
+@app.get("/api/analyses")
+async def list_active_analyses():
+    """List all active analysis processes."""
+    async with _analysis_lock:
+        analyses = []
+        for analysis_id, process in _active_analyses.items():
+            analyses.append({
+                "id": analysis_id,
+                "pid": process.pid,
+                "alive": process.is_alive(),
+            })
+        return {"analyses": analyses}
+
+
+@app.delete("/api/analyses/{analysis_id}")
+async def kill_analysis(analysis_id: str):
+    """Kill a specific analysis process."""
+    async with _analysis_lock:
+        process = _active_analyses.get(analysis_id)
+        if not process:
+            raise HTTPException(status_code=404, detail="Analysis not found")
+
+        if process.is_alive():
+            process.terminate()
+            await asyncio.sleep(0.5)
+            if process.is_alive():
+                process.kill()
+
+        _active_analyses.pop(analysis_id, None)
+        return {"status": "killed", "id": analysis_id}
+
+
+@app.delete("/api/analyses")
+async def kill_all_analyses():
+    """Kill all active analysis processes."""
+    async with _analysis_lock:
+        killed = []
+        for analysis_id, process in list(_active_analyses.items()):
+            if process.is_alive():
+                process.terminate()
+                killed.append(analysis_id)
+        await asyncio.sleep(0.5)
+        for analysis_id, process in list(_active_analyses.items()):
+            if process.is_alive():
+                process.kill()
+        _active_analyses.clear()
+        return {"status": "killed_all", "count": len(killed)}
+
+
+@app.post("/api/analyze-url")
+async def analyze_url_endpoint(request: UrlAnalyzeRequest):
+    """
+    Deep analysis from URL (YouTube, etc.) with stem separation + MIDI extraction.
+
+    Runs in a subprocess to prevent GPU hangs from blocking the server.
+    Returns SSE stream with progress updates.
+    """
+    from local_engine.analysis_worker import run_url_analysis
+
+    analysis_id = str(uuid.uuid4())[:8]
+
+    async def generate():
+        # Create queue for inter-process communication
+        queue = multiprocessing.Queue()
+
+        # Start analysis in subprocess
+        process = multiprocessing.Process(
+            target=run_url_analysis,
+            args=(request.url, queue, request.start_time, request.end_time),
+            daemon=True
+        )
+
+        async with _analysis_lock:
+            _active_analyses[analysis_id] = process
+
+        process.start()
+        logger.info(f"Started URL analysis {analysis_id} in subprocess {process.pid}")
+
+        # Start cleanup task
+        cleanup_task = asyncio.create_task(cleanup_process(analysis_id, process))
+
+        yield f"data: {json.dumps({'type': 'progress', 'stage': 'starting', 'progress': 0.01, 'message': 'Starting analysis...'})}\n\n"
+
+        try:
+            # Read events from queue
+            while True:
+                try:
+                    # Check queue in a thread to avoid blocking
+                    event = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: queue.get(timeout=0.5)
+                    )
+
+                    if event["type"] == "done":
+                        break
+                    elif event["type"] == "error":
+                        yield f"data: {json.dumps(event)}\n\n"
+                        break
+                    elif event["type"] == "result":
+                        yield f"data: {json.dumps(event)}\n\n"
+                    else:
+                        # Progress event
+                        yield f"data: {json.dumps(event)}\n\n"
+
+                except Exception:
+                    # Queue empty or timeout, check if process still alive
+                    if not process.is_alive():
+                        break
+                    continue
+
+        finally:
+            cleanup_task.cancel()
+            if process.is_alive():
+                process.terminate()
+            async with _analysis_lock:
+                _active_analyses.pop(analysis_id, None)
 
     return StreamingResponse(
         generate(),
@@ -513,6 +741,104 @@ async def ml_capabilities():
 # Plugin Scanner API
 # -----------------------------------------------------------------------------
 
+# Background scan state
+_scan_in_progress = False
+_last_scan_result = None
+
+
+@app.on_event("startup")
+async def startup_plugin_scan():
+    """Auto-scan for plugins on startup if needed."""
+    global _scan_in_progress, _last_scan_result
+
+    try:
+        from local_engine.plugin_scanner import get_database, scan_and_register
+
+        db = get_database()
+        last_scan = db.get_last_scan_time()
+
+        # Scan if never scanned or >24h since last scan
+        should_scan = False
+        if last_scan is None:
+            logger.info("No previous plugin scan found, scanning...")
+            should_scan = True
+        else:
+            from datetime import datetime
+            hours_since_scan = (datetime.now() - last_scan).total_seconds() / 3600
+            if hours_since_scan >= 24:
+                logger.info(f"Last scan was {hours_since_scan:.1f}h ago, rescanning...")
+                should_scan = True
+            else:
+                logger.info(f"Last scan was {hours_since_scan:.1f}h ago, using cached plugins")
+
+        if should_scan:
+            _scan_in_progress = True
+            try:
+                _last_scan_result = scan_and_register(
+                    scan_au=True,
+                    scan_vst3=True,
+                    scan_vst2=False,
+                    scan_ableton=True,
+                )
+                logger.info(f"Plugin scan complete: {_last_scan_result}")
+            finally:
+                _scan_in_progress = False
+        else:
+            # Load stats from existing data
+            _last_scan_result = db.get_stats()
+
+    except Exception as e:
+        logger.exception("Startup plugin scan failed: %s", e)
+        _scan_in_progress = False
+
+
+@app.get("/api/plugins/stats")
+async def plugin_stats():
+    """Get plugin statistics."""
+    try:
+        from local_engine.plugin_scanner import get_database
+
+        db = get_database()
+        stats = db.get_stats()
+        last_scan = db.get_last_scan_time()
+
+        return {
+            "total": stats.get("available_plugins", 0),
+            "by_format": stats.get("by_format", {}),
+            "by_type": stats.get("by_type", {}),
+            "favorites": stats.get("favorites_count", 0),
+            "manufacturers": stats.get("manufacturers_count", 0),
+            "last_scan": last_scan.isoformat() if last_scan else None,
+            "scan_in_progress": _scan_in_progress,
+        }
+    except Exception as e:
+        logger.exception("Failed to get plugin stats")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)},
+        )
+
+
+@app.post("/api/plugins/match")
+async def match_plugins_for_descriptor(descriptor: dict):
+    """Find plugins matching a tone descriptor."""
+    try:
+        from local_engine.plugin_scanner import get_plugins_for_descriptor
+
+        matches = get_plugins_for_descriptor(descriptor)
+
+        return {
+            "matches": matches,
+            "total_matched": sum(len(v) for v in matches.values()),
+        }
+    except Exception as e:
+        logger.exception("Failed to match plugins")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)},
+        )
+
+
 @app.get("/api/plugins")
 async def list_plugins(
     query: str = "",
@@ -546,41 +872,46 @@ async def list_plugins(
 
 
 @app.post("/api/plugins/scan")
-async def scan_plugins():
-    """Scan for installed plugins."""
+async def scan_plugins_endpoint():
+    """Scan for installed plugins (VST/AU and Ableton devices)."""
+    global _scan_in_progress, _last_scan_result
+
     async def generate():
+        global _scan_in_progress, _last_scan_result
+
         try:
             import platform
-            from local_engine.plugin_scanner import get_database
+            from local_engine.plugin_scanner import scan_and_register
 
-            system = platform.system()
-            yield f"data: {json.dumps({'type': 'progress', 'stage': 'starting', 'message': f'Scanning plugins on {system}...'})}\n\n"
-
-            if system == "Darwin":
-                from local_engine.plugin_scanner.scanner_macos import MacOSPluginScanner
-                scanner = MacOSPluginScanner()
-            elif system == "Windows":
-                from local_engine.plugin_scanner.scanner_windows import WindowsPluginScanner
-                scanner = WindowsPluginScanner()
-            else:
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Unsupported platform: {system}'})}\n\n"
+            if _scan_in_progress:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Scan already in progress'})}\n\n"
                 return
 
-            plugins = scanner.scan_all()
+            _scan_in_progress = True
+            system = platform.system()
 
-            yield f"data: {json.dumps({'type': 'progress', 'stage': 'storing', 'message': f'Found {len(plugins)} plugins'})}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'stage': 'starting', 'message': f'Scanning plugins on {system}...'})}\n\n"
 
-            db = get_database()
-            added = 0
-            for plugin in plugins:
-                if db.add_plugin(plugin):
-                    added += 1
+            yield f"data: {json.dumps({'type': 'progress', 'stage': 'vst', 'message': 'Scanning VST/AU plugins...'})}\n\n"
 
-            yield f"data: {json.dumps({'type': 'result', 'success': True, 'found': len(plugins), 'added': added})}\n\n"
+            result = scan_and_register(
+                scan_au=True,
+                scan_vst3=True,
+                scan_vst2=False,
+                scan_ableton=True,
+            )
+            _last_scan_result = result
+
+            plugins_found = result['plugins_found']
+            yield f"data: {json.dumps({'type': 'progress', 'stage': 'complete', 'message': f'Found {plugins_found} plugins'})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'result', 'success': True, **result})}\n\n"
 
         except Exception as e:
             logger.exception("Plugin scan failed")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            _scan_in_progress = False
 
     return StreamingResponse(
         generate(),
@@ -766,6 +1097,155 @@ async def delete_all_data():
             status_code=500,
             content={"error": str(e)},
         )
+
+
+# -----------------------------------------------------------------------------
+# Model Management API
+# -----------------------------------------------------------------------------
+
+# Track model download state
+_model_download_in_progress = False
+_model_download_cancel = False
+
+REQUIRED_MODELS = {
+    "htdemucs": {
+        "hash": "955717e8",
+        "description": "4-stem separation (drums, bass, other, vocals)",
+        "size_mb": 80,
+        "required": False,  # Fallback model
+    },
+    "htdemucs_6s": {
+        "hash": "5c90dfd2",
+        "description": "6-stem separation (drums, bass, guitar, piano, vocals, other)",
+        "size_mb": 80,
+        "required": True,  # Primary model
+    },
+}
+
+
+def _get_model_cache_dir():
+    """Get the torch hub cache directory."""
+    return Path.home() / ".cache" / "torch" / "hub" / "checkpoints"
+
+
+def _check_model_cached(model_hash: str) -> bool:
+    """Check if a model is already cached."""
+    cache_dir = _get_model_cache_dir()
+    if not cache_dir.exists():
+        return False
+    for f in cache_dir.glob(f"{model_hash}*.th"):
+        return True
+    return False
+
+
+@app.get("/api/models/status")
+async def get_models_status():
+    """Get status of required ML models."""
+    status = {
+        "models": {},
+        "all_ready": True,
+        "download_in_progress": _model_download_in_progress,
+        "cache_dir": str(_get_model_cache_dir()),
+    }
+
+    for name, info in REQUIRED_MODELS.items():
+        cached = _check_model_cached(info["hash"])
+        status["models"][name] = {
+            "name": name,
+            "description": info["description"],
+            "size_mb": info["size_mb"],
+            "cached": cached,
+            "required": info["required"],
+        }
+        if info["required"] and not cached:
+            status["all_ready"] = False
+
+    return status
+
+
+@app.get("/api/models/download")
+async def download_models():
+    """Download required models with streaming progress (GET for EventSource compatibility)."""
+    global _model_download_in_progress, _model_download_cancel
+
+    async def generate():
+        global _model_download_in_progress, _model_download_cancel
+        _model_download_in_progress = True
+        _model_download_cancel = False
+
+        try:
+            yield f"data: {json.dumps({'type': 'progress', 'stage': 'starting', 'message': 'Checking models...'})}\n\n"
+
+            for name, info in REQUIRED_MODELS.items():
+                if _model_download_cancel:
+                    yield f"data: {json.dumps({'type': 'cancelled', 'message': 'Download cancelled by user'})}\n\n"
+                    return
+
+                if _check_model_cached(info["hash"]):
+                    yield f"data: {json.dumps({'type': 'progress', 'stage': name, 'message': f'{name}: Already cached', 'cached': True})}\n\n"
+                    continue
+
+                size_mb = info["size_mb"]
+                yield f"data: {json.dumps({'type': 'progress', 'stage': name, 'message': f'Downloading {name} ({size_mb}MB)...', 'cached': False})}\n\n"
+
+                try:
+                    # Import and download model
+                    from demucs.pretrained import get_model
+                    model = get_model(name)
+                    del model  # Free memory
+
+                    yield f"data: {json.dumps({'type': 'progress', 'stage': name, 'message': f'{name}: Downloaded successfully', 'cached': True})}\n\n"
+
+                except Exception as e:
+                    yield f"data: {json.dumps({'type': 'error', 'stage': name, 'message': f'Failed to download {name}: {str(e)}'})}\n\n"
+                    if info["required"]:
+                        return
+
+            yield f"data: {json.dumps({'type': 'complete', 'message': 'All models ready'})}\n\n"
+
+        except Exception as e:
+            logger.exception("Model download failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            _model_download_in_progress = False
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.post("/api/models/cancel")
+async def cancel_model_download():
+    """Cancel an in-progress model download."""
+    global _model_download_cancel
+
+    if not _model_download_in_progress:
+        return {"success": False, "message": "No download in progress"}
+
+    _model_download_cancel = True
+    return {"success": True, "message": "Download cancellation requested"}
+
+
+@app.on_event("startup")
+async def startup_check_models():
+    """Check for required models on startup and log status."""
+    logger.info("Checking ML model status...")
+
+    missing = []
+    for name, info in REQUIRED_MODELS.items():
+        if info["required"] and not _check_model_cached(info["hash"]):
+            missing.append(name)
+
+    if missing:
+        logger.warning(f"Missing required models: {missing}")
+        logger.warning("Run model download from the UI or use: python -m local_engine.download_models")
+    else:
+        logger.info("All required models are cached and ready")
 
 
 # -----------------------------------------------------------------------------
