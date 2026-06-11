@@ -40,6 +40,30 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Cleanup: benchmark scripts promoted out of backend root (item #41)
+
+The last two stragglers from the §0 cleanup list — `run_samples_benchmark.py`
+and `run_stem_benchmark.py` — sat at `backend/` root with no other peers
+after `718843c` swept the rest into `backend/scripts/`. Promoting them
+keeps `backend/` a package root, not a script dumping ground.
+
+Both moved via `git mv` (history preserved). The internal
+`sys.path.insert(0, str(Path(__file__).parent))` hardcoded the old
+"this file is at `backend/`" assumption; updated to the convention
+already used by every other script in `backend/scripts/`:
+
+```python
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+```
+
+Verified both modules now import-resolve cleanly from the new
+location (loading the module top-level executes the `sys.path`
+insert + the package imports without errors).
+
+This closes item #41 in the §0 planned-work list. No callers
+imported either file as a module (grep clean repo-wide), so there
+is no breakage to fix outside the two files themselves.
+
 ### Song Understanding investigation (Priority 8) — research artifact landed
 
 Priority 8 sits in the priority table as "Investigation only" — the
@@ -1609,13 +1633,15 @@ Each item is a self-contained commit-able unit. Land in this order.
 
 ### Cleanups
 
-41. **Triage repo-root test scripts**:
-    - `backend/test_bass_v2.py` → `backend/tests/test_bass_v2.py` or delete
-    - `backend/test_debug.py` → delete
-    - `backend/test_fresh.py` → delete
-    - `backend/test_octave_fix.py` → `backend/tests/test_octave_fix.py` or delete
-    - `backend/root_cause_analysis.py` → `docs/_archive/` if useful, else delete
-    - `backend/run_samples_benchmark.py`, `backend/run_stem_benchmark.py` → `backend/scripts/` (which exists)
+41. **Triage repo-root test scripts** — complete:
+    - `backend/test_bass_v2.py` — deleted (commit `718843c`)
+    - `backend/test_debug.py` — deleted (commit `718843c`)
+    - `backend/test_fresh.py` — deleted (commit `718843c`)
+    - `backend/test_octave_fix.py` — deleted (commit `718843c`)
+    - `backend/root_cause_analysis.py` — promoted to `backend/scripts/`
+      (commit `718843c`)
+    - `backend/run_samples_benchmark.py` → `backend/scripts/` (see §0)
+    - `backend/run_stem_benchmark.py` → `backend/scripts/` (see §0)
 
 ---
 

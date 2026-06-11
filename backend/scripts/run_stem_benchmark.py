@@ -19,8 +19,9 @@ from typing import Dict, List, Optional, Tuple
 import mido
 import numpy as np
 
-# Add backend to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Add backend/ to sys.path so `tone_forge` imports resolve when invoked
+# from the repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tone_forge.evaluation.metrics import compute_midi_quality
 
