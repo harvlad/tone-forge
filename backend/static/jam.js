@@ -140,6 +140,16 @@
       // "applied" toast when the chain hasn't actually changed (e.g.
       // double-clicking Apply on the same suggestion).
       lastAppliedChainId: null,
+      // Per-connection latch: the server emits 0-3 frames carrying
+      // `replayed: true` immediately after join() when there is cached
+      // state on the channel (preset_push, set_gain, apply_chain). The
+      // user-visible signal we want is a single "Reconnected" toast
+      // when the helper / browser re-attaches to a channel with state,
+      // not three flashes back-to-back. This flag is cleared in
+      // ws.onopen (every fresh connection re-arms it) and flipped on
+      // the first replayed frame so the toast fires exactly once per
+      // (re)connect cycle.
+      reconnectToastShown: false,
     },
   };
 
@@ -202,6 +212,10 @@
       }));
       cb.status = 'open';
       cb.reconnectMs = 1000;
+      // Re-arm the "Reconnected" toast for this connection lifecycle.
+      // Without this, a second reconnect in the same tab would skip
+      // the toast because the prior flag was still set.
+      cb.reconnectToastShown = false;
       renderConnectStatus();
       // Flush any preset pushes that were queued before the socket opened.
       for (const msg of cb.queue) {
@@ -212,6 +226,16 @@
     ws.onmessage = (ev) => {
       let data;
       try { data = JSON.parse(ev.data); } catch { return; }
+      // First frame on a (re)connection that carries `replayed: true`
+      // fires a single "Reconnected" toast. The server-side replay
+      // batch can contain up to three frames (preset_push, set_gain,
+      // apply_chain) back-to-back; the latch in cb.reconnectToastShown
+      // dedupes them so the user sees one signal, not three flashes.
+      // Pinned at the server end by test_connect_bridge_replay.py.
+      if (data && data.replayed === true && !cb.reconnectToastShown) {
+        cb.reconnectToastShown = true;
+        flashConnectStatus('Reconnected', true, 1500);
+      }
       if (data.type === 'hello_ack') {
         // Server confirms it speaks our protocol version. `joined`
         // follows; nothing to do here beyond logging.

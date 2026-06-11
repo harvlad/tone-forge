@@ -17,7 +17,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | # | Subsystem | State |
 |---|---|---|
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
-| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) + join-time state replay coverage (last_gain / last_preset / targeted-no-broadcast / fresh-channel pins) + §3 doc sweep (§3A–G rewritten against landed reality; install/signing/update/crash-recovery/onboarding) landed (see §0) |
+| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) + join-time state replay coverage (last_gain / last_preset / targeted-no-broadcast / fresh-channel pins) + §3 doc sweep (§3A–G rewritten against landed reality; install/signing/update/crash-recovery/onboarding) + "Reconnected" toast (jam.js replay-frame latch closes §3E still-to-wire item) landed (see §0) |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
@@ -39,6 +39,80 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Connect hardening — "Reconnected" toast (Priority 2)
+
+The §3 doc sweep listed one real still-to-wire item in §3E:
+*"Browser surfaces a 'Reconnected' toast (≈1.5s) after replay
+completes, instead of just the inline flashConnectStatus flip."*
+This commit closes it.
+
+Background. The server already emits up to three replay frames
+when a peer joins a channel with cached state — `preset_push`,
+`set_gain`, `apply_chain`, each tagged `replayed: true`. The
+contract is drift-pinned by `test_connect_bridge_replay.py`. The
+browser was *silently* syncing each frame's state into local UI
+(gain slider, etc.) but giving the user no visible signal that a
+reconnect+replay had just occurred — the only cue was that the
+"paired" badge had blipped during the round trip.
+
+What ships
+----------
+
+`backend/static/jam.js` (3 small edits, ~15 lines total):
+
+- New per-connection latch ``cb.reconnectToastShown`` on the
+  ``state.connectBridge`` object. Initialised ``false``; reset
+  to ``false`` in ``ws.onopen`` so a *second* reconnect in the
+  same tab re-arms.
+- In ``ws.onmessage`` (before the type-dispatch chain): if the
+  incoming frame carries ``replayed === true`` and the latch is
+  unset, fire ``flashConnectStatus('Reconnected', true, 1500)`` and
+  flip the latch. The up-to-three replay frames that arrive
+  back-to-back collapse into a single user-visible toast.
+
+`EXECUTION_PLAN.md`:
+
+- §3E "Still to wire" → "Reconnected" toast moved out of the
+  not-landed list and into its own landed-item bullet with the
+  drift-gate pointer.
+- §3E "Persistent session_id on disk" item kept as a separate
+  bullet (still dropped as not-needed; the earlier sweep dropped
+  it for the right reasons).
+- Priority 2 row amended.
+
+Verification
+------------
+
+No new test added — there is no JS test harness in this repo, and
+the server-side ``replayed: true`` contract is already pinned by
+five tests in ``test_connect_bridge_replay.py`` plus the existing
+``test_last_chain_replayed_to_late_joining_peer``. The change is
+purely presentational: ``flashConnectStatus`` is already exercised
+by every other status-toast call site (apply success / failure /
+"still connecting"), so the new call inherits that behaviour.
+
+Connect-adjacent sweep — lifecycle, apply_chain, heartbeat, parity,
+error_codes, replay, session protocol, session route, session
+bundle, session transport, subsystem boundaries —
+**137/137 passing in 21.55s** (unchanged; this commit didn't touch
+Python).
+
+What this commit does NOT do
+----------------------------
+
+- No JS test infrastructure added. If the Reconnected toast
+  regresses (or fires more than once), the bug surfaces visually
+  in the field; the server-side contract that *triggers* it is
+  already pinned.
+- No animation / styling change on the toast itself —
+  ``flashConnectStatus`` decides the look. A future pass could
+  give "Reconnected" a distinct visual treatment from "Apply
+  failed", but the current shared toast is already a clear
+  positive-success colour (the ``ok=true`` branch).
+- No `device_lost` frame handling — that remains the one
+  not-landed §3E item (Connect Swift side would have to emit it
+  first).
 
 ### Connect hardening — §3 doc sweep (Priority 2)
 
@@ -2023,17 +2097,22 @@ divergence).
   Session Engine grows a reconnect-replay surface it lives there,
   not here. The connect-bridge endpoint deliberately stays
   monitor-only (gain / preset / chain).
-- **Still to wire:**
-  - Browser surfaces a "Reconnected" toast (≈1.5s) after replay
-    completes, instead of just the inline `flashConnectStatus` flip.
-  - (The earlier "persistent session_id on disk" item has been
-    dropped from this list — `jam.js`'s `newSessionId()` already
-    falls back to the literal `'default'`
-    (`static/jam.js:430-436`), and Connect's supervisor defaults
-    to the same `'default'` (`connect_bridge.py:141`). Browser
-    reload + Connect restart already converge on the same channel
-    without any on-disk session.json. A persistent ID becomes
-    interesting only if multi-session ever ships, which is Phase 2.)
+- **"Reconnected" toast** — landed. On (re)connect, the first
+  inbound frame carrying `replayed: true` fires a single
+  `flashConnectStatus('Reconnected', true, 1500)` toast; the
+  per-connection latch `cb.reconnectToastShown` dedupes the up-to-3
+  replay frames into one user-visible signal. Cleared in `ws.onopen`
+  so a second reconnect in the same tab re-fires.
+  Server-side contract (`replayed: true` on each replay frame) is
+  drift-gated by the five tests in `test_connect_bridge_replay.py`
+  plus `test_last_chain_replayed_to_late_joining_peer`.
+- **Persistent `session_id` on disk** — dropped from still-to-wire.
+  `jam.js`'s `newSessionId()` (`static/jam.js:430-436`) and the
+  supervisor (`connect_bridge.py:141`) both default to the same
+  literal `'default'`, so browser reload + Connect restart already
+  converge on the same channel without an on-disk session.json. A
+  persistent ID becomes interesting only if multi-session ever
+  ships (Phase 2).
 - **Audio device loss** (interface unplugged): not yet wired —
   Connect would need to emit a `device_lost` frame and the browser
   would show reconnection instructions. Tracked here, not landed.
