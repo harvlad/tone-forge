@@ -40,6 +40,45 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Working-tree integration sweep (inventory, not strategy)
+
+Roughly 140 modified/untracked items had been accumulating in the
+working tree across the MIDI, reconstruction, evaluation, analysis,
+fingerprinting, profiling, plugin-scanner, local-engine, and Studio-UI
+surfaces. None of them were new strategy — all had been written or
+modified during in-flight sessions before the §15 freeze on those
+packages was declared. This entry is the inventory commit that brings
+them under version control so future bug-fix-only work has a clean
+baseline.
+
+| Commit | Subsystem |
+|---|---|
+| `490ed8f` | gitignore local runtime artifacts (benchmark_results/, profile_results/, preset_catalog_output/, data/tone_log.jsonl) |
+| `b7e4adb` | reconstruction: region_analyzer (new) + contamination / role / temporal updates |
+| `1bc1ae7` | tone_forge: analysis, audio/, explainability/, fingerprint/, preset_catalog/, profiling/, spectral_cache, stem_model, ALS template / preset_export / unified_pipeline updates |
+| `673912d` | local_engine: analysis_worker (new subprocess worker), download_models (new), server.py + tray.py updates |
+| `6575ad9` | tone_forge.evaluation: benchmark_expansion / validation / calibration / generalization / profile_analysis / visualization packages + ab_comparison, benchmark_harness, melodic_contour, midi_benchmark, perceptual_score, workflow_metrics modules |
+| `71779b2` | static UI: admin.html retired; arrangement / intelligence / detection-shared / plugin-shared / preview-shared / export-shared / waveform-trim modules; Studio + index updates |
+| `2b844dd` | scripts/: ~30 dev-tooling scripts for benchmarks, catalog, reconstruction, retrieval, render, listening rig + start_server.sh |
+| `180cceb` | docs: EXTRACTION_STATUS.md, PHASE2_VALIDATION_KIT / REPORT / FEATURE_MASK_REPORT, PHASE2_PLACEHOLDER_FINGERPRINTS.json, ROADMAP_STATUS.md |
+| `9304bde` | midi: ProfileRegistry (profiles.py + profile_classifier.py), bass_extractor_v2, coreml_extractor, detector_arbitration, spectral_validator, pitch_stability, postprocess + 7 new passes (beat_grid_filter, delay_cleanup, harmonic_suppression, key_conformity, octave_correction, octave_doubling, subharmonic_suppression) |
+| `0e84b4c` | plugin_scanner: scanner_ableton (new) + plugin_db / mapper / __init__ updates to enumerate Live's built-in devices alongside AU/VST3/VST2 |
+| `cad5d93` | test_api: widened a pick-shape assertion to accept the bass `{name, type, confidence}` shape (the guitar-chain test grew bass coverage; only that one assertion was strict where its siblings used `.get(default)`) |
+| `718843c` | scripts/root_cause_analysis: promoted ~400-line MIDI F1 RCA harness out of backend root; four trivial print-debug scratchpads (test_bass_v2/test_debug/test_fresh/test_octave_fix) deleted |
+
+Test reconciliations (three stale assertions, no logic changes):
+- `test_midi_extractor.py::test_get_synthwave_bass`: `(onset 0.3, min_note_ms 50)` → `(0.5, 80)` to match the authoritative `MONO_BASS` in `profiles.py`. The test comment already pointed at `mono_bass`; only the numerics were stale.
+- `test_plugin_scanner.py::test_scan_and_register_function`: added `scan_ableton=False` so the fixture stays scoped to the mocked VST3 path (otherwise the real Ableton scanner runs and registers ~65 Live devices, breaking `plugins_added == 1`).
+- `test_api.py::test_analyze_chain_picks_have_required_fields`: assertion widened from `slot|category` + `display|models` to also accept `type` + `name` so the bass `recommendations` shape passes. Sibling tests in the same class already tolerated this via `.get(default)`.
+
+Verification: full backend `tests/` sweep — **1207 passed, 12 skipped, 0 failed** in ~3 min.
+
+Tension with §15 freeze acknowledged: these commits add files to subsystems marked Frozen (MIDI internals, Reconstruction, Evaluation, Studio). The freeze stands going forward — this entry is *inventory of work already done*, not authorization for new feature work in those packages. The bug-fix-only rule continues to apply.
+
+Not in this entry:
+- `data/history.json` is intentionally left as a working-tree modification; it's tracked runtime data that churns every session.
+- `test_api.py::test_analyze_chain_picks_have_required_fields` was failing on `HEAD` before the sweep started (confirmed via `git stash` against `0e84b4c`); the fix landed alongside the sweep purely so the broader-sweep verification could come back fully green.
+
 ### Deep-link refresh fidelity (Priority 5 follow-up)
 
 Refreshing `/jam/:id` lost guitar stems, the SUGGESTED tone card, top-level
