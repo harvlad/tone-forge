@@ -17,7 +17,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | # | Subsystem | State |
 |---|---|---|
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
-| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) landed (see §0) |
+| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) landed (see §0) |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
@@ -39,6 +39,76 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Connect hardening — error-code taxonomy + drift gate (Priority 2)
+
+The focused-pass and second-wave commits closed the *liveness* failure
+classes (broadcast send failure, silent recv-drop, protocol version
+drift). They left one quieter contract gap exposed: every
+``{"type":"error", "code":"<slug>", ...}`` frame emitted by the API
+edge used a bare string literal for ``code``, and one frame
+(``first frame must be hello``) didn't carry ``code`` at all. Three
+consequences:
+
+1. **No single source of truth.** The wire slugs lived as inline
+   literals scattered across the receive loop. A typo in any of them
+   would have changed the contract silently — Swift/jam.js dispatchers
+   branch on ``code``, not on ``message``.
+2. **No drift gate.** A developer could add a new error frame and
+   inline a fresh slug without anyone noticing. ``ErrorFrame`` in
+   ``session/protocol.py`` documented ``code`` as "taxonomy slug per
+   §3F" but nothing enforced the taxonomy.
+3. **Unclassifiable handshake failure.** The hello-validation error
+   frame carried only a human-readable ``message``. Downstream code
+   couldn't tell *why* the handshake was rejected without
+   string-matching prose — fine for a log line, broken for a
+   programmatic surface.
+
+**What ships:**
+
+* ``backend/tone_forge/session/protocol.py``:
+  - ``MessageType.PEER_LEFT = "peer_left"`` (was previously implicit —
+    declared as a wire string elsewhere but not on the canonical
+    namespace).
+  - New ``ErrorCode`` namespace with the four slugs the server emits
+    today: ``BAD_HELLO``, ``CHAIN_ID_MISSING``, ``CHAIN_NOT_FOUND``,
+    ``CHAIN_SPEC_INVALID``. Plain class, not a ``str``-Enum, for the
+    same reason ``MessageType`` is — unknown slugs from a future
+    server must land in the default branch of the consumer, not raise.
+  - New ``PeerLeftReason`` namespace: ``SEND_FAILED``,
+    ``HEARTBEAT_TIMEOUT``.
+* ``backend/tone_forge_api.py``:
+  - Imports ``ErrorCode`` / ``PeerLeftReason``, routes every
+    ``"code": ...`` / ``"reason": ...`` emit through the namespace
+    constants.
+  - Hello-validation error frame now carries ``code: bad_hello`` +
+    ``retriable: False``, matching the shape of every other error
+    frame the bridge emits. Closes the classifiability gap.
+* ``backend/tests/test_connect_error_codes.py`` (new, 5 tests, 7.83s):
+  - Pins the namespace members against their wire values.
+  - Regex drift gate: scans ``tone_forge_api.py`` for any bare
+    ``"code":"..."`` or ``"reason":"..."`` literal and fails if it
+    isn't a member of the namespace. Future emit sites must declare
+    the slug first, which is the entire enforcement mechanism.
+  - Functional pin: TestClient sends a non-hello first frame, asserts
+    the error frame carries ``code: bad_hello``.
+* ``EXECUTION_PLAN.md`` §3F: updated from "initial taxonomy"
+  (aspirational) to two lists — landed (with namespace pointer + drift
+  gate ref) and aspirational (still to be declared at the emit site
+  when the corresponding emit path actually exists).
+
+**Verification:** Connect-adjacent sweep — lifecycle, apply_chain,
+heartbeat, parity, error_codes, session protocol, session route,
+session bundle, session transport, subsystem boundaries —
+**132/132 passing in 9.94s**.
+
+**What this commit does NOT do:** No Swift-side mirror of
+``ErrorCode``. The existing parity gate enforces *Swift ⊆ Python*, so
+Swift can catch up when a Connect handler actually consumes a code
+(e.g. surfacing ``chain_not_found`` as a status banner). No emit-site
+expansion either — the aspirational §3F slugs land when the emit paths
+do, not in advance, because declaring an unused slug is just another
+form of contract drift.
 
 ### Connect hardening — second wave: heartbeat + protocol parity gate (Priority 2)
 
@@ -1714,13 +1784,20 @@ Connect is product. This is the largest invisible work in the plan.
 ### F. Error Handling
 
 - **All errors emit**: `{"v":1,"type":"error","code":"<slug>","message":"<human>","retriable":bool}`
-- **Code taxonomy** (initial):
-  - `audio_device_unavailable`
-  - `audio_input_permission_denied`
-  - `audio_buffer_underrun`
-  - `monitor_chain_load_failed`
-  - `preset_apply_failed`
-  - `ws_handshake_rejected`
+- **Code taxonomy** — landed slugs live in
+  `backend/tone_forge/session/protocol.py::ErrorCode`, drift-gated by
+  `backend/tests/test_connect_error_codes.py`. Adding a new slug
+  requires declaring it on `ErrorCode` first; the drift gate fails if
+  `tone_forge_api.py` emits any bare `"code":"..."` literal not in the
+  namespace.
+  - **Landed today**: `bad_hello`, `chain_id_missing`, `chain_not_found`,
+    `chain_spec_invalid` (`ErrorCode.*`).
+  - **Survivor-notify reasons**: `send_failed`, `heartbeat_timeout`
+    (`PeerLeftReason.*`, drift-gated by the same test).
+  - **Aspirational** (declare on `ErrorCode` at the emit site, not in
+    advance): `audio_device_unavailable`, `audio_input_permission_denied`,
+    `audio_buffer_underrun`, `monitor_chain_load_failed`,
+    `preset_apply_failed`, `ws_handshake_rejected`.
 - **Browser handler**: `jam.js` maps `code` → inline status text. Already partially wired via `flashConnectStatus`.
 
 ### G. Onboarding

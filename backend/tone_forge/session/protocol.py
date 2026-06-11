@@ -87,6 +87,71 @@ class MessageType:
     DEVICE_CHANGED = "device_changed"
     LATENCY_REPORT = "latency_report"
 
+    # --- Lifecycle (broadcast by server) -----------------------------------
+    # ``peer_left`` is emitted to the survivors when a peer is reaped — by
+    # a broadcast send failure today, by the heartbeat probe added in the
+    # second-wave Connect hardening pass, or by future reapers. The wire
+    # frame carries ``reason`` (a ``PeerLeftReason`` slug) and ``peers``
+    # (count of clients still in the channel after the drop).
+    PEER_LEFT = "peer_left"
+
+
+# ---------------------------------------------------------------------------
+# Error code taxonomy (per §3F)
+# ---------------------------------------------------------------------------
+
+class ErrorCode:
+    """Canonical ``error.code`` slugs.
+
+    Every ``{"type": "error", ...}`` frame the server emits MUST carry a
+    ``code`` field whose value is one of the slugs declared here. The slug
+    is the contract — the ``message`` field is human-readable colour for
+    logs and (eventually) Connect's status surface, but downstream code
+    (Swift dispatcher, jam.js status banner, future Sentry-grouping rules)
+    matches on ``code``.
+
+    Plain namespace, not a ``str``-Enum: a future server may emit a code
+    a v1 Connect doesn't recognise; the Swift dispatcher must land that
+    in its default branch and surface a generic "unknown error" rather
+    than crash on JSON decode. Same rationale as ``MessageType``.
+
+    The drift gate in ``tests/test_connect_error_codes.py`` reads
+    ``tone_forge_api.py`` as text and asserts every emitted ``"code":"..."``
+    literal is a member of this namespace. Adding a new slug requires
+    declaring it here first, which is the entire point.
+    """
+
+    # First frame on the WS was not ``hello`` — handshake aborted.
+    BAD_HELLO = "bad_hello"
+
+    # ``apply_chain`` frame arrived without a non-empty ``chain_id``.
+    CHAIN_ID_MISSING = "chain_id_missing"
+
+    # ``apply_chain`` ``chain_id`` did not resolve to a chain in the
+    # bundled monitor bank.
+    CHAIN_NOT_FOUND = "chain_not_found"
+
+    # ``apply_chain`` resolved a chain but ``ChainSpec.from_loader``
+    # rejected the YAML.
+    CHAIN_SPEC_INVALID = "chain_spec_invalid"
+
+
+class PeerLeftReason:
+    """Canonical ``peer_left.reason`` slugs.
+
+    ``peer_left`` is the survivor-notification frame emitted when a peer
+    is reaped from a channel. The ``reason`` slug tells the survivor's
+    UI why (so it can choose whether to retry, surface an error, or just
+    flip back to unpaired silently).
+    """
+
+    # ``broadcast()`` tried to send to a peer and the send raised.
+    SEND_FAILED = "send_failed"
+
+    # The recv-side heartbeat fired its probe and got no response inside
+    # ``CONNECT_BRIDGE_PONG_TIMEOUT_SEC``.
+    HEARTBEAT_TIMEOUT = "heartbeat_timeout"
+
 
 # ---------------------------------------------------------------------------
 # Frame envelopes

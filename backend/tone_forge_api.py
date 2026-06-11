@@ -174,6 +174,7 @@ from tone_forge.unified_pipeline import (
 
 # Session engine — canonical SessionBundle assembler (Priority 5).
 from tone_forge.session import build as build_session_bundle, serialize as serialize_session_bundle
+from tone_forge.session.protocol import ErrorCode, PeerLeftReason
 
 # Device discovery — onboarding preferences + DeviceCaps mapping (Priority 7).
 # Composition lives at the API edge so devices/ stays boundary-clean
@@ -452,7 +453,7 @@ class _ConnectChannel:
             notice = {
                 "type": "peer_left",
                 "peers": len(self.clients),
-                "reason": "send_failed",
+                "reason": PeerLeftReason.SEND_FAILED,
             }
             for client in list(self.clients):
                 try:
@@ -490,7 +491,12 @@ async def connect_bridge(ws: WebSocket) -> None:
         # Wait for the hello frame before joining any channel.
         hello = await ws.receive_json()
         if not isinstance(hello, dict) or hello.get("type") != "hello":
-            await ws.send_json({"type": "error", "message": "first frame must be hello"})
+            await ws.send_json({
+                "type": "error",
+                "code": ErrorCode.BAD_HELLO,
+                "message": "first frame must be hello",
+                "retriable": False,
+            })
             await ws.close()
             return
 
@@ -560,7 +566,7 @@ async def connect_bridge(ws: WebSocket) -> None:
                     notice = {
                         "type": "peer_left",
                         "peers": max(0, len(channel.clients) - 1),
-                        "reason": "heartbeat_timeout",
+                        "reason": PeerLeftReason.HEARTBEAT_TIMEOUT,
                     }
                     for client in list(channel.clients):
                         if client is ws:
@@ -610,7 +616,7 @@ async def connect_bridge(ws: WebSocket) -> None:
                 if not isinstance(chain_id, str) or not chain_id:
                     await ws.send_json({
                         "type": "error",
-                        "code": "chain_id_missing",
+                        "code": ErrorCode.CHAIN_ID_MISSING,
                         "message": "apply_chain frame requires a non-empty chain_id",
                         "retriable": False,
                     })
@@ -620,7 +626,7 @@ async def connect_bridge(ws: WebSocket) -> None:
                 except _ChainNotFoundError as exc:
                     await ws.send_json({
                         "type": "error",
-                        "code": "chain_not_found",
+                        "code": ErrorCode.CHAIN_NOT_FOUND,
                         "message": str(exc),
                         "retriable": False,
                     })
@@ -631,7 +637,7 @@ async def connect_bridge(ws: WebSocket) -> None:
                     logger.error(f"[connect-bridge] chain spec invalid for {chain_id}: {exc}")
                     await ws.send_json({
                         "type": "error",
-                        "code": "chain_spec_invalid",
+                        "code": ErrorCode.CHAIN_SPEC_INVALID,
                         "message": str(exc),
                         "retriable": False,
                     })
