@@ -17,6 +17,7 @@
 //
 
 import AVFoundation
+import CoreAudio
 import Foundation
 
 public final class AudioEngine {
@@ -204,6 +205,14 @@ public final class AudioEngine {
     private var configChangeToken: NSObjectProtocol?
 
     public init() {
+        // Honour the operator's onboarding answer (persisted to
+        // device.json on the Python side, plumbed through to the
+        // child as TONEFORGE_AUDIO_INPUT_NAME by ConnectSupervisor)
+        // BEFORE we read the input format in attachAndConnectGraph():
+        // the AVAudioEngine input node samples its format from the
+        // current HAL device at connect time, so flipping the device
+        // afterwards would leave the graph wired to a stale format.
+        applyPreferredInputDevice()
         attachAndConnectGraph()
         inputMixerNode.outputVolume = inputMonitorGain
         stemsMixerNode.outputVolume = stemsGain
@@ -302,6 +311,14 @@ public final class AudioEngine {
         // also brought down before we rebuild.
         if engine.isRunning { engine.stop() }
         for (_, player) in stemPlayers { player.stop() }
+
+        // Re-apply the operator's preferred input device before
+        // rebuilding the graph. A device flap (USB yank, default-device
+        // swap) is exactly the case where the system might silently
+        // promote a different device to default; without this call the
+        // user would silently lose the input they chose during
+        // onboarding until the next supervisor restart.
+        applyPreferredInputDevice()
 
         // Re-attach + re-connect against the new input format. The
         // mixer/EQ/distortion nodes are reused — AVAudioEngine
@@ -700,5 +717,141 @@ public final class AudioEngine {
         )
         if status != noErr { return 0 }
         return latency
+    }
+
+    // MARK: - Preferred input device (TONEFORGE_AUDIO_INPUT_NAME)
+    //
+    // The onboarding flow lets the operator nominate a specific audio
+    // interface (e.g. "Focusrite Scarlett 2i2"). The Python side
+    // persists that choice into device.json and re-plumbs it as the
+    // TONEFORGE_AUDIO_INPUT_NAME env var on every supervisor spawn
+    // (see backend/local_engine/connect_bridge.py, §0 entry
+    // "audio_input_name → Connect helper env"). This block closes the
+    // Swift half of that loop.
+    //
+    // Resolution rules:
+    //   * env var absent or empty → leave the input AU on the system
+    //     default. The operator never expressed a preference.
+    //   * env var present + matches an enumerated HAL input device's
+    //     name → set kAudioOutputUnitProperty_CurrentDevice on the
+    //     AVAudioEngine input AU so the engine reads from that device.
+    //   * env var present but no input device matches (operator
+    //     unplugged the interface; renamed it; chose one we can't
+    //     enumerate) → fall back to system default. Log the fall-back
+    //     so connect-bridge.log shows why the input isn't what the
+    //     user expected.
+    //
+    // Failure mode policy: any CoreAudio API failure logs and returns
+    // silently. The engine's contract is to start audio with *some*
+    // input; never to refuse to start because the user's preferred
+    // device went missing.
+
+    /// Best-effort apply of TONEFORGE_AUDIO_INPUT_NAME to the input
+    /// AU. Safe to call repeatedly (init + every reconfig).
+    private func applyPreferredInputDevice() {
+        guard let envName = ProcessInfo.processInfo.environment["TONEFORGE_AUDIO_INPUT_NAME"],
+              !envName.isEmpty else {
+            NSLog("[Connect] AudioEngine: TONEFORGE_AUDIO_INPUT_NAME unset; using system default input")
+            return
+        }
+
+        let inputDevices = AudioEngine.enumerateInputDevices()
+        guard let match = inputDevices.first(where: { $0.name == envName }) else {
+            let available = inputDevices.map { $0.name }.joined(separator: ", ")
+            NSLog("[Connect] AudioEngine: TONEFORGE_AUDIO_INPUT_NAME=\(envName) not found among input devices [\(available)]; using system default")
+            return
+        }
+
+        guard let inputAU = engine.inputNode.audioUnit else {
+            NSLog("[Connect] AudioEngine: input node has no underlying AudioUnit; cannot set device to \(envName)")
+            return
+        }
+
+        var deviceID = match.id
+        let propSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitSetProperty(
+            inputAU,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            propSize
+        )
+        if status != noErr {
+            NSLog("[Connect] AudioEngine: failed to set input device to \(envName) (OSStatus=\(status)); using system default")
+            return
+        }
+        NSLog("[Connect] AudioEngine: input device set to \(envName) (id=\(match.id)) per TONEFORGE_AUDIO_INPUT_NAME")
+    }
+
+    /// (id, name) for every HAL device that has at least one input
+    /// stream. Returns [] on any enumeration failure.
+    private static func enumerateInputDevices() -> [(id: AudioDeviceID, name: String)] {
+        var listAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var byteSize: UInt32 = 0
+        var status = AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject),
+            &listAddr,
+            0, nil,
+            &byteSize
+        )
+        guard status == noErr, byteSize > 0 else {
+            NSLog("[Connect] AudioEngine: AudioObjectGetPropertyDataSize(devices) failed (OSStatus=\(status))")
+            return []
+        }
+
+        let deviceCount = Int(byteSize) / MemoryLayout<AudioDeviceID>.size
+        var ids = [AudioDeviceID](repeating: 0, count: deviceCount)
+        status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &listAddr,
+            0, nil,
+            &byteSize,
+            &ids
+        )
+        guard status == noErr else {
+            NSLog("[Connect] AudioEngine: AudioObjectGetPropertyData(devices) failed (OSStatus=\(status))")
+            return []
+        }
+
+        return ids.compactMap { id -> (AudioDeviceID, String)? in
+            guard AudioEngine.deviceHasInputStreams(id) else { return nil }
+            let name = AudioEngine.deviceName(id)
+            guard !name.isEmpty else { return nil }
+            return (id, name)
+        }
+    }
+
+    /// True if `id` exposes any input streams. Filters out output-only
+    /// devices (headphones, built-in speakers) from the matchable set.
+    private static func deviceHasInputStreams(_ id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        let status = AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size)
+        return status == noErr && size > 0
+    }
+
+    /// Human-readable name of a HAL device, or "" on failure. Matches
+    /// the strings the operator sees in System Preferences → Sound
+    /// (which is what discovery.probe() captures on the Python side).
+    private static func deviceName(_ id: AudioDeviceID) -> String {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: Unmanaged<CFString>? = nil
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &name)
+        guard status == noErr, let cf = name?.takeRetainedValue() else { return "" }
+        return cf as String
     }
 }

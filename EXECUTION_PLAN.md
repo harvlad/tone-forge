@@ -22,7 +22,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 81/81 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); fitted artifact still blocked on 100 hand-labeled clips |
-| 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) + audio_input_name → Connect helper env (Python plumb of item #38) all landed (see §0) |
+| 7 | Device Discovery | Complete in main — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (`preferred_chain_family` → fallback policy) + CoreAudio probe pre-fill (item #36) + `audio_input_name` end-to-end loop closed (Python plumb via `TONEFORGE_AUDIO_INPUT_NAME` env var → Swift `AudioEngine.applyPreferredInputDevice()` sets `kAudioOutputUnitProperty_CurrentDevice` on the input AU, re-applied on every reconfig restart) all landed (see §0). Phase 2 expansion (USB MIDI sysex probing, bidirectional preset apply, multi-rig profiles) deferred per §8. |
 | 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` + capability map `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` + product roadmap `docs/JAM_PRODUCT_ROADMAP.md` (see §0). Founder Validation Corpus harness landed as post-synthesis Task #4 (`backend/founder_corpus/`, `backend/scripts/run_founder_validation.py`, `backend/tone_forge/evaluation/founder_corpus.py`, 52/52 tests green). No feature implementation auto-driven. |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
@@ -39,6 +39,84 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Device Discovery — Swift consumption of TONEFORGE_AUDIO_INPUT_NAME (Priority 7)
+
+Closes the last item the prior §0 audio_input_name entry called
+out as *"Not in this entry"*: the Swift side of the input-device
+loop. The Python supervisor has been plumbing
+`TONEFORGE_AUDIO_INPUT_NAME` to the child for several commits;
+this entry teaches the Swift `AudioEngine` to honour it.
+
+Resolution rules:
+- env var absent or empty → leave the input AU on the system
+  default. The operator never expressed a preference.
+- env var matches an enumerated HAL input device name → set
+  `kAudioOutputUnitProperty_CurrentDevice` on the input AU before
+  the engine graph is built.
+- env var present but no enumerated input device matches
+  (unplugged interface, renamed device, system reported nothing) →
+  log the available device list and fall back to the system
+  default. Engine MUST always start with *some* input.
+
+Call sites:
+- `AudioEngine.init()` — applied before `attachAndConnectGraph()`
+  reads `engine.inputNode.outputFormat(forBus: 0)`. The input AU
+  samples its format from the current HAL device at connect time,
+  so flipping the device after graph build would wire the chain
+  to a stale format.
+- `AudioEngine.attemptReconfigRestart(reason:)` — re-applied on
+  every reconfig before the graph is rebuilt. A device flap
+  (USB yank, default-device swap) is exactly the case where the
+  system might silently promote a different device to default;
+  without this call the operator would silently lose their
+  chosen input until the next supervisor restart.
+
+| Change | File |
+|---|---|
+| `import CoreAudio` for HAL device enumeration | `connect/Sources/ConnectCore/AudioEngine.swift` |
+| `applyPreferredInputDevice()` private method: reads the env var, enumerates input devices, sets the input AU device. Best-effort — any CoreAudio failure logs and returns silently. | `connect/Sources/ConnectCore/AudioEngine.swift` |
+| `enumerateInputDevices()` static helper: returns `(AudioDeviceID, String)` pairs for every HAL device exposing at least one input stream. Filters output-only devices (headphones, built-in speakers). | `connect/Sources/ConnectCore/AudioEngine.swift` |
+| `deviceHasInputStreams(_:)` + `deviceName(_:)` static helpers: thin wrappers over `AudioObjectGetPropertyData(kAudioDevicePropertyStreams, scope=Input)` and `kAudioObjectPropertyName`. | `connect/Sources/ConnectCore/AudioEngine.swift` |
+| Call `applyPreferredInputDevice()` from `init()` before `attachAndConnectGraph()`. | `connect/Sources/ConnectCore/AudioEngine.swift` |
+| Call `applyPreferredInputDevice()` from `attemptReconfigRestart()` before `attachAndConnectGraph()`. | `connect/Sources/ConnectCore/AudioEngine.swift` |
+
+Logging: every code path emits a single `NSLog("[Connect]
+AudioEngine: …")` line describing what happened — unset env,
+matched, no-match-with-available-list, or CoreAudio OSStatus
+failure. Output lands in `~/Library/Logs/ToneForge/connect-bridge.log`
+on operator machines and complements the existing Python-side
+*"input=Focusrite Scarlett 2i2"* / *"input=<default>"* spawn log
+line, so a diagnostic reader can see both sides of the loop in
+one file.
+
+Verification:
+- `swift build` at `connect/` — clean: `Build complete! (5.33s)`,
+  no warnings, no errors. Confirms the CoreAudio API surface and
+  the `Unmanaged<CFString>` retain semantics are correct.
+- `swift test` not runnable from Command Line Tools alone (the
+  bundled toolchain lacks XCTest); operator should run the
+  ConnectCore tests from Xcode to confirm `AudioEngineStateTests`
+  still passes against the new init path.
+- Manual smoke (operator's machine): plug an interface whose name
+  matches `device.json::audio_input_name`, relaunch Connect via
+  the supervisor, tail `connect-bridge.log` for
+  *"AudioEngine: input device set to <name> per
+  TONEFORGE_AUDIO_INPUT_NAME"*; then yank the USB cable and watch
+  the same line re-emit on reconfig.
+
+Not in this entry:
+- Two-way reporting (Connect telling the Jam UI which device it
+  actually opened). The Jam UI today only shows the answer the
+  operator gave during onboarding. A future commit could emit a
+  `device_selected` WS frame on every `applyPreferredInputDevice`
+  success so the UI can confirm the operator's intent landed.
+- Format negotiation. If the user's preferred device runs at
+  192 kHz but the rest of the chain assumes 48, AVAudioEngine's
+  built-in conversion handles it but with extra latency. A
+  rejection-with-toast flow on unsupported sample rates is out
+  of scope.
+- USB MIDI sysex device-identity probing (P7 Phase 2 per §8).
 
 ### Connect hardening — auto-update toggle UI (Priority 2)
 
