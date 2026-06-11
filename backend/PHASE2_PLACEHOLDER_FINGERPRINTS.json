@@ -1,0 +1,72 @@
+{
+  "_purpose": "Frozen snapshot of the Phase 1 hand-authored placeholder fingerprints, captured BEFORE scripts/render_chain_references.py overwrites them with measured values. Used by the Step 2 delta report so we can compute per-feature deltas after the rendered WAVs land. Do not edit by hand — regenerate from git history if corrupted.",
+  "_captured_at": "2026-06-09T00:00:00Z",
+  "_captured_from": "backend/tone_forge/monitor/chains/tfc.*.fingerprint.json",
+  "placeholders": {
+    "tfc.ambient": {
+      "source": "hand_authored_estimate",
+      "features": {
+        "brightness": 0.20,
+        "warmth": 0.40,
+        "air": 0.02,
+        "attack_ms": 2000,
+        "decay_ms": 600,
+        "sustain_ratio": 0.55,
+        "harmonic_ratio": 0.80,
+        "pitch_stability": 0.85
+      }
+    },
+    "tfc.classic_rock": {
+      "source": "hand_authored_estimate",
+      "features": {
+        "brightness": 0.30,
+        "warmth": 0.45,
+        "air": 0.03,
+        "attack_ms": 60,
+        "decay_ms": 700,
+        "sustain_ratio": 0.55,
+        "harmonic_ratio": 0.85,
+        "pitch_stability": 0.92
+      }
+    },
+    "tfc.clean_strat": {
+      "source": "hand_authored_estimate",
+      "features": {
+        "brightness": 0.30,
+        "warmth": 0.30,
+        "air": 0.05,
+        "attack_ms": 50,
+        "decay_ms": 300,
+        "sustain_ratio": 0.25,
+        "harmonic_ratio": 0.92,
+        "pitch_stability": 0.95
+      }
+    },
+    "tfc.edge_of_breakup": {
+      "source": "hand_authored_estimate",
+      "features": {
+        "brightness": 0.25,
+        "warmth": 0.40,
+        "air": 0.04,
+        "attack_ms": 80,
+        "decay_ms": 500,
+        "sustain_ratio": 0.40,
+        "harmonic_ratio": 0.88,
+        "pitch_stability": 0.93
+      }
+    },
+    "tfc.modern_gain": {
+      "source": "hand_authored_estimate",
+      "features": {
+        "brightness": 0.45,
+        "warmth": 0.25,
+        "air": 0.06,
+        "attack_ms": 30,
+        "decay_ms": 1200,
+        "sustain_ratio": 0.75,
+        "harmonic_ratio": 0.78,
+        "pitch_stability": 0.90
+      }
+    }
+  }
+}
