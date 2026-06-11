@@ -50,6 +50,15 @@ from .quality_tracker import (
     TrendAnalysis,
     get_tracker,
 )
+from .midi_benchmark import (
+    MIDIBenchmarkSample,
+    MIDIBenchmarkDataset,
+    ProfiledMIDIMetrics,
+    SampleResult,
+    MIDIBenchmarkRunner,
+    save_baseline,
+    load_baseline,
+)
 
 __all__ = [
     # Metrics
@@ -83,4 +92,12 @@ __all__ = [
     "MetricSnapshot",
     "TrendAnalysis",
     "get_tracker",
+    # MIDI benchmarks
+    "MIDIBenchmarkSample",
+    "MIDIBenchmarkDataset",
+    "ProfiledMIDIMetrics",
+    "SampleResult",
+    "MIDIBenchmarkRunner",
+    "save_baseline",
+    "load_baseline",
 ]
