@@ -17,10 +17,10 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | # | Subsystem | State |
 |---|---|---|
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
-| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) + join-time state replay coverage (last_gain / last_preset / targeted-no-broadcast / fresh-channel pins) + §3 doc sweep (§3A–G rewritten against landed reality; install/signing/update/crash-recovery/onboarding) + "Reconnected" toast (jam.js replay-frame latch closes §3E still-to-wire item) + "Try restarting Connect" CTA (jam.js renderConnectStatus button → `/api/connect/restart` → `ConnectSupervisor.restart()`; closes §3D budget-exhausted UX item; drift-gated by `test_api_connect_restart.py`) landed (see §0) |
+| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) + join-time state replay coverage (last_gain / last_preset / targeted-no-broadcast / fresh-channel pins) + §3 doc sweep (§3A–G rewritten against landed reality; install/signing/update/crash-recovery/onboarding) + "Reconnected" toast (jam.js replay-frame latch closes §3E still-to-wire item) + "Try restarting Connect" CTA (jam.js renderConnectStatus button → `/api/connect/restart` → `ConnectSupervisor.restart()`; closes §3D budget-exhausted UX item; drift-gated by `test_api_connect_restart.py`) + `device_lost` frame (AudioEngine 5-attempt reconfig budget → onDeviceLost → PresetBridge.sendDeviceLost → server default-broadcast → jam.js 8s toast; pinned by `test_connect_bridge_device_lost.py` + `deviceLost`/`device_lost` parity row) + auto-update toggle UI (Jam settings checkbox → `POST /api/device/preferences` → `set_auto_update` WS broadcast + join-time replay → Connect writes `UserDefaults.SUEnableAutomaticChecks`; closes last open §3C bullet; pinned by `test_connect_bridge_set_auto_update.py` + `setAutoUpdate`/`set_auto_update` parity row) landed (see §0). Only deferred item: §3C rollback to `connect-prev/` (waiting on a bad release to motivate). |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
-| 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
+| 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 81/81 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); fitted artifact still blocked on 100 hand-labeled clips |
 | 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) + audio_input_name → Connect helper env (Python plumb of item #38) all landed (see §0) |
 | 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` + capability map `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` + product roadmap `docs/JAM_PRODUCT_ROADMAP.md` (see §0). Founder Validation Corpus harness landed as post-synthesis Task #4 (`backend/founder_corpus/`, `backend/scripts/run_founder_validation.py`, `backend/tone_forge/evaluation/founder_corpus.py`, 52/52 tests green). No feature implementation auto-driven. |
@@ -606,6 +606,16 @@ What this commit does NOT do
   remain tracked, not landed.
 - Does not change any commit-prefix convention or branching model;
   the historical "branching plan" text stays as context.
+
+**Postscript (added in subsequent audit pass)**: four of the five
+"still-to-wire" items flagged above have since landed as separate
+§0 entries — "Reconnected" toast, "Try restarting Connect" CTA,
+`device_lost` frame, auto-update toggle UI. Only `connect-prev/`
+rollback remains deferred (explicitly waiting on a bad release to
+motivate). §3 sections have been updated in lockstep with each
+landing; this bullet is preserved verbatim as a historical
+snapshot of the state at the doc-sweep commit, not the current
+ground truth. The current ground truth is the §3 body text.
 
 ### Connect hardening — join-time state replay coverage (Priority 2)
 
@@ -1994,9 +2004,11 @@ confirmed no remaining scope in this track.
   back onto legacy shape so the rest of the UI didn't need to
   rewrite for this pass. Studio UI unchanged per §6.
 
-Tests: `test_session_protocol.py` (13), `test_session_transport.py`
-(27), `test_session_bundle.py` (21), `test_session_route.py` (13).
-74/74 PASS.
+Tests: `test_session_protocol.py` (10), `test_session_transport.py`
+(28), `test_session_bundle.py` (26), `test_session_route.py` (17).
+81/81 PASS. (Counts have grown organically since the initial 74/74
+landing as follow-up commits added coverage; the contracts pinned
+by each file are unchanged.)
 
 Cross-subsystem boundary check: session/ has no cross-imports of
 other subsystem internals; consumers reach in via the
@@ -2052,9 +2064,12 @@ Deferred (operator's call, not this commit):
   `backend/tone_forge/tone/calibration_v1.joblib`. Drop-in via
   `_CALIBRATOR` rebind — no caller changes.
 
-Tests: 89/89 tone tests green
-(`test_tone_calibration.py` 23, `test_tone_tiers.py` 23,
-`test_tone_policy.py` 22, `test_tone_retrieve.py` 21).
+Tests: 95/95 tone tests green
+(`test_tone_calibration.py` 23, `test_tone_tiers.py` 19,
+`test_tone_policy.py` 28, `test_tone_retrieve.py` 25).
+(Counts have grown organically since the initial 89/89 landing as
+follow-up commits added coverage; the contracts pinned by each file
+are unchanged.)
 
 Boundary check: `tone/` does not import `preset_catalog/`; the only
 cross-subsystem composition lives at the API seam, exactly as §7
