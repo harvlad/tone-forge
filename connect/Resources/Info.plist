@@ -114,7 +114,13 @@
     <key>SUScheduledCheckInterval</key>
     <integer>86400</integer>
 
-    <key>SUEnableAutomaticChecks</key>
-    <true/>
+    <!--
+      SUEnableAutomaticChecks deliberately not set here. Sparkle treats
+      the absence of this key as "enabled" by default, so factory
+      behaviour is unchanged. Removing the Info.plist override lets
+      UserDefaults take effect — see AppDelegate.setAutoUpdateEnabled,
+      which writes the user's browser-side toggle into UserDefaults so
+      they can opt out without recompiling. EXECUTION_PLAN §3C.
+    -->
 </dict>
 </plist>

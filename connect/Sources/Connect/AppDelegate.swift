@@ -373,6 +373,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bridge.onChainApply = { [weak engine] spec in
             engine?.applyChain(spec)
         }
+        bridge.onSetAutoUpdate = { [weak self] enabled in
+            self?.setAutoUpdateEnabled(enabled)
+        }
         bridge.onVersionMismatch = { [weak self] required in
             NSLog("[Connect] version mismatch: server requires v\(required)")
             DispatchQueue.main.async { [weak self] in
@@ -401,6 +404,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    /// Write the user's Sparkle auto-update preference into our app's
+    /// ``UserDefaults`` under the canonical ``SUEnableAutomaticChecks``
+    /// key. Sparkle picks the value up on its next scheduled-check
+    /// tick — no restart required and no need to poke
+    /// ``SPUStandardUpdaterController`` directly. We keep
+    /// ``UserDefaults`` as the single source of truth and let the
+    /// Sparkle framework decide what to do with it.
+    ///
+    /// Logged to NSLog so the menu-bar status tail shows the change
+    /// during dev / smoke-testing; the menu itself doesn't surface
+    /// a checkbox in this commit (browser is the sole UI).
+    func setAutoUpdateEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: "SUEnableAutomaticChecks")
+        NSLog("[Connect] Sparkle auto-update \(enabled ? "enabled" : "disabled")")
     }
 
     private func stopPairedBridge() {

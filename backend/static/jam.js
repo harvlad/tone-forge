@@ -300,6 +300,23 @@
             + `(${Math.round(performance.now() - pending.t0)}ms)`,
           );
         }
+      } else if (data.type === 'set_auto_update') {
+        // The user toggled the Sparkle auto-update preference in
+        // another tab (or the server replayed the persisted value
+        // on a fresh Connect join). Reflect the new state into the
+        // settings checkbox so all open tabs converge. Idempotent —
+        // setting `checked` to its current value is a no-op and
+        // does not fire a `change` event, so we won't loop back to
+        // the server. Pinned at the server end by
+        // test_connect_bridge_set_auto_update.py.
+        if (typeof data.enabled === 'boolean') {
+          const cbEl = document.getElementById('setting-auto-update-enabled');
+          if (cbEl) cbEl.checked = data.enabled;
+          console.log(
+            `[connect] set_auto_update enabled=${data.enabled} `
+            + `(replayed=${data.replayed === true})`,
+          );
+        }
       } else if (data.type === 'device_lost') {
         // Connect's AudioEngine exhausted its reconfig retry budget
         // (interface unplugged and not plugged back in, or driver
@@ -2618,6 +2635,21 @@
     }
   }
 
+  // Reflect the persisted Sparkle auto-update preference into the
+  // checkbox. ``null`` (= user has not expressed a preference) maps
+  // to ``true`` because Sparkle's built-in default is "checks
+  // enabled" when no override exists; that's what would actually
+  // happen at runtime, so the UI must show it as checked or the
+  // user would see "off" and be lied to.
+  function updateAutoUpdateSetting(prefs) {
+    const cb = document.getElementById('setting-auto-update-enabled');
+    if (!cb) return;
+    const persisted = prefs && typeof prefs.auto_update_enabled === 'boolean'
+      ? prefs.auto_update_enabled
+      : null;
+    cb.checked = persisted === null ? true : persisted;
+  }
+
   async function fetchDevicePreferences() {
     try {
       const res = await fetch('/api/device/preferences');
@@ -2849,6 +2881,7 @@
   (async () => {
     const prefs = await fetchDevicePreferences();
     updateDeviceSettingLabel(prefs);
+    updateAutoUpdateSetting(prefs);
     if (prefs === null) showOnboardingModal();
   })();
   initOnboardingUI();
@@ -2912,6 +2945,54 @@
     const deviceReset = $('setting-device-reset');
     if (deviceReset) {
       deviceReset.addEventListener('click', () => { resetDeviceChoice(); });
+    }
+
+    // Sparkle auto-update toggle. The POST round-trip is "optimistic":
+    // we keep the checkbox in its newly-chosen state and only flip it
+    // back on a server failure. Rationale: the WS broadcast that the
+    // server fires on success will fire `set_auto_update` back at
+    // every connected tab (including this one) — if we waited for
+    // that round-trip to flip the UI, the local toggle would look
+    // unresponsive for ~50ms. The inbound handler is idempotent so a
+    // second `checked = X` does no harm.
+    const autoUpdateCb = document.getElementById('setting-auto-update-enabled');
+    if (autoUpdateCb) {
+      autoUpdateCb.addEventListener('change', async () => {
+        const desired = autoUpdateCb.checked;
+        // We must re-send the existing device_class because the
+        // request model requires it; auto-update lives on the same
+        // record. fetchDevicePreferences is cheap (single GET) and
+        // avoids stashing a stale shadow copy in module state that
+        // could drift if the user changed device class in another tab.
+        const current = await fetchDevicePreferences();
+        if (!current || !current.device_class) {
+          // No device record yet — user hit the toggle before
+          // finishing onboarding. Revert and bail; the onboarding
+          // submit will land the bool with the default of `true`.
+          autoUpdateCb.checked = !desired;
+          console.warn(
+            '[settings] cannot toggle auto-update before device class is set',
+          );
+          return;
+        }
+        try {
+          const res = await fetch('/api/device/preferences', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              device_class: current.device_class,
+              audio_input_name: current.audio_input_name,
+              preferred_chain_family: current.preferred_chain_family,
+              auto_update_enabled: desired,
+            }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        } catch (e) {
+          console.warn('[settings] POST auto_update_enabled failed:', e);
+          // Roll back so the UI matches server-side truth.
+          autoUpdateCb.checked = !desired;
+        }
+      });
     }
   }
 

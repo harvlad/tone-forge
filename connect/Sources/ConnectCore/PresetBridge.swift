@@ -51,6 +51,15 @@ public final class PresetBridge {
     /// ``ChainSpec.decode(fromWireDict:)``.
     public var onChainApply: ((ChainSpec) -> Void)?
 
+    /// Fired on the main queue when a ``set_auto_update`` frame
+    /// arrives. The argument is the new Sparkle opt-in value; the
+    /// receiver (AppDelegate) is expected to write it to
+    /// ``UserDefaults`` under the ``SUEnableAutomaticChecks`` key.
+    /// PresetBridge intentionally does not depend on Sparkle —
+    /// keeping the side effect in AppDelegate means tests can stub
+    /// the callback without linking against the framework.
+    public var onSetAutoUpdate: ((Bool) -> Void)?
+
     public private(set) var sessionId: String
     public private(set) var serverURL: URL
     public private(set) var isRunning = false
@@ -256,6 +265,27 @@ public final class PresetBridge {
             onStatus?(String(format: "set_gain %.2f (replayed=%@)", clamped, replayed ? "true" : "false"))
             DispatchQueue.main.async { [weak self] in
                 self?.onGainChange?(clamped)
+            }
+        case ConnectProtocol.MessageType.setAutoUpdate:
+            // Browser flipped the Sparkle opt-in toggle (or the server
+            // replayed the persisted value to a fresh helper bring-up).
+            // We accept either Bool or NSNumber for "enabled" because
+            // JSONSerialization may unbox a JSON `true`/`false` either
+            // way depending on platform. Anything that isn't a bool is
+            // a protocol violation we just log and drop.
+            let enabled: Bool
+            if let b = dict["enabled"] as? Bool {
+                enabled = b
+            } else if let n = dict["enabled"] as? NSNumber {
+                enabled = n.boolValue
+            } else {
+                onStatus?("set_auto_update frame had no bool `enabled` field")
+                return
+            }
+            let replayed = (dict["replayed"] as? Bool) ?? false
+            onStatus?("set_auto_update enabled=\(enabled) (replayed=\(replayed))")
+            DispatchQueue.main.async { [weak self] in
+                self?.onSetAutoUpdate?(enabled)
             }
         case "pong":
             break

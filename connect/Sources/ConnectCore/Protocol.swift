@@ -50,5 +50,16 @@ public enum ConnectProtocol {
         /// browser peer in the channel, which surfaces a user-facing
         /// reconnection toast.
         public static let deviceLost        = "device_lost"
+        /// Server → Connect notification: the user toggled Sparkle's
+        /// auto-update preference in the browser. Frame shape:
+        ///   { "v": 1, "type": "set_auto_update",
+        ///     "enabled": true|false, "replayed": true|false }
+        /// On receipt, Connect writes the value to UserDefaults under
+        /// the `SUEnableAutomaticChecks` key so Sparkle picks it up
+        /// on its next scheduled-check tick. `replayed: true` means
+        /// the value arrived via the join-time replay path (i.e. on
+        /// a fresh helper bring-up); `replayed: false` means a live
+        /// user-initiated change. Connect treats them identically.
+        public static let setAutoUpdate     = "set_auto_update"
     }
 }

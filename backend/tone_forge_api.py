@@ -415,6 +415,27 @@ class _ConnectChannel:
                 })
             except Exception:
                 pass
+        # Auto-update preference is *global* (lives in device.json), not
+        # per-channel, so we read it from disk on every join rather than
+        # caching on the channel. A fresh Connect helper that spawned
+        # after the user toggled the preference in another tab must see
+        # the current value or Sparkle will run with stale defaults.
+        # ``None`` means "user has not expressed a preference" — let
+        # Sparkle's built-in default apply, no replay needed.
+        try:
+            disk_prefs = _load_device_preferences()
+        except Exception:
+            disk_prefs = None
+        if disk_prefs is not None and disk_prefs.auto_update_enabled is not None:
+            try:
+                await ws.send_json({
+                    "v": 1,
+                    "type": "set_auto_update",
+                    "enabled": disk_prefs.auto_update_enabled,
+                    "replayed": True,
+                })
+            except Exception:
+                pass
 
     async def leave(self, ws: WebSocket) -> None:
         self.clients.discard(ws)
@@ -2389,6 +2410,13 @@ class DevicePreferencesRequest(BaseModel):
     device_class: str
     audio_input_name: Optional[str] = None
     preferred_chain_family: Optional[str] = None
+    # Sparkle auto-update opt-in (§3C). ``None`` = "no expressed
+    # preference" (Sparkle's built-in default applies). ``True`` /
+    # ``False`` are explicit writes; when the value differs from the
+    # persisted record, POST also broadcasts ``set_auto_update`` to
+    # every active Connect peer so the change takes effect without
+    # waiting for a restart.
+    auto_update_enabled: Optional[bool] = None
 
 
 def _serialize_device_preferences(prefs: Optional[_DevicePreferences]) -> Optional[dict]:
@@ -2409,7 +2437,43 @@ def _serialize_device_preferences(prefs: Optional[_DevicePreferences]) -> Option
         ),
         "first_seen_iso": prefs.first_seen_iso,
         "last_used_iso": prefs.last_used_iso,
+        "auto_update_enabled": prefs.auto_update_enabled,
     }
+
+
+async def _broadcast_set_auto_update(enabled: bool) -> None:
+    """Notify every active Connect peer that the user toggled the
+    Sparkle auto-update preference.
+
+    The preference is global (lives in ``device.json``), not
+    per-session, so the broadcast fans out across every active
+    ``_ConnectChannel`` in the registry. The frame is fire-and-forget
+    from the server's perspective: Connect side writes
+    ``UserDefaults`` on receipt; Sparkle picks the value up on its
+    next scheduled-check tick. Failed sends are tolerated — the
+    next channel ``join()`` replays the value from disk anyway.
+    """
+    frame = {
+        "v": 1,
+        "type": "set_auto_update",
+        "enabled": enabled,
+        "replayed": False,
+    }
+    # Snapshot the channels under the registry lock so a concurrent
+    # join/leave doesn't mutate the dict while we iterate. We hold
+    # the lock only long enough to copy the values — the actual
+    # sends happen outside to avoid head-of-line blocking.
+    async with _connect_channels_lock:
+        channels = list(_connect_channels.values())
+    for chan in channels:
+        for client in list(chan.clients):
+            try:
+                await client.send_json(frame)
+            except Exception:
+                # Don't propagate per-client failures; the channel's
+                # own dead-client reaping path will catch the socket
+                # on its next broadcast.
+                pass
 
 
 @app.get("/api/device/preferences")
@@ -2466,6 +2530,9 @@ async def set_device_preferences_endpoint(
     # Preserve first_seen_iso if a record already exists.
     existing = _load_device_preferences()
     first_seen = existing.first_seen_iso if existing is not None else None
+    prev_auto_update = (
+        existing.auto_update_enabled if existing is not None else None
+    )
 
     prefs = _DevicePreferences(
         device_class=device_class,
@@ -2473,8 +2540,20 @@ async def set_device_preferences_endpoint(
         preferred_chain_family=family,
         first_seen_iso=first_seen,
         last_used_iso=None,  # save_preferences stamps this
+        auto_update_enabled=request.auto_update_enabled,
     )
     stamped = _save_device_preferences(prefs)
+
+    # Broadcast only when the auto-update preference actually changed
+    # AND has a concrete bool value. A no-op POST (e.g. the UI saving
+    # other fields without touching the toggle) must not spray
+    # ``set_auto_update`` frames across every Connect peer.
+    if (
+        stamped.auto_update_enabled is not None
+        and stamped.auto_update_enabled != prev_auto_update
+    ):
+        await _broadcast_set_auto_update(stamped.auto_update_enabled)
+
     return JSONResponse(content=_serialize_device_preferences(stamped))
 
 

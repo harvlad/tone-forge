@@ -40,6 +40,169 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Connect hardening — auto-update toggle UI (Priority 2)
+
+Closes the last open §3C bullet: *"silent auto-update default;
+user-facing toggle not yet surfaced in any settings UI."* The
+Sparkle 2.x framework has been wired since P2e (background
+check, EdDSA-verified appcast, install-on-quit) but the only way
+to opt out was `defaults write com.toneforge.connect
+SUEnableAutomaticChecks 0` from Terminal. This commit lands the
+browser-facing toggle.
+
+Design
+------
+
+Hybrid disk-persistence + WS broadcast:
+
+```
+Browser ⚙ Settings → "Check for updates automatically"
+   │
+   ▼ POST /api/device/preferences { auto_update_enabled: bool }
+   │
+backend/tone_forge_api.py
+   │       writes auto_update_enabled into device.json
+   │       (existing DevicePreferences contract, new optional
+   │       Bool field — None means "user has not expressed a
+   │       preference, let Sparkle's default apply")
+   │
+   ▼ broadcasts { v:1, type:"set_auto_update",
+   │              enabled:bool, replayed:false } to every
+   │              live `_ConnectChannel`
+   │
+connect/.../PresetBridge.swift dispatch → onSetAutoUpdate
+   │
+   ▼ AppDelegate.setAutoUpdateEnabled(_:) writes
+     UserDefaults.SUEnableAutomaticChecks; Sparkle picks the
+     value up on its next scheduled-check tick.
+
+Connect (re)join from a fresh helper:
+   _ConnectChannel.join() reads device.json from disk and
+   emits set_auto_update with replayed:true to the joining peer
+   so a supervisor-restarted helper picks up the persisted
+   choice without polling.
+```
+
+`device.json` is the authoritative source. The WS frame is a
+notification, not the persistence write. POST is the only way to
+change the persisted value.
+
+Why a Bool field on the existing `DevicePreferences` record and
+not a new persistence file: the file already holds user
+preferences for the onboarding answer; adding a sibling file for
+one Bool would be over-engineering. `Optional[bool] = None`
+threads through `contracts.py`, `devices/preferences.py`
+(round-trip with backwards-compat read), and the existing GET /
+POST / DELETE endpoints.
+
+What ships
+----------
+
+Backend (`backend/`):
+- `tone_forge/contracts.py`: `DevicePreferences.auto_update_enabled`
+  optional Bool.
+- `tone_forge/devices/preferences.py`: `_to_dict` / `_from_dict`
+  round-trip the new field; missing key on old `device.json`
+  maps to `None`.
+- `tone_forge/session/protocol.py`: new
+  `MessageType.SET_AUTO_UPDATE = "set_auto_update"` constant so
+  the parity gate against Swift's `setAutoUpdate` passes.
+- `tone_forge_api.py`:
+  - `DevicePreferencesRequest` accepts the new field.
+  - `_serialize_device_preferences` emits it.
+  - `_broadcast_set_auto_update(enabled)` fans the frame out to
+    every active `_ConnectChannel` (snapshot the registry under
+    the lock, send outside it).
+  - POST handler invokes the broadcast iff the new value is a
+    concrete bool AND differs from the persisted value (no-op
+    re-saves do not spray the network).
+  - `_ConnectChannel.join()` reads `DevicePreferences` from disk
+    and replays the bool with `replayed:true` when present.
+
+Swift (`connect/`):
+- `ConnectCore/Protocol.swift`:
+  `MessageType.setAutoUpdate = "set_auto_update"`.
+- `ConnectCore/PresetBridge.swift`:
+  `onSetAutoUpdate: ((Bool) -> Void)?` callback + dispatch case
+  in the inbound switch. Frame parses Bool *or* NSNumber for
+  `enabled` (JSONSerialization unboxes inconsistently).
+- `Connect/AppDelegate.swift`:
+  `setAutoUpdateEnabled(_ enabled: Bool)` writes
+  `UserDefaults.standard.set(enabled, forKey:
+  "SUEnableAutomaticChecks")` + logs to `NSLog`. Wired to
+  `bridge.onSetAutoUpdate` in `launchEngineAndBridge`.
+- `Resources/Info.plist`: removed the hardcoded
+  `<key>SUEnableAutomaticChecks</key><true/>` so the
+  `UserDefaults` write can take effect in either direction.
+  Sparkle's built-in default ("checks enabled") is unchanged on
+  factory installs because absence of the key has the same
+  effect as `true`.
+
+Browser (`backend/static/`):
+- `jam.html`: new "Connect helper" row inside the existing
+  settings popover with `#setting-auto-update-enabled`.
+- `jam.js`:
+  - `updateAutoUpdateSetting(prefs)` hydrates the checkbox from
+    the GET payload (treats `null` as "checked" because that
+    matches Sparkle's effective runtime default).
+  - `change` handler re-reads the existing record (so the POST
+    carries the required `device_class`), POSTs the new bool;
+    optimistic UI rollback on error.
+  - `ws.onmessage` branch for `set_auto_update` updates the
+    checkbox idempotently so cross-tab and cross-process changes
+    converge.
+
+Tests added
+-----------
+
+- `backend/tests/test_connect_bridge_set_auto_update.py` — 4
+  tests: broadcast on POST, join-time replay, no-broadcast-on-
+  no-op POST, null-pref-does-not-replay.
+- `backend/tests/test_api_device_preferences.py` — 4 rows
+  covering null-on-fresh, round-trip True/False, no-clobber of
+  other fields when toggling.
+- `backend/tests/test_connect_protocol_parity.py` — parametrize
+  row `("setAutoUpdate", "set_auto_update")` for cross-language
+  drift.
+
+Verify
+------
+
+```
+python3 -m pytest tests/test_api_device_preferences.py \
+                  tests/test_connect_bridge_set_auto_update.py \
+                  tests/test_connect_protocol_parity.py \
+                  -x -v
+  → 34 passed in ~8s
+
+python3 -m pytest tests/test_connect_bridge_apply_chain.py \
+                  tests/test_connect_bridge_replay.py \
+                  tests/test_connect_bridge_lifecycle.py \
+                  tests/test_connect_bridge_device_lost.py \
+                  tests/test_connect_error_codes.py \
+                  tests/test_api_connect_restart.py \
+                  tests/test_devices_preferences.py \
+                  tests/test_devices_discovery.py -q
+  → 100 passed in ~9s
+
+node --check backend/static/jam.js  → OK
+```
+
+Not in this commit
+------------------
+
+- No menu-bar checkbox in Connect itself. The browser is the
+  sole UI surface today. A Connect-side menu item could be
+  added later for parity with macOS conventions.
+- No "last update check" timestamp surfaced in the browser.
+- No surfacing of Sparkle errors (rate-limit, network failure)
+  in the UI.
+- No bump of `CONNECT_BRIDGE_PROTOCOL_VERSION`. Adding a new
+  server-emit message is additive; existing clients that don't
+  know `set_auto_update` ignore it on the default branch.
+- No rollback / `connect-prev/` mechanism (separate §3C item;
+  still tracked).
+
 ### Connect hardening — `device_lost` frame (Priority 2)
 
 Closes the last not-landed §3E item: *"Audio device loss
@@ -2249,7 +2412,7 @@ aspirational and is documented below as "considered, not landed".
 - **Verification**: `spctl -a -t open --context context:primary-signature`
   against the stapled DMG (CI gate).
 
-### C. Update Path — **mostly landed**
+### C. Update Path — **landed (modulo rollback)**
 
 - **Framework**: Sparkle 2.x with EdDSA signing (`SUPublicEDKey` in
   `Info.plist`, filled at release time from secrets by
@@ -2258,9 +2421,28 @@ aspirational and is documented below as "considered, not landed".
   (RSS XML, version-keyed). The prior `toneforge.app/connect/`
   wording was aspirational; the live URL is the GitHub Pages site
   and is the value in `connect/Resources/Info.plist::SUFeedURL`.
-- **Default**: silent auto-update (`SUEnableAutomaticChecks=true`,
-  `SUScheduledCheckInterval=86400`); user-facing toggle not yet
-  surfaced in any settings UI.
+- **Default**: silent auto-update on a 24-hour cadence
+  (`SUScheduledCheckInterval=86400` in `Info.plist`); the
+  `SUEnableAutomaticChecks` Info.plist key was removed in favour of
+  Sparkle's built-in default (also `true`) so the user's
+  `UserDefaults` write can take effect in either direction.
+- **User-facing toggle**: **landed**. The Jam settings popover
+  surfaces "Check for updates automatically"
+  (`backend/static/jam.html` "Connect helper" row;
+  `backend/static/jam.js` `setting-auto-update-enabled`). Browser
+  toggling flows through `POST /api/device/preferences`
+  (`auto_update_enabled` field on `DevicePreferences`); the server
+  persists to `device.json` AND broadcasts
+  `set_auto_update` over the WS bridge so live Connect helpers
+  write the value into `UserDefaults.SUEnableAutomaticChecks`
+  without restart. Replayed on Connect-side WS join from disk so a
+  freshly-spawned helper picks up the persisted choice. Pinned by
+  `backend/tests/test_connect_bridge_set_auto_update.py` (4 tests:
+  broadcast on POST, join-time replay, no-broadcast-on-no-op POST,
+  null-pref-does-not-replay) and the auto-update wire-shape rows in
+  `backend/tests/test_api_device_preferences.py`. Cross-language
+  drift gated by the `("setAutoUpdate", "set_auto_update")` row in
+  `backend/tests/test_connect_protocol_parity.py`.
 - **Channel**: single `stable` channel today; `beta` channel is
   Phase 2.
 - **Rollback to `connect-prev/`**: **not implemented.** Sparkle owns

@@ -487,6 +487,13 @@ class DevicePreferences:
     preferred_chain_family: Optional[MonitorChainFamily] = None
     first_seen_iso: Optional[str] = None
     last_used_iso: Optional[str] = None
+    # ``None`` means the user has not expressed a preference; the Connect
+    # helper falls back to Sparkle's default (which is "checks enabled"
+    # when neither Info.plist nor UserDefaults overrides it). ``True`` /
+    # ``False`` are an explicit opt-in / opt-out written into Connect's
+    # ``UserDefaults`` via the ``set_auto_update`` WS frame. See
+    # EXECUTION_PLAN §3C "Auto-update".
+    auto_update_enabled: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------

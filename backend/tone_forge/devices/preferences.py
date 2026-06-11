@@ -63,6 +63,7 @@ def _to_dict(prefs: DevicePreferences) -> dict:
         ),
         "first_seen_iso": prefs.first_seen_iso,
         "last_used_iso": prefs.last_used_iso,
+        "auto_update_enabled": prefs.auto_update_enabled,
     }
 
 
@@ -86,12 +87,29 @@ def _from_dict(payload: dict) -> DevicePreferences:
     else:
         family = MonitorChainFamily(raw_family)
 
+    raw_auto_update = payload.get("auto_update_enabled")
+    auto_update: Optional[bool]
+    if raw_auto_update is None:
+        # Missing key in pre-§3C-toggle device.json files maps to
+        # ``None`` (no expressed preference; let Sparkle default apply).
+        auto_update = None
+    elif isinstance(raw_auto_update, bool):
+        auto_update = raw_auto_update
+    else:
+        # Anything other than null/bool is corruption; reject so
+        # ``load_preferences`` returns ``None`` and the UI re-prompts.
+        raise ValueError(
+            "auto_update_enabled must be null or bool, got "
+            f"{type(raw_auto_update).__name__}"
+        )
+
     return DevicePreferences(
         device_class=device_class,
         audio_input_name=payload.get("audio_input_name"),
         preferred_chain_family=family,
         first_seen_iso=payload.get("first_seen_iso"),
         last_used_iso=payload.get("last_used_iso"),
+        auto_update_enabled=auto_update,
     )
 
 
@@ -137,6 +155,7 @@ def save_preferences(prefs: DevicePreferences) -> DevicePreferences:
         preferred_chain_family=prefs.preferred_chain_family,
         first_seen_iso=prefs.first_seen_iso or now,
         last_used_iso=now,
+        auto_update_enabled=prefs.auto_update_enabled,
     )
 
     path = preferences_path()

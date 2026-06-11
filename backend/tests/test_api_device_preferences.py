@@ -180,3 +180,98 @@ def test_delete_is_idempotent(temp_prefs_path: Path) -> None:
     # Second delete also succeeds.
     response = client.delete("/api/device/preferences")
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# auto_update_enabled (§3C — Sparkle opt-in toggle)
+# ---------------------------------------------------------------------------
+#
+# Wire-shape regression tests for the new ``auto_update_enabled`` field
+# on the existing preferences record. The cross-process semantics — the
+# WS broadcast to the Connect peer, the replay-on-join — live in
+# ``test_connect_bridge_set_auto_update.py`` so this file stays
+# focused on the HTTP layer.
+
+
+def test_get_returns_auto_update_null_on_fresh_record(temp_prefs_path: Path) -> None:
+    """A fresh record (POST without ``auto_update_enabled``) returns
+    ``null`` for the field. ``null`` is the wire signal for "no
+    expressed preference"; the browser maps it to checked-by-default
+    because Sparkle's runtime default is "enabled" when no override
+    is set. See ``updateAutoUpdateSetting`` in ``jam.js``.
+    """
+    saved = client.post(
+        "/api/device/preferences",
+        json={"device_class": "helix"},
+    ).json()
+    assert saved["auto_update_enabled"] is None
+
+    fetched = client.get("/api/device/preferences").json()
+    assert fetched["auto_update_enabled"] is None
+
+
+def test_post_round_trips_auto_update_false(temp_prefs_path: Path) -> None:
+    """Explicit opt-out persists across GET. Pinning ``False`` not
+    ``None`` matters because the Connect helper interprets these
+    differently: ``False`` → ``UserDefaults.SUEnableAutomaticChecks =
+    NO``; ``None`` → no UserDefaults write (Sparkle default applies).
+    """
+    saved = client.post(
+        "/api/device/preferences",
+        json={"device_class": "helix", "auto_update_enabled": False},
+    ).json()
+    assert saved["auto_update_enabled"] is False
+
+    fetched = client.get("/api/device/preferences").json()
+    assert fetched["auto_update_enabled"] is False
+
+
+def test_post_round_trips_auto_update_true(temp_prefs_path: Path) -> None:
+    """Explicit opt-in also persists. Belt-and-braces for the case
+    where a user opts out and later opts back in — we must write
+    ``True``, not ``None``, so the UserDefaults override stays in
+    place even if Sparkle's default ever changes.
+    """
+    saved = client.post(
+        "/api/device/preferences",
+        json={"device_class": "helix", "auto_update_enabled": True},
+    ).json()
+    assert saved["auto_update_enabled"] is True
+
+    fetched = client.get("/api/device/preferences").json()
+    assert fetched["auto_update_enabled"] is True
+
+
+def test_post_auto_update_does_not_clobber_other_fields(
+    temp_prefs_path: Path,
+) -> None:
+    """A POST that re-sends the existing device_class + flips only
+    the auto-update bool must not drop other fields. Guards the JS
+    settings handler which re-reads the record via GET before
+    POSTing the toggle change — a regression here would silently
+    drop ``audio_input_name`` from the persisted record.
+    """
+    first = client.post(
+        "/api/device/preferences",
+        json={
+            "device_class": "helix",
+            "audio_input_name": "Focusrite Scarlett 2i2",
+            "preferred_chain_family": "edge_of_breakup",
+        },
+    ).json()
+    assert first["audio_input_name"] == "Focusrite Scarlett 2i2"
+
+    second = client.post(
+        "/api/device/preferences",
+        json={
+            "device_class": first["device_class"],
+            "audio_input_name": first["audio_input_name"],
+            "preferred_chain_family": first["preferred_chain_family"],
+            "auto_update_enabled": False,
+        },
+    ).json()
+    assert second["audio_input_name"] == "Focusrite Scarlett 2i2"
+    assert second["preferred_chain_family"] == "edge_of_breakup"
+    assert second["auto_update_enabled"] is False
+    # first_seen_iso preserved (re-saves rule).
+    assert second["first_seen_iso"] == first["first_seen_iso"]

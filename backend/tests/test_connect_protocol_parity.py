@@ -216,6 +216,15 @@ def test_swift_message_type_names_use_known_wire_strings():
         # the field (the helper would silently stop emitting the frame
         # and the browser would never see device loss).
         ("deviceLost", "device_lost"),
+        # ``set_auto_update`` is server → Connect. Emitted when the
+        # browser-side Sparkle auto-update toggle changes (or replayed
+        # on Connect join from device.json). Drift-pinning the Swift
+        # constant here so a refactor that drops it surfaces in CI
+        # rather than the field: without the case in the Swift
+        # dispatcher, the helper would silently ignore the frame and
+        # the browser toggle would have no effect on running helpers.
+        # See EXECUTION_PLAN §3C.
+        ("setAutoUpdate", "set_auto_update"),
     ],
 )
 def test_swift_declares_known_message_type(swift_name, wire_string):

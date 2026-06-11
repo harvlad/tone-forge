@@ -87,6 +87,15 @@ class MessageType:
     DEVICE_CHANGED = "device_changed"
     LATENCY_REPORT = "latency_report"
 
+    # --- Server → Connect notifications ------------------------------------
+    # Browser-initiated preference change: toggle Sparkle's
+    # ``SUEnableAutomaticChecks`` UserDefaults key on the helper.
+    # Emitted by ``tone_forge_api.py`` from the POST handler for
+    # ``/api/device/preferences`` when ``auto_update_enabled`` changes,
+    # and replayed on Connect-side WS join from the persisted
+    # ``device.json``. See EXECUTION_PLAN §3C.
+    SET_AUTO_UPDATE = "set_auto_update"
+
     # --- Lifecycle (broadcast by server) -----------------------------------
     # ``peer_left`` is emitted to the survivors when a peer is reaped — by
     # a broadcast send failure today, by the heartbeat probe added in the
