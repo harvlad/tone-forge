@@ -65,6 +65,7 @@ backend/benchmark_results/
 backend/profile_results/
 backend/preset_catalog_output/
 backend/data/tone_log.jsonl
+backend/data/history.json
 
 # Node (frontend)
 node_modules/
