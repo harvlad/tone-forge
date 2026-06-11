@@ -253,6 +253,102 @@ body {
   background: #45b29d;
 }
 
+/* ================================================================
+   Trim Preview
+   ================================================================ */
+.trim-preview {
+  margin-top: 20px;
+  padding: 16px;
+  background: var(--paper-deep);
+  border: 1px solid var(--rule);
+}
+
+.trim-preview .section-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  margin-bottom: 12px;
+}
+
+.trim-canvas-wrap {
+  position: relative;
+  background: var(--ink);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.trim-canvas-wrap canvas,
+#trim-canvas {
+  display: block;
+  width: 100%;
+  height: 120px;
+  cursor: ew-resize;
+}
+
+.trim-info {
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.trim-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.trim-actions .btn {
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+.btn--primary {
+  background: var(--copper);
+  color: var(--paper);
+  border: none;
+  font-family: var(--mono);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn--primary:hover {
+  background: var(--copper-deep);
+}
+
+.btn--secondary {
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn--secondary:hover {
+  background: var(--paper-deep);
+  border-color: var(--ink-faint);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--ink-faint);
+  border: none;
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.btn--ghost:hover {
+  color: var(--ink);
+}
+
 .status {
   margin-top: 24px;
   font-family: var(--mono);
@@ -267,6 +363,19 @@ body {
 }
 .status.is-error { color: var(--copper-deep); }
 @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+.admin-link {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--copper);
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+.admin-link:hover {
+  color: var(--copper-deep);
+  text-decoration: underline;
+}
 
 /* ================================================================
    Result column / empty state
@@ -775,6 +884,13 @@ body {
   color: var(--copper);
   margin-left: 2px;
 }
+.tab--low-confidence {
+  opacity: 0.6;
+}
+.tab--low-confidence::after {
+  content: '?';
+  color: var(--muted);
+}
 
 /* Preview section */
 .preview-section {
@@ -878,12 +994,128 @@ body {
   color: var(--ink-faint);
 }
 
+/* Stem previews */
+.stem-previews {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+.stem-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--paper-deep);
+  border-radius: 4px;
+}
+.stem-preview-item .stem-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  min-width: 60px;
+}
+.stem-preview-item .btn--preview {
+  padding: 8px 14px;
+  font-size: 11px;
+}
+.stem-preview-item audio {
+  height: 32px;
+  flex: 1;
+  max-width: 300px;
+}
+.stem-preview-item audio::-webkit-media-controls-panel {
+  background: var(--paper);
+}
+.stem-preview-item .preview-status {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
 /* Export section */
 .export-section {
   margin-top: 32px;
   padding-top: 16px;
   border-top: 1px solid var(--rule);
 }
+
+.export-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.export-row {
+  border-bottom: 1px solid var(--rule);
+}
+.export-row:last-child {
+  border-bottom: none;
+}
+
+.export-row--header {
+  border-bottom: none;
+}
+.export-row--header td {
+  padding-top: 16px;
+}
+.export-row--header:first-child td {
+  padding-top: 0;
+}
+
+.export-row--deep {
+  opacity: 0.6;
+}
+
+.export-row--midi-stem {
+  background: var(--copper-glow);
+}
+.export-row--midi-stem .export-cell--name {
+  color: var(--copper);
+  font-weight: 400;
+}
+
+.export-cell {
+  padding: 8px 0;
+  vertical-align: middle;
+}
+
+.export-cell--category {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  padding-bottom: 6px;
+}
+
+.export-cell--name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  width: 140px;
+}
+
+.export-cell--desc {
+  color: var(--ink-faint);
+  padding-right: 16px;
+}
+
+.export-cell--action {
+  text-align: right;
+  width: 80px;
+}
+
+@media (max-width: 600px) {
+  .export-cell--desc { display: none; }
+  .export-cell--name { width: auto; }
+}
+
+/* Legacy button wrapper - keep for backwards compatibility */
 .export-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -892,15 +1124,16 @@ body {
 }
 .btn--export {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.10em;
-  padding: 10px 16px;
+  letter-spacing: 0.08em;
+  padding: 6px 12px;
   border: 1px solid var(--ink-soft);
   background: var(--paper-deep);
   color: var(--ink-soft);
   cursor: pointer;
   transition: all 0.2s;
+  min-width: 70px;
 }
 .btn--export:hover {
   border-color: var(--copper);
@@ -1452,4 +1685,34 @@ body {
 .processing-upgrade:hover {
   opacity: 1;
   color: var(--copper);
+}
+
+/* ================================================================
+   Plugin Matching Styles
+   ================================================================ */
+
+/* Plugin badge - appears on chain items */
+.plugin-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--success);
+  background: rgba(45, 122, 78, 0.1);
+  border: 1px solid rgba(45, 122, 78, 0.3);
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+/* Dark mode support for plugin badges */
+@media (prefers-color-scheme: dark) {
+  .plugin-badge {
+    background: rgba(74, 222, 128, 0.15);
+    border-color: rgba(74, 222, 128, 0.3);
+    color: #4ade80;
+  }
 }

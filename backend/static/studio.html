@@ -356,6 +356,42 @@
             border-bottom: 1px solid #333;
         }
 
+        .card-help {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin: -10px 0 15px 0;
+            line-height: 1.4;
+        }
+
+        .metric-explanations {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #333;
+        }
+
+        .metric-explanations summary {
+            cursor: pointer;
+            font-size: 0.75rem;
+            color: var(--primary);
+            margin-bottom: 10px;
+        }
+
+        .metric-explanations ul {
+            margin: 0;
+            padding: 0 0 0 20px;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .metric-explanations li {
+            margin-bottom: 6px;
+        }
+
+        .metric-explanations strong {
+            color: var(--text-primary);
+        }
+
         .metric {
             display: grid;
             grid-template-columns: 100px 1fr auto;
@@ -1891,7 +1927,20 @@
                 <!-- Stem Quality -->
                 <div class="card" id="stemQualityCard">
                     <h2>Stem Quality</h2>
+                    <p class="card-help" id="stemQualityHelp"></p>
                     <div id="stemQualityMetrics"></div>
+                    <div class="metric-explanations" id="metricExplanations">
+                        <details>
+                            <summary>What do these metrics mean?</summary>
+                            <ul>
+                                <li><strong>Overall Quality:</strong> Combined score. &gt;70% is good, &lt;50% may affect accuracy.</li>
+                                <li><strong>Transient Integrity:</strong> How well attack transients are preserved. Low = timing may be off.</li>
+                                <li><strong>Contamination Score:</strong> Bleed from other instruments. High = other instruments detected in stem.</li>
+                                <li><strong>Reverb Density:</strong> Amount of reverb/ambience. High = note boundaries harder to detect.</li>
+                                <li><strong>SNR Estimate:</strong> Signal-to-noise ratio in dB. &gt;20 is good, &lt;15 may miss quiet notes.</li>
+                            </ul>
+                        </details>
+                    </div>
                 </div>
 
                 <!-- Contamination -->
@@ -2477,22 +2526,27 @@
             progressLog.innerHTML = '';
 
             if (mode === 'deep') {
-                // Deep analysis REQUIRES local engine to avoid blocking the server
-                if (!localEngineAvailable) {
-                    loading.classList.remove('active');
-                    alert('Deep analysis requires local GPU engine.\n\nPlease start the local engine or select Quick/Standard mode.');
-                    return;
-                }
+                // Deep analysis - prefer local engine but allow server fallback
+                const useLocalEngine = localEngineAvailable;
+                const analyzeUrl = useLocalEngine
+                    ? `${LOCAL_ENGINE_URL}/api/analyze-deep`
+                    : '/api/analyze-stream';  // Fallback to server API
 
-                const analyzeUrl = `${LOCAL_ENGINE_URL}/api/analyze-deep`;
-
-                document.getElementById('loadingText').textContent = 'Deep GPU analysis (local engine)...';
+                document.getElementById('loadingText').textContent = useLocalEngine
+                    ? 'Deep GPU analysis (local engine)...'
+                    : 'Deep analysis (server - may take longer)...';
                 progressContainer.classList.add('active');
 
                 const formData = new FormData();
                 formData.append('file', file);
                 if (startTime !== null) formData.append('start_time', startTime);
                 if (endTime !== null) formData.append('end_time', endTime);
+
+                // For server fallback, add analysis mode parameters
+                if (!useLocalEngine) {
+                    formData.append('fast_mode', 'false');
+                    formData.append('analysis_mode', 'deep');
+                }
 
                 try {
                     const response = await fetch(analyzeUrl, {
@@ -2531,8 +2585,10 @@
                             if (line.startsWith('data: ')) {
                                 const data = JSON.parse(line.substring(6));
 
-                                if (data.stage) {
-                                    stageName.textContent = data.stage.replace('_', ' ');
+                                // Handle progress events (both formats)
+                                if (data.stage || data.type === 'progress') {
+                                    const stage = data.stage || data.message || '';
+                                    stageName.textContent = stage.replace('_', ' ');
                                 }
                                 if (data.percent !== undefined) {
                                     progressBar.style.width = data.percent + '%';
@@ -2541,9 +2597,17 @@
                                 if (data.message) {
                                     addLog(data.message, data.error ? 'error' : '');
                                 }
+
+                                // Handle result (local engine format)
                                 if (data.success !== undefined) {
                                     addLog(`Analysis complete in ${data.total_time_sec?.toFixed(1)}s`, 'success');
                                     displayDeepResults(data);
+                                }
+                                // Handle result (server API format)
+                                if (data.type === 'result' && data.data) {
+                                    const result = data.data;
+                                    addLog(`Analysis complete in ${result.profiling?.total_ms ? (result.profiling.total_ms / 1000).toFixed(1) : '?'}s`, 'success');
+                                    displayDeepResults(result);
                                 }
                             }
                         }
@@ -2633,9 +2697,70 @@
             }
         }
 
+        // Save analysis result to history
+        async function saveToHistory(data) {
+            console.log('=== saveToHistory DEBUG ===');
+            console.log('data.filename:', data.filename);
+            console.log('data.source_name:', data.source_name);
+            console.log('data.tone?.source?.filename:', data.tone?.source?.filename);
+            console.log('currentAnalysisFile:', currentAnalysisFile);
+            console.log('currentAnalysisFile?.name:', currentAnalysisFile?.name);
+
+            try {
+                // Get filename from various possible locations (local engine vs server)
+                const filename = data.filename || data.source_name ||
+                                 data.tone?.source?.filename ||
+                                 currentAnalysisFile?.name || 'Unknown';
+
+                console.log('Final filename chosen:', filename);
+
+                // Format matches what /api/history/save expects
+                const historyPayload = {
+                    filename: filename,
+                    result: data,  // Pass full result for storage
+                };
+
+                const response = await fetch('/api/history/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(historyPayload),
+                });
+
+                if (response.ok) {
+                    console.log('Saved to history successfully!');
+                    // Refresh history list
+                    if (typeof loadHistory === 'function') {
+                        loadHistory();
+                    }
+                } else {
+                    console.error('History save failed:', response.status, await response.text());
+                }
+            } catch (err) {
+                console.warn('Failed to save to history:', err);
+            }
+            console.log('===========================');
+        }
+
         async function displayDeepResults(data) {
             const detectedType = data.detected_type || 'guitar';
-            console.log('displayDeepResults:', { detectedType, keys: Object.keys(data).slice(0, 15) });
+
+            // Comprehensive debug logging
+            console.log('=== displayDeepResults DEBUG ===');
+            console.log('All keys:', Object.keys(data));
+            console.log('detected_type:', data.detected_type);
+            console.log('filename:', data.filename);
+            console.log('source_name:', data.source_name);
+            console.log('currentAnalysisFile:', currentAnalysisFile?.name);
+            console.log('profiling:', data.profiling);
+            console.log('total_time_sec:', data.total_time_sec);
+            console.log('quality:', data.quality);
+            console.log('waveform:', data.waveform ? 'present' : 'missing');
+            console.log('stems_paths:', data.stems_paths);
+            console.log('midi:', data.midi);
+            console.log('================================');
+
+            // Save to history (do this first so we can debug)
+            saveToHistory(data);
 
             // Get the primary instrument data based on detected type
             let instrumentData = null;
@@ -2683,9 +2808,40 @@
 
             console.log('displayDeepResults extracted:', { detectedType, primaryLabel, primaryValue, confidence });
 
+            // Derive filename from all possible sources
+            const derivedFilename = data.filename || data.source_name ||
+                                    data.tone?.source?.filename ||
+                                    currentAnalysisFile?.name || 'Unknown';
+
+            // Build profiling object from local engine data if not present
+            // Local engine returns processing_time (seconds), not profiling.total_ms
+            let profilingData = data.profiling;
+            const processingTimeSec = data.total_time_sec || data.processing_time || 0;
+
+            if (!profilingData && processingTimeSec > 0) {
+                // Synthesize profiling from local engine format
+                profilingData = {
+                    total_ms: processingTimeSec * 1000,
+                    stages: {
+                        stem_separation: { duration_ms: processingTimeSec * 500 },  // Estimate ~50% for stems
+                        midi_extraction: { duration_ms: processingTimeSec * 300 },  // Estimate ~30% for MIDI
+                        instrument_analysis: { duration_ms: processingTimeSec * 200 },  // Estimate ~20% for analysis
+                        total_ms: processingTimeSec * 1000,
+                    },
+                    audio_duration_sec: data.duration_sec || 0,
+                    processing_ratio: data.duration_sec ? (processingTimeSec / data.duration_sec) : 0,
+                };
+                console.log('Synthesized profiling from local engine:', profilingData);
+            }
+
+            // Calculate analysis time from synthesized or original profiling data
+            const analysisTimeMs = profilingData?.total_ms ||
+                                   profilingData?.stages?.total_ms ||
+                                   (processingTimeSec * 1000);
+
             // Format deep analysis results for display
             const formatted = {
-                filename: data.filename || data.source_name || 'Unknown',
+                filename: derivedFilename,
                 duration_sec: data.duration_sec || descriptor.source?.duration_sec,
                 sample_rate: data.sample_rate || descriptor.source?.sample_rate || 22050,
                 reconstruction_available: true,
@@ -2711,23 +2867,57 @@
                 guitar_details: descriptor?.guitar || null,
                 synth_details: descriptor?.synth_family ? descriptor : null,
                 midi: data.midi || null,  // Keep original for provenance
-                midi_stats: data.midi || {},
+                // For local engine: aggregate midi_stems into midi_stats
+                midi_stats: data.midi || (() => {
+                    if (data.midi_stems && Object.keys(data.midi_stems).length > 0) {
+                        // Aggregate from midi_stems
+                        const allStems = Object.values(data.midi_stems);
+                        const totalNotes = allStems.reduce((sum, s) => sum + (s?.note_count || 0), 0);
+                        const firstWithTempo = allStems.find(s => s?.tempo_bpm || s?.tempo);
+                        // Use top-level extraction_time_sec if available, otherwise aggregate from stems
+                        const extractionTimeMs = (data.extraction_time_sec || 0) * 1000 ||
+                            allStems.reduce((sum, s) => sum + (s?.extraction_time_ms || 0), 0);
+                        return {
+                            note_count: totalNotes,
+                            tempo: firstWithTempo?.tempo_bpm || firstWithTempo?.tempo || 120,
+                            total_time_ms: extractionTimeMs,
+                            overall_confidence: allStems.length > 0
+                                ? allStems.reduce((sum, s) => sum + (s?.confidence || 0.7), 0) / allStems.length
+                                : 0,
+                        };
+                    }
+                    return {};
+                })(),
                 midi_data: data.midi || null,
                 midi_stems: data.midi_stems || {},
                 stems_available: Object.keys(data.stems_paths || data.stems || {}),
                 stems_paths: data.stems_paths || data.stems || {},
-                analysis_time_ms: data.profiling?.total_ms || (data.total_time_sec || data.profiling?.total_time_sec || 0) * 1000,
-                profiling: data.profiling || null,
+                analysis_time_ms: analysisTimeMs,
+                profiling: profilingData,
                 tone_reasoning: instrumentData?.reasoning || descriptor.reasoning || null,
                 waveform: data.waveform || null,
                 // Arrangement data
                 sections: data.sections || [],
                 energy_curve: data.energy_curve || [],
-                tempo: data.midi?.tempo || data.midi_stats?.tempo || 120,
+                tempo: data.midi?.tempo || (() => {
+                    // Extract tempo from midi_stems if available
+                    if (data.midi_stems) {
+                        const stemWithTempo = Object.values(data.midi_stems).find(s => s?.tempo);
+                        if (stemWithTempo) return stemWithTempo.tempo;
+                    }
+                    return 120;
+                })(),
                 duration_sec: data.duration_sec || 0,
                 // Store descriptor for preview generation
                 descriptor: descriptor,
             };
+
+            console.log('Formatted result:', {
+                filename: formatted.filename,
+                analysis_time_ms: formatted.analysis_time_ms,
+                hasProfiling: !!formatted.profiling,
+                profilingKeys: formatted.profiling ? Object.keys(formatted.profiling) : 'null',
+            });
 
             await displayResults(formatted);
         }
@@ -2781,7 +2971,17 @@
                     <div class="label">Warnings</div>
                 </div>
                 <div class="summary-item">
-                    <div class="value">${(data.analysis_time_ms || 0).toFixed(0)}ms</div>
+                    <div class="value">${(() => {
+                        const ms = data.analysis_time_ms || 0;
+                        if (ms >= 60000) {
+                            const min = Math.floor(ms / 60000);
+                            const sec = Math.round((ms % 60000) / 1000);
+                            return `${min}m ${sec}s`;
+                        } else if (ms >= 1000) {
+                            return `${(ms / 1000).toFixed(1)}s`;
+                        }
+                        return `${ms.toFixed(0)}ms`;
+                    })()}</div>
                     <div class="label">Analysis Time</div>
                 </div>
             `;
@@ -2803,11 +3003,32 @@
             ) : {};
             displayMetrics('stemQualityMetrics', stemQualityMetrics, true);
 
+            // Add quality explanation based on metrics
+            const qualityHelp = document.getElementById('stemQualityHelp');
+            if (qualityHelp && data.stem_quality) {
+                const q = data.stem_quality;
+                const issues = [];
+                if ((q.overall_quality || 0) < 0.5) {
+                    if ((q.transient_integrity || 1) < 0.5) issues.push('degraded transients affecting timing accuracy');
+                    if ((q.reverb_density || 0) > 0.5) issues.push('heavy reverb making note boundaries unclear');
+                    if ((q.contamination_score || 0) > 0.3) issues.push('bleed from other instruments');
+                    if ((q.snr_estimate || 30) < 15) issues.push('low signal-to-noise ratio');
+                }
+                if (issues.length > 0) {
+                    qualityHelp.textContent = `Lower quality due to: ${issues.join(', ')}.`;
+                } else if ((q.overall_quality || 0) >= 0.7) {
+                    qualityHelp.textContent = 'Good quality stem - analysis should be accurate.';
+                } else {
+                    qualityHelp.textContent = 'Moderate quality - results may need manual review.';
+                }
+            }
+
             // Contamination (filter out regions array for metrics display)
             const contaminationMetrics = data.contamination ? {
-                overall_score: data.contamination.overall_score,
-                drum_bleed: data.contamination.drum_bleed,
-                vocal_bleed: data.contamination.vocal_bleed,
+                overall: data.contamination.overall_contamination ?? data.contamination.overall_score,
+                ...Object.fromEntries(
+                    Object.entries(data.contamination.contamination_by_type || {})
+                ),
             } : {};
             displayMetrics('contaminationMetrics', contaminationMetrics, true, true);
 
@@ -2843,21 +3064,15 @@
                     </div>
                     <div class="metric">
                         <span class="metric-label">Confidence</span>
-                        ${(() => {
+                        <span class="metric-value">${(() => {
                             // Calculate confidence - use provided value or estimate from note count
                             let conf = data.midi_stats.overall_confidence || 0;
                             if (conf === 0 && data.midi_stats.note_count > 0) {
                                 // Estimate confidence based on note count (more notes = more confident)
                                 conf = Math.min(0.85, 0.3 + (data.midi_stats.note_count / 500) * 0.55);
                             }
-                            const level = conf < 0.5 ? 'low' : conf < 0.7 ? 'medium' : 'high';
-                            return `
-                                <div class="bar-container">
-                                    <div class="bar-fill ${level}" style="width: ${(conf * 100)}%"></div>
-                                </div>
-                                <span class="metric-value">${(conf * 100).toFixed(0)}%</span>
-                            `;
-                        })()}
+                            return `${(conf * 100).toFixed(0)}%`;
+                        })()}</span>
                     </div>
                     ${midiPath ? `
                     <div style="margin-top: 1rem;">
@@ -2969,14 +3184,16 @@
                 stems: {},
             };
 
-            // Add stem data if available
-            const stemTypes = ['drums', 'bass', 'pads', 'leads', 'vocals', 'other'];
+            // Add stem data if available - use actual stems from API
+            const stemTypes = ['drums', 'bass', 'guitar', 'piano', 'vocals', 'other'];
             stemTypes.forEach(stemType => {
-                if (data.midi_stems?.[stemType] || data.waveform) {
+                const midiStem = data.midi_stems?.[stemType];
+                if (midiStem && midiStem.note_count > 0) {
                     analysisResult.stems[stemType] = {
                         waveform: data.waveform,  // Use main waveform for now
-                        midi: data.midi_stems?.[stemType]?.notes || [],
-                        confidence: data.midi_stems?.[stemType]?.confidence || 0.8,
+                        midi: midiStem.notes || [],
+                        note_count: midiStem.note_count || 0,
+                        confidence: midiStem.confidence || 0.8,
                     };
                 }
             });
@@ -3958,9 +4175,20 @@
             `;
         }
 
+        // Track all stem audio elements for master play control
+        let stemAudioElements = [];
+
         function displayAudioPlayers(elementId, stemsPaths, midiStems, descriptor) {
             const el = document.getElementById(elementId);
             const card = document.getElementById('audioPlayersCard');
+
+            // Debug logging for preview issues
+            console.log('displayAudioPlayers:', {
+                hasStemPaths: !!stemsPaths && Object.keys(stemsPaths || {}).length,
+                hasMidiStems: !!midiStems && Object.keys(midiStems || {}).length,
+                hasDescriptor: !!descriptor,
+                descriptorKeys: descriptor ? Object.keys(descriptor) : 'null',
+            });
 
             const hasStemPaths = stemsPaths && Object.keys(stemsPaths).length > 0;
             const hasMidiStems = midiStems && Object.keys(midiStems).length > 0;
@@ -3971,6 +4199,74 @@
             }
             card.style.display = 'block';
             el.innerHTML = '';
+            stemAudioElements = [];  // Reset audio elements
+
+            // Master play/stop controls (only if we have stem audio)
+            if (hasStemPaths) {
+                const masterControls = document.createElement('div');
+                masterControls.style.cssText = 'display: flex; gap: 0.5rem; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);';
+
+                let isPlaying = false;
+
+                const playAllBtn = document.createElement('button');
+                playAllBtn.innerHTML = '▶ Play All';
+                playAllBtn.style.cssText = 'flex: 1; padding: 0.75rem; background: var(--success); border: none; border-radius: 0.5rem; color: white; font-weight: bold; cursor: pointer; font-family: inherit;';
+
+                function updatePlayButton() {
+                    if (isPlaying) {
+                        playAllBtn.innerHTML = '⏸ Pause All';
+                        playAllBtn.style.background = 'var(--warning)';
+                    } else {
+                        playAllBtn.innerHTML = '▶ Play All';
+                        playAllBtn.style.background = 'var(--success)';
+                    }
+                }
+
+                playAllBtn.onclick = () => {
+                    if (isPlaying) {
+                        // Pause all
+                        stemAudioElements.forEach(audio => audio.pause());
+                        isPlaying = false;
+                    } else {
+                        // Play all from current position (or start if stopped)
+                        stemAudioElements.forEach(audio => {
+                            audio.play().catch(() => {});
+                        });
+                        isPlaying = true;
+                    }
+                    updatePlayButton();
+                };
+
+                const stopAllBtn = document.createElement('button');
+                stopAllBtn.innerHTML = '⏹ Stop';
+                stopAllBtn.style.cssText = 'padding: 0.75rem 1.5rem; background: var(--error); border: none; border-radius: 0.5rem; color: white; font-weight: bold; cursor: pointer; font-family: inherit;';
+                stopAllBtn.onclick = () => {
+                    stemAudioElements.forEach(audio => {
+                        audio.pause();
+                        audio.currentTime = 0;
+                    });
+                    isPlaying = false;
+                    updatePlayButton();
+                };
+
+                // Sync play state when any audio ends
+                setTimeout(() => {
+                    stemAudioElements.forEach(audio => {
+                        audio.addEventListener('ended', () => {
+                            // Check if all audios have ended
+                            const allEnded = stemAudioElements.every(a => a.paused || a.ended);
+                            if (allEnded) {
+                                isPlaying = false;
+                                updatePlayButton();
+                            }
+                        });
+                    });
+                }, 100);
+
+                masterControls.appendChild(playAllBtn);
+                masterControls.appendChild(stopAllBtn);
+                el.appendChild(masterControls);
+            }
 
             // Helper to create a stem card
             function createStemCard(stemName, stemPath, midiData) {
@@ -4001,9 +4297,12 @@
                     const audio = document.createElement('audio');
                     audio.controls = true;
                     audio.style.width = '100%';
-                    audio.preload = 'none';
+                    audio.preload = 'metadata';  // Load metadata for duration
                     audio.innerHTML = `<source src="${audioSrc}" type="audio/wav">`;
                     card.appendChild(audio);
+
+                    // Track for master play control
+                    stemAudioElements.push(audio);
 
                     // Download link
                     const downloadLink = document.createElement('a');
@@ -4027,6 +4326,13 @@
                     card.appendChild(midiLink);
 
                     // Reconstructed tone preview section
+                    console.log('Preview check:', {
+                        stemName,
+                        hasDescriptor: !!descriptor,
+                        descriptorAmp: descriptor?.amp?.family,
+                        hasTonePreview: typeof TonePreview !== 'undefined',
+                        midiNotes: midiData?.note_count
+                    });
                     if (descriptor && typeof TonePreview !== 'undefined') {
                         const previewSection = document.createElement('div');
                         previewSection.style.cssText = 'margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border);';
@@ -4082,28 +4388,31 @@
             const el = document.getElementById(elementId);
             const card = document.getElementById('profilingCard');
 
-            if (!profiling || !profiling.stages) {
+            console.log('displayProfiling called:', { profiling, hasStages: !!profiling?.stages, totalMs: profiling?.total_ms });
+
+            // Check for profiling data - support both nested and flat formats
+            const hasProfilingData = profiling && (profiling.stages || profiling.total_ms);
+            if (!hasProfilingData) {
+                console.log('displayProfiling: No profiling data, hiding card');
                 card.style.display = 'none';
                 return;
             }
+            console.log('displayProfiling: Showing profiling card');
             card.style.display = 'block';
 
-            const stages = profiling.stages;
-            const totalMs = profiling.total_ms || 0;
+            // Support both nested (stages) and flat formats
+            const stages = profiling.stages || profiling;
+            const totalMs = stages.total_ms || profiling.total_ms || 0;
 
-            // Stage order and labels
+            // Stage order and labels - match API response keys
             const stageOrder = [
-                { key: 'loading', label: 'Audio Loading', icon: '📂' },
+                { key: 'audio_loading', label: 'Audio Loading', icon: '📂' },
+                { key: 'detection', label: 'Content Detection', icon: '🔍' },
                 { key: 'stem_separation', label: 'Stem Separation', icon: '🎸' },
-                { key: 'stem_quality', label: 'Stem Quality Analysis', icon: '📊' },
-                { key: 'contamination', label: 'Contamination Detection', icon: '🔍' },
-                { key: 'artifacts', label: 'Artifact Detection', icon: '⚠️' },
-                { key: 'role', label: 'Role Classification', icon: '🎭' },
-                { key: 'continuity', label: 'Temporal Continuity', icon: '⏱️' },
-                { key: 'confidence_map', label: 'Confidence Mapping', icon: '🗺️' },
-                { key: 'quality_report', label: 'Quality Report', icon: '📋' },
+                { key: 'quality_analysis', label: 'Quality Analysis', icon: '📊' },
+                { key: 'instrument_analysis', label: 'Instrument Analysis', icon: '🎛️' },
                 { key: 'midi_extraction', label: 'MIDI Extraction', icon: '🎹' },
-                { key: 'tone_analysis', label: 'Tone Analysis', icon: '🎛️' },
+                { key: 'section_detection', label: 'Section Detection', icon: '📍' },
             ];
 
             let html = `
@@ -4114,11 +4423,11 @@
                     </div>
                     <div>
                         <span style="color: var(--text-secondary);">Audio Duration</span>
-                        <div style="font-size: 1.5rem; font-weight: bold;">${profiling.audio_duration_sec?.toFixed(1) || 0}s</div>
+                        <div style="font-size: 1.5rem; font-weight: bold;">${(stages.audio_duration_sec || profiling.audio_duration_sec || 0).toFixed(1)}s</div>
                     </div>
                     <div>
                         <span style="color: var(--text-secondary);">Processing Ratio</span>
-                        <div style="font-size: 1.5rem; font-weight: bold;">${profiling.processing_ratio?.toFixed(2) || 0}x</div>
+                        <div style="font-size: 1.5rem; font-weight: bold;">${(stages.processing_ratio || profiling.processing_ratio || 0).toFixed(2)}x</div>
                     </div>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 0.5rem;">
@@ -4128,7 +4437,8 @@
                 const stage = stages[key];
                 if (!stage) continue;
 
-                const durationMs = stage.duration_ms || 0;
+                // Handle both formats: {duration_ms: 123} or direct ms value
+                const durationMs = typeof stage === 'object' ? (stage.duration_ms || 0) : stage;
                 const percent = totalMs > 0 ? (durationMs / totalMs) * 100 : 0;
                 // Only show error if there's an actual error message string
                 const hasError = stage.error && typeof stage.error === 'string' && stage.error.length > 0;

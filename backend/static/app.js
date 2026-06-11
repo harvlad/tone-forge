@@ -1,4 +1,5 @@
 // Tone Forge — frontend logic. Plain JS, no framework.
+// Version: 2026-05-24-v2 (preview fix)
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -34,6 +35,22 @@ let recordingTimer = null;
 
 // Store the full analysis result for tab switching
 let currentResult = null;
+
+// Trim preview state
+let trimState = {
+  file: null,           // Pending file to analyze
+  url: null,            // Pending URL to analyze
+  waveformData: null,   // Waveform data from preview
+  trimmerInstance: null // WaveformTrimmer instance
+};
+
+// Trim preview elements
+const trimPreview = $('#trim-preview');
+const trimCanvas = $('#trim-canvas');
+const trimRange = $('#trim-range');
+const analyzeSelectionBtn = $('#analyze-selection');
+const analyzeFullBtn = $('#analyze-full');
+const cancelTrimBtn = $('#cancel-trim');
 
 // Deep analysis checkbox - persist preference in localStorage
 const deepAnalysisCheckbox = $('#deep-analysis');
@@ -72,6 +89,7 @@ async function checkLocalEngine() {
       const infoResp = await fetch(`${LOCAL_ENGINE_URL}/`);
       localEngineInfo = await infoResp.json();
       localEngineAvailable = true;
+      TonePlugins.setAvailable(true);
       updateLocalEngineUI(true);
       console.log('Local engine connected:', localEngineInfo);
       return true;
@@ -79,6 +97,7 @@ async function checkLocalEngine() {
   } catch (e) {
     // Local engine not running - this is fine
     localEngineAvailable = false;
+    TonePlugins.setAvailable(false);
     localEngineInfo = null;
     updateLocalEngineUI(false);
   }
@@ -139,6 +158,23 @@ function updateLocalEngineUI(connected) {
 // Check local engine on load and periodically
 checkLocalEngine();
 setInterval(checkLocalEngine, 10000); // Check every 10 seconds
+
+// -----------------------------------------------------------------------------
+// Plugin Matching (uses shared TonePlugins utility)
+// -----------------------------------------------------------------------------
+
+// Wrapper functions for backward compatibility
+async function fetchPluginMatches(descriptor) {
+  return TonePlugins.fetchMatches(descriptor);
+}
+
+function getPluginMatch(blockFamily) {
+  return TonePlugins.getMatch(blockFamily);
+}
+
+function createPluginBadge(plugin) {
+  return TonePlugins.createBadge(plugin);
+}
 
 // -----------------------------------------------------------------------------
 // Local Engine Deep Analysis
@@ -203,6 +239,25 @@ async function analyzeWithLocalEngine(file) {
       throw new Error('No result received from local engine');
     }
 
+    // Save to main server history to get admin_url
+    try {
+      const saveResp = await fetch('/api/history/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: file.name,
+          result: finalData,
+        }),
+      });
+      if (saveResp.ok) {
+        const saved = await saveResp.json();
+        finalData.history_id = saved.id;
+        finalData.admin_url = `/studio?analysis=${saved.id}`;
+      }
+    } catch (e) {
+      console.warn('Could not save to history:', e);
+    }
+
     return finalData;
 
   } catch (err) {
@@ -248,10 +303,144 @@ fileInput.addEventListener('change', () => {
   if (file) handleFile(file);
 });
 
+// -----------------------------------------------------------------------------
+// Trim Preview Helpers
+// -----------------------------------------------------------------------------
+
+function formatTrimTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  const ms = Math.floor((seconds % 1) * 100);
+  if (mins > 0) {
+    return `${mins}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+  }
+  return `${secs}.${ms.toString().padStart(2, '0')}`;
+}
+
+function showTrimPreview(waveformData) {
+  trimState.waveformData = waveformData;
+  console.log('showTrimPreview:', { duration: waveformData.duration_sec, hasTrimCanvas: !!trimCanvas, hasWaveformTrimmer: typeof WaveformTrimmer !== 'undefined' });
+
+  // Show trim preview section
+  if (trimPreview) {
+    trimPreview.hidden = false;
+  }
+
+  // Initialize waveform trimmer
+  if (trimCanvas && typeof WaveformTrimmer !== 'undefined') {
+    // Destroy existing instance
+    if (trimState.trimmerInstance) {
+      WaveformTrimmer.destroy(trimCanvas);
+    }
+
+    trimState.trimmerInstance = WaveformTrimmer.init(trimCanvas, waveformData, {
+      mode: 'trim',
+      initialStart: waveformData.start_timestamp || 0,
+      initialEnd: waveformData.duration_sec,
+      onChange: updateTrimInfo,
+    });
+    console.log('WaveformTrimmer initialized:', !!trimState.trimmerInstance);
+
+    // Initial update
+    updateTrimInfo(trimState.trimmerInstance.getSelection());
+  } else {
+    console.warn('WaveformTrimmer not available:', { trimCanvas: !!trimCanvas, WaveformTrimmer: typeof WaveformTrimmer });
+  }
+}
+
+function updateTrimInfo(selection) {
+  if (trimRange) {
+    const start = formatTrimTime(selection.startTime);
+    const end = formatTrimTime(selection.endTime);
+    const dur = formatTrimTime(selection.duration);
+    trimRange.textContent = `${start} - ${end} (${dur} selected)`;
+  }
+}
+
+function hideTrimPreview() {
+  if (trimPreview) {
+    trimPreview.hidden = true;
+  }
+
+  // Destroy trimmer instance
+  if (trimState.trimmerInstance && trimCanvas) {
+    WaveformTrimmer.destroy(trimCanvas);
+    trimState.trimmerInstance = null;
+  }
+
+  // Clear state
+  trimState.file = null;
+  trimState.url = null;
+  trimState.waveformData = null;
+}
+
+async function analyzeWithTrim(startTime, endTime) {
+  console.log('analyzeWithTrim called:', { startTime, endTime, hasFile: !!trimState.file, hasUrl: !!trimState.url, url: trimState.url });
+
+  // Store URL/file before hiding (hideTrimPreview clears them!)
+  const url = trimState.url;
+  const file = trimState.file;
+
+  hideTrimPreview();
+
+  if (file) {
+    // Analyze file with trim params
+    await analyzeFileWithTrim(file, startTime, endTime);
+  } else if (url) {
+    // Analyze URL with trim params
+    await analyzeUrlWithTrim(url, startTime, endTime);
+  } else {
+    console.error('analyzeWithTrim: No file or URL available');
+    setStatus('error', 'No file or URL to analyze');
+  }
+}
+
+// Trim button handlers
+if (analyzeSelectionBtn) {
+  analyzeSelectionBtn.addEventListener('click', () => {
+    console.log('Analyze Selection clicked:', {
+      hasTrimmer: !!trimState.trimmerInstance,
+      hasUrl: !!trimState.url,
+      hasFile: !!trimState.file
+    });
+    if (trimState.trimmerInstance) {
+      const sel = trimState.trimmerInstance.getSelection();
+      console.log('Selection:', sel);
+      analyzeWithTrim(sel.startTime, sel.endTime);
+    } else if (trimState.url || trimState.file) {
+      // Fallback: analyze full track if trimmer failed to init
+      console.warn('Trimmer not initialized, analyzing full track');
+      analyzeWithTrim(null, null);
+    } else {
+      console.error('No file or URL to analyze');
+      setStatus('error', 'No file or URL to analyze');
+    }
+  });
+}
+
+if (analyzeFullBtn) {
+  analyzeFullBtn.addEventListener('click', () => {
+    if (trimState.waveformData) {
+      analyzeWithTrim(null, null); // Full track
+    }
+  });
+}
+
+if (cancelTrimBtn) {
+  cancelTrimBtn.addEventListener('click', () => {
+    hideTrimPreview();
+    setStatus('idle', 'Cancelled');
+  });
+}
+
+// -----------------------------------------------------------------------------
+// File Handling with Trim Preview
+// -----------------------------------------------------------------------------
+
 async function handleFile(file) {
   const deepAnalysis = $('#deep-analysis')?.checked || false;
 
-  // Use local engine for deep analysis if available
+  // For local engine analysis, skip trim preview (local engine has its own UI)
   if (deepAnalysis && localEngineAvailable) {
     setStatus('working', `Analyzing ${file.name} on local GPU...`);
 
@@ -263,45 +452,139 @@ async function handleFile(file) {
       const duration = data.descriptor?.source?.duration_sec || data.descriptor?.duration_sec || 0;
       const detected = data.detection?.summary ? ` (${data.detection.summary})` : '';
       const device = data.processing?.device_name || 'GPU';
-      setStatus('idle', `Done - ${duration.toFixed(1)}s analyzed${detected} [${device}]`);
+
+      let adminLink = '';
+      if (data.admin_url) {
+        adminLink = ` <a href="${data.admin_url}" target="_blank" class="admin-link">Open in Studio →</a>`;
+      }
+      setStatus('idle', `Done - ${duration.toFixed(1)}s analyzed${detected} [${device}].${adminLink}`, !!data.admin_url);
       return;
     } catch (err) {
-      // Fall back to cloud
       console.warn('Local engine failed, using cloud:', err);
       setStatus('working', `Local engine unavailable, using cloud...`);
     }
   }
 
-  // Standard cloud analysis
-  setStatus('working', `Analyzing ${file.name} (${humanBytes(file.size)})...`);
+  // Generate waveform preview first
+  setStatus('working', `Generating preview for ${file.name}...`);
+
+  try {
+    const previewForm = new FormData();
+    previewForm.append('file', file);
+
+    const previewResp = await fetch('/api/preview-waveform', {
+      method: 'POST',
+      body: previewForm,
+    });
+
+    if (!previewResp.ok) {
+      const body = await previewResp.json().catch(() => ({}));
+      throw new Error(body.detail || `Preview failed: HTTP ${previewResp.status}`);
+    }
+
+    const waveformData = await previewResp.json();
+
+    // Store file for later analysis
+    trimState.file = file;
+    trimState.url = null;
+
+    // Show trim preview
+    showTrimPreview(waveformData);
+    setStatus('idle', `Select region to analyze (${waveformData.duration_sec?.toFixed(1)}s total)`);
+
+  } catch (err) {
+    setStatus('error', `Preview failed: ${err.message}`);
+    console.error(err);
+  }
+}
+
+async function analyzeFileWithTrim(file, startTime, endTime) {
+  const deepAnalysis = $('#deep-analysis')?.checked || false;
+
+  setStatus('working', `Analyzing ${file.name}...`);
 
   const form = new FormData();
   form.append('file', file);
   form.append('source_kind', 'auto');
   form.append('platform', 'auto');
+  form.append('fast_mode', deepAnalysis ? 'false' : 'true');
+  // Deep analysis must also set analysis_mode=deep so the backend picks
+  // PipelineConfig.deep() (with stem separation), not standard.
+  form.append('analysis_mode', deepAnalysis ? 'deep' : 'studio');
+
+  // Add trim parameters if specified
+  if (startTime !== null) {
+    form.append('start_time', startTime.toString());
+  }
+  if (endTime !== null) {
+    form.append('end_time', endTime.toString());
+  }
 
   try {
-    const resp = await fetch('/api/analyze', { method: 'POST', body: form });
+    const resp = await fetch('/api/analyze-stream', { method: 'POST', body: form });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(body.detail || `HTTP ${resp.status}`);
     }
-    const data = await resp.json();
-    currentResult = data;
-    renderUnifiedResult(data);
 
-    const duration = data.descriptor?.source?.duration_sec || data.descriptor?.duration_sec || 0;
-    const detected = data.detection?.summary ? ` (${data.detection.summary})` : '';
-    setStatus('idle', `Done - ${duration.toFixed(1)}s analyzed${detected}.`);
+    // Process SSE stream
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const msg = JSON.parse(line.slice(6));
+            if (msg.type === 'progress') {
+              const percent = msg.percent ? ` (${msg.percent}%)` : '';
+              setStatus('working', `${msg.message}${percent}`);
+            } else if (msg.type === 'result') {
+              currentResult = msg.data;
+              renderUnifiedResult(msg.data);
+              const duration = msg.data.descriptor?.source?.duration_sec || msg.data.descriptor?.duration_sec || 0;
+              const detected = msg.data.detection?.summary ? ` (${msg.data.detection.summary})` : '';
+              let adminLink = '';
+              if (msg.data.history_id) {
+                adminLink = ` <a href="/studio?analysis=${msg.data.history_id}" target="_blank" class="admin-link">Open in Studio →</a>`;
+              }
+              setStatus('idle', `Done - ${duration.toFixed(1)}s analyzed${detected}.${adminLink}`, !!msg.data.history_id);
+            } else if (msg.type === 'error') {
+              throw new Error(msg.message);
+            }
+          } catch (parseErr) {
+            if (parseErr.message !== 'Unexpected end of JSON input') {
+              console.warn('Parse error:', parseErr);
+            }
+          }
+        }
+      }
+    }
   } catch (err) {
     setStatus('error', `Failed: ${err.message}`);
     console.error(err);
   }
 }
 
-function setStatus(kind, text) {
+function setStatus(kind, text, allowHtml = false) {
   status.className = 'status' + (kind === 'working' ? ' is-working' : kind === 'error' ? ' is-error' : '');
-  status.textContent = text;
+  // Use innerHTML when explicitly allowed (for admin links etc)
+  const hasLink = text.includes('<a');
+  console.log('setStatus:', { kind, allowHtml, hasLink, textLength: text.length });
+  if (allowHtml && hasLink) {
+    console.log('Using innerHTML for admin link');
+    status.innerHTML = text;
+  } else {
+    status.textContent = text;
+  }
 }
 
 function humanBytes(n) {
@@ -358,6 +641,28 @@ async function exportPreset(format, stem = '') {
     }
     chain = [];
     descriptor = {};
+  // End-to-end reconstruction: extracted MIDI + matched preset → .als
+  } else if (format === 'reconstruction') {
+    // Find the best available MIDI to attach. Prefer the single-pass MIDI
+    // result, then fall back to any present stem.
+    let recoMidi = currentResult.midi || null;
+    if (!recoMidi && currentResult.midi_stems) {
+      const preferred = ['bass', 'vocals', 'other', 'drums'];
+      for (const key of preferred) {
+        if (currentResult.midi_stems[key]?.content) {
+          recoMidi = currentResult.midi_stems[key];
+          break;
+        }
+      }
+    }
+    if (!recoMidi) {
+      setStatus('error', 'Reconstruction requires MIDI extraction. Enable "Deep analysis" or re-analyze with MIDI on.');
+      return;
+    }
+    midiData = recoMidi;
+    fullResult = currentResult;
+    chain = [];
+    descriptor = currentResult.descriptor || {};
   // Project Bundle needs deep analysis with MIDI stems
   } else if (format === 'project_bundle') {
     if (!currentResult.midi_stems || Object.keys(currentResult.midi_stems).length === 0) {
@@ -460,6 +765,7 @@ function downloadFile(filename, content, contentType) {
     'application/x-ableton-live-set',
     'application/x-ableton-wavetable',
     'application/x-ableton-analog',
+    'application/octet-stream',
     'audio/midi',
     'application/zip',
   ];
@@ -486,7 +792,140 @@ function downloadFile(filename, content, contentType) {
   URL.revokeObjectURL(url);
 }
 
+// Build a chain card from a descriptor (for deep analysis results that lack chain)
+function buildChainFromDescriptor(descriptor) {
+  if (!descriptor) return { picks: [], tweak_hints: [] };
+
+  const picks = [];
+
+  // Amp
+  if (descriptor.amp) {
+    const amp = descriptor.amp;
+    const voicing = amp.voicing || {};
+    picks.push({
+      slot: 'amp',
+      block_id: `amp_${amp.family || 'unknown'}`,
+      display: (amp.family || 'Unknown').replace(/_/g, ' ').toUpperCase(),
+      params: {
+        drive: Math.round((amp.gain || 0.5) * 10 * 10) / 10,
+        bass: Math.round((voicing.bass || 0.5) * 10 * 10) / 10,
+        mid: Math.round((voicing.mid || 0.5) * 10 * 10) / 10,
+        treble: Math.round((voicing.treble || 0.5) * 10 * 10) / 10,
+        presence: Math.round((voicing.presence || 0.5) * 10 * 10) / 10,
+        master: 6.5,
+      },
+      rationale: `Detected ${amp.family || 'unknown'} amp family`,
+      block_family: amp.family,
+    });
+  }
+
+  // Cab
+  if (descriptor.cab) {
+    const cab = descriptor.cab;
+    picks.push({
+      slot: 'cab',
+      block_id: `cab_${cab.configuration || '4x12'}`,
+      display: `${cab.configuration || '4x12'} ${(cab.speaker_character || 'british').replace(/_/g, ' ')}`.toUpperCase(),
+      params: { mic: '57 Dynamic', distance: 1.0 },
+      rationale: `${cab.speaker_character || 'Unknown'} speaker character`,
+      block_family: 'cab_ir',
+    });
+  }
+
+  // Effects
+  const effects = descriptor.effects || {};
+
+  // Handle both overdrive_pedal (standard format) and overdrive (deep analysis format)
+  const od = effects.overdrive_pedal || effects.overdrive;
+  if (od && (od.drive > 0.05 || od.style)) {
+    picks.push({
+      slot: 'drive',
+      block_id: `od_${od.style || 'tube_screamer'}`,
+      display: (od.style || 'Overdrive').replace(/_/g, ' ').toUpperCase(),
+      params: { drive: Math.round((od.drive || 0.5) * 10 * 10) / 10, level: Math.round((od.level || 0.5) * 10 * 10) / 10 },
+      rationale: `${od.style || 'Overdrive'} pedal detected`,
+      block_family: `overdrive_${od.style || 'generic'}`,
+    });
+  }
+
+  // Compressor
+  if (effects.compressor && effects.compressor.amount > 0.1) {
+    const comp = effects.compressor;
+    picks.push({
+      slot: 'compressor',
+      block_id: `comp_${comp.character || 'studio'}`,
+      display: `${(comp.character || 'Studio').toUpperCase()} COMPRESSOR`,
+      params: { amount: Math.round(comp.amount * 100) },
+      rationale: `${comp.character || 'Studio'} compression detected`,
+      block_family: 'compressor',
+    });
+  }
+
+  if (effects.delay && effects.delay.type !== 'none' && effects.delay.mix > 0.03) {
+    const dl = effects.delay;
+    picks.push({
+      slot: 'delay',
+      block_id: `delay_${dl.type}`,
+      display: `${dl.type} DELAY`.toUpperCase(),
+      params: { time_ms: Math.round(dl.time_ms || 300), feedback: Math.round((dl.feedback || 0.3) * 10 * 10) / 10, mix: Math.round((dl.mix || 0.2) * 100) },
+      rationale: `${dl.type} delay at ${Math.round(dl.time_ms || 300)}ms`,
+      block_family: `delay_${dl.type}`,
+    });
+  }
+
+  if (effects.reverb && effects.reverb.type !== 'none' && effects.reverb.mix > 0.03) {
+    const rv = effects.reverb;
+    picks.push({
+      slot: 'reverb',
+      block_id: `reverb_${rv.type}`,
+      display: `${rv.type} REVERB`.toUpperCase(),
+      params: { decay: Math.round((rv.size || 0.4) * 10 * 10) / 10, mix: Math.round((rv.mix || 0.2) * 100) },
+      rationale: `${rv.type} reverb detected`,
+      block_family: `reverb_${rv.type}`,
+    });
+  }
+
+  if (effects.modulation && effects.modulation.type !== 'none' && effects.modulation.depth > 0.05) {
+    const mod = effects.modulation;
+    picks.push({
+      slot: 'modulation',
+      block_id: `mod_${mod.type}`,
+      display: `${mod.type}`.toUpperCase(),
+      params: { rate: Math.round((mod.rate || 0.5) * 10 * 10) / 10, depth: Math.round((mod.depth || 0.5) * 10 * 10) / 10 },
+      rationale: `${mod.type} modulation detected`,
+      block_family: `modulation_${mod.type}`,
+    });
+  }
+
+  return { picks, tweak_hints: [] };
+}
+
 function renderUnifiedResult(data) {
+  // Normalize deep analysis format (has tone but no guitar) to unified format
+  if (data.tone && !data.guitar) {
+    const tone = data.tone;
+    // Deep analysis stores amp/cab/effects directly in tone, not in tone.descriptor
+    const descriptor = {
+      amp: tone.amp,
+      cab: tone.cab,
+      effects: tone.effects,
+      guitar: tone.guitar,
+      confidence: tone.confidence,
+    };
+    // Build guitar structure from tone data
+    data.guitar = {
+      descriptor: descriptor,
+      platforms: {
+        helix: buildChainFromDescriptor(descriptor),
+      },
+      tweak_hints: tone.tweak_hints || [],
+    };
+    // Set detected type if not set
+    if (!data.detected_type) {
+      data.detected_type = 'guitar';
+    }
+  }
+
   resultEmpty.hidden = true;
   resultEl.hidden = false;
 
@@ -506,35 +945,25 @@ function renderUnifiedResult(data) {
     detectionInfo.hidden = true;
   }
 
-  // Update tabs to show which have data (can be multiple)
+  // Use shared detection utility for tab visibility
+  const conf = data.detection?.confidence || {};
   const tabs = document.querySelectorAll('.tab');
-  tabs.forEach(tab => {
-    tab.classList.remove('tab--active', 'tab--detected');
-    const platform = tab.dataset.platform;
-    // Mark tabs that have data
-    const hasData = (
-      (platform === 'helix' && data.guitar) ||
-      (platform === 'pedals' && data.guitar) ||
-      (platform === 'bass' && data.bass) ||
-      (platform === 'drums' && data.drums) ||
-      (platform === 'synth' && data.synth)
-    );
-    if (hasData) {
-      tab.classList.add('tab--detected');
-    }
-  });
+
+  // Update tab visibility using shared utility
+  const firstVisibleTab = ToneDetection.updateTabVisibility(tabs, conf, data);
 
   // Default to primary detected type's tab
-  let defaultPlatform = 'helix';
-  if (data.detected_type === 'drums') defaultPlatform = 'drums';
-  else if (data.detected_type === 'bass') defaultPlatform = 'bass';
-  else if (data.detected_type === 'synth') defaultPlatform = 'synth';
-  else if (data.detected_type === 'guitar') defaultPlatform = 'helix';
+  const defaultPlatform = ToneDetection.getDefaultPlatform(data.detected_type);
 
-  const defaultTab = document.querySelector(`.tab[data-platform="${defaultPlatform}"]`);
+  // Find the default tab - if it's hidden, use first visible tab
+  let defaultTab = document.querySelector(`.tab[data-platform="${defaultPlatform}"]`);
+  if (defaultTab && defaultTab.style.display === 'none') {
+    const firstVisible = document.querySelector('.tab:not([style*="display: none"])');
+    if (firstVisible) defaultTab = firstVisible;
+  }
   if (defaultTab) defaultTab.classList.add('tab--active');
 
-  renderForPlatform(data, defaultPlatform);
+  renderForPlatform(data, defaultTab?.dataset.platform || defaultPlatform);
 
   // Update MIDI button state - now shows per-stem options
   updateMidiButtons(data);
@@ -544,72 +973,65 @@ function renderUnifiedResult(data) {
 
   // Update ALS button state
   updateALSButton(data);
+
+  // Update Reconstruction button state
+  updateReconstructionButton(data);
 }
 
 function updateMidiButtons(data) {
   const midiBtn = document.getElementById('btn-midi');
-  const midiContainer = midiBtn?.parentElement;
+  if (!midiBtn) return;
 
-  if (!midiContainer) return;
-
-  // Remove any previously added stem buttons
-  const oldStemBtns = midiContainer.parentElement.querySelectorAll('.btn--midi-stem');
-  oldStemBtns.forEach(btn => btn.parentElement?.remove());
+  // Remove any previously added stem rows
+  const oldStemRows = document.querySelectorAll('.export-row--midi-stem');
+  oldStemRows.forEach(row => row.remove());
 
   if (data.midi_stems && Object.keys(data.midi_stems).length > 0) {
-    // We have per-stem MIDI - hide original button and show individual stem buttons
-    midiContainer.style.display = 'none';
+    // We have per-stem MIDI - update main button and add stem rows
+    const totalNotes = Object.values(data.midi_stems).reduce((sum, s) => sum + (s.note_count || 0), 0);
+    const stemCount = Object.keys(data.midi_stems).length;
+    midiBtn.classList.remove('btn--disabled');
+    midiBtn.disabled = false;
+    midiBtn.textContent = `${totalNotes} notes`;
+    midiBtn.dataset.stem = 'all';
 
-    // Order stems logically: drums, bass, guitar, keys, synth, vocals
-    const stemOrder = ['drums', 'bass', 'guitar', 'piano', 'other', 'vocals'];
-    let insertAfter = midiContainer;
+    // Add individual stem rows after the MIDI row
+    const midiRow = midiBtn.closest('.export-row');
+    if (midiRow) {
+      const stemOrder = ['drums', 'bass', 'guitar', 'piano', 'other', 'vocals'];
+      let insertAfter = midiRow;
 
-    for (const stemKey of stemOrder) {
-      if (data.midi_stems[stemKey]) {
-        const stemData = data.midi_stems[stemKey];
-        const label = stemData.label || stemKey.charAt(0).toUpperCase() + stemKey.slice(1);
+      for (const stemKey of stemOrder) {
+        if (data.midi_stems[stemKey]) {
+          const stemData = data.midi_stems[stemKey];
+          const label = stemData.label || stemKey.charAt(0).toUpperCase() + stemKey.slice(1);
 
-        const wrapper = document.createElement('span');
-        wrapper.className = 'tooltip-wrap';
-
-        const btn = document.createElement('button');
-        btn.className = 'btn btn--export btn--midi-stem';
-        btn.dataset.format = 'midi';
-        btn.dataset.stem = stemKey;
-        btn.textContent = `${label} MIDI (${stemData.note_count})`;
-
-        const tooltip = document.createElement('span');
-        tooltip.className = 'tooltip';
-        const descriptions = {
-          drums: 'Kick, snare, and hihat hits (GM drum mapping)',
-          bass: 'Bass line notes',
-          guitar: 'Guitar notes',
-          piano: 'Piano/keys notes',
-          other: 'Synth/lead notes',
-          vocals: 'Vocal melody notes',
-        };
-        tooltip.textContent = `${descriptions[stemKey] || label + ' notes'} extracted from isolated stem. Much cleaner than full mix.`;
-
-        wrapper.appendChild(btn);
-        wrapper.appendChild(tooltip);
-
-        // Insert after previous button
-        midiContainer.parentElement.insertBefore(wrapper, insertAfter.nextSibling);
-        insertAfter = wrapper;
+          const row = document.createElement('tr');
+          row.className = 'export-row export-row--midi-stem';
+          row.innerHTML = `
+            <td class="export-cell export-cell--name" style="padding-left: 20px;">↳ ${label}</td>
+            <td class="export-cell export-cell--desc">${stemData.note_count} notes from isolated stem</td>
+            <td class="export-cell export-cell--action">
+              <button class="btn btn--export btn--midi-stem" data-format="midi" data-stem="${stemKey}">Export</button>
+            </td>
+          `;
+          insertAfter.after(row);
+          insertAfter = row;
+        }
       }
     }
 
   } else if (data.midi) {
-    // Legacy single MIDI result - show original button
-    midiContainer.style.display = '';
+    // Legacy single MIDI result - show note count
     midiBtn.classList.remove('btn--disabled');
-    midiBtn.textContent = `MIDI (${data.midi.note_count} notes)`;
+    midiBtn.disabled = false;
+    midiBtn.textContent = `${data.midi.note_count} notes`;
     midiBtn.dataset.stem = '';
   } else {
-    // No MIDI data - show disabled original button
-    midiContainer.style.display = '';
-    midiBtn.classList.add('btn--disabled');
-    midiBtn.textContent = 'MIDI (needs Deep analysis)';
+    // No MIDI data - show export button (always available for polyphonic extraction)
+    midiBtn.classList.remove('btn--disabled');
+    midiBtn.disabled = false;
+    midiBtn.textContent = 'Export';
     midiBtn.dataset.stem = '';
   }
 }
@@ -619,14 +1041,19 @@ function updateProjectBundleButton(data) {
   if (!bundleBtn) return;
 
   const hasMidiStems = data.midi_stems && Object.keys(data.midi_stems).length > 0;
+  const row = bundleBtn.closest('.export-row');
 
   if (hasMidiStems) {
     const stemCount = Object.keys(data.midi_stems).length;
     bundleBtn.classList.remove('btn--disabled');
-    bundleBtn.textContent = `Project Bundle (${stemCount} stems)`;
+    bundleBtn.disabled = false;
+    bundleBtn.textContent = `${stemCount} stems`;
+    if (row) row.classList.remove('export-row--deep');
   } else {
     bundleBtn.classList.add('btn--disabled');
-    bundleBtn.textContent = 'Project Bundle (needs Deep analysis)';
+    bundleBtn.disabled = true;
+    bundleBtn.textContent = 'Deep only';
+    if (row) row.classList.add('export-row--deep');
   }
 }
 
@@ -635,14 +1062,42 @@ function updateALSButton(data) {
   if (!alsBtn) return;
 
   const hasMidiStems = data.midi_stems && Object.keys(data.midi_stems).length > 0;
+  const row = alsBtn.closest('.export-row');
 
   if (hasMidiStems) {
     const stemCount = Object.keys(data.midi_stems).length;
     alsBtn.classList.remove('btn--disabled');
-    alsBtn.textContent = `Live Set .als (${stemCount} tracks)`;
+    alsBtn.disabled = false;
+    alsBtn.textContent = `${stemCount} tracks`;
+    if (row) row.classList.remove('export-row--deep');
   } else {
     alsBtn.classList.add('btn--disabled');
-    alsBtn.textContent = 'Live Set .als (needs Deep analysis)';
+    alsBtn.disabled = true;
+    alsBtn.textContent = 'Deep only';
+    if (row) row.classList.add('export-row--deep');
+  }
+}
+
+function updateReconstructionButton(data) {
+  const btn = document.getElementById('btn-reconstruction');
+  if (!btn) return;
+
+  // Reconstruction needs at least one usable MIDI source. Accept either a
+  // single-pass MIDI result or any per-stem MIDI with notes.
+  const hasSingleMidi = !!(data.midi && data.midi.content);
+  const hasAnyStemMidi = !!(
+    data.midi_stems &&
+    Object.values(data.midi_stems).some((s) => s && s.content)
+  );
+
+  if (hasSingleMidi || hasAnyStemMidi) {
+    btn.classList.remove('btn--disabled');
+    btn.disabled = false;
+    btn.textContent = 'Download .als';
+  } else {
+    btn.classList.add('btn--disabled');
+    btn.disabled = true;
+    btn.textContent = 'Needs MIDI';
   }
 }
 
@@ -675,8 +1130,36 @@ function renderForPlatform(data, platform) {
     updateHeader(data.guitar.descriptor, 'guitar', timestamp, sourceUrl, sourceName);
     renderHints(data.guitar.tweak_hints);
   } else {
-    // No data for this platform - show empty state
-    $('#chain-list').innerHTML = '<li class="chain__item"><div class="chain__body">No analysis available for this type</div></li>';
+    // No data for this platform - show empty state with appropriate message
+    const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
+    $('#chain-list').innerHTML = `<li class="chain__item"><div class="chain__body">No ${platformName} analysis available. Deep analysis currently focuses on the guitar/other stem.</div></li>`;
+
+    // Update header to reflect selected platform (show N/A values)
+    const displayName = sourceName || 'Analysis';
+    $('#r-filename').textContent = displayName;
+
+    // Update labels based on platform type
+    if (platform === 'drums') {
+      $('#r-family-label').textContent = 'machine';
+      $('#r-gain-label').textContent = 'tempo';
+    } else if (platform === 'synth') {
+      $('#r-family-label').textContent = 'oscillator';
+      $('#r-gain-label').textContent = 'brightness';
+    } else if (platform === 'bass') {
+      $('#r-family-label').textContent = 'amp family';
+      $('#r-gain-label').textContent = 'gain';
+    } else {
+      $('#r-family-label').textContent = 'amp family';
+      $('#r-gain-label').textContent = 'gain';
+    }
+
+    // Show dashes for values since no data
+    $('#r-amp-family').textContent = '-';
+    $('#r-gain').textContent = '-';
+    $('#r-conf').textContent = '-';
+    $('#r-duration').textContent = data.duration_sec ? `${data.duration_sec.toFixed(1)}s` : '-';
+
+    renderHints([]);
   }
 
   // Raw JSON
@@ -1101,11 +1584,8 @@ function renderDrumsChain(drumsData) {
     list.appendChild(li);
   }
 
-  // Machine parameters (if matched)
-  if (machineMatch && machineMatch.suggested_params) {
-    const paramsLi = document.createElement('li');
-    paramsLi.className = 'chain__item chain__item--params';
-
+  // Machine parameters (if matched and has actual params)
+  if (machineMatch && machineMatch.suggested_params && Object.keys(machineMatch.suggested_params).length > 0) {
     const paramsHtml = Object.entries(machineMatch.suggested_params)
       .map(([section, params]) => {
         const paramList = Object.entries(params)
@@ -1115,14 +1595,19 @@ function renderDrumsChain(drumsData) {
       })
       .join('');
 
-    paramsLi.innerHTML = `
-      <div class="chain__head">
-        <span class="chain__index">${idx++}</span>
-        <span class="chain__type">Suggested Settings</span>
-      </div>
-      <div class="chain__body chain__body--params">${paramsHtml}</div>
-    `;
-    list.appendChild(paramsLi);
+    // Only add if we actually have param HTML
+    if (paramsHtml) {
+      const paramsLi = document.createElement('li');
+      paramsLi.className = 'chain__item chain__item--params';
+      paramsLi.innerHTML = `
+        <div class="chain__head">
+          <span class="chain__index">${idx++}</span>
+          <span class="chain__type">Suggested Settings</span>
+        </div>
+        <div class="chain__body chain__body--params">${paramsHtml}</div>
+      `;
+      list.appendChild(paramsLi);
+    }
   }
 }
 
@@ -1492,7 +1977,7 @@ function renderSynthResult({ descriptor, chain, tweak_hints }) {
   $('#raw-json').textContent = JSON.stringify({ descriptor, tweak_hints }, null, 2);
 }
 
-function createChainItem(num, slot, display, rationale, price = null) {
+function createChainItem(num, slot, display, rationale, price = null, blockFamily = null) {
   const li = document.createElement('li');
   li.className = 'chain__item';
 
@@ -1510,6 +1995,16 @@ function createChainItem(num, slot, display, rationale, price = null) {
   const dispEl = document.createElement('div');
   dispEl.className = 'chain__display';
   dispEl.textContent = display;
+
+  // Check for matching plugin
+  const matchingPlugin = blockFamily ? getPluginMatch(blockFamily) : null;
+  if (matchingPlugin) {
+    const badge = document.createElement('span');
+    badge.className = 'plugin-badge';
+    badge.title = `You have: ${matchingPlugin.name}`;
+    badge.textContent = matchingPlugin.name;
+    dispEl.appendChild(badge);
+  }
 
   const ratEl = document.createElement('div');
   ratEl.className = 'chain__rationale';
@@ -1562,18 +2057,74 @@ async function handleUrl() {
   const url = urlInput.value.trim();
   if (!url) return;
 
-  const deepAnalysis = $('#deep-analysis')?.checked || false;
-  const fastMode = !deepAnalysis;
-
-  setStatus('working', 'Starting analysis...');
+  setStatus('working', 'Downloading preview...');
   urlSubmit.disabled = true;
 
   try {
-    // Use streaming endpoint for real-time progress
+    // First get waveform preview
+    const previewResp = await fetch('/api/preview-waveform-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+
+    if (!previewResp.ok) {
+      const body = await previewResp.json().catch(() => ({}));
+      throw new Error(body.detail || `Preview failed: HTTP ${previewResp.status}`);
+    }
+
+    const waveformData = await previewResp.json();
+
+    // Store URL for later analysis
+    trimState.url = url;
+    trimState.file = null;
+
+    // Show trim preview (respecting URL timestamp if present)
+    showTrimPreview(waveformData);
+    setStatus('idle', `Select region to analyze (${waveformData.duration_sec?.toFixed(1)}s downloaded)`);
+
+  } catch (err) {
+    setStatus('error', `Preview failed: ${err.message}`);
+    console.error(err);
+  } finally {
+    urlSubmit.disabled = false;
+  }
+}
+
+async function analyzeUrlWithTrim(url, startTime, endTime) {
+  const deepAnalysis = $('#deep-analysis')?.checked || false;
+  const fastMode = !deepAnalysis;
+
+  console.log('analyzeUrlWithTrim:', { url, startTime, endTime, deepAnalysis, fastMode });
+
+  setStatus('working', 'Analyzing...');
+  urlSubmit.disabled = true;
+
+  try {
+    const requestBody = {
+      url,
+      source_kind: 'auto',
+      platform: 'auto',
+      fast_mode: fastMode,
+      // Deep analysis must also set analysis_mode=deep so the backend
+      // picks PipelineConfig.deep() (with stem separation), not standard.
+      analysis_mode: deepAnalysis ? 'deep' : 'studio',
+    };
+
+    // Add trim parameters if specified
+    if (startTime !== null && startTime !== undefined) {
+      requestBody.start_time = startTime;
+    }
+    if (endTime !== null && endTime !== undefined) {
+      requestBody.end_time = endTime;
+    }
+
+    console.log('Request body:', requestBody);
+
     const resp = await fetch('/api/analyze-url-stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, source_kind: 'auto', platform: 'auto', fast_mode: fastMode }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!resp.ok) {
@@ -1595,7 +2146,7 @@ async function handleUrl() {
 
       // Process complete SSE messages
       const lines = buffer.split('\n\n');
-      buffer = lines.pop() || ''; // Keep incomplete message in buffer
+      buffer = lines.pop() || '';
 
       for (const line of lines) {
         if (line.startsWith('data: ')) {
@@ -1622,11 +2173,15 @@ async function handleUrl() {
     currentResult = finalData;
     renderUnifiedResult(finalData);
 
-    const duration = finalData.descriptor?.source?.duration_sec || finalData.descriptor?.duration_sec || 0;
+    const duration = finalData.descriptor?.source?.duration_sec || finalData.descriptor?.duration_sec || finalData.duration_sec || 0;
     const detected = finalData.detection?.summary ? ` (${finalData.detection.summary})` : '';
     const mode = fastMode ? ' (fast)' : ' (deep)';
-    const timestamp = finalData.source_timestamp ? ` from ${formatTimestamp(finalData.source_timestamp)}` : '';
-    setStatus('idle', `Done - ${duration.toFixed(1)}s analyzed${timestamp}${detected}${mode}.`);
+
+    let adminLink = '';
+    if (finalData.admin_url) {
+      adminLink = ` <a href="${finalData.admin_url}" target="_blank" class="admin-link">Open in Studio →</a>`;
+    }
+    setStatus('idle', `Done - ${duration.toFixed(1)}s analyzed${detected}${mode}.${adminLink}`, !!finalData.admin_url);
     urlInput.value = '';
   } catch (err) {
     setStatus('error', `Failed: ${err.message}`);
@@ -1820,7 +2375,9 @@ async function loadHistoryItem(id, name, silent = false) {
       // Set history_id from the entry so URL gets updated
       currentResult.history_id = data.id || id;
       renderUnifiedResult(data.result);
-      setStatus('idle', `Loaded: ${name}`);
+      // Show admin link
+      const adminLink = ` <a href="/studio?analysis=${data.id || id}" target="_blank" class="admin-link">Open in Studio →</a>`;
+      setStatus('idle', `Loaded: ${name}.${adminLink}`, true);
       return true;
     } else {
       if (!silent) {
@@ -1926,164 +2483,122 @@ renderUnifiedResult = function(data) {
 checkUrlForAnalysis();
 
 // -----------------------------------------------------------------------------
-// Tone Preview
+// Tone Preview (per-stem) - uses shared TonePreview utility
 // -----------------------------------------------------------------------------
 
 const previewSection = $('#preview-section');
-const previewBtn = $('#btn-preview');
-const previewAudio = $('#preview-audio');
-const previewReference = $('#preview-reference');
+const stemPreviewsContainer = $('#stem-previews');
 
-if (previewBtn) {
-  previewBtn.addEventListener('click', generatePreview);
-}
+// Show/hide preview section and create stem preview items
+function updatePreviewSection(data) {
+  if (!previewSection || !stemPreviewsContainer) return;
 
-async function generatePreview() {
-  if (!currentResult) return;
+  // Clear existing previews
+  stemPreviewsContainer.innerHTML = '';
 
-  // Get the descriptor - prefer guitar, then synth, then bass
-  let descriptor = null;
-  let previewType = 'guitar';
+  // Get descriptor for preview generation
+  // Try various locations where descriptor might be stored
+  const descriptor = data.guitar?.descriptor
+    || data.bass?.descriptor
+    || data.synth?.descriptor
+    || data.descriptor
+    || data.tone;  // Deep analysis stores tone data here
 
-  if (currentResult.guitar?.descriptor) {
-    descriptor = currentResult.guitar.descriptor;
-    previewType = 'guitar';
-  } else if (currentResult.synth?.descriptor) {
-    descriptor = currentResult.synth.descriptor;
-    previewType = 'synth';
-  } else if (currentResult.bass?.descriptor) {
-    descriptor = currentResult.bass.descriptor;
-    previewType = 'bass';
+  // Debug logging
+  console.log('updatePreviewSection descriptor:', {
+    hasDescriptor: !!descriptor,
+    fromGuitarDescriptor: !!data.guitar?.descriptor,
+    fromBassDescriptor: !!data.bass?.descriptor,
+    fromSynthDescriptor: !!data.synth?.descriptor,
+    fromDescriptor: !!data.descriptor,
+    fromTone: !!data.tone,
+    descriptorKeys: descriptor ? Object.keys(descriptor) : 'null'
+  });
+
+  // Collect stems with MIDI data
+  const stemsWithMidi = [];
+  if (data.midi_stems) {
+    for (const [stemName, midiData] of Object.entries(data.midi_stems)) {
+      if (midiData?.content && midiData.note_count > 0) {
+        stemsWithMidi.push({ name: stemName, noteCount: midiData.note_count, content: midiData.content });
+      }
+    }
   }
 
-  if (!descriptor) {
-    setStatus('error', 'No descriptor available for preview');
+  // If no stems with MIDI, hide section
+  if (stemsWithMidi.length === 0) {
+    previewSection.hidden = true;
     return;
   }
 
-  // Get MIDI data for reconstruction (optional)
-  let midiData = null;
-  if (currentResult.midi_stems?.guitar) {
-    midiData = currentResult.midi_stems.guitar;
-  } else if (currentResult.midi_stems?.bass) {
-    midiData = currentResult.midi_stems.bass;
-  } else if (currentResult.midi_stems?.other) {
-    midiData = currentResult.midi_stems.other;
-  } else if (currentResult.midi) {
-    midiData = currentResult.midi;
-  }
+  previewSection.hidden = false;
 
-  setStatus('working', 'Generating tone preview...');
-  previewBtn.disabled = true;
-  previewBtn.innerHTML = '<span class="preview-icon">⏳</span> Generating...';
+  // Create preview item for each stem using shared TonePreview utility
+  for (const stem of stemsWithMidi) {
+    const item = document.createElement('div');
+    item.className = 'stem-preview-item';
 
-  try {
-    // Extract MIDI content for rendering (base64 encoded)
-    const midiContent = midiData?.content_base64 || null;
+    const nameEl = document.createElement('span');
+    nameEl.className = 'stem-name';
+    nameEl.textContent = stem.name;
 
-    const resp = await fetch('/api/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        descriptor,
-        preset_type: previewType,
-        midi_content: midiContent,
-      }),
+    const audioEl = document.createElement('audio');
+    audioEl.controls = true;
+    audioEl.hidden = true;
+
+    const statusEl = document.createElement('span');
+    statusEl.className = 'preview-status';
+    statusEl.textContent = `${stem.noteCount} notes`;
+
+    // Use shared TonePreview to create the button
+    const btn = TonePreview.createPreviewButton({
+      stemName: stem.name,
+      descriptor,
+      midiContent: stem.content,
+      audioEl,
+      onStatusChange: (status, msg) => {
+        if (status === 'generating') {
+          setStatus('working', `Generating ${stem.name} preview...`);
+        } else if (status === 'success') {
+          setStatus('idle', `${stem.name} preview generated`);
+        } else if (status === 'error') {
+          setStatus('error', `Preview failed: ${msg}`);
+        }
+      },
     });
+    // Override button class to match main page style
+    btn.className = 'btn btn--preview';
+    btn.innerHTML = '<span class="preview-icon">&#9658;</span> Preview';
 
-    if (!resp.ok) {
-      const body = await resp.json().catch(() => ({}));
-      const detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
-      throw new Error(detail || `Preview failed: HTTP ${resp.status}`);
-    }
-
-    const data = await resp.json();
-
-    // Display reference tone info
-    if (data.reference?.primary_match) {
-      displayReferenceInfo(data.reference.primary_match);
-    }
-
-    // Play the audio preview
-    if (data.audio_b64) {
-      const audioBlob = base64ToBlob(data.audio_b64, 'audio/wav');
-      const audioUrl = URL.createObjectURL(audioBlob);
-      previewAudio.src = audioUrl;
-      previewAudio.hidden = false;
-      previewAudio.play().catch(() => {
-        // Autoplay blocked - user can click play
-      });
-    }
-
-    setStatus('idle', 'Preview generated');
-  } catch (err) {
-    setStatus('error', `Preview failed: ${err.message}`);
-    console.error(err);
-  } finally {
-    previewBtn.disabled = false;
-    previewBtn.innerHTML = '<span class="preview-icon">&#9658;</span> Preview reconstructed tone';
+    item.appendChild(nameEl);
+    item.appendChild(btn);
+    item.appendChild(audioEl);
+    item.appendChild(statusEl);
+    stemPreviewsContainer.appendChild(item);
   }
 }
 
-function displayReferenceInfo(referenceMatch) {
-  if (!referenceMatch || !previewReference) return;
-
-  const refName = $('#reference-name');
-  const refConf = $('#reference-confidence');
-  const refDesc = $('#reference-description');
-  const refTags = $('#reference-tags');
-
-  if (refName) refName.textContent = referenceMatch.name || '—';
-  if (refConf && referenceMatch.confidence !== undefined) {
-    refConf.textContent = `${Math.round(referenceMatch.confidence * 100)}% match`;
-  }
-  if (refDesc) refDesc.textContent = referenceMatch.description || '';
-
-  if (refTags && referenceMatch.tags) {
-    refTags.innerHTML = '';
-    for (const tag of referenceMatch.tags) {
-      const span = document.createElement('span');
-      span.className = 'tag';
-      span.textContent = tag;
-      refTags.appendChild(span);
-    }
-  }
-
-  previewReference.hidden = false;
-}
-
-function base64ToBlob(base64, mimeType) {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return new Blob([bytes], { type: mimeType });
-}
-
-// Show/hide preview section based on analysis type
-function updatePreviewSection(data) {
-  if (!previewSection) return;
-
-  // Show preview for guitar and synth analysis (where tone reconstruction makes sense)
-  const hasGuitar = data.guitar?.descriptor;
-  const hasSynth = data.synth?.descriptor;
-  const hasBass = data.bass?.descriptor;
-
-  if (hasGuitar || hasSynth || hasBass) {
-    previewSection.hidden = false;
-    // Reset preview state
-    previewAudio.hidden = true;
-    previewAudio.src = '';
-    previewReference.hidden = true;
-  } else {
-    previewSection.hidden = true;
-  }
-}
-
-// Hook into renderUnifiedResult to show/hide preview section
+// Hook into renderUnifiedResult to show/hide preview section and fetch plugin matches
 const _originalRenderUnifiedResult = renderUnifiedResult;
-renderUnifiedResult = function(data) {
+renderUnifiedResult = async function(data) {
+  // Fetch plugin matches before rendering
+  const descriptor = data.guitar?.descriptor || data.bass?.descriptor || data.synth?.descriptor || data.descriptor;
+  if (descriptor && localEngineAvailable) {
+    await fetchPluginMatches(descriptor);
+  }
+
   _originalRenderUnifiedResult(data);
   updatePreviewSection(data);
+
+  // Render plugin matches section
+  renderPluginMatchesSection(data);
 };
+
+function renderPluginMatchesSection(data) {
+  // Remove existing section if any
+  const existing = document.getElementById('plugin-matches-section');
+  if (existing) existing.remove();
+
+  // Don't show separate section - plugins are shown as inline badges on chain items
+  // This avoids the confusing generic list
+}

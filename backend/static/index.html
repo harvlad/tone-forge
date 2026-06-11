@@ -12,7 +12,7 @@
 <body>
   <header class="masthead">
     <div class="masthead__edge">№ 001 · Vol. 0.5</div>
-    <h1 class="masthead__title">Tone Forge</h1>
+    <h1 class="masthead__title"><a href="/" style="color: inherit; text-decoration: none;">Tone Forge</a></h1>
     <div class="masthead__edge masthead__edge--right">Tone analysis &amp; gear recommendations</div>
   </header>
 
@@ -58,6 +58,22 @@
 
       <div class="detection-info" id="detection-info" hidden>
         <div class="detection-badge" id="detection-badge"></div>
+      </div>
+
+      <!-- Waveform Trim Preview -->
+      <div class="trim-preview" id="trim-preview" hidden>
+        <div class="section-label">Select region to analyze</div>
+        <div class="trim-canvas-wrap">
+          <canvas id="trim-canvas"></canvas>
+        </div>
+        <div class="trim-info">
+          <span id="trim-range">0:00 - 0:00 (0:00 selected)</span>
+        </div>
+        <div class="trim-actions">
+          <button type="button" id="analyze-selection" class="btn btn--primary">Analyze Selection</button>
+          <button type="button" id="analyze-full" class="btn btn--secondary">Analyze Full Track</button>
+          <button type="button" id="cancel-trim" class="btn btn--ghost">Cancel</button>
+        </div>
       </div>
 
       <div class="status" id="status" aria-live="polite"></div>
@@ -151,75 +167,99 @@
 
         <div class="preview-section" id="preview-section" hidden>
           <div class="section-label">Tone preview</div>
-          <div class="preview-controls">
-            <button class="btn btn--preview" id="btn-preview">
-              <span class="preview-icon">&#9658;</span> Preview reconstructed tone
-            </button>
-            <audio id="preview-audio" controls hidden></audio>
-          </div>
-          <div class="preview-reference" id="preview-reference" hidden>
-            <div class="reference-match">
-              <span class="reference-label">Closest match:</span>
-              <span class="reference-name" id="reference-name">—</span>
-              <span class="reference-confidence" id="reference-confidence"></span>
-            </div>
-            <div class="reference-description" id="reference-description"></div>
-            <div class="reference-tags" id="reference-tags"></div>
-          </div>
+          <div id="stem-previews" class="stem-previews"></div>
         </div>
 
         <div class="export-section">
-          <div class="section-label">Export preset</div>
-          <div class="export-buttons">
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="text">Text Analysis</button>
-              <span class="tooltip">Readable text file with all analysis data - amp settings, signal chain, synth parameters, etc.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="hlx">Helix .hlx</button>
-              <span class="tooltip">Line 6 Helix Floor/LT/Rack preset (8 blocks). Import via HX Edit.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="hlx_stomp">HX Stomp</button>
-              <span class="tooltip">HX Stomp preset (6 blocks max). Prioritizes amp, cab, drive, delay, reverb, mod.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="json">JSON</button>
-              <span class="tooltip">Universal format for backup, sharing, or importing into custom tools and scripts.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="neural_dsp">Quad Cortex</button>
-              <span class="tooltip">Neural DSP Quad Cortex preset format. A powerful floor modeler with neural capture technology.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="synth_serum">Synth</button>
-              <span class="tooltip">Synth parameters in Serum/Vital-compatible format. Use as a starting point in your soft synth.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="bass">Bass Rig</button>
-              <span class="tooltip">Bass amp and pedal recommendations with suggested settings.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="drums">Drum Machine</button>
-              <span class="tooltip">Drum machine parameters and settings based on the analyzed rhythm.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="ableton_analog">Analog .adv</button>
-              <span class="tooltip">Native Ableton Analog preset (Standard/Suite). Drag directly into Live to load the synth patch.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export btn--als" data-format="ableton_live_set" id="btn-als">Live Set .als</button>
-              <span class="tooltip">Ableton Live project with MIDI tracks for each stem. Requires "Deep analysis" with stem separation.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export" data-format="midi" id="btn-midi" data-stem="all">MIDI</button>
-              <span class="tooltip">Extract notes as MIDI using AI polyphonic detection. With "Deep analysis", stems are separated first for cleaner bass and melody MIDI files.</span>
-            </span>
-            <span class="tooltip-wrap">
-              <button class="btn btn--export btn--project-bundle" data-format="project_bundle" id="btn-project-bundle">Project Bundle</button>
-              <span class="tooltip">Download ZIP with all MIDI stems + analysis notes. Works with any DAW (Ableton, Logic, FL Studio, etc). Requires "Deep analysis".</span>
-            </span>
-          </div>
+          <div class="section-label">Export</div>
+          <table class="export-table">
+            <tbody>
+              <tr class="export-row export-row--header">
+                <td class="export-cell export-cell--category" colspan="3">General</td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">Text Analysis</td>
+                <td class="export-cell export-cell--desc">Readable summary with all analysis data</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="text">Export</button></td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">JSON</td>
+                <td class="export-cell export-cell--desc">Universal format for backup or custom tools</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="json">Export</button></td>
+              </tr>
+
+              <tr class="export-row export-row--header">
+                <td class="export-cell export-cell--category" colspan="3">Guitar Modelers</td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">Helix .hlx</td>
+                <td class="export-cell export-cell--desc">Line 6 Helix Floor/LT/Rack preset (8 blocks)</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="hlx">Export</button></td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">HX Stomp</td>
+                <td class="export-cell export-cell--desc">HX Stomp preset (6 blocks max)</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="hlx_stomp">Export</button></td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">Quad Cortex</td>
+                <td class="export-cell export-cell--desc">Neural DSP Quad Cortex preset format</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="neural_dsp">Export</button></td>
+              </tr>
+
+              <tr class="export-row export-row--header">
+                <td class="export-cell export-cell--category" colspan="3">Synth &amp; Keys</td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">Synth (Serum/Vital)</td>
+                <td class="export-cell export-cell--desc">Soft synth parameters as starting point</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="synth_serum">Export</button></td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">Analog .adv</td>
+                <td class="export-cell export-cell--desc">Ableton Analog preset (Standard/Suite)</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="ableton_analog">Export</button></td>
+              </tr>
+
+              <tr class="export-row export-row--header">
+                <td class="export-cell export-cell--category" colspan="3">Bass &amp; Drums</td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">Bass Rig</td>
+                <td class="export-cell export-cell--desc">Bass amp and pedal recommendations</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="bass">Export</button></td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">Drum Machine</td>
+                <td class="export-cell export-cell--desc">Drum machine parameters and settings</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="drums">Export</button></td>
+              </tr>
+
+              <tr class="export-row export-row--header">
+                <td class="export-cell export-cell--category" colspan="3">DAW Integration</td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">MIDI</td>
+                <td class="export-cell export-cell--desc">Extract notes via AI polyphonic detection</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export" data-format="midi" id="btn-midi" data-stem="all">Export</button></td>
+              </tr>
+              <tr class="export-row">
+                <td class="export-cell export-cell--name">Reconstruct in Ableton</td>
+                <td class="export-cell export-cell--desc">Editable .als with one track per stem + V2-matched preset per stem (drums use a default kit)</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export btn--reconstruct btn--disabled" data-format="reconstruction" id="btn-reconstruction" disabled>Needs MIDI</button></td>
+              </tr>
+              <tr class="export-row export-row--deep">
+                <td class="export-cell export-cell--name">Live Set .als</td>
+                <td class="export-cell export-cell--desc">Ableton project with MIDI tracks per stem</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export btn--als btn--disabled" data-format="ableton_live_set" id="btn-als" disabled>Deep only</button></td>
+              </tr>
+              <tr class="export-row export-row--deep">
+                <td class="export-cell export-cell--name">Project Bundle</td>
+                <td class="export-cell export-cell--desc">ZIP with all MIDI stems + analysis notes</td>
+                <td class="export-cell export-cell--action"><button class="btn btn--export btn--project-bundle btn--disabled" data-format="project_bundle" id="btn-project-bundle" disabled>Deep only</button></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         <details class="raw">
@@ -236,6 +276,10 @@
     <span>Heuristic DSP, no ML — calibration improves with labelled data</span>
   </footer>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/preview-shared.js?v=2"></script>
+  <script src="/static/plugin-shared.js"></script>
+  <script src="/static/detection-shared.js"></script>
+  <script src="/static/waveform-trim.js"></script>
+  <script src="/static/app.js?v=19"></script>
 </body>
 </html>
