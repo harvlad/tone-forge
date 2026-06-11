@@ -40,6 +40,48 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Deep-link refresh fidelity (Priority 5 follow-up)
+
+Refreshing `/jam/:id` lost guitar stems, the SUGGESTED tone card, top-level
+`tempo_bpm`, and `detected_key` — all visible in the live (streaming)
+analyze path but missing after a page reload. Root cause was a contract
+impedance mismatch between the persisted `AnalysisResult` shape and the
+narrower `SessionBundle` contract: stems beyond the six fixed slots were
+silently dropped on bundle build, and `bundleToLegacyResult()` hardcoded
+`preset_matches: {}` while never reading `bundle.tone`.
+
+| Change | File |
+|---|---|
+| `StemSet.extras: Tuple[Stem, ...]` field for stems beyond the six fixed slots. Backwards-compat default (`()`). | `backend/tone_forge/contracts.py` |
+| `_build_stems()` iterates the full `stems_paths` dict, classifying non-fixed-slot names via longest-prefix role match so `guitar_texture_2` resolves to `TEXTURE` (not `HARMONIC`). | `backend/tone_forge/session/bundle.py` |
+| `/api/session/:id` emits `legacy_tone`, `legacy_preset_matches`, `legacy_tempo_bpm`, `legacy_detected_key` sidecar fields from the persisted history row. Keeps the SessionBundle contract narrow; the Jam UI reads these for deep-link rehydration only. | `backend/tone_forge_api.py` |
+| `bundleToLegacyResult()` iterates `stems.extras`, reads the legacy sidecars, swaps `||` → `??` on tempo so a legitimate `0.0` survives, and passes through `tone` so `renderToneCard()` re-renders SUGGESTED chains after refresh. | `backend/static/jam.js` |
+| Cache-buster bump `?v=3` → `?v=4` on both jam.js and jam.css. | `backend/static/jam.html` |
+| New regression tests: `extras` populated for `guitar_texture` / `guitar_texture_2` / `guitar_rhythm`; no duplication into fixed slots; route emits sidecars including `tempo_bpm=0.0` (proves the `??` coalescing on the client side); extras key present on the route payload. | `backend/tests/test_session_bundle.py`, `backend/tests/test_session_route.py` |
+
+Verification:
+- `tests/test_session_bundle.py` — 23/23 PASS (was 21, added 2).
+- `tests/test_session_route.py` — 15/15 PASS (was 13, added 2).
+- Broader sweep (session + tone + devices + subsystem boundaries):
+  274/274 PASS.
+- Empirically against the real `data/history.json`: a row with
+  `['drums', 'bass', 'guitar_texture', 'guitar_texture_2', 'vocals']`
+  now projects all five stems (three fixed slots + two extras both
+  tagged `role=texture`).
+
+Not in this entry:
+- ToneMatch → ToneRecommendation conversion at the bundle layer. The
+  client today reads the persisted `to_wire_dict` blob directly via
+  the `legacy_tone` sidecar. Folding the conversion into `bundle.tone`
+  itself would let the deep-link path stop reading sidecars at all,
+  but is a larger contract change.
+- Re-running tone retrieval when a row has `preset_matches` but no
+  persisted `tone`. The endpoint already calls
+  `_retrieve_tone_for_history()` but its result lands on
+  `bundle.tone` (ToneMatch shape), not on the wire-shape `legacy_tone`
+  the UI consumes. Acceptable for now — rows missing `tone` will
+  simply show the default chain card.
+
 ### CoreAudio probe pre-fill (Priority 7 — item #36)
 
 The §7 plan called for the onboarding modal to seed

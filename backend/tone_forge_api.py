@@ -2269,6 +2269,20 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
         device_caps=device_caps,
     )
     payload = serialize_session_bundle(bundle)
+
+    # Legacy sidecar fields. The bundle contract is intentionally narrow
+    # (Priority-5); the Jam UI also reads a few legacy AnalysisResult
+    # fields that the streaming Studio path produces directly. Surface
+    # them here as ``legacy_*`` keys so the deep-link adapter on the
+    # client can pass them through unchanged. Without this, refreshing
+    # /jam/:id loses tone recommendations, preset_matches, and
+    # top-level tempo_bpm — they exist in the persisted history row
+    # but never made it onto the bundle.
+    payload["legacy_tone"] = result.get("tone")
+    payload["legacy_preset_matches"] = result.get("preset_matches") or {}
+    payload["legacy_tempo_bpm"] = result.get("tempo_bpm")
+    payload["legacy_detected_key"] = result.get("detected_key")
+
     return JSONResponse(_convert_numpy_types(payload))
 
 

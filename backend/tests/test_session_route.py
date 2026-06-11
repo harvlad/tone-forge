@@ -156,6 +156,57 @@ def test_session_route_stems_block_carries_urls() -> None:
     assert stems["vocals"] is None  # not in fixture
 
 
+def test_session_route_emits_legacy_sidecar_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: refreshing /jam/:id lost tone / preset_matches /
+    tempo_bpm because the SessionBundle contract is narrower than
+    the persisted AnalysisResult. The route now surfaces those
+    fields as ``legacy_*`` sidecars so the deep-link adapter can
+    pass them through without re-fetching.
+    """
+    rows = {
+        "sess-tone": {
+            "id": "sess-tone",
+            "result": {
+                "detected_type": "guitar",
+                "tempo_bpm": 0.0,  # legitimate zero — must survive ?? coalescing
+                "detected_key": "F major",
+                "tone": {
+                    "tier": "medium",
+                    "match": {"chain_id": "tfc.ambient"},
+                    "apply": {"chain_id": "tfc.ambient", "action": "connect.apply_chain"},
+                    "rationale": "Suggested for tempo and key.",
+                    "alternates": [],
+                },
+                "preset_matches": {
+                    "guitar": {"preset_name": "Analog Lead", "distance": 0.31},
+                },
+            },
+        },
+    }
+    monkeypatch.setattr(tone_forge_api, "_get_history_item", lambda _id: rows.get(_id))
+
+    body = client.get("/api/session/sess-tone").json()
+    assert body["legacy_tempo_bpm"] == 0.0  # not coerced to None
+    assert body["legacy_detected_key"] == "F major"
+    assert body["legacy_tone"]["tier"] == "medium"
+    assert body["legacy_tone"]["apply"]["chain_id"] == "tfc.ambient"
+    assert body["legacy_preset_matches"]["guitar"]["preset_name"] == "Analog Lead"
+
+
+def test_session_route_preserves_extra_stems() -> None:
+    """``guitar_texture`` / ``guitar_texture_2`` / ``guitar_rhythm`` round-trip
+    via the ``stems.extras`` array so the Jam UI can render every
+    stem the pipeline actually produced.
+    """
+    resp = client.get("/api/session/sess-real")
+    body = resp.json()
+    extras = body["stems"].get("extras", [])
+    # sess-real fixture only has drums + bass; extras should be empty.
+    assert extras == []
+
+
 def test_session_route_understanding_carries_tempo_and_chords() -> None:
     resp = client.get("/api/session/sess-real")
     u = resp.json()["understanding"]

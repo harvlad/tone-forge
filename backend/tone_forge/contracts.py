@@ -47,6 +47,11 @@ __all__ = [
     "InstrumentMIDI",
     "ToneCandidate",
     "ToneMatch",
+    "ToneRecommendation",
+    "ToneRecMatch",
+    "ToneRecFallback",
+    "ToneRecAlternate",
+    "ToneRecApply",
     "MonitorChain",
     "DeviceCaps",
     "AudioDeviceInfo",
@@ -173,6 +178,12 @@ class StemSet:
     other: Optional[Stem] = None
     guitar_left: Optional[Stem] = None
     guitar_right: Optional[Stem] = None
+    # Extra stems the pipeline emits that don't fit the fixed slots
+    # (e.g. ``guitar_texture``, ``guitar_texture_2``, ``guitar_rhythm``,
+    # ``piano``). The session bundle preserves them verbatim so the
+    # client can render every stem the analysis actually produced
+    # rather than the six this contract enumerates.
+    extras: Tuple[Stem, ...] = ()
     content_hash: str = ""  # provenance back to AcquiredAudio
 
 
@@ -293,6 +304,92 @@ class ToneMatch:
     fallback_chain_id: Optional[str] = None
     rationale: str = ""
     debug: Dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# ToneRecommendation — wire-shape for the Jam UI Tone card.
+#
+# ToneMatch is the internal policy object. ToneRecommendation is the
+# external contract a client consumes. Two reasons to keep them separate:
+#
+#   1. The internal object can evolve (calibrator interface, debug shape,
+#      new tier enum values) without forcing a wire-format change.
+#   2. The wire object enforces the XOR invariant on `match` / `fallback`
+#      that the UI relies on. Internal ToneMatch tracks the two cases
+#      with a tier enum + nullable fields, which is the right shape for
+#      Python policy code but the wrong shape for a JSON consumer.
+#
+# Invariant (enforced in ToneRecommendation.to_dict()):
+#     exactly one of `match` or `fallback` is non-None.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ToneRecMatch:
+    """Confident-or-suggested match attached to a ToneRecommendation."""
+
+    chain_id: str
+    display_name: str
+    archetype: str
+    distance: float
+    confidence: float
+
+
+@dataclass(frozen=True)
+class ToneRecFallback:
+    """Fallback chain attached when no match is confident enough."""
+
+    chain_id: str
+    display_name: str
+    archetype: str
+    reason: str  # "empty_candidates" | "low_confidence" | "tempo_default" | ...
+
+
+@dataclass(frozen=True)
+class ToneRecAlternate:
+    """Runner-up shown when tier is MEDIUM."""
+
+    chain_id: str
+    display_name: str
+    archetype: str
+    distance: float
+
+
+@dataclass(frozen=True)
+class ToneRecApply:
+    """Resolved Apply-button payload.
+
+    Always populated. UI dispatches by `action` without conditional
+    logic on tier, eliminating a class of "Apply button does nothing"
+    bugs.
+    """
+
+    chain_id: str
+    action: str = "connect.apply_chain"
+
+
+@dataclass(frozen=True)
+class ToneRecommendation:
+    """UI-facing recommendation envelope (Jam Tone card)."""
+
+    tier: ConfidenceTier
+    rationale: str
+    apply: ToneRecApply
+    match: Optional[ToneRecMatch] = None
+    fallback: Optional[ToneRecFallback] = None
+    alternates: Tuple[ToneRecAlternate, ...] = ()
+    preview_url: Optional[str] = None
+    debug: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # XOR invariant. Asserted in __post_init__ rather than runtime
+        # because emitting an invalid recommendation is a programmer
+        # error in the API composition layer, not user input.
+        if (self.match is None) == (self.fallback is None):
+            raise ValueError(
+                "ToneRecommendation requires exactly one of match/fallback "
+                f"to be set (got match={self.match!r}, fallback={self.fallback!r})."
+            )
 
 
 @dataclass(frozen=True)

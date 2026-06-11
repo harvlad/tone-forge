@@ -145,6 +145,42 @@ def _build_audio(result: Mapping[str, Any]) -> AcquiredAudio:
     )
 
 
+_FIXED_STEM_SLOTS: Mapping[str, StemRole] = {
+    "drums": StemRole.DRUMS,
+    "bass": StemRole.BASS,
+    "vocals": StemRole.VOCALS,
+    "other": StemRole.HARMONIC,
+    "guitar_left": StemRole.LEAD,
+    "guitar_right": StemRole.RHYTHM,
+}
+
+
+# Best-effort role guess for stems the pipeline emits beyond the fixed
+# slots. Anything not matched here falls back to HARMONIC — the client
+# still renders the stem; the slot just doesn't get a specific role hint.
+_EXTRA_STEM_ROLES: Mapping[str, StemRole] = {
+    "guitar": StemRole.HARMONIC,
+    "guitar_lead": StemRole.LEAD,
+    "guitar_rhythm": StemRole.RHYTHM,
+    "guitar_texture": StemRole.TEXTURE,
+    "piano": StemRole.KEYS,
+    "keys": StemRole.KEYS,
+}
+
+
+def _role_for_extra_stem(name: str) -> StemRole:
+    if name in _EXTRA_STEM_ROLES:
+        return _EXTRA_STEM_ROLES[name]
+    # Variants like ``guitar_texture_2`` — keep the texture-ish family.
+    # Walk prefixes longest-first so ``guitar_texture_`` wins over
+    # ``guitar_`` (which would otherwise demote texture variants to
+    # the harmonic catch-all).
+    for prefix in sorted(_EXTRA_STEM_ROLES, key=len, reverse=True):
+        if name.startswith(prefix + "_"):
+            return _EXTRA_STEM_ROLES[prefix]
+    return StemRole.HARMONIC
+
+
 def _build_stems(result: Mapping[str, Any]) -> StemSet:
     """Convert the legacy ``stems`` / ``stems_paths`` dict into a StemSet.
 
@@ -153,33 +189,39 @@ def _build_stems(result: Mapping[str, Any]) -> StemSet:
     so we synthesize minimal records with the role implied by the dict
     key. Provider is recorded as ``"legacy"`` so call sites can detect
     the conversion.
+
+    Stems beyond the six fixed contract slots (``guitar_texture``,
+    ``guitar_texture_2``, ``guitar_rhythm``, ``piano``, ...) are
+    preserved on the ``extras`` field — dropping them would make
+    deep-link refresh lose stems the analysis actually produced.
     """
 
     paths = result.get("stems") or result.get("stems_paths") or {}
     if not isinstance(paths, Mapping):
         return StemSet()
 
-    drums = _stem_from_path("drums", paths.get("drums"), StemRole.DRUMS)
-    bass = _stem_from_path("bass", paths.get("bass"), StemRole.BASS)
-    vocals = _stem_from_path("vocals", paths.get("vocals"), StemRole.VOCALS)
-    other = _stem_from_path("other", paths.get("other"), StemRole.HARMONIC)
+    fixed: dict[str, Optional[Stem]] = {}
+    for name, role in _FIXED_STEM_SLOTS.items():
+        fixed[name] = _stem_from_path(name, paths.get(name), role)
 
-    guitar_left = _stem_from_path(
-        "guitar_left", paths.get("guitar_left"), StemRole.LEAD
-    )
-    guitar_right = _stem_from_path(
-        "guitar_right", paths.get("guitar_right"), StemRole.RHYTHM
-    )
+    extras: list[Stem] = []
+    for name, path in paths.items():
+        if name in _FIXED_STEM_SLOTS:
+            continue
+        stem = _stem_from_path(name, path, _role_for_extra_stem(name))
+        if stem is not None:
+            extras.append(stem)
 
     content_hash = _str_or_none(result.get("content_hash")) or ""
 
     return StemSet(
-        drums=drums,
-        bass=bass,
-        vocals=vocals,
-        other=other,
-        guitar_left=guitar_left,
-        guitar_right=guitar_right,
+        drums=fixed["drums"],
+        bass=fixed["bass"],
+        vocals=fixed["vocals"],
+        other=fixed["other"],
+        guitar_left=fixed["guitar_left"],
+        guitar_right=fixed["guitar_right"],
+        extras=tuple(extras),
         content_hash=content_hash,
     )
 

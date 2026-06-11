@@ -130,6 +130,16 @@
       lastPreset: null,
       lastGain: 0.0,  // monitor gain last requested; replayed on reconnect
       peers: 0,       // other clients on the same channel (Connect helper)
+      // request_id -> { chainId, displayName, t0 } for in-flight
+      // apply_chain frames. Populated by applyToneChain(), drained by
+      // the WS 'ack' handler so the UI can confirm a successful push.
+      // Without this, Apply silently fires-and-forgets and the user
+      // can't tell whether the helper got the message.
+      pendingApplies: new Map(),
+      // Most recently applied monitor chain id. Used to suppress the
+      // "applied" toast when the chain hasn't actually changed (e.g.
+      // double-clicking Apply on the same suggestion).
+      lastAppliedChainId: null,
     },
   };
 
@@ -233,9 +243,65 @@
         cb.lastGain = g;
         renderConnectGain();
       } else if (data.type === 'ack') {
-        // Push confirmed.
+        // Server confirmed receipt of one of our requests. If it
+        // matches a pending apply_chain, flash a success toast and
+        // update the visible "matched tone" label so the user can
+        // see something changed.
+        const pending = data.request_id
+          ? cb.pendingApplies.get(data.request_id)
+          : null;
+        if (pending) {
+          cb.pendingApplies.delete(data.request_id);
+          const alreadyOnIt = cb.lastAppliedChainId === pending.chainId;
+          cb.lastAppliedChainId = pending.chainId;
+          flashConnectStatus(
+            alreadyOnIt
+              ? `${pending.displayName} re-applied`
+              : `${pending.displayName} applied`,
+            true,
+          );
+          // Surface the applied chain in the YOUR SLOT card so the
+          // page reflects the user's choice. The backend's automatic
+          // preset-match logic (pushPresetToConnect) may also fire
+          // later for the same song; if it does, that path will
+          // overwrite this label, which is the right precedence.
+          const userToneName = document.getElementById('user-tone-name');
+          if (userToneName) userToneName.textContent = pending.displayName;
+          const userToneMeta = document.getElementById('user-tone-meta');
+          if (userToneMeta) {
+            userToneMeta.textContent = 'Monitor chain pushed to Connect';
+          }
+          console.log(
+            `[connect] apply_chain ack ${pending.chainId} `
+            + `(${Math.round(performance.now() - pending.t0)}ms)`,
+          );
+        }
       } else if (data.type === 'error') {
+        // Surface the failure visibly, not just in the console. If
+        // we can pin it to an in-flight apply, name the chain in the
+        // toast so the user knows which click failed.
         console.warn('[connect] server error:', data.message);
+        const pending = data.request_id
+          ? cb.pendingApplies.get(data.request_id)
+          : null;
+        if (pending) {
+          cb.pendingApplies.delete(data.request_id);
+          flashConnectStatus(
+            `Couldn't apply ${pending.displayName}: ${data.message || data.code || 'unknown error'}`,
+            false,
+            5000,
+          );
+        } else if (cb.pendingApplies.size > 0) {
+          // Server didn't echo a request_id but we know an apply is
+          // in flight. Clear the queue and show a generic message —
+          // safer than silently leaving "Applying…" up forever.
+          cb.pendingApplies.clear();
+          flashConnectStatus(
+            `Apply failed: ${data.message || data.code || 'unknown error'}`,
+            false,
+            5000,
+          );
+        }
       }
     };
     ws.onclose = () => {
@@ -489,12 +555,32 @@
   // (`tone_forge_api._handle_apply_chain`) is the source of truth for
   // the positive-label log: it emits `log_applied` after the broadcast
   // succeeds. We don't double-log from the browser.
+  //
+  // Tracks the request_id in cb.pendingApplies so the WS ack handler
+  // can flash a "<chain> applied" toast and update the visible tone
+  // label. Before this, Apply was fire-and-forget — the user clicked
+  // and got zero visible signal even on a fully successful push.
   function applyToneChain(chainId) {
     if (!chainId) return;
+    const cb = state.connectBridge;
+    const rid = 'apply_' + Date.now().toString(36);
+    const displayName = toneChainDisplayName(chainId) || chainId;
+    cb.pendingApplies.set(rid, {
+      chainId,
+      displayName,
+      t0: performance.now(),
+    });
+    // Pessimistic UX: tell the user we're trying. If the WS is closed,
+    // sendOrQueueBridgeMessage queues + reopens the socket, so the
+    // "Applying…" message will sit until the socket reconnects and the
+    // ack comes back. If the helper is just gone, the message will be
+    // overwritten 2.2s later by the regular renderConnectStatus tick.
+    flashConnectStatus(`Applying ${displayName}…`);
+    console.log(`[connect] apply_chain ${chainId} request_id=${rid}`);
     sendOrQueueBridgeMessage({
       type: 'apply_chain',
       chain_id: chainId,
-      request_id: 'apply_' + Date.now().toString(36),
+      request_id: rid,
     });
   }
 
@@ -1503,34 +1589,56 @@
   });
 
   let _connectStatusFlashTimer = null;
-  function flashConnectStatus(text, ok = false) {
+  function flashConnectStatus(text, ok = false, durationMs = 2200) {
     const statusEl = document.getElementById('connect-status');
     if (!statusEl) return;
     statusEl.textContent = text;
     statusEl.hidden = false;
     statusEl.classList.toggle('ok', !!ok);
     clearTimeout(_connectStatusFlashTimer);
-    _connectStatusFlashTimer = setTimeout(renderConnectStatus, 2200);
+    _connectStatusFlashTimer = setTimeout(renderConnectStatus, durationMs);
+  }
+
+  // Briefly pulse the Connect button so a click that produces an
+  // otherwise-text-only status flash still has a tactile, on-element
+  // signal. Pure UI affordance — no state change, no WS traffic.
+  function pulseConnectBtn() {
+    const btn = document.getElementById('connect-btn');
+    if (!btn) return;
+    btn.classList.remove('clicked-pulse');
+    // Force reflow so the class re-add restarts the CSS animation.
+    void btn.offsetWidth;
+    btn.classList.add('clicked-pulse');
   }
 
   $('connect-btn').addEventListener('click', () => {
     const cb = state.connectBridge;
     const paired = cb.status === 'open' && cb.peers > 0;
+    // Visible tactile feedback regardless of branch — the click was
+    // received and a handler ran. Branches below decide the textual
+    // message; the pulse just removes the "did anything happen?"
+    // ambiguity the user hit on the paired+no-preset path.
+    pulseConnectBtn();
     if (paired && cb.lastPreset) {
       // Re-push so the helper re-applies the matched tone.
       pushPresetToConnect(cb.lastPreset);
-      flashConnectStatus('Re-synced tone preset to Connect.', true);
+      flashConnectStatus('Re-synced tone preset to Connect.', true, 3500);
       return;
     }
     if (paired) {
       // Paired but no match exists for this song. Acknowledge the click
-      // so it doesn't feel dead; re-rendering after the flash will
-      // restore the persistent "no matching preset" message.
-      flashConnectStatus('Already paired — no preset to push for this song.', true);
+      // with a longer-lived message that points at the Apply button —
+      // the previous 2.2s flash was easy to miss, and the user had no
+      // signposting to the actual action (Apply on the Suggested card).
+      flashConnectStatus(
+        'Already paired. Click "Apply" on the Suggested match above to push a tone.',
+        true,
+        5000,
+      );
       return;
     }
     if (cb.status === 'connecting') {
-      flashConnectStatus('Still connecting — give it a sec.');
+      flashConnectStatus('Still connecting — give it a sec.', false, 3500);
       return;
     }
     // Not paired (open w/ no peers, or closed). Two things have to
@@ -1950,11 +2058,44 @@
     const stems = bundle.stems || {};
     const userMidi = bundle.user_midi || null;
 
+    // Project every stem the bundle actually carries — fixed slots plus
+    // the ``extras`` array the assembler now preserves for stems beyond
+    // the six-slot contract (``guitar_texture``, ``guitar_texture_2``,
+    // ``guitar_rhythm``, ``piano``, ...). Each Stem.id is shaped as
+    // ``legacy.<name>``; we strip the prefix to recover the original
+    // dict key the rest of the client expects in ``stems_paths``.
     const stemsPaths = {};
-    for (const role of ['drums', 'bass', 'vocals', 'other', 'guitar_left', 'guitar_right']) {
-      const stem = stems[role];
-      if (stem && stem.audio_url) stemsPaths[role] = stem.audio_url;
+    const addStem = (key, stem) => {
+      if (!stem || !stem.audio_url) return;
+      if (!key) return;
+      stemsPaths[key] = stem.audio_url;
+    };
+    for (const slot of ['drums', 'bass', 'vocals', 'other', 'guitar_left', 'guitar_right']) {
+      addStem(slot, stems[slot]);
     }
+    const extras = Array.isArray(stems.extras) ? stems.extras : [];
+    for (const stem of extras) {
+      // Stem.id is "legacy.<name>" from _stem_from_path; fall back to
+      // the display_name slugified if the id isn't shaped that way.
+      let key = null;
+      if (typeof stem.id === 'string' && stem.id.startsWith('legacy.')) {
+        key = stem.id.slice('legacy.'.length);
+      } else if (typeof stem.display_name === 'string') {
+        key = stem.display_name.toLowerCase().replace(/\s+/g, '_');
+      }
+      addStem(key, stem);
+    }
+
+    // Tempo / key / preset_matches / tone: read the legacy sidecar
+    // fields first (they survive the persistence round-trip), then
+    // fall back to the bundle's structured fields. Using ``??`` so a
+    // legitimate 0 doesn't get clobbered into null the way ``||`` did.
+    const tempoBpm = (bundle.legacy_tempo_bpm ?? understanding.tempo_bpm) ?? null;
+    const detectedKey = bundle.legacy_detected_key ?? understanding.key ?? null;
+    const presetMatches = bundle.legacy_preset_matches && typeof bundle.legacy_preset_matches === 'object'
+      ? bundle.legacy_preset_matches
+      : {};
+    const tone = bundle.legacy_tone || null;
 
     return {
       // Identity
@@ -1970,8 +2111,8 @@
       // Role
       detected_type: bundle.user_role || 'guitar',
       // Understanding
-      tempo_bpm: understanding.tempo_bpm || null,
-      detected_key: understanding.key || null,
+      tempo_bpm: tempoBpm,
+      detected_key: detectedKey,
       sections: understanding.sections || [],
       beat_times: understanding.beats_s || [],
       // Stems
@@ -1981,9 +2122,10 @@
         notes: userMidi.notes || [],
         overall_confidence: userMidi.overall_confidence ?? 0,
       } : null,
-      // Tone — bundle carries an UNKNOWN-tier ToneMatch in MVP; emit an
-      // empty preset_matches so the "no tone match yet" branch fires.
-      preset_matches: {},
+      // Tone — carries the persisted ``to_wire_dict`` payload so
+      // renderToneCard can re-render the SUGGESTED chain after refresh.
+      tone,
+      preset_matches: presetMatches,
     };
   }
 

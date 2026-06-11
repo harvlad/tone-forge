@@ -111,6 +111,63 @@ def test_build_populates_stems_with_urls() -> None:
     assert bundle.stems.content_hash == "abc123"
 
 
+def test_build_preserves_extra_stems_beyond_fixed_slots() -> None:
+    """Regression: ``guitar_texture`` / ``guitar_texture_2`` / ``guitar_rhythm``
+    are produced by the real pipeline and were silently dropped on
+    deep-link reload. They must land on ``stems.extras`` with a
+    best-effort role so the client can render every stem.
+    """
+    from tone_forge.stem_model import StemRole
+
+    result = _legacy_result()
+    result["stems"] = {
+        "drums": "/p/drums.wav",
+        "bass": "/p/bass.wav",
+        "vocals": "/p/vocals.wav",
+        "guitar_texture": "/p/guitar_texture.wav",
+        "guitar_texture_2": "/p/guitar_texture_2.wav",
+        "guitar_rhythm": "/p/guitar_rhythm.wav",
+    }
+    bundle = build(result, session_id="x")
+
+    # Fixed slots that the pipeline DID emit:
+    assert bundle.stems.drums is not None
+    assert bundle.stems.bass is not None
+    assert bundle.stems.vocals is not None
+    # Fixed slots that the pipeline did NOT emit stay None:
+    assert bundle.stems.other is None
+    assert bundle.stems.guitar_left is None
+    assert bundle.stems.guitar_right is None
+
+    # Extras must include all three guitar variants. The previous
+    # implementation dropped them entirely.
+    by_name = {s.id.split(".", 1)[1]: s for s in bundle.stems.extras}
+    assert set(by_name) == {"guitar_texture", "guitar_texture_2", "guitar_rhythm"}
+    assert by_name["guitar_texture"].role == StemRole.TEXTURE
+    # Longest-prefix match: guitar_texture_2 must NOT collapse to
+    # ``guitar`` -> HARMONIC. It must follow the ``guitar_texture_``
+    # prefix to TEXTURE.
+    assert by_name["guitar_texture_2"].role == StemRole.TEXTURE
+    assert by_name["guitar_rhythm"].role == StemRole.RHYTHM
+    # All extras retain their audio URLs.
+    for stem in bundle.stems.extras:
+        assert stem.audio_url.startswith("/p/")
+
+
+def test_build_does_not_duplicate_extras_into_fixed_slots() -> None:
+    """A stem named like a fixed slot must land only on that slot,
+    not also on extras."""
+    result = _legacy_result()
+    result["stems"] = {
+        "drums": "/p/drums.wav",
+        "guitar_left": "/p/gl.wav",
+    }
+    bundle = build(result, session_id="x")
+    assert bundle.stems.drums is not None
+    assert bundle.stems.guitar_left is not None
+    assert bundle.stems.extras == ()
+
+
 def test_build_populates_understanding_tempo_and_key() -> None:
     bundle = build(_legacy_result(), session_id="x")
     assert bundle.understanding.tempo_bpm == pytest.approx(124.0)

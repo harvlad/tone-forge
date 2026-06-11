@@ -315,3 +315,125 @@ def test_resolve_connect_binary_ignores_nonexistent_env(
     # the override. We can't assert the final value without knowing the
     # host, only that it does not blindly return the bad override.
     assert _resolve_connect_binary() != "/definitely/does/not/exist/connect"
+
+
+# ---------------------------------------------------------------------------
+# Real-binary integration
+#
+# Regression coverage for the failure that landed in dev: the release
+# bundle in /Applications had a stale Connect binary that exited 0 but
+# emitted human-readable text instead of JSON, so the probe started
+# returning `probe_succeeded=False` with a parse error. The pure-mock
+# tests above all kept passing because they never exercised the actual
+# binary. This block runs the binary the resolver would actually pick
+# and asserts the JSON contract holds end-to-end.
+#
+# Skipped automatically when:
+#   * no Connect binary is on this host (CI, fresh checkout), or
+#   * the binary can't be executed (dyld error, permission denied, etc.).
+# Either of those cases is the correct local outcome ("not installed");
+# what we want to catch is "installed and runs, but is broken."
+# ---------------------------------------------------------------------------
+
+
+def _resolved_binary_or_skip() -> str:
+    binary = _resolve_connect_binary()
+    if binary is None:
+        pytest.skip("no Connect binary resolved on this host")
+    return binary
+
+
+def test_resolved_connect_binary_emits_parseable_json() -> None:
+    """The binary the resolver picks must speak the JSON contract."""
+    binary = _resolved_binary_or_skip()
+    try:
+        result = subprocess.run(
+            [binary, "devices", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        pytest.skip(f"Connect binary at {binary} could not be executed: {exc}")
+
+    if result.returncode != 0:
+        pytest.skip(
+            f"Connect binary at {binary} exited {result.returncode} "
+            f"(likely dyld / linkage issue, not a contract violation): "
+            f"{result.stderr.strip()}"
+        )
+
+    # The binary ran. From here on, any failure is a real contract bug
+    # that would break the probe in production.
+    stdout = result.stdout.strip()
+    assert stdout, (
+        f"Connect binary at {binary} exited 0 but produced no stdout. "
+        "Probe will treat this as a JSON parse failure."
+    )
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"Connect binary at {binary} did not emit JSON for "
+            f"`devices --json` (first 200 chars: {stdout[:200]!r}). "
+            f"This is the regression that caused the probe to start "
+            f"returning probe_succeeded=False. Rebuild the binary "
+            f"from current sources. Parse error: {exc}"
+        ) from exc
+
+    assert isinstance(payload, dict), (
+        f"Connect binary at {binary} returned non-object JSON: {type(payload)}"
+    )
+    assert "devices" in payload, (
+        f"Connect binary at {binary} JSON missing required 'devices' key. "
+        f"Keys present: {sorted(payload.keys())}"
+    )
+    assert isinstance(payload["devices"], list), (
+        "'devices' field must be a list"
+    )
+    # Every device entry must match the AudioDeviceInfo contract — same
+    # validation _parse_devices performs in production.
+    for i, entry in enumerate(payload["devices"]):
+        assert isinstance(entry, dict), f"devices[{i}] is not an object"
+        for field in ("device_id", "name", "input_channels", "output_channels"):
+            assert field in entry, f"devices[{i}] missing required field '{field}'"
+        assert isinstance(entry["device_id"], int)
+        assert isinstance(entry["name"], str)
+        assert isinstance(entry["input_channels"], int)
+        assert isinstance(entry["output_channels"], int)
+
+
+def test_probe_against_real_binary_succeeds() -> None:
+    """End-to-end: the public ``probe()`` call must succeed on a real host
+    with a working binary. This is the test that would have caught the
+    stale-binary failure: ``probe_succeeded`` had silently flipped to
+    False even though the binary was present and executable."""
+    binary = _resolved_binary_or_skip()
+    # Sanity-check the binary can run at all. If it can't, skip — same
+    # rationale as above (we want to catch broken contracts, not absent
+    # installs).
+    try:
+        smoke = subprocess.run(
+            [binary, "devices", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        pytest.skip(f"Connect binary at {binary} could not be executed: {exc}")
+    if smoke.returncode != 0:
+        pytest.skip(
+            f"Connect binary at {binary} exited {smoke.returncode} "
+            f"(stderr: {smoke.stderr.strip()})"
+        )
+
+    result = probe()
+    assert result.probe_succeeded is True, (
+        f"probe() reported failure against a runnable binary at {binary}: "
+        f"{result.error_message}"
+    )
+    # Devices list may legitimately be empty on a CI box with no audio
+    # hardware enumerated, but the contract still guarantees a tuple.
+    assert isinstance(result.devices, tuple)

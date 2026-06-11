@@ -258,6 +258,19 @@ html, body {
   color: #0a0a0a;
   border-color: var(--accent, #4ade80);
 }
+/* Brief visual pulse so a click on the Connect button always has an
+   on-element response, even when the resulting state change is purely
+   textual (e.g. "already paired — no preset to push"). Without this,
+   the only feedback was a status flash that auto-cleared, which made
+   the button feel dead. */
+#connect-btn.clicked-pulse {
+  animation: connect-btn-pulse 480ms ease-out;
+}
+@keyframes connect-btn-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 122, 0, 0.55); }
+  60%  { box-shadow: 0 0 0 10px rgba(255, 122, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 122, 0, 0); }
+}
 .connect-status {
   font-size: 12px;
   color: var(--text-dim);
