@@ -40,6 +40,67 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Monitor chain bank: render-script CI gate (Priority 3 — producer side)
+
+`scripts/render_chain_references.py` is the upstream of every
+bundled `<chain_id>.fingerprint.json`. The §0 entry below this one
+landed the *consumer*-side CI gate (parity + schema + cross-check
+on the JSON the catalog loader reads). This commit lands the
+matching *producer*-side gate so the script can't drift away from
+the schema either.
+
+New file: `backend/tests/test_render_chain_references.py` (~270
+lines, 16 tests). Three slices:
+
+1. **Pure helpers.** `_resolve_targets`,
+   `_find_audio_for_chain`, `_read_existing_source` — every branch
+   pinned. `_resolve_targets(None)` returns the whole bank;
+   `_resolve_targets(["tfc.does_not_exist"])` raises `SystemExit`
+   so an operator typo doesn't silently skip chains.
+   `_find_audio_for_chain` prefers `.wav` and accepts `.aif` /
+   `.aiff` / `.flac`. `_read_existing_source` returns `None` on
+   missing file and malformed JSON (so a corrupt prior write
+   doesn't kill the operator's batch).
+
+2. **`_render_fingerprint` schema.** With `gc._extract_query_fingerprint`
+   monkey-patched to return a synthetic 8-vector, the test asserts
+   the produced JSON carries identity (`chain_id`, `display_name`,
+   `family`), provenance (`source`, `source_note`, `rendered_at`,
+   `rendered_from`), and measurement (`features` dict with all eight
+   `_FEATURE_KEYS` as floats; `feature_validity` with all eight keys
+   as bools). Also pins the "extractor returned None → script
+   returns None" contract so a feature-extraction failure can never
+   write a garbage fingerprint.
+
+3. **`render()` round-trip.** End-to-end: synthesize a WAV-shaped
+   placeholder on disk, mock the extractor, run `render` into a
+   tmp out-dir, and feed the written JSON back through
+   `gc._load_entry`. If this round-trip ever throws, the producer
+   has drifted from the consumer. Also pins the missing-audio-dir
+   failure mode (`rc=1`, no out-dir created), the missing-WAV
+   per-chain skip (`rc=1`, no JSON written), and `--dry-run`
+   (`rc=0`, no JSON written, payload printed to stdout).
+
+Not covered (intentionally): the librosa-backed feature
+extraction itself — that's audio behaviour, not the structural
+contract this file protects. The CLI argparse surface is also
+skipped (testing stdlib).
+
+Verification:
+- `pytest tests/test_render_chain_references.py -v` → 16 passed
+  in 0.36s.
+- Combined with the producer + bank surface:
+  `tests/test_render_chain_references.py` +
+  `tests/test_monitor_fingerprints.py` +
+  `tests/test_monitor_loader.py` +
+  `tests/test_tone_retrieve.py` +
+  `tests/test_tone_policy.py` → 122 passed in 0.47s.
+
+No production code touched. With both sides gated, a drift between
+the script's output schema and the bundled JSONs' schema cannot
+land silently: either the producer test fails on write or the
+consumer test fails on the next CI run after the bank is updated.
+
 ### Monitor chain bank: fingerprint CI gate (Priority 3 — schema + parity)
 
 The monitor chain bank ships two artifacts per chain: the YAML spec
@@ -1340,14 +1401,22 @@ Each chain passes if it:
 - Latency ≤ 10ms round-trip on M-series
 
 **Mechanical CI gate (under the founder-ear gate):**
-`tests/test_monitor_fingerprints.py` pins bundle parity (YAML ↔
-fingerprint JSON), fingerprint schema (all eight `_FEATURE_KEYS`
-populated as numbers; optional `feature_validity` well-formed when
-present), and YAML ↔ JSON cross-check (`chain_id`, `family`,
-`display_name`). A YAML whose `family` is bumped without
-re-rendering the fingerprint via
-`scripts/render_chain_references.py` will fail this gate before
-the founder-ear audition ever runs. See §0.
+
+- *Consumer side* — `tests/test_monitor_fingerprints.py` pins
+  bundle parity (YAML ↔ fingerprint JSON), fingerprint schema
+  (all eight `_FEATURE_KEYS` populated as numbers; optional
+  `feature_validity` well-formed when present), and YAML ↔ JSON
+  cross-check (`chain_id`, `family`, `display_name`). A YAML
+  whose `family` is bumped without re-rendering the fingerprint
+  will fail this gate before the founder-ear audition ever runs.
+- *Producer side* — `tests/test_render_chain_references.py`
+  pins the output schema of `scripts/render_chain_references.py`
+  itself: every helper branch, the JSON shape of a single render,
+  and an end-to-end round-trip that feeds the script's output
+  back through `guitar_catalog._load_entry`. The script cannot
+  drift away from the consumer schema either.
+
+Both sides see §0.
 
 ### Phase 2 expansion
 
