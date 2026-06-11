@@ -21,7 +21,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
-| 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed (see §0); isotonic refit deferred |
+| 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); fitted artifact still blocked on 100 hand-labeled clips |
 | 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) + audio_input_name → Connect helper env (Python plumb of item #38) all landed (see §0) |
 | 8 | Song Understanding expansion | Investigation only |
 | — | MIDI extraction internals | Frozen |
@@ -39,6 +39,66 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Isotonic calibration loader infrastructure (Priority 6 — refit prep)
+
+`tone.calibrate(distance)` has shipped behind a deliberate placeholder
+(`exp(-d/scale)` capped at 0.79, one tick below `HIGH_CONFIDENCE_MIN`)
+since the tier-classifier landed. Plan §7 specifies replacing it with
+an isotonic regression fit from 100 hand-labeled clips. Those clips
+do not yet exist in the repo, so the **fit itself remains data-blocked**
+— but the loader / wrapper infrastructure that activates the fit
+once the artifact lands is independent of the data and lands now.
+
+The contract: a single `git add backend/tone_forge/tone/calibration_v1.joblib`
+of a `joblib.dump(IsotonicRegression(...))` artifact rebinds the
+module-level `_CALIBRATOR` on next import. No code change required
+to flip from placeholder to fitted; no code change required if the
+artifact is absent. The public `calibrate(distance) -> float` signature
+is unchanged; every caller (`tone.retrieve`, the session API edge,
+the instrumentation surface) keeps working without modification.
+
+| Change | File |
+|---|---|
+| New `IsotonicCalibrator` class adapting any predict-shaped model to the `Calibrator` protocol. Encapsulates the input sanitization (NaN/inf/negative/None/unparseable → 0.0) and `[0, 1]` output clamp that the public `calibrate` surface owes its callers, so the contract looks identical whether the placeholder or the fitted model is active. Numeric edge cases (model emits NaN/inf, model raises) all collapse to 0.0 — under-claim rather than propagate. | `backend/tone_forge/tone/calibration.py` |
+| `IsotonicCalibrator.load_from_joblib(path)` — lazy-imports joblib, validates the loaded object has `predict`, raises on either failure. The primitive the auto-loader and direct callers use; sklearn dependency is paid only on the load path, not on every import of this module. | `backend/tone_forge/tone/calibration.py` |
+| `_try_load_fitted_calibrator()` — module-level auto-loader that looks for `calibration_v1.joblib` next to the module. Returns an `IsotonicCalibrator` on success; returns `None` (logging a warning) on missing file, broken pickle, sklearn version skew, or wrong-object pickle. Never raises. | `backend/tone_forge/tone/calibration.py` |
+| `_CALIBRATOR: Calibrator = _try_load_fitted_calibrator() or _placeholder_calibrate` — the swappable module-level reference. `calibrate(distance)` reads through it on every call, so a future hot-swap path (re-loading after a manual refit) can also use this seam. | `backend/tone_forge/tone/calibration.py` |
+| Shared `_sanitize_distance` gate refactored out of `_placeholder_calibrate` so the placeholder and the wrapper apply identical input rules — no contract drift between them. | `backend/tone_forge/tone/calibration.py` |
+| Autouse fixture pinning `_CALIBRATOR` to `_placeholder_calibrate` for every test that asserts placeholder-specific properties (the cap, the exact pipeline tier outcomes). Without it, a dev machine that has dropped in a fitted artifact would silently break placeholder assertions. | `backend/tests/test_tone_calibration.py` |
+| New test file: 21 tests across three groups — `IsotonicCalibrator` wrapper contract (model call shape, clamps, NaN/inf/raise handling, defensive inputs), auto-loader negative paths (missing file, corrupt pickle, wrong-object pickle), happy path with a real `sklearn.isotonic.IsotonicRegression` round-tripped through `joblib`, and module-level wiring sanity (active calibrator is callable / obeys `[0, 1]` / sanitizes). | `backend/tests/test_tone_calibration_loader.py` |
+
+Why an auto-loader and not an explicit `install_calibrator()` call:
+the calibration module is imported transitively by every retrieval
+caller; threading an install step through every import site (FastAPI
+startup, session bundle, tests) was strictly worse than a one-line
+auto-load at import time. The autouse fixture in the placeholder test
+file means the test suite is immune to dev-machine artifact presence.
+
+Verification:
+- `tests/test_tone_calibration.py` — 23/23 PASS (existing assertions
+  preserved by the autouse fixture; no behavior change for callers
+  while the placeholder is active).
+- `tests/test_tone_calibration_loader.py` — 21/21 PASS (new wrapper
+  + auto-loader coverage).
+- Boundary sweep (`tests/test_tone_tiers.py`,
+  `tests/test_tone_policy.py`, `tests/test_tone_retrieve.py`,
+  `tests/test_api_tone_ignored.py`, `tests/test_session_route.py`,
+  `tests/test_session_bundle.py`, `tests/test_subsystem_boundaries.py`)
+  — 173/173 PASS.
+- Full backend test suite — 1280/1280 PASS, 12 skipped.
+
+Not in this entry:
+- The fitted artifact itself. Blocked on the 100 hand-labeled clips
+  per Plan §7. Once collected, the fit is a single
+  `IsotonicRegression().fit(distances, labels)` followed by
+  `joblib.dump(model, "tone/calibration_v1.joblib")`. No further
+  Python change.
+- Telemetry-driven re-fit cadence (Plan §7 specifies quarterly).
+  The loader doesn't need it; refit tooling can land separately.
+- Hot-swap of `_CALIBRATOR` mid-process. The auto-loader runs at
+  import time; a future `/api/calibration/reload` endpoint can use
+  the same module-level seam if needed. Not motivated yet.
 
 ### audio_input_name → Connect helper env (Priority 7 — Python plumb of item #38)
 

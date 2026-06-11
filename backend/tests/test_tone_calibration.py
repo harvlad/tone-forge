@@ -16,6 +16,26 @@ import pytest
 from tone_forge.tone import calibration, tiers
 
 
+@pytest.fixture(autouse=True)
+def _force_placeholder_calibrator(monkeypatch):
+    """Pin ``_CALIBRATOR`` to the placeholder for every test in this file.
+
+    These tests assert placeholder-specific properties (the
+    ``PLACEHOLDER_CONFIDENCE_CAP`` clip; the exact end-to-end tier
+    outcomes; ``calibrate(100.0) ≈ 0``). The auto-loader in
+    ``calibration.py`` rebinds ``_CALIBRATOR`` to a fitted
+    :class:`IsotonicCalibrator` if ``calibration_v1.joblib`` is
+    present next to the module — which would silently break the
+    placeholder assertions on any dev machine that has the artifact.
+    Forcing the placeholder here keeps the contract under test
+    explicit and machine-independent. Loader behavior is covered
+    separately in ``test_tone_calibration_loader.py``.
+    """
+    monkeypatch.setattr(
+        calibration, "_CALIBRATOR", calibration._placeholder_calibrate
+    )
+
+
 # ---------------------------------------------------------------------------
 # calibrate — placeholder properties
 # ---------------------------------------------------------------------------
