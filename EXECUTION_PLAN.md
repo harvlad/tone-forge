@@ -22,7 +22,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 4 | Chord detection (spike → ship) | MVP shipped in main; validation harness in-flight (uncommitted) — see §0 |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
 | 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed (see §0); isotonic refit deferred |
-| 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) all landed (see §0) |
+| 7 | Device Discovery | Active — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (preferred_chain_family → fallback policy) + CoreAudio probe pre-fill (item #36) + audio_input_name → Connect helper env (Python plumb of item #38) all landed (see §0) |
 | 8 | Song Understanding expansion | Investigation only |
 | — | MIDI extraction internals | Frozen |
 | — | Reconstruction / ALS export | Frozen |
@@ -39,6 +39,61 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### audio_input_name → Connect helper env (Priority 7 — Python plumb of item #38)
+
+The onboarding modal has been capturing `audio_input_name` since the
+CoreAudio probe pre-fill landed (#36 entry below), and the persistence
+layer round-trips it through `POST /api/device/preferences`, but no
+runtime consumer read the value. The Connect Swift helper still selects
+the system-default CoreAudio input. This entry closes the Python half
+of that gap: the local-engine supervisor now exports the persisted
+`audio_input_name` to the child process as `TONEFORGE_AUDIO_INPUT_NAME`
+on every spawn. The Swift side wiring to consume the env var is queued
+as a follow-up — at that point the loop closes end-to-end with no
+further Python change required.
+
+Env var transport was chosen over a 5th positional CLI arg so the
+existing Connect binary (which ignores unknown env vars) does not
+regress while the Swift side catches up. A positional arg would have
+forced the supervisor to also start managing `monitor-gain` (currently
+defaulted by Swift at `args[4]`) — out of scope for this commit.
+
+| Change | File |
+|---|---|
+| `_AUDIO_INPUT_ENV = "TONEFORGE_AUDIO_INPUT_NAME"` constant + `_resolve_audio_input_name()` helper that lazy-imports `load_preferences` and never raises | `backend/local_engine/connect_bridge.py` |
+| `ConnectSupervisor.start()` builds `env = os.environ.copy()`, layers in `_AUDIO_INPUT_ENV` when prefs has one, strips an inherited value when prefs does not — so a stale parent env can't override a cleared onboarding answer. `Popen(..., env=env)` | `backend/local_engine/connect_bridge.py` |
+| Spawn log line now records the resolved input (`input=Focusrite Scarlett 2i2` / `input=<default>`) so `~/Library/Logs/ToneForge/connect-bridge.log` shows what the child actually saw | `backend/local_engine/connect_bridge.py` |
+| Four new lifecycle tests: env var present when pref set; absent (and stale parent value stripped) when pref missing; `_resolve_audio_input_name` reads a real `device.json` end-to-end via `TONEFORGE_DEVICE_PREFS_PATH`; returns `None` without raising when the file is absent | `backend/tests/test_connect_bridge_lifecycle.py` |
+
+The lookup is intentionally lazy — done inside `start()` on every
+spawn — so an explicit "Reset device choice" mid-session takes effect
+on the next `restart()` without the local engine having to rebuild
+its supervisor. This is consistent with how the supervisor already
+re-resolves the Connect binary on every spawn.
+
+Verification:
+- `tests/test_connect_bridge_lifecycle.py` — 12/12 PASS (4 new tests
+  for the audio-input env wiring, 8 existing lifecycle tests
+  unchanged).
+- Boundary sweep (`tests/test_connect_bridge_apply_chain.py`,
+  `tests/test_api_device_preferences.py`,
+  `tests/test_api_device_probe.py`, `tests/test_devices_*.py`,
+  `tests/test_session_*.py`, `tests/test_subsystem_boundaries.py`,
+  `tests/test_tone_*.py`, `tests/test_api_tone_ignored.py`) —
+  295/295 PASS.
+- Full backend test suite — 1259/1259 PASS, 12 skipped.
+
+Not in this entry:
+- Swift consumption of `TONEFORGE_AUDIO_INPUT_NAME` in the bridge's
+  AVAudioEngine input-device selection. The env var reaches the
+  child process today; the Swift `startBridge(...)` path still
+  resolves to whatever CoreAudio reports as the default input.
+  Closing the loop end-to-end is queued as a Connect-side commit
+  and requires no further Python change once it lands.
+- Positional CLI surface for `audio_input_name`. Reconsider only if
+  the Swift parser ever moves to `swift-argument-parser`; the env
+  var keeps the bridge CLI signature stable in the meantime.
 
 ### Working-tree integration sweep (inventory, not strategy)
 
@@ -157,8 +212,9 @@ Verification:
 
 Not in this entry:
 - Runtime consumption of `audio_input_name` by the audio pipeline.
-  The onboarding loop now captures the value; downstream wiring is
-  the next P7 surface.
+  The onboarding loop now captures the value; the Python supervisor
+  plumb to the Connect helper env is the entry at the top of §0;
+  the Swift consumer is still queued.
 - Re-prompt when the detected device changes between sessions. Per
   the §8 spec, re-prompt is gated on `device_class === null` or an
   explicit settings reset; an interface swap alone does not trigger
@@ -215,8 +271,9 @@ Not in this entry:
   already route, so no bridge-side change was needed. Mentioned here
   for the audit trail.
 - Runtime consumption of `audio_input_name` by the audio pipeline.
-  Onboarding now captures the value (see #36 entry above) but
-  nothing downstream reads it yet.
+  Onboarding now captures the value (see #36 entry above); the
+  Python plumb to the Connect helper env lands in a later entry
+  above; the Swift side does not yet read the env var.
 
 ### Jam onboarding modal (Priority 7 — item #37)
 

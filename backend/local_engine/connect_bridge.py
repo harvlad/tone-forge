@@ -42,6 +42,12 @@ from typing import Optional
 logger = logging.getLogger("toneforge.connect")
 
 
+# Env var name the Connect helper reads to pick a non-default
+# CoreAudio input device. Defined here (not at the call site) so the
+# Swift side and the tests reference a single source of truth.
+_AUDIO_INPUT_ENV = "TONEFORGE_AUDIO_INPUT_NAME"
+
+
 # ---- Binary discovery -------------------------------------------------------
 
 # We expect the Connect Swift package at <repo>/connect. The release
@@ -71,6 +77,36 @@ def _log_path() -> Path:
     base = Path.home() / "Library" / "Logs" / "ToneForge"
     base.mkdir(parents=True, exist_ok=True)
     return base / "connect-bridge.log"
+
+
+def _resolve_audio_input_name() -> Optional[str]:
+    """Return the persisted ``audio_input_name`` or ``None``.
+
+    Reads ``DevicePreferences`` from the same on-disk store the
+    onboarding modal writes. Never raises: a missing file, broken
+    JSON, or any unexpected import-time failure (e.g. running outside
+    the backend package layout in CI) is treated as "no preference",
+    matching the supervisor's never-block contract.
+
+    The lookup is intentionally lazy — done inside ``start()`` on
+    every spawn — so an explicit "Reset device choice" mid-session
+    takes effect on the next ``restart()`` without needing to rebuild
+    the supervisor.
+    """
+    try:
+        from tone_forge.devices.preferences import load_preferences
+    except Exception:
+        return None
+    try:
+        prefs = load_preferences()
+    except Exception:
+        return None
+    if prefs is None:
+        return None
+    name = prefs.audio_input_name
+    if not name:
+        return None
+    return name
 
 
 # ---- Supervisor -------------------------------------------------------------
@@ -159,6 +195,22 @@ class ConnectSupervisor:
                 logger.warning("Connect: %s", self._last_error)
                 return self._status_locked()
 
+            # Build the child environment. The base is our own
+            # environment; we layer on TONEFORGE_AUDIO_INPUT_NAME from
+            # persisted DevicePreferences when the user has pinned an
+            # input device through the onboarding modal. The Connect
+            # helper consumes this when selecting its CoreAudio input;
+            # absent the var it falls back to the system default. We
+            # do not mutate os.environ — only the child sees the var.
+            env = os.environ.copy()
+            audio_input = _resolve_audio_input_name()
+            if audio_input is not None:
+                env[_AUDIO_INPUT_ENV] = audio_input
+            else:
+                # Strip an inherited value so a parent's stale env can't
+                # override what the user just cleared in onboarding.
+                env.pop(_AUDIO_INPUT_ENV, None)
+
             try:
                 log_file = open(_log_path(), "ab", buffering=0)
                 # Use Popen with start_new_session so the child gets its
@@ -171,12 +223,14 @@ class ConnectSupervisor:
                     stdin=subprocess.DEVNULL,
                     start_new_session=True,
                     close_fds=True,
+                    env=env,
                 )
                 self._spawn_ts = time.monotonic()
                 self._last_error = None
                 logger.info(
-                    "Connect: spawned %s (pid=%d, session=%s)",
+                    "Connect: spawned %s (pid=%d, session=%s, input=%s)",
                     binary, self._proc.pid, self.session_id,
+                    audio_input or "<default>",
                 )
             except Exception as e:
                 self._last_error = f"spawn failed: {e}"

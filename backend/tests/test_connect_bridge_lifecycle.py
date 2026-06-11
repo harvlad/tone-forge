@@ -26,6 +26,7 @@ coverage.
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import sys
 import threading
@@ -319,3 +320,104 @@ def test_supervisor_auto_restart_budget_is_bounded(monkeypatch) -> None:
     assert sup._restart_timer is None
     assert sup._restart_attempts == cb_module._MAX_RESTART_ATTEMPTS
     assert "exited with code 1" in (sup.status().last_error or "")
+
+
+# ---------------------------------------------------------------------------
+# Failure 4 — audio_input_name flows from preferences into the child env
+# (Priority 7 #38 follow-up). The Connect helper reads
+# TONEFORGE_AUDIO_INPUT_NAME to pick a non-default CoreAudio input;
+# the supervisor is responsible for sourcing it from persisted prefs.
+# ---------------------------------------------------------------------------
+
+
+def _patch_supervisor_capturing_env(
+    monkeypatch,
+) -> tuple[ConnectSupervisor, list[dict]]:
+    """Variant of ``_make_patched_supervisor`` that records every
+    ``Popen`` kwargs dict — tests assert on ``env`` to confirm the
+    audio-input plumbing reaches the child without poking os.environ.
+    """
+    captured: list[dict] = []
+
+    def fake_discover() -> Path:
+        return Path("/tmp/fake-connect-binary")
+
+    def fake_popen(*args, **kwargs):
+        captured.append(kwargs)
+        return _FakeProc()
+
+    monkeypatch.setattr(cb_module, "discover_connect_binary", fake_discover)
+    monkeypatch.setattr(cb_module.subprocess, "Popen", fake_popen)
+
+    return ConnectSupervisor(session_id="audio-input-test"), captured
+
+
+def test_supervisor_injects_audio_input_env_when_pref_set(monkeypatch) -> None:
+    """A user with a pinned interface gets its name in the child env."""
+    monkeypatch.setattr(
+        cb_module,
+        "_resolve_audio_input_name",
+        lambda: "Focusrite Scarlett 2i2",
+    )
+    sup, captured = _patch_supervisor_capturing_env(monkeypatch)
+
+    sup.start()
+    assert len(captured) == 1
+    env = captured[0].get("env")
+    assert env is not None, "supervisor must pass an explicit env to Popen"
+    assert env[cb_module._AUDIO_INPUT_ENV] == "Focusrite Scarlett 2i2"
+    # We must not have mutated the parent's environment.
+    assert cb_module._AUDIO_INPUT_ENV not in os.environ
+
+
+def test_supervisor_omits_audio_input_env_when_pref_missing(monkeypatch) -> None:
+    """No persisted pref → no env var → Swift side falls back to default."""
+    monkeypatch.setattr(cb_module, "_resolve_audio_input_name", lambda: None)
+    # Pre-seed os.environ to prove the supervisor strips an inherited
+    # value rather than silently propagating it.
+    monkeypatch.setenv(cb_module._AUDIO_INPUT_ENV, "Stale Inherited Mic")
+    sup, captured = _patch_supervisor_capturing_env(monkeypatch)
+
+    sup.start()
+    assert len(captured) == 1
+    env = captured[0].get("env")
+    assert env is not None
+    assert cb_module._AUDIO_INPUT_ENV not in env, (
+        "stale inherited env must not propagate to the child when the "
+        "user has no pinned interface"
+    )
+
+
+def test_resolve_audio_input_name_reads_persisted_pref(monkeypatch, tmp_path) -> None:
+    """End-to-end: write a real device.json and confirm the helper
+    surfaces ``audio_input_name`` without going through the API.
+    Belt-and-braces — guards against an import-path drift between the
+    supervisor and the persistence module.
+    """
+    import json
+
+    prefs_path = tmp_path / "device.json"
+    prefs_path.write_text(
+        json.dumps(
+            {
+                "device_class": "interface_only",
+                "audio_input_name": "MOTU M2",
+                "preferred_chain_family": None,
+                "first_seen_iso": None,
+                "last_used_iso": None,
+            }
+        )
+    )
+    monkeypatch.setenv("TONEFORGE_DEVICE_PREFS_PATH", str(prefs_path))
+
+    assert cb_module._resolve_audio_input_name() == "MOTU M2"
+
+
+def test_resolve_audio_input_name_returns_none_without_file(
+    monkeypatch, tmp_path
+) -> None:
+    """Absent file → None, never raise."""
+    monkeypatch.setenv(
+        "TONEFORGE_DEVICE_PREFS_PATH", str(tmp_path / "missing.json")
+    )
+    assert cb_module._resolve_audio_input_name() is None
