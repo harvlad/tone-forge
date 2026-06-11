@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ToneForge Listening Rig</title>
+  <style>
+    :root {
+      --bg: #111; --fg: #eee; --muted: #888; --accent: #6cf;
+      --good: #4c8; --bad: #d66; --warn: #ec6;
+      --card: #1a1a1a; --line: #333;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+      font: 14px/1.4 -apple-system, "SF Pro Text", system-ui, sans-serif;
+    }
+    header {
+      position: sticky; top: 0; background: #000; z-index: 10;
+      padding: 10px 16px; border-bottom: 1px solid var(--line);
+      display: flex; gap: 16px; align-items: center;
+    }
+    header h1 { margin: 0; font-size: 16px; flex: 0 0 auto; }
+    .mode { display: flex; gap: 0; }
+    .mode button {
+      background: #222; color: var(--fg); border: 1px solid var(--line);
+      padding: 6px 12px; cursor: pointer; font: inherit;
+    }
+    .mode button.active { background: var(--accent); color: #000; border-color: var(--accent); }
+    .nav { display: flex; gap: 6px; align-items: center; flex: 1 1 auto; }
+    .nav button {
+      background: #222; color: var(--fg); border: 1px solid var(--line);
+      padding: 6px 10px; cursor: pointer; font: inherit;
+    }
+    .nav button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .progress { color: var(--muted); margin-left: 12px; }
+    .save-status {
+      flex: 0 0 auto; padding: 4px 10px; border-radius: 4px;
+      background: #222; color: var(--muted); font-size: 12px;
+    }
+    .save-status.saving { background: #443; color: var(--warn); }
+    .save-status.saved { background: #243; color: var(--good); }
+    .save-status.error { background: #422; color: var(--bad); }
+    main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+    .query-card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+      padding: 16px; margin-bottom: 24px;
+    }
+    .query-head { margin-bottom: 12px; }
+    .query-head .title { font-size: 18px; font-weight: 600; }
+    .query-head .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    audio { width: 100%; max-width: 480px; display: block; margin-top: 8px; }
+    .neighbors { margin-top: 16px; }
+    .nbr {
+      border-top: 1px solid var(--line);
+      padding: 12px 0;
+      display: grid;
+      grid-template-columns: 60px 1fr 320px;
+      gap: 16px;
+      align-items: center;
+    }
+    .nbr .rank { font-size: 22px; color: var(--muted); text-align: center; }
+    .nbr .info { font-size: 13px; }
+    .nbr .info .name { font-weight: 600; }
+    .nbr .info .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .nbr .controls { display: flex; flex-direction: column; gap: 6px; }
+    .nbr .controls audio { margin-top: 0; max-width: 320px; }
+    .verdict { display: flex; gap: 4px; }
+    .verdict button {
+      flex: 1; padding: 4px 6px; font: inherit; cursor: pointer;
+      background: #222; color: var(--fg); border: 1px solid var(--line);
+    }
+    .verdict button.yes.active { background: var(--good); color: #000; border-color: var(--good); }
+    .verdict button.no.active { background: var(--bad); color: #fff; border-color: var(--bad); }
+    .verdict button.clear.active { background: var(--muted); color: #000; border-color: var(--muted); }
+    .summary {
+      margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line);
+      display: flex; gap: 24px; align-items: center; flex-wrap: wrap;
+    }
+    .summary label { display: flex; align-items: center; gap: 8px; }
+    .summary select, .summary input[type=text] {
+      background: #222; color: var(--fg); border: 1px solid var(--line);
+      padding: 4px 8px; font: inherit;
+    }
+    .evidence {
+      background: #161616; border: 1px solid var(--line); border-radius: 4px;
+      padding: 8px 12px; margin-top: 8px; font-size: 12px; color: var(--muted);
+    }
+    .evidence .head { color: var(--warn); margin-bottom: 4px; }
+    .same-cat { color: var(--good); }
+    .diff-cat { color: var(--muted); }
+    kbd {
+      background: #222; border: 1px solid var(--line); border-radius: 3px;
+      padding: 1px 6px; font-size: 11px; color: var(--muted);
+    }
+    .help { color: var(--muted); font-size: 12px; margin-left: auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Listening Rig</h1>
+    <div class="mode">
+      <button id="mode-v3" class="active">V3 (24 queries)</button>
+      <button id="mode-fx">FX audit (6)</button>
+    </div>
+    <div class="nav">
+      <button id="prev">&laquo; prev</button>
+      <button id="next">next &raquo;</button>
+      <span class="progress" id="progress"></span>
+    </div>
+    <span class="help">
+      <kbd>j</kbd>/<kbd>k</kbd> next/prev &nbsp;
+      <kbd>space</kbd> play query &nbsp;
+      <kbd>1</kbd>&hellip;<kbd>5</kbd> play neighbor
+    </span>
+    <span class="save-status" id="save-status">idle</span>
+  </header>
+  <main id="root"></main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = {
+  mode: "v3",        // "v3" | "fx"
+  cursor: 0,
+  v3: null,          // full JSON
+  fx: null,
+  saveTimer: null,
+};
+
+const setStatus = (cls, text) => {
+  const el = $("save-status");
+  el.className = "save-status " + cls;
+  el.textContent = text;
+};
+
+async function loadAll() {
+  setStatus("saving", "loading...");
+  const [v3, fx] = await Promise.all([
+    fetch("/api/v3").then(r => r.json()),
+    fetch("/api/fx").then(r => r.json()),
+  ]);
+  state.v3 = v3;
+  state.fx = fx;
+  setStatus("saved", "loaded");
+  render();
+}
+
+function saveSoon() {
+  if (state.saveTimer) clearTimeout(state.saveTimer);
+  setStatus("saving", "saving...");
+  state.saveTimer = setTimeout(async () => {
+    try {
+      const path = state.mode === "v3" ? "/api/v3" : "/api/fx";
+      const data = state.mode === "v3" ? state.v3 : state.fx;
+      const r = await fetch(path, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(data),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setStatus("saved", "saved " + new Date().toLocaleTimeString());
+    } catch (e) {
+      setStatus("error", "save failed: " + e.message);
+    }
+  }, 350);
+}
+
+function audioUrl(path) {
+  return `/audio?path=${encodeURIComponent(path)}`;
+}
+
+function renderV3() {
+  const root = $("root");
+  const queries = state.v3.queries;
+  const q = queries[state.cursor];
+  const rated = queries.filter(x => x.query_summary.any_top5_usable !== null).length;
+  $("progress").textContent = `query ${state.cursor + 1} of ${queries.length}  (${rated} rated)`;
+  $("prev").disabled = state.cursor === 0;
+  $("next").disabled = state.cursor === queries.length - 1;
+
+  const card = document.createElement("div");
+  card.className = "query-card";
+  card.innerHTML = `
+    <div class="query-head">
+      <div class="title">${escapeHtml(q.query_name)}</div>
+      <div class="meta">
+        sound_type=<b>${q.query_sound_type}</b> &middot;
+        category=${q.query_category} &middot;
+        id=<code>${q.query_preset_id}</code>
+      </div>
+      <audio controls preload="none" id="query-audio" src="${audioUrl(q.query_audio)}"></audio>
+    </div>
+    <div class="neighbors" id="neighbors"></div>
+    <div class="summary" id="summary"></div>
+  `;
+  root.replaceChildren(card);
+
+  const nbContainer = $("neighbors");
+  q.top5.forEach((nb, idx) => {
+    const div = document.createElement("div");
+    div.className = "nbr";
+    const v = nb.rating_would_start_from_this;
+    div.innerHTML = `
+      <div class="rank">#${nb.rank}</div>
+      <div class="info">
+        <div class="name">${escapeHtml(nb.name)}</div>
+        <div class="sub">
+          <span class="${nb.same_sound_type ? 'same-cat' : 'diff-cat'}">${nb.sound_type}</span> /
+          ${nb.category} &middot;
+          cos=${nb.cosine_sim.toFixed(3)}
+        </div>
+      </div>
+      <div class="controls">
+        <audio controls preload="none" id="nbr-audio-${idx}" src="${audioUrl(nb.audio_path)}"></audio>
+        <div class="verdict" data-rank="${nb.rank}">
+          <button class="yes ${v === true ? 'active' : ''}" data-v="true">would start</button>
+          <button class="no ${v === false ? 'active' : ''}" data-v="false">no</button>
+          <button class="clear ${v === null ? 'active' : ''}" data-v="null">?</button>
+        </div>
+      </div>
+    `;
+    nbContainer.appendChild(div);
+    const verdict = div.querySelector(".verdict");
+    verdict.addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      const raw = btn.dataset.v;
+      const newVal = raw === "true" ? true : raw === "false" ? false : null;
+      nb.rating_would_start_from_this = newVal;
+      saveSoon();
+      renderV3();
+    });
+  });
+
+  const sum = $("summary");
+  const s = q.query_summary;
+  const usableHtml = ["true", "false", "null"].map(v => {
+    const val = v === "true" ? true : v === "false" ? false : null;
+    const isActive = s.any_top5_usable === val;
+    const cls = v === "true" ? "yes" : v === "false" ? "no" : "clear";
+    const txt = v === "true" ? "any top-5 usable" : v === "false" ? "none usable" : "unrated";
+    return `<button class="${cls} ${isActive ? 'active' : ''}" data-v="${v}">${txt}</button>`;
+  }).join("");
+  sum.innerHTML = `
+    <label>
+      <div class="verdict" id="usable-toggle" style="min-width:380px">${usableHtml}</div>
+    </label>
+    <label>best_rank
+      <select id="best-rank">
+        ${[null,1,2,3,4,5].map(r => `<option value="${r === null ? '' : r}" ${s.best_rank === r ? 'selected' : ''}>${r === null ? '—' : r}</option>`).join("")}
+      </select>
+    </label>
+  `;
+  $("usable-toggle").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const raw = btn.dataset.v;
+    s.any_top5_usable = raw === "true" ? true : raw === "false" ? false : null;
+    saveSoon();
+    renderV3();
+  });
+  $("best-rank").addEventListener("change", (e) => {
+    s.best_rank = e.target.value === "" ? null : parseInt(e.target.value, 10);
+    saveSoon();
+  });
+}
+
+function renderFx() {
+  const root = $("root");
+  const items = state.fx.items;
+  const it = items[state.cursor];
+  const rated = items.filter(x => x.operator_label !== null && x.operator_label !== "").length;
+  $("progress").textContent = `fx ${state.cursor + 1} of ${items.length}  (${rated} labeled)`;
+  $("prev").disabled = state.cursor === 0;
+  $("next").disabled = state.cursor === items.length - 1;
+
+  const evidence = it.seg8_top5_evidence.map(e =>
+    `<div>#${e.rank} <b>${escapeHtml(e.name)}</b> (${e.sound_type} / ${e.category}, cos=${e.cosine.toFixed(3)})</div>`
+  ).join("");
+
+  const labels = ["fx", "bass", "lead", "pad", "keys", "percussion", "other"];
+  const opts = ["<option value=''>(unrated)</option>"].concat(
+    labels.map(l => `<option value="${l}" ${it.operator_label === l ? "selected" : ""}>${l}</option>`)
+  ).join("");
+
+  const card = document.createElement("div");
+  card.className = "query-card";
+  card.innerHTML = `
+    <div class="query-head">
+      <div class="title">${escapeHtml(it.name)}</div>
+      <div class="meta">
+        currently labeled: <b>${it.current_label_sound_type}</b> /
+        ${it.current_label_category} &middot;
+        id=<code>${it.preset_id}</code>
+      </div>
+      <audio controls preload="none" id="query-audio" src="${audioUrl(it.query_audio)}"></audio>
+    </div>
+    <div class="summary">
+      <label>operator_label
+        <select id="op-label">${opts}</select>
+      </label>
+      <label style="flex:1; min-width:300px">note
+        <input type="text" id="op-note" value="${escapeHtml(it.operator_note || '')}" style="width:100%" />
+      </label>
+    </div>
+    <div class="evidence">
+      <div class="head">seg8 retrieval evidence (information only; do not let bias your label)</div>
+      ${evidence}
+    </div>
+  `;
+  root.replaceChildren(card);
+
+  $("op-label").addEventListener("change", (e) => {
+    it.operator_label = e.target.value || null;
+    saveSoon();
+    renderFx();
+  });
+  $("op-note").addEventListener("input", (e) => {
+    it.operator_note = e.target.value;
+    saveSoon();
+  });
+}
+
+function render() {
+  document.querySelectorAll(".mode button").forEach(b => b.classList.remove("active"));
+  $("mode-" + state.mode).classList.add("active");
+  if (state.mode === "v3") renderV3();
+  else renderFx();
+}
+
+function nQueries() {
+  return state.mode === "v3" ? state.v3.queries.length : state.fx.items.length;
+}
+
+function step(d) {
+  const n = nQueries();
+  state.cursor = Math.max(0, Math.min(n - 1, state.cursor + d));
+  render();
+  window.scrollTo(0, 0);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  $("mode-v3").addEventListener("click", () => {
+    state.mode = "v3"; state.cursor = 0; render();
+  });
+  $("mode-fx").addEventListener("click", () => {
+    state.mode = "fx"; state.cursor = 0; render();
+  });
+  $("prev").addEventListener("click", () => step(-1));
+  $("next").addEventListener("click", () => step(+1));
+
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.key === "j") step(+1);
+    else if (e.key === "k") step(-1);
+    else if (e.key === " ") {
+      e.preventDefault();
+      const a = $("query-audio");
+      if (a) a.paused ? a.play() : a.pause();
+    } else if (/^[1-5]$/.test(e.key)) {
+      const a = $("nbr-audio-" + (parseInt(e.key, 10) - 1));
+      if (a) a.paused ? a.play() : a.pause();
+    }
+  });
+
+  loadAll();
+});
+</script>
+</body>
+</html>
