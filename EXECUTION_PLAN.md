@@ -40,6 +40,58 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Monitor chain bank: fingerprint CI gate (Priority 3 — schema + parity)
+
+The monitor chain bank ships two artifacts per chain: the YAML spec
+(loaded by `tone_forge.monitor.loader`) and the rendered fingerprint
+JSON (consumed by `tone_forge.tone.guitar_catalog`). They are produced
+by different workflows — YAML is hand-authored, fingerprint JSON is
+emitted by `scripts/render_chain_references.py` after a Connect
+render. Until this commit, nothing caught silent drift between them:
+a YAML whose `family` was bumped without re-rendering the fingerprint
+would route under the new family in the policy layer but match audio
+under the old family in the catalog. The tone → monitor import
+boundary fix (commit `c6ff8d1`) closed this at the import boundary by
+carrying `display_name` + `family` in the fingerprint JSON; this
+commit closes it at the *data* boundary by pinning the cross-check.
+
+New file: `backend/tests/test_monitor_fingerprints.py` (~210 lines).
+Eight test functions, three of which are parametrized over the chain
+ids → 32 individual test cases against the current bank
+(`tfc.ambient`, `tfc.classic_rock`, `tfc.clean_strat`,
+`tfc.edge_of_breakup`, `tfc.modern_gain`). The file pins:
+
+1. **Bundle parity.** Every YAML has a matching fingerprint JSON, and
+   every fingerprint JSON has a matching YAML. A new chain is
+   incomplete until both sides ship.
+2. **Fingerprint schema.** Every JSON parses cleanly through the
+   catalog loader (`guitar_catalog._load_entry`); `chain_id` /
+   `display_name` / `family` are present and well-formed; all eight
+   `_FEATURE_KEYS` are populated as numbers; the optional
+   `feature_validity` mask, when present, uses the same eight keys
+   with boolean values.
+3. **YAML ↔ JSON cross-check.** `chain_id`, `family`, and
+   `display_name` agree between the two artifacts. These are the
+   three user-facing contract fields — a quiet mismatch on `family`
+   in particular would mean the policy router and the catalog
+   distance gate disagree about what they're routing.
+
+Loader-internal validation (missing parameter sections, bad family
+strings, filename/id mismatch on the YAML side) is already covered by
+`tests/test_monitor_loader.py` and is not re-tested here.
+
+Verification: `pytest tests/test_monitor_fingerprints.py -v` → 32
+passed in 0.42s. Cross-checked against the broader retrieval surface
+(`test_monitor_loader.py`, `test_tone_retrieve.py`, `test_tone_policy.py`,
+`test_tone_tiers.py`) → 125 passed in 0.48s. No production code
+touched; this is a pure CI scaffolding commit against the §4
+acceptance surface.
+
+The §4 acceptance gate ("founder ear") stays unchanged. This commit
+adds a *mechanical* gate underneath it: even before a curator-level
+audition pass, drift between the YAML and the fingerprint will fail
+CI rather than silently route to the wrong family at runtime.
+
 ### Doc sync: acquisition package status corrected (item #6)
 
 `tone_forge/acquisition/__init__.py` claimed the URL-acquisition
@@ -1286,6 +1338,16 @@ Each chain passes if it:
 - Sits at a comparable monitor level to the original recording (no normalization required)
 - Doesn't clip with input peaking at −6dBFS
 - Latency ≤ 10ms round-trip on M-series
+
+**Mechanical CI gate (under the founder-ear gate):**
+`tests/test_monitor_fingerprints.py` pins bundle parity (YAML ↔
+fingerprint JSON), fingerprint schema (all eight `_FEATURE_KEYS`
+populated as numbers; optional `feature_validity` well-formed when
+present), and YAML ↔ JSON cross-check (`chain_id`, `family`,
+`display_name`). A YAML whose `family` is bumped without
+re-rendering the fingerprint via
+`scripts/render_chain_references.py` will fail this gate before
+the founder-ear audition ever runs. See §0.
 
 ### Phase 2 expansion
 
