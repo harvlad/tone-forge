@@ -17,7 +17,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | # | Subsystem | State |
 |---|---|---|
 | 1 | Subsystem boundary freeze (`contracts.py` + packages) | Active |
-| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) + join-time state replay coverage (last_gain / last_preset / targeted-no-broadcast / fresh-channel pins) landed (see §0) |
+| 2 | Connect hardening | Active — focused-pass + second-wave (heartbeat / silent-drop detection + Swift↔Python protocol parity gate) + error-code taxonomy (ErrorCode / PeerLeftReason namespaces + drift gate) + join-time state replay coverage (last_gain / last_preset / targeted-no-broadcast / fresh-channel pins) + §3 doc sweep (§3A–G rewritten against landed reality; install/signing/update/crash-recovery/onboarding) landed (see §0) |
 | 3 | Monitor Chain Bank | Active — ambient redesign accepted (see §0) |
 | 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 74/74 tests green (see §0) |
@@ -39,6 +39,109 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### Connect hardening — §3 doc sweep (Priority 2)
+
+Doc-only commit. After the §3E and §3F focused passes corrected
+their own sections, an audit of the remaining §3 subsections found
+the same pattern of stale narrative — §3 claims that the build /
+sign / update / restart / onboarding paths were aspirational, when
+in fact the CI workflow (`connect-release.yml`), the Info.plist
+(`connect/Resources/Info.plist`), the supervisor
+(`backend/local_engine/connect_bridge.py`), and the onboarding modal
+(`backend/static/jam.html` + `jam.js`) had all landed weeks ago.
+Several specific claims were numerically or factually wrong (the
+appcast URL, the restart backoff, the supervisor-vs-WS-heartbeat
+boundary, the 7-step onboarding flow).
+
+A wrong execution plan is more dangerous than no plan, because a
+reader (human or LLM) treats it as a contract. This sweep
+re-anchors §3 to landed reality and explicitly marks the few items
+that remain not-landed so we don't accidentally "fix" something
+that's already shipped, or skip something that hasn't.
+
+What changed
+------------
+
+- **§3A Install — landed**: documents the installer actually ships
+  as a signed/notarized **DMG** (the original `.pkg` /
+  `productbuild` wording was aspirational); points at the CI
+  workflow and the helper-discovery code paths; clarifies that the
+  TCC microphone prompt is OS-driven rather than via an explicit
+  `AVCaptureDevice.requestAccess` call.
+- **§3B Signing — landed**: confirms hardened runtime + the three
+  declared entitlements and points at the actual entitlements
+  file (`connect/Resources/Connect.entitlements`).
+- **§3C Update path — mostly landed**: corrects the appcast URL
+  from the aspirational `toneforge.app/connect/appcast.xml` to the
+  shipped `https://mattharvey.github.io/tone-forge/connect/appcast.xml`
+  (the value in `Info.plist::SUFeedURL`). Flags two unimplemented
+  items honestly: the auto-update-toggle UI surface and the
+  `connect-prev/` rollback mechanism (the latter deferred as
+  "publish a higher version" is the realistic recovery path until
+  Sparkle ever ships something broken).
+- **§3D Crash recovery — landed, with corrected numbers**:
+  - Backoff was claimed as `1s → 2s → 5s, 3 attempts`. The
+    supervisor actually uses `2 ** attempts` capped at 60s with
+    `_MAX_RESTART_ATTEMPTS = 4`, so the real schedule is
+    `1s → 2s → 4s → 8s → give up`
+    (`backend/local_engine/connect_bridge.py:119, :314`).
+  - Documented the `_HEALTHY_SECONDS = 30` reset (transient crash
+    budget doesn't permanently disable auto-restart).
+  - Made the supervisor-vs-WS-heartbeat boundary explicit: the
+    supervisor reaps **processes** (`Popen.poll()`); the heartbeat
+    we added in the second-wave commit reaps **WebSocket peers**
+    (`recv` timeout 30s + pong-wait 10s). These are independent
+    layers; the earlier text conflated them.
+  - Flagged the "Try restarting Connect" browser CTA as not yet
+    wired.
+- **§3E Reconnect — second pruning pass**: dropped the "persistent
+  `session_id` on disk" still-to-wire item. `jam.js`'s
+  `newSessionId()` (`backend/static/jam.js:430-436`) already falls
+  back to the literal `'default'`, and the supervisor defaults to
+  the same `'default'` (`connect_bridge.py:141`). A browser reload
+  and a Connect restart already converge on the same channel
+  without any on-disk session.json. The persistent-ID story
+  becomes interesting only if multi-session ever ships (Phase 2).
+  The "Reconnected" toast remains the one real still-to-wire item.
+- **§3G Onboarding — rewritten to landed P7 reality**: the 7-step
+  flow (welcome → device picker → level meter → test tone →
+  hear-yourself confirm → latency reading → "I'm ready to play")
+  was considered and rejected in favour of a single-question modal:
+  "What are you playing through?" with eight device-class radios +
+  the CoreAudio probe pre-fill (#36) below. The replaced section
+  documents both what landed and what was considered but cut, so a
+  future reader can see the design trade — fewer pre-flight steps,
+  trust the user can hear / adjust gain themselves in the Jam UI.
+- **Branching plan** retired: every Connect-hardening section
+  landed directly on `main` as small per-section commits; the
+  `connect/hardening` branch + sub-branches plan was never used.
+  Kept the text as a historical note rather than a forward
+  process.
+
+Priority 2 row + new §0 entry above the join-time replay entry.
+
+Verification
+------------
+
+No code changes. The audit cross-referenced
+`backend/local_engine/connect_bridge.py`,
+`connect/Resources/Info.plist`,
+`.github/workflows/connect-release.yml`, `backend/static/jam.html`,
+`backend/static/jam.js`, and the existing Connect-adjacent test
+sweep — **137/137 still green in 11.27s** (unchanged from the
+prior replay-coverage commit; this commit didn't touch code).
+
+What this commit does NOT do
+----------------------------
+
+- No code changes. Pure §3 doc rewrite + Priority 2 row + §0 entry.
+- Does not implement the still-to-wire items it explicitly flags
+  (auto-update toggle UI, `connect-prev/` rollback, "Try restarting
+  Connect" CTA, "Reconnected" toast, `device_lost` frame). Those
+  remain tracked, not landed.
+- Does not change any commit-prefix convention or branching model;
+  the historical "branching plan" text stays as context.
 
 ### Connect hardening — join-time state replay coverage (Priority 2)
 
@@ -1800,39 +1903,103 @@ backend/tone_forge/
 
 Connect is product. This is the largest invisible work in the plan.
 
-### A. Install (gate before anything else ships)
+Section status (audit pass): A/B/C describe the **landed signed-release
+pipeline** (CI workflow + Info.plist), with one URL correction (C) and
+two unimplemented bullets flagged. D describes the **landed supervisor**
+with corrected backoff numbers and the supervisor-vs-WS-heartbeat
+boundary made explicit. E/F have already been corrected in their own
+focused passes (entries in §0). G describes the **landed P7 modal**
+(device-class + CoreAudio probe pre-fill); the prior 7-step flow was
+aspirational and is documented below as "considered, not landed".
 
-- **Bundle target**: `ToneForge Connect.app` at `/Applications/`
-- **Installer**: signed `.pkg` produced by `productbuild`
-- **Tray integration**: `local_engine/tray.py` discovers installed Connect.app via launch-services lookup; no-PATH dependency
-- **Permissions**: microphone (Info.plist `NSMicrophoneUsageDescription`), audio device access
-- **First-run elevation**: prompt for microphone permission via `AVCaptureDevice.requestAccess`
+### A. Install (gate before anything else ships) — **landed**
 
-### B. Code Signing + Notarization
+- **Bundle target**: `ToneForge Connect.app` (Info.plist
+  `CFBundleIdentifier=com.toneforge.connect`); install location is
+  user's `/Applications/` via the release DMG.
+- **Installer**: signed + notarized `.dmg` produced by
+  `.github/workflows/connect-release.yml` on `connect-v*` tag push
+  (was originally specced as `.pkg`/`productbuild`; DMG is what
+  actually ships and is what Sparkle resolves to).
+- **Tray integration**: `local_engine/tray.py` + `connect_bridge.py`
+  discover the helper via in-repo `.build/release/Connect` and
+  `Connect.app/Contents/MacOS/Connect` candidates
+  (`connect_bridge.py:58-64`). No `$PATH` dependency.
+- **Permissions**: `NSMicrophoneUsageDescription` declared
+  (`connect/Resources/Info.plist`); audio device access via
+  CoreAudio.
+- **First-run elevation**: microphone permission prompt is OS-driven
+  on first capture attempt (TCC); no explicit
+  `AVCaptureDevice.requestAccess` call site has been added because
+  the OS prompt covers the flow.
 
-- **Cert**: Apple Developer ID Application
-- **Hardened runtime**: enabled with entitlements file
-- **Entitlements**:
+### B. Code Signing + Notarization — **landed**
+
+- **Cert**: Apple Developer ID Application — used by
+  `.github/workflows/connect-release.yml`.
+- **Hardened runtime**: enabled in the CI workflow's `codesign`
+  invocation.
+- **Entitlements**: declared in `connect/Resources/Connect.entitlements`:
   - `com.apple.security.device.audio-input` = true
   - `com.apple.security.cs.allow-unsigned-executable-memory` = false
   - `com.apple.security.cs.disable-library-validation` = false
-- **Notarization**: `xcrun notarytool submit ... --wait`; staple ticket to .pkg
-- **Verification**: `spctl -a -t install ToneForge-Connect.pkg`
+- **Notarization**: `xcrun notarytool submit ... --wait`; ticket
+  stapled to the `.dmg`.
+- **Verification**: `spctl -a -t open --context context:primary-signature`
+  against the stapled DMG (CI gate).
 
-### C. Update Path
+### C. Update Path — **mostly landed**
 
-- **Framework**: Sparkle 2.x with EdDSA signing
-- **Appcast**: `https://toneforge.app/connect/appcast.xml` (RSS XML, version-keyed)
-- **Default**: silent auto-update; settings toggle to opt out
-- **Channel**: `stable` for now; add `beta` once Jam MVP ships
-- **Rollback**: keep prior bundle in `/Library/Application Support/ToneForge/connect-prev/`
+- **Framework**: Sparkle 2.x with EdDSA signing (`SUPublicEDKey` in
+  `Info.plist`, filled at release time from secrets by
+  `build_release.sh`).
+- **Appcast**: `https://mattharvey.github.io/tone-forge/connect/appcast.xml`
+  (RSS XML, version-keyed). The prior `toneforge.app/connect/`
+  wording was aspirational; the live URL is the GitHub Pages site
+  and is the value in `connect/Resources/Info.plist::SUFeedURL`.
+- **Default**: silent auto-update (`SUEnableAutomaticChecks=true`,
+  `SUScheduledCheckInterval=86400`); user-facing toggle not yet
+  surfaced in any settings UI.
+- **Channel**: single `stable` channel today; `beta` channel is
+  Phase 2.
+- **Rollback to `connect-prev/`**: **not implemented.** Sparkle owns
+  the install transaction; if a release ships broken the recovery
+  path today is "publish a higher version on the appcast" rather
+  than user-side rollback to a cached prior bundle. Defer until a
+  bad release actually motivates building this.
 
-### D. Crash Recovery
+### D. Crash Recovery — **landed**
 
-- **Supervisor**: `backend/local_engine/connect_bridge.py` (exists; harden)
-- **Crash logs**: `~/Library/Logs/ToneForge/connect-crash-<iso-ts>.log` from stderr capture
-- **Backoff**: 1s → 2s → 5s; 3 attempts; then surface UI error with "Try restarting Connect" CTA
-- **Liveness ping**: WS hub sends `ping` every 10s; Connect must `pong` within 3s or supervisor restarts
+Pinned by `backend/tests/test_connect_bridge_lifecycle.py` (auto-restart
+backoff, healthy-uptime reset, budget-exhaustion path, intent vs reality
+divergence).
+
+- **Supervisor**: `backend/local_engine/connect_bridge.py` —
+  `ConnectSupervisor` owns spawn / stop / reap / auto-restart on a
+  single-process basis. Bounded by `_MAX_RESTART_ATTEMPTS = 4`
+  (`connect_bridge.py:119`).
+- **Crash logs**: stdout + stderr of the supervised child go to
+  `~/Library/Logs/ToneForge/connect-bridge.log` (`connect_bridge.py:77-79`).
+  No per-crash file rotation; the supervisor log + the rc message
+  in `last_error` are the breadcrumb.
+- **Backoff**: exponential, `2 ** attempts` seconds capped at 60s —
+  so **1s → 2s → 4s → 8s → give up** (4 attempts total, not 3 as
+  this section originally claimed) (`connect_bridge.py:314`). After
+  the helper stays alive for `_HEALTHY_SECONDS = 30`, the attempt
+  counter resets, so a transient crash budget doesn't permanently
+  disable auto-restart (`connect_bridge.py:169-174`).
+- **Budget-exhausted UX**: supervisor logs a "manual restart
+  required" message and leaves `last_error` populated; the tray
+  surfaces the status. A dedicated "Try restarting Connect" CTA
+  in the browser is **not yet wired** — pending UX work.
+- **Supervisor vs WS heartbeat — boundary**: the supervisor restarts
+  *processes* based on `Popen.poll()` (the child exited). The WS
+  heartbeat (`recv` timeout 30s + pong-wait 10s) added in the
+  second-wave commit lives in `_ConnectChannel` and reaps **dead
+  WebSocket peers**, not crashed processes. These are independent
+  layers: a WS-dead-but-process-alive peer is heartbeat-reaped; a
+  process-crashed helper is supervisor-respawned. The earlier
+  §3D wording conflated the two.
 
 ### E. Reconnect Behavior
 
@@ -1857,12 +2024,19 @@ Connect is product. This is the largest invisible work in the plan.
   not here. The connect-bridge endpoint deliberately stays
   monitor-only (gain / preset / chain).
 - **Still to wire:**
-  - Persistent `session_id` across Connect restarts (write to
-    `~/Library/Application Support/ToneForge/session.json`)
-  - Browser surfaces "Reconnected" toast (1.5s), not just an inline
-    status flip
-- **Audio device loss** (interface unplugged): Connect emits
-  `device_lost` WS frame; browser shows reconnection instructions
+  - Browser surfaces a "Reconnected" toast (≈1.5s) after replay
+    completes, instead of just the inline `flashConnectStatus` flip.
+  - (The earlier "persistent session_id on disk" item has been
+    dropped from this list — `jam.js`'s `newSessionId()` already
+    falls back to the literal `'default'`
+    (`static/jam.js:430-436`), and Connect's supervisor defaults
+    to the same `'default'` (`connect_bridge.py:141`). Browser
+    reload + Connect restart already converge on the same channel
+    without any on-disk session.json. A persistent ID becomes
+    interesting only if multi-session ever ships, which is Phase 2.)
+- **Audio device loss** (interface unplugged): not yet wired —
+  Connect would need to emit a `device_lost` frame and the browser
+  would show reconnection instructions. Tracked here, not landed.
 
 ### F. Error Handling
 
@@ -1883,23 +2057,69 @@ Connect is product. This is the largest invisible work in the plan.
     `preset_apply_failed`, `ws_handshake_rejected`.
 - **Browser handler**: `jam.js` maps `code` → inline status text. Already partially wired via `flashConnectStatus`.
 
-### G. Onboarding
+### G. Onboarding — **landed (P7), single-step modal**
 
-First-run flow when no `session.json` exists:
+First-run flow when no `DevicePreferences` exists on disk (i.e.
+`~/Library/Application Support/ToneForge/device.json` is missing). The
+shape is **not** the 7-step flow this section originally specced —
+that flow was considered and rejected in favour of a single decisive
+question. See "considered, not landed" below.
 
-1. Welcome screen: "Plug your guitar into your interface, put headphones on."
-2. Audio device picker: enumerated via `connect devices`; default to lowest-latency interface
-3. Input level meter: 5 seconds of listening; auto-set input gain to peak −12dBFS
-4. Test tone: play a 2-second clean chord through default `clean_strat` chain
-5. Confirmation: "Did you hear yourself clearly?" → Yes / No (retry)
-6. Latency reading: `connect latency` measured; warn if > 12ms RTT
-7. "I'm ready to play" → stores session, hands off to the Jam UI
+What the modal actually asks (`static/jam.html:31-82`):
 
-### Branching plan
+1. **One question**: "What are you playing through?" with eight
+   device-class radios: `interface_only`, `helix`, `quad_cortex`,
+   `kemper`, `fractal`, `tonex`, `neural_dsp`, `other`.
+2. **CoreAudio probe pre-fill** (Priority 7 — item #36): on modal
+   open, `GET /api/device/probe` runs in the background. If it
+   succeeds, "Detected: <name>" appears under the radios with a
+   `Change` link that swaps in a `<select>` of all enumerated inputs
+   (default-selected to the probe's `suggested_input`).
+3. **Submit** posts `{device_class, audio_input_name}` to
+   `POST /api/device/preferences`. The persisted preference is
+   read by `_resolve_audio_input_name()` (`connect_bridge.py:82-109`)
+   on every helper spawn, and exported to the Connect child as
+   `TONEFORGE_AUDIO_INPUT_NAME`.
+4. **Re-prompt policy**: the modal only re-opens if `device_class`
+   is `null` (DELETE preferences from settings) — not on every
+   launch. See "Re-prompt only when class is null or the user
+   explicitly opens device settings" in the device-discovery design
+   note in §8.
 
-- Branch: `connect/hardening`
-- Sub-branches per section (A–G); merge to `connect/hardening` then to `main`
-- Each section is an independent commit-set; A and B together gate the first signed build
+Drift-pinned by `backend/tests/test_api_device_probe.py`,
+`backend/tests/test_api_device_preferences.py`,
+`backend/tests/test_devices_preferences.py` (the bridge wire-up).
+
+**Considered, not landed** (the original 7-step spec, kept here for
+historical context):
+
+- Welcome screen — not surfaced; the modal is the welcome.
+- Standalone audio device picker step — collapsed into the
+  "Detected + Change" affordance on the same modal.
+- Input level meter / peak −12dBFS auto-gain — not implemented.
+  Auto-gain on first-run is meaningful only if we also expose
+  manual override + a confidence display; deferred until we have
+  a credible level-meter UI.
+- Test-tone playthrough + "did you hear yourself" confirmation —
+  not implemented. The monitor chain is the test tone in steady
+  state, and the user finds out in the Jam UI itself; a dedicated
+  pre-flight test wasn't earning its keep against the simpler
+  flow.
+- `connect latency` reading + 12ms RTT warn — not implemented;
+  ToneForge does not currently expose a latency probe in Connect.
+  Tracked as Phase 2 if the field tells us users need it.
+- "I'm ready to play" affordance — collapsed into the single
+  `Continue` submit.
+
+### Work landing model
+
+The original "branch off `connect/hardening` with sub-branches per
+section" plan was not used — every section of this work has landed
+directly on `main` as a series of small, individually-tested
+commits (visible in §0). The branching plan above is retained as a
+historical artifact, not a forward-looking process. New Connect
+hardening work continues on `main` with a `P2 Connect hardening — …`
+commit-title prefix.
 
 ---
 
