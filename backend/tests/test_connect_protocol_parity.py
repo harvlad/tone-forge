@@ -208,6 +208,14 @@ def test_swift_message_type_names_use_known_wire_strings():
         ("applyChain", "apply_chain"),
         ("setGain", "set_gain"),
         ("presetPush", "preset_push"),
+        # `device_lost` is Connect → server. Emitted by AudioEngine when
+        # the reconfig budget exhausts on a device flap. Server falls
+        # through to default-broadcast at the WS edge; browser surfaces
+        # a reconnection toast. Drift-pinning the Swift constant here
+        # so a future refactor that drops it surfaces in CI rather than
+        # the field (the helper would silently stop emitting the frame
+        # and the browser would never see device loss).
+        ("deviceLost", "device_lost"),
     ],
 )
 def test_swift_declares_known_message_type(swift_name, wire_string):

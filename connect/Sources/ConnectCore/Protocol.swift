@@ -42,5 +42,13 @@ public enum ConnectProtocol {
         public static let pong              = "pong"
         public static let ack               = "ack"
         public static let error             = "error"
+        /// Connect → server event: the helper's audio engine could not
+        /// recover from a device change (e.g. interface unplugged,
+        /// default-device swap that left the engine in `.failed`).
+        /// Emitted exactly once when `AudioEngine.attemptReconfigRestart`
+        /// exhausts its retry budget; broadcast by the server to any
+        /// browser peer in the channel, which surfaces a user-facing
+        /// reconnection toast.
+        public static let deviceLost        = "device_lost"
     }
 }

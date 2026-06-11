@@ -56,6 +56,17 @@ public final class AudioEngine {
     /// Fired on the main queue whenever `state` transitions.
     public var onStateChange: ((State) -> Void)?
 
+    /// Fired on the main queue exactly once when `attemptReconfigRestart`
+    /// exhausts its retry budget — i.e. the engine is about to settle
+    /// into `.failed` because the underlying audio device stayed gone.
+    /// The Connect CLI wires this to `PresetBridge.sendDeviceLost(...)`
+    /// so the browser side of the channel learns that the helper is
+    /// alive but its audio path is broken. Distinct from `onStateChange(.failed)`
+    /// because the latter also fires on cold-start failures where the
+    /// WS bridge may not yet exist; this callback only fires on
+    /// runtime device loss.
+    public var onDeviceLost: ((_ reason: String) -> Void)?
+
     public private(set) var state: State = .stopped {
         didSet {
             guard state != oldValue else { return }
@@ -312,6 +323,15 @@ public final class AudioEngine {
             state = .running
         } catch {
             if reconfigAttempt >= maxReconfigAttempts {
+                let reason = "reconfig_exhausted_after_\(reconfigAttempt)_attempts"
+                // Fire device-lost BEFORE transitioning to .failed so
+                // subscribers see the device-loss event with the engine
+                // still in `.reconfiguring`; this mirrors the normal
+                // pattern (notification → terminal state) and lets the
+                // browser show its reconnection toast a tick before any
+                // generic "audio failed" handler kicks in.
+                let cb = onDeviceLost
+                DispatchQueue.main.async { cb?(reason) }
                 state = .failed(error: "could not recover audio engine after \(reconfigAttempt) attempts: \(error)")
                 return
             }

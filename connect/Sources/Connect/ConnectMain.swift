@@ -372,6 +372,16 @@ struct Connect {
             print("  [bridge] applying chain \(spec.id) (\(spec.displayName))")
             engine.applyChain(spec)
         }
+        // Wire the engine's device-lost callback into the bridge so the
+        // browser learns when the audio path is permanently broken (the
+        // helper itself is still alive — its WS is still connected — but
+        // the engine has given up trying to recover the input device).
+        // Server broadcasts the frame to every browser peer; the user
+        // sees a "Reconnect your audio interface" toast.
+        engine.onDeviceLost = { reason in
+            print("  [audio] device lost (\(reason)) — notifying browser")
+            bridge.sendDeviceLost(reason: reason)
+        }
         bridge.start()
 
         // Keep the process alive until Ctrl-C.

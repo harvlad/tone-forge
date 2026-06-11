@@ -114,6 +114,37 @@ public final class PresetBridge {
         }
     }
 
+    /// Emit a one-shot `device_lost` event upstream when the audio
+    /// engine's reconfig budget is exhausted (e.g. the input interface
+    /// stayed gone across all retry attempts). The server's
+    /// `_ConnectChannel` doesn't have an explicit handler for this
+    /// frame type — it falls through to the default-broadcast branch
+    /// at the WS edge, which relays the frame to every browser peer
+    /// in the channel. The browser surfaces a reconnection toast
+    /// (`jam.js` ws.onmessage `device_lost` branch).
+    ///
+    /// Fire-and-forget: if the WS isn't connected we just no-op. The
+    /// engine is already in `.failed`; there's nothing more to do
+    /// from here.
+    public func sendDeviceLost(reason: String) {
+        guard task != nil else {
+            onStatus?("device_lost not sent — no active WS")
+            return
+        }
+        let frame: [String: Any] = [
+            "v": ConnectProtocol.version,
+            "type": ConnectProtocol.MessageType.deviceLost,
+            "reason": reason,
+        ]
+        sendJSON(frame) { [weak self] err in
+            if let err = err {
+                self?.onStatus?("device_lost send failed: \(err.localizedDescription)")
+            } else {
+                self?.onStatus?("device_lost sent (reason=\(reason))")
+            }
+        }
+    }
+
     private func sendJSON(_ obj: [String: Any], completion: ((Error?) -> Void)? = nil) {
         guard let task = task else { completion?(nil); return }
         do {

@@ -300,6 +300,21 @@
             + `(${Math.round(performance.now() - pending.t0)}ms)`,
           );
         }
+      } else if (data.type === 'device_lost') {
+        // Connect's AudioEngine exhausted its reconfig retry budget
+        // (interface unplugged and not plugged back in, or driver
+        // gave up). The helper is alive on the WS but its audio
+        // path is permanently broken until restart. Surface a
+        // longer-lived toast so the user knows the helper itself
+        // needs attention — a normal reconnection won't fix this.
+        // Pinned at the server end by
+        // test_connect_bridge_device_lost.py.
+        console.warn(`[connect] device_lost (reason=${data.reason || 'unknown'})`);
+        flashConnectStatus(
+          'Audio input lost — reconnect your interface and restart Connect.',
+          false,
+          8000,
+        );
       } else if (data.type === 'error') {
         // Surface the failure visibly, not just in the console. If
         // we can pin it to an in-flight apply, name the chain in the

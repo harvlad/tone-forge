@@ -40,6 +40,127 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Connect hardening — `device_lost` frame (Priority 2)
+
+Closes the last not-landed §3E item: *"Audio device loss
+(interface unplugged): not yet wired — Connect would need to
+emit a `device_lost` frame and the browser would show
+reconnection instructions."* The §3D "Try restarting Connect"
+CTA entry below explicitly deferred this with the note *"No
+`device_lost` frame handling — that remains the one not-landed
+§3E item (Connect Swift side would have to emit it first)."*
+This commit emits it.
+
+Background. `AudioEngine`
+(`connect/Sources/ConnectCore/AudioEngine.swift`) already
+listened for `AVAudioEngineConfigurationChange` and ran a
+5-attempt reconfig budget (`maxReconfigAttempts`) before
+transitioning to `.failed`. When the budget exhausted nothing
+told the browser — the helper went silent on audio but stayed
+connected on the WS, so the user's "paired" badge stayed green
+while no sound flowed. The fix is a one-shot event frame at the
+exact moment the engine gives up.
+
+What ships
+----------
+
+Swift side
+(`connect/Sources/ConnectCore/{Protocol,PresetBridge,AudioEngine}.swift`
++ `connect/Sources/Connect/ConnectMain.swift`):
+
+- `ConnectProtocol.MessageType.deviceLost = "device_lost"` —
+  pinned by the parity gate.
+- `PresetBridge.sendDeviceLost(reason:)` — emits
+  `{"v":1,"type":"device_lost","reason":"<slug>"}` via the
+  existing `sendJSON` path, no-op when the socket is not
+  attached.
+- `AudioEngine.onDeviceLost: ((String) -> Void)?` callback,
+  fired exactly once on the main queue when
+  `attemptReconfigRestart` exhausts its budget, *before* the
+  state transitions to `.failed` so subscribers see the
+  device-loss event with the engine still in `.reconfiguring`.
+- `ConnectMain` wires `engine.onDeviceLost = { reason in
+  bridge.sendDeviceLost(reason: reason) }` right before
+  `bridge.start()`.
+
+Server side: no code change. `_ConnectChannel` has no explicit
+handler for `device_lost`; the frame falls through to the
+default-broadcast branch at `tone_forge_api.py:664-667` and is
+relayed verbatim to every other peer in the channel. The frame
+is **not** added to the replay cache — `device_lost` is a
+transient event reporting the *current* audio state, and on a
+supervisor restart the fresh `AudioEngine` either succeeds
+silently or re-emits `device_lost`. Replaying a stale event
+would lie to a late joiner.
+
+Browser side (`backend/static/jam.js`):
+
+- New `device_lost` branch in `ws.onmessage`. Logs the reason
+  to console and flashes an 8s toast: *"Audio input lost —
+  reconnect your interface and restart Connect."* Longer than
+  the standard 5s toast because the recovery action requires
+  physical user intervention (replug the interface) followed by
+  a Connect restart.
+
+Tests added
+-----------
+
+`backend/tests/test_connect_bridge_device_lost.py` — 3 tests:
+
+1. `test_device_lost_from_connect_peer_broadcasts_to_browser` —
+   pins the server-side passthrough. A `device_lost` frame from
+   a `connect` peer must reach a `browser` peer in the same
+   channel.
+2. `test_device_lost_is_not_cached_for_late_joiners` — pins the
+   "not replayed" contract. A peer joining after the channel
+   saw `device_lost` must not receive it as a replay frame.
+3. `test_device_lost_reason_round_trips_unmodified` — pins the
+   opaque-string contract on the `reason` field. The server is
+   a relay; whatever Swift sends must arrive at `jam.js`
+   intact.
+
+`backend/tests/test_connect_protocol_parity.py` — parametrize
+extended with `("deviceLost", "device_lost")` so a future
+Swift-side rename / delete trips CI rather than the field.
+
+Why three event-shape tests, not one
+------------------------------------
+
+The contract has three distinct properties (passthrough,
+no-cache, reason-opaque) and each could regress independently.
+A single combined test would either obscure which property
+broke or duplicate setup. Each property reads as a single
+assertion against an isolated path.
+
+Why no cached replay
+--------------------
+
+`device_lost` reports a transient engine state (*"my current
+audio session is broken"*). A late joiner — typically the next
+fresh helper after a supervisor restart — has a brand-new
+`AudioEngine` that may or may not be in the same state.
+Replaying the stale event would tell the joiner about a
+device-loss that no longer applies. The contract is mirrored
+by the no-replay-cache test so a future refactor that
+naively adds `last_device_lost` alongside `last_preset` /
+`last_gain` / `last_chain` fails CI.
+
+Not in this commit
+------------------
+
+- No `device_changed` / `latency_report` frames — those are
+  listed in §3E's "future device events" aspirations and
+  remain unwired. `device_lost` is the only one with a
+  user-visible failure mode that wasn't already covered.
+- No structured `error` taxonomy entry. `device_lost` is an
+  event, not an error frame; it doesn't go through the
+  `ErrorCode` namespace.
+- No retry-from-browser affordance. The user must replug the
+  interface and restart Connect (via the existing CTA). A
+  future pass could add a "Reset audio engine" button that
+  hits a new `POST /api/connect/audio/reset` endpoint, but
+  that's a separate UX surface.
+
 ### Connect hardening — "Try restarting Connect" CTA (Priority 2)
 
 The §3D doc sweep flagged one still-to-wire item under the
@@ -217,9 +338,8 @@ What this commit does NOT do
   give "Reconnected" a distinct visual treatment from "Apply
   failed", but the current shared toast is already a clear
   positive-success colour (the ``ok=true`` branch).
-- No `device_lost` frame handling — that remains the one
-  not-landed §3E item (Connect Swift side would have to emit it
-  first).
+- No `device_lost` frame handling in *this* commit — landed
+  separately in the §3E `device_lost` follow-up (see entry below).
 
 ### Connect hardening — §3 doc sweep (Priority 2)
 
@@ -2228,9 +2348,26 @@ divergence).
   converge on the same channel without an on-disk session.json. A
   persistent ID becomes interesting only if multi-session ever
   ships (Phase 2).
-- **Audio device loss** (interface unplugged): not yet wired —
-  Connect would need to emit a `device_lost` frame and the browser
-  would show reconnection instructions. Tracked here, not landed.
+- **Audio device loss** (interface unplugged): landed.
+  `AudioEngine` (`connect/Sources/ConnectCore/AudioEngine.swift`)
+  exhausts a 5-attempt reconfig budget on
+  `AVAudioEngineConfigurationChange`, then fires
+  `onDeviceLost(reason)` exactly once before transitioning to
+  `.failed`. `ConnectMain` wires that callback to
+  `PresetBridge.sendDeviceLost(reason:)` which emits a
+  `{"v":1,"type":"device_lost","reason":...}` frame. The server
+  has no explicit handler — the frame rides the
+  default-broadcast fallthrough at `tone_forge_api.py:664-667`
+  out to the browser peer. `jam.js`'s `device_lost` branch
+  surfaces an 8s toast: *"Audio input lost — reconnect your
+  interface and restart Connect."* The frame is **not** cached
+  for replay (transient event, not persistent state); a fresh
+  helper that joined post-loss either succeeds silently or
+  re-emits its own `device_lost`. Pinned by
+  `backend/tests/test_connect_bridge_device_lost.py` (passthrough,
+  no-replay-cache, opaque-reason round-trip) and drift-gated by
+  the `("deviceLost", "device_lost")` row in
+  `test_connect_protocol_parity.py`.
 
 ### F. Error Handling
 
