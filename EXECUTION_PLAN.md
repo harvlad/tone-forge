@@ -40,6 +40,68 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Monitor chain bank: WAV ↔ fingerprint exact-equality integration test (Priority 3 — fourth layer)
+
+The three mechanical gates that landed before this one protected the
+*shape* of the bank: the rendering script's output schema, the
+bundled JSONs' schema + YAML cross-check, and the bank's retrieval
+geometry. None of them ran real audio through the librosa pipeline.
+They couldn't catch a fourth drift class: someone re-bouncing a
+chain's WAV without re-running `scripts/render_chain_references.py`,
+or hand-editing a fingerprint JSON to a value that isn't what the
+audio actually measures. The schema gates would still pass; the
+retrieval gate would still pass; only end-to-end behaviour would
+regress.
+
+New file: `backend/tests/test_monitor_wav_fingerprint_integration.py`
+(~170 lines, 6 tests; one is parametrized over chain ids). Feeds
+each bundled WAV through `gc._extract_query_fingerprint` (the same
+function the rendering script and the runtime query path both call;
+see `scripts/render_chain_references.py:207`) and asserts the result
+matches the bundled JSON **exactly** — vector and validity mask,
+byte-for-byte at float64 precision.
+
+Strict equality (not approximate) is the right gate here because
+both sides of the contract are the same code path. A non-zero delta
+means one of three things drifted:
+
+1. The WAV was modified after the fingerprint was rendered.
+2. The fingerprint JSON was hand-edited.
+3. `_compute_8_features` or one of its dependencies changed math
+   without the bank being re-rendered.
+
+Any of those is a real bug; the right fix is always "re-render via
+`scripts/render_chain_references.py`" — so we want a hard failure
+here rather than a soft tolerance that lets case (3) slip through.
+
+Cost: ~13s for the five bundled chains (librosa load + HPSS +
+feature extraction). The file is named with an `_integration`
+suffix so an operator running a quick loop can skip it with
+`pytest -k 'not integration'` — but it's fast enough to keep on
+the default CI path.
+
+What this file does *not* test:
+
+- The schema of the JSON. Covered by `test_monitor_fingerprints.py`.
+- The script's helpers or its output structure. Covered by
+  `test_render_chain_references.py` (which monkey-patches the
+  extractor; this file is the real-audio side of the same contract).
+- Cross-chain retrieval geometry. Covered by
+  `test_monitor_self_retrieval.py`.
+- The librosa internals themselves — they are dependency code, not
+  under our boundary discipline. We only assert the end-to-end
+  pipeline is self-consistent.
+
+Verification:
+- `pytest tests/test_monitor_wav_fingerprint_integration.py -v` →
+  6 passed in 10.58s. Manual pre-check confirmed `max_abs_delta =
+  0.00e+00` across all five chains; validity masks match exactly.
+
+No production code touched. The §4 mechanical gate now covers four
+layers: producer, consumer, retrieval geometry, and the WAV ↔ JSON
+self-consistency loop. The founder-ear gate on top of all four is
+unchanged.
+
 ### Monitor chain bank: self-retrieval invariant pinned (Priority 3 — bank-internal gate)
 
 The ambient-redesign §0 entry below this one documented an operator
@@ -1497,8 +1559,17 @@ Each chain passes if it:
   fingerprint drift that the schema gates would miss (e.g. a
   re-rendered chain landing on top of another chain in feature
   space).
+- *WAV ↔ JSON self-consistency* —
+  `tests/test_monitor_wav_fingerprint_integration.py` feeds each
+  bundled WAV back through `_extract_query_fingerprint` and asserts
+  exact equality against the bundled JSON (vector + validity mask,
+  byte-for-byte). Catches the one drift class the three schema /
+  geometry gates can't: a re-bounced WAV that no longer matches its
+  fingerprint, or a hand-edited JSON that no longer matches its
+  WAV. ~13s; named `_integration` so quick loops can skip with
+  `pytest -k 'not integration'`.
 
-All three layers see §0.
+All four layers see §0.
 
 ### Phase 2 expansion
 
