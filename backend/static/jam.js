@@ -1289,7 +1289,7 @@
       const pill = document.createElement('button');
       pill.className = 'section-pill';
       // Sections come back as {type, start_time, end_time} from the backend
-      // (see ArrangementSection.to_dict in reconstruction/section_detector.py).
+      // (see ArrangementSection.to_dict in tone_forge/analysis/sections.py).
       // Tolerate the older {name, start, end} shape as a fallback.
       const label = s.type || s.name || s.label || 'Section';
       const start = secondsOf(s.start_time ?? s.start ?? s.start_sec ?? s.startSec);

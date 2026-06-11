@@ -40,6 +40,50 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Boundary freeze: `reconstruction.section_detector` shim retired (item #5)
+
+The §9 item 5 plan called for a dual-location transition: lift the
+section detector from `reconstruction/` to `analysis/sections.py`,
+keep a back-compat re-export shim at the old path "for one release,"
+then delete the original. The lift landed earlier (627-line canonical
+home at `tone_forge/analysis/sections.py`); the shim was the last
+remaining piece of the dual location.
+
+Three internal callers still imported through the shim:
+
+| Caller | Line |
+|---|---|
+| `tone_forge/unified_pipeline.py` | 1342 |
+| `tone_forge_api.py` | 3456 |
+| `local_engine/analysis_worker.py` | 452 |
+
+All three switched from
+`from tone_forge.reconstruction.section_detector import SectionDetector`
+to
+`from tone_forge.analysis.sections import SectionDetector`.
+One stale doc comment in `static/jam.js:1292` referencing the old
+path was updated to point at the canonical home. The 17-line shim
+at `tone_forge/reconstruction/section_detector.py` was then deleted
+via `git rm`.
+
+The boundary test (`tests/test_subsystem_boundaries.py`) and the
+broader suite were both green after the migration — `1227 passed,
+1 skipped` in 220.67s (heavy MIDI / GPU / reconstruction-e2e
+suites deliberately skipped; they exercise unrelated extractor
+paths and don't touch the section import boundary).
+
+EXECUTION_PLAN.md updates:
+- §2 existing-packages row for `tone_forge/reconstruction/` annotated
+  as "shim retired."
+- §2 package-structure tree note next to `analysis/sections.py`
+  updated from "lift from reconstruction/section_detector.py" to
+  "canonical home; reconstruction/section_detector.py removed."
+- §9 item 5 annotated complete with the per-caller migration notes.
+
+This is the last freeze-migration cleanup for the section detector;
+no other callers need to be tracked. The `reconstruction/` package
+stays frozen per §15.
+
 ### Cleanup: benchmark scripts promoted out of backend root (item #41)
 
 The last two stragglers from the §0 cleanup list — `run_samples_benchmark.py`
@@ -994,7 +1038,7 @@ backend/tone_forge/
 ├── analysis/                     ← EXPAND (currently 2 files)
 │   ├── __init__.py               (exports: analyze, detect_chords, detect_sections)
 │   ├── chords.py                 ← NEW (§5)
-│   ├── sections.py               (lift from reconstruction/section_detector.py)
+│   ├── sections.py               (canonical home; reconstruction/section_detector.py removed in §0 cleanup)
 │   ├── tempo_key.py              (extracted from unified_pipeline analyses)
 │   ├── synth_behavior.py         (existing)
 │   └── reference_analyzer.py     (existing)
@@ -1033,7 +1077,7 @@ backend/tone_forge/
 |---|---|
 | `tone_forge/midi/` | **Frozen.** Expose only via `__init__.py`. Internals untouched. |
 | `tone_forge/preset_catalog/` | **Frozen.** Wrap via `devices/` adapters and `tone/` confidence layer. |
-| `tone_forge/reconstruction/` | **Frozen.** Keep running. Lift `section_detector.py` to `analysis/sections.py` (re-export). |
+| `tone_forge/reconstruction/` | **Frozen.** Keep running. `section_detector.py` lifted to `analysis/sections.py`; shim retired (see §0). |
 | `tone_forge/evaluation/` | **Frozen.** Keep as QA infra. Stop adding subfolders. |
 | `tone_forge/stem_separator.py` | Wrap as `stems.separate()` in package `stems/` (cheap rename for boundary). |
 | `tone_forge/stem_model.py` | **Untouched.** `contracts.StemSet` composes existing `Stem`. |
@@ -1554,11 +1598,14 @@ Each item is a self-contained commit-able unit. Land in this order.
    - AST walk + allowlist from §2
    - Fails on illegal cross-imports
 
-5. **Move + re-export: section detector**
-   - Copy `reconstruction/section_detector.py` → `analysis/sections.py`
-   - In `analysis/sections.py`: thin wrapper exposing `detect_sections() -> List[Section]` (contracts type)
-   - `reconstruction/section_detector.py` re-exports from new location for back-compat during transition
-   - One release of dual location, then delete the original
+5. **Move + re-export: section detector** — complete:
+   - `analysis/sections.py` is the canonical home (627 lines, full
+     detector + `detect_sections()` API).
+   - `reconstruction/section_detector.py` was a 17-line re-export shim
+     during the transition; all three internal callers
+     (`unified_pipeline.py`, `tone_forge_api.py`, `analysis_worker.py`)
+     have been migrated to the new location and the shim deleted
+     (see §0).
 
 6. **Move + re-export: URL acquisition**
    - Extract `unified_pipeline._load_from_url` → `acquisition/youtube.py`

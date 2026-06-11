@@ -3453,7 +3453,7 @@ async def detect_sections_endpoint(
     Returns:
         JSON with detected sections, energy curve, and arrangement analysis
     """
-    from tone_forge.reconstruction.section_detector import SectionDetector
+    from tone_forge.analysis.sections import SectionDetector
 
     suffix = Path(file.filename or "").suffix.lower()
     if suffix and suffix not in _ACCEPTED_SUFFIXES:

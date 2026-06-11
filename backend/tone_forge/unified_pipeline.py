@@ -1339,7 +1339,7 @@ class UnifiedPipeline:
     ) -> Optional[Dict[str, Any]]:
         """Detect arrangement sections using section detector."""
         def detect():
-            from tone_forge.reconstruction.section_detector import SectionDetector
+            from tone_forge.analysis.sections import SectionDetector
 
             # Get tempo from MIDI if available
             tempo = None

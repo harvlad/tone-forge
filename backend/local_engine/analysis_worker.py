@@ -449,7 +449,7 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         sections_data = None
         energy_curve_data = None
         try:
-            from tone_forge.reconstruction.section_detector import SectionDetector
+            from tone_forge.analysis.sections import SectionDetector
             # Use larger minimum section duration (8s) to avoid overly granular sections
             detector = SectionDetector(sr=sr_dur, min_section_duration=8.0)
             arrangement = detector.detect_sections(y_dur, sr_dur)
