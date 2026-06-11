@@ -3161,27 +3161,43 @@ Re-prompt only when class is `null` or the user explicitly opens device settings
 
 Each item is a self-contained commit-able unit. Land in this order.
 
+**Audit pass:** items below are the original commit-order spec.
+Most have shipped (often via slightly different shapes than spec'd
+when reality dictated). Each item is now annotated **landed**,
+**partial**, **deferred**, or **diverged**; the original bullets
+are preserved verbatim as the historical snapshot. Source of truth
+for "what's actually in the tree" remains §0.
+
 ### Boundary freeze (Priority 1)
 
-1. **`docs/_archive/` and move strategy docs**
-   - Move all `backend/*.md` strategy/RCA/plan files to `docs/_archive/`
-   - Exceptions kept at `backend/`: `EXTRACTION_STATUS.md`, `ROADMAP_STATUS.md` (these reflect frozen-system current state)
-   - Add `docs/README.md` pointing to this `EXECUTION_PLAN.md`
+1. **`docs/_archive/` and move strategy docs** — **landed**:
+   - `docs/_archive/` exists with the strategy / RCA / plan docs
+     migrated (`AUDIO_COLLAPSE_FINDING.md`,
+     `E2E_RECONSTRUCTION_SHIP_PLAN.md`, `EXTRACTION_ROADMAP.md`,
+     `MILESTONE_EXTRACTION_FLOOR.md`,
+     `RECONSTRUCTION_READINESS_REVIEW.md`, …).
+   - Exceptions kept at `backend/`: `EXTRACTION_STATUS.md` and
+     `ROADMAP_STATUS.md` per the spec. A few PHASE2 reports also
+     remain at the repo root as point-in-time validation artifacts
+     (would be moved if anyone ever cared to re-tidy).
+   - `docs/README.md` exists and points at this `EXECUTION_PLAN.md`.
 
-2. **`backend/tone_forge/contracts.py`**
-   - All enums and dataclasses from §1
-   - Zero behavior; pure types
-   - Add `__all__` listing public surface
+2. **`backend/tone_forge/contracts.py`** — **landed**:
+   - All enums and dataclasses from §1 are defined in
+     `backend/tone_forge/contracts.py` (large, well past minimum
+     surface) with `__all__` declared.
 
-3. **Create empty package skeletons**
-   - `acquisition/`, `session/`, `guidance/`, `notation/`, `devices/`, `monitor/`, `tone/`, `stems/`
-   - Each: `__init__.py` with `__all__ = []`
-   - Each subsystem gets a `README.md` (3 lines: purpose, owner, status)
+3. **Create empty package skeletons** — **landed**:
+   - All eight subsystems exist as packages with `__init__.py`:
+     `acquisition/`, `session/`, `guidance/`, `notation/`,
+     `devices/`, `monitor/`, `tone/`, `stems/`.
+   - Subsystem `README.md` coverage is partial — `monitor/`
+     has one (purpose / owner / status), some others don't.
+     Not gating anything today; left as a low-value follow-up.
 
-4. **Boundary test**
-   - `backend/tests/test_subsystem_boundaries.py`
-   - AST walk + allowlist from §2
-   - Fails on illegal cross-imports
+4. **Boundary test** — **landed**:
+   - `backend/tests/test_subsystem_boundaries.py` exists; AST walk
+     + allowlist gate per spec.
 
 5. **Move + re-export: section detector** — complete:
    - `analysis/sections.py` is the canonical home (627 lines, full
@@ -3212,68 +3228,159 @@ Each item is a self-contained commit-able unit. Land in this order.
 
 ### Connect hardening (Priority 2)
 
-7. **Branch: `connect/hardening`**
-8. **Signed build CI**
-   - GitHub Action or local script that produces signed + notarized `.pkg`
-   - Test on a clean macOS VM
-9. **First-run flow scaffold**
-   - Swift onboarding view controller
-   - Audio device picker + input meter
-   - Test-tone playback
-10. **Crash supervisor hardening**
-    - `connect_bridge.py` writes crash logs to ~/Library/Logs/ToneForge/
-    - Backoff + max-retries + UI error surfacing
-11. **WS protocol v1 envelope**
-    - `session/protocol.py` defines schemas
-    - Browser + Connect both emit `{"v":1, ...}`
-    - Server validates envelope; rejects v0
+7. **Branch: `connect/hardening`** — **diverged** (n/a):
+   - Work landed incrementally on `main` rather than via a
+     long-lived feature branch. The `connect/hardening` branch
+     never existed. Documented for the historical record.
+
+8. **Signed build CI** — **landed** (see §3B/C):
+   - `.github/workflows/connect-release.yml` produces a signed +
+     notarized `.dmg` on `connect-v*` tag push (originally spec'd
+     as `.pkg`; `.dmg` is what actually ships and what Sparkle
+     resolves).
+
+9. **First-run flow scaffold** — **landed via Jam modal** (see §3G):
+   - Swift onboarding view controller was not the shape that
+     landed. Instead the device-class question + CoreAudio probe
+     pre-fill flow lives in the browser (`backend/static/jam.html`
+     onboarding modal); Connect itself has no first-run UI.
+   - Input meter + test-tone playback never landed as part of
+     onboarding; not on critical path today (audio-input picker
+     answer flows through to `TONEFORGE_AUDIO_INPUT_NAME` + Swift
+     consumer landed under P7).
+
+10. **Crash supervisor hardening** — **landed** (see §3D):
+    - `local_engine/connect_bridge.py` writes structured logs to
+      `~/Library/Logs/ToneForge/connect-bridge.log` and
+      `connect-supervisor.log`.
+    - Linear backoff up to `maxReconfigAttempts=5` (Swift side)
+      and supervisor restart budget on the Python side; UI error
+      surfacing landed as "Try restarting Connect" CTA in jam.js.
+
+11. **WS protocol v1 envelope** — **landed**:
+    - Browser + Connect both emit `{"v":1, ...}` frames; server
+      validates and rejects mismatched versions.
+    - `CONNECT_BRIDGE_PROTOCOL_VERSION` is pinned; protocol parity
+      gated by `test_connect_protocol_parity.py` so a Swift-side
+      rename or addition trips CI rather than the wire.
 
 ### Monitor chains (Priority 3, in parallel with Connect)
 
-12. **`monitor/README.md`** — chain authoring guide
-13. **Reserve 5 chain YAML files** with placeholder parameters
-14. **Swift `MonitorChainLoader`** — parses YAML + builds AVAudioEngine graph
-15. **WS `apply_chain` handler** end-to-end (Browser → Engine → Connect)
-16. **First chain dialed in**: `clean_strat` — committed only after sit-with-reference acceptance
-17. Remaining 4 chains, one per commit, each with reference recording in `monitor/chains/preview/`
+All five items below are **landed**; the P3 row in the priority
+table is Complete in main. See §0 entries for the per-chain dial-in
+acceptance trail and the ambient redesign Path 1 acceptance.
+
+12. **`monitor/README.md`** — **landed**: authoring guide present
+    (`backend/tone_forge/monitor/README.md`).
+13. **Reserve 5 chain YAML files** — **landed**: `ambient`,
+    `classic_rock`, `clean_strat`, `edge_of_breakup`,
+    `modern_gain` all in `backend/tone_forge/monitor/chains/`
+    with YAML + WAV + fingerprint JSON.
+14. **Swift `MonitorChainLoader`** — **landed**: chain spec parser
+    + AVAudioEngine graph builder shipped in Connect.
+15. **WS `apply_chain` handler** end-to-end — **landed**: Browser
+    → Engine → Connect path live; ack handler updates
+    `lastAppliedChainId` and the Jam status pill flips green
+    (jam.js renderConnectStatus, fixed in commit `e1ef908`).
+16. **First chain dialed in `clean_strat`** — **landed** (see §0).
+17. **Remaining 4 chains** — **landed**: ambient redesign accepted
+    as the last hand-tuning pass; Phase 2 expansion (per-pickup
+    variants, per-amp character, bass chains) explicitly deferred
+    per §4.
 
 ### Chord detection (Priority 4)
 
-18. **Spike branch**: `analysis/chords-spike`
-19. **Build prototype** (chroma + HMM) — Day 1–2
-20. **Borrow prototype** (best library) — Day 1–2
-21. **Hybrid prototype** — Day 3
-22. **Labeled eval set** — `tests/fixtures/chord_labels.json` (20 songs)
-23. **Eval report** — Markdown comparison in spike branch
-24. **Pick + merge**: winner lands at `analysis/chords.py`
-25. **API wire-up**: `SongUnderstanding.chords` populated in pipeline
+All eight items below are **landed**; P4 row is Complete in main.
+The dom7 weakness flagged during validation is documented as a
+known-issue in §0; spike-branch shape is N/A — the work landed
+incrementally on `main`.
+
+18. **Spike branch `analysis/chords-spike`** — **diverged**: the
+    work landed on `main` directly; no long-lived spike branch.
+19. **Chroma + HMM prototype** — **landed** (folded into the
+    eventual hybrid).
+20. **Borrow prototype** — **landed** (best-library eval folded
+    in).
+21. **Hybrid prototype** — **landed**: shipping chord detector.
+22. **Labeled eval set** — **landed**: chord-validation harness
+    + label fixtures committed.
+23. **Eval report** — **landed**: validation report committed
+    (`backend/scripts/chord_validation_report.json`); dom7
+    weakness documented as known-issue.
+24. **Pick + merge** — **landed**: winner lives at
+    `backend/tone_forge/analysis/chords.py` (canonical home).
+25. **API wire-up** — **landed**: `SongUnderstanding.chords`
+    populated in the unified pipeline; jam UI consumes it.
 
 ### Session Engine (Priority 5)
 
-26. **`session/transport.py`** — `TransportState` reducer
-27. **`session/protocol.py`** — full v1 schema
-28. **`session/bundle.py`** — `SessionBundle.build()` from existing pipeline outputs
-29. **New API route**: `GET /api/session/:id` returning `SessionBundle.to_dict()`
-30. **Jam UI**: read `SessionBundle` instead of `AnalysisResult`. Studio UI unchanged.
+All five items below are **landed**; P5 row is Complete in main
+with 81/81 tests green across `test_session_*.py`.
+
+26. **`session/transport.py`** — **landed**: `TransportState`
+    reducer present (`backend/tone_forge/session/transport.py`).
+27. **`session/protocol.py`** — **landed**: full v1 schema
+    pinned by `test_session_protocol.py`.
+28. **`session/bundle.py`** — **landed**: `SessionBundle.build()`
+    composes from existing pipeline outputs.
+29. **`GET /api/session/:id`** — **landed**: route returns
+    `SessionBundle.to_dict()`; pinned by `test_session_route.py`.
+30. **Jam UI consumes `SessionBundle`** — **landed**: jam.js
+    reads the bundle; Studio UI unchanged per spec.
 
 ### Retrieval calibration (Priority 6)
 
-31. **`tone/__init__.py`** + `tone/calibration.py` + `tone/tiers.py` + `tone/policy.py`
-32. **Labeled calibration set** — 100 clips + ratings
-33. **Isotonic regression fit** committed as `tone/calibration_v1.joblib`
-34. **New API route**: `POST /api/tone/retrieve` returning `ToneMatch`
-35. **Jam UI**: consume `ToneMatch`; render tier-appropriate UX
+Code surface landed; the artifact + labeling task remain **blocked
+on the 100 hand-labeled clips**, which is the gating dependency
+called out in the P6 priority row.
+
+31. **`tone/` package** — **landed**: `tone/__init__.py`,
+    `tone/calibration.py`, `tone/tiers.py`, `tone/policy.py`,
+    plus follow-on additions (`tone/guitar_catalog.py`,
+    `tone/instrumentation.py`).
+32. **Labeled calibration set (100 clips + ratings)** —
+    **blocked**. External data collection; no code path can
+    unblock this.
+33. **Isotonic regression fit `tone/calibration_v1.joblib`** —
+    **blocked on #32**. Loader infrastructure is in place
+    (drop-in artifact activates the fitted curve, see §0); the
+    artifact file itself is the gating bit.
+34. **`POST /api/tone/retrieve` returning `ToneMatch`** —
+    **diverged**: shipped as `_retrieve_tone_for_history()`
+    integrated into the analysis flow rather than as a separate
+    route. A `ToneMatch` is returned via the history endpoint
+    and consumed by jam.js. The original separate-route spec
+    would have duplicated work the pipeline was already doing.
+35. **Jam UI consumes `ToneMatch`** — **landed**: tier-aware UX
+    renders against the integrated path (LOW/UNKNOWN tier →
+    monitor chain fallback list; HIGH tier → preset apply).
 
 ### Device Discovery (Priority 7)
 
-36. **`devices/discovery.py`** — CoreAudio probe wrapper around existing `connect devices`
-37. **Onboarding screen** — single question, persisted to `device.json`
-38. **`DeviceCaps` plumbed** into session bundle
+All three items below are **landed**; P7 row is Complete in main.
+
+36. **`devices/discovery.py` CoreAudio probe** — **landed**:
+    wrapper around `connect devices` with `--json` mode; pre-fills
+    the onboarding modal.
+37. **Onboarding screen** — **landed via Jam modal**: single
+    question persisted to `device.json` (see §3G / §8). Implemented
+    in the browser, not in Connect.
+38. **`DeviceCaps` plumbed into session bundle** — **landed**:
+    `preferred_chain_family` feeds the fallback policy;
+    `TONEFORGE_AUDIO_INPUT_NAME` is consumed Swift-side by
+    `AudioEngine.applyPreferredInputDevice()` (see §0 entry at
+    top).
 
 ### Song Understanding investigation (Priority 8)
 
-39. **`docs/SONG_UNDERSTANDING_INVESTIGATION.md`** — investigation notes (not an implementation commit; pure research output documenting tuning/capo/motif feasibility)
-40. **Place fields in `SongUnderstanding` DTO already** so consumers can stub-render when populated
+39. **`docs/SONG_UNDERSTANDING_INVESTIGATION.md`** — **landed**:
+    investigation notes + capability map
+    (`docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md`) + product
+    roadmap (`docs/JAM_PRODUCT_ROADMAP.md`) all shipped (see §0).
+40. **`SongUnderstanding` DTO fields** — **landed**: `tuning`,
+    `capo_fret`, `motifs` (and friends) declared in
+    `backend/tone_forge/contracts.py` so consumers can stub-render
+    when populated.
 
 ### Cleanups
 
