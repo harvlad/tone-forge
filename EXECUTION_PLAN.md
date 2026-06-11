@@ -40,6 +40,81 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Monitor chain bank: self-retrieval invariant pinned (Priority 3 — bank-internal gate)
+
+The ambient-redesign §0 entry below this one documented an operator
+validation step:
+
+> Non-ambient cross-checks: every other catalog chain still
+> self-matches at rank 1.
+
+That check ran from a one-shot tmp harness
+(`/tmp/ambient_retrieval_validation.py`) and was never landed in
+the repo. Until this commit, a future chain edit could silently
+break the invariant — the previous CI gates pinned the *shape* of
+the bank (parity + schema + cross-check on both producer and
+consumer sides) but not its *retrieval geometry*. A bank where
+two chains landed at the same point in feature space, or where a
+chain didn't self-match at rank 1, would still pass all of those
+gates and only surface as a behavioral regression.
+
+New file: `backend/tests/test_monitor_self_retrieval.py` (~170
+lines, 9 tests; one is parametrized over chain ids). Probes
+beneath the `recommend()` public surface — directly against
+`_get_catalog()` and `_znorm_l2()` — so no audio is in the loop.
+Three invariants pinned:
+
+1. **Bank loads completely.** The cached `_Catalog` has one entry
+   per YAML in the bank, and at least one entry total (the
+   "empty catalog → UNKNOWN-tier fallback" path is explicit so
+   the rest of the file can't silently no-op).
+2. **Self-distance is zero.** Every entry's z-norm L2 against
+   itself returns 0 (tolerance `1e-9`). If this breaks, the
+   distance function itself has acquired a bug; the bank is fine.
+3. **Self-rank is 1 with no top-tier tie.** For each chain, using
+   its own fingerprint as the query against the full bank, the
+   closest match is itself *strictly* closer than the second
+   place. A whole-bank pairwise check also asserts no two
+   distinct chains land at distance ~0 — a tie would corrupt
+   retrieval regardless of which side was the query.
+
+What this file does *not* cover (intentionally): the
+librosa-backed `_extract_query_fingerprint` path (real-audio
+behaviour belongs in heavier integration suites), and the
+tier-policy logic on top of `recommend()` (already covered by
+`test_tone_retrieve.py` against mock candidates).
+
+Manual sanity check of the bank's current pairwise distance
+matrix (all five chains × all five):
+
+| | ambient | classic_rock | clean_strat | edge_of_breakup | modern_gain |
+|---|---|---|---|---|---|
+| ambient          | 0.0000 | 0.5260 | 3.1862 | 2.8152 | 2.9087 |
+| classic_rock     | 0.5260 | 0.0000 | 3.5471 | 3.3423 | 3.2167 |
+| clean_strat      | 3.1862 | 3.5471 | 0.0000 | 1.1421 | 1.0161 |
+| edge_of_breakup  | 2.8152 | 3.3423 | 1.1421 | 0.0000 | 1.8220 |
+| modern_gain      | 2.9087 | 3.2167 | 1.0161 | 1.8220 | 0.0000 |
+
+Diagonal is exactly 0; closest non-self pair is ambient ↔
+classic_rock at 0.5260 — the same near-miss the §0 redesign
+addressed by tightening the ambient YAML. The new test catches
+drift but the bank itself passes.
+
+Verification:
+- `pytest tests/test_monitor_self_retrieval.py -v` → 9 passed in
+  0.42s.
+- Combined tone + monitor surface (`test_monitor_self_retrieval.py`,
+  `test_monitor_fingerprints.py`, `test_monitor_loader.py`,
+  `test_tone_retrieve.py`, `test_tone_policy.py`,
+  `test_tone_tiers.py`, `test_tone_calibration.py`,
+  `test_tone_calibration_loader.py`) → 178 passed in 1.92s.
+
+No production code touched. The §4 mechanical gate now covers
+three layers: producer (the rendering script), consumer (the
+bundled JSON schema + YAML/JSON cross-check), and retrieval
+(self-match at rank 1, no degenerate pairs). The founder-ear
+gate on top of all three is unchanged.
+
 ### Monitor chain bank: render-script CI gate (Priority 3 — producer side)
 
 `scripts/render_chain_references.py` is the upstream of every
@@ -1402,6 +1477,12 @@ Each chain passes if it:
 
 **Mechanical CI gate (under the founder-ear gate):**
 
+- *Producer side* — `tests/test_render_chain_references.py`
+  pins the output schema of `scripts/render_chain_references.py`
+  itself: every helper branch, the JSON shape of a single render,
+  and an end-to-end round-trip that feeds the script's output
+  back through `guitar_catalog._load_entry`. The script cannot
+  drift away from the consumer schema.
 - *Consumer side* — `tests/test_monitor_fingerprints.py` pins
   bundle parity (YAML ↔ fingerprint JSON), fingerprint schema
   (all eight `_FEATURE_KEYS` populated as numbers; optional
@@ -1409,14 +1490,15 @@ Each chain passes if it:
   cross-check (`chain_id`, `family`, `display_name`). A YAML
   whose `family` is bumped without re-rendering the fingerprint
   will fail this gate before the founder-ear audition ever runs.
-- *Producer side* — `tests/test_render_chain_references.py`
-  pins the output schema of `scripts/render_chain_references.py`
-  itself: every helper branch, the JSON shape of a single render,
-  and an end-to-end round-trip that feeds the script's output
-  back through `guitar_catalog._load_entry`. The script cannot
-  drift away from the consumer schema either.
+- *Retrieval geometry* — `tests/test_monitor_self_retrieval.py`
+  pins the bank-internal invariant the operator hand-verified
+  during the ambient redesign: every chain self-matches at rank
+  1 against the full bank, with no degenerate ties. Catches
+  fingerprint drift that the schema gates would miss (e.g. a
+  re-rendered chain landing on top of another chain in feature
+  space).
 
-Both sides see §0.
+All three layers see §0.
 
 ### Phase 2 expansion
 
