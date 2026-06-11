@@ -40,6 +40,34 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Doc sync: acquisition package status corrected (item #6)
+
+`tone_forge/acquisition/__init__.py` claimed the URL-acquisition
+behavior still lived in `unified_pipeline._load_from_url` "until
+Priority 1 step 6 lifts it here." Reading the code: the
+download / decode logic has already been lifted —
+`acquisition/youtube.py:download_audio()` is the canonical
+implementation, and `_load_from_url` is now an 8-line wrapper that
+just offloads to a thread and projects into the legacy `AudioData`.
+The module docstring was misleading new readers.
+
+This commit:
+
+- Rewrites the `acquisition/__init__.py` docstring to reflect the
+  current state — download / decode in `acquisition.youtube`,
+  `_load_from_url` as a thin wrapper, two sub-items deferred until
+  the Jam-facing acquisition route lands (the `AcquiredAudio`
+  contract switch and `acquisition/cache.py`).
+- Annotates §9 item 6 in the planned-commit list as **partial**
+  with per-bullet status: extraction done; one-line-delegator
+  substantively done; `AcquiredAudio` switch + `cache.py` deferred
+  with rationale. No silent "complete" claim on items that aren't
+  yet shipped.
+
+No behavior change. No new code paths. No tests added — this is
+pure doc reconciliation matching the boundary-freeze layout to the
+code that already lives in the tree.
+
 ### Boundary freeze: `reconstruction.section_detector` shim retired (item #5)
 
 The §9 item 5 plan called for a dual-location transition: lift the
@@ -1607,11 +1635,23 @@ Each item is a self-contained commit-able unit. Land in this order.
      have been migrated to the new location and the shim deleted
      (see §0).
 
-6. **Move + re-export: URL acquisition**
+6. **Move + re-export: URL acquisition** — partial:
    - Extract `unified_pipeline._load_from_url` → `acquisition/youtube.py`
-   - Return `AcquiredAudio` (contracts type)
-   - `unified_pipeline._load_from_url` becomes one-line delegator
-   - Add `acquisition/cache.py` with content-hash storage
+     — done. Download / decode logic now lives in
+     `acquisition/youtube.py:download_audio()`.
+   - `unified_pipeline._load_from_url` becomes one-line delegator —
+     substantively done. The remaining 8-line wrapper does the thread
+     offload + projects the primitive tuple into the legacy
+     `AudioData` shape. Further simplification requires the
+     `AcquiredAudio` switch below.
+   - Return `AcquiredAudio` (contracts type) — **deferred** until
+     the Jam-facing acquisition route lands. Switching the return
+     shape would force a cascade of consumer updates outside the
+     scope of the boundary-freeze pass; the docstring in
+     `acquisition/youtube.py` explicitly defers this.
+   - Add `acquisition/cache.py` with content-hash storage —
+     **deferred**. No consumer reads from it today; landing it
+     before the route would be speculative.
 
 ### Connect hardening (Priority 2)
 
