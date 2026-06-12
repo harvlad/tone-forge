@@ -21,7 +21,7 @@ It supersedes every `backend/*.md` strategic/RCA/roadmap document. Those are arc
 | 3 | Monitor Chain Bank | Complete in main — 5-chain MVP shipped (`ambient`, `classic_rock`, `clean_strat`, `edge_of_breakup`, `modern_gain`) with YAML + WAV + fingerprint JSON each; ambient redesign Path 1 accepted as the last hand-tuning pass (see §0); all 4 CI gate layers green (schema parity, producer-side, retrieval geometry, WAV↔JSON integration). Phase 2 expansion (per-pickup variants, per-amp character, bass chains) deferred per §4. |
 | 4 | Chord detection (spike → ship) | Complete in main — MVP + validation harness + wire-up tests all shipped; dom7 weakness documented as known-issue (see §0) |
 | 5 | Session Engine consolidation | Complete in main — all 5 commits shipped, 81/81 tests green (see §0) |
-| 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); fitted artifact still blocked on 100 hand-labeled clips |
+| 6 | Retrieval confidence calibration | Active — calibrator/tiers/policy + guitar_catalog matcher + instrumentation shipped; tone→monitor boundary regression closed; isotonic loader infrastructure landed (drop-in artifact activates fitted curve, see §0); labeler + fitter tooling landed (`scripts/label_tone_clips.py` + `scripts/fit_tone_calibration.py`, see §0); fitted artifact still blocked on the 100 hand-labeled clips themselves (operator-owned external data collection) |
 | 7 | Device Discovery | Complete in main — scaffold + persistence + API edge + Jam onboarding modal + DeviceCaps consumer wiring (`preferred_chain_family` → fallback policy) + CoreAudio probe pre-fill (item #36) + `audio_input_name` end-to-end loop closed (Python plumb via `TONEFORGE_AUDIO_INPUT_NAME` env var → Swift `AudioEngine.applyPreferredInputDevice()` sets `kAudioOutputUnitProperty_CurrentDevice` on the input AU, re-applied on every reconfig restart) all landed (see §0). Phase 2 expansion (USB MIDI sysex probing, bidirectional preset apply, multi-rig profiles) deferred per §8. |
 | 8 | Song Understanding expansion | Investigation landed — `docs/SONG_UNDERSTANDING_INVESTIGATION.md` + capability map `docs/SONG_UNDERSTANDING_CAPABILITY_MAP.md` + product roadmap `docs/JAM_PRODUCT_ROADMAP.md` (see §0). Founder Validation Corpus harness landed as post-synthesis Task #4 (`backend/founder_corpus/`, `backend/scripts/run_founder_validation.py`, `backend/tone_forge/evaluation/founder_corpus.py`, 52/52 tests green). No feature implementation auto-driven. |
 | — | MIDI extraction internals | Frozen |
@@ -39,6 +39,70 @@ Most-recent landings first. Each entry is concrete enough to point an
 auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
+
+### P6 calibration labeling + fitter tooling
+
+Closes the *tooling* half of the only remaining P6 gate. The loader
+infrastructure (`tone/calibration.py` auto-loading
+`calibration_v1.joblib`) landed in `319a55e`; the missing piece was
+the producer side — how a human operator turns a corpus of clips
+into the fitted artifact the loader expects. Two scripts now own
+that pipeline end-to-end:
+
+- `backend/scripts/label_tone_clips.py` — interactive labeler.
+  Walks `data/tone_calibration_clips/` (override via `--clips-dir`),
+  runs `preset_retrieval.match_audio_file` against each clip, prints
+  the top match, prompts `y/n/s/q`, and appends to
+  `data/tone_calibration_labels.jsonl`. Resumable by design: every
+  keystroke flushes to disk, and a re-run skips any `clip_path`
+  already in the JSONL. Append-only — re-labeling is a deliberate
+  manual edit.
+- `backend/scripts/fit_tone_calibration.py` — fitter. Reads the
+  labels JSONL, fits an
+  `IsotonicRegression(y_min=0, y_max=1, out_of_bounds="clip",
+  increasing=False)` (distance and correctness are inversely
+  related), writes via `joblib.dump` to
+  `backend/tone_forge/tone/calibration_v1.joblib` (the path the
+  loader auto-picks up on next import).
+
+Refusal gates that protect production:
+- `--min-samples 50` floor (matches the existing
+  `evaluation/calibration/calibration_adjustment.py:IsotonicCalibrator`
+  default). Refuses with a clear `SystemExit` rather than producing
+  an under-sampled artifact.
+- Single-class corpus rejected explicitly — an all-positive corpus
+  would happily produce constant-1.0 predictions and silently
+  unlock HIGH tier on every retrieval.
+- Malformed JSONL lines are skipped with a stderr warning, not
+  fatal, so a Ctrl-C mid-keystroke during labeling cannot poison
+  every future fit.
+
+Pinned by `backend/tests/test_fit_tone_calibration.py` (4 tests,
+all green) covering: loader-compatible artifact round-trip (the
+interesting failure mode is *drift* between producer and consumer,
+so the test exercises both ends), `--min-samples` refusal +
+no-artifact-written, single-class refusal + no-artifact-written,
+and malformed-line tolerance. No dedicated test for the labeler —
+stdin/stdout/retrieval-pipeline mocking would exceed the
+script's surface area; the fitter test pins the only shared wire
+contract (JSONL schema).
+
+What this does NOT do:
+- The 100 hand-labeled clips themselves are not in this commit;
+  the corpus directory + the labels JSONL are operator-owned
+  artifacts. P6's priority-table state stays "Active" until the
+  fitted `calibration_v1.joblib` is committed.
+- No CI gate for "is the corpus big enough yet" — the refusal
+  gate inside the fitter is sufficient; running the fitter is a
+  deliberate operator action, not an automated one.
+
+Verify
+```
+cd backend
+python3 -m pytest tests/test_fit_tone_calibration.py -x -v
+python3 scripts/label_tone_clips.py --help
+python3 scripts/fit_tone_calibration.py --help
+```
 
 ### §9 PHASE2 aside retraction (Priority 1 — boundary freeze)
 
