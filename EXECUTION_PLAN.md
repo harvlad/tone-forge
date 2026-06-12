@@ -40,6 +40,62 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Subsystem README Status sweep (Priority 1 — boundary freeze)
+
+Pure doc follow-up to the §9 audit pass (commit `64b65e4`). That
+audit claimed *"Subsystem `README.md` coverage is partial — `monitor/`
+has one, some others don't"*. A subsequent `ls` proved every
+subsystem already has a 7-line README (purpose / owner / status);
+the real issue was that several **Status** lines described
+pre-landing state and had drifted.
+
+Status lines refreshed:
+- `acquisition/README.md`: was *"Skeleton. Active code remains in
+  `unified_pipeline._load_from_url`"* → now describes the
+  `acquisition/youtube.py:download_audio()` canonical home + the
+  remaining `AcquiredAudio` return-type switch deferral.
+- `session/README.md`: was *"Skeleton. Existing transport logic
+  remains in Jam UI + Connect until Priority 5 consolidation"* →
+  now reflects P5 complete (transport / protocol / bundle all
+  landed, 81/81 tests).
+- `devices/README.md`: was *"Skeleton. Priority 7 work in
+  `/EXECUTION_PLAN.md` lifts MVP discovery here"* → now reflects
+  P7 complete (caps / discovery / preferences + Swift consumer of
+  `TONEFORGE_AUDIO_INPUT_NAME`).
+- `tone/README.md`: was *"Skeleton. Priority 6 of
+  `/EXECUTION_PLAN.md` adds calibration + tier policy"* → now
+  reflects code surface landed (calibration / tiers / policy /
+  guitar_catalog / instrumentation) with the fitted artifact
+  explicitly called out as the only remaining P6 gate.
+
+Not touched (still accurate):
+- `monitor/README.md` — already detailed (155 lines covering
+  schema, curation, acceptance gate, programmatic access).
+- `guidance/README.md` — status accurate (MVP guidance still
+  assembled inline in `tone_forge_api`).
+- `notation/README.md` — status accurate ("Phase 3 — not on MVP
+  critical path").
+- `stems/README.md` — status accurate (still a skeleton wrapping
+  `stem_separator.py`; the boundary lift is intentional follow-on
+  work, not silently complete).
+
+Also corrected the §9 audit bullet in place: item 3 ("Create
+empty package skeletons") now states README coverage is complete
+and points at this entry for the Status refresh.
+
+What this was NOT
+- Not a content rewrite of any README. Existing purpose / owner
+  prose preserved verbatim; only the single Status sentence
+  changed per file.
+- Not a contracts change, not a code change, not a test change.
+- Not a §9 retraction — the items still record what was
+  originally spec'd; the audit annotations stand.
+
+Verify
+  git diff HEAD~1 -- 'backend/tone_forge/*/README.md' EXECUTION_PLAN.md
+    → four READMEs touched (one line each) + one §0 add + one
+      §9 inline correction.
+
 ### Device Discovery — Swift consumption of TONEFORGE_AUDIO_INPUT_NAME (Priority 7)
 
 Closes the last item the prior §0 audio_input_name entry called
@@ -3191,9 +3247,9 @@ for "what's actually in the tree" remains §0.
    - All eight subsystems exist as packages with `__init__.py`:
      `acquisition/`, `session/`, `guidance/`, `notation/`,
      `devices/`, `monitor/`, `tone/`, `stems/`.
-   - Subsystem `README.md` coverage is partial — `monitor/`
-     has one (purpose / owner / status), some others don't.
-     Not gating anything today; left as a low-value follow-up.
+   - Each subsystem has a `README.md` (purpose / owner / status);
+     `Status` lines refreshed in a follow-up pass to reflect
+     post-landing state (see §0 README sweep entry).
 
 4. **Boundary test** — **landed**:
    - `backend/tests/test_subsystem_boundaries.py` exists; AST walk

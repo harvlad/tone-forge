@@ -4,4 +4,4 @@
 
 **Owner**: Jam Experience attention pool.
 
-**Status**: Skeleton. Existing transport logic remains in Jam UI + Connect until Priority 5 consolidation.
+**Status**: Landed. P5 consolidation complete — `transport.py` (`TransportState` reducer), `protocol.py` (full v1 schema), `bundle.py` (`SessionBundle.build()`) all in place; `GET /api/session/:id` serves the bundle; Jam UI consumes it. Pinned by 81/81 tests across `test_session_*.py`. See EXECUTION_PLAN.md §6 + §0 entries.

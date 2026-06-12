@@ -4,4 +4,4 @@
 
 **Owner**: Platform & Engine attention pool.
 
-**Status**: Skeleton. Priority 7 work in `/EXECUTION_PLAN.md` lifts MVP discovery here.
+**Status**: Landed. P7 MVP complete — `caps.py` exposes `DeviceCaps`; `discovery.py` wraps the CoreAudio + USB-MIDI probe (`connect devices --json`); `preferences.py` persists onboarding answers to `device.json`. `audio_input_name` plumbs end-to-end into Connect via `TONEFORGE_AUDIO_INPUT_NAME` (Swift-side `AudioEngine.applyPreferredInputDevice()`). Phase 2 (USB MIDI sysex probing, bidirectional preset apply, multi-rig profiles) deferred per EXECUTION_PLAN.md §8.
