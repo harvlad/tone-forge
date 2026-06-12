@@ -40,6 +40,58 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### §9 PHASE2 aside retraction (Priority 1 — boundary freeze)
+
+Third self-correction in three audit-shaped commits. The §9 audit
+pass (commit `64b65e4`) ended item 1's "exceptions kept" bullet
+with a throwaway aside that the three `backend/PHASE2_*.md` files
+*"would be moved if anyone ever cared to re-tidy"*. The README
+sweep (commit `f1129e2`) caught one error in that same pass. This
+commit catches a second: investigation triggered by the planned
+move (intended as a small concrete cleanup) showed the move is
+inappropriate.
+
+What an `ls` + `grep` actually established:
+- `PHASE2_VALIDATION_KIT.md` (439 lines) carries
+  *"Status: Awaiting 5 rendered reference WAVs from operator
+  (Matt)"* — active forward-looking execution kit with the
+  operator's name on a pending action. Self-references and
+  references from `scripts/run_phase2_benchmark.py` assume the
+  `backend/` path.
+- `PHASE2_VALIDATION_REPORT.md` (252 lines) is a TEMPLATE
+  populated by `scripts/run_phase2_benchmark.py`; it appears
+  as the default `--out` value three times in that script.
+- `PHASE2_FEATURE_MASK_REPORT.md` (622 lines) is the output
+  path of `scripts/feature_mask_experiment.py`
+  (`REPORT_PATH = REPO_ROOT / "PHASE2_FEATURE_MASK_REPORT.md"`).
+  The experiment concluded ("HYPOTHESIS PARTIALLY SUPPORTED")
+  but the script + its path remain wired; moving the file
+  would either orphan the path or require retiring the script.
+
+Resolution: don't move any of the three. Fixed §9 item 1's
+"exceptions kept" bullet to enumerate the PHASE2 docs and explain
+the operational tie for each.
+
+Pattern observed across the three audits
+- Each audit pass mostly does what it intends but introduces
+  one local error from over-reach. `64b65e4` overstated README
+  drift; `f1129e2` caught that one but introduced the
+  "would-be-moved" PHASE2 aside; this commit catches that one.
+- The fix is not to stop auditing — the audits have done real
+  work — but to keep verifying assumptions before each new
+  claim, and to treat the "diminishing returns" warning at the
+  top of this thread as an actual stop signal soon.
+
+What this commit is NOT
+- Not a move. No files relocated. No script paths touched.
+- Not a script retirement. `feature_mask_experiment.py` and
+  `run_phase2_benchmark.py` left alone.
+- Not a §9 audit retraction in whole — only the one aside in
+  item 1. The 40-item annotation pass stands.
+
+Verify
+  git diff HEAD~1 -- EXECUTION_PLAN.md  # §0 add + §9 item 1 rewrite
+
 ### Subsystem README Status sweep (Priority 1 — boundary freeze)
 
 Pure doc follow-up to the §9 audit pass (commit `64b65e4`). That
@@ -3232,10 +3284,20 @@ for "what's actually in the tree" remains §0.
      `E2E_RECONSTRUCTION_SHIP_PLAN.md`, `EXTRACTION_ROADMAP.md`,
      `MILESTONE_EXTRACTION_FLOOR.md`,
      `RECONSTRUCTION_READINESS_REVIEW.md`, …).
-   - Exceptions kept at `backend/`: `EXTRACTION_STATUS.md` and
-     `ROADMAP_STATUS.md` per the spec. A few PHASE2 reports also
-     remain at the repo root as point-in-time validation artifacts
-     (would be moved if anyone ever cared to re-tidy).
+   - Exceptions kept at `backend/`: `EXTRACTION_STATUS.md`,
+     `ROADMAP_STATUS.md`, and three PHASE2 docs
+     (`PHASE2_FEATURE_MASK_REPORT.md`,
+     `PHASE2_VALIDATION_KIT.md`, `PHASE2_VALIDATION_REPORT.md`).
+     The PHASE2 set stays at `backend/` root because each is
+     operationally tied to a script: VALIDATION_KIT is the
+     active execution kit awaiting the operator's rendered
+     reference WAVs; VALIDATION_REPORT is the default `--out`
+     for `scripts/run_phase2_benchmark.py`; FEATURE_MASK_REPORT
+     is the output path of `scripts/feature_mask_experiment.py`
+     (the experiment concluded but the script and its path
+     remain wired). See the §0 retraction entry for the audit
+     trail; an earlier version of this bullet erroneously
+     described these as movable point-in-time artifacts.
    - `docs/README.md` exists and points at this `EXECUTION_PLAN.md`.
 
 2. **`backend/tone_forge/contracts.py`** — **landed**:
