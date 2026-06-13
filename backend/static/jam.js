@@ -34,6 +34,10 @@
   function showView(name) {
     Object.values(views).forEach(v => v.classList.remove('active'));
     views[name].classList.add('active');
+    // perform v2: the 1440px wide layout + fixed playback bar only
+    // apply on the perform view. Intake / band-room keep the legacy
+    // 1100px max-width to stay byte-identical.
+    document.body.classList.toggle('perform-active', name === 'perform');
   }
 
   // -------------------------------------------------------- constants
@@ -55,6 +59,12 @@
     stems: new Map(),
     // Section pills (from analysis); array of { name, startSec, endSec, el }
     sections: [],
+    // Chord ribbon pills (from analysis); array of
+    // { symbol, startSec, endSec, el, leftPx, widthPx }. Built once per
+    // session in buildChordRibbon(); leftPx/widthPx are cached on
+    // construction so updateChordPlayhead can run in O(log n) per RAF
+    // tick without re-measuring DOM.
+    chords: [],
     // Loop window in seconds or null
     loop: null,
     // Web Audio context (created lazily on first play)
@@ -151,6 +161,13 @@
       // (re)connect cycle.
       reconnectToastShown: false,
     },
+    // perform v2 waveform timeline. Peaks are computed once from the
+    // decoded stem AudioBuffers after prepareStemAudio resolves.
+    //   peaks      : Float32Array (length = targetSamples, range [0,1])
+    //   durationSec: anchor duration the peaks were taken against
+    // Re-drawn every RAF inside tickClock(); also re-drawn on debounced
+    // window resize so the canvas matches the bar's actual pixel width.
+    waveform: null,
   };
 
   // Records a timing mark relative to TTFJ t0. No-op if t0 is unset.
@@ -332,6 +349,19 @@
           false,
           8000,
         );
+      } else if (data.type === 'ping') {
+        // Server liveness probe. The backend reaps the socket if it
+        // doesn't see any frame within ~40s (30s recv + 10s pong
+        // window) — see tone_forge_api.py:567-599. We must answer
+        // immediately or get dropped, and because the browser's
+        // auto-reconnect path is gated on `cb.lastPreset` being set
+        // (see ws.onclose below), a single missed pong on a fresh
+        // perform view leaves the UI stuck at "Connect: offline"
+        // until the user reloads. Best-effort send.
+        try { ws.send(JSON.stringify({ type: 'pong' })); } catch {}
+      } else if (data.type === 'pong') {
+        // The server doesn't send unsolicited pongs, but the wire
+        // protocol allows them as a defense-in-depth keepalive. No-op.
       } else if (data.type === 'error') {
         // Surface the failure visibly, not just in the console. If
         // we can pin it to an in-flight apply, name the chain in the
@@ -434,7 +464,16 @@
         text = 'Monitor chain synced with Connect.';
         ok = true;
       } else if (paired) {
-        text = 'Paired — no tone match for this song.';
+        // Companion to the user-tone headline at jam.js:1402-1413 —
+        // if a recommendation exists and hasn't been dismissed yet
+        // it IS a tone match, just not yet pushed to Connect. Don't
+        // contradict the visible Apply card.
+        const hasPending = state.tone
+          && state.tone.rec
+          && !state.tone.dismissed;
+        text = hasPending
+          ? 'Paired — recommendation ready (click Apply).'
+          : 'Paired — no tone match for this song.';
       } else if (cb.status === 'connecting') {
         text = 'Connecting to the desktop helper…';
       } else if (cb.status === 'open') {
@@ -479,6 +518,9 @@
       statusEl.hidden = !text;
       statusEl.classList.toggle('ok', ok);
     }
+    // v2 header pill mirrors every status transition. Guarded for the
+    // initial pre-DOM call by renderConnectPill's own null check.
+    try { renderConnectPill(); } catch (_) {}
   }
 
   // Click handler for the "Try restarting Connect" CTA rendered inside
@@ -966,10 +1008,39 @@
     }
     state.stems.clear();
     state.sections = [];
+    state.chords = [];
+    // Empty the ribbon DOM so stale pills from the prior song don't
+    // bleed into the next one before buildChordRibbon repopulates.
+    const _ribbonEl = document.getElementById('chord-ribbon');
+    const _stripEl = document.getElementById('chord-ribbon-strip');
+    if (_stripEl) _stripEl.innerHTML = '';
+    if (_ribbonEl) _ribbonEl.hidden = true;
     state.duration = 0;
     state.playOffset = 0;
     state.analysisId = null;
     $('t-play').textContent = 'Play';
+    // perform v2: stop mic capture if it was running; clear waveform
+    // peaks + canvas; reset tone-card state; hide the header monitor
+    // popover. We intentionally do NOT touch state.connectBridge —
+    // P2k Safari pairing must survive a "New jam" click so the
+    // helper stays paired across songs.
+    try { stopListening(); } catch (_) {}
+    state.waveform = null;
+    try {
+      const _wfCanvas = document.getElementById('waveform-canvas');
+      if (_wfCanvas) {
+        const _wfCtx = _wfCanvas.getContext('2d');
+        if (_wfCtx) _wfCtx.clearRect(0, 0, _wfCanvas.width, _wfCanvas.height);
+      }
+    } catch (_) {}
+    state.tone = { rec: null, dismissed: false };
+    const _toneCard = document.getElementById('tone-card');
+    if (_toneCard) _toneCard.hidden = true;
+    const _monitorPop = document.getElementById('header-connect-monitor-pop');
+    if (_monitorPop) _monitorPop.hidden = true;
+    const _connectPill = document.getElementById('header-connect-pill');
+    if (_connectPill) _connectPill.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('perform-active');
     // Reset the URL to the bare /jam path. onAnalysisComplete() pushes
     // /jam/:id and the Connect-bridge pairing flow appends
     // ?session=<id>; both should disappear when the user explicitly
@@ -1307,6 +1378,8 @@
     // Parse the key string into a pitch-class set for intonation scoring.
     state.songKey = parseDetectedKey(key);
     applyFeedbackView();
+    // Refresh the perform-view "Audio in" row label.
+    try { refreshAudioInName(); } catch (_) {}
     if (state.settings.listenEnabled) startListening().catch(err => {
       console.warn('Mic capture failed on result load:', err);
     });
@@ -1335,6 +1408,18 @@
         instrument: state.userInstrument,
         match: userMatch,
       });
+    } else if (result.tone) {
+      // The legacy preset_matches table didn't hit, but the new
+      // ToneRecommendation pipeline did. Reflect the recommendation
+      // in the headline so it doesn't contradict the card body below,
+      // which is about to render via renderToneCard().
+      const recName = (result.tone.match && result.tone.match.chain_id
+        && toneChainDisplayName(result.tone.match.chain_id))
+        || (result.tone.apply && result.tone.apply.chain_id
+          && toneChainDisplayName(result.tone.apply.chain_id))
+        || 'Recommended tone';
+      $('user-tone-name').textContent = recName;
+      $('user-tone-meta').textContent = 'Apply below to push to Connect';
     } else {
       $('user-tone-name').textContent = 'No tone match yet';
       $('user-tone-meta').textContent = 'Default monitoring preset will be used';
@@ -1350,6 +1435,11 @@
     // Build the stem rack rows
     buildStemRack();
     buildSectionBar(result.sections || []);
+    // JAM Alpha visual reference. Top-level result.chords is the
+    // shape AnalysisResult.to_dict() emits; empty/missing renders
+    // nothing (ribbon stays hidden), so legacy responses without a
+    // chord lane don't show an empty strip.
+    buildChordRibbon(result.chords || []);
 
     // Preload audio so press-play is instant
     await prepareStemAudio();
@@ -1429,6 +1519,137 @@
     if (!state.sections.length) {
       bar.innerHTML = '<div style="color: var(--text-dim); font-size:13px;">Section detection unavailable for this song</div>';
     }
+  }
+
+  // ---------------------------------------------- chord ribbon (JAM Alpha)
+  //
+  // Render the chord lane from result.chords. Wire shape (from
+  // AnalysisResult.to_dict + chord_detector):
+  //   [{ start_s: number, end_s: number, symbol: string,
+  //      confidence: number }, ...]
+  //
+  // Layout strategy: pill width scales with chord duration so the
+  // strip's pixel timeline IS the song's time axis. updateChordPlayhead
+  // then translates the strip by `-pxPerSecond * t` to put the
+  // currently-sounding chord under the fixed centre playhead. We
+  // pre-measure offsetLeft / offsetWidth ONCE here so per-RAF cost is
+  // O(log n) binary-search + one style write.
+  //
+  // Empty / missing input renders nothing and leaves the ribbon hidden,
+  // which is the correct degenerate behaviour — a guitarist on a
+  // chord-less song should not see a blank strip.
+  const CHORD_RIBBON_PX_PER_SEC = 60;
+  function buildChordRibbon(chords) {
+    const ribbon = $('chord-ribbon');
+    const strip = $('chord-ribbon-strip');
+    if (!ribbon || !strip) return;
+    strip.innerHTML = '';
+    state.chords = [];
+
+    if (!Array.isArray(chords) || chords.length === 0) {
+      ribbon.hidden = true;
+      return;
+    }
+
+    // Build pills. Cache start/end/leftPx/widthPx onto state.chords so
+    // the playhead update never re-measures.
+    let leftPx = 0;
+    const pxPerSec = CHORD_RIBBON_PX_PER_SEC;
+    for (const c of chords) {
+      const startSec = secondsOf(c.start_s);
+      const endSec = secondsOf(c.end_s);
+      const durSec = Math.max(0, endSec - startSec);
+      // Skip degenerate chords (zero-length / negative); the detector
+      // shouldn't emit them but defensive code is cheap.
+      if (!(durSec > 0)) continue;
+      const widthPx = Math.max(28, durSec * pxPerSec);
+      const pill = document.createElement('div');
+      pill.className = 'chord-pill';
+      pill.style.width = widthPx + 'px';
+      pill.textContent = c.symbol || '?';
+      // perform v2: click / Enter / Space on a pill seeks the playhead
+      // to that chord's start. Capture startSec per-iteration so the
+      // closure binds the right value. seekAll() already nudges the
+      // chord ribbon + waveform when paused.
+      pill.setAttribute('role', 'button');
+      pill.setAttribute('tabindex', '0');
+      pill.setAttribute('aria-label', `Seek to ${c.symbol || '?'} at ${formatTime(startSec)}`);
+      const _seekTarget = startSec;
+      pill.addEventListener('click', () => seekAll(_seekTarget));
+      pill.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          seekAll(_seekTarget);
+        }
+      });
+      strip.appendChild(pill);
+      state.chords.push({
+        symbol: c.symbol || '?',
+        startSec,
+        endSec,
+        el: pill,
+        leftPx,
+        widthPx,
+      });
+      leftPx += widthPx + 4; // +4 to match flex gap
+    }
+
+    if (state.chords.length === 0) {
+      ribbon.hidden = true;
+      return;
+    }
+    ribbon.hidden = false;
+    // Position at t=0 immediately so the first chord is centred under
+    // the playhead before the user hits Play.
+    updateChordPlayhead(0);
+  }
+
+  // Per-RAF playhead update. Binary-search state.chords by startSec to
+  // find the active chord at time `t`, toggle the highlight, and
+  // translate the strip so the active pill sits under the centred
+  // playhead marker. Called from tickClock() while playing and from
+  // seekAll() when paused so the ribbon tracks scrubs too.
+  let _chordLastActiveIdx = -1;
+  function updateChordPlayhead(t) {
+    const strip = $('chord-ribbon-strip');
+    if (!strip || state.chords.length === 0) return;
+
+    // Binary search for the chord whose [startSec, endSec) contains t.
+    let lo = 0, hi = state.chords.length - 1, idx = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const c = state.chords[mid];
+      if (t < c.startSec) hi = mid - 1;
+      else if (t >= c.endSec) lo = mid + 1;
+      else { idx = mid; break; }
+    }
+    // Past-the-end: pin to last chord so the strip doesn't snap back to 0.
+    if (idx < 0) {
+      if (t >= state.chords[state.chords.length - 1].endSec) {
+        idx = state.chords.length - 1;
+      } else if (t < state.chords[0].startSec) {
+        idx = 0;
+      }
+    }
+    if (idx < 0) return;
+
+    if (idx !== _chordLastActiveIdx) {
+      if (_chordLastActiveIdx >= 0 && state.chords[_chordLastActiveIdx]) {
+        state.chords[_chordLastActiveIdx].el.classList.remove('active');
+      }
+      state.chords[idx].el.classList.add('active');
+      _chordLastActiveIdx = idx;
+    }
+
+    // Translate the strip so the active pill's centre sits at x=0
+    // (under the fixed playhead). Within the active pill, interpolate
+    // by song-time progress through that chord for smooth scroll.
+    const c = state.chords[idx];
+    const localProgress = c.endSec > c.startSec
+      ? (t - c.startSec) / (c.endSec - c.startSec)
+      : 0;
+    const activeCentrePx = c.leftPx + c.widthPx * localProgress;
+    strip.style.transform = `translateX(${-activeCentrePx}px)`;
   }
 
   function secondsOf(v) {
@@ -1519,6 +1740,14 @@
     state.duration = maxDur;
     state.playOffset = 0;
     $('t-time').textContent = `0:00 / ${formatTime(maxDur)}`;
+    // Schedule waveform peak computation off the critical path.
+    // ~500ms for a 4-stem song; user can hit Play immediately and the
+    // bars will appear shortly after.
+    setTimeout(() => {
+      try { computeWaveformPeaks(); } catch (e) {
+        console.warn('[jam] computeWaveformPeaks failed:', e);
+      }
+    }, 0);
     console.log('[jam] audio prepared:', {
       stems: state.stems.size,
       ctxState: state.ctx.state,
@@ -1948,6 +2177,10 @@
     } else {
       state.playOffset = target;
       $('t-time').textContent = `${formatTime(target)} / ${formatTime(state.duration)}`;
+      // While paused, tickClock isn't running, so the ribbon needs an
+      // explicit nudge when the user seeks via a section pill.
+      updateChordPlayhead(target);
+      try { drawWaveform(); } catch (_) {}
     }
   }
 
@@ -1955,6 +2188,11 @@
     if (!state.isPlaying) return;
     const t = currentPlayTime();
     $('t-time').textContent = `${formatTime(t)} / ${formatTime(state.duration)}`;
+    // JAM Alpha chord ribbon: cheap per-frame update (O(log n) binary
+    // search + one style write). No-op when state.chords is empty.
+    updateChordPlayhead(t);
+    // v2 waveform playhead. Cheap canvas redraw (~1600 bars + 1 line).
+    drawWaveform();
     // Looping: jump back to loop start when we cross the end.
     if (state.loop && t >= state.loop.endSec) {
       seekAll(state.loop.startSec);
@@ -2241,6 +2479,12 @@
       tempo_bpm: tempoBpm,
       detected_key: detectedKey,
       sections: understanding.sections || [],
+      // JAM Alpha: project chord lane onto the legacy top-level field
+      // shape that onAnalysisComplete / buildChordRibbon consume. The
+      // bundle assembler persists chords as
+      // SongUnderstanding.chords; empty/missing becomes [] so the
+      // ribbon stays hidden on legacy sessions without a chord lane.
+      chords: understanding.chords || [],
       beat_times: understanding.beats_s || [],
       // Stems
       stems_paths: stemsPaths,
@@ -2379,19 +2623,70 @@
   }
 
   // ---- mic capture ----
+
+  // Resolve the user's stored audio_input_name (e.g. "Line 6 HX Stomp")
+  // to a Web Audio deviceId. enumerateDevices() only returns labels for
+  // devices the page has already been granted permission to, so this
+  // must run AFTER a successful getUserMedia call.
+  async function _findInputDeviceIdByName(preferredName) {
+    if (!preferredName) return null;
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      const norm = preferredName.toLowerCase();
+      const match = devs.find(d =>
+        d.kind === 'audioinput'
+        && typeof d.label === 'string'
+        && d.label.toLowerCase().includes(norm)
+      );
+      return match ? match.deviceId : null;
+    } catch { return null; }
+  }
+
+  // Base capture constraints. AEC is on by default so the laptop's
+  // own playback doesn't get scored as the player's input; when we
+  // re-acquire on a dedicated hardware input (HX Stomp etc.) AEC is
+  // not helpful and we drop it for cleaner pitch detection.
+  function _captureConstraints(deviceId, isHardwareInput) {
+    const audio = {
+      echoCancellation: !isHardwareInput,
+      noiseSuppression: false,
+      autoGainControl: false,
+    };
+    if (deviceId) audio.deviceId = { exact: deviceId };
+    return { audio };
+  }
+
   async function startListening() {
     if (state.listen.stream) return; // already running
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          // Browser AEC subtracts speaker output from the mic so the laptop's
-          // own playback doesn't get scored as the player's input. Headphones
-          // give cleaner results, but most users won't be wearing them.
-          echoCancellation: true,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
+      // First pass: default device. Required to populate device labels
+      // for enumerateDevices() — browsers hide labels until permission
+      // has been granted at least once for the page.
+      let stream = await navigator.mediaDevices.getUserMedia(
+        _captureConstraints(null, false),
+      );
+      // Second pass: if the user has a stored audio_input_name and
+      // it resolves to a different deviceId, re-acquire on that
+      // device. Failures fall back silently to the default stream.
+      try {
+        const prefs = await fetchDevicePreferences();
+        const preferredName = prefs && prefs.audio_input_name;
+        if (preferredName) {
+          const targetId = await _findInputDeviceIdByName(preferredName);
+          const track = stream.getAudioTracks()[0];
+          const currentId = track && track.getSettings
+            ? track.getSettings().deviceId
+            : null;
+          if (targetId && targetId !== currentId) {
+            for (const t of stream.getTracks()) t.stop();
+            stream = await navigator.mediaDevices.getUserMedia(
+              _captureConstraints(targetId, true),
+            );
+          }
+        }
+      } catch (e) {
+        console.warn('[listen] preferred-device acquire failed; using default:', e);
+      }
       // Reuse the playback audio context if one exists.
       const ctx = state.ctx || new (window.AudioContext || window.webkitAudioContext)();
       state.ctx = ctx;
@@ -2594,10 +2889,16 @@
     const panel = $('intonation-panel');
     const rolling = $('into-rolling');
     const full = $('into-full');
-    // Panel is visible only while listening is enabled.
-    panel.hidden = !state.settings.listenEnabled;
-    rolling.hidden = state.settings.feedbackView === 'cents';
-    full.hidden = state.settings.feedbackView !== 'full';
+    // Legacy panel is now an empty placeholder; keep gating it so any
+    // residual visibility CSS stays consistent.
+    if (panel) panel.hidden = !state.settings.listenEnabled;
+    // perform v2: the visible tuner is #tuner-compact in the left
+    // slot. Gate it on listenEnabled — without the mic, the tuner
+    // can't say anything meaningful.
+    const tuner = document.getElementById('tuner-compact');
+    if (tuner) tuner.hidden = !state.settings.listenEnabled;
+    if (rolling) rolling.hidden = state.settings.feedbackView === 'cents';
+    if (full) full.hidden = state.settings.feedbackView !== 'full';
   }
 
   // ---- device-discovery onboarding (§8) ----
@@ -2850,6 +3151,7 @@
         }
         const prefs = await res.json();
         updateDeviceSettingLabel(prefs);
+        try { refreshAudioInName(); } catch (_) {}
         hideOnboardingModal();
       } catch (e) {
         console.warn('[onboarding] POST /api/device/preferences failed:', e);
@@ -2998,6 +3300,290 @@
       });
     }
   }
+
+  // =====================================================================
+  // Perform v2 wiring — stats disclosure, audio-in, tone send-to-connect,
+  // header Connect pill + monitor popover, waveform timeline, t-loop,
+  // instrument selector. All elements live in the new perform layout
+  // (#perform-grid + #playback-bar). Existing IDs are preserved so the
+  // legacy code paths above continue to work unchanged.
+  // =====================================================================
+
+  // ---- 3f: stats disclosure -------------------------------------------
+  (function initStatsDisclosure() {
+    const toggle = document.getElementById('tuner-stats-toggle');
+    const body = document.getElementById('tuner-stats-body');
+    if (!toggle || !body) return;
+    toggle.addEventListener('click', () => {
+      const willOpen = !!body.hidden;
+      body.hidden = !willOpen;
+      toggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      toggle.textContent = willOpen ? 'Hide stats ▴' : 'Show stats ▾';
+    });
+  })();
+
+  // ---- 3g: audio-in row -----------------------------------------------
+  async function refreshAudioInName() {
+    const nameEl = document.getElementById('audio-in-name');
+    if (!nameEl) return;
+    try {
+      const prefs = await fetchDevicePreferences();
+      const label = (prefs && prefs.audio_input_name)
+        ? prefs.audio_input_name
+        : 'System default';
+      nameEl.textContent = label;
+    } catch {
+      nameEl.textContent = 'System default';
+    }
+  }
+  (function initAudioInRow() {
+    const changeBtn = document.getElementById('audio-in-change');
+    if (changeBtn) {
+      changeBtn.addEventListener('click', () => { resetDeviceChoice(); });
+    }
+    // Initial paint — onboarding submit + onAnalysisComplete will
+    // refresh it again, but populating it on first paint avoids the
+    // "System default" -> real name flicker for returning users.
+    refreshAudioInName();
+  })();
+
+  // ---- 3h: tone match Send-to-Connect ---------------------------------
+  (function initToneSendToConnect() {
+    const btn = document.getElementById('tone-send-connect');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const rec = state.tone && state.tone.rec;
+      const chainId = rec && rec.apply && rec.apply.chain_id;
+      if (chainId) {
+        applyToneChain(chainId);
+        return;
+      }
+      if (state.connectBridge && state.connectBridge.lastPreset) {
+        try {
+          sendOrQueueBridgeMessage({
+            type: 'apply_preset',
+            preset: state.connectBridge.lastPreset,
+          });
+          flashConnectStatus(
+            'Re-synced tone preset to Connect.', true, 3500,
+          );
+        } catch (e) {
+          flashConnectStatus(
+            'Could not reach Connect — is the helper running?',
+            false, 3500,
+          );
+        }
+        return;
+      }
+      flashConnectStatus(
+        'No tone match yet — analyze a song first.', false, 3500,
+      );
+    });
+  })();
+
+  // ---- 3i: header Connect pill + monitor popover ----------------------
+  function renderConnectPill() {
+    const pill = document.getElementById('header-connect-pill');
+    if (!pill) return;
+    const cb = state.connectBridge;
+    pill.classList.remove('connected', 'connecting', 'offline');
+    if (cb.status === 'open' && cb.peers > 0) {
+      pill.classList.add('connected');
+      pill.textContent = `Connect: paired (${cb.peers})`;
+    } else if (cb.status === 'open') {
+      pill.classList.add('connecting');
+      pill.textContent = 'Connect: waiting…';
+    } else if (cb.status === 'connecting') {
+      pill.classList.add('connecting');
+      pill.textContent = 'Connect: connecting…';
+    } else {
+      pill.classList.add('offline');
+      pill.textContent = 'Connect: offline';
+    }
+  }
+  (function initHeaderConnectPill() {
+    const pill = document.getElementById('header-connect-pill');
+    const pop = document.getElementById('header-connect-monitor-pop');
+    if (!pill || !pop) return;
+    pill.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const willOpen = !!pop.hidden;
+      pop.hidden = !willOpen;
+      pill.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+    document.addEventListener('click', (ev) => {
+      if (pop.hidden) return;
+      if (pop.contains(ev.target)) return;
+      if (ev.target === pill) return;
+      pop.hidden = true;
+      pill.setAttribute('aria-expanded', 'false');
+    });
+    renderConnectPill();
+  })();
+
+  // ---- 3k: waveform timeline ------------------------------------------
+  function computeWaveformPeaks(targetSamples = 1600) {
+    // Mix-down across all decoded stem buffers; track abs-peak per
+    // block of (nFrames / targetSamples) samples. Normalize to 1.0.
+    const buffers = [];
+    let maxFrames = 0;
+    let maxDur = 0;
+    for (const stem of state.stems.values()) {
+      if (!stem.buffer) continue;
+      buffers.push(stem.buffer);
+      if (stem.buffer.length > maxFrames) maxFrames = stem.buffer.length;
+      if (stem.buffer.duration > maxDur) maxDur = stem.buffer.duration;
+    }
+    if (!buffers.length || maxFrames === 0) return;
+    const peaks = new Float32Array(targetSamples);
+    const blockSize = Math.max(1, Math.floor(maxFrames / targetSamples));
+    // Pre-cache channel data refs to avoid getChannelData() in the
+    // hot loop.
+    const stemChannels = buffers.map((buf) => {
+      const chans = [];
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        chans.push(buf.getChannelData(c));
+      }
+      return { chans, length: buf.length };
+    });
+    let globalMax = 1e-6;
+    for (let b = 0; b < targetSamples; b++) {
+      const start = b * blockSize;
+      const end = Math.min(start + blockSize, maxFrames);
+      let blockPeak = 0;
+      for (let i = start; i < end; i++) {
+        let mix = 0;
+        for (let s = 0; s < stemChannels.length; s++) {
+          const sc = stemChannels[s];
+          if (i >= sc.length) continue;
+          for (let c = 0; c < sc.chans.length; c++) {
+            mix += sc.chans[c][i];
+          }
+        }
+        const av = mix < 0 ? -mix : mix;
+        if (av > blockPeak) blockPeak = av;
+      }
+      peaks[b] = blockPeak;
+      if (blockPeak > globalMax) globalMax = blockPeak;
+    }
+    // Normalize.
+    const inv = 1.0 / globalMax;
+    for (let i = 0; i < peaks.length; i++) peaks[i] *= inv;
+    state.waveform = { peaks, durationSec: maxDur };
+    drawWaveform();
+  }
+
+  function drawWaveform() {
+    const canvas = document.getElementById('waveform-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const cssW = Math.max(1, Math.floor(rect.width));
+    const cssH = Math.max(1, Math.floor(rect.height));
+    if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
+      canvas.width = cssW * dpr;
+      canvas.height = cssH * dpr;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const wf = state.waveform;
+    if (!wf || !wf.peaks || !wf.peaks.length) return;
+    const peaks = wf.peaks;
+    const midY = cssH / 2;
+    const styles = getComputedStyle(document.documentElement);
+    const dimColor = (styles.getPropertyValue('--text-dim') || '#888').trim();
+    const accent = (styles.getPropertyValue('--accent') || '#f97316').trim();
+    ctx.fillStyle = dimColor;
+    const barCount = peaks.length;
+    const barW = cssW / barCount;
+    for (let i = 0; i < barCount; i++) {
+      const h = Math.max(1, peaks[i] * (cssH * 0.9));
+      const x = i * barW;
+      ctx.fillRect(x, midY - h / 2, Math.max(1, barW - 0.5), h);
+    }
+    // Playhead.
+    const t = currentPlayTime();
+    const dur = wf.durationSec || state.duration || 0;
+    if (dur > 0) {
+      const px = Math.min(cssW - 1, (t / dur) * cssW);
+      ctx.fillStyle = accent;
+      ctx.fillRect(px, 0, 2, cssH);
+    }
+  }
+
+  (function initWaveformInteraction() {
+    const canvas = document.getElementById('waveform-canvas');
+    if (!canvas) return;
+    canvas.addEventListener('click', (ev) => {
+      const wf = state.waveform;
+      if (!wf || !wf.durationSec) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const frac = Math.max(0, Math.min(1, x / rect.width));
+      seekAll(frac * wf.durationSec);
+    });
+    // Debounced resize.
+    let resizeT = null;
+    window.addEventListener('resize', () => {
+      if (resizeT) clearTimeout(resizeT);
+      resizeT = setTimeout(() => { drawWaveform(); }, 100);
+    });
+  })();
+
+  // ---- 3l: t-loop (clear) ---------------------------------------------
+  (function initLoopClearButton() {
+    const btn = document.getElementById('t-loop');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const hasActive = !!document.querySelector('#section-bar .section-pill.active');
+      if (!hasActive && !state.loop) {
+        flashConnectStatus(
+          'Tap a section pill to loop it.', false, 2500,
+        );
+        return;
+      }
+      state.loop = null;
+      const pills = document.querySelectorAll('#section-bar .section-pill');
+      for (const p of pills) p.classList.remove('active');
+      const ls = document.getElementById('loop-status');
+      if (ls) ls.textContent = 'Loop: off';
+      btn.textContent = 'Loop: off';
+    });
+  })();
+
+  // ---- 3m: instrument selector ----------------------------------------
+  (function initInstrumentSelector() {
+    const sel = document.getElementById('instrument-select');
+    if (!sel) return;
+    // Mirror the current intake/state choice so the labels stay in sync
+    // when entering the perform view.
+    if (state.userInstrument) sel.value = state.userInstrument;
+    sel.addEventListener('change', () => {
+      const next = sel.value;
+      if (!next) return;
+      state.userInstrument = next;
+      try { buildStemRack(); } catch (e) {
+        console.warn('[jam] buildStemRack after instrument change failed:', e);
+      }
+      const muteBtn = document.getElementById('user-mute-original');
+      if (muteBtn) {
+        const label = next === 'guitar' ? 'guitar'
+          : next === 'bass' ? 'bass'
+          : next === 'keys' ? 'keys'
+          : next;
+        // Preserve existing on/off state if the button is already in
+        // "Unmute" mode — only the noun changes.
+        if (/^Unmute /.test(muteBtn.textContent)) {
+          muteBtn.textContent = `Unmute original ${label}`;
+        } else {
+          muteBtn.textContent = `Mute original ${label}`;
+        }
+      }
+    });
+  })();
 
   initSettingsUI();
 })();

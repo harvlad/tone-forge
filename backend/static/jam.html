@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=4" />
+<link rel="stylesheet" href="/static/jam.css?v=5" />
 </head>
 <body>
 <header class="jam-header">
@@ -165,13 +165,38 @@
   </section>
 
   <!-- =========================== PERFORMANCE ============================ -->
+  <!--
+    perform v2 — musician-first three-column layout (1440p desktop).
+    HEADER row carries song title/bpm/key, Connect status pill,
+    settings gear, and "New jam".
+    LEFT slot: instrument selector, compact tuner (note + cents + needle)
+    with collapsed stats disclosure, Tone Match card (with Send to
+    Connect), and the audio-input row.
+    CENTER slot: section markers above the chord ribbon (large pills,
+    click to seek), with the loop status line beneath.
+    RIGHT slot: stem mixer.
+    BOTTOM: fixed playback bar (Play/Stop/Loop/Click + waveform timeline
+    + clock).
+    All existing IDs the JS writes into are preserved verbatim. New IDs
+    are introduced for the v2 chrome only.
+  -->
   <section id="view-perform" class="view">
-    <div class="perform-top">
-      <div class="now-playing">
+    <div id="perform-header" class="perform-header">
+      <div class="ph-song">
         <div class="np-title" id="np-title">Untitled jam</div>
         <div class="np-meta" id="np-meta">— bpm · — key</div>
       </div>
-      <div class="perform-actions">
+      <div class="ph-actions">
+        <button id="header-connect-pill" class="connect-pill offline" type="button" aria-haspopup="true" aria-expanded="false">Connect: offline</button>
+        <div id="header-connect-monitor-pop" class="connect-monitor-pop" hidden>
+          <!-- monitor-gain controls migrate here from the legacy user card -->
+          <div class="connect-gain" id="connect-gain-wrap" hidden>
+            <label for="connect-gain">Monitor</label>
+            <input id="connect-gain" type="range" min="0" max="1" step="0.01" value="0" />
+            <span id="connect-gain-readout" class="connect-gain-readout">muted</span>
+            <div class="connect-gain-hint">Set above 0 only when wearing headphones — laptop speakers will feed back.</div>
+          </div>
+        </div>
         <button id="perform-settings" class="ghost" title="Settings">⚙</button>
         <button id="perform-back" class="ghost">New jam</button>
       </div>
@@ -206,108 +231,147 @@
       </div>
     </div>
 
-    <div id="intonation-panel" class="intonation-panel" hidden>
-      <div class="intonation-main">
-        <div class="intonation-note">
-          <div class="intonation-note-name" id="into-note">—</div>
-          <div class="intonation-cents" id="into-cents">0¢</div>
-        </div>
-        <div class="intonation-meter">
-          <div class="intonation-meter-track"></div>
-          <div class="intonation-meter-needle" id="into-needle"></div>
-          <div class="intonation-meter-center"></div>
-        </div>
-        <div class="intonation-status" id="into-status">Idle</div>
-      </div>
-      <div class="intonation-rolling" id="into-rolling" hidden>
-        <div class="intonation-rolling-label">In tune (5s)</div>
-        <div class="intonation-rolling-pct" id="into-rolling-pct">—</div>
-      </div>
-      <div class="intonation-full" id="into-full" hidden>
-        <div class="intonation-full-row">
-          <span class="intonation-full-label">In key</span>
-          <span id="into-in-key" class="intonation-full-val">—</span>
-        </div>
-        <div class="intonation-full-row">
-          <span class="intonation-full-label">Stable pitch %</span>
-          <span id="into-stable" class="intonation-full-val">—</span>
-        </div>
-        <div class="intonation-full-divider"></div>
-        <div class="intonation-full-row">
-          <span class="intonation-full-label">Last hit</span>
-          <span id="into-timing-last" class="intonation-full-val">—</span>
-        </div>
-        <div class="intonation-full-row">
-          <span class="intonation-full-label">Within ±50ms</span>
-          <span id="into-timing-tight" class="intonation-full-val">—</span>
-        </div>
-        <div class="intonation-full-row">
-          <span class="intonation-full-label">Within ±100ms</span>
-          <span id="into-timing-loose" class="intonation-full-val">—</span>
-        </div>
-      </div>
-    </div>
+    <div id="perform-grid" class="perform-grid">
+      <!-- LEFT SLOT — "Your slot" -->
+      <div id="slot-left" class="stage-col stage-left">
+        <div class="stage-col-label">Your slot</div>
 
-    <div class="perform-stage">
-      <div class="user-card">
-        <div class="user-card-label">Your slot</div>
-        <div class="user-card-tone" id="user-tone-name">No tone yet</div>
-        <div class="user-card-meta" id="user-tone-meta">—</div>
-        <!-- Tone recommendation card (P3a/P6e+). Populated from
-             result.tone by jam.js renderToneCard(). Hidden until a
-             recommendation lands so legacy responses without a tone
-             field don't render an empty shell. -->
-        <div class="tone-card" id="tone-card" hidden>
-          <div class="tone-card-header">
-            <span class="tone-tier-badge" id="tone-tier-badge">—</span>
-            <span class="tone-card-title" id="tone-card-title">—</span>
+        <div id="instrument-selector" class="perform-instrument-selector">
+          <label class="audio-in-label" for="instrument-select">Instrument</label>
+          <select id="instrument-select">
+            <option value="guitar" selected>Guitar</option>
+            <option value="bass" disabled>Bass (coming soon)</option>
+            <option value="keys" disabled>Keys (coming soon)</option>
+          </select>
+        </div>
+
+        <div id="tuner-compact" class="tuner-compact" hidden>
+          <div class="tuner-row">
+            <div id="into-note">—</div>
+            <div id="into-cents">0¢</div>
           </div>
-          <div class="tone-card-rationale" id="tone-card-rationale">—</div>
-          <div class="tone-card-actions">
-            <button id="tone-apply-btn" class="primary" type="button">Apply</button>
-            <button id="tone-dismiss-btn" class="ghost" type="button">Dismiss</button>
+          <div class="tuner-bar">
+            <div class="tuner-bar-center"></div>
+            <div id="into-needle"></div>
           </div>
-          <div class="tone-card-alternates" id="tone-card-alternates" hidden>
-            <div class="tone-card-alternates-label">Alternatives</div>
-            <div class="tone-card-alternates-list" id="tone-card-alternates-list"></div>
+          <div id="into-status">Idle</div>
+          <button id="tuner-stats-toggle" type="button" aria-expanded="false">Show stats ▾</button>
+          <div id="tuner-stats-body" class="tuner-stats-body" hidden>
+            <!-- Re-host of the existing rolling/full intonation IDs.
+                 jam.js writes into these by id; the embedded layout
+                 stays minimal so the disclosure feels like a true
+                 secondary surface. -->
+            <div class="intonation-rolling" id="into-rolling" hidden>
+              <div class="intonation-rolling-label">In tune (5s)</div>
+              <div class="intonation-rolling-pct" id="into-rolling-pct">—</div>
+            </div>
+            <div class="intonation-full" id="into-full" hidden>
+              <div class="intonation-full-row">
+                <span class="intonation-full-label">In key</span>
+                <span id="into-in-key" class="intonation-full-val">—</span>
+              </div>
+              <div class="intonation-full-row">
+                <span class="intonation-full-label">Stable pitch %</span>
+                <span id="into-stable" class="intonation-full-val">—</span>
+              </div>
+              <div class="intonation-full-divider"></div>
+              <div class="intonation-full-row">
+                <span class="intonation-full-label">Last hit</span>
+                <span id="into-timing-last" class="intonation-full-val">—</span>
+              </div>
+              <div class="intonation-full-row">
+                <span class="intonation-full-label">Within ±50ms</span>
+                <span id="into-timing-tight" class="intonation-full-val">—</span>
+              </div>
+              <div class="intonation-full-row">
+                <span class="intonation-full-label">Within ±100ms</span>
+                <span id="into-timing-loose" class="intonation-full-val">—</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="user-card-controls">
-          <button id="connect-btn" class="primary">Connect to play</button>
+
+        <div id="tone-match" class="tone-match-card">
+          <div class="user-card-label">Tone match</div>
+          <div id="user-tone-name">No tone yet</div>
+          <div id="user-tone-meta">—</div>
+          <div class="tone-card" id="tone-card" hidden>
+            <div class="tone-card-header">
+              <span class="tone-tier-badge" id="tone-tier-badge">—</span>
+              <span class="tone-card-title" id="tone-card-title">—</span>
+            </div>
+            <div class="tone-card-rationale" id="tone-card-rationale">—</div>
+            <div class="tone-card-actions">
+              <button id="tone-apply-btn" class="primary" type="button">Apply</button>
+              <button id="tone-dismiss-btn" class="ghost" type="button">Dismiss</button>
+            </div>
+            <div class="tone-card-alternates" id="tone-card-alternates" hidden>
+              <div class="tone-card-alternates-label">Alternatives</div>
+              <div class="tone-card-alternates-list" id="tone-card-alternates-list"></div>
+            </div>
+          </div>
+          <button id="tone-send-connect" type="button">Send to Connect</button>
+          <button id="user-mute-original" type="button">Mute original guitar</button>
+          <!-- Legacy controls kept in DOM (hidden) so existing wiring
+               in renderConnectStatus / connect-btn handler continues
+               to work without guards. -->
+          <button id="connect-btn" class="primary" hidden>Connect to play</button>
           <div id="connect-status" class="connect-status" hidden></div>
-          <button id="user-mute-original" class="ghost">Mute original guitar</button>
-          <div class="connect-gain" id="connect-gain-wrap" hidden>
-            <label for="connect-gain">Monitor</label>
-            <input id="connect-gain" type="range" min="0" max="1" step="0.01" value="0" />
-            <span id="connect-gain-readout" class="connect-gain-readout">muted</span>
-            <div class="connect-gain-hint">Set above 0 only when wearing headphones — laptop speakers will feed back.</div>
-          </div>
-          <p class="hint user-card-change-device">
-            <button type="button" id="perform-change-device" class="linklike">Change audio interface</button>
-          </p>
+        </div>
+
+        <div id="audio-in-row" class="audio-in-row">
+          <span class="audio-in-label">Audio in:</span>
+          <span id="audio-in-name">System default</span>
+          <button type="button" id="audio-in-change" class="linklike">Change</button>
+          <!-- Hidden legacy button — its click handler still works -->
+          <button type="button" id="perform-change-device" class="linklike" hidden>Change audio interface</button>
         </div>
       </div>
 
-      <div class="stem-rack" id="stem-rack">
-        <!-- Per-stem rows injected by JS -->
+      <!-- CENTER SLOT — section markers + chord timeline -->
+      <div id="slot-center" class="stage-col stage-center">
+        <div class="section-bar" id="section-bar">
+          <!-- Section pills injected by JS -->
+        </div>
+        <!-- JAM Alpha chord ribbon. Populated by buildChordRibbon()
+             from result.chords. Hidden when chords are absent so
+             legacy sessions without a chord lane don't show an empty
+             strip. Playhead is driven from tickClock(). -->
+        <div id="chord-ribbon" class="chord-ribbon" hidden>
+          <div class="chord-ribbon-playhead"></div>
+          <div class="chord-ribbon-strip" id="chord-ribbon-strip"></div>
+        </div>
+        <div id="loop-status" class="loop-status">Loop: off</div>
+      </div>
+
+      <!-- RIGHT SLOT — stem mixer -->
+      <div id="slot-right" class="stage-col stage-right">
+        <div class="stage-col-label">Stems</div>
+        <div class="stem-rack" id="stem-rack">
+          <!-- Per-stem rows injected by JS -->
+        </div>
       </div>
     </div>
 
-    <div class="transport">
-      <div class="transport-row">
-        <button id="t-play" class="primary big">Play</button>
-        <button id="t-stop" class="ghost big">Stop</button>
+    <!-- Empty placeholder so applyFeedbackView() can still toggle
+         #intonation-panel.hidden without null-derefing. The real
+         tuner lives inside #tuner-compact now. -->
+    <div id="intonation-panel" hidden></div>
+
+    <!-- BOTTOM — fixed playback bar -->
+    <div id="playback-bar" class="playback-bar">
+      <div class="pb-transport">
+        <button id="t-play" class="primary">Play</button>
+        <button id="t-stop" class="ghost">Stop</button>
+        <button id="t-loop" class="ghost" title="Clear loop">Loop: off</button>
         <button id="t-click" class="ghost" title="Toggle click track">Click: off</button>
-        <div id="t-time" class="time">0:00 / 0:00</div>
       </div>
-      <div class="section-bar" id="section-bar">
-        <!-- Section pills injected by JS -->
-      </div>
-      <div id="loop-status" class="loop-status">Loop: off</div>
+      <canvas id="waveform-canvas" width="800" height="64"></canvas>
+      <div id="t-time" class="time">0:00 / 0:00</div>
     </div>
   </section>
 </main>
 
-<script src="/static/jam.js?v=4"></script>
+<script src="/static/jam.js?v=7"></script>
 </body>
 </html>
