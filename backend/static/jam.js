@@ -2665,23 +2665,79 @@
       let stream = await navigator.mediaDevices.getUserMedia(
         _captureConstraints(null, false),
       );
+      let acquiredVia = 'default';
       // Second pass: if the user has a stored audio_input_name and
       // it resolves to a different deviceId, re-acquire on that
       // device. Failures fall back silently to the default stream.
+      //
+      // Observability is load-bearing here: previously this whole block
+      // was silent on every code path, so a user whose Helix wasn't
+      // being matched ("listening to mic instead") had no diagnostic
+      // surface and no idea which of {prefs missing, label mismatch,
+      // enumerate visibility, exact-id reacquire failure} was hitting
+      // them. We log every branch and surface the active device in
+      // both `state.listen.deviceLabel` and the tuner status text so
+      // the failure mode is visible without DevTools spelunking.
       try {
         const prefs = await fetchDevicePreferences();
         const preferredName = prefs && prefs.audio_input_name;
-        if (preferredName) {
+        if (!preferredName) {
+          console.info('[listen] no preferred input stored; using default mic');
+        } else {
+          const devs = await navigator.mediaDevices.enumerateDevices();
+          const inputs = devs.filter(d => d.kind === 'audioinput');
+          const labels = inputs.map(d => d.label || '(no label)');
           const targetId = await _findInputDeviceIdByName(preferredName);
           const track = stream.getAudioTracks()[0];
           const currentId = track && track.getSettings
             ? track.getSettings().deviceId
             : null;
-          if (targetId && targetId !== currentId) {
-            for (const t of stream.getTracks()) t.stop();
-            stream = await navigator.mediaDevices.getUserMedia(
-              _captureConstraints(targetId, true),
+          if (!targetId) {
+            // The user's preferred device isn't visible to the page.
+            // Log the labels we DID see so we can tell whether the
+            // mismatch is "device not enumerated at all" (USB lost /
+            // hot-plugged after page load) or "labelled differently
+            // than the stored audio_input_name" (probe wrote
+            // "Line 6 HX Stomp" but Chromium shows "HX Stomp"
+            // without the vendor prefix, etc).
+            console.warn(
+              '[listen] preferred input not visible to browser; using default mic. '
+              + `wanted="${preferredName}" visible=${JSON.stringify(labels)}`
             );
+          } else if (targetId === currentId) {
+            // The default already IS the preferred device. Common when
+            // the user has only the HX Stomp connected.
+            acquiredVia = 'preferred-as-default';
+            console.info(
+              `[listen] preferred input "${preferredName}" was already the default; no re-acquire`
+            );
+          } else {
+            // Stop the default stream and re-acquire on the target id.
+            // If the re-acquire throws (busy / disconnected mid-flight)
+            // we surface that explicitly rather than silently keeping
+            // the wrong stream.
+            for (const t of stream.getTracks()) t.stop();
+            try {
+              stream = await navigator.mediaDevices.getUserMedia(
+                _captureConstraints(targetId, true),
+              );
+              acquiredVia = 'preferred-reacquire';
+              console.info(
+                `[listen] re-acquired on preferred input "${preferredName}" `
+                + `(deviceId=${targetId.slice(0, 8)}...)`
+              );
+            } catch (reacqErr) {
+              // Don't strand the user with a silent failure. Fall back
+              // to the default mic, but make sure they know.
+              console.error(
+                `[listen] re-acquire on "${preferredName}" FAILED — falling back to default mic`,
+                reacqErr,
+              );
+              stream = await navigator.mediaDevices.getUserMedia(
+                _captureConstraints(null, false),
+              );
+              acquiredVia = 'reacquire-failed-fallback';
+            }
           }
         }
       } catch (e) {
@@ -2699,8 +2755,24 @@
       state.listen.analyser = analyser;
       state.listen.buffer = new Float32Array(analyser.fftSize);
       state.listen.history = [];
+      // Read back the actual device label/id we ended up on. The label
+      // can be empty if the OS didn't expose it; in that case we fall
+      // back to acquiredVia so the user still sees something useful.
+      const finalTrack = stream.getAudioTracks()[0];
+      const finalLabel = (finalTrack && finalTrack.label) || '';
+      const finalSettings = finalTrack && finalTrack.getSettings ? finalTrack.getSettings() : {};
+      state.listen.deviceLabel = finalLabel;
+      state.listen.deviceId = finalSettings.deviceId || null;
+      state.listen.acquiredVia = acquiredVia;
+      console.info(
+        `[listen] started — via=${acquiredVia} label="${finalLabel}" `
+        + `channels=${finalSettings.channelCount || '?'} sr=${finalSettings.sampleRate || '?'}`
+      );
       $('intonation-panel').hidden = false;
-      $('into-status').textContent = 'Listening…';
+      // Surface the active input in the status text so the user can
+      // spot a default-mic fallback without opening DevTools.
+      const statusLabel = finalLabel || acquiredVia;
+      $('into-status').textContent = `Listening — ${statusLabel}`;
       pitchTick();
     } catch (err) {
       $('into-status').textContent = 'Mic permission denied or unavailable';
