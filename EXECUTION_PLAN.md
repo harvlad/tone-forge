@@ -40,6 +40,198 @@ auditor at the diff + verification artifact. This log is the ground
 truth on "what's actually shipped" relative to the priority table; the
 section-level notes below (§3, §4, …) explain what remains.
 
+### Connect hardening — ObjC trap around AVAudioEngine.connect (Priority 2)
+
+Closes the helper-crash mode triggered by audio-interface hot-plug.
+AVAudioEngine raises `NSInvalidArgumentException` synchronously from
+`connect(_:to:format:)` when the HAL's reported input format diverges
+from the destination tap. The textbook trigger is hot-plugging a
+Line 6 HX Stomp whose channel count flaps stereo→mono→stereo as the
+host re-enumerates it across reconfigure attempts. Swift cannot catch
+ObjC exceptions, so the helper was SIGABRT-ing before its own
+retry/backoff logic ever got a turn — the user saw the helper go
+offline for several seconds while `ConnectSupervisor` restarted it.
+
+New `ConnectObjCBridge` SwiftPM target ships a tiny `ObjCExceptionTrap`
+class with a single class method that wraps a block in `@try/@catch`
+and bridges the caught `NSException` to `NSError` via the ObjC
+`error:` out-parameter convention (which the Swift importer
+re-bridges to Swift `throws`). `ConnectCore` takes a dependency on
+it and wraps **only** the one `engine.connect(engine.inputNode, ...)`
+call that has been observed to raise — the rest of the chain uses
+`format: nil` and inherits the upstream node's format, so it cannot
+hit the HW-format mismatch.
+
+`AudioEngine.attachAndConnectGraph` now returns `Bool`.
+`attemptReconfigRestart` treats a wireup-false the same way it treats
+`engine.start()` throwing: counts the attempt, retries with linear
+backoff, and escalates to `.failed` + `device_lost` after the
+existing `maxReconfigAttempts` budget is exhausted (the `device_lost`
+wiring already lands in the browser via the §3D toast).
+
+Pinned by `connect/Tests/ConnectCoreTests/ObjCExceptionTrapTests.swift`
+(3 tests): clean block does not throw; raised `NSException` reaches
+Swift as `NSError` carrying the exception `reason`; trapped error
+carries `name` + call-stack in `userInfo`. Full Connect suite: 45/45
+green (was 42 before the trap target).
+
+Verify
+```
+cd connect
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --sdk macosx swift test
+```
+
+### Connect hardening — bridge ping/pong + reconfig reentrancy guard (Priority 2)
+
+Two parallel symptoms, one user-visible failure mode ("Connect:
+offline" within ~60s of pairing), two distinct root causes:
+
+1. **Browser ping handler missing** (`backend/static/jam.js`).
+   The server-side bridge reaps any WS that does not produce a frame
+   inside `CONNECT_BRIDGE_RECV_TIMEOUT_SEC` (30s) + the 10s pong
+   window. The browser's `onmessage` switch had no `case "ping"` arm,
+   so a freshly-paired tab with no preset state in flight was reaped
+   after ~40s. Companion Swift helper bug — same cause — had been
+   added in the focused-pass commit; this commit closes the
+   browser-side gap. Auto-reconnect path was gated on
+   `cb.lastPreset` being set, which a fresh-jam tab does not have,
+   so the reap was sticky until manual reload.
+2. **AudioEngine reconfig reentrancy** (`AudioEngine.swift`).
+   `AudioUnitSetProperty(kAudioOutputUnitProperty_CurrentDevice)`
+   fires `AVAudioEngineConfigurationChangeNotification` synchronously
+   *even when the new device id equals the old one*. That re-enters
+   `handleConfigurationChange`, which calls back into
+   `applyPreferredInputDevice`, which writes the property again,
+   looping until the input-AU graph crashes with "Input HW format
+   and tap format not matching". Guard added:
+   `applyPreferredInputDevice` now reads the AU's current device id
+   first via `AudioUnitGetProperty` and returns when it already
+   matches.
+
+Browser tuner secondary fix: `startListening` now does a two-pass
+`getUserMedia` (default first to populate `enumerateDevices` labels,
+then re-acquire on the preferred device when the stored
+`audio_input_name` matches a label). Closes the "tuner reads laptop
+mic instead of HX Stomp" report.
+
+Cache-buster bumped `static/jam.js?v=5 → v=7` so the fixes land
+across already-open tabs on first reload.
+
+Verify (manual smoke walkthrough): pair browser + helper, leave the
+tab idle 90s, confirm pill stays `paired (1)`.
+
+### jam: Perform v2 UI rebuild — three-column layout + tone card
+
+Jam UI rebuild (no priority slot — sits under §8's Jam product
+roadmap implementation). Replaces the legacy stem strip with a
+three-column perform view:
+
+- **Left column** — tuner with Listen toggle, audio-input device
+  label, gear popover for device preferences, returning-user paint
+  that skips the Listen prompt when `audio_input_name` is already
+  set.
+- **Center column** — waveform timeline with click-to-seek,
+  section pill bar, loop button (clear-only — section pills set
+  loops), click track (disabled when `beat_times` is empty), stem
+  rack with per-stem mute, instrument selector (guitar enabled,
+  bass/keys disabled with "coming soon").
+- **Right column** — tone recommendation card driven by
+  `result.tone` (ToneRecommendation wire dict) with tier badge,
+  match name, rationale, alternates row, Apply button → Connect
+  bridge `apply_chain`, Send-to-Connect fallback button below.
+
+Companion fix to the contradiction between tone-card header and
+footer when `result.tone` is populated but legacy
+`result.preset_matches.guitar` is empty: the headline now reflects
+the recommendation, and `renderConnectStatus`'s paired branch
+checks `state.tone.rec` before falling back to "no tone match".
+
+Verify (smoke walkthrough, no automated coverage): waveform
+click-to-seek, settings popover open/close, instrument selector
+renders bass/keys as disabled, Apply button surfaces
+`[connect] apply_chain ... (Xms)` ack in console, New-jam Back
+button drops decoded buffers (no audible carryover).
+
+### midi: per-stem `extraction_tempo_bpm` rename + density hardening (frozen-package bugfix)
+
+Bugfix-class change in the otherwise-frozen MIDI extraction internals.
+A real run on "The Chats - Pub Feed" emitted three materially
+different tempo values:
+
+    result.tempo_bpm                       = 95.7   (canonical, beat_track)
+    result.midi_stems.drums.tempo_bpm      = 95.70
+    result.midi_stems.bass.tempo_bpm       = 129.20
+    result.midi_stems.guitar.tempo_bpm     = 107.66
+
+The disagreement was a **naming** bug, not an estimator bug: each
+per-stem extractor estimates its own tempo from its stem alone
+(onset autocorrelation for pYIN+torchcrepe, note-density heuristic
+for CoreML basic_pitch), but the field name `tempo_bpm` made the
+per-stem value look like "the" canonical tempo. Renamed to
+`extraction_tempo_bpm` at every emit site
+(`tone_forge/midi/coreml_extractor.py` + `tone_forge_api.py`
+admin_analyze_deep projection). Pinned by
+`tests/test_per_stem_tempo_field_name.py` via source inspection
+across all emit sites.
+
+Density-hardening companion (also bugfix-class, default = no-op):
+`_postprocess_notes` gains a `min_confidence` knob (default 0.0
+= legacy behavior preserved). Background: a "The Chats" guitar stem
+produced 17.8 notes/sec while the role classifier labeled it
+`texture_layer` with confidence 0.277. Without a validation corpus
+we can't decide whether the extractor is over-firing on harmonic
+ghosts or the classifier is wrong, but a tunable confidence floor
+lets a future corpus-backed decision be made without adding a
+separate filter pass. Pinned by `tests/test_midi_density_hardening.py`.
+
+Verify
+```
+cd backend
+python3 -m pytest tests/test_per_stem_tempo_field_name.py tests/test_midi_density_hardening.py -x -v
+```
+
+### analysis: auto_detect STFT sharing + stage-timing / chord-wireup test locks
+
+Two unrelated landings combined into one §0 entry because both are
+observability-class plumbing (not behavior changes).
+
+`auto_detect.detect_audio_type` now precomputes the STFT, FFT
+frequencies, spectral flatness, RMS, and onset envelope *once* and
+threads them through `_detect_full_mix` and `_detect_instrument_type`
+via optional kwargs. The previous code recomputed the same STFT
+inside every spectral helper (4+ redundant transforms) and ran
+spectral_flatness + onset_strength twice. The load buffer is also
+capped to 20s (was 60s) — the source-kind heuristic stabilizes well
+inside 20s of typical music, and `pyin` + `hpss` inside
+`_detect_instrument_type` scale linearly with buffer length. Helper
+signatures stay back-compat: the new kwargs default to `None` and
+the helper re-computes when called the old way.
+
+Two source-inspection test locks:
+
+- `tests/test_analysis_stage_timings.py` — pins the
+  `time.perf_counter` brackets inside
+  `local_engine/analysis_worker.py`. Background: a profile of "The
+  Chats - Pub Feed" showed 188s in the `instrument_analysis`
+  bucket, but that bucket was a *residual* (`total - stem - midi`)
+  and `section_time` was fabricated as `analysis_time * 0.3` — no
+  way to know which stage inside the 188s dominated. Brackets emit
+  `started_ms` / `finished_ms` / `duration_ms` into
+  `result.profiling.stages.<stage_name>` so the longest stage is
+  immediately visible.
+- `tests/test_local_engine_chord_wireup.py` — pins the chord-lane
+  wireup on the local-engine path (the unified-pipeline path is
+  already covered by `tests/test_chord_lane_wireup.py`). Source
+  inspection — running the worker end-to-end requires the local GPU
+  engine and a real audio file; the wireup is the regression
+  surface, not the detector itself.
+
+Verify
+```
+cd backend
+python3 -m pytest tests/test_analysis_stage_timings.py tests/test_local_engine_chord_wireup.py -x -v
+```
+
 ### P6 calibration labeling + fitter tooling
 
 Closes the *tooling* half of the only remaining P6 gate. The loader
