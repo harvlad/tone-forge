@@ -24,6 +24,38 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Phase 2 feature flag — TorchCrepe-first chooser for the lead/vocals path.
+#
+# When True, ``extract_midi_lead_ensemble``'s chooser branch runs
+# TorchCrepe (tiny) BEFORE pYIN and short-circuits on TorchCrepe's
+# result for the bulk of songs, where the 27-stem corpus shows
+# TorchCrepe wins 14/15 (93.3%) chooser-branch songs under the
+# existing count-based rules. Two rescue conditions still invoke pYIN:
+#
+#   1. harm_ratio is in the "near-HCA" band (below
+#      TC_FASTPATH_HARM_RESCUE). The single pYIN-win sample in the
+#      corpus sat at harm_ratio=0.718, so the threshold is set
+#      slightly above to capture the band of moderately polyphonic
+#      content where pYIN tends to complement TC. The next observed
+#      TC-win sample is at 0.759.
+#
+#   2. TorchCrepe produced fewer than TC_FASTPATH_MIN_TC_COUNT notes.
+#      Mirrors the old chooser's "tc_count < 5 -> pyin" branch.
+#
+# When False, the legacy pYIN-first chooser runs unchanged. Toggle this
+# (or override via environment) to bisect winner-distribution shifts
+# against the legacy path during rollout. Final default-flag
+# recommendation lives in the corpus-replay report.
+# =============================================================================
+import os as _os
+ENABLE_TC_FASTPATH = _os.environ.get(
+    "TONEFORGE_TC_FASTPATH", "1"
+) not in ("0", "false", "False", "")
+TC_FASTPATH_HARM_RESCUE = 0.75
+TC_FASTPATH_MIN_TC_COUNT = 5
+
+
+# =============================================================================
 # HYBRID MERGE FUNCTIONS (Phase 3 Architecture Evolution)
 # =============================================================================
 
@@ -1425,6 +1457,7 @@ def extract_midi_lead_ensemble(
     audio_path: str,
     use_hca_for_polyphony: bool = True,
     use_hybrid_merge: bool = False,  # EXPERIMENTAL — DISABLED — known regression
+    harm_ratio: Optional[float] = None,
 ) -> Tuple[List[MIDINote], float, float, str]:
     """
     Ensemble lead extraction. Production path is HCA for very polyphonic
@@ -1440,6 +1473,10 @@ def extract_midi_lead_ensemble(
         audio_path: Path to audio file
         use_hca_for_polyphony: If True, use HCA for very polyphonic content
         use_hybrid_merge: EXPERIMENTAL. Keep False for production.
+        harm_ratio: If provided, skip the internal estimate_harmonic_ratio
+            call (which costs ~5-7s on a full song). Used by
+            analysis_worker to overlap HPSS with drums+bass MIDI
+            extraction (Phase 1 concurrency).
 
     Returns:
         Tuple of (notes, tempo, duration, method_used)
@@ -1458,7 +1495,13 @@ def extract_midi_lead_ensemble(
                 estimate_harmonic_ratio,
             )
 
-            harm_ratio = estimate_harmonic_ratio(y, sr)
+            # Phase 1 (harm_ratio concurrency): if caller precomputed it
+            # on a worker thread, accept the value; otherwise fall back
+            # to the inline computation. Must be numerically identical
+            # to the inline call when caller used estimate_harmonic_ratio
+            # on the same y/sr.
+            if harm_ratio is None:
+                harm_ratio = estimate_harmonic_ratio(y, sr)
 
             # Only use HCA for VERY polyphonic content (tighter threshold)
             # Let hybrid merge handle moderately polyphonic content
@@ -1500,13 +1543,98 @@ def extract_midi_lead_ensemble(
         except ImportError as e:
             logger.warning(f"HCA module not available: {e}")
 
+    # Phase 2 (ENABLE_TC_FASTPATH) — feature-flagged TorchCrepe-first
+    # chooser path.
+    #
+    # Production chooser (use_pyin block below) always runs pYIN before
+    # TorchCrepe and decides between them by note-count ratios. On the
+    # 27-stem corpus, TorchCrepe wins 14/15 chooser-branch songs (93.3%),
+    # so pYIN's 10.83s/song mean cost is wasted in the vast majority of
+    # cases. The single pYIN-win outlier (tlu522gu) sat at harm_ratio
+    # 0.718, the lowest in the chooser branch — closest to the HCA
+    # boundary at 0.65.
+    #
+    # When ENABLE_TC_FASTPATH is True:
+    #   1. Run TorchCrepe tiny first (cheap, ~1s).
+    #   2. Apply rescue heuristic: if harm_ratio is below
+    #      TC_FASTPATH_HARM_RESCUE (the "near-HCA" band), the song is
+    #      structurally close to the pYIN-win case; run pYIN and fall
+    #      through to the existing count-based chooser.
+    #   3. Otherwise, return TorchCrepe notes immediately without
+    #      paying the pYIN cost.
+    #
+    # When ENABLE_TC_FASTPATH is False, this entire block is skipped
+    # and the original pYIN-first path runs unchanged.
+    #
+    # Instrumentation (per chooser-branch call) is emitted via the
+    # logger so corpus replay can recover tc_count / pyin_count /
+    # rescue / winner without re-running the extraction. Tagged
+    # ``TC_FASTPATH_TELEMETRY`` so callers can grep one prefix.
+    tc_notes_fp = None
+    tc_count_fp = 0
+    pyin_notes = []
+    pyin_tempo = 120.0
+    pyin_count = 0
+    rescue_triggered = False
+    tc_fastpath_used = False
+
+    if ENABLE_TC_FASTPATH:
+        try:
+            tc_notes_fp, tc_tempo_fp, tc_duration_fp = extract_midi_torchcrepe(
+                audio_path, stem_type="lead", model_size="tiny"
+            )
+            tc_count_fp = len(tc_notes_fp)
+        except Exception as e:
+            logger.warning(f"torchcrepe (fastpath) failed for lead: {e}")
+            tc_notes_fp = []
+            tc_count_fp = 0
+
+        # Rescue 1: harm_ratio close to the HCA threshold (0.65)
+        # indicates moderately polyphonic content; pYIN tends to
+        # complement TC here. The only pYIN-win sample in the corpus
+        # had harm_ratio 0.718, so the threshold is set tight above
+        # that to also catch nearby unobserved cases without
+        # capturing the bulk of TC-win songs (next sample at 0.759+).
+        if harm_ratio is not None and harm_ratio < TC_FASTPATH_HARM_RESCUE:
+            rescue_triggered = True
+            logger.info(
+                f"TC_FASTPATH rescue: harm_ratio={harm_ratio:.3f} < "
+                f"{TC_FASTPATH_HARM_RESCUE} (near-HCA band), running pYIN"
+            )
+
+        # Rescue 2: TC produced almost no notes. The old chooser
+        # would have picked pYIN under the "tc_count < 5" rule.
+        # We mirror that.
+        elif tc_count_fp < TC_FASTPATH_MIN_TC_COUNT:
+            rescue_triggered = True
+            logger.info(
+                f"TC_FASTPATH rescue: tc_count={tc_count_fp} < "
+                f"{TC_FASTPATH_MIN_TC_COUNT} (TC under-produced), "
+                f"running pYIN"
+            )
+
+        if not rescue_triggered and tc_count_fp > 0:
+            # Fast path: return TC immediately.
+            tc_fastpath_used = True
+            logger.info(
+                f"TC_FASTPATH_TELEMETRY branch=chooser flag=on "
+                f"tc_count={tc_count_fp} pyin_count=skipped "
+                f"harm_ratio={harm_ratio} winner=torchcrepe_gpu "
+                f"rescue=False fastpath=True"
+            )
+            return tc_notes_fp, tc_tempo_fp, duration, "torchcrepe_gpu"
+
     # Run pYIN (monophonic detector)
+    # Either ENABLE_TC_FASTPATH is False (legacy path) or rescue was
+    # triggered. Either way the pYIN run is required.
     try:
         pyin_notes, pyin_tempo, _ = extract_midi_pyin(audio_path, "lead")
+        pyin_count = len(pyin_notes)
     except Exception as e:
         logger.warning(f"pYIN failed for lead: {e}")
         pyin_notes = []
         pyin_tempo = 120.0
+        pyin_count = 0
 
     # Run basic_pitch WITH posteriors (polyphonic detector)
     bp_notes = []
@@ -1541,7 +1669,9 @@ def extract_midi_lead_ensemble(
             bp_notes = []
             bp_posteriors = None
 
-    pyin_count = len(pyin_notes)
+    # pyin_count is set inline after the pYIN call above (Phase 2);
+    # this legacy recompute would shadow the explicit zero set by
+    # the except branch. bp_count is still derived locally.
     bp_count = len(bp_notes)
 
     # HYBRID MERGE: Use frame-wise posteriors to select best source per segment
@@ -1580,16 +1710,24 @@ def extract_midi_lead_ensemble(
     # FALLBACK: Count-based heuristics
     logger.info("Lead: falling back to count-based heuristics")
 
-    # Run torchcrepe as additional monophonic option
-    try:
-        tc_notes, tc_tempo, tc_duration = extract_midi_torchcrepe(
-            audio_path, stem_type="lead", model_size="full"
-        )
-    except Exception as e:
-        logger.warning(f"torchcrepe failed for lead: {e}")
-        tc_notes = []
-
-    tc_count = len(tc_notes)
+    # Reuse the fastpath's TorchCrepe run when one happened (rescue
+    # triggered before we returned early). Otherwise (flag off) run
+    # TorchCrepe now. Skipping the second TC call when rescue fired
+    # is the whole point of moving the TC call up: model load + GPU
+    # work would have been duplicated, paying twice for the same
+    # result. Option 1 (model_size="tiny") still applies.
+    if tc_notes_fp is not None:
+        tc_notes = tc_notes_fp
+        tc_count = tc_count_fp
+    else:
+        try:
+            tc_notes, tc_tempo, tc_duration = extract_midi_torchcrepe(
+                audio_path, stem_type="lead", model_size="tiny"
+            )
+        except Exception as e:
+            logger.warning(f"torchcrepe failed for lead: {e}")
+            tc_notes = []
+        tc_count = len(tc_notes)
 
     # Choose between pYIN and torchcrepe
     use_pyin = False
@@ -1605,6 +1743,21 @@ def extract_midi_lead_ensemble(
     elif pyin_count >= 20 and tc_count < 5:
         use_pyin = True
         logger.info(f"Lead: choosing pYIN ({pyin_count} notes) - torchcrepe failed")
+
+    winner_method = "pyin_dsp" if use_pyin else "torchcrepe_gpu"
+
+    # Phase 2 telemetry. Emitted from the count-based fallback so
+    # corpus replay can recover (tc_count, pyin_count, winner,
+    # rescue_triggered) without re-running. ``flag`` records the
+    # state of ENABLE_TC_FASTPATH at call time; ``fastpath`` is False
+    # here because we got to the legacy chooser (rescue OR flag-off).
+    logger.info(
+        f"TC_FASTPATH_TELEMETRY branch=chooser "
+        f"flag={'on' if ENABLE_TC_FASTPATH else 'off'} "
+        f"tc_count={tc_count} pyin_count={pyin_count} "
+        f"harm_ratio={harm_ratio} winner={winner_method} "
+        f"rescue={rescue_triggered} fastpath=False"
+    )
 
     if use_pyin:
         return pyin_notes, pyin_tempo, duration, "pyin_dsp"
@@ -1769,6 +1922,7 @@ def extract_midi_hybrid(
     audio_path: str,
     stem_type: str = "other",
     preset_name: str = "Extracted MIDI",
+    harm_ratio: Optional[float] = None,
 ) -> dict:
     """
     Hybrid MIDI extraction - uses GPU for monophonic, CPU for polyphonic.
@@ -1777,6 +1931,9 @@ def extract_midi_hybrid(
         audio_path: Path to audio file
         stem_type: Type of stem (bass, lead, drums, other, pad)
         preset_name: Name for the MIDI file
+        harm_ratio: Precomputed harmonic ratio (overlap optimization).
+            Only used for lead/vocals stems; forwarded to
+            extract_midi_lead_ensemble to skip its internal HPSS call.
 
     Returns:
         Dict with MIDI data (compatible with MIDIExtractionResult)
@@ -1791,7 +1948,13 @@ def extract_midi_hybrid(
             "content": result.content,
             "note_count": result.note_count,
             "duration_seconds": result.duration_seconds,
-            "tempo_bpm": result.tempo_bpm,
+            # Per-stem tempo estimate from this extractor's internal onset
+            # analysis. NOT the canonical session tempo — that lives at
+            # the top-level ``result.tempo_bpm`` from beat_track on the
+            # full mix. Renamed from ``tempo_bpm`` to disambiguate after
+            # observing drums=95.7 / bass=129.2 / guitar=107.66 on a
+            # single song. See backend/local_engine/analysis_worker.py.
+            "extraction_tempo_bpm": result.tempo_bpm,
             "pitch_range": result.pitch_range,
             "method": "onset_detection",
         }
@@ -1816,7 +1979,11 @@ def extract_midi_hybrid(
                     "content": midi_b64,
                     "note_count": len(notes),
                     "duration_seconds": duration,
-                    "tempo_bpm": tempo,
+                    # Bass-only tempo from pYIN+torchcrepe ensemble; can
+                    # disagree with the canonical session tempo because
+                    # bass plays on subdivisions. See per-stem rename note
+                    # at the drum branch above.
+                    "extraction_tempo_bpm": tempo,
                     "pitch_range": (min(pitches), max(pitches)),
                     "method": method,
                 }
@@ -1826,7 +1993,9 @@ def extract_midi_hybrid(
     # Lead/vocals use ensemble of pYIN (DSP) + torchcrepe (ML)
     if stem_type in ("lead", "vocals"):
         try:
-            notes, tempo, duration, method = extract_midi_lead_ensemble(audio_path)
+            notes, tempo, duration, method = extract_midi_lead_ensemble(
+                audio_path, harm_ratio=harm_ratio
+            )
             logger.info(f"Lead ensemble chose: {method} with {len(notes)} notes")
 
             if len(notes) > 0:
@@ -1844,7 +2013,10 @@ def extract_midi_hybrid(
                     "content": midi_b64,
                     "note_count": len(notes),
                     "duration_seconds": duration,
-                    "tempo_bpm": tempo,
+                    # Lead/vocals tempo from the same ensemble; same
+                    # caveat as bass — onset-derived per-stem estimate,
+                    # not the session-canonical tempo.
+                    "extraction_tempo_bpm": tempo,
                     "pitch_range": (min(pitches), max(pitches)),
                     "method": method,
                 }
@@ -1884,7 +2056,8 @@ def extract_midi_hybrid(
             "content": result.content,
             "note_count": result.note_count,
             "duration_seconds": result.duration_seconds,
-            "tempo_bpm": result.tempo_bpm,
+            # basic_pitch ONNX fallback. Per-stem tempo estimate.
+            "extraction_tempo_bpm": result.tempo_bpm,
             "pitch_range": result.pitch_range,
             "method": "basic_pitch_onnx",
             "provenance": result.provenance,
