@@ -131,7 +131,29 @@ def detect_chords_from_audio(
         # Match to chord template
         root, quality, confidence = _match_chord_template(segment_chroma)
 
-        if confidence > 0.3:  # Minimum confidence threshold
+        # Minimum confidence threshold.
+        #
+        # _match_chord_template (below) scores `dot(chroma_norm, template_norm)`
+        # where both vectors are L1-normalized. For a 3-note triad template
+        # the mathematical ceiling is 1/3 ≈ 0.333 — reached only when the
+        # chroma energy is concentrated *entirely* on the chord notes, which
+        # happens for synthetic test triads but never for real polyphonic
+        # audio (overtones, percussive transients, melodic variation, and
+        # bleed across pitch classes all flatten the distribution). The old
+        # 0.3 cutoff therefore filtered out 100% of segments on every real
+        # song: empirically, the Pub Feed full mix tops out at 0.249, the
+        # isolated `other` stem at 0.219, and most segments sit between
+        # 0.10 and 0.20. Jam's chord ribbon was silently empty as a result
+        # (see EXECUTION_PLAN §0 "chord-lane visibility").
+        #
+        # 0.18 gates out the floor of pure-noise / silence segments (which
+        # land below ~0.13) while admitting the realistic-music band. It
+        # is locked by tests/test_chord_detector_threshold.py against a
+        # synthesised mix that mimics real chroma distribution; if a future
+        # change re-tightens this cutoff without compensating elsewhere
+        # in the pipeline that test will fail before the ribbon goes dark
+        # in production.
+        if confidence > 0.18:
             chord = Chord(
                 root=root,
                 quality=quality,
