@@ -105,19 +105,40 @@ def detect_chords_from_audio(
     # Time array
     times = librosa.times_like(chroma, sr=sr, hop_length=hop_length)
 
-    # Segment into chord regions using recurrence
-    # Simple approach: find frames where chroma changes significantly
-    chroma_diff = np.sum(np.abs(np.diff(chroma_smooth, axis=1)), axis=0)
-    threshold = np.mean(chroma_diff) + np.std(chroma_diff)
-
-    # Find segment boundaries
-    boundaries = [0]
-    min_frames = int(min_chord_duration * sr / hop_length)
-
-    for i in range(1, len(chroma_diff)):
-        if chroma_diff[i-1] > threshold and (i - boundaries[-1]) >= min_frames:
-            boundaries.append(i)
-    boundaries.append(chroma.shape[1])
+    # Tile the song with fixed-size analysis windows.
+    #
+    # The previous implementation peak-picked chroma_diff for boundaries
+    # (`mean + std` threshold over the first-difference sum). That only
+    # fires on bright transient chord changes and silently swallows
+    # songs with steady chord textures — overdriven rock, drone, slow
+    # transitions, anything where the chroma vector evolves smoothly
+    # rather than stepping. For those (the majority of real songs), the
+    # peak-picker found one or two boundaries across the entire track
+    # and the detector emitted ~1 chord region in 3 minutes of audio.
+    # The Pub Feed import reproduced this in production: the full mix
+    # surfaced exactly one C#sus4 region (139.88s–145.84s) while the
+    # actual song is a recognisable 2-chord vamp the whole way through.
+    #
+    # Lowering the *confidence* cutoff (9cc11c6) didn't help: when the
+    # segmenter only emits one segment, there's only one confidence
+    # value to test. The bottleneck was upstream of the cutoff.
+    #
+    # Fixed windows give O(song_dur / window_dur) candidates that each
+    # template-match independently; _merge_consecutive_chords (called
+    # below) then compacts adjacent same-chord windows back into chord
+    # regions, so long stretches of one chord still surface as one
+    # pill — but a genuine change between two windows becomes a
+    # boundary "for free", no transient required.
+    #
+    # Window size = min_chord_duration so we never emit a region shorter
+    # than the caller-requested minimum. Step = window (no overlap):
+    # overlap would inflate the candidate count without improving
+    # boundary resolution (the boundary still lands on a window edge
+    # after merging).
+    frames_per_window = max(1, int(min_chord_duration * sr / hop_length))
+    boundaries = list(range(0, chroma.shape[1], frames_per_window))
+    if not boundaries or boundaries[-1] != chroma.shape[1]:
+        boundaries.append(chroma.shape[1])
 
     # Analyze each segment
     chords = []

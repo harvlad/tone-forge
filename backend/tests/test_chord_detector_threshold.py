@@ -188,3 +188,62 @@ def test_chord_detector_source_uses_calibrated_cutoff() -> None:
         "0.18 cutoff; the Jam chord ribbon will stay empty on real songs if "
         "the cutoff has been re-raised. See chord_detector.py:134 docstring."
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. Segmenter density on steady-vamp audio.
+#
+# The Pub Feed bug class: songs whose chroma evolves smoothly (overdriven
+# rock, slow transitions, drone) where the OLD chroma_diff peak-pick
+# segmenter found ~1 boundary across the entire track and emitted ~1
+# chord region. The 0.18 confidence cutoff was necessary but not
+# sufficient — when the segmenter only emits one segment there's only
+# one confidence to test.
+#
+# This fixture synthesises an 8-cycle A/D vamp (16 chord regions
+# expected, 4s each, 64s total) with overdrive-style harmonics. A
+# segmenter that bottlenecks on chroma-change peaks would collapse
+# this to ~1 region; the fixed-window segmenter recovers all 16 cleanly.
+#
+# Lower bound: ≥6 regions (slack for boundary jitter / merge collapse).
+# A regression that re-introduces the peak-pick segmenter will fail
+# this with the same ~1-region output that reproduced in production.
+# ---------------------------------------------------------------------------
+
+
+def test_steady_vamp_yields_multiple_chord_regions() -> None:
+    sr = 22050
+    chord_dur_s = 4.0
+    rng = np.random.default_rng(0)
+
+    vamp = [
+        ("A",  [220.00, 277.18, 329.63]),
+        ("D",  [146.83, 220.00, 293.66]),
+    ]
+
+    parts = []
+    for _ in range(8):
+        for _name, freqs in vamp:
+            t = np.linspace(0, chord_dur_s, int(sr * chord_dur_s), endpoint=False)
+            y = np.zeros_like(t)
+            for f in freqs:
+                # Heavy harmonic content (overdrive proxy).
+                for h, amp in [(1, 1.0), (2, 0.7), (3, 0.5), (4, 0.35), (5, 0.2)]:
+                    y += amp * np.sin(2 * np.pi * f * h * t)
+            y /= max(1.0, float(np.max(np.abs(y))))
+            parts.append(y)
+    sig = np.concatenate(parts).astype(np.float32)
+    noise = rng.standard_normal(len(sig)).astype(np.float32) * 0.10 * float(np.std(sig))
+    sig = (sig + noise).astype(np.float32)
+    sig /= max(1e-9, float(np.max(np.abs(sig))))
+
+    chords = detect_chords(sig, sr)
+
+    assert len(chords) >= 6, (
+        f"steady 8-cycle A/D vamp (16 ground-truth regions) collapsed to "
+        f"{len(chords)} chord region(s): {[c.symbol for c in chords]}. "
+        f"The chroma-diff peak-pick segmenter has been re-introduced; the "
+        f"Jam chord ribbon will only show ~1 pill for any song with smooth "
+        f"chord transitions (overdriven rock, drone, slow changes). See "
+        f"chord_detector.py:108 docstring for the windowed-segmenter rationale."
+    )
