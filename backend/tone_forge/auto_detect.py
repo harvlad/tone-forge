@@ -74,16 +74,54 @@ def detect_audio_type(audio_path: str | Path, sr: int = 22050) -> AudioDetection
         return AudioDetection()
 
     try:
-        y, sr = librosa.load(str(path), sr=sr, mono=True, duration=60)  # First 60s
+        # First 20s. Previously 60s; pyin + hpss inside
+        # _detect_instrument_type scale linearly with buffer length,
+        # and those two together account for ~80% of this function's
+        # cost. The heuristic is broad-band: source_kind decisions
+        # come from frequency-distribution and percussive/harmonic
+        # ratios that stabilize well inside 20s of typical music.
+        y, sr = librosa.load(str(path), sr=sr, mono=True, duration=20)
     except Exception as e:
         logger.warning(f"Failed to load audio for detection: {e}")
         return AudioDetection()
 
+    # ------------------------------------------------------------------
+    # Pre-compute shared features once, pass to both helpers.
+    #
+    # The original code recomputed the same STFT inside every
+    # librosa.feature.spectral_* call (4+ STFTs on the same y),
+    # ran spectral_flatness twice, and ran onset_strength twice.
+    # On a 60-second buffer @ 22050 Hz those redundant transforms
+    # were the dominant cost.
+    #
+    # All shared arrays are computed here and threaded through
+    # _detect_full_mix and _detect_instrument_type via optional
+    # kwargs. Helpers retain their old signatures (the kwargs
+    # default to None, in which case the helper computes the
+    # feature itself), so external callers keep working.
+    # ------------------------------------------------------------------
+    S = np.abs(librosa.stft(y))
+    freqs = librosa.fft_frequencies(sr=sr)
+    flatness_arr = librosa.feature.spectral_flatness(S=S)
+    avg_flatness = float(np.mean(flatness_arr))
+    rms_arr = librosa.feature.rms(S=S)[0]
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+
     # Detect if full mix or isolated
-    is_mix, mix_conf = _detect_full_mix(y, sr)
+    is_mix, mix_conf = _detect_full_mix(
+        y, sr,
+        S=S, freqs=freqs,
+        avg_flatness=avg_flatness, rms=rms_arr,
+        onset_env=onset_env,
+    )
 
     # Detect instrument type (now includes bass, drums, and vocals)
-    detection_result = _detect_instrument_type(y, sr)
+    detection_result = _detect_instrument_type(
+        y, sr,
+        S=S, freqs=freqs,
+        avg_flatness=avg_flatness,
+        onset_env=onset_env,
+    )
     is_guitar = detection_result["is_guitar"]
     is_synth = detection_result["is_synth"]
     is_bass = detection_result["is_bass"]
@@ -161,7 +199,16 @@ def detect_audio_type(audio_path: str | Path, sr: int = 22050) -> AudioDetection
     )
 
 
-def _detect_full_mix(y: np.ndarray, sr: int) -> tuple[bool, float]:
+def _detect_full_mix(
+    y: np.ndarray,
+    sr: int,
+    *,
+    S: np.ndarray | None = None,
+    freqs: np.ndarray | None = None,
+    avg_flatness: float | None = None,
+    rms: np.ndarray | None = None,
+    onset_env: np.ndarray | None = None,
+) -> tuple[bool, float]:
     """Detect if audio is a full mix with multiple instruments.
 
     Full mixes typically have:
@@ -169,10 +216,18 @@ def _detect_full_mix(y: np.ndarray, sr: int) -> tuple[bool, float]:
     - Higher spectral complexity
     - Multiple distinct frequency bands with energy
     - Less dynamic range (more compressed)
+
+    Optional kwargs allow the caller to pass pre-computed shared
+    features (STFT magnitude, frequency axis, flatness, rms,
+    onset envelope). When ``None``, this helper computes the
+    feature itself to preserve backwards compatibility for
+    external callers.
     """
-    # Compute spectrum
-    S = np.abs(librosa.stft(y))
-    freqs = librosa.fft_frequencies(sr=sr)
+    # Compute spectrum (reuse if caller already computed it)
+    if S is None:
+        S = np.abs(librosa.stft(y))
+    if freqs is None:
+        freqs = librosa.fft_frequencies(sr=sr)
 
     # Average spectrum
     avg_spec = np.mean(S, axis=1)
@@ -204,16 +259,19 @@ def _detect_full_mix(y: np.ndarray, sr: int) -> tuple[bool, float]:
     bands_with_energy = sum(1 for e in band_energies if e > 0.05)
 
     # 3. Spectral flatness (mixes are more "full")
-    flatness = librosa.feature.spectral_flatness(y=y)
-    avg_flatness = np.mean(flatness)
+    if avg_flatness is None:
+        flatness = librosa.feature.spectral_flatness(S=S)
+        avg_flatness = float(np.mean(flatness))
 
     # 4. Dynamic range (mixes are usually more compressed)
-    rms = librosa.feature.rms(y=y)[0]
+    if rms is None:
+        rms = librosa.feature.rms(S=S)[0]
     dynamic_range = np.max(rms) / (np.mean(rms) + 1e-10)
     is_compressed = dynamic_range < 3.0
 
     # 5. Check for percussion (onset density)
-    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    if onset_env is None:
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
     onset_density = np.sum(onset_env > np.mean(onset_env) * 2) / len(onset_env)
     has_drums = onset_density > 0.15
 
@@ -237,22 +295,39 @@ def _detect_full_mix(y: np.ndarray, sr: int) -> tuple[bool, float]:
     return is_mix, confidence
 
 
-def _detect_instrument_type(y: np.ndarray, sr: int) -> dict:
+def _detect_instrument_type(
+    y: np.ndarray,
+    sr: int,
+    *,
+    S: np.ndarray | None = None,
+    freqs: np.ndarray | None = None,
+    avg_flatness: float | None = None,
+    onset_env: np.ndarray | None = None,
+) -> dict:
     """Detect if audio is guitar, bass, synth, or drums.
 
     Returns:
         dict with keys: is_guitar, is_bass, is_synth, is_drums, confidence
+
+    Optional kwargs ``S`` / ``freqs`` / ``avg_flatness`` /
+    ``onset_env`` accept pre-computed features so the same STFT,
+    spectral_flatness, and onset envelope aren't re-run when the
+    caller has them already.
     """
+    # Frequency band analysis (compute STFT only if caller didn't pass one)
+    if S is None:
+        S = np.abs(librosa.stft(y))
+    if freqs is None:
+        freqs = librosa.fft_frequencies(sr=sr)
+
     # Spectral features
-    centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
+    centroid = librosa.feature.spectral_centroid(S=S, freq=freqs)
     avg_centroid = np.mean(centroid)
 
-    flatness = librosa.feature.spectral_flatness(y=y)
-    avg_flatness = np.mean(flatness)
+    if avg_flatness is None:
+        flatness = librosa.feature.spectral_flatness(S=S)
+        avg_flatness = float(np.mean(flatness))
 
-    # Frequency band analysis
-    S = np.abs(librosa.stft(y))
-    freqs = librosa.fft_frequencies(sr=sr)
     avg_spec = np.mean(S, axis=1)
     total_energy = np.sum(avg_spec) + 1e-10
 
@@ -288,8 +363,9 @@ def _detect_instrument_type(y: np.ndarray, sr: int) -> dict:
         pitch_stability = 0.5
         voiced_ratio = 0.0
 
-    # Onset characteristics
-    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    # Onset characteristics (reuse if caller already computed)
+    if onset_env is None:
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
     onset_var = np.var(onset_env) / (np.mean(onset_env) + 1e-10)
     onset_density = np.sum(onset_env > np.mean(onset_env) * 2) / len(onset_env)
 
