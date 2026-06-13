@@ -287,6 +287,13 @@ public final class PresetBridge {
             DispatchQueue.main.async { [weak self] in
                 self?.onSetAutoUpdate?(enabled)
             }
+        case "ping":
+            // Server liveness probe. The backend reaps the socket if it
+            // doesn't see any frame within ~40s (30s recv + 10s pong
+            // window), so we must answer immediately or get dropped and
+            // forced into a reconnect loop. Best-effort — if the send
+            // fails the receive loop will surface the underlying error.
+            sendJSON(["type": "pong"])
         case "pong":
             break
         case "error":

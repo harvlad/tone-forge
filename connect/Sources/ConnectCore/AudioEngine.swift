@@ -767,6 +767,30 @@ public final class AudioEngine {
             return
         }
 
+        // Read the AU's current device id and skip the write when it
+        // already matches. ``AudioUnitSetProperty`` on the current-
+        // device key fires an ``AVAudioEngineConfigurationChange``
+        // notification synchronously even when the new value equals
+        // the old one — that re-enters ``handleConfigurationChange``,
+        // which calls back into this function, which fires the
+        // notification again, and the engine never settles. The
+        // observable symptom is the helper crashing in
+        // ``attachAndConnectGraph`` with "Input HW format and tap
+        // format not matching" a few hundred ms after every spawn.
+        var currentDeviceID: AudioDeviceID = 0
+        var currentSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let getStatus = AudioUnitGetProperty(
+            inputAU,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &currentDeviceID,
+            &currentSize
+        )
+        if getStatus == noErr && currentDeviceID == match.id {
+            return
+        }
+
         var deviceID = match.id
         let propSize = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = AudioUnitSetProperty(
