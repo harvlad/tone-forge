@@ -1623,32 +1623,71 @@
       else if (t >= c.endSec) lo = mid + 1;
       else { idx = mid; break; }
     }
-    // Past-the-end: pin to last chord so the strip doesn't snap back to 0.
-    if (idx < 0) {
-      if (t >= state.chords[state.chords.length - 1].endSec) {
-        idx = state.chords.length - 1;
-      } else if (t < state.chords[0].startSec) {
-        idx = 0;
-      }
-    }
-    if (idx < 0) return;
 
-    if (idx !== _chordLastActiveIdx) {
+    // Three cases for "no exact hit":
+    //   (a) before the first chord       -> pin to first, clamp progress=0
+    //   (b) past the last chord          -> pin to last,  clamp progress=1
+    //   (c) inside an internal gap       -> interpolate between bracketing
+    //       pills' edges so the strip keeps scrolling instead of freezing
+    //       off-screen until the next chord starts.
+    // Without case (c) the strip would park at the last computed transform
+    // (which is typically far left-of-viewport) for the duration of the
+    // gap, producing the "saw a chord slide through once and never again"
+    // symptom on songs whose detector emitted sparse chord regions.
+    let activeCentrePx;
+    let highlightIdx = idx;
+
+    if (idx >= 0) {
+      const c = state.chords[idx];
+      const rawProgress = c.endSec > c.startSec
+        ? (t - c.startSec) / (c.endSec - c.startSec)
+        : 0;
+      const localProgress = Math.max(0, Math.min(1, rawProgress));
+      activeCentrePx = c.leftPx + c.widthPx * localProgress;
+    } else if (t < state.chords[0].startSec) {
+      // (a) Pre-roll: pin to first pill's leading edge.
+      const c = state.chords[0];
+      highlightIdx = 0;
+      activeCentrePx = c.leftPx;
+    } else if (t >= state.chords[state.chords.length - 1].endSec) {
+      // (b) Post-roll: pin to last pill's trailing edge.
+      const c = state.chords[state.chords.length - 1];
+      highlightIdx = state.chords.length - 1;
+      activeCentrePx = c.leftPx + c.widthPx;
+    } else {
+      // (c) Internal gap: find the bracketing pair [prev, next] where
+      //     prev.endSec <= t < next.startSec, and interpolate between
+      //     prev's right edge and next's left edge.
+      let prevIdx = 0;
+      for (let i = 0; i < state.chords.length - 1; i++) {
+        if (state.chords[i].endSec <= t && t < state.chords[i + 1].startSec) {
+          prevIdx = i;
+          break;
+        }
+      }
+      const prev = state.chords[prevIdx];
+      const next = state.chords[prevIdx + 1];
+      const gapDur = next.startSec - prev.endSec;
+      const gapProgress = gapDur > 0
+        ? (t - prev.endSec) / gapDur
+        : 0;
+      const prevRightPx = prev.leftPx + prev.widthPx;
+      const nextLeftPx = next.leftPx;
+      activeCentrePx = prevRightPx + (nextLeftPx - prevRightPx) * gapProgress;
+      // No pill is "active" during the gap; drop the highlight.
+      highlightIdx = -1;
+    }
+
+    if (highlightIdx !== _chordLastActiveIdx) {
       if (_chordLastActiveIdx >= 0 && state.chords[_chordLastActiveIdx]) {
         state.chords[_chordLastActiveIdx].el.classList.remove('active');
       }
-      state.chords[idx].el.classList.add('active');
-      _chordLastActiveIdx = idx;
+      if (highlightIdx >= 0 && state.chords[highlightIdx]) {
+        state.chords[highlightIdx].el.classList.add('active');
+      }
+      _chordLastActiveIdx = highlightIdx;
     }
 
-    // Translate the strip so the active pill's centre sits at x=0
-    // (under the fixed playhead). Within the active pill, interpolate
-    // by song-time progress through that chord for smooth scroll.
-    const c = state.chords[idx];
-    const localProgress = c.endSec > c.startSec
-      ? (t - c.startSec) / (c.endSec - c.startSec)
-      : 0;
-    const activeCentrePx = c.leftPx + c.widthPx * localProgress;
     strip.style.transform = `translateX(${-activeCentrePx}px)`;
   }
 
