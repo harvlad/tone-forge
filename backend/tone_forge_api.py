@@ -2055,7 +2055,12 @@ async def admin_analyze_deep(
                                     "content": stem_midi.content,
                                     "note_count": stem_midi.note_count,
                                     "duration_seconds": stem_midi.duration_seconds,
-                                    "tempo_bpm": stem_midi.tempo_bpm,
+                                    # Per-stem extractor tempo (renamed from
+                                    # ``tempo_bpm`` to disambiguate from the
+                                    # session-canonical tempo at the top of
+                                    # the result payload). See the matching
+                                    # rename in tone_forge/midi/gpu_extractor.py.
+                                    "extraction_tempo_bpm": stem_midi.tempo_bpm,
                                     "pitch_range": {
                                         "lowest": int(stem_midi.pitch_range[0]),
                                         "highest": int(stem_midi.pitch_range[1]),

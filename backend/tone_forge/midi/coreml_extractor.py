@@ -346,6 +346,7 @@ def _postprocess_notes(
     stem_type: str,
     min_duration_ms: float = 50.0,
     min_velocity: int = 30,
+    min_confidence: float = 0.0,
 ) -> List[ExtractedNote]:
     """
     Post-process extracted notes to improve accuracy.
@@ -355,6 +356,16 @@ def _postprocess_notes(
         stem_type: Type of stem for stem-specific filtering
         min_duration_ms: Minimum note duration in milliseconds
         min_velocity: Minimum velocity to keep
+        min_confidence: Minimum CoreML confidence to keep (0.0 = no
+            filter, the default — preserves legacy behavior). Tunable
+            knob for callers that observe over-firing on distorted
+            sources (e.g. saturated guitar produces a halo of low-
+            confidence "ghost" notes from harmonics). Setting this
+            above 0 trades recall for precision; recommended range
+            is 0.15-0.30 if the upstream corpus shows obvious
+            false-positive density. Don't crank past 0.5 — legitimate
+            notes from basic_pitch frequently land in the 0.3-0.5
+            band, especially short attacks.
 
     Returns:
         Filtered list of notes
@@ -383,6 +394,13 @@ def _postprocess_notes(
 
         # Filter by velocity
         if note.velocity < min_velocity:
+            continue
+
+        # Filter by confidence (default 0.0 = no-op, matches legacy
+        # behaviour). The CoreML extractor sets ``confidence`` from the
+        # mean per-frame note probability; very low values are nearly
+        # always harmonic ghosts on saturated input.
+        if note.confidence < min_confidence:
             continue
 
         # Octave correction for stem type
@@ -451,7 +469,11 @@ def extract_midi_coreml(
             "content": "",
             "note_count": 0,
             "duration_seconds": duration,
-            "tempo_bpm": 120.0,
+            # Empty-result default. Renamed from ``tempo_bpm`` to make it
+            # clear this is the extractor's local estimate (here: 120.0
+            # placeholder because there are no notes to derive density
+            # from), not the canonical session tempo.
+            "extraction_tempo_bpm": 120.0,
             "pitch_range": (0, 0),
             "method": "coreml_gpu",
         }
@@ -476,7 +498,10 @@ def extract_midi_coreml(
         "content": midi_b64,
         "note_count": len(notes),
         "duration_seconds": duration,
-        "tempo_bpm": tempo,
+        # Heuristic 3-bucket tempo from note density (100/120/140). Per
+        # the rename rationale at the empty-result branch: this is the
+        # extractor's local estimate, not the canonical session tempo.
+        "extraction_tempo_bpm": tempo,
         "pitch_range": (min(pitches), max(pitches)),
         "method": "coreml_gpu",
     }
