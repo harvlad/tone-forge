@@ -17,6 +17,7 @@
 //
 
 import AVFoundation
+import ConnectObjCBridge
 import CoreAudio
 import Foundation
 
@@ -235,7 +236,17 @@ public final class AudioEngine {
     /// Pulled out of init() so it can be re-run after a driver
     /// configuration change without leaking nodes (AVAudioEngine drops
     /// pre-change connections on its own; we just re-attach + connect).
-    private func attachAndConnectGraph() {
+    ///
+    /// Returns ``true`` when the graph wired cleanly. Returns ``false``
+    /// when the input-node connect raised
+    /// ``NSInvalidArgumentException`` ("Input HW format and tap format
+    /// not matching"); the trap converts that to a Swift-side error.
+    /// Callers (init, attemptReconfigRestart) decide what to do with
+    /// the failure — init logs and proceeds (start() will surface the
+    /// follow-on error normally), the reconfig loop treats it the
+    /// same way it treats engine.start() throwing.
+    @discardableResult
+    private func attachAndConnectGraph() -> Bool {
         // Both mixers feed the engine's main mixer; the engine's main
         // mixer is auto-connected to outputNode.
         engine.attach(inputMixerNode)
@@ -256,7 +267,33 @@ public final class AudioEngine {
         // configuration change the format may have flipped sample rate
         // or channel count, and the previous format becomes invalid.
         let inputFormat = engine.inputNode.outputFormat(forBus: 0)
-        engine.connect(engine.inputNode, to: inputMixerNode, format: inputFormat)
+
+        // Trap the input-node connect. This is the specific call that
+        // raises NSInvalidArgumentException when the HAL's reported
+        // input format diverges from what the mixer expects — the
+        // textbook trigger is hot-plugging a Line 6 HX Stomp whose
+        // channel count flaps stereo→mono→stereo as the host re-
+        // enumerates it across reconfig attempts. Without the trap
+        // the process is killed with SIGABRT before our retry logic
+        // ever gets a turn. The rest of the connects use ``format:
+        // nil`` and inherit the upstream node's format; they're
+        // immune to the HW-format mismatch and don't need trapping.
+        // The ObjC ``error:`` convention bridges to Swift ``throws`` —
+        // we get a clean ``do/catch`` rather than an explicit Bool +
+        // NSError out-parameter.
+        do {
+            try ObjCExceptionTrap.`try` {
+                self.engine.connect(
+                    self.engine.inputNode,
+                    to: self.inputMixerNode,
+                    format: inputFormat
+                )
+            }
+        } catch {
+            NSLog("[Connect] AudioEngine: input-node connect trapped: \(error.localizedDescription)")
+            return false
+        }
+
         // Monitor chain: HPF → drive → EQ → comp → reverb → trim → out.
         // Stems bypass the chain entirely — only the player's instrument
         // is colored by the curated tone.
@@ -268,6 +305,7 @@ public final class AudioEngine {
         engine.connect(reverb, to: outputTrim, format: nil)
         engine.connect(outputTrim, to: mainMixer, format: nil)
         engine.connect(stemsMixerNode, to: mainMixer, format: nil)
+        return true
     }
 
     /// Subscribes to AVAudioEngineConfigurationChange so a device flap
@@ -323,17 +361,34 @@ public final class AudioEngine {
         // Re-attach + re-connect against the new input format. The
         // mixer/EQ/distortion nodes are reused — AVAudioEngine
         // tolerates re-attach on already-attached nodes silently.
-        attachAndConnectGraph()
+        //
+        // A ``false`` here means the input-node connect raised an
+        // ObjC exception (format mismatch from a hot-plug). Treat
+        // it identically to ``engine.start()`` throwing below — count
+        // it as a failed attempt, retry with backoff, and escalate
+        // to ``.failed`` + ``device_lost`` after the budget is gone.
+        let wired = attachAndConnectGraph()
         // Stems need their player nodes re-connected to the stems mixer
         // because the engine may have dropped those edges during the
         // device change. The PCM buffers and player instances survive.
-        let format = stemsMixerNode.outputFormat(forBus: 0)
-        for (_, player) in stemPlayers {
-            engine.attach(player)
-            engine.connect(player, to: stemsMixerNode, format: format)
+        if wired {
+            let format = stemsMixerNode.outputFormat(forBus: 0)
+            for (_, player) in stemPlayers {
+                engine.attach(player)
+                engine.connect(player, to: stemsMixerNode, format: format)
+            }
         }
 
         do {
+            if !wired {
+                // Synthesize the same kind of failure ``engine.start()``
+                // would have produced so the existing retry/escalation
+                // branch handles both cases uniformly.
+                struct InputFormatMismatch: Error, CustomStringConvertible {
+                    var description: String { "input format mismatch during graph wireup" }
+                }
+                throw InputFormatMismatch()
+            }
             engine.prepare()
             try engine.start()
             reconfigAttempt = 0

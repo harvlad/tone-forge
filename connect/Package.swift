@@ -35,8 +35,20 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
+        // ObjC support target. Houses the NSException trap that
+        // ConnectCore uses to catch AVAudioEngine's synchronous
+        // ``NSInvalidArgumentException`` on format-mismatched
+        // graph wiring. Kept as a separate target because SwiftPM
+        // does not allow mixed-language targets and the bridge is
+        // tiny (one .h + one .m).
+        .target(
+            name: "ConnectObjCBridge",
+            path: "Sources/ConnectObjCBridge",
+            publicHeadersPath: "include"
+        ),
         .target(
             name: "ConnectCore",
+            dependencies: ["ConnectObjCBridge"],
             path: "Sources/ConnectCore"
         ),
         .executableTarget(
