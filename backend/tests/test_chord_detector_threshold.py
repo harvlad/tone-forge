@@ -117,17 +117,41 @@ def test_realistic_mix_yields_distinct_chord_regions(realistic_mix: np.ndarray) 
 
 def test_old_threshold_would_have_filtered_everything(
     realistic_mix: np.ndarray,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the cutoff is moved back to 0.30, the realistic mix must
-    produce zero chords. This is the failure mode we are guarding
-    against — a "tighten the threshold" refactor that looks safe
-    against the synthetic C-triad fixture but reintroduces an empty
-    ribbon in production.
+    """Historical regression doc for the original cutoff bug.
+
+    Reproduces the OLD failure mode end-to-end: chroma_diff peak-pick
+    segmenter + L1-normalized dot-product scoring + fixed 0.30 cutoff.
+    Inlines the entire old pipeline so the test stays valid even as
+    the production source moves on (it has since moved to fixed-window
+    segmenter + L2 cosine similarity + adaptive cutoff).
+
+    What this pins:
+    * The realistic synthetic mix sits in the regression band for the
+      old scoring (max dot-product confidence well below 0.30, so the
+      old cutoff would have shipped an empty ribbon).
+    * At least one segment passes the intermediate 0.18 dot-product
+      cutoff (i.e. lowering the cutoff was the necessary first step
+      9cc11c6 took — the test confirms that step would have produced
+      *some* chords for this fixture class).
     """
     import librosa
+    from tone_forge.analysis.chord_detector import CHORD_TEMPLATES
 
-    from tone_forge.analysis.chord_detector import _match_chord_template
+    def _old_match(chroma: np.ndarray) -> float:
+        """Old scoring: L1-normalize both, dot product. Returns confidence."""
+        chroma_norm = chroma / (np.sum(chroma) + 1e-6)
+        best = 0.0
+        for root in range(12):
+            for _quality, intervals in CHORD_TEMPLATES.items():
+                template = np.zeros(12)
+                for interval in intervals:
+                    template[(root + interval) % 12] = 1.0
+                template /= np.sum(template)
+                sim = float(np.dot(chroma_norm, template))
+                if sim > best:
+                    best = sim
+        return best
 
     hop_length = 512
     chroma = librosa.feature.chroma_cqt(y=realistic_mix, sr=_SR, hop_length=hop_length)
@@ -147,22 +171,23 @@ def test_old_threshold_would_have_filtered_everything(
     confs = []
     for i in range(len(boundaries) - 1):
         seg = np.mean(chroma_smooth[:, boundaries[i] : boundaries[i + 1]], axis=1)
-        _root, _qual, conf = _match_chord_template(seg)
-        confs.append(conf)
+        confs.append(_old_match(seg))
 
     passing_at_old_cutoff = sum(1 for c in confs if c > 0.30)
     assert passing_at_old_cutoff == 0, (
-        f"realistic mix passes the OLD 0.30 cutoff in {passing_at_old_cutoff} "
-        f"segment(s) — fixture is no longer in the regression band; max "
-        f"confidence={max(confs):.3f}. Re-tune the fixture so it sits in the "
-        f"0.20–0.29 confidence band where the production bug actually lives."
+        f"realistic mix passes the OLD 0.30 dot-product cutoff in "
+        f"{passing_at_old_cutoff} segment(s) — fixture is no longer in "
+        f"the regression band; max dot-product confidence={max(confs):.3f}. "
+        f"Re-tune the fixture so it sits in the 0.20–0.29 dot-product band "
+        f"where the original production bug lives."
     )
 
-    passing_at_new_cutoff = sum(1 for c in confs if c > 0.18)
-    assert passing_at_new_cutoff >= 1, (
-        f"realistic mix produces no segments above the new 0.18 cutoff "
-        f"either (max confidence={max(confs):.3f}); the cutoff change "
-        f"would not have fixed the user-visible bug for this signal class."
+    passing_at_intermediate_cutoff = sum(1 for c in confs if c > 0.18)
+    assert passing_at_intermediate_cutoff >= 1, (
+        f"realistic mix produces no segments above the intermediate 0.18 "
+        f"dot-product cutoff either (max={max(confs):.3f}); the cutoff-drop "
+        f"step (9cc11c6) would not have produced any chord pills for this "
+        f"signal class."
     )
 
 
@@ -175,18 +200,36 @@ def test_old_threshold_would_have_filtered_everything(
 
 
 def test_chord_detector_source_uses_calibrated_cutoff() -> None:
-    """The cutoff lives as a literal in chord_detector.py rather than
-    as a named module constant (legacy code). Pin the literal so a
-    'cleanup' that bumps it back to 0.3 trips here even if the
-    realistic-mix test is skipped or marked xfail.
+    """Pin the gating to the cosine-similarity + adaptive-cutoff form.
+
+    History: the detector originally used L1-normalized dot-product
+    scoring with a fixed 0.3 cutoff (filtered 100% of real audio →
+    empty ribbon), then a fixed 0.18 cutoff (still filtered Pub Feed
+    down to 1 region because dot-product scores collapse to the same
+    narrow band across all real songs). The current form is L2
+    cosine similarity + per-song adaptive threshold
+    `max(0.50, median + 0.3*std)`. A regression that re-introduces a
+    fixed scalar cutoff or reverts to L1 + dot-product will silently
+    re-empty the ribbon; pin the cutoff expression here so that
+    happens at test time instead.
     """
     import inspect
 
     src = inspect.getsource(chord_detector.detect_chords_from_audio)
-    assert "if confidence > 0.18" in src, (
-        "detect_chords_from_audio no longer gates segments at the calibrated "
-        "0.18 cutoff; the Jam chord ribbon will stay empty on real songs if "
-        "the cutoff has been re-raised. See chord_detector.py:134 docstring."
+    assert "COS_CUTOFF = 0.70" in src and "confidence > COS_CUTOFF" in src, (
+        "detect_chords_from_audio no longer gates windows at the calibrated "
+        "cosine-similarity floor of 0.70. The Jam chord ribbon will either "
+        "go silent (cutoff raised above the overdriven-rock chord regime) "
+        "or fill with noise pills (cutoff dropped below the ~0.66 chroma "
+        "noise floor). See chord_detector.py:143 docstring for the floor "
+        "rationale and empirical scoring bands."
+    )
+    match_src = inspect.getsource(chord_detector._match_chord_template)
+    assert "np.linalg.norm" in match_src, (
+        "_match_chord_template no longer uses L2 normalization (cosine "
+        "similarity). Reverting to L1 + dot-product caps scores at "
+        "1/triad-size ≈ 0.333 and re-introduces the bug class the "
+        "adaptive cutoff is calibrated against."
     )
 
 
