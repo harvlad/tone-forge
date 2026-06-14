@@ -13,7 +13,20 @@ from collections import Counter
 
 logger = logging.getLogger(__name__)
 
-# Chord templates (intervals from root)
+# Chord templates (intervals from root).
+#
+# The full extended set is kept here because under L2 cosine similarity
+# the richer templates (9-chords especially) score above the 0.70
+# cutoff on heavily-overdriven sources where the bare-triad template
+# would fall to ~0.55-0.65. Stripping the extensions from the matching
+# pool caused Pub Feed to collapse back to ~1 region (most windows
+# failing the 0.70 floor).
+#
+# What the user sees in the ribbon is *not* the raw quality from this
+# table — it's the collapsed display label from `_collapse_quality()`,
+# which maps extensions back to the underlying triad family ("min9" ->
+# "m", "maj9" -> "", "maj7" -> "", "dom7" -> "7"). The 9-chord variants
+# are doing scoring work, not labelling work.
 CHORD_TEMPLATES = {
     'maj': [0, 4, 7],
     'min': [0, 3, 7],
@@ -29,6 +42,38 @@ CHORD_TEMPLATES = {
     'min9': [0, 3, 7, 10, 14],
     'maj9': [0, 4, 7, 11, 14],
 }
+
+
+def _collapse_quality(quality: str) -> str:
+    """Map an extended chord quality to its display label.
+
+    Cosine similarity over harmonic-spread chroma reliably identifies
+    the *root* and *family* (major-ish vs minor-ish), but the choice
+    of extension within that family is noisy — an A major triad with
+    overdriven harmonics scores about the same against Amaj, Amaj7
+    and Amaj9, with the 9-chord winning by a small margin due to
+    chroma spread. Reading "Amaj9" off the ribbon when the underlying
+    chord is just "A" is misleading; collapse extensions to their
+    triad form for display.
+    """
+    # Drop the major-family extensions entirely. "Amaj7" -> "A" etc.
+    if quality in ('maj', 'maj7', 'maj9', 'add9'):
+        return 'maj'
+    # Keep dom7 as a "7" — it's harmonically distinct from a major
+    # triad (the b7 is a real chord tone in V7/blues idioms). Mapping
+    # it down to maj would lose useful information.
+    if quality == 'dom7':
+        return 'dom7'
+    # Minor-family extensions collapse to bare minor.
+    if quality in ('min', 'min7', 'min9'):
+        return 'min'
+    # Diminished family collapses to dim (dim7 is a real chord but
+    # rare enough that the false-positive risk from over-triggering
+    # the 4-note template outweighs the labeling precision).
+    if quality in ('dim', 'dim7'):
+        return 'dim'
+    # sus2/sus4/aug are already minimal; pass through.
+    return quality
 
 NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
@@ -182,9 +227,15 @@ def detect_chords_from_audio(
         root, quality, confidence = _match_chord_template(segment_chroma)
 
         if confidence > COS_CUTOFF:
+            # Collapse extended-quality matches to the display family
+            # *before* the merge step. Merging compares (root, quality)
+            # tuples for equality, so an alternation of "Amaj9" and
+            # "Amaj7" windows would survive as two regions unless we
+            # collapse first; after collapse they both read as "Amaj"
+            # and merge into one "A" region.
             chord = Chord(
                 root=root,
-                quality=quality,
+                quality=_collapse_quality(quality),
                 start_time=times[start_frame],
                 end_time=times[min(end_frame, len(times)-1)],
                 confidence=confidence,
@@ -193,6 +244,50 @@ def detect_chords_from_audio(
 
     # Merge consecutive identical chords
     chords = _merge_consecutive_chords(chords)
+
+    # Bridge short gaps between chord regions.
+    #
+    # Fixed-window stepping (above) emits one candidate per window. Any
+    # window whose best-match cosine sits at or below COS_CUTOFF gets
+    # dropped, leaving a time gap between the surrounding regions. On
+    # the Pub Feed mix this happened ~7 times across 145s (each gap
+    # 0.5s–1s), corresponding to brief stretches where a single window's
+    # chroma briefly lost coherence — transient noise, a sung phrase
+    # dominating, a drum fill.
+    #
+    # For the Jam chord ribbon those gaps surface as "no pill under
+    # the playhead" frames: updateChordPlayhead's gap-interpolation
+    # branch sets highlightIdx = -1 and the ribbon momentarily shows
+    # no highlight. The user-visible effect is the chord display
+    # flickering off and on as the song plays.
+    #
+    # Bridge gaps shorter than GAP_BRIDGE_MAX by extending the previous
+    # chord's end_time to the next chord's start_time. This is a UI-
+    # friendly post-processing step: the chord that surfaced before the
+    # gap is overwhelmingly likely to still be the chord during the
+    # gap, since chord changes between two confidently-detected regions
+    # would have been caught by the segmenter as a distinct window in
+    # the middle. A larger gap (> GAP_BRIDGE_MAX) is left alone — that
+    # implies a genuinely empty stretch (intro, breakdown, silence)
+    # where surfacing no pill is the correct behaviour.
+    GAP_BRIDGE_MAX = 1.5
+    if len(chords) >= 2:
+        bridged = [chords[0]]
+        for ch in chords[1:]:
+            prev = bridged[-1]
+            gap = ch.start_time - prev.end_time
+            if 0 < gap <= GAP_BRIDGE_MAX:
+                # Extend prev to bridge the gap.
+                bridged[-1] = Chord(
+                    root=prev.root,
+                    quality=prev.quality,
+                    start_time=prev.start_time,
+                    end_time=ch.start_time,
+                    confidence=prev.confidence,
+                    bass_note=prev.bass_note,
+                )
+            bridged.append(ch)
+        chords = bridged
 
     logger.info(f"Detected {len(chords)} chords from audio")
     return chords

@@ -254,6 +254,128 @@ def test_chord_detector_source_uses_calibrated_cutoff() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_extended_labels_collapsed_to_triad_form() -> None:
+    """The chord ribbon shows simple triad-family labels, not 9-chords.
+
+    Under L2 cosine similarity the richer templates (maj9 = 5 "on"
+    pitch classes) score higher than bare triads when chroma has any
+    harmonic spread — overdriven sources especially. Pre-collapse, Pub
+    Feed surfaced as 58×F#min9 / 29×Amaj9 / 26×Emaj9 / 25×F#maj9 even
+    though the underlying chords are simple triads with harmonic
+    spread. The collapse step maps those back to the triad family
+    ("F#min9" -> "F#m", "Amaj9" -> "A", etc.) for the ribbon label
+    while preserving the cosine-score advantage of the richer template
+    pool.
+
+    This test pins that the OUTPUT chord symbols never contain a 9- or
+    extension suffix that the user wouldn't want to read off the
+    ribbon. A regression that removes the collapse (or re-introduces
+    9-chord symbols downstream) will trip this against the same
+    overdrive-style fixture that drove the original bug report.
+    """
+    sr = 22050
+    chord_dur_s = 2.0
+    rng = np.random.default_rng(7)
+
+    # Overdriven A and E triads (heavy harmonic content). With cosine
+    # matching these reliably score Amaj9 / Emaj9 in the raw matcher.
+    vamp = [
+        ("A", [220.00, 277.18, 329.63]),  # A major triad
+        ("E", [164.81, 207.65, 246.94]),  # E major triad
+    ]
+    parts = []
+    for _ in range(4):
+        for _name, freqs in vamp:
+            t = np.linspace(0, chord_dur_s, int(sr * chord_dur_s), endpoint=False)
+            y = np.zeros_like(t)
+            for f in freqs:
+                for h, amp in [(1, 1.0), (2, 0.7), (3, 0.5), (4, 0.35), (5, 0.2)]:
+                    y += amp * np.sin(2 * np.pi * f * h * t)
+            y /= max(1.0, float(np.max(np.abs(y))))
+            parts.append(y)
+    sig = np.concatenate(parts).astype(np.float32)
+    noise = rng.standard_normal(len(sig)).astype(np.float32) * 0.05 * float(np.std(sig))
+    sig = (sig + noise).astype(np.float32)
+    sig /= max(1e-9, float(np.max(np.abs(sig))))
+
+    chords = detect_chords(sig, sr)
+    assert chords, "extended-label fixture produced no chords at all"
+
+    # No emitted symbol may contain an extension suffix from the
+    # collapse-target set. (sus2/sus4/dim/aug/dom7 are allowed: they
+    # are kept as distinct display qualities; min7/maj7/add9/min9/maj9
+    # / dim7 are the ones the collapse maps away.)
+    BANNED = ("maj7", "maj9", "min7", "min9", "add9", "dim7")
+    offenders = [c.symbol for c in chords if any(b in c.symbol for b in BANNED)]
+    assert not offenders, (
+        f"chord symbols still carry extension suffixes after collapse: "
+        f"{offenders}. The _collapse_quality step has been removed or "
+        f"bypassed; the Jam ribbon will read 'Amaj9' where the user "
+        f"expects 'A'. See chord_detector.py:_collapse_quality docstring."
+    )
+
+
+def test_internal_time_gaps_are_bridged() -> None:
+    """Adjacent chord regions are contiguous in time (no `idx == -1`
+    frames during playback).
+
+    The fixed-window segmenter + COS_CUTOFF gate naturally produces
+    chord arrays with small time gaps where individual windows fell
+    just below 0.70 cosine. Pre-bridge, Pub Feed surfaced ~7 such
+    gaps in a 145s mix, each 0.5–1.0s long. The Jam playhead
+    interpolates through those gaps with `highlightIdx = -1`
+    (jam.js:updateChordPlayhead), so the user-visible effect is the
+    active chord pill momentarily de-highlighting as the playhead
+    crosses a gap.
+
+    The detector's GAP_BRIDGE_MAX post-pass extends the previous
+    chord's end_time to the next chord's start_time for any gap up
+    to 1.5s. This test pins that no chord pair surfaces with a
+    nonzero time gap on realistic harmonic-spread input.
+    """
+    sr = 22050
+    chord_dur_s = 1.0
+    rng = np.random.default_rng(11)
+
+    # Long signal: 12 chord cycles of A major + a couple of brief
+    # "silent" interludes (chunks of low-amplitude noise) that the
+    # detector will discard as below-cutoff. The bridge step should
+    # absorb those gaps back into the surrounding chord.
+    chunks = []
+    for cycle in range(12):
+        t = np.linspace(0, chord_dur_s, int(sr * chord_dur_s), endpoint=False)
+        y = np.zeros_like(t)
+        for f in [220.00, 277.18, 329.63]:
+            for h, amp in [(1, 1.0), (2, 0.7), (3, 0.5)]:
+                y += amp * np.sin(2 * np.pi * f * h * t)
+        y /= max(1.0, float(np.max(np.abs(y))))
+        chunks.append(y)
+        # Inject a 0.6s dim-amplitude noise stretch every 4 cycles
+        # — small enough that the bridge should still close it.
+        if cycle % 4 == 3:
+            interlude = rng.standard_normal(int(0.6 * sr)).astype(np.float32) * 0.05
+            chunks.append(interlude)
+
+    sig = np.concatenate(chunks).astype(np.float32)
+    sig /= max(1e-9, float(np.max(np.abs(sig))))
+    chords = detect_chords(sig, sr)
+
+    assert len(chords) >= 1, "test signal produced no chords at all"
+
+    # No pair should have a measurable gap between them.
+    gaps = []
+    for i in range(len(chords) - 1):
+        gap = chords[i + 1].start_s - chords[i].end_s
+        if gap > 0.05:  # 50ms slack for frame-to-time rounding
+            gaps.append((i, round(gap, 3), chords[i].symbol, chords[i + 1].symbol))
+    assert not gaps, (
+        f"chord regions surface with internal time-gaps after the "
+        f"bridge pass: {gaps}. The Jam chord ribbon will flicker "
+        f"off-highlight as the playhead crosses each gap. See "
+        f"chord_detector.py:GAP_BRIDGE_MAX block."
+    )
+
+
 def test_steady_vamp_yields_multiple_chord_regions() -> None:
     sr = 22050
     chord_dur_s = 4.0
