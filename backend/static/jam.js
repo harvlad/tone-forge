@@ -154,7 +154,10 @@
     //                    \--> meterAnalyser (analysis-only tap)
     //
     // gain values:
-    //   - `gain` is the current slider value [0, 1.5]
+    //   - `gain` is the current slider value [0, 4]. Range goes above
+    //     unity (1.0) because HX Stomp at line level + Web Audio
+    //     getUserMedia is consistently quiet through the laptop's
+    //     internal speakers; users need real make-up gain.
     //   - `muted` zeroes the gainNode without losing the slider value
     //   - clipping is detected on the analyser tap pre-gain so the
     //     "your input is hot" warning is independent of monitor gain.
@@ -168,7 +171,7 @@
       rafHandle: null,
       deviceId: '',       // '' = system default
       deviceLabel: '',
-      gain: 0.7,
+      gain: 1.0,
       muted: false,
       // Clip indicator hold: timestamp (perf.now ms) until which the
       // CLIP overlay stays lit. Reset by the meter tick.
@@ -2744,7 +2747,13 @@
   async function prepareStemAudio() {
     if (!state.ctx) {
       try {
-        state.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        // latencyHint: 'interactive' asks the browser for the smallest
+        // render buffer it will give us. Safari defaults to 'balanced'
+        // (larger buffer for power), which adds ~20-40ms of monitor
+        // round-trip on top of the OS layer. 'interactive' typically
+        // halves baseLatency at the cost of more CPU.
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        state.ctx = new Ctx({ latencyHint: 'interactive' });
         state.masterGain = state.ctx.createGain();
         state.masterGain.gain.value = 1.0;
         state.masterGain.connect(state.ctx.destination);
@@ -4809,7 +4818,12 @@
   async function _ensureAudioContextForMonitor() {
     if (state.ctx) return state.ctx;
     try {
-      state.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      // Same latencyHint rationale as prepareStemAudio(): the monitor
+      // path is the one that NEEDS interactive latency, so when the
+      // user enables monitoring before pressing play we still get the
+      // small-buffer behaviour.
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      state.ctx = new Ctx({ latencyHint: 'interactive' });
       state.masterGain = state.ctx.createGain();
       state.masterGain.gain.value = 1.0;
       state.masterGain.connect(state.ctx.destination);
@@ -5245,7 +5259,7 @@
     // fall through to the defaults set on the state object.
     try {
       const savedGain = parseFloat(localStorage.getItem(MONITOR_GAIN_KEY) || '');
-      if (isFinite(savedGain) && savedGain >= 0 && savedGain <= 1.5) {
+      if (isFinite(savedGain) && savedGain >= 0 && savedGain <= 4) {
         state.monitor.gain = savedGain;
         if (gainSlider) gainSlider.value = String(savedGain);
         const r = $('monitor-gain-readout');
