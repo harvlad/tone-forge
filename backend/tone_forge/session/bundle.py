@@ -257,6 +257,10 @@ def _build_understanding(result: Mapping[str, Any]) -> SongUnderstanding:
 
     sections = tuple(_iter_sections(result.get("sections")))
     chords = tuple(_iter_chords(result.get("chords")))
+    # Phase 6 hybrid grid: optional beat-snapped chord array. Absent /
+    # null on the wire collapses to an empty tuple so the UI toggle
+    # stays hidden on legacy sessions without beats.
+    chords_beat_snapped = tuple(_iter_chords(result.get("chords_beat_snapped")))
 
     return SongUnderstanding(
         tempo_bpm=tempo,
@@ -268,6 +272,7 @@ def _build_understanding(result: Mapping[str, Any]) -> SongUnderstanding:
         downbeats_s=tuple(_iter_floats(result.get("downbeats_s"))),
         sections=sections,
         chords=chords,
+        chords_beat_snapped=chords_beat_snapped,
     )
 
 

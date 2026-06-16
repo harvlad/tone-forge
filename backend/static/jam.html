@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=5" />
+<link rel="stylesheet" href="/static/jam.css?v=14" />
 </head>
 <body>
 <header class="jam-header">
@@ -341,14 +341,98 @@
           <div class="chord-ribbon-playhead"></div>
           <div class="chord-ribbon-strip" id="chord-ribbon-strip"></div>
         </div>
+        <!-- Chord guidance lane: a single full-width "NOW PLAYING"
+             focal card. The prior "NEXT" sub-card was removed because
+             the upcoming chords are already visible in the ribbon
+             strip above; the countdown + transition hint that used to
+             live in the NEXT card are now a footer on the NOW PLAYING
+             card. Populated by _onActiveChordChanged when the chord
+             index advances. Hidden when the ribbon is hidden. -->
+        <div id="chord-guidance" class="chord-guidance" hidden>
+          <div id="chord-now-block" class="chord-now-block">
+            <div class="chord-now-label">NOW PLAYING</div>
+            <div class="chord-now-symbol" id="chord-now-symbol"></div>
+            <!-- Overlay row sits between symbol and diagram. Each
+                 child is hidden until the corresponding overlay toggle
+                 is enabled in the Advanced overlays panel (§8). -->
+            <div class="chord-now-overlays">
+              <span class="chord-overlay-nashville" id="chord-now-nashville" hidden></span>
+              <span class="chord-overlay-roman" id="chord-now-roman" hidden></span>
+            </div>
+            <div class="chord-now-diagram" id="chord-now-diagram"></div>
+            <div class="chord-overlay-scales" id="chord-now-scale" hidden></div>
+            <!-- Footer: countdown to next chord change + transition
+                 hint ("Barre at fret 1", "Move one finger only", ...).
+                 Countdown updates ~10Hz from the RAF tick; transition
+                 hint refreshes on each chord-index change. -->
+            <div class="chord-now-footer">
+              <div class="chord-countdown" id="chord-countdown"></div>
+              <div class="chord-transition" id="chord-transition" hidden></div>
+            </div>
+          </div>
+          <!-- Two preview cards for the next chord changes. Smaller
+               diagrams than NOW PLAYING, dim border, click-to-seek to
+               the target chord. Populated by _renderChordGuidance
+               alongside the NOW block; hidden via the .is-empty
+               modifier when there's no further chord to preview
+               (end of song). -->
+          <button id="chord-up-next-1" class="chord-up-next" type="button" hidden>
+            <div class="chord-up-next-label">UP NEXT</div>
+            <div class="chord-up-next-symbol" id="chord-up-next-1-symbol"></div>
+            <div class="chord-up-next-diagram" id="chord-up-next-1-diagram"></div>
+          </button>
+          <button id="chord-up-next-2" class="chord-up-next" type="button" hidden>
+            <div class="chord-up-next-label">THEN</div>
+            <div class="chord-up-next-symbol" id="chord-up-next-2-symbol"></div>
+            <div class="chord-up-next-diagram" id="chord-up-next-2-diagram"></div>
+          </button>
+        </div>
+        <!-- Advanced musician overlays (UX directive §8). Toggle row
+             reveals Nashville Numbers / Roman Numerals / Scale
+             Suggestions. Default OFF; persisted to localStorage. -->
+        <div id="chord-overlays-row" class="chord-overlays-row" hidden>
+          <details class="chord-overlays-details">
+            <summary class="chord-overlays-summary">Advanced overlays</summary>
+            <label class="chord-overlay-option"><input type="checkbox" id="chord-overlay-nashville" /> Nashville Numbers</label>
+            <label class="chord-overlay-option"><input type="checkbox" id="chord-overlay-roman" /> Roman Numerals</label>
+            <label class="chord-overlay-option"><input type="checkbox" id="chord-overlay-scales" /> Scale Suggestions</label>
+          </details>
+        </div>
+        <!-- Lead phrase / riff lane: a 6-string tab notation block
+             showing the lead-stem MIDI notes for the currently-active
+             section (widened from per-chord so an intro phrase across
+             multiple chords still surfaces as one cohesive riff).
+             Always visible when chord data exists; falls back to an
+             explanatory placeholder when no MIDI notes are detected
+             (per the "no blank cards" UX rule). -->
+        <div id="chord-tab-queue" class="chord-tab-queue" hidden>
+          <div class="chord-tab-label">LEAD PART / RIFF</div>
+          <div class="chord-tab-body" id="chord-tab-body"></div>
+        </div>
+        <!-- Beat-snap toggle: switches the chord ribbon between
+             fixed-window region boundaries (higher WCSR; aligns to a
+             0.5s analysis grid) and beat-snapped boundaries (visually
+             aligns to the rhythm). Both arrays are computed at
+             analysis time; this toggle is a render-time choice.
+             Hidden when the analysis didn't include a snapped array. -->
+        <div id="chord-snap-row" class="chord-snap-row" hidden>
+          <label class="chord-snap-label">
+            <input type="checkbox" id="chord-snap-toggle" />
+            <span>Snap chords to beats</span>
+          </label>
+        </div>
         <div id="loop-status" class="loop-status">Loop: off</div>
-      </div>
 
-      <!-- RIGHT SLOT — stem mixer -->
-      <div id="slot-right" class="stage-col stage-right">
-        <div class="stage-col-label">Stems</div>
-        <div class="stem-rack" id="stem-rack">
-          <!-- Per-stem rows injected by JS -->
+        <!-- Stems mixer: relocated from a dedicated right column to
+             live underneath the LEAD PART / RIFF block so the chord
+             ribbon + NOW PLAYING card can occupy the full width of
+             this column. The .stage-col.stage-right classes are kept
+             so the tighter-row stem styling continues to apply. -->
+        <div id="slot-right" class="stage-col stage-right">
+          <div class="stage-col-label">Stems</div>
+          <div class="stem-rack" id="stem-rack">
+            <!-- Per-stem rows injected by JS -->
+          </div>
         </div>
       </div>
     </div>
@@ -372,6 +456,6 @@
   </section>
 </main>
 
-<script src="/static/jam.js?v=9"></script>
+<script src="/static/jam.js?v=19"></script>
 </body>
 </html>

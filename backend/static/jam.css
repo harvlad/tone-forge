@@ -878,7 +878,12 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 /* grid */
 .perform-grid {
   display: grid;
-  grid-template-columns: 320px 1fr 320px;
+  /* 2-column layout: "Your slot" sidebar + everything else (chord
+     ribbon, NOW PLAYING card, LEAD PART, and the relocated Stems
+     mixer underneath). The prior 3-column layout had a separate
+     right-hand stems column; that was moved into the centre column
+     so the chord ribbon + chord card span the full available width. */
+  grid-template-columns: 320px 1fr;
   gap: 24px;
   margin-bottom: 24px;
   align-items: start;
@@ -1097,6 +1102,481 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   margin-top: 10px;
   color: var(--text-dim);
   font-size: 13px;
+}
+.chord-snap-row {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.chord-snap-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.chord-snap-label input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+}
+
+/* Queued chord diagrams row (Phase C of chord-diagram feature).
+   4 slots showing current + next 3 chords. Slots flex-grow to fill
+   the center column so the row reads as a "queue lane" rather than
+   four floating thumbnails. Slot 0 (the active chord) gets a brighter
+   --accent border + soft shadow so it pops from the ribbon's static
+   colour. SVGs inside the slots use the same theme tokens as the
+   surrounding UI (white nut/strings, --text for fret marks, --accent
+   for the highlighted active slot). */
+/* Chord guidance: three-card row — large NOW PLAYING focal card on
+   the left + two smaller "UP NEXT" / "THEN" preview cards on the
+   right. The previews show diagrams for activeIdx+1 and activeIdx+2
+   so the player can see what's coming, while NOW PLAYING dominates
+   visual weight to keep the eye anchored to "what do I play now". */
+.chord-guidance {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  padding: 0 8px;
+  align-items: stretch;
+}
+.chord-now-block {
+  flex: 1 1 50%;
+  min-width: 0;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 12px rgba(249, 115, 22, 0.20);
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+}
+.chord-now-label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  align-self: flex-start;
+}
+.chord-now-symbol {
+  font-size: 56px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+  line-height: 1;
+}
+.chord-now-diagram {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 520px;
+  min-height: 340px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chord-now-diagram svg {
+  width: 100%;
+  height: 100%;
+  max-height: 400px;
+  display: block;
+}
+/* Footer row inside NOW PLAYING — countdown on the left, transition
+   hint on the right. On narrow viewports they stack via flex-wrap. */
+.chord-now-footer {
+  width: 100%;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.chord-countdown {
+  font-size: 14px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-height: 1.2em;
+}
+.chord-transition {
+  font-size: 14px;
+  color: var(--accent);
+  font-weight: 600;
+}
+/* Up-next preview cards (activeIdx+1, +2). Smaller than NOW PLAYING
+   with a dim border so the eye isn't tempted away from the focal
+   card. The whole card is a <button> for click-to-seek; keyboard
+   focus picks up the accent ring. */
+.chord-up-next {
+  flex: 1 1 25%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.chord-up-next:hover,
+.chord-up-next:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  outline: none;
+}
+.chord-up-next-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  align-self: flex-start;
+}
+.chord-up-next-symbol {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+  line-height: 1;
+}
+.chord-up-next-diagram {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chord-up-next-diagram svg {
+  width: 100%;
+  height: 100%;
+  max-height: 260px;
+  display: block;
+}
+/* NOW PLAYING diagram is a click target for the voicing picker
+   (§4). Hover affordance via subtle accent ring; cursor:pointer to
+   communicate interactivity. */
+.chord-now-diagram.is-clickable {
+  cursor: pointer;
+  border-radius: 8px;
+  transition: box-shadow 120ms ease;
+}
+.chord-now-diagram.is-clickable:hover {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+/* Voicing picker popover — anchored under chord-now-block, opens on
+   click of the NOW PLAYING diagram. */
+.chord-now-block {
+  position: relative;
+}
+.chord-voicing-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  z-index: 50;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px;
+  min-width: 180px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.chord-voicing-header {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 2px 6px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.chord-voicing-option {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.chord-voicing-option:hover,
+.chord-voicing-option:focus-visible {
+  background: rgba(249, 115, 22, 0.08);
+  border-color: var(--accent);
+  outline: none;
+}
+.chord-voicing-option.is-selected {
+  background: rgba(249, 115, 22, 0.16);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+/* Overlay labels under NOW PLAYING (§8). Nashville + Roman sit
+   inline above the diagram; the scale suggestion sits below. */
+.chord-now-overlays {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-height: 0;
+  margin-bottom: 4px;
+}
+.chord-overlay-nashville {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+.chord-overlay-roman {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.chord-overlay-scales {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+}
+/* Advanced overlays toggle row — collapsed by default via <details>. */
+.chord-overlays-row {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.chord-overlays-details {
+  background: transparent;
+}
+.chord-overlays-summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  display: inline-block;
+}
+.chord-overlays-summary:hover {
+  color: var(--accent);
+}
+.chord-overlay-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  cursor: pointer;
+}
+.chord-diagram-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 6px;
+}
+
+/* On narrow viewports stack the three guidance cards vertically so
+   the focal card isn't squeezed and the up-next previews stay
+   legible. */
+@media (max-width: 900px) {
+  .chord-guidance {
+    flex-direction: column;
+  }
+  .chord-now-block,
+  .chord-up-next {
+    flex: 1 1 auto;
+  }
+}
+@media (max-width: 600px) {
+  .chord-now-block {
+    padding: 10px 12px 12px;
+  }
+  .chord-now-symbol {
+    font-size: 44px;
+  }
+  .chord-now-diagram {
+    min-height: 240px;
+  }
+}
+
+/* SVG element styling — the renderer in chord_diagrams.js applies
+   these class names to <line>/<circle>/<text>/<rect>. Default SVG
+   paint is black, which is invisible on the dark panel; pin every
+   stroke/fill to a theme token here so the diagrams read like the
+   rest of the UI. */
+.chord-diagram-title {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+}
+.chord-diagram-slot.is-active .chord-diagram-title,
+.chord-diagram-svg.is-active .chord-diagram-title {
+  fill: var(--accent);
+}
+.chord-diagram-string {
+  stroke: var(--text-dim);
+  stroke-width: 1.2;
+}
+.chord-diagram-fret {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  opacity: 0.7;
+}
+.chord-diagram-nut {
+  stroke: var(--text);
+  stroke-width: 2.5;
+}
+.chord-diagram-dot {
+  fill: var(--accent);
+  stroke: none;
+}
+.chord-diagram-open {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.2;
+}
+.chord-diagram-mute {
+  fill: var(--text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  font-family: inherit;
+}
+.chord-diagram-finger {
+  fill: #0b0d10;
+  font-size: 7px;
+  font-weight: 700;
+  font-family: inherit;
+}
+.chord-diagram-barre {
+  fill: var(--accent);
+  opacity: 0.85;
+}
+.chord-diagram-fret-label {
+  fill: var(--text-dim);
+  font-size: 8px;
+  font-family: inherit;
+}
+.chord-diagram-placeholder {
+  fill: var(--text-dim);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+/* Lead-tab lane: single full-width fretboard SVG showing the
+   monophonic lead-line notes for the active chord window. */
+.chord-tab-queue {
+  margin-top: 12px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  min-height: 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chord-tab-label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.chord-tab-body {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 90px;
+}
+.chord-tab-body svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 120px;
+}
+.chord-tab-body .chord-tab-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* Tab-SVG elements — same theming approach as the chord diagram
+   classes above. Default SVG fill (black) is invisible on the
+   dark panel; pin to theme tokens. */
+.chord-tab-string {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  opacity: 0.7;
+}
+.chord-tab-clef {
+  fill: var(--text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  font-family: inherit;
+}
+.chord-tab-fret {
+  fill: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+}
+.chord-tab-placeholder {
+  fill: var(--text-dim);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+/* View-mode toggle row: Diagrams / Tab / Both. Mirrors the
+   chord-snap-row typography so the two toggles look like a family. */
+.chord-view-mode-row {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.chord-view-mode-label {
+  color: var(--text-dim);
+}
+.chord-view-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.chord-view-mode-option input[type="radio"] {
+  cursor: pointer;
+  margin: 0;
+}
+
+/* Click-track toggle: when ON, accent border + faint accent fill so the
+   user can tell the metronome scheduler is actually running. */
+#t-click.click-on {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* right column: stem mixer (tighter rows) */

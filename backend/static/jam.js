@@ -65,6 +65,44 @@
     // construction so updateChordPlayhead can run in O(log n) per RAF
     // tick without re-measuring DOM.
     chords: [],
+    // Raw chord arrays from the analysis result, cached so the
+    // beat-snap toggle can switch between them at render time without
+    // a refetch. `fixed` is the Phase 5 WCSR-best, fixed-window grid;
+    // `snapped` is the same regions with boundaries snapped to nearest
+    // beat (Phase 6 hybrid). `snapped` is null when the analysis lane
+    // didn't produce a beat-snapped version (e.g. no beats detected).
+    rawChords: { fixed: [], snapped: null },
+    // User preference: render the beat-snapped chord array when
+    // available. Persisted to localStorage under
+    // CHORD_BEAT_SNAP_PREF_KEY. Falsy by default — WCSR floor is
+    // higher with the fixed-window array, so that's the safer default
+    // for guitarists tracking chord changes against the tab.
+    chordBeatSnap: false,
+    // Chord diagram queue + tab lane (Phase C of the chord-diagram
+    // feature). View mode is persisted to localStorage under
+    // CHORD_VIEW_MODE_PREF_KEY. The shape registry is the parsed
+    // chord_shapes.json, fetched once on first render; null until
+    // loaded. The renderer module is dynamically imported on first
+    // need (same lazy load pattern) and pinned here so subsequent
+    // renders skip the import promise resolution.
+    chordViewMode: 'diagrams',   // 'diagrams' | 'tab' | 'both'
+    chordShapeRegistry: null,
+    chordDiagramModule: null,
+    // Per-symbol voicing preference, populated from localStorage on
+    // boot. Shape: { "C:maj": 0, "G:maj": 1, ... } where the int is
+    // the index into listVoicings(symbol, registry) — 0 is the
+    // curated open voicing, 1+ are algorithmic barre alternates.
+    // Selections persist across sessions (§4 of the chord-guidance
+    // UX directive: "Persist selection for the session").
+    voicingPrefs: {},
+    // Advanced overlays toggle state (§8). All default OFF; persisted
+    // to localStorage under CHORD_OVERLAYS_KEY.
+    chordOverlays: { nashville: false, roman: false, scales: false },
+    // Lead-line MIDI notes for the tab lane. Sourced from
+    // result.midi.notes (bundle.user_midi.notes). Cached at
+    // analysis-complete so the tab renderer can slice [t0, t1)
+    // without touching the network.
+    leadMidiNotes: [],
     // Loop window in seconds or null
     loop: null,
     // Web Audio context (created lazily on first play)
@@ -1009,12 +1047,55 @@
     state.stems.clear();
     state.sections = [];
     state.chords = [];
+    state.rawChords = { fixed: [], snapped: null };
     // Empty the ribbon DOM so stale pills from the prior song don't
     // bleed into the next one before buildChordRibbon repopulates.
     const _ribbonEl = document.getElementById('chord-ribbon');
     const _stripEl = document.getElementById('chord-ribbon-strip');
     if (_stripEl) _stripEl.innerHTML = '';
     if (_ribbonEl) _ribbonEl.hidden = true;
+    // Hide the beat-snap toggle row until the next analysis result
+    // brings a fresh `chords_beat_snapped` array.
+    const _snapRow = document.getElementById('chord-snap-row');
+    if (_snapRow) _snapRow.hidden = true;
+    // Reset the chord guidance (now+next) + lead-tab lane + view-mode
+    // row so stale content from the prior session doesn't bleed into
+    // the next. The view-mode preference itself is intentionally NOT
+    // reset (it's a user preference that should survive across jams,
+    // same as the beat-snap toggle).
+    const _guidance = document.getElementById('chord-guidance');
+    if (_guidance) {
+      _guidance.hidden = true;
+      const _nowSym = document.getElementById('chord-now-symbol');
+      const _nowDia = document.getElementById('chord-now-diagram');
+      const _countdown = document.getElementById('chord-countdown');
+      const _transition = document.getElementById('chord-transition');
+      if (_nowSym) _nowSym.textContent = '';
+      if (_nowDia) _nowDia.innerHTML = '';
+      if (_countdown) _countdown.textContent = '';
+      if (_transition) { _transition.textContent = ''; _transition.hidden = true; }
+      // Up-next preview cards — clear text + diagram, hide cards.
+      for (let i = 1; i <= 2; i++) {
+        const _card = document.getElementById(`chord-up-next-${i}`);
+        const _sym = document.getElementById(`chord-up-next-${i}-symbol`);
+        const _dia = document.getElementById(`chord-up-next-${i}-diagram`);
+        if (_card) { _card.hidden = true; _card.onclick = null; }
+        if (_sym) _sym.textContent = '';
+        if (_dia) _dia.innerHTML = '';
+      }
+    }
+    const _tabLane = document.getElementById('chord-tab-queue');
+    if (_tabLane) {
+      _tabLane.hidden = true;
+      const _tabBody = document.getElementById('chord-tab-body');
+      if (_tabBody) _tabBody.innerHTML = '';
+    }
+    const _overlaysRow = document.getElementById('chord-overlays-row');
+    if (_overlaysRow) _overlaysRow.hidden = true;
+    // Clear any open voicing popover so it doesn't leak between jams.
+    const _vp = document.getElementById('chord-voicing-popover');
+    if (_vp) _vp.remove();
+    state.leadMidiNotes = [];
     state.duration = 0;
     state.playOffset = 0;
     state.analysisId = null;
@@ -1439,7 +1520,37 @@
     // shape AnalysisResult.to_dict() emits; empty/missing renders
     // nothing (ribbon stays hidden), so legacy responses without a
     // chord lane don't show an empty strip.
-    buildChordRibbon(result.chords || []);
+    //
+    // Phase 6: result.chords_beat_snapped is the same regions with
+    // boundaries snapped to nearest beat. Cache both and let the
+    // toggle pick at render time.
+    state.rawChords = {
+      fixed: result.chords || [],
+      snapped: result.chords_beat_snapped || null,
+    };
+    // Cache lead-line MIDI notes for the tab lane. Preference order:
+    //   1. result.midi_stems[guitar|other|piano] — the live-analyze
+    //      path carries per-stem MIDI keyed by stem name. We prefer
+    //      guitar (lead-flavour on most rock catalogue); 'other' (the
+    //      demucs catch-all) and 'piano' are fallbacks so legacy
+    //      pipelines without a guitar stem still surface something.
+    //   2. result.midi.notes — bundle-restore path: user_midi.notes
+    //      (whatever stem the user's selected role mapped to).
+    // An empty array makes the tab lane render its "(no lead notes
+    // for this region)" placeholder, which is the correct degenerate
+    // behaviour rather than throwing.
+    state.leadMidiNotes = _pickLeadMidiNotes(result);
+    syncChordSnapToggleVisibility();
+    buildChordRibbon(activeChordArray());
+    syncChordViewModeRowVisibility();
+    syncChordOverlaysVisibility();
+    // Prime the guidance + tab panels at index 0 so the user sees a
+    // populated NOW PLAYING / NEXT UP / LEAD PART surface immediately
+    // after analysis completes — without this, both panels stay empty
+    // until the playhead crosses the first chord boundary.
+    if (Array.isArray(state.chords) && state.chords.length > 0) {
+      _onActiveChordChanged(0);
+    }
 
     // Preload audio so press-play is instant
     await prepareStemAudio();
@@ -1516,13 +1627,774 @@
       bar.appendChild(pill);
       return { name: label, startSec: start, endSec: end, el: pill };
     });
+    // Fallback: when section detection returns nothing (some short
+    // clips or noisy mixes), still give the user a single full-song
+    // pill so the loop UX (click pill → A/B region loop) is reachable.
     if (!state.sections.length) {
-      bar.innerHTML = '<div style="color: var(--text-dim); font-size:13px;">Section detection unavailable for this song</div>';
+      const dur = secondsOf(state.duration) || 0;
+      if (dur > 0) {
+        const pill = document.createElement('button');
+        pill.className = 'section-pill';
+        pill.textContent = `Full song ${formatTime(0)}`;
+        pill.addEventListener('click', () => toggleSectionLoop({ name: 'Full song', startSec: 0, endSec: dur, el: pill }));
+        bar.appendChild(pill);
+        state.sections = [{ name: 'Full song', startSec: 0, endSec: dur, el: pill }];
+      } else {
+        bar.innerHTML = '<div style="color: var(--text-dim); font-size:13px;">Section detection unavailable for this song</div>';
+      }
     }
   }
 
   // ---------------------------------------------- chord ribbon (JAM Alpha)
   //
+  // Beat-snap toggle: switches the rendered chord ribbon between the
+  // fixed-window grid (result.chords) and the beat-snapped grid
+  // (result.chords_beat_snapped). Both arrays are produced by the
+  // analysis pipeline; the toggle is a render-time choice persisted
+  // to localStorage so the user's preference survives reloads.
+  const CHORD_BEAT_SNAP_PREF_KEY = 'toneforge.jam.chordBeatSnap';
+  try {
+    state.chordBeatSnap = localStorage.getItem(CHORD_BEAT_SNAP_PREF_KEY) === '1';
+  } catch (_) {
+    // localStorage may throw in private-mode Safari; default stays
+    // false which matches the safer (higher-WCSR) view.
+  }
+
+  function activeChordArray() {
+    const raw = state.rawChords || { fixed: [], snapped: null };
+    if (state.chordBeatSnap && Array.isArray(raw.snapped) && raw.snapped.length > 0) {
+      return raw.snapped;
+    }
+    return raw.fixed || [];
+  }
+
+  function syncChordSnapToggleVisibility() {
+    const row = document.getElementById('chord-snap-row');
+    const cb = document.getElementById('chord-snap-toggle');
+    if (!row || !cb) return;
+    const raw = state.rawChords || { fixed: [], snapped: null };
+    const hasSnapped = Array.isArray(raw.snapped) && raw.snapped.length > 0;
+    const hasFixed = Array.isArray(raw.fixed) && raw.fixed.length > 0;
+    // Only surface the toggle when there's a meaningful choice: both
+    // a chord lane to show AND a beat-snapped alternative.
+    row.hidden = !(hasFixed && hasSnapped);
+    cb.checked = !!state.chordBeatSnap;
+  }
+
+  // Wire the toggle once at module load. The handler flips the
+  // preference, persists it, and re-renders the ribbon from the
+  // cached arrays without touching the network.
+  (function wireChordSnapToggle() {
+    const cb = document.getElementById('chord-snap-toggle');
+    if (!cb) return;
+    cb.checked = !!state.chordBeatSnap;
+    cb.addEventListener('change', () => {
+      state.chordBeatSnap = !!cb.checked;
+      try { localStorage.setItem(CHORD_BEAT_SNAP_PREF_KEY, state.chordBeatSnap ? '1' : '0'); } catch (_) {}
+      buildChordRibbon(activeChordArray());
+    });
+  })();
+
+  // -------------------------------------- chord diagrams + lead tab (Phase C)
+  // View mode persisted to localStorage so the user's choice survives
+  // reloads. Default is 'diagrams' — the common case for a guitarist
+  // who wants visual fingerings under the chord ribbon.
+  const CHORD_VIEW_MODE_PREF_KEY = 'toneforge.jam.chordViewMode';
+  const VALID_CHORD_VIEW_MODES = new Set(['diagrams', 'tab', 'both']);
+  const VOICING_PREFS_KEY = 'toneforge.jam.voicings';
+  const CHORD_OVERLAYS_KEY = 'toneforge.jam.overlays';
+  try {
+    const stored = localStorage.getItem(CHORD_VIEW_MODE_PREF_KEY);
+    if (stored && VALID_CHORD_VIEW_MODES.has(stored)) {
+      state.chordViewMode = stored;
+    }
+    const voicingStr = localStorage.getItem(VOICING_PREFS_KEY);
+    if (voicingStr) {
+      const parsed = JSON.parse(voicingStr);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        state.voicingPrefs = parsed;
+      }
+    }
+    const overlayStr = localStorage.getItem(CHORD_OVERLAYS_KEY);
+    if (overlayStr) {
+      const parsed = JSON.parse(overlayStr);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        state.chordOverlays = {
+          nashville: !!parsed.nashville,
+          roman: !!parsed.roman,
+          scales: !!parsed.scales,
+        };
+      }
+    }
+  } catch (_) {
+    // localStorage may throw in private-mode Safari; default stays
+    // 'diagrams'.
+  }
+
+  // Walk the analysis result and return the best lead-line MIDI
+  // notes array we can find. See the caller comment in
+  // onAnalysisComplete for the preference order.
+  function _pickLeadMidiNotes(r) {
+    if (!r) return [];
+    const stems = r.midi_stems;
+    if (stems && typeof stems === 'object') {
+      for (const key of ['guitar', 'other', 'piano']) {
+        const stem = stems[key];
+        if (!stem) continue;
+        if (Array.isArray(stem.notes) && stem.notes.length > 0) {
+          return stem.notes;
+        }
+        // Some per-stem extractor outputs nest notes inside ``content``
+        // (PrettyMIDI dict shape from tone_forge_api.py:2055).
+        if (stem.content && Array.isArray(stem.content.notes) && stem.content.notes.length > 0) {
+          return stem.content.notes;
+        }
+      }
+    }
+    if (r.midi && Array.isArray(r.midi.notes)) {
+      return r.midi.notes;
+    }
+    return [];
+  }
+
+  // Lazy-import the renderer module + shape registry. Idempotent —
+  // resolves to the cached pair after the first successful load. If
+  // either resource fails (404, parse error) we return null and the
+  // queue render falls back to symbol-only text in each slot.
+  async function ensureChordDiagramAssets() {
+    if (state.chordDiagramModule && state.chordShapeRegistry) {
+      return { mod: state.chordDiagramModule, registry: state.chordShapeRegistry };
+    }
+    try {
+      if (!state.chordDiagramModule) {
+        state.chordDiagramModule = await import('/static/chord_diagrams.js');
+      }
+      if (!state.chordShapeRegistry) {
+        state.chordShapeRegistry = await state.chordDiagramModule.loadChordShapes();
+      }
+      return { mod: state.chordDiagramModule, registry: state.chordShapeRegistry };
+    } catch (err) {
+      try { console.warn('[jam] chord diagram assets failed to load', err); } catch (_) {}
+      return null;
+    }
+  }
+
+  // Hide / show the diagram queue + tab lane according to the
+  // current view mode. Both lanes are also gated on whether chord
+  // data is present at all — when state.chords is empty (or the
+  // ribbon is hidden), nothing chord-derived should be visible.
+  function syncChordViewModeRowVisibility() {
+    // Old radio toggle ("Now+Next / Lead tab / Both") removed per the
+    // chord-guidance UX directive (§3, §9): both panels are always
+    // visible when chord data exists. The LEAD PART panel renders an
+    // explanatory placeholder ("No lead phrase detected …") rather
+    // than hiding itself, so the surface is never blank.
+    const guidance = document.getElementById('chord-guidance');
+    const tab = document.getElementById('chord-tab-queue');
+    if (!guidance || !tab) return;
+    const hasChords = Array.isArray(state.chords) && state.chords.length > 0;
+    guidance.hidden = !hasChords;
+    tab.hidden = !hasChords;
+  }
+
+  // Wire the view-mode radios. Mirrors wireChordSnapToggle: handler
+  // updates state, persists to localStorage, re-applies visibility,
+  // and forces a queue / tab re-render so the visible lane reflects
+  // the active chord immediately rather than waiting for the next
+  // playhead tick.
+  (function wireChordViewModeRadios() {
+    const row = document.getElementById('chord-view-mode-row');
+    if (!row) return;
+    const radios = row.querySelectorAll('input[name="chord-view-mode"]');
+    radios.forEach((r) => {
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        if (!VALID_CHORD_VIEW_MODES.has(r.value)) return;
+        state.chordViewMode = r.value;
+        try { localStorage.setItem(CHORD_VIEW_MODE_PREF_KEY, state.chordViewMode); } catch (_) {}
+        syncChordViewModeRowVisibility();
+        // Force a re-render at the current active index so the lane
+        // populates immediately rather than waiting for the chord
+        // boundary to cross (which on a long pill could be many
+        // seconds away).
+        const idx = _chordLastActiveIdx >= 0
+          ? _chordLastActiveIdx
+          : 0;
+        _renderChordGuidance(idx);
+        _renderLeadTabLane(idx);
+      });
+    });
+  })();
+
+  // Render the NOW PLAYING focal card. The prior NEXT UP peripheral
+  // row was removed because the upcoming chords are already visible
+  // in the ribbon strip above; the countdown + transition hint that
+  // used to live in the NEXT card are now updated in the now-block's
+  // footer via _updateChordCountdown / _updateChordTransitionHint.
+  function _renderChordGuidance(activeIdx) {
+    const guidance = document.getElementById('chord-guidance');
+    if (!guidance) return;
+    if (!Array.isArray(state.chords) || state.chords.length === 0) return;
+
+    const nowSymbolEl = document.getElementById('chord-now-symbol');
+    const nowDiagramEl = document.getElementById('chord-now-diagram');
+    if (!nowSymbolEl || !nowDiagramEl) return;
+
+    const chords = state.chords;
+    const nowChord = (activeIdx >= 0 && activeIdx < chords.length) ? chords[activeIdx] : null;
+    const nowSymbol = nowChord ? (nowChord.symbol || '?') : '—';
+
+    // Update the now-block text label immediately so the chord name
+    // refreshes even before the SVG renderer has loaded.
+    nowSymbolEl.textContent = nowSymbol;
+    // Overlays (§8) render synchronously off state.chordOverlays so
+    // their labels update at the same moment as the chord symbol.
+    _applyOverlaysToNowBlock(nowSymbol);
+
+    // Asset load is async; if it isn't ready yet, fire-and-forget
+    // and let the next chord-change tick repaint. We still update
+    // the text label so the user always sees the current chord.
+    ensureChordDiagramAssets().then((assets) => {
+      // NOW PLAYING — large diagram, no in-SVG title (the symbol text
+      // above is the title surface). highlighted=true so .is-active
+      // classes on SVG children pick up the accent palette.
+      nowDiagramEl.innerHTML = '';
+      // The NOW PLAYING diagram is a click target (§4) — wire the
+      // cursor + handler once per render so the voicing picker opens
+      // anchored to chord-now-block.
+      nowDiagramEl.classList.add('is-clickable');
+      nowDiagramEl.title = `${nowSymbol} — click to change voicing`;
+      nowDiagramEl.onclick = () => {
+        if (nowSymbol && nowSymbol !== '—') _openVoicingPicker(nowSymbol);
+      };
+      if (nowChord) {
+        if (assets && assets.mod && assets.registry) {
+          const shape = _resolveShapeForSymbol(nowSymbol);
+          const svg = assets.mod.renderChordDiagramSVG(
+            nowSymbol, shape,
+            { highlighted: true, hideTitle: true },
+          );
+          if (svg) nowDiagramEl.appendChild(svg);
+          else {
+            const txt = document.createElement('div');
+            txt.className = 'chord-diagram-empty';
+            txt.textContent = nowSymbol;
+            nowDiagramEl.appendChild(txt);
+          }
+        } else {
+          const txt = document.createElement('div');
+          txt.className = 'chord-diagram-empty';
+          txt.textContent = nowSymbol;
+          nowDiagramEl.appendChild(txt);
+        }
+      }
+
+      // UP NEXT / THEN — two preview cards for activeIdx+1, +2. Each
+      // is a click-to-seek <button>; rendered with the same registry
+      // + voicing prefs as NOW PLAYING but at the non-highlighted
+      // (dim) palette since they're peripheral. Hidden when there's
+      // no further chord at that index (end of song).
+      _renderUpNextSlot(1, chords, activeIdx + 1, assets);
+      _renderUpNextSlot(2, chords, activeIdx + 2, assets);
+    });
+
+    // Transition guidance (best-effort one-liner) — sits below the
+    // countdown. Updated on every active-chord change since the
+    // shape pair only changes at chord boundaries.
+    _updateChordTransitionHint(activeIdx);
+  }
+
+  // Render one of the two up-next preview cards (slotNumber in {1, 2}).
+  // Hides the card when `chordIdx` is out of range (end of song).
+  // Wires a click-to-seek handler on each render so the closure
+  // captures the current target chord's startSec.
+  function _renderUpNextSlot(slotNumber, chords, chordIdx, assets) {
+    const cardEl = document.getElementById(`chord-up-next-${slotNumber}`);
+    const symbolEl = document.getElementById(`chord-up-next-${slotNumber}-symbol`);
+    const diagramEl = document.getElementById(`chord-up-next-${slotNumber}-diagram`);
+    if (!cardEl || !symbolEl || !diagramEl) return;
+
+    if (chordIdx < 0 || chordIdx >= chords.length) {
+      cardEl.hidden = true;
+      symbolEl.textContent = '';
+      diagramEl.innerHTML = '';
+      cardEl.onclick = null;
+      return;
+    }
+
+    const chord = chords[chordIdx];
+    const symbol = chord.symbol || '?';
+    cardEl.hidden = false;
+    symbolEl.textContent = symbol;
+    cardEl.title = `Jump to ${symbol} (${formatTime(chord.startSec)})`;
+    const _seekTo = chord.startSec;
+    cardEl.onclick = () => seekAll(_seekTo);
+
+    diagramEl.innerHTML = '';
+    if (assets && assets.mod && assets.registry) {
+      const shape = _resolveShapeForSymbol(symbol);
+      const svg = assets.mod.renderChordDiagramSVG(
+        symbol, shape,
+        { highlighted: false, hideTitle: true },
+      );
+      if (svg) {
+        diagramEl.appendChild(svg);
+      } else {
+        const txt = document.createElement('div');
+        txt.className = 'chord-diagram-empty';
+        txt.textContent = symbol;
+        diagramEl.appendChild(txt);
+      }
+    } else {
+      const txt = document.createElement('div');
+      txt.className = 'chord-diagram-empty';
+      txt.textContent = symbol;
+      diagramEl.appendChild(txt);
+    }
+  }
+
+  // Find the section that contains time `t`. Falls back to null when
+  // no sections are defined; callers should degrade to the per-chord
+  // window in that case.
+  function _findSectionAt(t) {
+    if (!Array.isArray(state.sections) || state.sections.length === 0) return null;
+    for (const s of state.sections) {
+      const s0 = typeof s.startSec === 'number' ? s.startSec : null;
+      const s1 = typeof s.endSec === 'number' ? s.endSec : null;
+      if (s0 === null || s1 === null) continue;
+      if (t >= s0 && t < s1) return s;
+    }
+    return null;
+  }
+
+  // Tiny one-line transition hints comparing the curated shape of the
+  // current chord against the next chord. The full transition-hint
+  // problem is rich (which fingers move, hand position, voice
+  // leading) — this is a best-effort heuristic that covers the most
+  // common useful cases without overpromising.
+  function _computeTransitionHint(nowSymbol, nextSymbol) {
+    if (!nowSymbol || !nextSymbol || nowSymbol === nextSymbol) return '';
+    if (!state.chordDiagramModule || !state.chordShapeRegistry) return '';
+    const mod = state.chordDiagramModule;
+    const reg = state.chordShapeRegistry;
+    let nowShape = null;
+    let nextShape = null;
+    try {
+      nowShape = mod.lookupShape(nowSymbol, reg);
+      nextShape = mod.lookupShape(nextSymbol, reg);
+    } catch (_) { return ''; }
+    if (!nowShape || !nextShape) return '';
+    const a = nowShape.frets;
+    const b = nextShape.frets;
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== 6 || b.length !== 6) return '';
+
+    // Same shape shifted: every non-muted string differs by the same
+    // positive offset. Common for barre-chord movements.
+    const deltas = [];
+    let sameStructure = true;
+    for (let i = 0; i < 6; i++) {
+      const aMute = a[i] < 0;
+      const bMute = b[i] < 0;
+      if (aMute !== bMute) { sameStructure = false; break; }
+      if (aMute) continue;
+      deltas.push(b[i] - a[i]);
+    }
+    if (sameStructure && deltas.length > 0
+        && deltas.every((d) => d === deltas[0]) && deltas[0] !== 0) {
+      const sign = deltas[0] > 0 ? '+' : '';
+      const word = Math.abs(deltas[0]) === 1 ? 'fret' : 'frets';
+      return `Same shape ${sign}${deltas[0]} ${word}`;
+    }
+
+    // Single-string-change hint: only one fretted string differs.
+    let changedStrings = 0;
+    for (let i = 0; i < 6; i++) {
+      if (a[i] !== b[i]) changedStrings++;
+    }
+    if (changedStrings === 1) return 'Move one finger only';
+    if (changedStrings === 2) return 'Two-finger move';
+
+    // Barre hint when next shape uses a barre.
+    if (nextShape.barre && typeof nextShape.barre.fret === 'number') {
+      return `Barre at fret ${nextShape.barre.fret}`;
+    }
+
+    return '';
+  }
+
+  function _updateChordTransitionHint(activeIdx) {
+    const el = document.getElementById('chord-transition');
+    if (!el) return;
+    if (!Array.isArray(state.chords) || activeIdx < 0
+        || activeIdx >= state.chords.length - 1) {
+      el.hidden = true;
+      el.textContent = '';
+      return;
+    }
+    const now = state.chords[activeIdx];
+    const next = state.chords[activeIdx + 1];
+    // The transition module loads async — if it hasn't resolved yet,
+    // try again after the current ensureChordDiagramAssets promise.
+    if (!state.chordDiagramModule || !state.chordShapeRegistry) {
+      ensureChordDiagramAssets().then(() => {
+        const hint = _computeTransitionHint(now.symbol, next.symbol);
+        if (!hint) { el.hidden = true; el.textContent = ''; return; }
+        el.textContent = hint;
+        el.hidden = false;
+      });
+      return;
+    }
+    const hint = _computeTransitionHint(now.symbol, next.symbol);
+    if (!hint) { el.hidden = true; el.textContent = ''; return; }
+    el.textContent = hint;
+    el.hidden = false;
+  }
+
+  // Countdown to next chord change. Updated from the RAF tick at
+  // ~10Hz via _chordCountdownLastTextTs throttle, so we don't churn
+  // the DOM 60 times per second for a value that only changes every
+  // 100ms in user-visible precision.
+  let _chordCountdownLastText = '';
+  function _updateChordCountdown(t, activeIdx) {
+    const el = document.getElementById('chord-countdown');
+    if (!el) return;
+    if (!Array.isArray(state.chords) || activeIdx < 0
+        || activeIdx >= state.chords.length) {
+      if (_chordCountdownLastText !== '') {
+        el.textContent = '';
+        _chordCountdownLastText = '';
+      }
+      return;
+    }
+    const cur = state.chords[activeIdx];
+    const next = state.chords[activeIdx + 1];
+    let text;
+    if (!next) {
+      text = 'Last chord';
+    } else {
+      const remaining = Math.max(0, cur.endSec - t);
+      // 1-decimal precision matches the directive example "1.8s".
+      text = `Next change in ${remaining.toFixed(1)}s`;
+    }
+    if (text !== _chordCountdownLastText) {
+      el.textContent = text;
+      _chordCountdownLastText = text;
+    }
+  }
+
+  // -------------------------------------- voicing picker (§4)
+  // Returns the user's preferred shape for `symbol`, falling back to
+  // the curated lookup (voicing index 0). The renderer module +
+  // registry must already be loaded — callers ensure this via
+  // ensureChordDiagramAssets().
+  function _resolveShapeForSymbol(symbol) {
+    if (!state.chordDiagramModule || !state.chordShapeRegistry) return null;
+    const mod = state.chordDiagramModule;
+    const reg = state.chordShapeRegistry;
+    const list = (typeof mod.listVoicings === 'function')
+      ? mod.listVoicings(symbol, reg)
+      : null;
+    if (Array.isArray(list) && list.length > 0) {
+      const key = `${symbol}`;
+      const idx = Number.isInteger(state.voicingPrefs[key])
+        ? state.voicingPrefs[key]
+        : 0;
+      const clamped = Math.max(0, Math.min(idx, list.length - 1));
+      return list[clamped].shape;
+    }
+    // Fallback to legacy lookup if listVoicings missing for some
+    // reason (older bundled module on a stale cache).
+    try { return mod.lookupShape(symbol, reg); } catch (_) { return null; }
+  }
+
+  function _persistVoicingPref() {
+    try {
+      localStorage.setItem(VOICING_PREFS_KEY, JSON.stringify(state.voicingPrefs));
+    } catch (_) {}
+  }
+
+  // Toggle the voicing popover under the NOW PLAYING diagram. The
+  // popover is built on demand and parented to chord-now-block so it
+  // anchors visually beneath the diagram without needing a portal /
+  // fixed positioner. Re-clicking the same chord closes the popover.
+  let _voicingPopoverSymbol = null;
+  function _openVoicingPicker(symbol) {
+    const host = document.getElementById('chord-now-block');
+    if (!host) return;
+    const existing = document.getElementById('chord-voicing-popover');
+    if (existing) existing.remove();
+    if (_voicingPopoverSymbol === symbol) {
+      _voicingPopoverSymbol = null;
+      return;
+    }
+    _voicingPopoverSymbol = symbol;
+
+    if (!state.chordDiagramModule || !state.chordShapeRegistry) return;
+    const list = state.chordDiagramModule.listVoicings(symbol, state.chordShapeRegistry);
+    if (!Array.isArray(list) || list.length === 0) {
+      _voicingPopoverSymbol = null;
+      return;
+    }
+
+    const pop = document.createElement('div');
+    pop.id = 'chord-voicing-popover';
+    pop.className = 'chord-voicing-popover';
+    pop.setAttribute('role', 'menu');
+    pop.setAttribute('aria-label', `Voicing options for ${symbol}`);
+
+    const header = document.createElement('div');
+    header.className = 'chord-voicing-header';
+    header.textContent = `${symbol} voicings`;
+    pop.appendChild(header);
+
+    const selectedIdx = Number.isInteger(state.voicingPrefs[symbol])
+      ? state.voicingPrefs[symbol]
+      : 0;
+
+    list.forEach((entry, idx) => {
+      const opt = document.createElement('button');
+      opt.type = 'button';
+      opt.className = 'chord-voicing-option';
+      if (idx === selectedIdx) opt.classList.add('is-selected');
+      opt.setAttribute('role', 'menuitemradio');
+      opt.setAttribute('aria-checked', idx === selectedIdx ? 'true' : 'false');
+      opt.textContent = entry.name;
+      opt.addEventListener('click', () => {
+        state.voicingPrefs[symbol] = idx;
+        _persistVoicingPref();
+        // Close popover and re-render to reflect the new selection.
+        _voicingPopoverSymbol = null;
+        pop.remove();
+        if (_chordLastActiveIdx >= 0) _renderChordGuidance(_chordLastActiveIdx);
+      });
+      pop.appendChild(opt);
+    });
+
+    host.appendChild(pop);
+
+    // Dismiss on outside click. Defer registering the listener by one
+    // tick so the click that opened the popover doesn't immediately
+    // close it.
+    setTimeout(() => {
+      const onDocClick = (ev) => {
+        if (!pop.contains(ev.target)
+            && !ev.target.closest('#chord-now-diagram')) {
+          pop.remove();
+          _voicingPopoverSymbol = null;
+          document.removeEventListener('click', onDocClick);
+        }
+      };
+      document.addEventListener('click', onDocClick);
+    }, 0);
+  }
+
+  // -------------------------------------- advanced overlays (§8)
+  // Parse a chord symbol into { rootPc, quality }. The chord_diagrams
+  // module exports normalizeSymbol but it's only available after the
+  // async import — for overlays we want a synchronous fast path so
+  // the labels appear without waiting for the module to resolve.
+  // Falls back to null on garbage input.
+  const _PC_NAME_TO_PC = {
+    'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
+    'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8, 'Ab': 8,
+    'A': 9, 'A#': 10, 'Bb': 10, 'B': 11,
+  };
+  function _parseChordSymbolLocal(symbol) {
+    if (!symbol || typeof symbol !== 'string') return null;
+    const m = symbol.match(/^([A-G][#b]?)(.*)$/);
+    if (!m) return null;
+    const rootPc = _PC_NAME_TO_PC[m[1]];
+    if (rootPc == null) return null;
+    const tail = (m[2] || '').toLowerCase();
+    let quality = 'maj';
+    if (/^m(?!aj)/.test(tail) || /^min/.test(tail)) quality = 'min';
+    else if (/dim/.test(tail)) quality = 'dim';
+    else if (/aug/.test(tail)) quality = 'aug';
+    else if (/^7/.test(tail)) quality = '7';
+    else if (/m7/.test(tail)) quality = 'm7';
+    else if (/maj7/.test(tail)) quality = 'maj7';
+    else if (/sus2/.test(tail)) quality = 'sus2';
+    else if (/sus4/.test(tail)) quality = 'sus4';
+    else if (/^5/.test(tail)) quality = '5';
+    return { rootPc, quality };
+  }
+
+  // Compute the scale degree (1-7) of the chord root relative to the
+  // song key. Returns null when key isn't known or the chord doesn't
+  // sit on a scale tone (e.g. chromatic / borrowed chords).
+  function _scaleDegree(chordRootPc, songKey) {
+    if (!songKey || chordRootPc == null) return null;
+    const intervals = songKey.scale === 'Minor'
+      ? [0, 2, 3, 5, 7, 8, 10]
+      : [0, 2, 4, 5, 7, 9, 11];
+    const diff = (chordRootPc - songKey.root + 12) % 12;
+    const idx = intervals.indexOf(diff);
+    return idx >= 0 ? idx + 1 : null; // 1-based
+  }
+
+  function _nashvilleLabel(symbol) {
+    if (!state.songKey) return '';
+    const parsed = _parseChordSymbolLocal(symbol);
+    if (!parsed) return '';
+    const deg = _scaleDegree(parsed.rootPc, state.songKey);
+    if (!deg) return '';
+    const isMinor = parsed.quality === 'min' || parsed.quality === 'm7' || parsed.quality === 'dim';
+    return isMinor ? `${deg}m` : `${deg}`;
+  }
+
+  // Roman numerals, uppercase for major-family, lowercase for minor;
+  // diminished gets the ° symbol, augmented the + symbol.
+  const _ROMAN_UPPER = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+  function _romanLabel(symbol) {
+    if (!state.songKey) return '';
+    const parsed = _parseChordSymbolLocal(symbol);
+    if (!parsed) return '';
+    const deg = _scaleDegree(parsed.rootPc, state.songKey);
+    if (!deg) return '';
+    const base = _ROMAN_UPPER[deg - 1];
+    if (parsed.quality === 'dim') return `${base.toLowerCase()}°`;
+    if (parsed.quality === 'aug') return `${base}+`;
+    const isMinor = parsed.quality === 'min' || parsed.quality === 'm7';
+    return isMinor ? base.toLowerCase() : base;
+  }
+
+  // Scale-suggestion strings by quality. Concise, one-line, generic
+  // enough to apply across keys (the renderer prepends the chord
+  // root). Goal is a "try this" hint, not music-theory exhaustive.
+  const _SCALE_HINTS = {
+    'maj': 'Major / Major pentatonic',
+    'min': 'Natural minor / Minor pentatonic',
+    'm7':  'Dorian / Minor pentatonic',
+    'maj7': 'Major / Lydian',
+    '7':   'Mixolydian',
+    'dim': 'Whole-half diminished',
+    'aug': 'Whole-tone',
+    'sus2': 'Major pentatonic',
+    'sus4': 'Mixolydian / Major pentatonic',
+    '5':   'Major / Minor pentatonic',
+  };
+  function _scaleSuggestion(symbol) {
+    const parsed = _parseChordSymbolLocal(symbol);
+    if (!parsed) return '';
+    const hint = _SCALE_HINTS[parsed.quality];
+    if (!hint) return '';
+    // Use the chord root name, not the song key, since soloists
+    // typically frame scales against the chord they're playing over.
+    const rootName = symbol.match(/^([A-G][#b]?)/)?.[1] || '';
+    return rootName ? `${rootName} ${hint}` : hint;
+  }
+
+  function _applyOverlaysToNowBlock(symbol) {
+    const nash = document.getElementById('chord-now-nashville');
+    const rom = document.getElementById('chord-now-roman');
+    const sc = document.getElementById('chord-now-scale');
+    if (nash) {
+      const txt = state.chordOverlays.nashville ? _nashvilleLabel(symbol) : '';
+      nash.textContent = txt;
+      nash.hidden = !txt;
+    }
+    if (rom) {
+      const txt = state.chordOverlays.roman ? _romanLabel(symbol) : '';
+      rom.textContent = txt;
+      rom.hidden = !txt;
+    }
+    if (sc) {
+      const txt = state.chordOverlays.scales ? _scaleSuggestion(symbol) : '';
+      sc.textContent = txt;
+      sc.hidden = !txt;
+    }
+  }
+
+  function _persistChordOverlays() {
+    try { localStorage.setItem(CHORD_OVERLAYS_KEY, JSON.stringify(state.chordOverlays)); } catch (_) {}
+  }
+
+  // Reflect the overlays state on the checkbox UI and toggle the
+  // visibility of the row itself. Called on analysis-complete and on
+  // perform-back cleanup.
+  function syncChordOverlaysVisibility() {
+    const row = document.getElementById('chord-overlays-row');
+    if (!row) return;
+    const hasChords = Array.isArray(state.chords) && state.chords.length > 0;
+    row.hidden = !hasChords;
+    const n = document.getElementById('chord-overlay-nashville');
+    const r = document.getElementById('chord-overlay-roman');
+    const s = document.getElementById('chord-overlay-scales');
+    if (n) n.checked = !!state.chordOverlays.nashville;
+    if (r) r.checked = !!state.chordOverlays.roman;
+    if (s) s.checked = !!state.chordOverlays.scales;
+  }
+
+  (function wireChordOverlayCheckboxes() {
+    const wire = (id, key) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('change', () => {
+        state.chordOverlays[key] = !!el.checked;
+        _persistChordOverlays();
+        if (_chordLastActiveIdx >= 0) _renderChordGuidance(_chordLastActiveIdx);
+      });
+    };
+    wire('chord-overlay-nashville', 'nashville');
+    wire('chord-overlay-roman', 'roman');
+    wire('chord-overlay-scales', 'scales');
+  })();
+
+  // Render the LEAD PART / RIFF lane for the active section's time
+  // window — widened from per-chord so an intro phrase that spans
+  // multiple chords appears as one cohesive riff. Falls back to the
+  // per-chord window when section info is missing.
+  function _renderLeadTabLane(activeIdx) {
+    const lane = document.getElementById('chord-tab-queue');
+    const body = document.getElementById('chord-tab-body');
+    if (!lane || !body) return;
+    if (!Array.isArray(state.chords) || state.chords.length === 0) return;
+    if (activeIdx < 0 || activeIdx >= state.chords.length) return;
+
+    const chord = state.chords[activeIdx];
+    // Prefer the active section's window so an intro riff that spans
+    // 4 chords renders as one phrase. If no section info, fall back
+    // to the chord's own [startSec, endSec).
+    const section = _findSectionAt(chord.startSec);
+    const t0 = section ? section.startSec : chord.startSec;
+    const t1 = section ? section.endSec : chord.endSec;
+
+    body.innerHTML = '';
+    const notes = Array.isArray(state.leadMidiNotes) ? state.leadMidiNotes : [];
+    if (notes.length === 0) {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'chord-tab-empty';
+      placeholder.textContent = 'No lead phrase detected for this region';
+      body.appendChild(placeholder);
+      return;
+    }
+
+    ensureChordDiagramAssets().then((assets) => {
+      if (!assets || !assets.mod) return;
+      const svg = assets.mod.renderLeadTabSVG(notes, t0, t1, { highlighted: true });
+      body.innerHTML = '';
+      if (svg) {
+        body.appendChild(svg);
+      } else {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'chord-tab-empty';
+        placeholder.textContent = 'No lead phrase detected for this region';
+        body.appendChild(placeholder);
+      }
+    });
+  }
+
+  // Active-chord-change dispatcher. Called from inside
+  // updateChordPlayhead's class-toggle block whenever the active
+  // chord index advances. Re-renders both the guidance block and the
+  // tab lane, but each render is gated by the current view mode so
+  // we don't waste cycles painting hidden DOM.
+  function _onActiveChordChanged(newIdx) {
+    if (newIdx < 0) return;
+    _renderChordGuidance(newIdx);
+    _renderLeadTabLane(newIdx);
+  }
+
   // Render the chord lane from result.chords. Wire shape (from
   // AnalysisResult.to_dict + chord_detector):
   //   [{ start_s: number, end_s: number, symbol: string,
@@ -1553,7 +2425,19 @@
 
     // Build pills. Cache start/end/leftPx/widthPx onto state.chords so
     // the playhead update never re-measures.
-    let leftPx = 0;
+    //
+    // Two layout invariants must mirror jam.css exactly or the active-
+    // pill highlight will visually drift off the playhead as leftPx
+    // accumulates across many pills:
+    //   (1) `.chord-ribbon-strip` has `padding: 0 8px`, so pill 0's
+    //       visual left edge sits 8px in from the strip's left edge.
+    //       Initialise leftPx = 8 to match.
+    //   (2) `.chord-pill` has `min-width: 56px`. The width floor here
+    //       MUST equal that minimum — a smaller floor (e.g. 28) makes
+    //       JS believe a short pill is narrower than CSS actually
+    //       renders it, and the per-pill underestimate compounds over
+    //       170 Pub Feed pills into multi-pill drift.
+    let leftPx = 8;
     const pxPerSec = CHORD_RIBBON_PX_PER_SEC;
     for (const c of chords) {
       const startSec = secondsOf(c.start_s);
@@ -1562,7 +2446,7 @@
       // Skip degenerate chords (zero-length / negative); the detector
       // shouldn't emit them but defensive code is cheap.
       if (!(durSec > 0)) continue;
-      const widthPx = Math.max(28, durSec * pxPerSec);
+      const widthPx = Math.max(56, durSec * pxPerSec);
       const pill = document.createElement('div');
       pill.className = 'chord-pill';
       pill.style.width = widthPx + 'px';
@@ -1686,7 +2570,16 @@
         state.chords[highlightIdx].el.classList.add('active');
       }
       _chordLastActiveIdx = highlightIdx;
+      // Notify the chord-diagram queue + lead-tab lane that the
+      // active chord index advanced. Idempotent if the view mode
+      // hides both lanes.
+      _onActiveChordChanged(highlightIdx);
     }
+
+    // Countdown updates every RAF tick (string-compare gates the
+    // actual DOM write so churn is bounded to ~10Hz user-visible
+    // precision).
+    _updateChordCountdown(t, highlightIdx);
 
     strip.style.transform = `translateX(${-activeCentrePx}px)`;
   }
@@ -2268,8 +3161,10 @@
     if (state.clickGain) return state.clickGain;
     if (!state.ctx || !state.masterGain) return null;
     state.clickGain = state.ctx.createGain();
-    // Conservative level — the click is a guide, not a drum.
-    state.clickGain.gain.value = 0.25;
+    // Audible over a full stem mix without overwhelming it. 0.25 was
+    // too quiet against drums+bass+guitar; 0.6 sits roughly at -4 dB
+    // peak after the envelope which the ear actually catches.
+    state.clickGain.gain.value = 0.6;
     state.clickGain.connect(state.masterGain);
     return state.clickGain;
   }
@@ -2338,7 +3233,9 @@
   $('t-click').addEventListener('click', () => {
     if (!state.beatTimes.length) return;
     state.clickEnabled = !state.clickEnabled;
-    $('t-click').textContent = state.clickEnabled ? 'Click: on' : 'Click: off';
+    const btn = $('t-click');
+    btn.textContent = state.clickEnabled ? 'Click: on' : 'Click: off';
+    btn.classList.toggle('click-on', state.clickEnabled);
     if (state.clickEnabled && state.isPlaying) {
       startClickScheduler();
     } else {
@@ -2524,6 +3421,11 @@
       // SongUnderstanding.chords; empty/missing becomes [] so the
       // ribbon stays hidden on legacy sessions without a chord lane.
       chords: understanding.chords || [],
+      // Phase 6 hybrid grid: beat-snapped chord boundaries. Null when
+      // the upstream analysis didn't produce a snapped array (e.g.
+      // beats unavailable). onAnalysisComplete caches both and the
+      // beat-snap toggle picks at render time.
+      chords_beat_snapped: understanding.chords_beat_snapped || null,
       beat_times: understanding.beats_s || [],
       // Stems
       stems_paths: stemsPaths,

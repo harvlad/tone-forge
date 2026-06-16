@@ -646,18 +646,119 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         # ribbon stayed hidden for any song routed through the GPU
         # engine. Wire it in here so both paths emit the same shape.
         #
-        # The detector is chroma-template against the full-mix waveform
-        # (y_dur, sr_dur loaded at line 444). It does not depend on
-        # stems, tempo, or key — those are computed independently and in
-        # any order. Soft degradation: any failure here logs a warning
-        # and leaves chords_data = None, matching the unified-path
-        # convention where the field is omitted on failure.
+        # Chroma source: prefer the demucs "other" stem (harmonic
+        # content — guitar + keys, no drums, no bass, no vocals) over
+        # the full mix. The full mix is dominated by bass-string
+        # fundamentals; CQT chroma reads the bass root and the cosine
+        # matcher locks onto the bass note's relative-minor template
+        # (Pub Feed: bass riff on F# → entire intro labelled F#m even
+        # though guitar plays E). The "other" stem isolates the
+        # harmonic content so the template match reflects the actual
+        # chord voicing rather than the bass note. Falls back to the
+        # full mix waveform (y_dur) when the stem is missing.
+        #
+        # Soft degradation: any failure here logs a warning and leaves
+        # chords_data = None, matching the unified-path convention
+        # where the field is omitted on failure.
         send_progress(queue, "chords", 0.87, "Detecting chord lane...")
         chords_data = None
+        chords_data_beat_snapped = None
         _st = time.perf_counter()
         try:
             from tone_forge.analysis import detect_chords
-            chord_records = detect_chords(y_dur, sr_dur)
+            _chord_path = stems.get("other")
+            if _chord_path is not None:
+                try:
+                    y_chord, sr_chord = librosa.load(
+                        str(_chord_path), sr=22050, mono=True
+                    )
+                    logger.info(
+                        f"Chord detection: using 'other' stem "
+                        f"({len(y_chord)/sr_chord:.1f}s) instead of full mix"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Chord detection: 'other' stem load failed ({e}); "
+                        f"falling back to full mix"
+                    )
+                    y_chord, sr_chord = y_dur, sr_dur
+            else:
+                y_chord, sr_chord = y_dur, sr_dur
+            # Phase 5: load bass stem for emission-bias disambiguation.
+            # The bass-root track resolves the relative-major/minor
+            # ambiguity that chroma alone cannot break (A vs F#m, etc).
+            # Loaded at the same sample rate as the 'other' stem so the
+            # pyin frames inside detect_chords align with chroma frames.
+            # Failure to load degrades to no-bass-bias rather than
+            # failing chord detection entirely.
+            y_bass = None
+            _bass_path = stems.get("bass")
+            if _bass_path is not None:
+                try:
+                    y_bass, _ = librosa.load(
+                        str(_bass_path), sr=sr_chord, mono=True
+                    )
+                    logger.info(
+                        f"Chord detection: routing 'bass' stem "
+                        f"({len(y_bass)/sr_chord:.1f}s) for root bias"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Chord detection: 'bass' stem load failed ({e}); "
+                        f"falling back to no bass-root bias"
+                    )
+                    y_bass = None
+            # Phase 6: precompute beats on the chord audio (same stem,
+            # same sr) so the detector aggregates chroma per beat and
+            # chord-change boundaries snap to musical beats rather than
+            # the arbitrary 0.5s grid. Duplicates the beat_track call
+            # the tempo block (~line 748) makes on y_dur — accept the
+            # ~sub-second cost in exchange for avoiding a reorder of
+            # the existing tempo/key block. If beat tracking fails or
+            # returns an out-of-range tempo, fall back to fixed
+            # windows by passing beats_s=None.
+            beats_for_chord = None
+            try:
+                _tempo_raw, _beat_frames = librosa.beat.beat_track(
+                    y=y_chord, sr=sr_chord,
+                )
+                _tempo_val = (
+                    float(np.asarray(_tempo_raw).item())
+                    if _tempo_raw is not None else None
+                )
+                if (
+                    _tempo_val is not None
+                    and 40 <= _tempo_val <= 240
+                    and _beat_frames is not None
+                    and len(_beat_frames) >= 2
+                ):
+                    beats_for_chord = librosa.frames_to_time(
+                        _beat_frames, sr=sr_chord,
+                    )
+                    logger.info(
+                        f"Chord detection: beat-sync with "
+                        f"{len(beats_for_chord)} beats "
+                        f"@ {_tempo_val:.1f} BPM"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Chord detection: beat tracking failed ({e}); "
+                    f"falling back to fixed-window grid"
+                )
+                beats_for_chord = None
+            # Phase 6 (hybrid grid + UI toggle): call the detector once
+            # with beats_s=None so chroma/Viterbi run on the fixed 0.5s
+            # grid that maximises WCSR. Then produce a SECOND beat-snapped
+            # array via the cheap post-processing utility. Both arrays
+            # ship to the client; jam.js toggles between them at render
+            # time. See ``snap_chord_boundaries_to_beats`` for why the
+            # snap is cosmetic, not WCSR-improving.
+            from tone_forge.analysis.chords import snap_chord_boundaries_to_beats
+            chord_records = detect_chords(
+                y_chord, sr_chord,
+                bass_audio=y_bass,
+                beats_s=None,
+            )
             chords_data = [
                 {
                     "start_s": float(c.start_s),
@@ -667,7 +768,25 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 }
                 for c in chord_records
             ]
-            logger.info(f"Chord detection complete: {len(chords_data)} chord regions")
+            chords_data_beat_snapped = None
+            if beats_for_chord is not None and len(chord_records) >= 2:
+                _song_dur_s = float(len(y_chord) / sr_chord) if sr_chord else 0.0
+                snapped = snap_chord_boundaries_to_beats(
+                    chord_records, beats_for_chord, _song_dur_s,
+                )
+                chords_data_beat_snapped = [
+                    {
+                        "start_s": float(c.start_s),
+                        "end_s": float(c.end_s),
+                        "symbol": c.symbol,
+                        "confidence": float(c.confidence),
+                    }
+                    for c in snapped
+                ]
+            logger.info(
+                f"Chord detection complete: {len(chords_data)} fixed regions, "
+                f"{len(chords_data_beat_snapped) if chords_data_beat_snapped else 0} beat-snapped"
+            )
         except Exception as e:
             logger.warning(f"Chord detection failed: {e}")
             chords_data = None
@@ -971,6 +1090,12 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             # `chords_data or []` would mask "detector failed" as
             # "no chords found", which is a different ground truth.
             "chords": chords_data if chords_data is not None else [],
+            # Phase 6 (hybrid + UI toggle): beat-snapped chord regions
+            # for the Jam ribbon's "snap to beats" toggle. None when the
+            # beat tracker failed or detector produced fewer than 2
+            # regions; the frontend treats None/missing as "snap mode
+            # unavailable" and disables the toggle.
+            "chords_beat_snapped": chords_data_beat_snapped,
             # Quality analysis
             "quality": {
                 "role": role_data,
