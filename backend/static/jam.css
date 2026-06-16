@@ -1097,16 +1097,16 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .audio-in-row .audio-in-label { color: var(--text-dim); }
 /* `flex: 1 1 auto` lets the device name take leftover space but
  * shrink first when the indicators + Change button + latency need
- * room. `max-width: 14ch` keeps long names like "Line 6 HX Stomp"
- * from monopolising the row while still showing enough characters
- * to identify the device.
+ * room. `max-width: 20ch` fits "Line 6 HX Stomp" (15 chars) and
+ * similar interface names in full while still capping pathological
+ * labels so they can't monopolise the row.
  */
 .audio-in-row #audio-in-name {
   color: var(--text);
   font-weight: 500;
   flex: 1 1 auto;
   min-width: 0;
-  max-width: 14ch;
+  max-width: 20ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
