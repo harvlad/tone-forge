@@ -1221,7 +1221,9 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
+.monitor-row > * { min-width: 0; }
 .monitor-row-device .monitor-device-label {
   color: var(--text-dim);
   font-size: 11px;
@@ -1252,11 +1254,21 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
 }
-.monitor-gain-label { color: var(--text-dim); font-size: 11px; }
-.monitor-gain-wrap .gain { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--border); }
+.monitor-gain-label { color: var(--text-dim); font-size: 11px; flex: 0 0 auto; }
+.monitor-gain-wrap .gain {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
 .monitor-gain-wrap .gain::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
