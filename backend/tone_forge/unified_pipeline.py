@@ -308,6 +308,11 @@ class AnalysisResult:
     # ``[{"start_s": float, "end_s": float, "symbol": str, "confidence": float}, ...]``.
     # Bundle assembler reads this directly into ``SongUnderstanding.chords``.
     chords: Optional[List[Dict[str, Any]]] = None
+    # Phase 6 (hybrid + UI toggle): beat-snapped chord regions for the
+    # Jam ribbon's "snap to beats" toggle. Same shape as ``chords``;
+    # ``None`` when beat tracking failed or fewer than 2 regions
+    # surfaced (frontend disables the toggle in that case).
+    chords_beat_snapped: Optional[List[Dict[str, Any]]] = None
 
     # Backward compatibility
     type: Optional[str] = None
@@ -346,6 +351,7 @@ class AnalysisResult:
                           "quality",
                           "provenance", "waveform", "profiling",
                           "sections", "energy_curve", "chords",
+                          "chords_beat_snapped",
                           "type", "descriptor", "chain", "tweak_hints"]:
             value = getattr(self, field_name)
             if value is not None:
@@ -610,11 +616,15 @@ class UnifiedPipeline:
             # not a full mix / not guitar-y (e.g. drum-only stems) because
             # the result would be noise and Jam wouldn't display it.
             chords = None
+            chords_beat_snapped = None
             if detection.is_full_mix or detection.is_guitar:
                 yield ProgressEvent("chords", "Detecting chord lane...", 89)
                 stage_start = time.time()
                 try:
-                    chords = await self._detect_chord_lane(audio_data)
+                    chord_lane = await self._detect_chord_lane(audio_data, stems)
+                    if chord_lane is not None:
+                        chords = chord_lane.get("fixed")
+                        chords_beat_snapped = chord_lane.get("snapped")
                 except Exception as e:  # pragma: no cover - defensive
                     logger.warning(f"Chord detection failed: {e}")
                 if stage_timings is not None:
@@ -643,6 +653,7 @@ class UnifiedPipeline:
             result = self._build_result(
                 audio_data, detection, stems, stem_results, instrument_results,
                 midi_stems, waveform, sections, energy_curve, chords,
+                chords_beat_snapped,
                 stage_timings, config,
             )
 
@@ -1366,6 +1377,7 @@ class UnifiedPipeline:
     async def _detect_chord_lane(
         self,
         audio_data: AudioData,
+        stems: Optional[Dict[str, Path]] = None,
     ) -> List[Dict[str, Any]]:
         """Detect the chord lane via the analysis subsystem (P4a).
 
@@ -1374,18 +1386,99 @@ class UnifiedPipeline:
         the dict shape persisted in history results and consumed by
         ``session.bundle._iter_chords``.
 
+        Chroma source: prefer the demucs "other" stem (harmonic content
+        — guitar + keys, no drums, no bass, no vocals) over the full
+        mix. The full mix is dominated by bass-string fundamentals;
+        CQT chroma reads the bass root and the cosine matcher locks
+        onto the bass note's relative-minor template (e.g. Pub Feed:
+        bass on F# → intro labelled F#m even though guitar plays E).
+        Falls back to the full mix audio when the stem is missing.
+
         Returns an empty list on failure rather than raising — the
         caller logs and skips the field. The chord lane is not on the
         critical path for analysis; absence is a soft degradation.
         """
         def detect() -> List[Dict[str, Any]]:
+            import librosa as _lr
             from tone_forge.analysis import detect_chords
 
-            # Use the full mix audio; the chroma-template pipeline is
-            # robust enough that stem isolation is not required for the
-            # Jam MVP. (Per execution plan §5 scope discipline.)
-            chord_records = detect_chords(audio_data.audio, audio_data.sr)
-            return [
+            y, sr = audio_data.audio, audio_data.sr
+            other_path = stems.get("other") if stems else None
+            if other_path is not None:
+                try:
+                    y, sr = _lr.load(str(other_path), sr=22050, mono=True)
+                    logger.info(
+                        f"Chord detection: using 'other' stem "
+                        f"({len(y)/sr:.1f}s) instead of full mix"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Chord detection: 'other' stem load failed ({e}); "
+                        f"falling back to full mix"
+                    )
+                    y, sr = audio_data.audio, audio_data.sr
+
+            # Phase 5: bass-routed disambiguation. Load the bass stem
+            # at the same sample rate as the 'other' stem so the pyin
+            # bass-root frames inside detect_chords align with chroma
+            # frames. The bias resolves the relative-major/minor
+            # ambiguity (A vs F#m, C vs Am, ...) that chroma alone
+            # cannot separate. Missing bass stem degrades to no-bias.
+            y_bass = None
+            bass_path = stems.get("bass") if stems else None
+            if bass_path is not None:
+                try:
+                    y_bass, _ = _lr.load(str(bass_path), sr=sr, mono=True)
+                    logger.info(
+                        f"Chord detection: routing 'bass' stem "
+                        f"({len(y_bass)/sr:.1f}s) for root bias"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Chord detection: 'bass' stem load failed ({e}); "
+                        f"falling back to no bass-root bias"
+                    )
+                    y_bass = None
+
+            # Phase 6: precompute beats on the chord audio so the
+            # detector aggregates chroma per beat (chord-region
+            # boundaries snap to musical beats rather than the fixed
+            # 0.5s grid). Out-of-range tempos and tracking failures
+            # fall back to fixed-window grid by leaving beats_s=None.
+            beats_s = None
+            try:
+                tempo_raw, beat_frames = _lr.beat.beat_track(y=y, sr=sr)
+                tempo_val = (
+                    float(np.asarray(tempo_raw).item())
+                    if tempo_raw is not None else None
+                )
+                if (
+                    tempo_val is not None
+                    and 40 <= tempo_val <= 240
+                    and beat_frames is not None
+                    and len(beat_frames) >= 2
+                ):
+                    beats_s = _lr.frames_to_time(beat_frames, sr=sr)
+                    logger.info(
+                        f"Chord detection: beat-sync with "
+                        f"{len(beats_s)} beats @ {tempo_val:.1f} BPM"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Chord detection: beat tracking failed ({e}); "
+                    f"falling back to fixed-window grid"
+                )
+                beats_s = None
+
+            # Phase 6 (hybrid grid + UI toggle): detector runs on the
+            # fixed 0.5s grid (Phase 5 WCSR floor). The beat-snapped
+            # variant is produced separately via the cheap post-process
+            # so both views ship to the client.
+            from tone_forge.analysis.chords import snap_chord_boundaries_to_beats
+            chord_records = detect_chords(
+                y, sr, bass_audio=y_bass, beats_s=None,
+            )
+            fixed = [
                 {
                     "start_s": c.start_s,
                     "end_s": c.end_s,
@@ -1394,6 +1487,22 @@ class UnifiedPipeline:
                 }
                 for c in chord_records
             ]
+            snapped = None
+            if beats_s is not None and len(chord_records) >= 2:
+                song_dur_s = float(len(y) / sr) if sr else 0.0
+                snapped_records = snap_chord_boundaries_to_beats(
+                    chord_records, beats_s, song_dur_s,
+                )
+                snapped = [
+                    {
+                        "start_s": c.start_s,
+                        "end_s": c.end_s,
+                        "symbol": c.symbol,
+                        "confidence": c.confidence,
+                    }
+                    for c in snapped_records
+                ]
+            return {"fixed": fixed, "snapped": snapped}
 
         return await run_in_thread(detect)
 
@@ -1409,6 +1518,7 @@ class UnifiedPipeline:
         sections: Optional[List[Dict[str, Any]]],
         energy_curve: Optional[List[float]],
         chords: Optional[List[Dict[str, Any]]],
+        chords_beat_snapped: Optional[List[Dict[str, Any]]],
         stage_timings: Optional[Dict],
         config: PipelineConfig,
     ) -> AnalysisResult:
@@ -1504,6 +1614,7 @@ class UnifiedPipeline:
             energy_curve=energy_curve,
             # Chord lane (P4a)
             chords=chords,
+            chords_beat_snapped=chords_beat_snapped,
             # Provenance
             provenance=provenance,
             # Backward compatibility

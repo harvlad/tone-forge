@@ -243,6 +243,12 @@ class SongUnderstanding:
     downbeats_s: Tuple[float, ...]
     sections: Tuple[Section, ...]
     chords: Tuple[Chord, ...]
+    # Phase 6 hybrid grid: same chord regions as ``chords`` but with
+    # boundary timestamps snapped to the nearest beat. Empty tuple when
+    # the analyzer didn't produce a snapped variant (e.g. no beats
+    # detected). The Jam UI's "Snap chords to beats" toggle renders
+    # this array instead of ``chords`` when non-empty.
+    chords_beat_snapped: Tuple[Chord, ...] = ()
     key: Optional[str] = None  # e.g. "C major", "A minor"
     key_confidence: float = 0.0
     # Phase 3 — none of these populated in MVP:

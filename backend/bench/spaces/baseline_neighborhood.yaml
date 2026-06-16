@@ -1,0 +1,42 @@
+# Example sweep space for ``python -m bench.sweep``.
+#
+# This file documents the YAML schema consumed by M1.5. Each
+# parameter's range/step controls how candidates are enumerated;
+# the strategy controls how many of those candidates actually get
+# evaluated.
+#
+# The defaults below are a tight neighbourhood around the current
+# production ``DetectorConfig()`` values. A grid sweep on this
+# space hits ~7*5*8*7*9*7 = 123,480 candidates (too many); use
+# ``strategy: random`` with ``budget: 64`` for first-pass
+# exploration, or ``strategy: coordinate_descent`` for a directed
+# walk.
+#
+# Acceptance-gate semantics (M1.6):
+#   * corpus_must_strictly_improve  -- candidate corpus mean must
+#     be strictly greater than baseline.
+#   * max_per_fixture_drop_pp       -- no individual fixture drops
+#     by more than this many absolute percentage points.
+#   * max_runtime_factor            -- candidate wall_seconds_mean
+#     must be <= factor * baseline wall_seconds_mean.
+#   * max_memory_factor             -- candidate peak_rss_mb_max
+#     must be <= factor * baseline peak_rss_mb_max.
+
+strategy: random          # grid | random | coordinate_descent
+seed: 1729                # for random; ignored for grid
+budget: 64                # max candidates for random; ignored for grid
+
+acceptance:
+  corpus_metric: wcsr_triad_relaxed_mean
+  corpus_must_strictly_improve: true
+  max_per_fixture_drop_pp: 5.0
+  max_runtime_factor: 2.0
+  max_memory_factor: 1.5
+
+parameters:
+  diatonic_bias:           {type: float, range: [0.05, 0.20], step: 0.025}
+  bass_root_bias:          {type: float, range: [0.00, 0.10], step: 0.025}
+  cos_cutoff:              {type: float, range: [0.50, 0.85], step: 0.05}
+  self_loop_bonus:         {type: float, range: [0.00, 0.03], step: 0.005}
+  no_chord_penalty:        {type: float, range: [-0.20, 0.00], step: 0.025}
+  quality_switch_penalty:  {type: float, range: [0.00, 0.03], step: 0.005}

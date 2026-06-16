@@ -67,6 +67,9 @@ backend/preset_catalog_output/
 backend/data/tone_log.jsonl
 backend/data/history.json
 
+# bench/ harness outputs (M1)
+backend/bench/runs/
+
 # Node (frontend)
 node_modules/
 .next/

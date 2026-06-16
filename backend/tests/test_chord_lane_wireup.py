@@ -188,12 +188,28 @@ def test_detect_chord_lane_emits_persisted_dict_shape(tmp_path: Path):
     )
 
     pipeline = UnifiedPipeline()
-    chord_dicts = asyncio.run(pipeline._detect_chord_lane(audio_data))
+    chord_lane = asyncio.run(pipeline._detect_chord_lane(audio_data))
 
-    assert isinstance(chord_dicts, list)
-    assert len(chord_dicts) >= 1
-    for record in chord_dicts:
+    # Phase 6 hybrid grid: orchestrator emits a dict with the
+    # fixed-window array under "fixed" and the optional beat-snapped
+    # variant under "snapped" (None when no beats were detected).
+    assert isinstance(chord_lane, dict)
+    assert set(chord_lane.keys()) == {"fixed", "snapped"}
+
+    fixed = chord_lane["fixed"]
+    assert isinstance(fixed, list)
+    assert len(fixed) >= 1
+    for record in fixed:
         assert set(record.keys()) == {"start_s", "end_s", "symbol", "confidence"}
         assert isinstance(record["symbol"], str)
         assert isinstance(record["confidence"], float)
         assert record["end_s"] > record["start_s"]
+
+    snapped = chord_lane["snapped"]
+    # Synthetic clip without beat detection upstream -> snapped is None
+    # or a list of the same persisted-dict shape.
+    assert snapped is None or isinstance(snapped, list)
+    if isinstance(snapped, list):
+        for record in snapped:
+            assert set(record.keys()) == {"start_s", "end_s", "symbol", "confidence"}
+            assert record["end_s"] > record["start_s"]

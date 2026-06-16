@@ -1,0 +1,5 @@
+# Development-only dependencies. NOT shipped with production
+# (``requirements.txt`` is the production manifest).
+
+# bench.sweep parses YAML space definitions.
+PyYAML>=6.0
