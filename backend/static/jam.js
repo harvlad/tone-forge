@@ -141,6 +141,48 @@
       listenEnabled: false,
       feedbackView: 'cents', // 'cents' | 'rolling' | 'full'
     },
+    // Live guitar monitor — the play-along loop's input path.
+    // Routes the connected audio interface directly to ctx.destination
+    // so the player hears themselves through JAM while the song
+    // plays. Distinct from `state.listen` (tuner / pitch detection):
+    // the tuner only ever taps the mic through an analyser; the
+    // monitor mixes the input into the output bus. The two own
+    // separate MediaStreams so they can run independently.
+    //
+    // Audio graph when enabled:
+    //   MediaStreamSource -> monitor.gainNode -> ctx.destination
+    //                    \--> meterAnalyser (analysis-only tap)
+    //
+    // gain values:
+    //   - `gain` is the current slider value [0, 1.5]
+    //   - `muted` zeroes the gainNode without losing the slider value
+    //   - clipping is detected on the analyser tap pre-gain so the
+    //     "your input is hot" warning is independent of monitor gain.
+    monitor: {
+      enabled: false,
+      stream: null,
+      sourceNode: null,
+      gainNode: null,
+      meterAnalyser: null,
+      meterBuffer: null,
+      rafHandle: null,
+      deviceId: '',       // '' = system default
+      deviceLabel: '',
+      gain: 0.7,
+      muted: false,
+      // Clip indicator hold: timestamp (perf.now ms) until which the
+      // CLIP overlay stays lit. Reset by the meter tick.
+      clipUntil: 0,
+      // Devices enumerate with empty labels until the page has been
+      // granted mic permission at least once. We flip this after the
+      // first successful getUserMedia so the select can refresh with
+      // real labels.
+      devicesEnumerated: false,
+      // Smoothed peak amplitude for the displayed bar height. Tracked
+      // on `state.monitor` (not a closure local) so a restart on a
+      // device change can reset it without leaking state.
+      lastDisplayedPeak: 0,
+    },
     // Mic-capture pipeline (built lazily when listening is enabled).
     listen: {
       stream: null,
@@ -4599,4 +4641,384 @@
   })();
 
   initSettingsUI();
+
+  // -------------------------------------------- live guitar monitor
+  //
+  // Phase 1 of the "karaoke for musicians" play-along loop. The
+  // monitor opens an audio-interface input via getUserMedia, routes
+  // it through a GainNode to ctx.destination, and runs an analyser
+  // tap on the input side for the level meter + clip indicator.
+  //
+  // Audio graph (active):
+  //   MediaStreamSource -> monitor.gainNode -> ctx.destination
+  //                    \--> meterAnalyser (analysis-only tap)
+  //
+  // The monitor reuses the playback AudioContext when one exists
+  // (created by prepareStemAudio on first play) so song + monitor
+  // share one clock. If the user enables the monitor BEFORE loading
+  // a song, the context is created on the fly here.
+  //
+  // No DSP, no amp sim, no effects. Just direct monitoring. By
+  // design we pass the raw input through; tone-matching is a Connect
+  // concern.
+
+  const MONITOR_DEVICE_KEY = 'jamMonitorDeviceId';
+  const MONITOR_GAIN_KEY   = 'jamMonitorGain';
+  const METER_CLIP_THRESHOLD = 0.98;      // amplitude
+  const METER_CLIP_HOLD_MS   = 600;       // visual hold for momentary peaks
+  const METER_DECAY          = 0.85;      // per-frame falloff
+
+  async function _ensureAudioContextForMonitor() {
+    if (state.ctx) return state.ctx;
+    try {
+      state.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      state.masterGain = state.ctx.createGain();
+      state.masterGain.gain.value = 1.0;
+      state.masterGain.connect(state.ctx.destination);
+    } catch (e) {
+      console.warn('[monitor] AudioContext not available:', e);
+      return null;
+    }
+    return state.ctx;
+  }
+
+  async function _populateMonitorDeviceSelect() {
+    const sel = $('monitor-device-select');
+    if (!sel) return;
+    let inputs = [];
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      inputs = devs.filter(d => d.kind === 'audioinput');
+    } catch (e) {
+      console.warn('[monitor] enumerateDevices failed:', e);
+    }
+    const prevValue = sel.value;
+    sel.innerHTML = '';
+    const def = document.createElement('option');
+    def.value = '';
+    def.textContent = 'System default';
+    sel.appendChild(def);
+    for (const d of inputs) {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      // Until permission is granted the label is empty; show a
+      // truncated id placeholder so the user at least sees that
+      // separate inputs exist.
+      opt.textContent = d.label || `Input ${d.deviceId.slice(0, 6)}…`;
+      sel.appendChild(opt);
+    }
+    // Restore the active selection where possible. Precedence:
+    //   1. The deviceId the monitor is currently bound to
+    //   2. Whatever the <select> showed before we rebuilt it
+    const target = state.monitor.deviceId || prevValue;
+    if (target && [...sel.options].some(o => o.value === target)) {
+      sel.value = target;
+    }
+    state.monitor.devicesEnumerated = inputs.some(d => d.label);
+  }
+
+  async function _startMonitor() {
+    if (state.monitor.enabled) return;
+    const ctx = await _ensureAudioContextForMonitor();
+    if (!ctx) {
+      _setMonitorStatus('AudioContext unavailable', 'err');
+      return;
+    }
+    // Some browsers ship the context in 'suspended' state until a
+    // user gesture; the toggle click itself is a gesture so this
+    // resume() is allowed.
+    if (ctx.state === 'suspended') {
+      try { await ctx.resume(); } catch {}
+    }
+    try {
+      const deviceId = state.monitor.deviceId || null;
+      const isHardware = !!deviceId;
+      const stream = await navigator.mediaDevices.getUserMedia(
+        _captureConstraints(deviceId, isHardware),
+      );
+      const sourceNode = ctx.createMediaStreamSource(stream);
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = state.monitor.muted ? 0.0 : state.monitor.gain;
+      const meterAnalyser = ctx.createAnalyser();
+      meterAnalyser.fftSize = 1024;
+      meterAnalyser.smoothingTimeConstant = 0.0;
+      // Two parallel taps off the source:
+      //   - through gainNode to destination (the monitoring path)
+      //   - through meterAnalyser (analysis only; no further connect)
+      // The analyser sits PRE-gain so the clip indicator reflects
+      // input level regardless of the monitor gain slider.
+      sourceNode.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      sourceNode.connect(meterAnalyser);
+      state.monitor.stream = stream;
+      state.monitor.sourceNode = sourceNode;
+      state.monitor.gainNode = gainNode;
+      state.monitor.meterAnalyser = meterAnalyser;
+      state.monitor.meterBuffer = new Float32Array(meterAnalyser.fftSize);
+      state.monitor.enabled = true;
+      state.monitor.lastDisplayedPeak = 0;
+      const track = stream.getAudioTracks()[0];
+      state.monitor.deviceLabel = (track && track.label) || '';
+      const trackSettings = (track && track.getSettings) ? track.getSettings() : {};
+      // If no preferred deviceId was set, remember the one we actually
+      // got so a later restart can re-acquire the same input.
+      if (!state.monitor.deviceId && trackSettings.deviceId) {
+        state.monitor.deviceId = trackSettings.deviceId;
+      }
+      // Now that the page has permission, device labels become
+      // visible; re-enumerate so the select shows readable names.
+      if (!state.monitor.devicesEnumerated) {
+        await _populateMonitorDeviceSelect();
+      }
+      _setMonitorStatus(`On — ${state.monitor.deviceLabel || 'default input'}`, 'ok');
+      _updateMonitorLatencyDisplay();
+      _meterTick();
+      console.info(
+        `[monitor] started — label="${state.monitor.deviceLabel}" `
+        + `deviceId=${(trackSettings.deviceId || '').slice(0, 8)}… `
+        + `sr=${trackSettings.sampleRate || '?'} channels=${trackSettings.channelCount || '?'}`
+      );
+    } catch (err) {
+      console.warn('[monitor] start failed:', err);
+      _setMonitorStatus(_humanReadableMicError(err), 'err');
+    }
+  }
+
+  function _stopMonitor() {
+    if (state.monitor.rafHandle) {
+      cancelAnimationFrame(state.monitor.rafHandle);
+      state.monitor.rafHandle = null;
+    }
+    try { state.monitor.sourceNode   && state.monitor.sourceNode.disconnect(); } catch {}
+    try { state.monitor.gainNode     && state.monitor.gainNode.disconnect();   } catch {}
+    try { state.monitor.meterAnalyser && state.monitor.meterAnalyser.disconnect(); } catch {}
+    if (state.monitor.stream) {
+      for (const t of state.monitor.stream.getTracks()) t.stop();
+    }
+    state.monitor.stream = null;
+    state.monitor.sourceNode = null;
+    state.monitor.gainNode = null;
+    state.monitor.meterAnalyser = null;
+    state.monitor.meterBuffer = null;
+    state.monitor.enabled = false;
+    state.monitor.lastDisplayedPeak = 0;
+    _setMonitorStatus('Off', '');
+    _clearMonitorMeter();
+  }
+
+  function _setMonitorGain(g) {
+    state.monitor.gain = g;
+    if (state.monitor.gainNode && !state.monitor.muted) {
+      state.monitor.gainNode.gain.value = g;
+    }
+    const r = $('monitor-gain-readout');
+    if (r) r.textContent = g.toFixed(2);
+    try { localStorage.setItem(MONITOR_GAIN_KEY, String(g)); } catch {}
+  }
+
+  function _setMonitorMuted(muted) {
+    state.monitor.muted = !!muted;
+    if (state.monitor.gainNode) {
+      state.monitor.gainNode.gain.value = state.monitor.muted ? 0.0 : state.monitor.gain;
+    }
+    const btn = $('monitor-mute');
+    if (btn) {
+      btn.textContent = state.monitor.muted ? 'Unmute' : 'Mute';
+      btn.classList.toggle('active', state.monitor.muted);
+    }
+  }
+
+  function _setMonitorStatus(text, kind) {
+    const el = $('monitor-status');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove('monitor-status-ok', 'monitor-status-err');
+    if (kind === 'ok') el.classList.add('monitor-status-ok');
+    else if (kind === 'err') el.classList.add('monitor-status-err');
+  }
+
+  function _updateMonitorLatencyDisplay() {
+    const el = $('monitor-latency');
+    if (!el || !state.ctx) { return; }
+    // baseLatency: render-graph latency (input -> output) within the
+    // context. outputLatency: estimated audio-pipeline latency to the
+    // physical output. Not all browsers implement outputLatency; fall
+    // back to baseLatency only when it's missing.
+    const base = (state.ctx.baseLatency || 0) * 1000;
+    const out  = (state.ctx.outputLatency || 0) * 1000;
+    const total = base + out;
+    el.textContent = total > 0 ? `~${Math.round(total)} ms` : '';
+  }
+
+  function _clearMonitorMeter() {
+    const fill = $('monitor-meter-fill');
+    if (fill) { fill.style.width = '0%'; fill.style.opacity = '1.0'; }
+    const clip = $('monitor-meter-clip');
+    if (clip) clip.hidden = true;
+  }
+
+  function _meterTick() {
+    const { meterAnalyser, meterBuffer, muted } = state.monitor;
+    if (!meterAnalyser || !meterBuffer) return;
+    meterAnalyser.getFloatTimeDomainData(meterBuffer);
+    // Peak amplitude over the buffer window. Faster than RMS for a
+    // visual meter and accurate for clip detection.
+    let peak = 0;
+    for (let i = 0; i < meterBuffer.length; i++) {
+      const a = Math.abs(meterBuffer[i]);
+      if (a > peak) peak = a;
+    }
+    // Slow decay between frames so the bar settles smoothly when
+    // input goes quiet, but still snaps up instantly on a transient.
+    const displayed = Math.max(peak, state.monitor.lastDisplayedPeak * METER_DECAY);
+    state.monitor.lastDisplayedPeak = displayed;
+    // Map amplitude to bar width via dBFS with a -40 dB floor. Linear
+    // amplitude looks "stuck low" because most signals live below 0.1.
+    let pct;
+    if (displayed <= 0.00001) {
+      pct = 0;
+    } else {
+      const db = 20 * Math.log10(displayed);
+      pct = Math.max(0, Math.min(100, ((db + 40) / 40) * 100));
+    }
+    const fill = $('monitor-meter-fill');
+    if (fill) {
+      fill.style.width = `${pct.toFixed(1)}%`;
+      // Dim the bar when muted so the user sees "audio gated" at a
+      // glance without checking the mute button.
+      fill.style.opacity = muted ? '0.35' : '1.0';
+    }
+    // Clip indicator: latches whenever a sample crosses the threshold,
+    // held for a short window so a single-frame spike is still visible.
+    const now = performance.now();
+    if (peak >= METER_CLIP_THRESHOLD) {
+      state.monitor.clipUntil = now + METER_CLIP_HOLD_MS;
+    }
+    const clip = $('monitor-meter-clip');
+    if (clip) clip.hidden = now > state.monitor.clipUntil;
+    state.monitor.rafHandle = requestAnimationFrame(_meterTick);
+  }
+
+  function _humanReadableMicError(err) {
+    if (!err || typeof err !== 'object') return 'Mic access failed';
+    const n = err.name || '';
+    if (n === 'NotAllowedError' || n === 'SecurityError') {
+      return 'Permission denied';
+    }
+    if (n === 'NotFoundError' || n === 'OverconstrainedError') {
+      return 'Device unavailable';
+    }
+    if (n === 'NotReadableError') {
+      return 'Device busy';
+    }
+    return n || 'Mic access failed';
+  }
+
+  (function initMonitorPanel() {
+    const toggleBtn   = $('monitor-toggle');
+    const muteBtn     = $('monitor-mute');
+    const gainSlider  = $('monitor-gain');
+    const deviceSel   = $('monitor-device-select');
+    const refreshBtn  = $('monitor-device-refresh');
+    if (!toggleBtn) return; // panel not present (defensive)
+
+    // Restore persisted gain + device. Out-of-range/missing values
+    // fall through to the defaults set on the state object.
+    try {
+      const savedGain = parseFloat(localStorage.getItem(MONITOR_GAIN_KEY) || '');
+      if (isFinite(savedGain) && savedGain >= 0 && savedGain <= 1.5) {
+        state.monitor.gain = savedGain;
+        if (gainSlider) gainSlider.value = String(savedGain);
+        const r = $('monitor-gain-readout');
+        if (r) r.textContent = savedGain.toFixed(2);
+      }
+      const savedDev = localStorage.getItem(MONITOR_DEVICE_KEY) || '';
+      if (savedDev) state.monitor.deviceId = savedDev;
+    } catch {}
+
+    // First-pass enumeration. Labels will be empty until the user
+    // has granted permission at least once; the start path re-runs
+    // this after a successful getUserMedia.
+    _populateMonitorDeviceSelect().then(() => {
+      if (!deviceSel) return;
+      if (state.monitor.deviceId) {
+        const stillPresent = [...deviceSel.options].some(
+          o => o.value === state.monitor.deviceId,
+        );
+        if (!stillPresent) {
+          // Saved device disappeared between sessions (unplugged USB,
+          // OS-level rename, etc.). Reset to default so the next
+          // enable doesn't fail with OverconstrainedError.
+          state.monitor.deviceId = '';
+          try { localStorage.removeItem(MONITOR_DEVICE_KEY); } catch {}
+        } else {
+          deviceSel.value = state.monitor.deviceId;
+        }
+      }
+    });
+
+    toggleBtn.addEventListener('click', async () => {
+      if (state.monitor.enabled) {
+        _stopMonitor();
+        toggleBtn.textContent = 'Enable monitor';
+        toggleBtn.classList.remove('active');
+        if (muteBtn) muteBtn.disabled = true;
+      } else {
+        _setMonitorStatus('Requesting input…', '');
+        await _startMonitor();
+        if (state.monitor.enabled) {
+          toggleBtn.textContent = 'Disable monitor';
+          toggleBtn.classList.add('active');
+          if (muteBtn) muteBtn.disabled = false;
+        }
+      }
+    });
+
+    if (muteBtn) {
+      muteBtn.addEventListener('click', () => {
+        _setMonitorMuted(!state.monitor.muted);
+      });
+    }
+
+    if (gainSlider) {
+      gainSlider.addEventListener('input', () => {
+        const v = parseFloat(gainSlider.value);
+        if (isFinite(v)) _setMonitorGain(v);
+      });
+    }
+
+    if (deviceSel) {
+      deviceSel.addEventListener('change', async () => {
+        const v = deviceSel.value;
+        state.monitor.deviceId = v;
+        try {
+          if (v) localStorage.setItem(MONITOR_DEVICE_KEY, v);
+          else localStorage.removeItem(MONITOR_DEVICE_KEY);
+        } catch {}
+        // If currently running, restart on the new device. Stop +
+        // start is the simplest "switch input" implementation;
+        // sample-accurate hot-swap is not worth the code in MVP.
+        if (state.monitor.enabled) {
+          _stopMonitor();
+          _setMonitorStatus('Switching device…', '');
+          await _startMonitor();
+          toggleBtn.textContent = state.monitor.enabled
+            ? 'Disable monitor' : 'Enable monitor';
+          toggleBtn.classList.toggle('active', state.monitor.enabled);
+        }
+      });
+    }
+
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => _populateMonitorDeviceSelect());
+    }
+
+    // USB interfaces appear/disappear at runtime; re-enumerate when
+    // the browser notifies us so the user doesn't need a reload.
+    try {
+      navigator.mediaDevices.addEventListener('devicechange', () => {
+        _populateMonitorDeviceSelect();
+      });
+    } catch {}
+  })();
 })();

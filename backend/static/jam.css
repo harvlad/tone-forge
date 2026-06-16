@@ -1078,6 +1078,154 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .audio-in-row .audio-in-label { color: var(--text-dim); }
 .audio-in-row #audio-in-name { color: var(--text); font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* --------------------------------------------- live guitar monitor */
+/* Compact card under the audio-in row. Owns the play-along input
+   path: device picker, enable toggle, gain, level meter, clipping
+   indicator. Deliberately lightweight so the chord strip stays the
+   primary surface.
+*/
+.monitor-panel {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.monitor-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.monitor-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.monitor-status {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+.monitor-status-ok { color: var(--good); }
+.monitor-status-err { color: var(--bad); }
+.monitor-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.monitor-row-device .monitor-device-label {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.monitor-row-device .monitor-device-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.monitor-row-controls #monitor-toggle {
+  /* Compact primary; keeps the panel from outgrowing slot-left. */
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.monitor-row-controls #monitor-toggle.active {
+  background: var(--good);
+  border-color: var(--good);
+  color: #0b0d10;
+}
+.monitor-row-controls #monitor-mute { font-size: 12px; padding: 6px 10px; }
+.monitor-row-controls #monitor-mute:disabled { opacity: 0.45; cursor: not-allowed; }
+.monitor-gain-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.monitor-gain-label { color: var(--text-dim); font-size: 11px; }
+.monitor-gain-wrap .gain { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--border); }
+.monitor-gain-wrap .gain::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.monitor-gain-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: 11px;
+  min-width: 32px;
+  text-align: right;
+}
+.monitor-row-meter {
+  align-items: center;
+  gap: 10px;
+}
+.monitor-meter {
+  position: relative;
+  flex: 1;
+  height: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.monitor-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  /* Green at low, yellow mid, red near top — gradient gives the
+     "track to 0" mental model without needing per-frame colour
+     calculations. */
+  background: linear-gradient(
+    90deg,
+    var(--good) 0%,
+    var(--good) 55%,
+    var(--warn) 78%,
+    var(--bad)  100%
+  );
+  width: 0%;
+  transition: width 60ms linear;
+}
+.monitor-meter-clip {
+  position: absolute;
+  inset: 0;
+  background: var(--bad);
+  color: #0b0d10;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+}
+.monitor-latency {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 70px;
+  text-align: right;
+}
+
 /* center column: section bar + chord ribbon */
 #slot-center .section-bar {
   margin-bottom: 10px;

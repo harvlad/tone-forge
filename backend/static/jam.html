@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=14" />
+<link rel="stylesheet" href="/static/jam.css?v=15" />
 </head>
 <body>
 <header class="jam-header">
@@ -326,6 +326,41 @@
           <!-- Hidden legacy button — its click handler still works -->
           <button type="button" id="perform-change-device" class="linklike" hidden>Change audio interface</button>
         </div>
+
+        <!-- Live guitar monitor: routes the connected audio interface
+             directly to the AudioContext destination so the player
+             hears themselves through JAM while the song plays. The
+             "Listen to my playing" tuner uses a separate analyser-
+             only path and can run independently. -->
+        <div id="monitor-panel" class="monitor-panel">
+          <div class="monitor-header">
+            <span class="monitor-title">Guitar input</span>
+            <span id="monitor-status" class="monitor-status">Off</span>
+          </div>
+          <div class="monitor-row monitor-row-device">
+            <label class="monitor-device-label" for="monitor-device-select">Device</label>
+            <select id="monitor-device-select" class="monitor-device-select">
+              <option value="">System default</option>
+            </select>
+            <button type="button" id="monitor-device-refresh" class="linklike" title="Re-enumerate connected inputs">Refresh</button>
+          </div>
+          <div class="monitor-row monitor-row-controls">
+            <button type="button" id="monitor-toggle" class="primary">Enable monitor</button>
+            <button type="button" id="monitor-mute" class="ghost" disabled>Mute</button>
+            <label class="monitor-gain-wrap">
+              <span class="monitor-gain-label">Gain</span>
+              <input type="range" id="monitor-gain" class="gain" min="0" max="1.5" step="0.01" value="0.7" />
+              <span id="monitor-gain-readout" class="monitor-gain-readout">0.70</span>
+            </label>
+          </div>
+          <div class="monitor-row monitor-row-meter">
+            <div class="monitor-meter" title="Input level (-40 dBFS … 0 dBFS)">
+              <div id="monitor-meter-fill" class="monitor-meter-fill"></div>
+              <div id="monitor-meter-clip" class="monitor-meter-clip" hidden>CLIP</div>
+            </div>
+            <span id="monitor-latency" class="monitor-latency"></span>
+          </div>
+        </div>
       </div>
 
       <!-- CENTER SLOT — section markers + chord timeline -->
@@ -456,6 +491,6 @@
   </section>
 </main>
 
-<script src="/static/jam.js?v=19"></script>
+<script src="/static/jam.js?v=20"></script>
 </body>
 </html>
