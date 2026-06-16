@@ -4961,16 +4961,53 @@
 
   function _setMonitorStatus(text, kind) {
     const el = $('monitor-status');
-    if (!el) return;
-    el.textContent = text;
-    el.classList.remove('monitor-status-ok', 'monitor-status-err');
-    if (kind === 'ok') el.classList.add('monitor-status-ok');
-    else if (kind === 'err') el.classList.add('monitor-status-err');
+    if (el) {
+      el.textContent = text;
+      el.classList.remove('monitor-status-ok', 'monitor-status-err');
+      if (kind === 'ok') el.classList.add('monitor-status-ok');
+      else if (kind === 'err') el.classList.add('monitor-status-err');
+    }
+    _syncAudioInRowStatus(kind, text);
+  }
+
+  // Sync the lightweight in-row indicators (#audio-in-status-dot,
+  // #audio-in-mini-meter, #audio-in-latency) with the monitor state.
+  // The dot tracks lifecycle (off / on / error); the mini-meter is
+  // visible only while the monitor is enabled; the latency text
+  // mirrors #monitor-latency. Called whenever monitor status changes;
+  // the per-frame meter update happens inline in _meterTick to avoid
+  // an extra DOM-query pass per RAF.
+  function _syncAudioInRowStatus(kind, text) {
+    const dot = $('audio-in-status-dot');
+    if (dot) {
+      dot.classList.remove('audio-in-status-off', 'audio-in-status-on', 'audio-in-status-err');
+      const enabled = !!state.monitor.enabled;
+      let cls = 'audio-in-status-off', title = 'Monitor off';
+      if (kind === 'err') { cls = 'audio-in-status-err'; title = text ? `Monitor error: ${text}` : 'Monitor error'; }
+      else if (enabled || kind === 'ok') { cls = 'audio-in-status-on'; title = 'Monitor on'; }
+      dot.classList.add(cls);
+      dot.title = title;
+    }
+    const mini = $('audio-in-mini-meter');
+    if (mini) mini.hidden = !state.monitor.enabled;
+    if (!state.monitor.enabled) {
+      const fill = $('audio-in-mini-meter-fill');
+      if (fill) fill.style.width = '0%';
+      const clip = $('audio-in-mini-meter-clip');
+      if (clip) clip.hidden = true;
+    }
+    const latencyOut = $('audio-in-latency');
+    const panelLatency = $('monitor-latency');
+    if (latencyOut) {
+      latencyOut.textContent = state.monitor.enabled && panelLatency
+        ? panelLatency.textContent
+        : '';
+    }
   }
 
   function _updateMonitorLatencyDisplay() {
     const el = $('monitor-latency');
-    if (!el || !state.ctx) { return; }
+    if (!state.ctx) { return; }
     // baseLatency: render-graph latency (input -> output) within the
     // context. outputLatency: estimated audio-pipeline latency to the
     // physical output. Not all browsers implement outputLatency; fall
@@ -4978,7 +5015,10 @@
     const base = (state.ctx.baseLatency || 0) * 1000;
     const out  = (state.ctx.outputLatency || 0) * 1000;
     const total = base + out;
-    el.textContent = total > 0 ? `~${Math.round(total)} ms` : '';
+    const text = total > 0 ? `~${Math.round(total)} ms` : '';
+    if (el) el.textContent = text;
+    const rowEl = $('audio-in-latency');
+    if (rowEl) rowEl.textContent = state.monitor.enabled ? text : '';
   }
 
   function _clearMonitorMeter() {
@@ -5013,11 +5053,18 @@
       pct = Math.max(0, Math.min(100, ((db + 40) / 40) * 100));
     }
     const fill = $('monitor-meter-fill');
+    const pctStr = `${pct.toFixed(1)}%`;
     if (fill) {
-      fill.style.width = `${pct.toFixed(1)}%`;
+      fill.style.width = pctStr;
       // Dim the bar when muted so the user sees "audio gated" at a
       // glance without checking the mute button.
       fill.style.opacity = muted ? '0.35' : '1.0';
+    }
+    // Phase 3 mini-meter in the audio-in row (read-only glance).
+    const miniFill = $('audio-in-mini-meter-fill');
+    if (miniFill) {
+      miniFill.style.width = pctStr;
+      miniFill.style.opacity = muted ? '0.35' : '1.0';
     }
     // Clip indicator: latches whenever a sample crosses the threshold,
     // held for a short window so a single-frame spike is still visible.
@@ -5025,8 +5072,11 @@
     if (peak >= METER_CLIP_THRESHOLD) {
       state.monitor.clipUntil = now + METER_CLIP_HOLD_MS;
     }
+    const clipped = now <= state.monitor.clipUntil;
     const clip = $('monitor-meter-clip');
-    if (clip) clip.hidden = now > state.monitor.clipUntil;
+    if (clip) clip.hidden = !clipped;
+    const miniClip = $('audio-in-mini-meter-clip');
+    if (miniClip) miniClip.hidden = !clipped;
     state.monitor.rafHandle = requestAnimationFrame(_meterTick);
   }
 

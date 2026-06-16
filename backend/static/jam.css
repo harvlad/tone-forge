@@ -1097,6 +1097,64 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .audio-in-row .audio-in-label { color: var(--text-dim); }
 .audio-in-row #audio-in-name { color: var(--text); font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Phase 3 — lightweight in-row monitor-status indicators.
+ *
+ * These read out of state.monitor; the full monitor panel below the
+ * row owns the controls. Sized small so the row stays a single line
+ * and the chord strip remains the dominant element on screen.
+ */
+.audio-in-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+.audio-in-status-dot.audio-in-status-off { background: var(--border); }
+.audio-in-status-dot.audio-in-status-on {
+  background: #4caf50;
+  box-shadow: 0 0 6px rgba(76, 175, 80, 0.55);
+}
+.audio-in-status-dot.audio-in-status-err {
+  background: #e54b4b;
+  box-shadow: 0 0 6px rgba(229, 75, 75, 0.55);
+}
+.audio-in-mini-meter {
+  display: inline-block;
+  position: relative;
+  width: 56px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+.audio-in-mini-meter-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #4caf50 0%, #cdd54a 60%, #e54b4b 100%);
+  transition: width 60ms linear;
+}
+.audio-in-mini-meter-clip {
+  position: absolute;
+  inset: 0;
+  background: rgba(229, 75, 75, 0.55);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.audio-in-latency {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
 /* --------------------------------------------- live guitar monitor */
 /* Compact card under the audio-in row. Owns the play-along input
    path: device picker, enable toggle, gain, level meter, clipping

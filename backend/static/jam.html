@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=16" />
+<link rel="stylesheet" href="/static/jam.css?v=17" />
 </head>
 <body>
 <header class="jam-header">
@@ -321,7 +321,18 @@
 
         <div id="audio-in-row" class="audio-in-row">
           <span class="audio-in-label">Audio in:</span>
+          <!-- Phase 3 monitor-status indicators (lightweight, in-row).
+               The full monitor panel below owns the controls; these
+               surfaces are read-only glance indicators so the player
+               doesn't have to look down to confirm the monitor is on
+               and not clipping. -->
+          <span id="audio-in-status-dot" class="audio-in-status-dot audio-in-status-off" title="Monitor off"></span>
           <span id="audio-in-name">System default</span>
+          <span id="audio-in-mini-meter" class="audio-in-mini-meter" hidden title="Input level">
+            <span id="audio-in-mini-meter-fill" class="audio-in-mini-meter-fill"></span>
+            <span id="audio-in-mini-meter-clip" class="audio-in-mini-meter-clip" hidden>!</span>
+          </span>
+          <span id="audio-in-latency" class="audio-in-latency" title="Estimated round-trip monitor latency"></span>
           <button type="button" id="audio-in-change" class="linklike">Change</button>
           <!-- Hidden legacy button — its click handler still works -->
           <button type="button" id="perform-change-device" class="linklike" hidden>Change audio interface</button>
@@ -491,6 +502,6 @@
   </section>
 </main>
 
-<script src="/static/jam.js?v=21"></script>
+<script src="/static/jam.js?v=22"></script>
 </body>
 </html>
