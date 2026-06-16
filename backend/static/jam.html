@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=20" />
+<link rel="stylesheet" href="/static/jam.css?v=21" />
 </head>
 <body>
 <header class="jam-header">
@@ -358,6 +358,8 @@
           <div class="monitor-row monitor-row-controls">
             <button type="button" id="monitor-toggle" class="primary">Enable monitor</button>
             <button type="button" id="monitor-mute" class="ghost" disabled>Mute</button>
+          </div>
+          <div class="monitor-row monitor-row-gain">
             <label class="monitor-gain-wrap">
               <span class="monitor-gain-label">Gain</span>
               <input type="range" id="monitor-gain" class="gain" min="0" max="1.5" step="0.01" value="0.7" />
