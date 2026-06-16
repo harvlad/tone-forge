@@ -5038,6 +5038,18 @@
       state.monitor.lastDisplayedPeak = 0;
       _setMonitorStatus('Off', '');
       _clearMonitorMeter();
+      // Sync the toggle UI: _stopMonitor can be called from non-click
+      // paths (track.onended, _syncMonitorVsConnect) and previously
+      // left the button reading "Disable monitor" / active even though
+      // the underlying monitor was off. Click handler still owns the
+      // status text update; here we just reset the button surface.
+      const toggleBtn = document.getElementById('monitor-toggle');
+      if (toggleBtn) {
+        toggleBtn.textContent = 'Enable monitor';
+        toggleBtn.classList.remove('active');
+      }
+      const muteBtn = document.getElementById('monitor-mute');
+      if (muteBtn) muteBtn.disabled = true;
     } finally {
       state.monitor._stopping = false;
     }

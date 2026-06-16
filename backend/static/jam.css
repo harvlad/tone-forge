@@ -1204,6 +1204,8 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   color: var(--text);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 .monitor-status {
   font-size: 11px;
