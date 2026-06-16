@@ -1095,7 +1095,25 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   border-top: 1px solid var(--border);
 }
 .audio-in-row .audio-in-label { color: var(--text-dim); }
-.audio-in-row #audio-in-name { color: var(--text); font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* `flex: 1 1 auto` lets the device name take leftover space but
+ * shrink first when the indicators + Change button + latency need
+ * room. `max-width: 14ch` keeps long names like "Line 6 HX Stomp"
+ * from monopolising the row while still showing enough characters
+ * to identify the device.
+ */
+.audio-in-row #audio-in-name {
+  color: var(--text);
+  font-weight: 500;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Spacer pushes the indicators + Change button to the right of the
+ * (truncated) device name without forcing the name to grow. */
+.audio-in-row .audio-in-spacer { flex: 1 1 auto; min-width: 4px; }
 
 /* Phase 3 — lightweight in-row monitor-status indicators.
  *
@@ -1123,7 +1141,7 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .audio-in-mini-meter {
   display: inline-block;
   position: relative;
-  width: 56px;
+  width: 42px;
   height: 6px;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.08);
@@ -1137,16 +1155,18 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   background: linear-gradient(90deg, #4caf50 0%, #cdd54a 60%, #e54b4b 100%);
   transition: width 60ms linear;
 }
+/* CLIP indicator is a thin red bracket at the right edge of the
+ * meter, not a wash across the whole bar. The underlying level
+ * fill stays visible so the player can still see how much they're
+ * clipping by. */
 .audio-in-mini-meter-clip {
   position: absolute;
-  inset: 0;
-  background: rgba(229, 75, 75, 0.55);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--bad);
+  box-shadow: 0 0 4px var(--bad);
 }
 .audio-in-latency {
   font-size: 11px;
@@ -1284,16 +1304,25 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 }
 .monitor-meter-clip {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
   background: var(--bad);
+  box-shadow: 0 0 6px var(--bad);
+  border-top-right-radius: inherit;
+  border-bottom-right-radius: inherit;
+}
+.monitor-meter-clip::after {
+  content: "!";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   color: #0b0d10;
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 1px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-transform: uppercase;
+  line-height: 1;
 }
 .monitor-latency {
   font-size: 10px;

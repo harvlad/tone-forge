@@ -4886,6 +4886,19 @@
       if (!state.monitor.deviceId && trackSettings.deviceId) {
         state.monitor.deviceId = trackSettings.deviceId;
       }
+      // Listen for the OS yanking the device out from under us. The
+      // HX Stomp's USB re-enumeration during stereo<->mono channel-count
+      // flap surfaces here as a 'ended' event on the track; without
+      // this handler the meter freezes at the last sample and the
+      // status dot stays green, hiding the failure.
+      if (track) {
+        track.addEventListener('ended', () => {
+          console.warn('[monitor] MediaStreamTrack ended (capture failure)');
+          const lostLabel = state.monitor.deviceLabel || 'input device';
+          _stopMonitor();
+          _setMonitorStatus(`Disconnected — ${lostLabel} dropped`, 'err');
+        });
+      }
       // Now that the page has permission, device labels become
       // visible; re-enumerate so the select shows readable names.
       if (!state.monitor.devicesEnumerated) {
