@@ -182,6 +182,15 @@
       // on `state.monitor` (not a closure local) so a restart on a
       // device change can reset it without leaking state.
       lastDisplayedPeak: 0,
+      // Stored reference to the track 'ended' listener so we can
+      // remove it before our own _stopMonitor() calls t.stop().
+      // Safari has been observed to fire 'ended' synchronously on
+      // explicit stop, which without this guard re-entered _stopMonitor
+      // on a half-torn-down stream and contributed to a tab crash
+      // alongside the in-flight UserMediaPermissionsController query.
+      trackEndedHandler: null,
+      // Re-entry guard for _stopMonitor.
+      _stopping: false,
     },
     // Song master-bus mixer channel. Mirrors state.masterGain in the
     // same way state.monitor mirrors monitor.gainNode. Tracked
@@ -4891,13 +4900,22 @@
       // flap surfaces here as a 'ended' event on the track; without
       // this handler the meter freezes at the last sample and the
       // status dot stays green, hiding the failure.
+      //
+      // Handler stored on state.monitor so _stopMonitor can detach it
+      // before calling t.stop() -- Safari has been seen to re-fire
+      // 'ended' synchronously on explicit stop, which without the
+      // detach re-enters _stopMonitor mid-teardown and (combined with
+      // an in-flight WBSUserMediaPermissionController query) crashes
+      // the tab.
       if (track) {
-        track.addEventListener('ended', () => {
+        const onEnded = () => {
           console.warn('[monitor] MediaStreamTrack ended (capture failure)');
           const lostLabel = state.monitor.deviceLabel || 'input device';
           _stopMonitor();
           _setMonitorStatus(`Disconnected — ${lostLabel} dropped`, 'err');
-        });
+        };
+        state.monitor.trackEndedHandler = onEnded;
+        track.addEventListener('ended', onEnded);
       }
       // Now that the page has permission, device labels become
       // visible; re-enumerate so the select shows readable names.
@@ -4919,25 +4937,46 @@
   }
 
   function _stopMonitor() {
-    if (state.monitor.rafHandle) {
-      cancelAnimationFrame(state.monitor.rafHandle);
-      state.monitor.rafHandle = null;
+    // Re-entry guard. Safari fires 'ended' on the track during our
+    // own t.stop() below; without this, the handler can recursively
+    // call _stopMonitor while we're mid-teardown.
+    if (state.monitor._stopping) return;
+    state.monitor._stopping = true;
+    try {
+      // Cancel RAF FIRST so _meterTick can't run against
+      // partially-nulled state once we disconnect the analyser below.
+      if (state.monitor.rafHandle) {
+        cancelAnimationFrame(state.monitor.rafHandle);
+        state.monitor.rafHandle = null;
+      }
+      // Detach the 'ended' listener BEFORE stopping tracks so our own
+      // teardown doesn't recurse through the handler.
+      if (state.monitor.trackEndedHandler && state.monitor.stream) {
+        for (const t of state.monitor.stream.getTracks()) {
+          try { t.removeEventListener('ended', state.monitor.trackEndedHandler); } catch {}
+        }
+      }
+      state.monitor.trackEndedHandler = null;
+      try { state.monitor.sourceNode   && state.monitor.sourceNode.disconnect(); } catch {}
+      try { state.monitor.gainNode     && state.monitor.gainNode.disconnect();   } catch {}
+      try { state.monitor.meterAnalyser && state.monitor.meterAnalyser.disconnect(); } catch {}
+      if (state.monitor.stream) {
+        for (const t of state.monitor.stream.getTracks()) {
+          try { t.stop(); } catch {}
+        }
+      }
+      state.monitor.stream = null;
+      state.monitor.sourceNode = null;
+      state.monitor.gainNode = null;
+      state.monitor.meterAnalyser = null;
+      state.monitor.meterBuffer = null;
+      state.monitor.enabled = false;
+      state.monitor.lastDisplayedPeak = 0;
+      _setMonitorStatus('Off', '');
+      _clearMonitorMeter();
+    } finally {
+      state.monitor._stopping = false;
     }
-    try { state.monitor.sourceNode   && state.monitor.sourceNode.disconnect(); } catch {}
-    try { state.monitor.gainNode     && state.monitor.gainNode.disconnect();   } catch {}
-    try { state.monitor.meterAnalyser && state.monitor.meterAnalyser.disconnect(); } catch {}
-    if (state.monitor.stream) {
-      for (const t of state.monitor.stream.getTracks()) t.stop();
-    }
-    state.monitor.stream = null;
-    state.monitor.sourceNode = null;
-    state.monitor.gainNode = null;
-    state.monitor.meterAnalyser = null;
-    state.monitor.meterBuffer = null;
-    state.monitor.enabled = false;
-    state.monitor.lastDisplayedPeak = 0;
-    _setMonitorStatus('Off', '');
-    _clearMonitorMeter();
   }
 
   function _setMonitorGain(g) {
@@ -5042,9 +5081,19 @@
   }
 
   function _meterTick() {
+    // Bail out if monitor has been (or is being) torn down. The RAF
+    // schedule order means a tick can land after _stopMonitor nulled
+    // state but before the next RAF cancel takes effect.
+    if (state.monitor._stopping || !state.monitor.enabled) return;
     const { meterAnalyser, meterBuffer, muted } = state.monitor;
     if (!meterAnalyser || !meterBuffer) return;
-    meterAnalyser.getFloatTimeDomainData(meterBuffer);
+    try {
+      meterAnalyser.getFloatTimeDomainData(meterBuffer);
+    } catch (e) {
+      // Analyser was disconnected mid-frame (Safari can throw on a
+      // node whose source has just ended). Drop the frame quietly.
+      return;
+    }
     // Peak amplitude over the buffer window. Faster than RMS for a
     // visual meter and accurate for clip detection.
     let peak = 0;
