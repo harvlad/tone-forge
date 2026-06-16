@@ -540,6 +540,14 @@
     const wrap = document.getElementById('connect-gain-wrap');
     if (wrap) wrap.hidden = !paired;
 
+    // Reconcile the browser-side monitor toggle with the pairing
+    // state. When paired, Connect owns the input device and the
+    // monitor must yield (otherwise both clients fight for the HX
+    // Stomp and the helper supervisor flaps). Defined further down
+    // alongside the monitor lifecycle; safe to call here because
+    // function declarations are hoisted within this IIFE.
+    if (typeof _syncMonitorVsConnect === 'function') _syncMonitorVsConnect();
+
     // Inline status line. We're always on the perform view by the time
     // anyone reads this, so the message reflects post-analysis state —
     // never "analyze a song" (we already did).
@@ -4849,6 +4857,16 @@
 
   async function _startMonitor() {
     if (state.monitor.enabled) return;
+    // Refuse if Connect is paired: it already has exclusive access to
+    // the input device. Starting getUserMedia in this state crashes
+    // the helper's AVAudioEngine (channel-count flap) and produces a
+    // flapping WS — observable as "click Enable monitor, hear guitar
+    // for a sec, then Connect disconnects".
+    if (_isConnectPaired()) {
+      _setMonitorStatus('Connect is using your input — quit it to monitor here', 'err');
+      _syncMonitorVsConnect();
+      return;
+    }
     const ctx = await _ensureAudioContextForMonitor();
     if (!ctx) {
       _setMonitorStatus('AudioContext unavailable', 'err');
@@ -4933,6 +4951,52 @@
     } catch (err) {
       console.warn('[monitor] start failed:', err);
       _setMonitorStatus(_humanReadableMicError(err), 'err');
+    }
+  }
+
+  // True when the Connect helper has registered as a peer on the
+  // connect-bridge channel. While paired, Connect owns the HX Stomp
+  // (or whichever input the user picked) at the OS level. The browser
+  // monitor MUST NOT also grab the same device: two clients on a USB
+  // audio device forces Core Audio to renegotiate the format, which
+  // crashes AVAudioEngine inside Connect (the very NSException we
+  // trap in 1e16d94 — even with the trap, the supervisor restart
+  // cycle still produces audible dropouts).
+  function _isConnectPaired() {
+    const cb = state.connectBridge;
+    return !!cb && cb.status === 'open' && (cb.peers || 0) > 0;
+  }
+
+  // Centralised reconciliation between Connect pairing state and the
+  // monitor toggle. Called from renderConnectStatus() (which already
+  // fires on joined / peer_left) and from initMonitorPanel() once at
+  // boot. Two responsibilities:
+  //   1. If Connect just paired AND the browser monitor is running,
+  //      stop the monitor immediately to release the HX Stomp.
+  //   2. Reflect the lockout in the UI: disable the toggle, replace
+  //      its label, and update the status line + audio-in row dot so
+  //      the user understands WHY they can't enable monitoring.
+  function _syncMonitorVsConnect() {
+    const toggleBtn = document.getElementById('monitor-toggle');
+    if (!toggleBtn) return;
+    const paired = _isConnectPaired();
+    if (paired) {
+      if (state.monitor.enabled) {
+        _stopMonitor();
+      }
+      toggleBtn.disabled = true;
+      toggleBtn.textContent = 'Connect handles input';
+      toggleBtn.classList.remove('active');
+      toggleBtn.title = 'Connect is online and is using your audio input. '
+        + 'Quit Connect to monitor through the browser instead.';
+      _setMonitorStatus('Off — Connect is using your input', '');
+    } else {
+      toggleBtn.disabled = false;
+      toggleBtn.title = '';
+      if (!state.monitor.enabled) {
+        toggleBtn.textContent = 'Enable monitor';
+        toggleBtn.classList.remove('active');
+      }
     }
   }
 
@@ -5201,6 +5265,13 @@
     });
 
     toggleBtn.addEventListener('click', async () => {
+      // Disabled when Connect is paired (lockout enforced via
+      // _syncMonitorVsConnect). Belt-and-braces: still call the guard
+      // here so a stale class on the button can't bypass the check.
+      if (toggleBtn.disabled || _isConnectPaired()) {
+        _syncMonitorVsConnect();
+        return;
+      }
       if (state.monitor.enabled) {
         _stopMonitor();
         toggleBtn.textContent = 'Enable monitor';
@@ -5216,6 +5287,12 @@
         }
       }
     });
+
+    // Initial sync: page-load state may already have Connect paired
+    // (helper running before page loaded). Without this the button
+    // would show "Enable monitor" enabled until the next pairing
+    // event tick.
+    _syncMonitorVsConnect();
 
     if (muteBtn) {
       muteBtn.addEventListener('click', () => {
