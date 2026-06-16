@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Tuple
 
 
 __all__ = [
@@ -78,6 +78,11 @@ class RunRecord:
     wall_seconds_total: float
     rejection_reason: Optional[str] = None
     parent_baseline_run_id: Optional[str] = None
+    # M2.5: corpus splits the benchmark restricted to. ``None`` means
+    # "no filter" (current M1 behaviour: all fixtures). When set, all
+    # benchmark runs within a sweep share the same value, so reported
+    # corpus_mean comparisons are apples-to-apples.
+    splits: Optional[Tuple[str, ...]] = None
     # Free-form metadata bucket (sweep id, strategy name, etc.).
     extra: Mapping[str, object] = field(default_factory=dict)
 
@@ -97,6 +102,7 @@ def _record_to_jsonable(record: RunRecord) -> dict:
         "wall_seconds_total": record.wall_seconds_total,
         "rejection_reason": record.rejection_reason,
         "parent_baseline_run_id": record.parent_baseline_run_id,
+        "splits": list(record.splits) if record.splits is not None else None,
         "extra": dict(record.extra),
     }
 
@@ -120,6 +126,10 @@ def load_run_record(path: Path | str) -> RunRecord:
         name: FixtureResult(**fr) for name, fr in data["per_fixture"].items()
     }
     corpus = CorpusResult(**data["corpus"])
+    raw_splits = data.get("splits")
+    splits: Optional[Tuple[str, ...]] = (
+        tuple(raw_splits) if raw_splits is not None else None
+    )
     return RunRecord(
         run_id=data["run_id"],
         timestamp_utc=data["timestamp_utc"],
@@ -131,5 +141,6 @@ def load_run_record(path: Path | str) -> RunRecord:
         wall_seconds_total=float(data["wall_seconds_total"]),
         rejection_reason=data.get("rejection_reason"),
         parent_baseline_run_id=data.get("parent_baseline_run_id"),
+        splits=splits,
         extra=data.get("extra", {}),
     )

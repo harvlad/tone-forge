@@ -19,11 +19,12 @@ import sys
 
 
 _USAGE = (
-    "usage: python -m bench {benchmark,sweep} [<args>...]\n"
+    "usage: python -m bench {benchmark,sweep,corpus} [<args>...]\n"
     "\n"
     "Subcommands:\n"
     "  benchmark  Run the detector against the corpus, write RunRecord JSON\n"
     "  sweep      Run a parameter sweep against a corpus baseline\n"
+    "  corpus     Corpus curator CLI (stats, validate, add)\n"
 )
 
 
@@ -42,6 +43,9 @@ def main(argv: list[str] | None = None) -> int:
     if sub == "sweep":
         from bench import sweep as _sweep
         return _sweep.main(rest)
+    if sub == "corpus":
+        from bench import corpus as _corpus
+        return _corpus.main(rest)
     sys.stderr.write(f"unknown subcommand: {sub!r}\n\n{_USAGE}")
     return 2
 

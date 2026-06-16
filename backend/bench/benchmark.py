@@ -234,11 +234,15 @@ def run_benchmark(
     output_path: Optional[Path] = None,
     require_audio: bool = True,
     parent_baseline_run_id: Optional[str] = None,
+    splits: Optional[tuple[str, ...]] = None,
     extra: Optional[Mapping[str, object]] = None,
 ) -> RunRecord:
     """Programmatic entry point used by ``bench.sweep`` and tests.
 
     ``config`` may be a ``DetectorConfig`` or ``None`` (uses default).
+    ``splits`` (M2.5), when not ``None``, restricts the corpus to
+    fixtures whose ``split`` field is in the tuple. The value is
+    recorded on the ``RunRecord`` for downstream auditing.
     """
     if config is None:
         config = _load_detector_config(None)
@@ -247,8 +251,16 @@ def run_benchmark(
         Path(corpus_dir) if corpus_dir is not None else DEFAULT_FIXTURES_DIR
     )
     fixtures = iter_corpus_fixtures(
-        resolved_corpus_dir, require_audio=require_audio
+        resolved_corpus_dir,
+        require_audio=require_audio,
+        splits=splits,
     )
+
+    if splits is not None and not fixtures:
+        raise ValueError(
+            f"no fixtures match split filter {sorted(splits)!r} "
+            f"in {resolved_corpus_dir}"
+        )
 
     per_fixture: dict[str, FixtureResult] = {}
     total_start = time.perf_counter()
@@ -272,6 +284,7 @@ def run_benchmark(
         corpus=corpus,
         wall_seconds_total=total_wall,
         parent_baseline_run_id=parent_baseline_run_id,
+        splits=tuple(splits) if splits is not None else None,
         extra=dict(extra or {}),
     )
 
@@ -335,6 +348,10 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--no-require-audio", action="store_true",
                    help="include fixtures whose audio is not on disk "
                         "(produces empty per-fixture results for them)")
+    p.add_argument("--split", action="append", default=None,
+                   choices=("train", "val", "test", "holdout"),
+                   help="restrict corpus to fixtures with this split "
+                        "(may be repeated; default: all splits)")
     return p
 
 
@@ -346,6 +363,7 @@ def main(argv: list[str]) -> int:
         corpus_dir=args.corpus,
         output_path=args.output,
         require_audio=not args.no_require_audio,
+        splits=tuple(args.split) if args.split else None,
     )
     output_path = args.output or (
         Path(__file__).resolve().parent / "runs" / f"{record.run_id}.json"

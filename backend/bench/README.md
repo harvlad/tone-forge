@@ -22,9 +22,11 @@ and supports parameter sweeps that propose changes to
 4. **Not a decision engine.** Sweeps produce evidence; a human
    reviews `runs/sweep_<id>/accepted.json` and decides whether to
    change `DetectorConfig` defaults in a separate commit.
-5. **Not a corpus expander.** M1 uses only the 4 existing
-   fixtures in `backend/tests/fixtures/chord_groundtruth/`.
-   Corpus expansion is M2.
+5. **Curator-driven corpus expansion.** M2 added schema v2,
+   split-aware filtering, and the `python -m bench.corpus`
+   curator CLI. M2 does NOT bulk-import third-party datasets
+   (Isophonics / McGill Billboard / MIREX / Songsterr); each
+   needs its own licensing review (deferred to M2.5+).
 6. **No new runtime dependencies.** The only new dependency is
    `PyYAML`, declared in `requirements-dev.txt` (NOT
    `requirements.txt`). Production has no compile- or run-time
@@ -43,6 +45,8 @@ python -m bench.benchmark
     [--output <path>]         # default: bench/runs/<run_id>.json
     [--quiet | --json-only]
     [--no-require-audio]      # include fixtures with no audio on disk
+    [--split S]               # restrict to fixtures with split=S
+                              # (M2.5; repeatable; default: all splits)
 ```
 
 Outputs a `RunRecord` JSON to `bench/runs/<run_id>.json` and a
@@ -50,6 +54,12 @@ human-readable summary to stdout (suppressed by `--quiet`,
 replaced by just the JSON path with `--json-only`). With no
 `--config`, the default `DetectorConfig()` reproduces the pre-M1
 behaviour bit-for-bit; the corpus mean should be 0.7897.
+
+`--split` (M2.5) restricts the corpus to fixtures whose
+`split` field is one of the listed values (see "Schema v2"
+below). The recorded `RunRecord.splits` lets downstream
+sweep comparisons stay apples-to-apples. Without `--split`,
+every fixture loads (the M1 invariant).
 
 DetectorConfig override JSON looks like::
 
@@ -71,6 +81,10 @@ python -m bench.sweep <space.yaml>
     [--workers N]                # advisory; sweep is currently serial
     [--output <dir>]             # default: bench/runs/sweep_<id>/
     [--corpus <dir>]             # propagated to benchmark
+    [--split S]                  # restrict corpus to fixtures with
+                                 # split=S; applied uniformly to the
+                                 # baseline and every candidate
+                                 # (M2.5; repeatable; default: all)
 ```
 
 Produces a sweep directory with:
@@ -80,6 +94,75 @@ Produces a sweep directory with:
 * `accepted.json` -- candidates that cleared the acceptance gate,
   sorted by corpus delta (descending)
 * `index.csv` -- per-candidate flat summary for ad-hoc inspection
+
+### `python -m bench.corpus` (M2.4)
+
+Corpus-curator CLI. Three subcommands.
+
+```
+python -m bench.corpus stats [--fixtures-dir DIR] [--split S] [--json]
+    Tabulate counts per split / genre / license, total duration,
+    fixture roster. Plain text by default; `--json` emits a
+    machine-readable summary on stdout.
+
+python -m bench.corpus validate <fixture.json>
+    Run `bench.schema.validate_fixture_json` against a fixture
+    JSON. Print errors to stderr and exit 1 on any failure;
+    print "OK" and exit 0 when the file is valid.
+
+python -m bench.corpus add --json <path> --other <audio.wav>
+                          [--bass <audio.wav>] [--name NAME]
+                          [--measure-floor]
+                          [--fixtures-dir DIR]
+                          [--audio-dir DIR]
+    Curator workflow:
+    1. Validate <json> against schema v2.
+    2. Resolve fixture name (from --name or the JSON's "song" slug).
+    3. Copy --other and --bass audio into <audio-dir>/<name>/.
+    4. Update the JSON's source_audio_other_stem / _bass_stem to
+       point at the copies (relative to backend/ when possible).
+    5. If --measure-floor: run the production detector under the
+       default DetectorConfig, compute triad_relaxed_wcsr vs the
+       JSON's regions, write the value rounded DOWN to 0.01 into
+       regression_floor_triad_relaxed. Mirrors the M1 pub_feed
+       pattern (0.2257 measured -> 0.22 pinned).
+    6. Write the final JSON to <fixtures-dir>/<name>.json.
+```
+
+See `bench/CURATION.md` for the end-to-end playbook (audio
+preparation, region annotation, validate/add invocation,
+licensing review).
+
+## Schema v2 (M2.0)
+
+Fixture JSONs gained six optional fields in M2. Defaults
+preserve M1 behaviour (legacy v1 JSONs load unchanged).
+
+| Field              | Type           | Default        | Vocab / Notes |
+| ------------------ | -------------- | -------------- | ------------- |
+| `schema_version`   | `int`          | `1`            | `{1, 2}`. Missing or `1` = legacy. |
+| `split`            | `str`          | `"test"`       | `{train, val, test, holdout}`. M1 fixtures are all `test` (held-out regression anchors). |
+| `genre`            | `str` / null   | `null`         | Free-form (`"rock"`, `"punk"`, ...). `null` surfaces in stats as `"unspecified"`. |
+| `license`          | `str`          | `"first-party"`| `{first-party, cc-by-4.0, cc-by-sa-4.0, public-domain, proprietary, other}`. |
+| `tags`             | `list[str]`    | `[]`           | Free-form. Curator-meaningful labels (`"power-chords"`, `"baseline-captured"`, ...). |
+| `curated_by`       | `str` / null   | `null`         | Free-form attribution. |
+| `added_at_unix`    | `int` / null   | `null`         | Optional; written by `bench.corpus add`. |
+
+### Split semantics
+
+* `test` -- held-out regression anchor. **Never** swept
+  against. Drift here is a regression.
+* `train` -- sweep-optimised. Sweeps that improve `train`
+  corpus mean (without dropping any `test` fixture beyond
+  the per-fixture cap) are candidates for promotion.
+* `val` -- intermediate signal. Used for cross-checking
+  candidates that look good on `train` before promoting.
+* `holdout` -- never touched by sweeps **or** test runs.
+  Reserved for periodic end-to-end audits.
+
+M2 ships the metadata rail. Statistically-principled
+splitting (stratification, k-fold, leak prevention) is M3+
+when the corpus is large enough for it to matter.
 
 ## YAML sweep-space schema
 
@@ -162,7 +245,9 @@ backend/bench/
 ├── __init__.py              # Public surface (currently empty by design)
 ├── __main__.py              # `python -m bench` subcommand dispatcher
 ├── README.md                # This file
-├── corpus.py                # CorpusFixture + iter_corpus_fixtures
+├── CURATION.md              # M2.8 curator playbook
+├── corpus.py                # CorpusFixture + iter_corpus_fixtures + curator CLI
+├── schema.py                # Fixture-JSON validator (M2.2)
 ├── metrics.py               # Six pure metric functions
 ├── benchmark.py             # `bench.benchmark` CLI + run_benchmark
 ├── sweep.py                 # `bench.sweep` CLI + acceptance gate
@@ -176,7 +261,8 @@ backend/bench/
 
 These directives from the M1 plan are deferred to later milestones:
 
-* Phase 1 corpus expansion -- first post-M1 milestone (M2).
+* Phase 1 corpus expansion substrate -- done in M2 (this milestone).
+  Real-corpus ingestion (Isophonics / Billboard / Songsterr) is M2.5+.
 * Phase 4 disagreement runtime DB -- M4.
 * Phase 5 failure pattern mining -- M5.
 * Phase 6 ranked alternatives in detector output -- M3.

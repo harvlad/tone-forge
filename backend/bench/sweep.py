@@ -375,6 +375,7 @@ def _resolve_baseline(
     *,
     corpus_dir: Optional[Path],
     output_dir: Path,
+    splits: Optional[tuple[str, ...]] = None,
 ) -> RunRecord:
     """Load an existing baseline JSON, or run a fresh baseline benchmark."""
     if arg is not None:
@@ -397,6 +398,7 @@ def _resolve_baseline(
         corpus_dir=corpus_dir,
         output_path=baseline_path,
         require_audio=True,
+        splits=splits,
     )
 
 
@@ -407,8 +409,15 @@ def run_sweep(
     workers: int = 1,
     output_dir: Optional[Path] = None,
     corpus_dir: Optional[Path] = None,
+    splits: Optional[tuple[str, ...]] = None,
 ) -> dict[str, Any]:
-    """Drive a sweep end-to-end and return a summary dict."""
+    """Drive a sweep end-to-end and return a summary dict.
+
+    ``splits`` (M2.5), when not ``None``, restricts the corpus to
+    fixtures whose ``split`` field is in the tuple. The same filter
+    is applied to the baseline benchmark and every candidate benchmark
+    so all comparisons are apples-to-apples.
+    """
     from bench.benchmark import run_benchmark
 
     space = load_space(space_path)
@@ -419,7 +428,10 @@ def run_sweep(
     out_root.mkdir(parents=True, exist_ok=True)
 
     baseline_record = _resolve_baseline(
-        baseline, corpus_dir=corpus_dir, output_dir=out_root
+        baseline,
+        corpus_dir=corpus_dir,
+        output_dir=out_root,
+        splits=splits,
     )
     candidates = enumerate_candidates(space)
 
@@ -441,6 +453,7 @@ def run_sweep(
             output_path=cand_path,
             require_audio=True,
             parent_baseline_run_id=baseline_record.run_id,
+            splits=splits,
             extra={"sweep_id": sweep_id, "candidate_index": i, "overlay": overlay},
         )
         verdict = evaluate_acceptance(record, baseline_record, space.acceptance)
@@ -509,6 +522,11 @@ def _build_argparser() -> argparse.ArgumentParser:
                    help="output dir (default: bench/runs/sweep_<id>/)")
     p.add_argument("--corpus", type=Path, default=None,
                    help="alternative fixtures dir (propagated to benchmark)")
+    p.add_argument("--split", action="append", default=None,
+                   choices=("train", "val", "test", "holdout"),
+                   help="restrict corpus to fixtures with this split "
+                        "(may be repeated; applied uniformly to baseline "
+                        "and every candidate)")
     return p
 
 
@@ -520,6 +538,7 @@ def main(argv: list[str]) -> int:
         workers=args.workers,
         output_dir=args.output,
         corpus_dir=args.corpus,
+        splits=tuple(args.split) if args.split else None,
     )
     sys.stdout.write(json.dumps(summary, indent=2) + "\n")
     return 0
