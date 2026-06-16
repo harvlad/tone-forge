@@ -376,6 +376,25 @@ html, body {
   cursor: pointer;
 }
 
+/* Mixer master channels (Song / Guitar input). Same row template as
+ * stem rows so the CSS grid stays uniform; differentiation is purely
+ * visual -- bolder name, brighter accent for Guitar input, and an
+ * accent-coloured divider after the Guitar Input row that separates
+ * master channels from per-stem channels. */
+.stem-row.mixer-channel-row .name.mixer-channel-name {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+.stem-row.mixer-channel-song .name { color: var(--text); }
+.stem-row.mixer-channel-guitar .name { color: var(--accent); }
+.stem-row.mixer-channel-divider {
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: 6px;
+  padding-bottom: 12px;
+}
+
 /* ---------------------------------------------------------- transport */
 .transport {
   background: var(--panel);

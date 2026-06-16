@@ -183,6 +183,15 @@
       // device change can reset it without leaking state.
       lastDisplayedPeak: 0,
     },
+    // Song master-bus mixer channel. Mirrors state.masterGain in the
+    // same way state.monitor mirrors monitor.gainNode. Tracked
+    // separately so the song mute toggle remembers the user's
+    // pre-mute gain value across mute/unmute (and across solo-induced
+    // auto-mute) without reading it back out of the live gain node.
+    songMix: {
+      gain: 1.0,
+      muted: false,
+    },
     // Mic-capture pipeline (built lazily when listening is enabled).
     listen: {
       stream: null,
@@ -1617,6 +1626,18 @@
   function buildStemRack() {
     const rack = $('stem-rack');
     rack.innerHTML = '';
+
+    // Two synthetic mixer-channel rows precede the per-stem rows:
+    //   * Song master  -- routes state.masterGain
+    //   * Guitar input -- routes state.monitor.gainNode (mirrors the
+    //                     standalone monitor panel above)
+    // Both participate in the shared solo group via _applyAllSoloMutes.
+    // The Guitar Input row carries `.mixer-channel-divider` so the CSS
+    // can draw a visual separator between the master channels and the
+    // per-stem channels.
+    rack.appendChild(_buildMixerChannelRow('song', 'Song', false));
+    rack.appendChild(_buildMixerChannelRow('guitar', 'Guitar input', true));
+
     // Order by stem.role using the global ROLE_ORDER. Unknown roles
     // sort to the end. Ties (multiple guitar parts with the same role
     // role) preserve insertion order.
@@ -1641,15 +1662,61 @@
       `;
       rack.appendChild(row);
     }
-    rack.querySelectorAll('.gain').forEach(el =>
+    // Stem-row controls
+    rack.querySelectorAll('.gain[data-stem]').forEach(el =>
       el.addEventListener('input', () => setStemGain(el.dataset.stem, parseFloat(el.value)))
     );
-    rack.querySelectorAll('.mute-btn').forEach(btn =>
+    rack.querySelectorAll('.mute-btn[data-stem]').forEach(btn =>
       btn.addEventListener('click', () => toggleMute(btn.dataset.stem, btn))
     );
-    rack.querySelectorAll('.solo-btn').forEach(btn =>
+    rack.querySelectorAll('.solo-btn[data-stem]').forEach(btn =>
       btn.addEventListener('click', () => toggleSolo(btn.dataset.stem, btn))
     );
+    // Channel-row controls (song / guitar) — share toggleMute/Solo
+    // but route gain changes to the appropriate setter so the master
+    // node and monitor node each get the slider value live.
+    rack.querySelectorAll('.gain[data-channel]').forEach(el =>
+      el.addEventListener('input', () => {
+        const v = parseFloat(el.value);
+        if (!isFinite(v)) return;
+        if (el.dataset.channel === 'song') setSongGain(v);
+        else if (el.dataset.channel === 'guitar') _setMonitorGain(v);
+      })
+    );
+    rack.querySelectorAll('.mute-btn[data-channel]').forEach(btn =>
+      btn.addEventListener('click', () => toggleMute(btn.dataset.channel, btn))
+    );
+    rack.querySelectorAll('.solo-btn[data-channel]').forEach(btn =>
+      btn.addEventListener('click', () => toggleSolo(btn.dataset.channel, btn))
+    );
+  }
+
+  // Build one synthetic mixer-channel row (Song master or Guitar
+  // input). Rendered using the same .stem-row layout as the per-stem
+  // rows so the CSS grid stays uniform. Min/max/step on the gain
+  // slider matches the underlying node: master is [0, 1.5] and
+  // monitor is [0, 1.5]; both default to the live state value when
+  // present so a re-render mid-session doesn't snap the fader.
+  function _buildMixerChannelRow(channelId, displayName, withDivider) {
+    const row = document.createElement('div');
+    row.className = `stem-row mixer-channel-row mixer-channel-${channelId}`;
+    if (withDivider) row.classList.add('mixer-channel-divider');
+    let initialGain, muted;
+    if (channelId === 'song') {
+      initialGain = state.songMix.gain;
+      muted = state.songMix.muted;
+    } else {
+      // 'guitar' — mirrors the monitor panel
+      initialGain = state.monitor.gain;
+      muted = state.monitor.muted;
+    }
+    row.innerHTML = `
+      <div class="name mixer-channel-name">${escapeHtml(displayName)}</div>
+      <input type="range" class="gain" min="0" max="1.5" step="0.01" value="${initialGain.toFixed(2)}" data-channel="${channelId}" />
+      <button class="ghost mute-btn" data-channel="${channelId}">${muted ? 'Muted' : 'Mute'}</button>
+      <button class="ghost solo-btn" data-channel="${channelId}">Solo</button>
+    `;
+    return row;
   }
 
   function buildSectionBar(sections) {
@@ -3285,7 +3352,18 @@
     }
   });
 
-  // ---------------------------------------------- stem mute/solo/gain
+  // ---------------------------------------------- mixer: stems + master + monitor
+  //
+  // The mixer surfaces three flavours of channel:
+  //   * stem channels      -- one per demucs stem; data-stem="<name>"
+  //   * song master        -- routes state.masterGain; data-channel="song"
+  //   * guitar input       -- routes state.monitor.gainNode; data-channel="guitar"
+  //
+  // setStemGain / setStemMuted operate per-stem. setSongGain /
+  // setSongMuted and _setMonitorGain / _setMonitorMuted operate on
+  // the master + monitor. toggleMute and toggleSolo dispatch on
+  // dataset.channel vs dataset.stem so one button click handler
+  // serves both row types.
   function setStemGain(name, g) {
     const stem = state.stems.get(name);
     if (!stem || !stem.gainNode) return;
@@ -3303,31 +3381,74 @@
     const stem = state.stems.get(name);
     return !!(stem && stem.muted);
   }
-  function toggleMute(name, btn) {
-    const m = setStemMuted(name, !isMuted(name));
-    btn.textContent = m ? 'Muted' : 'Mute';
-  }
-  function toggleSolo(name, btn) {
-    const soloing = btn.classList.toggle('active');
-    if (soloing) {
-      // Mute everything except the soloed stem (and other solo'd ones).
-      for (const [n, _] of state.stems.entries()) {
-        const isSolo = document.querySelector(`.solo-btn[data-stem="${n}"]`).classList.contains('active');
-        setStemMuted(n, !isSolo);
-      }
-    } else {
-      // If no solos remain, unmute everything; else re-mute non-solo'd.
-      const anySolo = !!document.querySelector('.solo-btn.active');
-      for (const [n, _] of state.stems.entries()) {
-        const isSolo = document.querySelector(`.solo-btn[data-stem="${n}"]`).classList.contains('active');
-        if (anySolo) setStemMuted(n, !isSolo);
-        else setStemMuted(n, false);
-      }
+  function setSongGain(g) {
+    state.songMix.gain = g;
+    if (state.masterGain && !state.songMix.muted) {
+      state.masterGain.gain.value = g;
     }
-    // Reflect mute button text
+  }
+  function setSongMuted(muted) {
+    state.songMix.muted = !!muted;
+    if (state.masterGain) {
+      state.masterGain.gain.value = state.songMix.muted ? 0 : state.songMix.gain;
+    }
+    return state.songMix.muted;
+  }
+  function isSongMuted() { return !!state.songMix.muted; }
+
+  function toggleMute(target, btn) {
+    // `target` is either a stem name (data-stem) or the channel id
+    // 'song' / 'guitar' (data-channel). Dispatch on the button's
+    // dataset so the rack's row-template stays uniform.
+    const ch = btn && btn.dataset && btn.dataset.channel;
+    let muted;
+    if (ch === 'song') {
+      muted = setSongMuted(!isSongMuted());
+    } else if (ch === 'guitar') {
+      _setMonitorMuted(!state.monitor.muted);
+      muted = state.monitor.muted;
+    } else {
+      muted = setStemMuted(target, !isMuted(target));
+    }
+    btn.textContent = muted ? 'Muted' : 'Mute';
+  }
+
+  function toggleSolo(target, btn) {
+    // Solo is a global one-of-many across stems + song + guitar:
+    // any solo active mutes every non-solo channel; clearing all
+    // solos unmutes everything. Matches the legacy stem-only
+    // behaviour (channel-level user mutes get overwritten).
+    btn.classList.toggle('active');
+    _applyAllSoloMutes();
+    // Re-sync every Mute button's text since solos can change the
+    // underlying mute state out from under the user.
     document.querySelectorAll('.mute-btn').forEach(b => {
-      b.textContent = isMuted(b.dataset.stem) ? 'Muted' : 'Mute';
+      const cb = b.dataset.channel;
+      if (cb === 'song') b.textContent = isSongMuted() ? 'Muted' : 'Mute';
+      else if (cb === 'guitar') b.textContent = state.monitor.muted ? 'Muted' : 'Mute';
+      else if (b.dataset.stem) b.textContent = isMuted(b.dataset.stem) ? 'Muted' : 'Mute';
     });
+  }
+
+  function _applyAllSoloMutes() {
+    const anySolo = !!document.querySelector('.solo-btn.active');
+    // Stems
+    for (const [n] of state.stems.entries()) {
+      const soloBtn = document.querySelector(`.solo-btn[data-stem="${n}"]`);
+      const isSolo = !!(soloBtn && soloBtn.classList.contains('active'));
+      if (anySolo) setStemMuted(n, !isSolo);
+      else setStemMuted(n, false);
+    }
+    // Song master
+    const songSoloBtn = document.querySelector('.solo-btn[data-channel="song"]');
+    const songSoloed = !!(songSoloBtn && songSoloBtn.classList.contains('active'));
+    if (anySolo) setSongMuted(!songSoloed);
+    else setSongMuted(false);
+    // Guitar input
+    const guitarSoloBtn = document.querySelector('.solo-btn[data-channel="guitar"]');
+    const guitarSoloed = !!(guitarSoloBtn && guitarSoloBtn.classList.contains('active'));
+    if (anySolo) _setMonitorMuted(!guitarSoloed);
+    else _setMonitorMuted(false);
   }
 
   // ---------------------------------------------- util
@@ -4813,6 +4934,12 @@
     }
     const r = $('monitor-gain-readout');
     if (r) r.textContent = g.toFixed(2);
+    // Mirror to the rack's Guitar Input row (Phase 2 mixer) if it
+    // exists. Guarded against the redundant assignment so dragging
+    // either slider doesn't re-fire `input` on the other.
+    document.querySelectorAll('.gain[data-channel="guitar"]').forEach(el => {
+      if (parseFloat(el.value) !== g) el.value = String(g);
+    });
     try { localStorage.setItem(MONITOR_GAIN_KEY, String(g)); } catch {}
   }
 
@@ -4826,6 +4953,10 @@
       btn.textContent = state.monitor.muted ? 'Unmute' : 'Mute';
       btn.classList.toggle('active', state.monitor.muted);
     }
+    // Mirror to the rack's Guitar Input mute button (Phase 2 mixer).
+    document.querySelectorAll('.mute-btn[data-channel="guitar"]').forEach(b => {
+      b.textContent = state.monitor.muted ? 'Muted' : 'Mute';
+    });
   }
 
   function _setMonitorStatus(text, kind) {
