@@ -15,9 +15,16 @@ from tone_forge.session.protocol import MessageType
 
 def test_protocol_version_is_pinned() -> None:
     """If this fires, also bump ConnectProtocol.version (Swift) and
-    CONNECT_BRIDGE_PROTOCOL_VERSION in tone_forge_api.py."""
+    CONNECT_BRIDGE_PROTOCOL_VERSION in tone_forge_api.py.
 
-    assert P.PROTOCOL_VERSION == 1
+    Bumped 1->2 by the Audio-Ownership Pivot (Phase 4): added the
+    additive v2 frame types (session_data, transport_state,
+    connect_state, latency_report, input_meter, measure_latency,
+    load_stems). v1 helpers still negotiate via hello_ack's
+    back-compat path.
+    """
+
+    assert P.PROTOCOL_VERSION == 2
 
 
 def test_message_type_strings_are_stable() -> None:
@@ -73,8 +80,9 @@ def test_envelope_with_empty_body_still_frames() -> None:
     [
         (None, True),    # missing version field → accept (v0 / pre-versioning)
         (0, True),       # explicit v0
-        (1, True),       # current
-        (2, False),      # future client; server must reject
+        (1, True),       # legacy helper; server back-compat accepts v1
+        (2, True),       # current (post-Phase-4 bump)
+        (3, False),      # future client; server must reject
         (99, False),     # way-future client; server must reject
         ("bogus", True), # garbage → treated as missing rather than rejection
     ],
