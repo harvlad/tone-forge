@@ -9,11 +9,13 @@ difficulty, motifs.
 Public surface (importable from ``tone_forge.analysis``):
 
 * ``detect_chords`` — chord lane in ``contracts.Chord`` shape (P4a).
+* ``detect_chords_with_key`` — chord lane + the post-tie-break key
+  decision the chord_detector reaches internally (Phase-7+ hoist).
 
 Other helpers (sections, tempo_key, etc.) ship from their own
 submodules and will be re-exported here as they land.
 """
 
-from tone_forge.analysis.chords import detect_chords
+from tone_forge.analysis.chords import detect_chords, detect_chords_with_key
 
-__all__ = ["detect_chords"]
+__all__ = ["detect_chords", "detect_chords_with_key"]

@@ -1045,9 +1045,23 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             "sample_rate": 22050,
             # Tempo + key (estimated above) — surfaced for the Jam UI and
             # the looper grid. beat_times is in seconds.
+            #
+            # Field-name compat: ``beats_s`` / ``downbeats_s`` are the
+            # canonical names that ``session/bundle.py`` reads into
+            # ``SongUnderstanding``. Prior to the Phase-7 hoist this
+            # path wrote only ``beat_times`` and the bundle silently
+            # fell through to ``()`` — the JAM ribbon's now-playing
+            # strip never saw beats. We emit *all three* keys: the
+            # canonical pair plus the legacy ``beat_times`` for any
+            # caller still pinned to the old name. ``downbeats_s`` is
+            # derived 4/4 (every 4th beat from anchor); a real
+            # downbeat tracker can replace this without changing the
+            # bundle contract.
             "tempo_bpm": tempo_bpm,
             "detected_key": detected_key,
             "beat_times": beat_times,
+            "beats_s": beat_times,
+            "downbeats_s": beat_times[::4] if beat_times else [],
             # Waveform for arrangement view
             "waveform": waveform_data,
             # Detection

@@ -48,3 +48,34 @@ class DetectorConfig:
     # Re-enable previously REVERTED stages for sweep exploration.
     quality_switch_penalty: float = 0.0      # S2.1 reverted
     hcdf_snap_radius_frames: int = 0         # S3.1 reverted
+
+    # Stage 1.4 (Power-chord third-absence prior) — re-enabled with
+    # persistence gating + key-conditioning to address the
+    # demolition_warning false-positive regression that caused the
+    # original Phase 3 attempt to be disabled:
+    #
+    #   * power_chord_third_ratio > 0 AND
+    #   * power_chord_penalty > 0 AND
+    #   * power_chord_third_min_streak >= 1
+    #
+    # together enable the prior. The streak gate requires the third
+    # of a candidate root to be absent for N consecutive windows
+    # before the maj/min emission is demoted, ruling out the
+    # transient-attack false positives that demoted real triads in
+    # the original failed attempt.
+    #
+    # power_chord_minor_key_only=True additionally restricts the
+    # prior to songs whose detected key is minor with strength
+    # >= 0.7 — rock idiom is minor-key power chords, and gating on
+    # the post-tie-break key avoids firing the prior on songs
+    # outside the idiom.
+    #
+    # Production callsites (``bench.benchmark``, ``bench.corpus``,
+    # the existing chord-detector regression tests) pass a default
+    # config → all four fields are zero/False → emission behaviour
+    # is bit-exact identical to pre-S1.4. Only the chord-lane stage
+    # (``analysis.chords.detect_chords_with_key``) opts in.
+    power_chord_third_ratio: float = 0.0
+    power_chord_penalty: float = 0.0
+    power_chord_third_min_streak: int = 0
+    power_chord_minor_key_only: bool = False

@@ -303,6 +303,39 @@ class AnalysisResult:
     sections: Optional[List[Dict[str, Any]]] = None
     energy_curve: Optional[List[float]] = None
 
+    # Beat grid (hoisted Phase 7 — single source of truth feeding both
+    # section detection and chord-lane snap). Persisting these here is
+    # what closes the historical "tempo=0.0, beats_s=()" UI bug: the
+    # values were being computed inside _detect_sections /
+    # _detect_chord_lane and silently dropped on the floor before this
+    # commit. ``downbeats_s`` is derived from ``beats_s`` at the
+    # detected time signature (every 4th beat at 4/4); a smarter
+    # downbeat tracker can replace the derivation without changing the
+    # field contract.
+    tempo_bpm: float = 0.0
+    beats_s: Optional[List[float]] = None
+    downbeats_s: Optional[List[float]] = None
+
+    # Detected musical key (Phase-7+ hoist — same defensibility
+    # pattern as tempo/beats). chord_detector internally runs
+    # Krumhansl-Schmuckler + optional bass-tiebreak to anchor the
+    # diatonic-bias scoring; previously the result was logged then
+    # dropped on the floor, leaving downstream re-spelling and
+    # key-aware UI blind. Now lifted to the top of the result so
+    # ``bundle._resolve_key`` and the chord ribbon can consume it
+    # directly.
+    #
+    # ``detected_key`` is the human label ("F minor", "E major") —
+    # the source of truth for display + enharmonic re-spelling.
+    # ``detected_key_root`` is the 0-11 pitch-class index
+    # (5 = F, 4 = E, etc.) for code that needs numeric arithmetic.
+    # ``detected_key_strength`` is the Krumhansl top-1 vs top-2
+    # margin, normalised to [0, 1]; values near 0 mean the key
+    # picker is essentially guessing.
+    detected_key: Optional[str] = None
+    detected_key_root: Optional[int] = None
+    detected_key_strength: float = 0.0
+
     # Chord lane (P4a wire-up).
     # Persisted shape matches ``analysis.chords.detect_chords`` -> contracts.Chord:
     # ``[{"start_s": float, "end_s": float, "symbol": str, "confidence": float}, ...]``.
@@ -350,12 +383,27 @@ class AnalysisResult:
                           "midi_stems", "stems", "stems_paths", "preset_matches",
                           "quality",
                           "provenance", "waveform", "profiling",
-                          "sections", "energy_curve", "chords",
+                          "sections", "energy_curve",
+                          "beats_s", "downbeats_s",
+                          "detected_key", "detected_key_root",
+                          "chords",
                           "chords_beat_snapped",
                           "type", "descriptor", "chain", "tweak_hints"]:
             value = getattr(self, field_name)
             if value is not None:
                 result[field_name] = value
+
+        # tempo_bpm is a non-Optional float (default 0.0). Persist it
+        # unconditionally — bundle/jam UI key off `> 0` to decide
+        # whether to render the BPM readout, so emitting 0.0 is the
+        # honest "no tempo detected" signal.
+        result["tempo_bpm"] = float(self.tempo_bpm or 0.0)
+        # detected_key_strength is a non-Optional float (default 0.0).
+        # Persist unconditionally for the same reason as tempo_bpm:
+        # downstream callers branch on `> 0` to gate key-aware
+        # re-spelling, and "0.0" is the honest "no key inferred"
+        # signal.
+        result["detected_key_strength"] = float(self.detected_key_strength or 0.0)
 
         # Add midi_stats for frontend
         if self.midi:
@@ -593,16 +641,48 @@ class UnifiedPipeline:
                     {"midi_stems": list(midi_stems.keys())}
                 )
 
+            # 6.5 Track beats (Phase 7: hoisted single-source-of-truth).
+            #
+            # Previously the beat grid was computed twice — once inside
+            # ``_detect_sections`` (only persisted as ``tempo_bpm`` and
+            # *then dropped on the floor* by the caller at this site),
+            # and once inside ``_detect_chord_lane`` (used only for the
+            # local snap step, never returned). The result was a UI
+            # that read ``tempo_bpm = 0.0`` and ``beats_s = []`` on
+            # every session, even when librosa had cleanly tracked the
+            # beats. Hoisting fixes the root cause: a single call here,
+            # consumed by both downstream stages and persisted in the
+            # AnalysisResult.
+            yield ProgressEvent("beats", "Tracking beats...", 86)
+            stage_start = time.time()
+            beat_grid = await self._track_beats(audio_data, stems)
+            tempo_bpm = beat_grid["tempo_bpm"]
+            beats_s = beat_grid["beats_s"]
+            downbeats_s = beat_grid["downbeats_s"]
+            if stage_timings is not None:
+                stage_timings["beat_tracking"] = {
+                    "duration_ms": (time.time() - stage_start) * 1000,
+                    "tempo_bpm": tempo_bpm,
+                    "beats_detected": len(beats_s),
+                }
+
             # 7. Detect arrangement sections
             sections = None
             energy_curve = None
             yield ProgressEvent("sections", "Analyzing arrangement...", 87)
             stage_start = time.time()
             try:
-                section_result = await self._detect_sections(audio_data, midi_stems)
+                section_result = await self._detect_sections(
+                    audio_data, midi_stems, tempo_hint=tempo_bpm,
+                )
                 if section_result:
                     sections = section_result.get("sections")
                     energy_curve = section_result.get("energy_curve")
+                    # Belt-and-braces: if the hoisted beat tracker
+                    # failed (tempo_bpm==0) but the section detector
+                    # successfully recovered one, accept it.
+                    if (not tempo_bpm or tempo_bpm <= 0) and section_result.get("tempo_bpm"):
+                        tempo_bpm = float(section_result["tempo_bpm"])
             except Exception as e:
                 logger.warning(f"Section detection failed: {e}")
             if stage_timings is not None:
@@ -617,14 +697,33 @@ class UnifiedPipeline:
             # the result would be noise and Jam wouldn't display it.
             chords = None
             chords_beat_snapped = None
+            # Phase-7+: detected_key surfaces out of the chord-lane
+            # stage (chord_detector internally runs Krumhansl + the
+            # bass-tiebreak; ``detect_chords_with_key`` returns it
+            # alongside the chord records).
+            detected_key: Optional[str] = None
+            detected_key_root: Optional[int] = None
+            detected_key_strength: float = 0.0
             if detection.is_full_mix or detection.is_guitar:
                 yield ProgressEvent("chords", "Detecting chord lane...", 89)
                 stage_start = time.time()
                 try:
-                    chord_lane = await self._detect_chord_lane(audio_data, stems)
+                    chord_lane = await self._detect_chord_lane(
+                        audio_data, stems, beats_s=beats_s,
+                    )
                     if chord_lane is not None:
                         chords = chord_lane.get("fixed")
                         chords_beat_snapped = chord_lane.get("snapped")
+                        key_dict = chord_lane.get("key") or {}
+                        if key_dict.get("label"):
+                            detected_key = str(key_dict["label"])
+                            detected_key_root = (
+                                int(key_dict["root"])
+                                if key_dict.get("root") is not None else None
+                            )
+                            detected_key_strength = float(
+                                key_dict.get("strength", 0.0) or 0.0
+                            )
                 except Exception as e:  # pragma: no cover - defensive
                     logger.warning(f"Chord detection failed: {e}")
                 if stage_timings is not None:
@@ -655,6 +754,12 @@ class UnifiedPipeline:
                 midi_stems, waveform, sections, energy_curve, chords,
                 chords_beat_snapped,
                 stage_timings, config,
+                tempo_bpm=tempo_bpm,
+                beats_s=beats_s,
+                downbeats_s=downbeats_s,
+                detected_key=detected_key,
+                detected_key_root=detected_key_root,
+                detected_key_strength=detected_key_strength,
             )
 
             yield ProgressEvent("complete", "Analysis complete", 100)
@@ -1343,21 +1448,125 @@ class UnifiedPipeline:
             "sample_rate": audio_data.sr,
         }
 
+    async def _track_beats(
+        self,
+        audio_data: AudioData,
+        stems: Optional[Dict[str, Path]] = None,
+    ) -> Dict[str, Any]:
+        """Pipeline-level beat-tracking stage (Phase 7 hoist).
+
+        Runs ``librosa.beat.beat_track`` once on the most informative
+        source available (the demucs 'other' stem when present —
+        harmonic + percussive but free of vocals — else the full mix).
+        Returns ``{tempo_bpm, beats_s, downbeats_s}`` for both the
+        section detector and the chord-lane snap step to consume.
+
+        Failure is silent and observable: every output is degraded
+        rather than raised. ``tempo_bpm == 0.0`` signals "no tempo
+        detected" without breaking the pipeline; the new pipeline-
+        output invariant test (``test_pipeline_output_invariants``)
+        catches the silent-zero regression for non-silent fixtures.
+
+        ``downbeats_s`` is currently derived from ``beats_s`` at 4/4
+        (every 4th beat starting at beat 0). When/if a real downbeat
+        tracker lands (madmom DBN, librosa.beat.plp, or a learned
+        head), it can replace the derivation without changing the
+        AnalysisResult / SongUnderstanding contract.
+        """
+        def track() -> Dict[str, Any]:
+            import librosa as _lr
+            # Prefer the 'other' stem (harmonic + percussive without
+            # vocals/bass smear); the chord lane uses the same source,
+            # which keeps the beat grid musically aligned to the
+            # chord-region edges. Fall back to the full mix on any
+            # load failure.
+            y, sr = audio_data.audio, audio_data.sr
+            if stems is not None:
+                other_path = stems.get("other")
+                if other_path is not None:
+                    try:
+                        y, sr = _lr.load(str(other_path), sr=sr, mono=True)
+                    except Exception as e:  # pragma: no cover - defensive
+                        logger.warning(
+                            f"Beat tracking: 'other' stem load failed "
+                            f"({e}); using full mix"
+                        )
+                        y, sr = audio_data.audio, audio_data.sr
+
+            tempo_bpm = 0.0
+            beats_s: List[float] = []
+            downbeats_s: List[float] = []
+            try:
+                tempo_raw, beat_frames = _lr.beat.beat_track(y=y, sr=sr)
+                tempo_val = (
+                    float(np.asarray(tempo_raw).item())
+                    if tempo_raw is not None else 0.0
+                )
+                # Same 40–240 BPM sanity window the legacy in-stage
+                # code used. Out-of-range outputs are almost always
+                # phantom-pulse artefacts and would mislead the UI.
+                if (
+                    40.0 <= tempo_val <= 240.0
+                    and beat_frames is not None
+                    and len(beat_frames) >= 2
+                ):
+                    tempo_bpm = tempo_val
+                    beats_s = _lr.frames_to_time(
+                        beat_frames, sr=sr
+                    ).tolist()
+                    # Derive downbeats at 4/4 (every 4th beat starting
+                    # from beat 0). The first beat in the librosa
+                    # tracking output is treated as the anchor; this
+                    # is an estimate, not a measured downbeat — UI
+                    # honesty: render as a thinner tick than a
+                    # measured one would warrant.
+                    downbeats_s = beats_s[::4]
+                    logger.info(
+                        f"Beat tracking: tempo={tempo_bpm:.1f} BPM, "
+                        f"{len(beats_s)} beats, "
+                        f"{len(downbeats_s)} downbeats (derived 4/4)"
+                    )
+                else:
+                    logger.warning(
+                        f"Beat tracking: tempo {tempo_val:.1f} BPM "
+                        f"outside 40–240 range or <2 beats; degrading"
+                    )
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(f"Beat tracking failed: {e}")
+
+            return {
+                "tempo_bpm": tempo_bpm,
+                "beats_s": beats_s,
+                "downbeats_s": downbeats_s,
+            }
+
+        return await run_in_thread(track)
+
     async def _detect_sections(
         self,
         audio_data: AudioData,
         midi_stems: Dict[str, Dict[str, Any]],
+        tempo_hint: float = 0.0,
     ) -> Optional[Dict[str, Any]]:
-        """Detect arrangement sections using section detector."""
+        """Detect arrangement sections using section detector.
+
+        ``tempo_hint`` is the pipeline-level tempo from ``_track_beats``.
+        When > 0 it short-circuits the section detector's internal
+        beat-track call, avoiding the duplicate computation that
+        previously fed two stages independently and produced
+        inconsistent tempo values between them.
+        """
         def detect():
             from tone_forge.analysis.sections import SectionDetector
 
-            # Get tempo from MIDI if available
-            tempo = None
-            for stem_type, midi_data in midi_stems.items():
-                if midi_data.get("tempo"):
-                    tempo = midi_data["tempo"]
-                    break
+            # Prefer the hoisted pipeline tempo; fall back to MIDI
+            # tempo when the hoisted beat tracker degraded.
+            tempo = tempo_hint if tempo_hint and tempo_hint > 0 else None
+            if tempo is None:
+                for stem_type, midi_data in midi_stems.items():
+                    if midi_data.get("tempo"):
+                        tempo = midi_data["tempo"]
+                        break
 
             detector = SectionDetector(sr=audio_data.sr)
             result = detector.detect_sections(
@@ -1378,6 +1587,7 @@ class UnifiedPipeline:
         self,
         audio_data: AudioData,
         stems: Optional[Dict[str, Path]] = None,
+        beats_s: Optional[List[float]] = None,
     ) -> List[Dict[str, Any]]:
         """Detect the chord lane via the analysis subsystem (P4a).
 
@@ -1440,42 +1650,34 @@ class UnifiedPipeline:
                     )
                     y_bass = None
 
-            # Phase 6: precompute beats on the chord audio so the
-            # detector aggregates chroma per beat (chord-region
-            # boundaries snap to musical beats rather than the fixed
-            # 0.5s grid). Out-of-range tempos and tracking failures
-            # fall back to fixed-window grid by leaving beats_s=None.
-            beats_s = None
-            try:
-                tempo_raw, beat_frames = _lr.beat.beat_track(y=y, sr=sr)
-                tempo_val = (
-                    float(np.asarray(tempo_raw).item())
-                    if tempo_raw is not None else None
-                )
-                if (
-                    tempo_val is not None
-                    and 40 <= tempo_val <= 240
-                    and beat_frames is not None
-                    and len(beat_frames) >= 2
-                ):
-                    beats_s = _lr.frames_to_time(beat_frames, sr=sr)
-                    logger.info(
-                        f"Chord detection: beat-sync with "
-                        f"{len(beats_s)} beats @ {tempo_val:.1f} BPM"
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Chord detection: beat tracking failed ({e}); "
-                    f"falling back to fixed-window grid"
-                )
-                beats_s = None
+            # Phase 7 hoist: beats come from the pipeline-level
+            # ``_track_beats`` stage rather than being re-derived here.
+            # The previous in-stage ``librosa.beat.beat_track`` call
+            # was duplicative AND its result was dropped (used only
+            # for the snap below, never propagated to AnalysisResult).
+            # The caller passes ``beats_s=None`` when the hoisted
+            # tracker degraded, which gracefully disables the snap
+            # variant and matches the legacy fixed-window output.
+            beats_array = (
+                np.asarray(beats_s, dtype=np.float64)
+                if beats_s is not None and len(beats_s) >= 2 else None
+            )
 
             # Phase 6 (hybrid grid + UI toggle): detector runs on the
             # fixed 0.5s grid (Phase 5 WCSR floor). The beat-snapped
             # variant is produced separately via the cheap post-process
             # so both views ship to the client.
-            from tone_forge.analysis.chords import snap_chord_boundaries_to_beats
-            chord_records = detect_chords(
+            #
+            # Phase-7+ key hoist: use detect_chords_with_key so the
+            # post-tie-break key decision surfaces alongside the chord
+            # records, instead of being computed and dropped on the
+            # floor inside chord_detector. Backward-compatible: empty
+            # dict on degenerate input.
+            from tone_forge.analysis.chords import (
+                detect_chords_with_key,
+                snap_chord_boundaries_to_beats,
+            )
+            chord_records, key_dict = detect_chords_with_key(
                 y, sr, bass_audio=y_bass, beats_s=None,
             )
             fixed = [
@@ -1488,10 +1690,10 @@ class UnifiedPipeline:
                 for c in chord_records
             ]
             snapped = None
-            if beats_s is not None and len(chord_records) >= 2:
+            if beats_array is not None and len(chord_records) >= 2:
                 song_dur_s = float(len(y) / sr) if sr else 0.0
                 snapped_records = snap_chord_boundaries_to_beats(
-                    chord_records, beats_s, song_dur_s,
+                    chord_records, beats_array, song_dur_s,
                 )
                 snapped = [
                     {
@@ -1502,7 +1704,7 @@ class UnifiedPipeline:
                     }
                     for c in snapped_records
                 ]
-            return {"fixed": fixed, "snapped": snapped}
+            return {"fixed": fixed, "snapped": snapped, "key": key_dict}
 
         return await run_in_thread(detect)
 
@@ -1521,6 +1723,12 @@ class UnifiedPipeline:
         chords_beat_snapped: Optional[List[Dict[str, Any]]],
         stage_timings: Optional[Dict],
         config: PipelineConfig,
+        tempo_bpm: float = 0.0,
+        beats_s: Optional[List[float]] = None,
+        downbeats_s: Optional[List[float]] = None,
+        detected_key: Optional[str] = None,
+        detected_key_root: Optional[int] = None,
+        detected_key_strength: float = 0.0,
     ) -> AnalysisResult:
         """Build the final analysis result."""
         # Build stems paths dict - optionally as URLs for web playback
@@ -1612,6 +1820,14 @@ class UnifiedPipeline:
             # Arrangement sections
             sections=sections,
             energy_curve=energy_curve,
+            # Beat grid (Phase 7 hoist)
+            tempo_bpm=tempo_bpm or 0.0,
+            beats_s=beats_s if beats_s else None,
+            downbeats_s=downbeats_s if downbeats_s else None,
+            # Detected key (Phase-7+ hoist)
+            detected_key=detected_key,
+            detected_key_root=detected_key_root,
+            detected_key_strength=detected_key_strength or 0.0,
             # Chord lane (P4a)
             chords=chords,
             chords_beat_snapped=chords_beat_snapped,

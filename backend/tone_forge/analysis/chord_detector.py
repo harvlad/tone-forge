@@ -7,7 +7,7 @@ and can group scattered notes into coherent chord voicings.
 
 import numpy as np
 import logging
-from typing import List, Tuple, Optional, Dict
+from typing import Any, List, Tuple, Optional, Dict
 from dataclasses import dataclass
 
 from .detector_config import DetectorConfig
@@ -545,6 +545,7 @@ def detect_chords_from_audio(
     bass_y: Optional[np.ndarray] = None,
     beats_s: Optional[np.ndarray] = None,
     config: Optional[DetectorConfig] = None,
+    key_out: Optional[Dict[str, Any]] = None,
 ) -> List[Chord]:
     """
     Detect chords from audio using chroma features.
@@ -682,6 +683,18 @@ def detect_chords_from_audio(
             f"[no chord-output effect; relative pairs share diatonic set]"
         )
         key_root, key_mode = new_root, new_mode
+    # Phase-7+ key surfacing: if the caller passed an out-dict, populate
+    # it with the final (post tie-break) key decision so the pipeline
+    # can hoist it to AnalysisResult.detected_key without re-running
+    # chroma + Krumhansl. Mirrors the tempo/beats hoist: useful state
+    # computed inside a stage was previously logged then dropped on
+    # the floor, leaving downstream (re-spelling, key-aware UI) blind.
+    if key_out is not None:
+        mode_word = 'major' if key_mode == 'major' else 'minor'
+        key_out["root"] = int(key_root)
+        key_out["mode"] = mode_word
+        key_out["strength"] = float(key_strength)
+        key_out["label"] = f"{NOTE_NAMES[key_root]} {mode_word}"
     diatonic = _diatonic_chord_set(key_root, key_mode)
     logger.info(
         f"Detected key: {NOTE_NAMES[key_root]} {key_mode} "
@@ -922,12 +935,32 @@ def detect_chords_from_audio(
     # harmony LM that has already decided the relative-pair direction.
     # The call site passes zeros, so behaviour is bit-for-bit
     # identical to pre-S1.4.
+    # Stage 1.4.1 power-chord prior plumbing. Three numeric levers
+    # plus an optional key-conditioning gate live on DetectorConfig.
+    # When power_chord_minor_key_only=True, the levers are zeroed
+    # for songs whose detected key is NOT minor with high strength
+    # (>= 0.7) — the rock idiom this prior targets. For songs that
+    # pass the gate (or when the flag is off), the levers flow
+    # through to the emission scorer unchanged. With default config
+    # (all zeros + False) this branch is a no-op and behaviour
+    # matches pre-Stage 1.4.1 exactly.
+    _pc_ratio = float(_cfg.power_chord_third_ratio)
+    _pc_penalty = float(_cfg.power_chord_penalty)
+    _pc_streak = int(_cfg.power_chord_third_min_streak)
+    if _cfg.power_chord_minor_key_only:
+        if not (key_mode == 'minor' and key_strength >= 0.7):
+            _pc_ratio = 0.0
+            _pc_penalty = 0.0
+            _pc_streak = 0
     emissions = _compute_emission_scores(
         chroma, boundaries,
         diatonic=diatonic, bias=DIATONIC_BIAS,
         no_chord_floor=COS_CUTOFF,
         bass_root_track=bass_track,
         bass_bias=BASS_ROOT_BIAS if bass_track is not None else 0.0,
+        power_chord_third_ratio=_pc_ratio,
+        power_chord_penalty=_pc_penalty,
+        power_chord_third_min_streak=_pc_streak,
     )
     transitions = _build_transition_matrix(diatonic=diatonic, config=_cfg)
     states = _viterbi_decode(emissions, transitions)
@@ -1442,6 +1475,7 @@ def _compute_emission_scores(
     bass_bias: float = 0.0,
     power_chord_third_ratio: float = 0.0,
     power_chord_penalty: float = 0.0,
+    power_chord_third_min_streak: int = 0,
 ) -> np.ndarray:
     """Compute the (T, S) emission score matrix for Viterbi decoding.
 
@@ -1476,6 +1510,19 @@ def _compute_emission_scores(
     emissions for that root, letting `5` win the slot. Zero by
     default; gated on ``power_chord_penalty > 0`` and
     ``power_chord_third_ratio > 0``.
+
+    Stage 1.4.1 — persistence streak gate. The original Stage-1.4
+    failed corpus regression because the per-window third-absence
+    test fires on real triads during attack envelopes, demoting
+    them. ``power_chord_third_min_streak`` >= 1 requires the
+    third-absent flag to be True for N consecutive windows ending at
+    t before the penalty applies — a power-chord voicing has the
+    third absent for its full duration, but a triad's third only
+    drops out for one or two windows during transients. Per-root
+    streak counters reset to 0 whenever a window's third-absent flag
+    is False, so the gate is sharp on the leading edge of a real
+    power-chord region (no penalty on the first (N-1) frames) and
+    resets cleanly on the trailing edge.
     """
     n_q = len(_VITERBI_QUALITIES)
     n_chord_states = 12 * n_q
@@ -1500,6 +1547,13 @@ def _compute_emission_scores(
     pc_enabled = (
         power_chord_penalty > 0.0 and power_chord_third_ratio > 0.0
     )
+    pc_min_streak = max(1, int(power_chord_third_min_streak))
+    # Per-root running streak of consecutive third-absent windows.
+    # Resets to zero whenever the third-absent flag drops to False.
+    # The penalty is gated on streak >= pc_min_streak so a single
+    # transient frame can't demote a real triad (the failure mode
+    # that caused the original Stage 1.4 to be reverted).
+    pc_streak = np.zeros(12, dtype=np.int64)
 
     for t in range(T):
         s_frame, e_frame = boundaries[t], boundaries[t + 1]
@@ -1537,6 +1591,18 @@ def _compute_emission_scores(
                 if thirds < power_chord_third_ratio * root_fifth_avg:
                     third_absent[r] = True
 
+        # Stage 1.4.1: update per-root persistence streak. After
+        # this update, ``pc_streak[r]`` counts consecutive
+        # third-absent windows ending at t (inclusive). The penalty
+        # at this window only fires when pc_streak[r] >= pc_min_streak,
+        # ruling out single-frame transients on real triads.
+        if pc_enabled:
+            for r in range(12):
+                if third_absent[r]:
+                    pc_streak[r] += 1
+                else:
+                    pc_streak[r] = 0
+
         for root, q_raw, tmpl in raw_templates:
             raw = float(np.dot(chroma_norm, tmpl))
             biased = raw
@@ -1553,9 +1619,11 @@ def _compute_emission_scores(
             # Stage 1.4 third-absence penalty applied to maj/min
             # collapsed cells only. Subtractive (cosine-units) so it
             # composes additively with the Viterbi transition scores.
+            # Stage 1.4.1 gates the penalty on the persistence streak
+            # so single-frame transients on real triads don't trip it.
             if (
                 pc_enabled
-                and third_absent[root]
+                and pc_streak[root] >= pc_min_streak
                 and (q_coll == 'maj' or q_coll == 'min')
             ):
                 biased = biased - power_chord_penalty

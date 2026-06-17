@@ -362,7 +362,24 @@ def _resolve_user_role(result: Mapping[str, Any]) -> UserRole:
 
 
 def _resolve_tempo(result: Mapping[str, Any]) -> tuple[float, float]:
-    """Walk the common legacy locations for a tempo value."""
+    """Walk the common locations for a tempo value.
+
+    Reads the top-level ``tempo_bpm`` first — this is the canonical
+    field written by the hoisted pipeline-level beat-tracker
+    (``UnifiedPipeline._track_beats``) and by the local analysis
+    worker. The descriptor / per-instrument paths below are *legacy
+    fallbacks*: they kept old sessions readable through the
+    Phase-7 hoist, but new sessions all write to the top level.
+
+    Returns ``(bpm, confidence)`` where confidence is conservative —
+    we don't currently track tempo confidence end-to-end so 0.5 is
+    used for any successful read.
+    """
+    # Canonical path: top-level field from the hoisted beat tracker.
+    top_level = _safe_float(result.get("tempo_bpm"), default=None)
+    if top_level is not None and top_level > 0:
+        return top_level, 0.5
+    # Legacy fallbacks (descriptor.tempo, guitar.tempo, ...).
     for path in (
         ("descriptor", "tempo"),
         ("descriptor", "tempo_bpm"),
@@ -372,11 +389,39 @@ def _resolve_tempo(result: Mapping[str, Any]) -> tuple[float, float]:
         value = _nested_get(result, path)
         bpm = _safe_float(value, default=None)
         if bpm is not None and bpm > 0:
-            return bpm, 0.5  # conservative confidence; we don't track it
+            return bpm, 0.5
     return 0.0, 0.0
 
 
 def _resolve_key(result: Mapping[str, Any]) -> tuple[Optional[str], float]:
+    """Resolve the song's musical key for the JAM understanding block.
+
+    Reader priority:
+      1. Top-level ``detected_key`` (Phase-7+ hoist — the chord
+         detector's post-tie-break Krumhansl pick, surfaced by
+         ``unified_pipeline._detect_chord_lane`` via
+         ``chords.detect_chords_with_key``). The accompanying
+         ``detected_key_strength`` becomes the confidence; the
+         strength is the Krumhansl top-1 vs top-2 margin, normalised
+         to [0, 1].
+      2. Legacy descriptor / per-instrument key fields (older history
+         dicts where the chord detector's key was never surfaced; the
+         tone descriptor sometimes carries a "key" alongside its
+         guitar/amp/cab choice). Confidence is fixed at 0.5 because
+         these paths predate the surfaced strength signal.
+    """
+    # Canonical path: chord-detector's Krumhansl result, hoisted to
+    # the top of the persisted dict.
+    top_level = result.get("detected_key")
+    if isinstance(top_level, str) and top_level:
+        strength = _safe_float(
+            result.get("detected_key_strength"), default=0.0,
+        )
+        # Floor at 0.5 so the canonical path is at least as
+        # authoritative as the legacy fallback — strength=0 is
+        # honest "no key" but if the label is present, the
+        # detector made a pick.
+        return top_level, max(strength or 0.0, 0.5)
     for path in (
         ("descriptor", "key"),
         ("guitar", "key"),
@@ -426,16 +471,42 @@ def _first_present(item: Mapping[str, Any], *keys: str) -> Any:
 
 
 def _iter_sections(raw: Any) -> Iterable[Section]:
+    """Translate a persisted ``sections`` list into ``Section`` contracts.
+
+    Accepts two shapes for backward + forward compatibility (Bug D):
+
+    * **Contract shape** (preferred, future writes): ``start_s`` /
+      ``end_s`` / ``label`` / ``confidence``.
+    * **Legacy shape** (what ``ArrangementSection.to_dict()`` emits
+      today): ``start_time`` / ``end_time`` / ``type`` /
+      ``confidence``. Used by the section detector and persisted by
+      ``UnifiedPipeline`` because changing the producer shape would
+      ripple through API contracts and the existing frontend.
+
+    Same field-name-compat pattern as the beats_s vs beat_times
+    Bug B precedent. Without this translation, the section detector's
+    43 detected sections were silently dropped at the bundle boundary
+    and ``understanding.sections`` came out empty.
+    """
     if not isinstance(raw, Iterable) or isinstance(raw, (str, bytes)):
         return
     for item in raw:
         if not isinstance(item, Mapping):
             continue
-        start = _safe_float(_first_present(item, "start_s", "start"), default=None)
-        end = _safe_float(_first_present(item, "end_s", "end"), default=None)
+        start = _safe_float(
+            _first_present(item, "start_s", "start", "start_time"),
+            default=None,
+        )
+        end = _safe_float(
+            _first_present(item, "end_s", "end", "end_time"),
+            default=None,
+        )
         if start is None or end is None:
             continue
-        label = _str_or_none(item.get("label")) or "section"
+        label = (
+            _str_or_none(_first_present(item, "label", "name", "type", "section_type"))
+            or "section"
+        )
         conf = _safe_float(item.get("confidence"), default=0.5) or 0.5
         yield Section(start_s=start, end_s=end, label=label, confidence=conf)
 

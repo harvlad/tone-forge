@@ -193,8 +193,11 @@ def test_detect_chord_lane_emits_persisted_dict_shape(tmp_path: Path):
     # Phase 6 hybrid grid: orchestrator emits a dict with the
     # fixed-window array under "fixed" and the optional beat-snapped
     # variant under "snapped" (None when no beats were detected).
+    # Bug-C hoist (Phase 7+): the post-tie-break key decision the
+    # chord_detector reaches internally is surfaced under "key" so
+    # AnalysisResult can persist detected_key at the top level.
     assert isinstance(chord_lane, dict)
-    assert set(chord_lane.keys()) == {"fixed", "snapped"}
+    assert set(chord_lane.keys()) == {"fixed", "snapped", "key"}
 
     fixed = chord_lane["fixed"]
     assert isinstance(fixed, list)
@@ -213,3 +216,12 @@ def test_detect_chord_lane_emits_persisted_dict_shape(tmp_path: Path):
         for record in snapped:
             assert set(record.keys()) == {"start_s", "end_s", "symbol", "confidence"}
             assert record["end_s"] > record["start_s"]
+
+    # Key dict: populated for a tonal triad; degenerate-input case
+    # (silent audio) leaves it empty per chord_detector's contract.
+    key_dict = chord_lane["key"]
+    assert isinstance(key_dict, dict)
+    if key_dict:
+        assert set(key_dict.keys()) >= {"root", "mode", "strength", "label"}
+        assert key_dict["mode"] in {"major", "minor"}
+        assert 0 <= int(key_dict["root"]) <= 11

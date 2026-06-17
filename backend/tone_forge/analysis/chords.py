@@ -13,14 +13,18 @@ enough for the Jam chord lane; not a research project.
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
 from tone_forge.contracts import Chord
 from tone_forge.analysis import chord_detector as _internal
 
-__all__ = ["detect_chords", "snap_chord_boundaries_to_beats"]
+__all__ = [
+    "detect_chords",
+    "detect_chords_with_key",
+    "snap_chord_boundaries_to_beats",
+]
 
 
 def detect_chords(
@@ -69,6 +73,82 @@ def detect_chords(
         )
         for c in raw
     )
+
+
+def detect_chords_with_key(
+    audio: np.ndarray,
+    sr: int,
+    *,
+    min_chord_duration_s: float = 0.5,
+    bass_audio: Optional[np.ndarray] = None,
+    beats_s: Optional[np.ndarray] = None,
+) -> Tuple[Tuple[Chord, ...], Dict[str, Any]]:
+    """Detect chords AND surface the underlying key decision.
+
+    Behaviourally identical to ``detect_chords`` for chord output. The
+    second return value is a small dict the chord_detector populates
+    in-place describing the post-tie-break key:
+
+        {"root": int (0-11), "mode": "major"|"minor",
+         "strength": float (0-1), "label": "F minor"}
+
+    Empty dict on degenerate input (no chroma, all-zero audio): the
+    chord_detector then falls back to its silent-defaults path and
+    never writes into ``key_out``.
+
+    Wired by ``unified_pipeline._detect_chord_lane`` so the key
+    surfaces in the persisted AnalysisResult dict (same defensibility
+    pattern as the Phase-7 tempo/beats hoist). Direct chord_detector
+    callers that don't need the key keep using ``detect_chords``.
+
+    Stage 1.4.1 — power-chord third-absence prior (chord-lane only).
+    The chord-lane stage opts into the persistence-gated,
+    key-conditioned power-chord prior:
+
+      * ``power_chord_third_ratio=0.4``    — third must be at most
+        40% of the root+5th mass to flag third-absent
+      * ``power_chord_penalty=0.03``       — subtractive cosine
+        penalty on maj/min cells at that root
+      * ``power_chord_third_min_streak=3`` — 3 consecutive windows
+        (~1.5s at 0.5s windowing) before penalty fires
+      * ``power_chord_minor_key_only=True`` — gated on the post-
+        tie-break key being minor with strength >= 0.7
+
+    Calibrated specifically to the rock idiom (minor-key overdriven
+    guitar) without altering bench-corpus behaviour (bench uses the
+    default DetectorConfig and these levers are all zero/False
+    there). On songs outside the gate (major key or weak key
+    confidence) the prior is silently disabled, so this stage
+    matches the bench-corpus detector bit-for-bit on those inputs.
+    """
+    from tone_forge.analysis.detector_config import DetectorConfig
+
+    _stage_config = DetectorConfig(
+        power_chord_third_ratio=0.4,
+        power_chord_penalty=0.03,
+        power_chord_third_min_streak=3,
+        power_chord_minor_key_only=True,
+    )
+
+    key_out: Dict[str, Any] = {}
+    raw = _internal.detect_chords_from_audio(
+        audio, sr,
+        min_chord_duration=min_chord_duration_s,
+        bass_y=bass_audio,
+        beats_s=beats_s,
+        config=_stage_config,
+        key_out=key_out,
+    )
+    chords = tuple(
+        Chord(
+            start_s=float(c.start_time),
+            end_s=float(c.end_time),
+            symbol=c.name,
+            confidence=float(c.confidence),
+        )
+        for c in raw
+    )
+    return chords, key_out
 
 
 def snap_chord_boundaries_to_beats(
