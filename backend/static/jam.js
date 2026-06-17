@@ -173,6 +173,17 @@
       deviceLabel: '',
       gain: 1.0,
       muted: false,
+      // Phase 2 (Audio-Ownership Pivot): browser-monitor demotion.
+      // When Connect.app is installed but not paired, the toggle is
+      // gated behind a "Launch Connect for low-latency monitoring"
+      // affordance, and a small fallback link lets the user opt
+      // INTO the browser monitor anyway. This flag stays true once
+      // the user opts in, for the rest of the page session. We
+      // intentionally do NOT persist it — the assumption is that
+      // re-opening JAM is a clean slate and Connect should be the
+      // default again. When `paired`, this flag is moot (Connect
+      // owns the device regardless).
+      fallbackMode: false,
       // Clip indicator hold: timestamp (perf.now ms) until which the
       // CLIP overlay stays lit. Reset by the meter tick.
       clipUntil: 0,
@@ -261,6 +272,48 @@
       // the first replayed frame so the toast fires exactly once per
       // (re)connect cycle.
       reconnectToastShown: false,
+
+      // ----- v2 fields (Audio-Ownership Pivot) -----
+      //
+      // Mirrors of the new Connect → Browser snapshot frames. Phase
+      // 4 commit A wires the receive path; subsequent phases consume
+      // them for UI (latency comparison card, install probe button,
+      // four-state status pill).
+      //
+      // connectState   : last connect_state frame from Connect.app
+      //                  (engine state + device + monitor + dsp).
+      // connectLatencyMs : last latency_report.estimated_round_trip_ms.
+      // connectMeter   : last input_meter sample, smoothed downstream.
+      // installed      : /api/connect/installed result (Phase 6).
+      // installedPath  : filesystem path to the bundle, when known.
+      // installedVersion : CFBundleShortVersionString, when known.
+      // launching      : true while a launch attempt is in-flight
+      //                  (Phase 1: drives the "Connect Starting"
+      //                  status pill for up to 5s).
+      // launchingUntilMs : performance.now() expiry of the launching
+      //                    flag; cleared early on first peer join.
+      connectState: null,
+      connectLatencyMs: null,
+      // connectLatencyReport: full latency_report payload (kept for
+      // the dual-latency tooltip's input/output/buffer breakdown).
+      connectLatencyReport: null,
+      // connectMeasuredLatencyMs: ground-truth round-trip from a
+      // LatencyProbe impulse-loopback run, only present after the
+      // user clicked "Measure". Estimated vs. measured are shown
+      // side-by-side; measured wins the "Recommended" tag when
+      // both are present and confidence is "high".
+      connectMeasuredLatencyMs: null,
+      connectMeasuredConfidence: null,
+      // measureInFlight: true between sending measure_latency and
+      // receiving the next latency_report. Drives the button's
+      // disabled state + a "Measuring…" label.
+      measureInFlight: false,
+      connectMeter: { peak: -120, rms: -120, t: 0 },
+      installed: null,
+      installedPath: null,
+      installedVersion: null,
+      launching: false,
+      launchingUntilMs: 0,
     },
     // perform v2 waveform timeline. Peaks are computed once from the
     // decoded stem AudioBuffers after prepareStemAudio resolves.
@@ -326,7 +379,12 @@
         // on the server and ConnectProtocol.version in Swift). Bump in
         // lockstep with those when adding required fields or changing
         // semantics of an existing message type.
-        protocol_version: 1,
+        //
+        // v2 (Audio-Ownership Pivot): additive over v1. JAM now
+        // emits session_data + transport_state and receives
+        // connect_state + latency_report + input_meter. Existing v1
+        // frame shapes unchanged.
+        protocol_version: 2,
       }));
       cb.status = 'open';
       cb.reconnectMs = 1000;
@@ -363,11 +421,16 @@
         // Stop reconnecting — looping would just rehit the rejection.
         // In practice this happens when an older backend is paired with
         // a newer jam.js (e.g. cached static asset after deploy).
-        console.warn(`[connect] version_mismatch: server requires v${data.required}, we sent v1`);
+        console.warn(`[connect] version_mismatch: server requires v${data.required}, we sent v2`);
         cb.lastPreset = null;  // suppress auto-reconnect in onclose
         try { ws.close(); } catch {}
       } else if (data.type === 'joined') {
         cb.peers = data.peers || 0;
+        // Phase 1: helper is on the channel — pop the "Connect
+        // Starting" grace window early so the pill flips straight
+        // to "Connect Connected" without lingering in the
+        // intermediate state for the rest of the 5s.
+        if (cb.peers > 0) _clearLaunchingTimer();
         renderConnectStatus();
         console.log(`[connect] joined session ${data.session_id} (peers=${data.peers})`);
       } else if (data.type === 'peer_left') {
@@ -489,6 +552,50 @@
             5000,
           );
         }
+      } else if (data.type === 'connect_state') {
+        // v2 (Audio-Ownership Pivot): engine snapshot from Connect.app.
+        // Phase 4 commit A only stores it; consumers in Phases 1/2/5
+        // read state.connectBridge.connectState to drive the four-
+        // state status pill, the audio-input-card collapse, and the
+        // ownership banner. Storing the raw payload (not destructured)
+        // keeps the v2 fields { state, device, monitor, dsp }
+        // available without a second wire pass.
+        cb.connectState = data;
+        // Phase 3: the "Recommended" tag on the dual-latency card
+        // tracks paired-and-running, which depends on the connect_state
+        // we just stored. Re-render the comparison so the tag flips
+        // when Connect's engine transitions to .running.
+        renderLatencyComparison();
+      } else if (data.type === 'latency_report') {
+        // v2: measured engine latency. Stash the round-trip estimate
+        // for the dual-latency card (Phase 3) plus the full payload
+        // (input/output/buffer ms) so the row's tooltip can break
+        // the floor down for the curious user.
+        const rt = Number(data.estimated_round_trip_ms);
+        cb.connectLatencyMs = Number.isFinite(rt) ? rt : null;
+        // measured_round_trip_ms is the ground-truth from a
+        // LatencyProbe impulse-loopback run; only present after the
+        // user triggered a "Measure" via measure_latency. Stash
+        // alongside the floor estimate so the UI can show both.
+        const measured = Number(data.measured_round_trip_ms);
+        cb.connectMeasuredLatencyMs = Number.isFinite(measured) ? measured : null;
+        cb.connectMeasuredConfidence = typeof data.measurement_confidence === 'string'
+          ? data.measurement_confidence
+          : null;
+        cb.measureInFlight = false;
+        cb.connectLatencyReport = data;
+        renderLatencyComparison();
+      } else if (data.type === 'input_meter') {
+        // v2: input level for JAM's VU meter. High-rate (~20 Hz at
+        // source); smoothing happens at the render layer in a later
+        // phase. Store last sample only.
+        const peak = Number(data.peak_dbfs);
+        const rms = Number(data.rms_dbfs);
+        cb.connectMeter = {
+          peak: Number.isFinite(peak) ? peak : -120,
+          rms: Number.isFinite(rms) ? rms : -120,
+          t: performance.now(),
+        };
       }
     };
     ws.onclose = () => {
@@ -519,20 +626,28 @@
     const cb = state.connectBridge;
     let label;
     const paired = cb.status === 'open' && cb.peers > 0;
+    // Phase 1: four-state vocabulary.
+    //   Connected → peers > 0 (helper actually on the channel)
+    //   Starting  → user just clicked Launch (5s grace window)
+    //   Error     → WS closed AND auto-reconnect exhausted
+    //                 (cb.reconnectMs caps at 30000)
+    //   Offline   → everything else (idle / waiting / connecting)
+    // The class names stay legacy ('connected' only) so the existing
+    // CSS for the gain slider reveal at line 614+ keeps working.
+    const launching = !!cb.launching
+      && performance.now() < cb.launchingUntilMs;
+    const errored = cb.status === 'closed' && cb.reconnectMs >= 30000;
     if (paired) {
-      label = `Connect: paired (${cb.peers})`;
+      label = `Connect Connected (${cb.peers})`;
       btn.classList.add('connected');
-    } else if (cb.status === 'open') {
-      label = 'Connect: waiting for helper';
+    } else if (launching) {
+      label = 'Connect Starting…';
       btn.classList.remove('connected');
-    } else if (cb.status === 'connecting') {
-      label = 'Connect: connecting…';
-      btn.classList.remove('connected');
-    } else if (cb.status === 'closed') {
-      label = 'Connect: offline — click for help';
+    } else if (errored) {
+      label = 'Connect Error — click for help';
       btn.classList.remove('connected');
     } else {
-      label = 'Connect to play';
+      label = 'Connect Offline';
       btn.classList.remove('connected');
     }
     btn.textContent = label;
@@ -550,6 +665,15 @@
     // alongside the monitor lifecycle; safe to call here because
     // function declarations are hoisted within this IIFE.
     if (typeof _syncMonitorVsConnect === 'function') _syncMonitorVsConnect();
+    // Phase 3: the dual-latency card's "Recommended" tag tracks
+    // _isConnectPaired(), which we just updated. Re-render so peer
+    // join / peer leave flips the tag without waiting for the next
+    // connect_state frame.
+    if (typeof renderLatencyComparison === 'function') renderLatencyComparison();
+    // Phase 5: ownership-boundary disclosure summary mirrors the
+    // same state. Keeps the audio-input-card collapsed/expanded
+    // default + badge in sync with install/launch/pair transitions.
+    if (typeof renderAudioInputCard === 'function') renderAudioInputCard();
 
     // Inline status line. We're always on the perform view by the time
     // anyone reads this, so the message reflects post-analysis state —
@@ -583,15 +707,53 @@
         text = hasPending
           ? 'Paired — recommendation ready (click Apply).'
           : 'Paired — no tone match for this song.';
+      } else if (launching) {
+        // Phase 1: user just clicked Launch; we're inside the
+        // 5s grace window. The pill above already says
+        // "Connect Starting…" — the body just confirms.
+        text = 'Starting Connect…';
+        showLauncherLink = !!cb.sessionId;
       } else if (cb.status === 'connecting') {
         text = 'Connecting to the desktop helper…';
       } else if (cb.status === 'open') {
         text = 'Waiting for the desktop helper to join.';
         showLauncherLink = !!cb.sessionId;
+      } else if (errored) {
+        text = 'Connect Error — restart it from the tray menu.';
       } else if (cb.status === 'closed') {
-        text = 'Desktop helper offline. Restart it from the tray menu.';
+        text = 'Connect Offline. Restart it from the tray menu.';
       }
       statusEl.textContent = text;
+      // Phase 6: install/launch CTA. Lives ABOVE the existing
+      // deep-link / restart affordances so it's the user's primary
+      // action when not paired. Renders one of three states:
+      //   installed===true  && !paired → "Launch Connect" button
+      //   installed===false              → "Install Connect" link
+      //   installed===null               → nothing (probe pending)
+      if (!paired && cb.installed === true) {
+        const btn6 = document.createElement('button');
+        btn6.type = 'button';
+        btn6.textContent = 'Launch Connect';
+        btn6.className = 'connect-launch-btn';
+        btn6.addEventListener('click', launchConnect);
+        statusEl.appendChild(document.createElement('br'));
+        statusEl.appendChild(btn6);
+        if (cb.installedVersion) {
+          const ver = document.createElement('span');
+          ver.className = 'connect-launch-version';
+          ver.textContent = ` v${cb.installedVersion}`;
+          statusEl.appendChild(ver);
+        }
+      } else if (!paired && cb.installed === false) {
+        const installLink = document.createElement('a');
+        installLink.href = CONNECT_INSTALL_URL;
+        installLink.target = '_blank';
+        installLink.rel = 'noopener';
+        installLink.textContent = 'Install Connect for low-latency monitoring';
+        installLink.className = 'connect-install-link';
+        statusEl.appendChild(document.createElement('br'));
+        statusEl.appendChild(installLink);
+      }
       if (showLauncherLink) {
         const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${scheme}//${window.location.host}/ws/connect-bridge`;
@@ -603,6 +765,17 @@
         launcher.href = deepLink;
         launcher.textContent = 'Open Connect helper →';
         launcher.className = 'connect-launcher-link';
+        // Phase 1: clicking the user-gesture deeplink should also
+        // arm the "Connect Starting" pill so the UX matches the
+        // synthetic-click path inside launchConnect(). Without this
+        // the pill would stay on "Connect Offline" until the helper
+        // joins, which can read as nothing-happening for several
+        // seconds.
+        launcher.addEventListener('click', () => {
+          if (typeof _setLaunchingTimer === 'function') {
+            _setLaunchingTimer(5000);
+          }
+        });
         // Space the link onto its own line so it's distinguishable
         // from the status copy above it.
         statusEl.appendChild(document.createElement('br'));
@@ -624,7 +797,12 @@
         statusEl.appendChild(document.createElement('br'));
         statusEl.appendChild(restartBtn);
       }
-      statusEl.hidden = !text;
+      // Phase 6: even with empty `text` (e.g. status='idle' before the
+      // bridge has been opened) we want the install/launch CTA visible
+      // so first-time users see "Install Connect" without having to
+      // click anything. statusEl.children includes the appended button/
+      // anchor regardless of text content.
+      statusEl.hidden = !text && statusEl.children.length === 0;
       statusEl.classList.toggle('ok', ok);
     }
     // v2 header pill mirrors every status transition. Guarded for the
@@ -684,6 +862,228 @@
     }
   }
 
+  // ---- Phase 6: install probe + launch helper ------------------------
+  //
+  // probeConnectInstalled() runs once at page load and hits
+  // `/api/connect/installed` (filesystem-only, no AVFoundation). The
+  // result drives `renderConnectStatus()`'s install/launch CTA: when
+  // we can see the bundle on disk we surface "Launch Connect"; when
+  // we can't we surface "Install Connect" pointing at GitHub Releases.
+  //
+  // Failure is silent on purpose: a 5xx from the probe must NOT block
+  // JAM startup. We just stay in "installed: null" — neither CTA
+  // renders, and the pre-Phase-6 behaviour (no install affordance,
+  // status pill only) prevails.
+  //
+  // GitHub Releases tag for the Connect.app DMG. Pinned to /latest so
+  // users always get the most recent build that build_release.sh
+  // produced; never hard-codes a version JAM might out-grow.
+  const CONNECT_INSTALL_URL =
+    'https://github.com/harvlad/tone-forge/releases/latest';
+
+  async function probeConnectInstalled() {
+    const cb = state.connectBridge;
+    try {
+      const resp = await fetch('/api/connect/installed');
+      if (!resp.ok) {
+        console.warn('[connect] install probe HTTP', resp.status);
+        return;
+      }
+      const data = await resp.json();
+      cb.installed = !!data.installed;
+      cb.installedPath = data.path || null;
+      cb.installedVersion = data.version || null;
+      renderConnectStatus();
+    } catch (err) {
+      // No-op: stays at installed=null, no CTA rendered. This is the
+      // pre-Phase-6 UX, which is correct behaviour for "we don't know".
+      console.warn('[connect] install probe failed:', err);
+    }
+  }
+
+  // launchConnect() POSTs /api/connect/launch (Launch Services lookup
+  // by bundle id, falling back to `open <path>`), then fires the
+  // toneforge:// deeplink so Connect.app's URL handler can pair with
+  // this browser. Both steps are best-effort: if `open` fails (e.g.
+  // Connect.app isn't installed yet) the deeplink simply won't have
+  // anything to receive it, and the user can fall back to the
+  // browser monitor via Phase 2's affordance.
+  //
+  // The deeplink synthesis duplicates the inline anchor in
+  // renderConnectStatus() — see jam.js:670-685 — because we want a
+  // *programmatic* path here (button → POST → deeplink) without
+  // requiring the user to click a second link after clicking the
+  // primary "Launch Connect" button. Safari may drop the synthetic
+  // anchor.click() on the floor; that's fine, the visible deeplink
+  // anchor in the existing status block stays as the universal
+  // escape hatch.
+  // Phase 1: arm the "Connect Starting" status pill for `ms`
+  // milliseconds (default 5s). The pill consumes
+  // `cb.launching === true && performance.now() < cb.launchingUntilMs`
+  // — see renderConnectStatus() / renderConnectPill(). Cleared early
+  // in the WS `joined` handler the moment peers > 0, so the user
+  // doesn't see a misleading "Starting…" once Connect is actually
+  // paired. Idempotent: re-calling extends the deadline rather than
+  // queueing a second timer.
+  let _launchingTimer = null;
+  function _setLaunchingTimer(ms = 5000) {
+    const cb = state.connectBridge;
+    cb.launching = true;
+    cb.launchingUntilMs = performance.now() + ms;
+    if (_launchingTimer) clearTimeout(_launchingTimer);
+    _launchingTimer = setTimeout(() => {
+      _launchingTimer = null;
+      const cb2 = state.connectBridge;
+      if (!cb2) return;
+      // Defensive: only clear if the deadline really has passed. A
+      // later _setLaunchingTimer() call could have pushed the
+      // deadline out while this timer was queued.
+      if (performance.now() >= cb2.launchingUntilMs) {
+        cb2.launching = false;
+        renderConnectStatus();
+      }
+    }, ms + 100);
+    renderConnectStatus();
+  }
+
+  // Phase 1: called from the `joined` WS handler when peers > 0.
+  // Pops the launching flag so the status pill flips from
+  // "Connect Starting" → "Connect Connected" without waiting for
+  // the 5s grace timer to expire.
+  function _clearLaunchingTimer() {
+    if (_launchingTimer) {
+      clearTimeout(_launchingTimer);
+      _launchingTimer = null;
+    }
+    const cb = state.connectBridge;
+    if (cb) {
+      cb.launching = false;
+      cb.launchingUntilMs = 0;
+    }
+  }
+
+  let _launchInFlight = false;
+  async function launchConnect() {
+    if (_launchInFlight) return;
+    _launchInFlight = true;
+    const cb = state.connectBridge;
+    try {
+      // Step 1: POST /api/connect/launch. Backend tries
+      // `open -b com.toneforge.connect` then `open <path>`; both are
+      // idempotent. Status 202 always (Accepted, polling for paired
+      // state lives in the WS join handler).
+      try {
+        await fetch('/api/connect/launch', { method: 'POST' });
+      } catch (err) {
+        console.warn('[connect] launch POST failed:', err);
+      }
+      // Step 2: fire the toneforge:// deeplink so Connect.app's URL
+      // handler pairs with this browser. Requires a session id (the
+      // bridge channel) and the WS URL the helper should join.
+      if (cb.sessionId) {
+        try {
+          const scheme =
+            window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const wsUrl =
+            `${scheme}//${window.location.host}/ws/connect-bridge`;
+          const deepLink =
+            'toneforge://pair'
+            + `?session=${encodeURIComponent(cb.sessionId)}`
+            + `&ws=${encodeURIComponent(wsUrl)}`;
+          const a = document.createElement('a');
+          a.href = deepLink;
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        } catch (err) {
+          console.warn('[connect] deeplink synth failed:', err);
+        }
+      }
+      // Phase 1: arm the "Connect Starting" pill for the standard
+      // 5s grace window. _setLaunchingTimer() also triggers a
+      // renderConnectStatus() so the pill flips immediately.
+      _setLaunchingTimer(5000);
+    } finally {
+      _launchInFlight = false;
+    }
+  }
+
+  // ---- Phase 5: ownership-boundary disclosure ------------------------
+  //
+  // renderAudioInputCard() owns the <details id="audio-input-card">
+  // summary state. The card's default `open` attribute is set
+  // optimistically in jam.html to true (expanded) so users on
+  // browsers without JS — or before the install probe lands —
+  // still see the controls. Once we learn whether Connect.app is
+  // installed we collapse it: the contract is that JAM does NOT
+  // own the audio path when Connect is installed, so the browser-
+  // monitor controls become a fallback affordance rather than the
+  // primary surface.
+  //
+  // The "collapse on first install probe" behaviour fires exactly
+  // once per page session — once the user has explicitly clicked
+  // the disclosure (toggling it open or closed manually), we
+  // record that on `state.connectBridge._inputCardUserToggled`
+  // and never auto-collapse again. Without that latch, every
+  // renderConnectStatus() call (joined, peer_left, gain replay,
+  // etc.) would clobber the user's choice.
+  let _audioInputCardWiredUp = false;
+  function renderAudioInputCard() {
+    const card = document.getElementById('audio-input-card');
+    const badge = document.getElementById('audio-input-card-badge');
+    if (!card) return;
+    if (!_audioInputCardWiredUp) {
+      _audioInputCardWiredUp = true;
+      card.addEventListener('toggle', () => {
+        const cb = state.connectBridge;
+        if (cb) cb._inputCardUserToggled = true;
+      });
+    }
+    const cb = state.connectBridge;
+    const paired = cb && cb.status === 'open' && cb.peers > 0;
+    const installed = cb && cb.installed === true;
+    // Auto-collapse semantics: collapse when Connect is installed
+    // (whether paired or not) so the disclosure reflects "Connect
+    // owns this". Stays open if Connect isn't installed — the
+    // browser monitor is the primary path. Once the user has
+    // touched the chevron we leave it alone.
+    if (cb && !cb._inputCardUserToggled) {
+      const shouldBeOpen = !installed;
+      if (card.open !== shouldBeOpen) card.open = shouldBeOpen;
+    }
+    // Tiny status badge in the summary. Mirrors the four-state
+    // vocabulary at a glance without filling the summary with a
+    // full status pill.
+    if (badge) {
+      badge.classList.remove(
+        'is-paired',
+        'is-installed',
+        'is-fallback',
+        'is-missing',
+      );
+      if (paired) {
+        badge.textContent = 'Connect';
+        badge.classList.add('is-paired');
+        badge.title = 'Connect.app is paired — owns the audio path.';
+      } else if (installed) {
+        badge.textContent = 'Connect installed';
+        badge.classList.add('is-installed');
+        badge.title = 'Connect.app is installed but not paired. '
+          + 'Click "Launch Connect" to pair.';
+      } else if (state.monitor && state.monitor.fallbackMode) {
+        badge.textContent = 'Browser fallback';
+        badge.classList.add('is-fallback');
+        badge.title = 'Using the browser monitor as a fallback.';
+      } else {
+        badge.textContent = 'Browser only';
+        badge.classList.add('is-missing');
+        badge.title = 'Connect.app isn\'t installed — install it for '
+          + 'low-latency monitoring.';
+      }
+    }
+  }
+
   // Format the gain slider's readout so users see what they're doing.
   // The readout sits next to the slider; the slider itself stays
   // value-driven from state.connectBridge.lastGain so re-renders
@@ -729,6 +1129,129 @@
     const clamped = Math.max(0, Math.min(1, Number(gain) || 0));
     cb.lastGain = clamped;
     sendOrQueueBridgeMessage({ type: 'set_gain', gain: clamped });
+  }
+
+  // Audio-Ownership Pivot follow-up: ask Connect to run a real
+  // impulse-loopback LatencyProbe. Audible — caller is responsible
+  // for user confirmation. Idempotent: re-firing while a probe is
+  // in flight is a no-op on the Connect side (latencyProbeInFlight
+  // guard in AudioEngine) and the second send here is harmless.
+  function triggerLatencyMeasurement() {
+    const cb = state.connectBridge;
+    if (!cb || cb.status !== 'open' || !(cb.peers > 0)) return;
+    if (cb.measureInFlight) return;
+    cb.measureInFlight = true;
+    // Render flips the button to "Measuring…" immediately so the
+    // user gets feedback even before the impulse plays.
+    if (typeof renderLatencyComparison === 'function') renderLatencyComparison();
+    sendOrQueueBridgeMessage({ type: 'measure_latency', v: 2 });
+    // Safety: if Connect never answers (engine down, helper killed
+    // mid-probe), clear the in-flight flag after a generous timeout
+    // so the button comes back.
+    setTimeout(() => {
+      if (state.connectBridge && state.connectBridge.measureInFlight) {
+        state.connectBridge.measureInFlight = false;
+        if (typeof renderLatencyComparison === 'function') renderLatencyComparison();
+      }
+    }, 5000);
+  }
+
+  // Audio-Ownership Pivot follow-up: hand stem URLs to Connect so
+  // it can take over playback from the browser's Web Audio path.
+  // Idempotent: re-firing with the same stem set is harmless on the
+  // Connect side (it unloads then reloads). Gated on a paired
+  // Connect — silent no-op otherwise so a JAM tab with no helper
+  // running doesn't pile up messages on the queue.
+  function pushStemsToConnect() {
+    const cb = state.connectBridge;
+    if (!cb || cb.status !== 'open' || !(cb.peers > 0)) return;
+    const stems = [];
+    for (const [id, stem] of state.stems.entries()) {
+      if (!stem || !stem.url) continue;
+      stems.push({
+        id: String(id),
+        url: String(stem.url),
+        display_name: stem.displayName || String(id),
+      });
+    }
+    if (stems.length === 0) return;
+    sendOrQueueBridgeMessage({ type: 'load_stems', v: 2, stems });
+  }
+
+  // Audio-Ownership Pivot Phase 4 (D4): push the post-analysis song
+  // metadata to Connect so a future SessionStore consumer can drive
+  // an in-Connect tuner / countdown / chord HUD overlay. Today's
+  // Connect ignores unknown keys, so this is a no-op on the helper
+  // side until SessionStore is wired up; the rails go through now
+  // so the wire format does not churn.
+  //
+  // Called once per song-load from the post-analysis populate point
+  // (where state.beatTimes / state.songKey / state.rawChords /
+  // state.sections all become valid). Server caches the frame and
+  // replays it to a late-joining Connect helper on join, so a user
+  // who fires JAM analysis before launching Connect.app still sees
+  // the song metadata once the helper attaches.
+  function pushSessionDataToConnect() {
+    const cb = state.connectBridge;
+    if (!cb || cb.status !== 'open' || !(cb.peers > 0)) return;
+    const chords = (state.rawChords && (state.rawChords.snapped || state.rawChords.fixed)) || [];
+    const sections = Array.isArray(state.sections)
+      ? state.sections.map((s) => ({
+          name: s.name || 'section',
+          // jam.js stores sections in seconds (startSec/endSec). Wire
+          // contract is start_s/end_s to match the rest of the v2
+          // schema.
+          start_s: Number(s.startSec) || 0,
+          end_s: Number(s.endSec) || 0,
+        }))
+      : null;
+    // state.songKey is the parsed pitch-class set (see
+    // parseDetectedKey). For wire we send {root, scale} where root is
+    // 0-11 and scale is "Major"/"Minor"; null when the analysis did
+    // not produce a defensible key.
+    let keyPayload = null;
+    if (state.songKey && typeof state.songKey === 'object') {
+      const root = (typeof state.songKey.root === 'number') ? state.songKey.root : null;
+      const scale = state.songKey.scale || state.songKey.mode || null;
+      if (root !== null && scale) {
+        keyPayload = { root, scale };
+      }
+    }
+    const bpm = (typeof state.tempo === 'number' && state.tempo > 0) ? state.tempo : null;
+    const npTitleEl = document.getElementById('np-title');
+    sendOrQueueBridgeMessage({
+      type: 'session_data',
+      v: 2,
+      session_id: state.analysisId || null,
+      song: {
+        id: state.analysisId || null,
+        title: (npTitleEl && npTitleEl.textContent) || null,
+      },
+      bpm,
+      key: keyPayload,
+      chord_progression: chords,
+      section_markers: sections,
+      loop_markers: null,
+    });
+  }
+
+  // Audio-Ownership Pivot follow-up: mirror play/pause/seek state
+  // to Connect so its AudioEngine drives the stems. Cheap (one
+  // small JSON frame per transport edge); JAM's tickClock does NOT
+  // call this — only the edges (play, pause, seek) do.
+  function pushTransportToConnect() {
+    const cb = state.connectBridge;
+    if (!cb || cb.status !== 'open' || !(cb.peers > 0)) return;
+    const playing = !!state.isPlaying;
+    const positionS = playing
+      ? (typeof currentPlayTime === 'function' ? currentPlayTime() : state.playOffset || 0)
+      : (state.playOffset || 0);
+    sendOrQueueBridgeMessage({
+      type: 'transport_state',
+      v: 2,
+      playing,
+      position_s: positionS,
+    });
   }
 
   function sendOrQueueBridgeMessage(msg) {
@@ -1599,6 +2122,13 @@
       fixed: result.chords || [],
       snapped: result.chords_beat_snapped || null,
     };
+    // Phase 4 (D4): once every post-analysis field is populated
+    // (songKey, beatTimes, sections via buildSectionBar, rawChords
+    // above), push the session-data v2 frame to Connect. Gated on
+    // paired-Connect inside pushSessionDataToConnect; server caches
+    // it for late-joiners. Fire-and-forget — no UI dependency on
+    // Connect ack.
+    try { pushSessionDataToConnect(); } catch (_) {}
     // Cache lead-line MIDI notes for the tab lane. Preference order:
     //   1. result.midi_stems[guitar|other|piano] — the live-analyze
     //      path carries per-stem MIDI keyed by stem name. We prefer
@@ -2821,6 +3351,14 @@
       sampleRate: state.ctx.sampleRate,
       durationSec: maxDur,
     });
+    // Audio-Ownership Pivot follow-up: hand the URL list to
+    // Connect so its AudioEngine can take over playback. Browser
+    // Web Audio above stays as the fallback path. Silent no-op if
+    // Connect is not paired — re-fires on every prepareStemAudio
+    // call, which is idempotent on the helper side.
+    try { pushStemsToConnect(); } catch (e) {
+      console.warn('[jam] pushStemsToConnect failed:', e);
+    }
   }
 
   // ----- Stem-model helpers (role-based, provider-agnostic) -----
@@ -3205,6 +3743,10 @@
       stopClickScheduler();
       startClickScheduler();
     }
+    // Mirror the play edge to Connect so its AudioEngine starts the
+    // stems sample-aligned. seekAll() also routes through this, so a
+    // seek-while-playing produces a clean stop+restart on the helper.
+    try { pushTransportToConnect(); } catch (_) {}
   }
 
   function stopSources() {
@@ -3225,6 +3767,10 @@
     stopClickScheduler();
     state.isPlaying = false;
     $('t-play').textContent = 'Play';
+    // Mirror the pause edge to Connect so its AudioEngine stops the
+    // stems. Position is captured into state.playOffset above so the
+    // helper has the right resume point on the next play.
+    try { pushTransportToConnect(); } catch (_) {}
   }
 
   function stopAllStems() {
@@ -4588,19 +5134,27 @@
     const pill = document.getElementById('header-connect-pill');
     if (!pill) return;
     const cb = state.connectBridge;
-    pill.classList.remove('connected', 'connecting', 'offline');
-    if (cb.status === 'open' && cb.peers > 0) {
+    pill.classList.remove('connected', 'connecting', 'offline', 'errored');
+    // Phase 1: four-state vocabulary, matching the inline status
+    // button at jam.js:597-621. `connecting` class reused for the
+    // "Starting" state so the existing amber CSS lights up without
+    // a new colour token.
+    const paired = cb.status === 'open' && cb.peers > 0;
+    const launching = !!cb.launching
+      && performance.now() < cb.launchingUntilMs;
+    const errored = cb.status === 'closed' && cb.reconnectMs >= 30000;
+    if (paired) {
       pill.classList.add('connected');
-      pill.textContent = `Connect: paired (${cb.peers})`;
-    } else if (cb.status === 'open') {
+      pill.textContent = `Connect Connected (${cb.peers})`;
+    } else if (launching) {
       pill.classList.add('connecting');
-      pill.textContent = 'Connect: waiting…';
-    } else if (cb.status === 'connecting') {
-      pill.classList.add('connecting');
-      pill.textContent = 'Connect: connecting…';
+      pill.textContent = 'Connect Starting…';
+    } else if (errored) {
+      pill.classList.add('errored');
+      pill.textContent = 'Connect Error';
     } else {
       pill.classList.add('offline');
-      pill.textContent = 'Connect: offline';
+      pill.textContent = 'Connect Offline';
     }
   }
   (function initHeaderConnectPill() {
@@ -4621,6 +5175,35 @@
       pill.setAttribute('aria-expanded', 'false');
     });
     renderConnectPill();
+  })();
+
+  // Phase 6: kick off the install probe once the DOM is alive. Fires
+  // in the background — never blocks anything. Result lands on
+  // state.connectBridge.{installed,installedPath,installedVersion}
+  // and triggers a renderConnectStatus() so the install/launch CTA
+  // appears as soon as the probe returns.
+  (function initConnectInstallProbe() {
+    if (typeof probeConnectInstalled !== 'function') return;
+    // Defer one tick so the rest of the IIFE has a chance to install
+    // its DOM listeners; the probe itself is async and won't block.
+    setTimeout(() => { probeConnectInstalled(); }, 0);
+  })();
+
+  // Audio-Ownership Pivot follow-up: wire the LatencyProbe "Measure"
+  // button. The button is in the audio-status card; firing it sends
+  // a v2 measure_latency frame to Connect, which plays an audible
+  // 1 kHz impulse and replies with measured_round_trip_ms in the
+  // next latency_report. Idempotent re-clicks are guarded server-
+  // side AND in triggerLatencyMeasurement.
+  (function initMeasureLatencyButton() {
+    const btn = document.getElementById('audio-latency-measure-btn');
+    if (!btn) return;
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      if (typeof triggerLatencyMeasurement === 'function') {
+        triggerLatencyMeasurement();
+      }
+    });
   })();
 
   // ---- 3k: waveform timeline ------------------------------------------
@@ -4993,7 +5576,19 @@
   function _syncMonitorVsConnect() {
     const toggleBtn = document.getElementById('monitor-toggle');
     if (!toggleBtn) return;
+    const fallbackRow = document.getElementById('monitor-fallback-row');
     const paired = _isConnectPaired();
+    const cb = state.connectBridge || {};
+    // Phase 2: tri-state UX.
+    //   A. paired       → toggle disabled, "Connect handles input"
+    //   B. installed && !paired && !fallback → toggle disabled,
+    //                     "Launch Connect for low-latency monitoring",
+    //                     fallback link visible.
+    //   C. otherwise (not installed, or user opted into fallback) →
+    //                     existing "Enable monitor" behaviour.
+    const installedAvailable = cb.installed === true;
+    const useDemotedUx =
+      !paired && installedAvailable && !state.monitor.fallbackMode;
     if (paired) {
       if (state.monitor.enabled) {
         _stopMonitor();
@@ -5004,15 +5599,65 @@
       toggleBtn.title = 'Connect is online and is using your audio input. '
         + 'Quit Connect to monitor through the browser instead.';
       _setMonitorStatus('Off — Connect is using your input', '');
+      if (fallbackRow) fallbackRow.hidden = true;
+    } else if (useDemotedUx) {
+      // Connect is installed but not paired — the recommended path
+      // is to launch it. The toggle is gated; the fallback link
+      // beneath gives the user an out.
+      if (state.monitor.enabled) {
+        // User had the browser monitor running, Connect was just
+        // installed (e.g. probe completed late). Don't yank their
+        // audio mid-session; treat that as implicit fallback.
+        state.monitor.fallbackMode = true;
+        if (fallbackRow) fallbackRow.hidden = true;
+        toggleBtn.disabled = false;
+        toggleBtn.title = '';
+        _setMonitorStatus('Fallback (browser monitor active)', '');
+        return;
+      }
+      toggleBtn.disabled = true;
+      toggleBtn.textContent = 'Launch Connect for low-latency monitoring';
+      toggleBtn.classList.remove('active');
+      toggleBtn.title = 'Connect.app is installed — launch it for the '
+        + 'best monitoring latency. Or use the browser fallback '
+        + 'below if you\'d rather monitor through this tab.';
+      _setMonitorStatus('Off', '');
+      if (fallbackRow) fallbackRow.hidden = false;
     } else {
+      // Connect not installed, OR user opted into fallback mode.
       toggleBtn.disabled = false;
       toggleBtn.title = '';
       if (!state.monitor.enabled) {
         toggleBtn.textContent = 'Enable monitor';
         toggleBtn.classList.remove('active');
+        // Fallback users see a muted "Fallback" annotation so they
+        // remember they're on the slower path; pre-Phase-6 users
+        // see the original "Off" copy.
+        if (state.monitor.fallbackMode) {
+          _setMonitorStatus('Off — fallback ready', '');
+        }
+      } else if (state.monitor.fallbackMode) {
+        // Monitor is active in fallback mode — annotate the meter
+        // pill so the user can't miss it.
+        _setMonitorStatus('Fallback (browser monitor active)', '');
       }
+      if (fallbackRow) fallbackRow.hidden = true;
     }
   }
+
+  // Phase 2: fallback-link click. Demotes Connect to "optional" for
+  // the remainder of the page session: re-enables the monitor toggle,
+  // hides the fallback row, and re-syncs the UI so the user can
+  // immediately click "Enable monitor". Idempotent.
+  (function initMonitorFallbackLink() {
+    const link = document.getElementById('monitor-fallback-link');
+    if (!link) return;
+    link.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      state.monitor.fallbackMode = true;
+      _syncMonitorVsConnect();
+    });
+  })();
 
   function _stopMonitor() {
     // Re-entry guard. Safari fires 'ended' on the track during our
@@ -5161,6 +5806,151 @@
     if (el) el.textContent = text;
     const rowEl = $('audio-in-latency');
     if (rowEl) rowEl.textContent = state.monitor.enabled ? text : '';
+    // Phase 3: the dual-latency card reads the same browser numbers,
+    // so re-render whenever the monitor-side floor changes.
+    renderLatencyComparison();
+  }
+
+  // Audio-Ownership Pivot, Phase 3 — dual-latency comparison card.
+  //
+  // Renders two rows: Connect Monitor (from the v2 latency_report
+  // frame) and Browser Monitor (from AudioContext.baseLatency +
+  // outputLatency). The "Recommended" tag rides off _isConnectPaired();
+  // paired-but-pre-running shows the row in unavailable styling
+  // because Connect hasn't sent its first latency_report yet.
+  //
+  // Both numbers are floors (lower bounds), not measurements; the
+  // tooltips explain why so a user comparing them to a hardware
+  // monitor doesn't feel misled.
+  //
+  // Idempotent — safe to call on every dispatch event, monitor
+  // start/stop, or Connect peer join/leave.
+  function renderLatencyComparison() {
+    const card = $('audio-latency-card');
+    if (!card) return;  // HTML not present (loaded mid-Phase 3, etc.)
+    card.hidden = false;
+
+    const cb = state.connectBridge || {};
+    const paired = _isConnectPaired();
+
+    // ----- Connect row -----
+    const connectRow   = $('audio-latency-row-connect');
+    const connectValue = $('audio-latency-connect-value');
+    const recommended  = $('audio-latency-recommended');
+    const haveConnect  = Number.isFinite(cb.connectLatencyMs);
+    if (connectValue) {
+      connectValue.textContent = haveConnect
+        ? `~${Math.round(cb.connectLatencyMs)} ms`
+        : '—';
+    }
+    if (connectRow) {
+      // Unavailable when we don't have a latency report yet (Connect
+      // not paired, not yet running, or first report not delivered).
+      connectRow.classList.toggle('is-unavailable', !haveConnect);
+      const rep = cb.connectLatencyReport;
+      if (rep && haveConnect) {
+        const fmt = (n) => Number.isFinite(Number(n)) ? Number(n).toFixed(1) : '?';
+        connectRow.title =
+          'Connect engine floor: input ' + fmt(rep.input_ms) +
+          ' ms + output ' + fmt(rep.output_ms) +
+          ' ms + 2× buffer ' + fmt(rep.buffer_ms) + ' ms. ' +
+          'A lower bound — real round trip can be higher under load.';
+      } else {
+        connectRow.title = paired
+          ? 'Waiting for Connect to report its engine latency…'
+          : 'Connect not paired. Launch Connect for low-latency monitoring.';
+      }
+    }
+    if (recommended) {
+      // Tag shown only when Connect is actually delivering audio.
+      // Pre-pairing the column is "informational"; once paired and a
+      // latency report has arrived, it becomes the recommended path.
+      recommended.hidden = !(paired && haveConnect);
+    }
+
+    // ----- Measured (LatencyProbe) sub-row -----
+    // Only meaningful when Connect is paired AND the user has run
+    // the impulse probe at least once. We surface measured vs.
+    // estimated side-by-side rather than replacing the estimate,
+    // because the estimate is a useful "this is the floor" anchor
+    // even after a measurement.
+    const measuredRow   = $('audio-latency-measured');
+    const measuredValue = $('audio-latency-measured-value');
+    const measuredBadge = $('audio-latency-measured-badge');
+    const measureBtn    = $('audio-latency-measure-btn');
+    const haveMeasured  = Number.isFinite(cb.connectMeasuredLatencyMs);
+    if (measuredRow) {
+      measuredRow.hidden = !paired;
+    }
+    if (measuredValue) {
+      measuredValue.textContent = haveMeasured
+        ? `~${Math.round(cb.connectMeasuredLatencyMs)} ms (measured)`
+        : 'Not measured';
+    }
+    if (measuredBadge) {
+      // confidence ∈ {"high","low","no_signal"}; we surface low/no-signal
+      // as warnings, high is the silent good-case (badge shows '✓').
+      const conf = haveMeasured ? cb.connectMeasuredConfidence : null;
+      measuredBadge.classList.remove('is-high', 'is-low', 'is-nosignal');
+      if (conf === 'high') {
+        measuredBadge.textContent = '✓';
+        measuredBadge.title = 'Impulse-loopback measurement, high confidence.';
+        measuredBadge.classList.add('is-high');
+        measuredBadge.hidden = false;
+      } else if (conf === 'low') {
+        measuredBadge.textContent = 'low confidence';
+        measuredBadge.title = 'Probe ran but the impulse was hard to detect. Check input level and try again.';
+        measuredBadge.classList.add('is-low');
+        measuredBadge.hidden = false;
+      } else if (conf === 'no_signal') {
+        measuredBadge.textContent = 'no signal';
+        measuredBadge.title = 'Probe ran but never detected its own impulse. Check that the input bus actually picks up the speaker output (open-mic loopback).';
+        measuredBadge.classList.add('is-nosignal');
+        measuredBadge.hidden = false;
+      } else {
+        measuredBadge.hidden = true;
+      }
+    }
+    if (measureBtn) {
+      const canMeasure = paired && !cb.measureInFlight;
+      measureBtn.disabled = !canMeasure;
+      measureBtn.textContent = cb.measureInFlight ? 'Measuring…' : 'Measure';
+      measureBtn.title = paired
+        ? (cb.measureInFlight
+            ? 'Impulse probe in progress (~1.5 s)…'
+            : 'Play a 1 kHz tone through Connect and measure the round-trip time. Audible — turn the volume down first.')
+        : 'Connect not paired.';
+    }
+
+    // ----- Browser row -----
+    const browserRow   = $('audio-latency-row-browser');
+    const browserValue = $('audio-latency-browser-value');
+    const ctx = state.ctx;
+    if (ctx) {
+      const baseMs = (ctx.baseLatency  || 0) * 1000;
+      const outMs  = (ctx.outputLatency || 0) * 1000;
+      const totalMs = baseMs + outMs;
+      const haveBrowser = totalMs > 0;
+      if (browserValue) {
+        browserValue.textContent = haveBrowser
+          ? `~${Math.round(totalMs)} ms`
+          : '—';
+      }
+      if (browserRow) {
+        browserRow.classList.toggle('is-unavailable', !haveBrowser);
+        browserRow.title = haveBrowser
+          ? 'Web Audio floor: baseLatency ' + baseMs.toFixed(1) +
+            ' ms + outputLatency ' + outMs.toFixed(1) + ' ms. ' +
+            'Safari often reports zero outputLatency.'
+          : 'Browser audio context not yet started.';
+      }
+    } else {
+      if (browserValue) browserValue.textContent = '—';
+      if (browserRow) {
+        browserRow.classList.add('is-unavailable');
+        browserRow.title = 'Browser audio context not yet started.';
+      }
+    }
   }
 
   function _clearMonitorMeter() {

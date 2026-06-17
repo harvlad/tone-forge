@@ -338,15 +338,73 @@
           <button type="button" id="perform-change-device" class="linklike" hidden>Change audio interface</button>
         </div>
 
-        <!-- Live guitar monitor: routes the connected audio interface
-             directly to the AudioContext destination so the player
-             hears themselves through JAM while the song plays. The
-             "Listen to my playing" tuner uses a separate analyser-
-             only path and can run independently. -->
+        <!-- AUDIO INPUT OWNERSHIP (Audio-Ownership Pivot, Phase 5)
+             ===========================================================
+             PRIMARY  : Connect.app  (state.connectBridge.connectState)
+             FALLBACK : Web Audio monitor (state.monitor.*)
+             ===========================================================
+             JAM never owns the audio path when Connect is installed.
+             The browser monitor stays present as a fallback affordance
+             (Phase 2's `fallbackMode`) but is collapsed-by-default
+             when Connect is installed so the disclosure makes the
+             ownership boundary visible. Live guitar monitor: routes
+             the connected audio interface directly to the
+             AudioContext destination so the player hears themselves
+             through JAM while the song plays. The "Listen to my
+             playing" tuner uses a separate analyser-only path and
+             can run independently. -->
+        <details id="audio-input-card" class="audio-input-card" open>
+          <summary class="audio-input-card-summary">
+            <span class="audio-input-card-title">Audio input</span>
+            <span id="audio-input-card-badge" class="audio-input-card-badge"></span>
+          </summary>
         <div id="monitor-panel" class="monitor-panel">
           <div class="monitor-header">
             <span class="monitor-title">Guitar input</span>
             <span id="monitor-status" class="monitor-status">Off</span>
+          </div>
+          <!-- Audio-Ownership Pivot, Phase 3 dual-latency card.
+               Compares Connect's measured engine-floor latency
+               (via the v2 latency_report frame) against the
+               browser's Web Audio floor (baseLatency + outputLatency).
+               The "Recommended" tag rides off whether Connect is
+               currently paired; both rows render in muted text when
+               their data source is unavailable so the user always
+               sees the comparison surface. Wire-up:
+               renderLatencyComparison() in jam.js. -->
+          <div id="audio-latency-card" class="audio-latency-card" hidden>
+            <div class="audio-latency-card-title">Audio status</div>
+            <div class="audio-latency-row" id="audio-latency-row-connect">
+              <div class="audio-latency-row-head">
+                <span class="audio-latency-row-name">Connect Monitor</span>
+                <span id="audio-latency-recommended" class="audio-latency-recommended" hidden>✓ Recommended</span>
+              </div>
+              <div class="audio-latency-row-value">
+                <span class="audio-latency-row-label">Latency:</span>
+                <span id="audio-latency-connect-value" class="audio-latency-row-num">—</span>
+              </div>
+              <!-- Audio-Ownership Pivot follow-up: LatencyProbe ground
+                   truth. Hidden until Connect is paired. The "Measure"
+                   button fires a v2 measure_latency frame to Connect,
+                   which runs an impulse-loopback probe (~1.5 s,
+                   audible 1 kHz tone) and replies with the next
+                   latency_report carrying measured_round_trip_ms. -->
+              <div class="audio-latency-measured" id="audio-latency-measured" hidden>
+                <span class="audio-latency-row-label">Measured:</span>
+                <span id="audio-latency-measured-value" class="audio-latency-row-num audio-latency-measured-num">Not measured</span>
+                <span id="audio-latency-measured-badge" class="audio-latency-measured-badge" hidden></span>
+                <button type="button" id="audio-latency-measure-btn" class="audio-latency-measure-btn" disabled>Measure</button>
+              </div>
+            </div>
+            <div class="audio-latency-row" id="audio-latency-row-browser">
+              <div class="audio-latency-row-head">
+                <span class="audio-latency-row-name">Browser Monitor</span>
+              </div>
+              <div class="audio-latency-row-value">
+                <span class="audio-latency-row-label">Latency:</span>
+                <span id="audio-latency-browser-value" class="audio-latency-row-num">—</span>
+              </div>
+            </div>
           </div>
           <div class="monitor-row monitor-row-device">
             <label class="monitor-device-label" for="monitor-device-select">Device</label>
@@ -358,6 +416,14 @@
           <div class="monitor-row monitor-row-controls">
             <button type="button" id="monitor-toggle" class="primary">Enable monitor</button>
             <button type="button" id="monitor-mute" class="ghost" disabled>Mute</button>
+          </div>
+          <!-- Phase 2 (Audio-Ownership Pivot): fallback affordance.
+               Shown when Connect.app is installed but not paired —
+               clicking demotes Connect to "optional", re-enables the
+               browser monitor toggle above, and stays sticky for the
+               page session. _syncMonitorVsConnect() owns visibility. -->
+          <div id="monitor-fallback-row" class="monitor-row monitor-row-fallback" hidden>
+            <a id="monitor-fallback-link" class="monitor-fallback-link" href="#">Use browser monitor anyway (higher latency)</a>
           </div>
           <div class="monitor-row monitor-row-gain">
             <label class="monitor-gain-wrap">
@@ -374,6 +440,7 @@
             <span id="monitor-latency" class="monitor-latency"></span>
           </div>
         </div>
+        </details>
       </div>
 
       <!-- CENTER SLOT — section markers + chord timeline -->
@@ -504,6 +571,6 @@
   </section>
 </main>
 
-<script src="/static/jam.js?v=26"></script>
+<script src="/static/jam.js?v=33"></script>
 </body>
 </html>

@@ -1,10 +1,17 @@
-"""Session Engine wire protocol — v1.
+"""Session Engine wire protocol — v2.
 
 Single source of truth for every WebSocket message that crosses the
 Jam UI ↔ Session Engine ↔ Connect boundary. Per EXECUTION_PLAN.md §6,
-every frame carries ``{"v": 1, "type": ..., ...}``. Today's connect-bridge
+every frame carries ``{"v": 2, "type": ..., ...}``. Today's connect-bridge
 endpoint omits the ``v`` field; new clients send it, the server treats
 its absence as v1 (back-compat with the helper builds in the field).
+
+v2 (additive over v1, JAM↔Connect Audio-Ownership Pivot Phase 4):
+  B→C: session_data, transport_state
+  C→B: connect_state, latency_report, input_meter, measure_latency,
+       load_stems
+All v1 message types continue to work unchanged. Server negotiates
+``min(client_v, server_v)`` on hello so a v1 helper still pairs.
 
 The Swift mirror lives at ``connect/Sources/ConnectCore/Protocol.swift``.
 ``PROTOCOL_VERSION`` here, ``ConnectProtocol.version`` there, and
@@ -27,7 +34,7 @@ from typing import Any, Literal, Optional, TypedDict
 # Version
 # ---------------------------------------------------------------------------
 
-PROTOCOL_VERSION: int = 1
+PROTOCOL_VERSION: int = 2
 """Wire-protocol version this server speaks.
 
 Bump when adding required fields or changing the semantics of any
@@ -86,6 +93,36 @@ class MessageType:
     DEVICE_LOST = "device_lost"
     DEVICE_CHANGED = "device_changed"
     LATENCY_REPORT = "latency_report"
+
+    # --- Phase 4 v2 additions (JAM↔Connect Audio-Ownership Pivot) ----------
+    # B→C: post-analysis song metadata (chord progression, key, BPM,
+    # section markers) pushed once per song-load. Cached server-side
+    # so late-joining Connect sees it on join. Emitted by jam.js
+    # ``pushSessionDataToConnect()`` after analysis populates
+    # state.beatTimes / state.songKey / state.rawChords / state.sections.
+    SESSION_DATA = "session_data"
+
+    # C→B: periodic engine snapshot (state, device, monitor, dsp).
+    # Connect emits on state-change and at most every 1 s
+    # (rate-limited in PresetBridge.sendConnectState). Cached
+    # server-side for late-joining JAM clients.
+    CONNECT_STATE = "connect_state"
+
+    # C→B: high-rate input level for the JAM-side VU. NOT cached
+    # (stale-on-arrival; tone_forge_api drops it onto the broadcast
+    # bus only).
+    INPUT_METER = "input_meter"
+
+    # B→C: ask Connect to run a one-shot impulse-loopback latency
+    # measurement (replaces the hardcoded buffer-frame floor with a
+    # real round-trip number). Implemented by AudioEngine's
+    # LatencyProbe path.
+    MEASURE_LATENCY = "measure_latency"
+
+    # B→C: hand Connect a list of stem URLs to download into its
+    # local stems mixer. Future-only — JAM stem playback stays on
+    # the browser until Connect's stemsMixerNode is wired through.
+    LOAD_STEMS = "load_stems"
 
     # --- Server → Connect notifications ------------------------------------
     # Browser-initiated preference change: toggle Sparkle's

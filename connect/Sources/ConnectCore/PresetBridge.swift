@@ -60,6 +60,35 @@ public final class PresetBridge {
     /// the callback without linking against the framework.
     public var onSetAutoUpdate: ((Bool) -> Void)?
 
+    /// Fired on the main queue when a v2 ``measure_latency`` frame
+    /// arrives. The receiver (AppDelegate / ConnectMain) is expected
+    /// to call ``AudioEngine.runLatencyProbeAsync``; the resulting
+    /// re-emission goes back over the wire as a ``latency_report``
+    /// with the ``measured_round_trip_ms`` field populated.
+    /// PresetBridge does not own the AudioEngine reference so it
+    /// cannot run the probe directly.
+    public var onMeasureLatencyRequest: (() -> Void)?
+
+    /// Fired on the main queue when a v2 ``session_data`` frame
+    /// arrives. Today this is a no-op pass-through; a future
+    /// SessionStore consumer in Connect will subscribe to drive the
+    /// in-Connect tuner / countdown / chord HUD overlay.
+    public var onSessionData: (([String: Any]) -> Void)?
+
+    /// Fired on the main queue when a v2 ``transport_state`` frame
+    /// arrives. `(playing, positionSec)`. Not cached server-side.
+    public var onTransportState: ((Bool, Double) -> Void)?
+
+    /// Fired on the main queue when a v2 ``load_stems`` frame
+    /// arrives. The receiver (AppDelegate / ConnectMain) is
+    /// expected to feed the specs into ``StemLoader`` and then call
+    /// ``AudioEngine.loadStem(name:url:)`` for each successful
+    /// download. The bridge intentionally does not own the engine
+    /// or the loader; we just decode and forward.
+    /// Malformed entries (missing url, unparseable URL) are dropped
+    /// before this callback fires.
+    public var onLoadStems: (([StemLoader.Spec]) -> Void)?
+
     public private(set) var sessionId: String
     public private(set) var serverURL: URL
     public private(set) var isRunning = false
@@ -69,6 +98,25 @@ public final class PresetBridge {
     private var reconnectDelay: TimeInterval = 1.0
     private let reconnectMax: TimeInterval = 30.0
     private var shouldReconnect = true
+
+    // ----- v2 connect_state coalescing (Audio-Ownership Pivot) -----
+    //
+    // sendConnectState() can be called several times in quick
+    // succession (a slider drag fires inputMonitorGain.didSet on every
+    // value change; a chain swap fires applyChain + ampSimEnabled
+    // changes). Rate-limit to ≤1 Hz on the wire: the first call goes
+    // out immediately; subsequent calls within the window stash the
+    // latest snapshot and arm a single trailing flush at (last + 1s).
+    private let connectStateMinIntervalSec: TimeInterval = 1.0
+    private var connectStateLastSentAt: Date?
+    private var connectStatePending: AudioEngine.ConnectStateSnapshot?
+    /// Guards `connectStateLastSentAt` and `connectStatePending`.
+    /// Snapshots arrive on the main queue; the flush DispatchWorkItem
+    /// also runs on main, so the lock is defense-in-depth against a
+    /// future caller off the main thread rather than a real race
+    /// today.
+    private let connectStateLock = NSLock()
+    private var connectStateFlushWorkItem: DispatchWorkItem?
 
     public init(serverURL: URL = URL(string: "ws://127.0.0.1:8000/ws/connect-bridge")!,
                 sessionId: String = "default") {
@@ -152,6 +200,178 @@ public final class PresetBridge {
                 self?.onStatus?("device_lost sent (reason=\(reason))")
             }
         }
+    }
+
+    /// Emit a v2 `connect_state` snapshot upstream. Coalesced to ≤1 Hz
+    /// so a slider drag (which fires `inputMonitorGain.didSet` on every
+    /// pixel of motion) doesn't flood the wire. The first call after a
+    /// quiet window goes out immediately; subsequent calls within the
+    /// window stash the latest snapshot and arm a single trailing flush
+    /// scheduled at (last_send_at + 1s).
+    ///
+    /// Safe to call from any thread; the rate-limit bookkeeping is
+    /// guarded by `connectStateLock`. The actual `task.send` runs on
+    /// the URLSession queue per Apple's contract.
+    public func sendConnectState(_ snapshot: AudioEngine.ConnectStateSnapshot) {
+        let now = Date()
+
+        connectStateLock.lock()
+        let last = connectStateLastSentAt
+        let intervalElapsed: Bool
+        if let last = last {
+            intervalElapsed = now.timeIntervalSince(last) >= connectStateMinIntervalSec
+        } else {
+            intervalElapsed = true
+        }
+
+        if intervalElapsed {
+            connectStateLastSentAt = now
+            connectStatePending = nil
+            connectStateFlushWorkItem?.cancel()
+            connectStateFlushWorkItem = nil
+            connectStateLock.unlock()
+            transmitConnectState(snapshot)
+            return
+        }
+
+        // Inside the rate-limit window: stash, then ensure a trailing
+        // flush is scheduled.
+        connectStatePending = snapshot
+        if connectStateFlushWorkItem == nil, let last = last {
+            let dueAt = last.addingTimeInterval(connectStateMinIntervalSec)
+            let delay = max(0.0, dueAt.timeIntervalSince(now))
+            let work = DispatchWorkItem { [weak self] in
+                self?.flushPendingConnectState()
+            }
+            connectStateFlushWorkItem = work
+            connectStateLock.unlock()
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            return
+        }
+        connectStateLock.unlock()
+    }
+
+    private func flushPendingConnectState() {
+        connectStateLock.lock()
+        let pending = connectStatePending
+        connectStatePending = nil
+        connectStateFlushWorkItem = nil
+        if pending != nil {
+            connectStateLastSentAt = Date()
+        }
+        connectStateLock.unlock()
+        if let snap = pending {
+            transmitConnectState(snap)
+        }
+    }
+
+    private func transmitConnectState(_ snapshot: AudioEngine.ConnectStateSnapshot) {
+        guard task != nil else {
+            onStatus?("connect_state not sent — no active WS")
+            return
+        }
+        sendJSON(PresetBridge.buildConnectStateFrame(snapshot)) { [weak self] err in
+            if let err = err {
+                self?.onStatus?("connect_state send failed: \(err.localizedDescription)")
+            }
+        }
+    }
+
+    /// Build the v2 `connect_state` JSON-encodable dict. Pulled out
+    /// (and `internal`) so tests can assert the wire shape without
+    /// standing up a real URLSessionWebSocketTask.
+    static func buildConnectStateFrame(_ snapshot: AudioEngine.ConnectStateSnapshot) -> [String: Any] {
+        var device: [String: Any] = [
+            "sample_rate": snapshot.sampleRate,
+            "channels_in": snapshot.channelsIn,
+        ]
+        if let inName = snapshot.inputDeviceName  { device["input_name"]  = inName }
+        if let outName = snapshot.outputDeviceName { device["output_name"] = outName }
+
+        let monitor: [String: Any] = [
+            "enabled": snapshot.monitorEnabled,
+            "gain":    Double(snapshot.monitorGain),
+            "muted":   snapshot.monitorMuted,
+        ]
+
+        var dsp: [String: Any] = [
+            "amp_sim_enabled": snapshot.ampSimEnabled,
+        ]
+        if let chainId = snapshot.activeChainId {
+            dsp["active_chain_id"] = chainId
+        }
+
+        return [
+            "v": ConnectProtocol.version,
+            "type": ConnectProtocol.MessageType.connectState,
+            "state": snapshot.stateName,
+            "device": device,
+            "monitor": monitor,
+            "dsp": dsp,
+        ]
+    }
+
+    /// Emit a v2 `latency_report` upstream. Not rate-limited — the
+    /// engine only fires this on state transitions to `.running` and
+    /// on device/sample-rate changes, both of which are inherently
+    /// low-frequency. Wire numbers are milliseconds; struct fields
+    /// are seconds, so we convert here.
+    public func sendLatencyReport(_ report: AudioEngine.LatencyReport) {
+        guard task != nil else {
+            onStatus?("latency_report not sent — no active WS")
+            return
+        }
+        sendJSON(PresetBridge.buildLatencyReportFrame(report)) { [weak self] err in
+            if let err = err {
+                self?.onStatus?("latency_report send failed: \(err.localizedDescription)")
+            }
+        }
+    }
+
+    /// Build the v2 `latency_report` JSON-encodable dict. Internal
+    /// for the same test-only reason as `buildConnectStateFrame`.
+    /// Converts seconds → milliseconds at the wire boundary.
+    /// `measured_round_trip_ms` + `measurement_confidence` are only
+    /// included when a LatencyProbe run has populated them; absence
+    /// means JAM should render the estimate alone.
+    static func buildLatencyReportFrame(_ report: AudioEngine.LatencyReport) -> [String: Any] {
+        var frame: [String: Any] = [
+            "v": ConnectProtocol.version,
+            "type": ConnectProtocol.MessageType.latencyReport,
+            "input_ms":  report.inputDeviceLatencySec  * 1000.0,
+            "output_ms": report.outputDeviceLatencySec * 1000.0,
+            "buffer_ms": report.bufferDurationSec      * 1000.0,
+            "estimated_round_trip_ms": report.estimatedRoundTripSec * 1000.0,
+        ]
+        if let measuredSec = report.measuredRoundTripSec {
+            frame["measured_round_trip_ms"] = measuredSec * 1000.0
+        }
+        if let confidence = report.measurementConfidence {
+            frame["measurement_confidence"] = confidence
+        }
+        return frame
+    }
+
+    /// Emit a v2 `input_meter` upstream for the JAM-side VU. Callers
+    /// (the AudioEngine input-tap callback) are responsible for
+    /// upstream rate-limiting to ~20 Hz per the Protocol.swift
+    /// contract — this helper is otherwise unconditional, so a hot
+    /// tap calling it on every render-quantum would flood the wire.
+    /// NOT cached server-side: meter levels are stale-on-arrival.
+    public func sendInputMeter(peakDbfs: Double, rmsDbfs: Double) {
+        guard task != nil else { return }
+        sendJSON(PresetBridge.buildInputMeterFrame(peakDbfs: peakDbfs, rmsDbfs: rmsDbfs))
+    }
+
+    /// Build the v2 `input_meter` JSON-encodable dict. Internal for
+    /// the same test-only reason as `buildLatencyReportFrame`.
+    static func buildInputMeterFrame(peakDbfs: Double, rmsDbfs: Double) -> [String: Any] {
+        return [
+            "v": ConnectProtocol.version,
+            "type": ConnectProtocol.MessageType.inputMeter,
+            "peak_dbfs": peakDbfs,
+            "rms_dbfs":  rmsDbfs,
+        ]
     }
 
     private func sendJSON(_ obj: [String: Any], completion: ((Error?) -> Void)? = nil) {
@@ -299,6 +519,47 @@ public final class PresetBridge {
         case "error":
             let msg = dict["message"] as? String ?? "(unspecified)"
             onStatus?("server error: \(msg)")
+
+        // ----- v2 inbound (Audio-Ownership Pivot) ----------------------
+        case ConnectProtocol.MessageType.measureLatency:
+            // User explicitly asked for an impulse measurement. Hand off
+            // to the AppDelegate / ConnectMain which owns the
+            // AudioEngine reference. Idempotent on the engine side
+            // (latencyProbeInFlight guards re-entry).
+            DispatchQueue.main.async { [weak self] in
+                self?.onMeasureLatencyRequest?()
+            }
+        case ConnectProtocol.MessageType.sessionData:
+            // Future SessionStore singleton subscribes here. Today we
+            // surface to a callback that defaults to no-op so the
+            // receiver opts in.
+            DispatchQueue.main.async { [weak self] in
+                self?.onSessionData?(dict)
+            }
+        case ConnectProtocol.MessageType.transportState:
+            let playing = dict["playing"] as? Bool ?? false
+            let positionS = (dict["position_s"] as? Double)
+                ?? Double(dict["position_s"] as? Int ?? 0)
+            DispatchQueue.main.async { [weak self] in
+                self?.onTransportState?(playing, positionS)
+            }
+        case ConnectProtocol.MessageType.loadStems:
+            // Build typed StemLoader.Spec list from the wire dict.
+            // Skip entries with missing or unparseable URLs so the
+            // receiver never has to handle bad data.
+            let rawList = dict["stems"] as? [[String: Any]] ?? []
+            let specs: [StemLoader.Spec] = rawList.compactMap { item in
+                guard
+                    let id  = item["id"] as? String,
+                    let raw = item["url"] as? String,
+                    let url = URL(string: raw)
+                else { return nil }
+                return StemLoader.Spec(id: id, url: url)
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.onLoadStems?(specs)
+            }
+
         default:
             // Unknown typed frame — ignore but log so debugging is easy.
             onStatus?("ignored frame type=\(type)")

@@ -16,7 +16,7 @@ final class ProtocolTests: XCTestCase {
     /// is. Bumping the value is fine — the failure forces the author
     /// to also bump the server constant and the docstring.
     func testProtocolVersionIsPinned() {
-        XCTAssertEqual(ConnectProtocol.version, 1,
+        XCTAssertEqual(ConnectProtocol.version, 2,
             "If this value changed, also bump CONNECT_BRIDGE_PROTOCOL_VERSION in tone_forge_api.py")
     }
 
@@ -24,6 +24,7 @@ final class ProtocolTests: XCTestCase {
     /// documented in tone_forge_api.py. Any rename here breaks
     /// browser ↔ server ↔ Connect compatibility.
     func testMessageTypeStringsAreStable() {
+        // v1 envelope
         XCTAssertEqual(ConnectProtocol.MessageType.hello,           "hello")
         XCTAssertEqual(ConnectProtocol.MessageType.helloAck,        "hello_ack")
         XCTAssertEqual(ConnectProtocol.MessageType.versionMismatch, "version_mismatch")
@@ -34,5 +35,11 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(ConnectProtocol.MessageType.pong,            "pong")
         XCTAssertEqual(ConnectProtocol.MessageType.ack,             "ack")
         XCTAssertEqual(ConnectProtocol.MessageType.error,           "error")
+        // v2 Audio-Ownership Pivot additions
+        XCTAssertEqual(ConnectProtocol.MessageType.sessionData,     "session_data")
+        XCTAssertEqual(ConnectProtocol.MessageType.transportState,  "transport_state")
+        XCTAssertEqual(ConnectProtocol.MessageType.connectState,    "connect_state")
+        XCTAssertEqual(ConnectProtocol.MessageType.latencyReport,   "latency_report")
+        XCTAssertEqual(ConnectProtocol.MessageType.inputMeter,      "input_meter")
     }
 }

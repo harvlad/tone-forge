@@ -382,6 +382,57 @@ struct Connect {
             print("  [audio] device lost (\(reason)) — notifying browser")
             bridge.sendDeviceLost(reason: reason)
         }
+        // v2 wire frames (Audio-Ownership Pivot, Phase 4 commit B).
+        // AudioEngine emits a fresh snapshot on every state transition
+        // and on each monitor-gain / amp-sim / chain change; PresetBridge
+        // coalesces to ≤1 Hz, so we can forward unconditionally.
+        // latency_report is emitted by AudioEngine exactly when state
+        // transitions to .running and (future) on device changes.
+        engine.onConnectStateSnapshot = { snap in
+            bridge.sendConnectState(snap)
+        }
+        engine.onLatencyReportReady = { report in
+            bridge.sendLatencyReport(report)
+        }
+        // v2 measure_latency: JAM requests an impulse measurement.
+        bridge.onMeasureLatencyRequest = { [weak engine = engine] in
+            engine?.runLatencyProbeAsync { msg in
+                fputs("[latency-probe] \(msg)\n", stderr)
+            }
+        }
+        // v2 session_data / transport_state: feed the singleton
+        // SessionStore. No UI consumer in CLI mode today, but the
+        // ingest exercises the same code path the GUI uses, which
+        // is useful for `connect-cli bridge` smoke tests.
+        bridge.onSessionData = { dict in
+            SessionStore.shared.ingestSessionData(dict)
+        }
+        bridge.onTransportState = { [weak engine = engine] playing, positionSec in
+            SessionStore.shared.ingestTransport(playing: playing, positionSec: positionSec)
+            if playing {
+                engine?.playAllStems()
+            } else {
+                engine?.stopAllStems()
+            }
+        }
+        bridge.onLoadStems = { [weak engine = engine] specs in
+            engine?.unloadAllStems()
+            StemLoader.shared.load(specs) { results in
+                guard let engine = engine else { return }
+                for (id, outcome) in results {
+                    switch outcome {
+                    case .success(let localURL):
+                        do {
+                            try engine.loadStem(name: id, url: localURL)
+                        } catch {
+                            fputs("[stem] attach failed id=\(id) err=\(error.localizedDescription)\n", stderr)
+                        }
+                    case .failure(let error):
+                        fputs("[stem] download failed id=\(id) err=\(error.localizedDescription)\n", stderr)
+                    }
+                }
+            }
+        }
         bridge.start()
 
         // Keep the process alive until Ctrl-C.

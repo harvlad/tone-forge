@@ -345,7 +345,15 @@ async def jam_session_page(analysis_id: str) -> FileResponse:
 # Bump whenever a required field is added or a message semantic changes.
 # Both the Swift client (ConnectCore.ConnectProtocol.version) and the
 # browser (jam.js CONNECT_PROTOCOL_VERSION) must stay in lockstep.
-CONNECT_BRIDGE_PROTOCOL_VERSION = 1
+#
+# v2 (Audio-Ownership Pivot): purely additive over v1. New message
+# types — `session_data`, `transport_state`, `connect_state`,
+# `latency_report`, `input_meter`. Existing v1 frames unchanged.
+# A v1 client connecting to a v2 server still negotiates fine
+# (client_version <= server_version is the accept path); the
+# additional cached frames in join() are gated on "non-None" so a
+# v1-only channel never sees a v2 replay.
+CONNECT_BRIDGE_PROTOCOL_VERSION = 2
 
 # Heartbeat / liveness detection for the WS bridge.
 #
@@ -393,6 +401,28 @@ class _ConnectChannel:
         # this session" — Connect falls back to its dry passthrough.
         self.last_chain: dict | None = None
 
+        # ----- v2 cache fields (Audio-Ownership Pivot) -----
+        #
+        # These mirror last_preset / last_gain / last_chain but for the
+        # v2 frame types. The high-rate v2 types (transport_state and
+        # input_meter) are intentionally *not* cached: they are
+        # stale-on-arrival and broadcasting a stale tick on join would
+        # be misleading. The low-rate snapshot types (connect_state,
+        # latency_report) and session-scoped session_data ARE cached
+        # so a late-joining peer (e.g. a JAM tab opened after Connect
+        # is already running, or vice-versa) sees current truth.
+        self.last_connect_state: dict | None = None
+        self.last_latency_report: dict | None = None
+        self.last_session_data: dict | None = None
+        # Post-pivot stem playback: the v2 ``load_stems`` frame
+        # hands a list of stem URLs from JAM to Connect. Cached
+        # so a Connect helper that joins mid-song (relaunch, or
+        # the user opened JAM before installing the helper) sees
+        # the current stem set on join. The URLs already point at
+        # the backend's own ``/api/serve-file`` endpoint so the
+        # cache holds plain JSON; no audio bytes live here.
+        self.last_load_stems: dict | None = None
+
     async def join(self, ws: WebSocket) -> None:
         self.clients.add(ws)
         if self.last_preset is not None:
@@ -413,6 +443,42 @@ class _ConnectChannel:
                     "chain": self.last_chain,
                     "replayed": True,
                 })
+            except Exception:
+                pass
+        # ----- v2 replay (Audio-Ownership Pivot) -----
+        #
+        # Snapshot frames replayed on join so a late-joining peer sees
+        # current truth without waiting for the next 1-Hz tick from
+        # Connect or the next analysis-complete event from JAM. Each
+        # carries replayed=True so the receiver can distinguish a
+        # replay from a fresh push (useful for "first connect_state
+        # received" UI logic).
+        if self.last_connect_state is not None:
+            try:
+                payload = dict(self.last_connect_state)
+                payload["replayed"] = True
+                await ws.send_json(payload)
+            except Exception:
+                pass
+        if self.last_latency_report is not None:
+            try:
+                payload = dict(self.last_latency_report)
+                payload["replayed"] = True
+                await ws.send_json(payload)
+            except Exception:
+                pass
+        if self.last_session_data is not None:
+            try:
+                payload = dict(self.last_session_data)
+                payload["replayed"] = True
+                await ws.send_json(payload)
+            except Exception:
+                pass
+        if self.last_load_stems is not None:
+            try:
+                payload = dict(self.last_load_stems)
+                payload["replayed"] = True
+                await ws.send_json(payload)
             except Exception:
                 pass
         # Auto-update preference is *global* (lives in device.json), not
@@ -682,6 +748,50 @@ async def connect_bridge(ws: WebSocket) -> None:
                     logger.warning(f"[connect-bridge] tone applied log failed: {_apply_log_exc}")
                 if rid is not None:
                     await ws.send_json({"type": "ack", "request_id": rid})
+            elif mtype == "connect_state":
+                # v2: Connect → Browser engine snapshot. Cache the last
+                # one so a late-joining JAM sees it on join. Broadcast
+                # only — no server-side mutation of the payload, no
+                # ack required (Connect emits on its own cadence).
+                channel.last_connect_state = msg
+                await channel.broadcast(ws, msg)
+            elif mtype == "latency_report":
+                # v2: Connect → Browser measured engine latency. Same
+                # cache-then-broadcast pattern as connect_state. Low
+                # rate (transition-driven, not periodic) so caching
+                # is cheap.
+                channel.last_latency_report = msg
+                await channel.broadcast(ws, msg)
+            elif mtype == "session_data":
+                # v2: Browser → Connect song metadata. Cached so a
+                # Connect helper that joins after JAM finishes
+                # analysis still sees the current song. Future
+                # consumer is an in-Connect SessionStore; today the
+                # broadcast just lands at PresetBridge's no-op
+                # callback.
+                channel.last_session_data = msg
+                await channel.broadcast(ws, msg)
+            elif mtype == "transport_state" or mtype == "input_meter":
+                # v2: high-rate frames. Broadcast but never cache
+                # (stale-on-arrival; would mislead late joiners).
+                await channel.broadcast(ws, msg)
+            elif mtype == "measure_latency":
+                # v2: Browser → Connect impulse-probe trigger. NOT
+                # cached: it's a user-explicit one-shot request (the
+                # probe plays an audible tone). Replaying it to a
+                # late-joining Connect would re-fire the impulse,
+                # which would be obnoxious. Pass through to live
+                # peers only.
+                await channel.broadcast(ws, msg)
+            elif mtype == "load_stems":
+                # v2: Browser → Connect stem-playback handoff.
+                # Cached so a Connect helper that joins after the
+                # current song was loaded still gets the URLs.
+                # Payload is plain JSON (URLs only — the actual
+                # audio bytes are served from /api/serve-file),
+                # so caching is cheap.
+                channel.last_load_stems = msg
+                await channel.broadcast(ws, msg)
             else:
                 # Pass-through for any other typed message (status, transport
                 # commands, etc.) so we don't have to keep adding branches.
@@ -693,6 +803,140 @@ async def connect_bridge(ws: WebSocket) -> None:
     finally:
         if channel is not None:
             await channel.leave(ws)
+
+
+# ----- Audio-Ownership Pivot, Phase 6 -------------------------------
+#
+# Two endpoints supporting the "is Connect installed?" + "launch it
+# now" affordance in JAM. Both are local-only — they do filesystem
+# probes and macOS `open(1)` invocations, never anything network-
+# facing or device-touching. Safety properties:
+#   * Path arguments come exclusively from
+#     ``connect_bridge.discover_connect_bundle()`` /
+#     ``discover_connect_binary()``; nothing user-supplied reaches
+#     subprocess.
+#   * The launch endpoint shells out via ``subprocess.run([...])``
+#     with a fixed argv (no ``shell=True``).
+#   * Both endpoints succeed-with-empty-payload on non-macOS hosts
+#     and on missing-bundle so jam.js can render the "Install
+#     Connect" CTA without an error path.
+#
+# Wire shape:
+#   GET /api/connect/installed
+#     -> { "installed": bool,
+#          "path":      str | None,
+#          "version":   str | None }
+#   POST /api/connect/launch
+#     -> { "launched": bool,
+#          "method":   "open_bundle" | "open_path" | "none" }
+
+
+@app.get("/api/connect/installed")
+async def connect_installed() -> JSONResponse:
+    """Filesystem probe for the Connect.app bundle.
+
+    No side effects. Cheap enough to call on every JAM page load.
+    Returns `{installed: false, path: null, version: null}` when the
+    bundle isn't where we expect — JAM uses that to surface an
+    "Install Connect" link instead of the "Launch Connect" button.
+    """
+    try:
+        from local_engine.connect_bridge import (
+            discover_connect_bundle,
+            read_connect_bundle_version,
+        )
+    except Exception as exc:  # pragma: no cover — import-time guard
+        logger.warning(f"[connect-install] discover import failed: {exc}")
+        return JSONResponse({
+            "installed": False,
+            "path":      None,
+            "version":   None,
+        })
+
+    bundle = discover_connect_bundle()
+    if bundle is None:
+        return JSONResponse({
+            "installed": False,
+            "path":      None,
+            "version":   None,
+        })
+    version = read_connect_bundle_version(bundle)
+    return JSONResponse({
+        "installed": True,
+        "path":      str(bundle),
+        "version":   version,
+    })
+
+
+@app.post("/api/connect/launch", status_code=202)
+async def connect_launch() -> JSONResponse:
+    """Best-effort launch of the Connect.app helper.
+
+    Strategy (in order):
+      1. ``open -b com.toneforge.connect`` — Launch Services lookup;
+         works once the .app has been registered (i.e. ever launched
+         since being moved to Applications).
+      2. ``open <discovered path>`` — direct fallback for fresh
+         installs that Launch Services hasn't indexed yet, or for
+         dev builds living in the repo.
+      3. ``"none"`` — bundle not found anywhere we look; JAM should
+         show the install CTA.
+
+    Returns immediately with HTTP 202. The caller polls the
+    connect-bridge WebSocket for the actual paired state; this
+    endpoint does NOT confirm Connect started successfully.
+    """
+    try:
+        from local_engine.connect_bridge import (
+            discover_connect_bundle,
+            CONNECT_BUNDLE_ID,
+        )
+    except Exception as exc:  # pragma: no cover — import-time guard
+        logger.warning(f"[connect-launch] discover import failed: {exc}")
+        return JSONResponse(
+            {"launched": False, "method": "none"}, status_code=202
+        )
+
+    # Step 1: try Launch Services lookup by bundle ID. Fast and the
+    # canonical path once the user has dragged the .app into
+    # /Applications and run it at least once.
+    try:
+        result = subprocess.run(
+            ["open", "-b", CONNECT_BUNDLE_ID],
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return JSONResponse(
+                {"launched": True, "method": "open_bundle"}, status_code=202
+            )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.info(f"[connect-launch] open -b failed: {exc}")
+    except Exception as exc:  # pragma: no cover — surface but don't 500
+        logger.warning(f"[connect-launch] open -b unexpected: {exc}")
+
+    # Step 2: direct-path fallback. Only fire if we actually have a
+    # discovered bundle; never pass an unvalidated path to open(1).
+    bundle = discover_connect_bundle()
+    if bundle is not None:
+        try:
+            result = subprocess.run(
+                ["open", str(bundle)],
+                capture_output=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return JSONResponse(
+                    {"launched": True, "method": "open_path"}, status_code=202
+                )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            logger.info(f"[connect-launch] open path failed: {exc}")
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"[connect-launch] open path unexpected: {exc}")
+
+    return JSONResponse(
+        {"launched": False, "method": "none"}, status_code=202
+    )
 
 
 class ToneIgnoredRequest(BaseModel):

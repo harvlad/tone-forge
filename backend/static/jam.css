@@ -307,6 +307,47 @@ html, body {
   opacity: 0.5;
   cursor: default;
 }
+/* Phase 6: install / launch CTA inside the Connect status card.
+   `connect-launch-btn` is the primary action when Connect.app is on
+   disk but not paired; styled more prominently than the restart
+   button (filled accent rather than outlined neutral) so it reads
+   as the recommended next step. `connect-install-link` is the
+   download CTA when Connect.app isn't installed yet. */
+.connect-launch-btn {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent, #ff7a00);
+  border: 1px solid var(--accent, #ff7a00);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.connect-launch-btn:hover {
+  filter: brightness(1.1);
+}
+.connect-launch-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.connect-launch-version {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-dim, #aaa);
+  letter-spacing: 0.3px;
+}
+.connect-install-link {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--accent, #ff7a00);
+  text-decoration: underline;
+  font-weight: 500;
+}
+.connect-install-link:hover { text-decoration: none; }
 .connect-gain {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -879,6 +920,13 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   border-color: var(--border);
   color: var(--text-dim);
 }
+/* Phase 1: distinct error styling. Reuses --err (red accent token)
+   to separate "auto-reconnect exhausted" from the routine
+   transient-offline state above. */
+.connect-pill.errored {
+  border-color: var(--err, #ff4d4d);
+  color: var(--err, #ff4d4d);
+}
 
 .connect-monitor-pop {
   position: absolute;
@@ -1219,6 +1267,214 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 }
 .monitor-status-ok { color: var(--good); }
 .monitor-status-err { color: var(--bad); }
+
+/* Audio-Ownership Pivot, Phase 5 — ownership-boundary disclosure.
+ * Wraps the legacy #monitor-panel in <details id="audio-input-card">
+ * so the browser-monitor controls collapse-by-default when Connect
+ * is installed. The summary carries a status badge that mirrors
+ * the four-state vocabulary. */
+.audio-input-card {
+  /* Reset native <details> chrome so the disclosure blends with the
+     surrounding card style — we want the same visual weight as
+     the previous bare div, plus a chevron. */
+  margin: 0;
+}
+.audio-input-card-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 8px;
+  list-style: none;
+}
+/* Hide the default disclosure marker; we'll rely on the <details>
+   open/closed state class. */
+.audio-input-card-summary::-webkit-details-marker { display: none; }
+.audio-input-card-summary::marker { content: ''; }
+.audio-input-card-summary:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.audio-input-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-dim, #aaa);
+}
+.audio-input-card-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #2a2a2a);
+  color: var(--text-dim, #aaa);
+  letter-spacing: 0.3px;
+}
+.audio-input-card-badge.is-paired {
+  border-color: var(--good, #4caf50);
+  color: var(--good, #4caf50);
+}
+.audio-input-card-badge.is-installed {
+  border-color: var(--warn, #ff9800);
+  color: var(--warn, #ff9800);
+}
+.audio-input-card-badge.is-fallback {
+  border-color: var(--accent, #ff7a00);
+  color: var(--accent, #ff7a00);
+}
+.audio-input-card-badge.is-missing {
+  border-color: var(--border, #2a2a2a);
+  color: var(--text-dim, #aaa);
+}
+
+/* Audio-Ownership Pivot, Phase 2 — fallback affordance.
+ * Renders beneath the disabled "Launch Connect for low-latency
+ * monitoring" toggle when Connect.app is installed but not paired.
+ * Styled muted-secondary so it reads as a fallback, not the
+ * recommended action. _syncMonitorVsConnect() owns visibility. */
+.monitor-row-fallback {
+  padding: 4px 0 0 0;
+}
+.monitor-fallback-link {
+  color: var(--text-dim, #aaa);
+  font-size: 12px;
+  text-decoration: underline;
+  text-decoration-color: var(--text-dim, #aaa);
+  cursor: pointer;
+}
+.monitor-fallback-link:hover {
+  color: var(--accent, #ff7a00);
+  text-decoration-color: var(--accent, #ff7a00);
+}
+
+/* Audio-Ownership Pivot, Phase 3 — dual-latency card.
+ * Sits inside #monitor-panel; will move into #audio-input-card
+ * when Phase 5 lands the rename. Styled to feel like a nested
+ * subsection of the monitor panel: lighter background, no border,
+ * so it reads as "data" rather than "another card". */
+.audio-latency-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.audio-latency-card-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+.audio-latency-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.audio-latency-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.audio-latency-row-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.audio-latency-recommended {
+  font-size: 10px;
+  color: var(--good);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.audio-latency-row-value {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.audio-latency-row-label {
+  color: var(--text-dim);
+}
+.audio-latency-row-num {
+  color: var(--text);
+}
+/* Greyed-out variant when the data source is unavailable
+ * (Connect not paired, or AudioContext not constructed yet). */
+.audio-latency-row.is-unavailable .audio-latency-row-num,
+.audio-latency-row.is-unavailable .audio-latency-row-name {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+/* Audio-Ownership Pivot follow-up: LatencyProbe row.
+ * Sits under the Connect Monitor row inside the same card. Shows
+ * the ground-truth measured round-trip alongside the estimated
+ * floor, plus a "Measure" button that triggers an impulse probe
+ * on Connect. */
+.audio-latency-measured {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+.audio-latency-measured-num {
+  color: var(--text);
+}
+.audio-latency-measured-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.audio-latency-measured-badge.is-high {
+  color: var(--good);
+  border-color: var(--good);
+}
+.audio-latency-measured-badge.is-low {
+  color: var(--warn, #c08a2c);
+  border-color: var(--warn, #c08a2c);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.audio-latency-measured-badge.is-nosignal {
+  color: var(--err, #c0392b);
+  border-color: var(--err, #c0392b);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.audio-latency-measure-btn {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.audio-latency-measure-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.audio-latency-measure-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .monitor-row {
   display: flex;
   align-items: center;

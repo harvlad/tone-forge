@@ -72,6 +72,67 @@ def discover_connect_binary() -> Optional[Path]:
     return None
 
 
+# Connect.app bundle locations checked by the install probe. The
+# `.app` is what end users actually install (via DMG → drag to
+# Applications); the standalone CLI binary path above is only used
+# by the supervisor in dev. We check both system Applications and
+# the per-user Applications folder because the DMG drop target is
+# user-chosen.
+_BUNDLE_CANDIDATES = [
+    Path("/Applications") / "ToneForge Connect.app",
+    Path("/Applications") / "Connect.app",
+    Path.home() / "Applications" / "ToneForge Connect.app",
+    Path.home() / "Applications" / "Connect.app",
+    _CONNECT_DIR / "Connect.app",
+]
+
+# Bundle identifier of the Connect macOS app. Single source of truth
+# for the install-probe / launch endpoints. Must stay in lockstep
+# with the `CFBundleIdentifier` declared in
+# connect/Resources/Info.plist (currently `com.toneforge.connect`)
+# and the `APP_BUNDLE_ID` constant in connect/build_release.sh.
+CONNECT_BUNDLE_ID = "com.toneforge.connect"
+
+
+def discover_connect_bundle() -> Optional[Path]:
+    """Return the first existing Connect.app bundle, or ``None``.
+
+    Unlike ``discover_connect_binary()`` which targets dev (CLI
+    binary inside `.build/`), this is the user-install surface:
+    `/Applications/Connect.app` is the canonical end-user location.
+    The two helpers exist side by side because the supervisor and
+    the install probe answer different questions ("can I spawn a
+    bridge in this dev tree?" vs "did the user install the .app?").
+    """
+    for candidate in _BUNDLE_CANDIDATES:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def read_connect_bundle_version(bundle_path: Path) -> Optional[str]:
+    """Best-effort extraction of ``CFBundleShortVersionString`` from
+    a Connect.app's ``Contents/Info.plist``.
+
+    Returns ``None`` on any failure (missing plist, malformed XML,
+    missing key, unreadable file). plistlib is stdlib so this never
+    introduces a new runtime dependency.
+    """
+    plist_path = bundle_path / "Contents" / "Info.plist"
+    if not plist_path.is_file():
+        return None
+    try:
+        import plistlib
+        with plist_path.open("rb") as f:
+            data = plistlib.load(f)
+    except Exception:
+        return None
+    value = data.get("CFBundleShortVersionString")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
 def _log_path() -> Path:
     """User-visible log file for the supervised Connect process."""
     base = Path.home() / "Library" / "Logs" / "ToneForge"

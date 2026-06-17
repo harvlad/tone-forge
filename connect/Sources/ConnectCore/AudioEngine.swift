@@ -34,6 +34,38 @@ public final class AudioEngine {
         public let bufferDurationSec: Double
         /// Sum of the above — a *lower bound* on the achievable monitoring round trip.
         public let estimatedRoundTripSec: Double
+        /// Ground-truth round-trip in seconds from the most recent
+        /// `LatencyProbe.run()` (impulse-loopback). Nil until the user
+        /// triggers a measurement via the v2 `measure_latency` frame.
+        /// Once set, persists for the life of this AudioEngine instance
+        /// (cleared on device reconfigure — see `runLatencyProbeAsync`).
+        public let measuredRoundTripSec: Double?
+        /// LatencyProbe confidence ("high" | "low" | "no_signal") — see
+        /// `LatencyProbe.Result.confidence`. Nil iff measuredRoundTripSec
+        /// is nil.
+        public let measurementConfidence: String?
+    }
+
+    /// Snapshot of engine state for the v2 `connect_state` wire frame.
+    /// Built by `currentSnapshot()` and consumed by
+    /// `PresetBridge.sendConnectState(_:)` — AudioEngine doesn't know
+    /// about JSON, so the dict construction lives in PresetBridge.
+    ///
+    /// Audio-Ownership Pivot, Phase 4 commit B. The browser side
+    /// (jam.js) reads this to drive the four-state status pill, the
+    /// audio-input-card collapse, and (once the dual-latency UI lands)
+    /// the device-name readout.
+    public struct ConnectStateSnapshot {
+        public let stateName: String      // "stopped"|"starting"|"running"|"reconfiguring"|"failed"
+        public let inputDeviceName: String?
+        public let outputDeviceName: String?
+        public let sampleRate: Double
+        public let channelsIn: Int
+        public let monitorEnabled: Bool   // ampSim engaged AND gain > 0
+        public let monitorGain: Float     // current inputMonitorGain
+        public let monitorMuted: Bool     // gain == 0
+        public let ampSimEnabled: Bool
+        public let activeChainId: String?
     }
 
     /// Lifecycle state surfaced via `onStateChange`. The state machine
@@ -69,12 +101,42 @@ public final class AudioEngine {
     /// runtime device loss.
     public var onDeviceLost: ((_ reason: String) -> Void)?
 
+    /// Fired on the main queue whenever a property the v2
+    /// `connect_state` frame cares about changes: state transition,
+    /// inputMonitorGain didSet, ampSimEnabled didSet, applyChain
+    /// completion. The owner (AppDelegate / ConnectMain) wires this
+    /// to `PresetBridge.sendConnectState(_:)` which handles the 1 Hz
+    /// coalescing and the actual wire send.
+    ///
+    /// Audio-Ownership Pivot, Phase 4 commit B.
+    public var onConnectStateSnapshot: ((ConnectStateSnapshot) -> Void)?
+
+    /// Fired on the main queue when the engine reaches `.running` from
+    /// any other state. The owner wires this to
+    /// `PresetBridge.sendLatencyReport(_:)`. Not periodic — only on
+    /// transition to running and on successful reconfig completion.
+    ///
+    /// Audio-Ownership Pivot, Phase 4 commit B.
+    public var onLatencyReportReady: ((LatencyReport) -> Void)?
+
     public private(set) var state: State = .stopped {
         didSet {
             guard state != oldValue else { return }
             let cb = onStateChange
             let s = state
             DispatchQueue.main.async { cb?(s) }
+            // v2: every state transition is a connect_state-worthy
+            // event. PresetBridge does the coalescing; we just fire.
+            emitConnectStateSnapshot()
+            // v2: emit latency_report only on transition into running.
+            // Reconfig success also reaches .running via the retry
+            // loop, so we cover the "device or sample-rate change
+            // settled" case here without a second hook.
+            if case .running = s {
+                let report = latencyReport()
+                let lrCb = onLatencyReportReady
+                DispatchQueue.main.async { lrCb?(report) }
+            }
         }
     }
 
@@ -96,7 +158,13 @@ public final class AudioEngine {
     /// 0.0 = mute, 1.0 = unity. Default starts muted so first launch
     /// doesn't surprise a user with a feedback loop into laptop speakers.
     public var inputMonitorGain: Float = 0.0 {
-        didSet { inputMixerNode.outputVolume = inputMonitorGain }
+        didSet {
+            inputMixerNode.outputVolume = inputMonitorGain
+            // v2: monitor mute/level is part of connect_state. Fire on
+            // every change; PresetBridge coalesces to ≤1 Hz so a slider
+            // drag doesn't flood the wire.
+            if inputMonitorGain != oldValue { emitConnectStateSnapshot() }
+        }
     }
 
     /// Linear gain applied to the stems mix bus.
@@ -119,6 +187,8 @@ public final class AudioEngine {
             ampSimEQ.bypass = bypass
             compressor.bypass = bypass || !currentChainSpec.comp.enabled
             reverb.bypass = bypass
+            // v2: DSP block of connect_state changed.
+            if ampSimEnabled != oldValue { emitConnectStateSnapshot() }
         }
     }
 
@@ -190,6 +260,18 @@ public final class AudioEngine {
     /// One player per active stem. Keyed by stem name (e.g. "drums").
     private var stemPlayers: [String: AVAudioPlayerNode] = [:]
     private var stemBuffers: [String: AVAudioPCMBuffer] = [:]
+
+    /// Cached result of the most recent successful LatencyProbe run,
+    /// or nil if the user has never requested an impulse measurement
+    /// on this engine instance. Cleared on device reconfigure because
+    /// changing devices invalidates the measured value.
+    /// Read on the AVAudioEngine main render thread; written on the
+    /// background `latencyProbeQueue`. The Bool flag below guards
+    /// re-entrant probe requests (impulse runs are ~1.5s blocking and
+    /// stomping on a probe-in-flight wastes the user's time).
+    private var lastMeasuredLatency: LatencyProbe.Result?
+    private var latencyProbeInFlight: Bool = false
+    private let latencyProbeQueue = DispatchQueue(label: "com.toneforge.connect.latency-probe")
 
     /// Reconfig attempts since the last successful start. Reset to 0 on
     /// any successful start; incremented per recovery attempt.
@@ -344,6 +426,12 @@ public final class AudioEngine {
         state = .reconfiguring(reason: reason)
         reconfigAttempt += 1
 
+        // Any cached LatencyProbe result was measured against the
+        // OLD device path. A reconfigure typically means the input
+        // or output device changed under us, so the measured number
+        // is now stale. Drop it; the user can re-measure post-restart.
+        lastMeasuredLatency = nil
+
         // Engine is already stopped per the notification contract, but
         // call stop() defensively so any stragglers (stem players) are
         // also brought down before we rebuild.
@@ -472,12 +560,74 @@ public final class AudioEngine {
         // -- Output trim ---------------------------------------------
         // outputVolume is linear; convert dB → linear once.
         outputTrim.outputVolume = decibelsToLinearGain(safe.output.trimDb)
+
+        // v2: active_chain_id in connect_state.dsp changed. Fire here
+        // rather than from every per-node setter above so a single
+        // applyChain call results in exactly one snapshot emission.
+        emitConnectStateSnapshot()
     }
 
     /// Identifier of the currently-applied chain. Exposed for the
     /// WS handler's apply_chain_ack response and for diagnostics.
     public func currentChainId() -> String {
         return currentChainSpec.id
+    }
+
+    /// Build a `ConnectStateSnapshot` reflecting the engine's current
+    /// state. Cheap — just reads cached properties; safe to call
+    /// inside a property `didSet`. Audio-Ownership Pivot, Phase 4
+    /// commit B.
+    public func currentSnapshot() -> ConnectStateSnapshot {
+        let stateName: String
+        switch state {
+        case .stopped: stateName = "stopped"
+        case .starting: stateName = "starting"
+        case .running: stateName = "running"
+        case .reconfiguring: stateName = "reconfiguring"
+        case .failed: stateName = "failed"
+        }
+        // inputNode format isn't valid until the engine has been
+        // prepared, but reading it on .stopped returns a default
+        // 44.1 kHz mono format — harmless for a pre-running
+        // snapshot, accurate once running.
+        let format = engine.inputNode.outputFormat(forBus: 0)
+        let sampleRate = format.sampleRate > 0 ? format.sampleRate : 48000.0
+        let channelsIn = Int(format.channelCount)
+        // Input device name is sourced from the supervisor-supplied
+        // env var. If unset, we let the system default win and report
+        // nil (the browser side treats this as "unknown" and falls
+        // back to a generic label).
+        let inputName = ProcessInfo.processInfo.environment["TONEFORGE_AUDIO_INPUT_NAME"]
+        let inputDeviceName = (inputName?.isEmpty == false) ? inputName : nil
+        // Output device name is intentionally nil for now —
+        // AVAudioEngine doesn't expose it without a HAL query, and
+        // the v2 wire schema permits null. A later commit can plumb
+        // it via CoreAudio if the dual-latency UI needs it.
+        let outputDeviceName: String? = nil
+        let gain = inputMonitorGain
+        let muted = gain <= 0.0
+        return ConnectStateSnapshot(
+            stateName: stateName,
+            inputDeviceName: inputDeviceName,
+            outputDeviceName: outputDeviceName,
+            sampleRate: sampleRate,
+            channelsIn: channelsIn,
+            monitorEnabled: ampSimEnabled && !muted,
+            monitorGain: gain,
+            monitorMuted: muted,
+            ampSimEnabled: ampSimEnabled,
+            activeChainId: currentChainSpec.id.isEmpty ? nil : currentChainSpec.id
+        )
+    }
+
+    /// Build a snapshot and fire `onConnectStateSnapshot` on the main
+    /// queue. Called from every property `didSet` that influences the
+    /// v2 connect_state frame. Rate-limiting happens downstream in
+    /// PresetBridge — AudioEngine just fires; the bridge coalesces.
+    private func emitConnectStateSnapshot() {
+        let snap = currentSnapshot()
+        let cb = onConnectStateSnapshot
+        DispatchQueue.main.async { cb?(snap) }
     }
 
     // MARK: - Section appliers (private)
@@ -730,6 +880,20 @@ public final class AudioEngine {
         stemPlayers[name]?.volume = muted ? 0.0 : 1.0
     }
 
+    /// Detach every stem player from the engine and drop the
+    /// retained PCM buffers. Call before loading a new song's stems
+    /// so the mixer doesn't accumulate dead nodes (each
+    /// AVAudioPlayerNode keeps its connection until detached, and
+    /// each AVAudioPCMBuffer holds ~5-30 MB for a typical stem).
+    public func unloadAllStems() {
+        for (_, player) in stemPlayers {
+            player.stop()
+            engine.detach(player)
+        }
+        stemPlayers.removeAll()
+        stemBuffers.removeAll()
+    }
+
     // MARK: - Latency report
 
     /// Combine driver-reported latency with buffer duration. This is a
@@ -750,12 +914,53 @@ public final class AudioEngine {
         let bufferFrames: Double = 256.0
         let bufferDuration = bufferFrames / sampleRate
 
+        let measured = lastMeasuredLatency
         return LatencyReport(
             inputDeviceLatencySec: inputLatency,
             outputDeviceLatencySec: outputLatency,
             bufferDurationSec: bufferDuration,
-            estimatedRoundTripSec: inputLatency + outputLatency + (2 * bufferDuration)
+            estimatedRoundTripSec: inputLatency + outputLatency + (2 * bufferDuration),
+            measuredRoundTripSec: measured.map { $0.roundTripMs / 1000.0 },
+            measurementConfidence: measured?.confidence
         )
+    }
+
+    /// Trigger an impulse-loopback LatencyProbe on a background queue,
+    /// cache the result, and fire `onLatencyReportReady` so the bridge
+    /// can re-emit a fresh `latency_report` with the measured fields
+    /// populated.
+    ///
+    /// Re-entrancy: if a probe is already in flight, the request is
+    /// silently dropped (the requester gets the in-flight result via
+    /// the next emission). Errors thrown by the probe are logged via
+    /// `onStatus` but never crash the engine.
+    ///
+    /// The probe plays a brief 1 kHz tone — call only when the user
+    /// explicitly opts in. Connect never auto-fires this.
+    public func runLatencyProbeAsync(onStatus: ((String) -> Void)? = nil) {
+        if latencyProbeInFlight { return }
+        latencyProbeInFlight = true
+        let sampleRate = engine.inputNode.outputFormat(forBus: 0).sampleRate
+        let probeSampleRate = sampleRate > 0 ? sampleRate : 48000.0
+        latencyProbeQueue.async { [weak self] in
+            guard let self = self else { return }
+            defer {
+                DispatchQueue.main.async { [weak self] in
+                    self?.latencyProbeInFlight = false
+                }
+            }
+            do {
+                let probe = LatencyProbe(sampleRate: probeSampleRate)
+                let result = try probe.run()
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.lastMeasuredLatency = result
+                    self.onLatencyReportReady?(self.latencyReport())
+                }
+            } catch {
+                onStatus?("latency probe failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     private static func deviceLatencySec(forAudioUnit unit: AudioUnit?, scope: AudioUnitScope) -> Double {

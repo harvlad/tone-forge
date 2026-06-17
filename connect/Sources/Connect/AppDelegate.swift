@@ -383,6 +383,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.surfaceVersionMismatch(required: required)
             }
         }
+        // v2 wire frames (Audio-Ownership Pivot, Phase 4 commit B).
+        // AudioEngine.onConnectStateSnapshot fires on state transitions
+        // and on monitor-gain / amp-sim / chain changes; PresetBridge
+        // coalesces to ≤1 Hz on its own. onLatencyReportReady fires
+        // when the engine reaches .running.
+        engine.onConnectStateSnapshot = { [weak bridge] snap in
+            bridge?.sendConnectState(snap)
+        }
+        engine.onLatencyReportReady = { [weak bridge] report in
+            bridge?.sendLatencyReport(report)
+        }
+        // v2 measure_latency (Audio-Ownership Pivot, follow-up):
+        // JAM asks Connect to run an impulse-loopback probe; the
+        // engine fires onLatencyReportReady on success with the
+        // measured fields populated, which the wire-out above
+        // forwards to JAM.
+        bridge.onMeasureLatencyRequest = { [weak engine] in
+            engine?.runLatencyProbeAsync { msg in
+                NSLog("[Connect] [latency-probe] \(msg)")
+            }
+        }
+        // v2 session_data / transport_state (Audio-Ownership Pivot,
+        // post-pivot follow-up): inbound song/key/chord/section
+        // metadata feeds the process-wide SessionStore so future
+        // HUD code can subscribe to a typed source of truth. No UI
+        // surface today — the rails are live, the destination is
+        // a singleton with `onChange` ready for consumers.
+        bridge.onSessionData = { dict in
+            SessionStore.shared.ingestSessionData(dict)
+        }
+        // transport_state drives both SessionStore (so the HUD
+        // knows position) AND the AudioEngine (so the stems
+        // actually play). Stems must be loaded first — a play
+        // request with no loaded stems is a silent no-op inside
+        // `playAllStems`.
+        bridge.onTransportState = { [weak engine] playing, positionSec in
+            SessionStore.shared.ingestTransport(playing: playing, positionSec: positionSec)
+            if playing {
+                engine?.playAllStems()
+            } else {
+                engine?.stopAllStems()
+            }
+        }
+        // v2 load_stems (post-pivot stem playback). Download each
+        // spec to a local file via StemLoader, then attach via
+        // AudioEngine.loadStem. Failures are surfaced via NSLog
+        // but don't block the successes.
+        bridge.onLoadStems = { [weak engine] specs in
+            engine?.unloadAllStems()
+            StemLoader.shared.load(specs) { results in
+                guard let engine = engine else { return }
+                for (id, outcome) in results {
+                    switch outcome {
+                    case .success(let localURL):
+                        do {
+                            try engine.loadStem(name: id, url: localURL)
+                        } catch {
+                            NSLog("[Connect] stem attach failed id=\(id) err=\(error.localizedDescription)")
+                        }
+                    case .failure(let error):
+                        NSLog("[Connect] stem download failed id=\(id) err=\(error.localizedDescription)")
+                    }
+                }
+            }
+        }
         bridge.start()
 
         self.engine = engine
