@@ -3070,27 +3070,22 @@
   }
 
   // Reflect the current section's guidance_mode on the chord-ribbon
-  // and lead/riff lane DOM via data attributes + a dynamic label so
-  // CSS can mute the chord ribbon during riff/lead windows and the
-  // user sees an honest label ("RIFF" instead of always "LEAD PART /
-  // RIFF"). Legacy bundles → mode="chord" → everything looks the
-  // same as before this milestone shipped.
+  // and lead/riff lane DOM via data attributes. The CSS rules that
+  // would *visually* mute the ribbon and re-label the lane on
+  // riff/lead sections are intentionally not shipped yet — the
+  // synthetic-fixture-tuned classifier thresholds over-classify
+  // real songs, so flipping the visuals here would mis-mute chord
+  // ribbons on songs that are still musically chord-shaped. Setting
+  // the data attribute remains harmless: a future calibration pass
+  // or a debug overlay can read it without re-plumbing.
   function _applyGuidanceModeForActiveSection(t) {
     const mode = _currentGuidanceMode(t);
     const ribbon = document.getElementById('chord-ribbon');
     const guidance = document.getElementById('chord-guidance');
     const lane = document.getElementById('chord-tab-queue');
-    const labelEl = lane ? lane.querySelector('.chord-tab-label') : null;
     if (ribbon) ribbon.setAttribute('data-guidance-mode', mode);
     if (guidance) guidance.setAttribute('data-guidance-mode', mode);
     if (lane) lane.setAttribute('data-guidance-mode', mode);
-    if (labelEl) {
-      labelEl.textContent = mode === 'riff'
-        ? 'RIFF'
-        : mode === 'lead'
-        ? 'LEAD PHRASE'
-        : 'LEAD PART / RIFF';
-    }
   }
 
   // Active-chord-change dispatcher. Called from inside
