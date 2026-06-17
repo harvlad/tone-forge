@@ -2281,10 +2281,24 @@
       const label = s.type || s.name || s.label || 'Section';
       const start = secondsOf(s.start_time ?? s.start ?? s.start_sec ?? s.startSec);
       const end = secondsOf(s.end_time ?? s.end ?? s.end_sec ?? s.endSec);
+      // Per-section guidance-mode classification (chord/riff/lead).
+      // Persisted by ArrangementSection.to_dict; legacy bundles
+      // (pre-milestone) lack the field and we default to chord so the
+      // ribbon keeps rendering exactly as before.
+      const guidanceMode = (s.guidance_mode === 'riff' || s.guidance_mode === 'lead')
+        ? s.guidance_mode
+        : 'chord';
+      const guidanceConfidence = typeof s.guidance_confidence === 'number'
+        ? s.guidance_confidence : 0.0;
+      const guidanceReason = typeof s.guidance_reason === 'string'
+        ? s.guidance_reason : '';
       pill.textContent = `${label} ${formatTime(start)}`;
       pill.addEventListener('click', () => toggleSectionLoop({ name: label, startSec: start, endSec: end, el: pill }));
       bar.appendChild(pill);
-      return { name: label, startSec: start, endSec: end, el: pill };
+      return {
+        name: label, startSec: start, endSec: end, el: pill,
+        guidanceMode, guidanceConfidence, guidanceReason,
+      };
     });
     // Fallback: when section detection returns nothing (some short
     // clips or noisy mixes), still give the user a single full-song
@@ -2297,7 +2311,10 @@
         pill.textContent = `Full song ${formatTime(0)}`;
         pill.addEventListener('click', () => toggleSectionLoop({ name: 'Full song', startSec: 0, endSec: dur, el: pill }));
         bar.appendChild(pill);
-        state.sections = [{ name: 'Full song', startSec: 0, endSec: dur, el: pill }];
+        state.sections = [{
+          name: 'Full song', startSec: 0, endSec: dur, el: pill,
+          guidanceMode: 'chord', guidanceConfidence: 0.0, guidanceReason: '',
+        }];
       } else {
         bar.innerHTML = '<div style="color: var(--text-dim); font-size:13px;">Section detection unavailable for this song</div>';
       }
@@ -3043,6 +3060,39 @@
     });
   }
 
+  // Look up the per-section guidance mode at time ``t``. Defaults to
+  // "chord" when no section info exists (legacy bundles, full-song
+  // fallback) so the chord ribbon keeps rendering exactly as before.
+  function _currentGuidanceMode(t) {
+    const s = _findSectionAt(t);
+    if (!s) return 'chord';
+    return s.guidanceMode === 'riff' || s.guidanceMode === 'lead' ? s.guidanceMode : 'chord';
+  }
+
+  // Reflect the current section's guidance_mode on the chord-ribbon
+  // and lead/riff lane DOM via data attributes + a dynamic label so
+  // CSS can mute the chord ribbon during riff/lead windows and the
+  // user sees an honest label ("RIFF" instead of always "LEAD PART /
+  // RIFF"). Legacy bundles → mode="chord" → everything looks the
+  // same as before this milestone shipped.
+  function _applyGuidanceModeForActiveSection(t) {
+    const mode = _currentGuidanceMode(t);
+    const ribbon = document.getElementById('chord-ribbon');
+    const guidance = document.getElementById('chord-guidance');
+    const lane = document.getElementById('chord-tab-queue');
+    const labelEl = lane ? lane.querySelector('.chord-tab-label') : null;
+    if (ribbon) ribbon.setAttribute('data-guidance-mode', mode);
+    if (guidance) guidance.setAttribute('data-guidance-mode', mode);
+    if (lane) lane.setAttribute('data-guidance-mode', mode);
+    if (labelEl) {
+      labelEl.textContent = mode === 'riff'
+        ? 'RIFF'
+        : mode === 'lead'
+        ? 'LEAD PHRASE'
+        : 'LEAD PART / RIFF';
+    }
+  }
+
   // Active-chord-change dispatcher. Called from inside
   // updateChordPlayhead's class-toggle block whenever the active
   // chord index advances. Re-renders both the guidance block and the
@@ -3052,6 +3102,13 @@
     if (newIdx < 0) return;
     _renderChordGuidance(newIdx);
     _renderLeadTabLane(newIdx);
+    // Sync guidance-mode attributes for the new active chord's
+    // section. Uses the chord's startSec rather than the wall-clock
+    // playhead because _onActiveChordChanged fires exactly once per
+    // chord transition — so we resolve the section *at the chord
+    // boundary*, not somewhere mid-pill.
+    const chord = state.chords && state.chords[newIdx];
+    if (chord) _applyGuidanceModeForActiveSection(chord.startSec);
   }
 
   // Render the chord lane from result.chords. Wire shape (from

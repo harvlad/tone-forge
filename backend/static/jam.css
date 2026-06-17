@@ -539,6 +539,44 @@ html, body {
   font-weight: 700;
 }
 
+/* Guidance-mode gating (chord vs riff vs lead).
+ *
+ * The per-section classifier (analysis/guidance_mode.py) decides what
+ * kind of practice surface the user gets per section. For chord
+ * sections the ribbon is the primary signal and stays at full
+ * prominence. For riff / lead sections the chord ribbon is still
+ * shown (it's still computed; the labels are still legal) but muted
+ * to a *reference strip* so the user's eye goes to the riff/lead
+ * lane below, which is the honest guidance for that window. */
+.chord-ribbon[data-guidance-mode="riff"],
+.chord-ribbon[data-guidance-mode="lead"] {
+  opacity: 0.45;
+}
+.chord-ribbon[data-guidance-mode="riff"]::after,
+.chord-ribbon[data-guidance-mode="lead"]::after {
+  content: "reference";
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  pointer-events: none;
+  z-index: 3;
+}
+/* The dynamic label flips between "LEAD PART / RIFF" (chord/default),
+ * "RIFF" (riff sections), and "LEAD PHRASE" (lead sections) — see
+ * _applyGuidanceModeForActiveSection in jam.js. Tint the lane border
+ * accent on the two non-chord modes so the active surface is
+ * unmistakable at a glance. */
+.chord-tab-queue[data-guidance-mode="riff"] {
+  border-color: var(--accent);
+}
+.chord-tab-queue[data-guidance-mode="lead"] {
+  border-color: var(--accent-2, var(--accent));
+}
+
 /* ---------------------------------------------------------- buttons */
 button {
   font-family: inherit;

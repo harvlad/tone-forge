@@ -452,7 +452,7 @@
              from result.chords. Hidden when chords are absent so
              legacy sessions without a chord lane don't show an empty
              strip. Playhead is driven from tickClock(). -->
-        <div id="chord-ribbon" class="chord-ribbon" hidden>
+        <div id="chord-ribbon" class="chord-ribbon" data-guidance-mode="chord" hidden>
           <div class="chord-ribbon-playhead"></div>
           <div class="chord-ribbon-strip" id="chord-ribbon-strip"></div>
         </div>
@@ -520,7 +520,7 @@
              Always visible when chord data exists; falls back to an
              explanatory placeholder when no MIDI notes are detected
              (per the "no blank cards" UX rule). -->
-        <div id="chord-tab-queue" class="chord-tab-queue" hidden>
+        <div id="chord-tab-queue" class="chord-tab-queue" data-guidance-mode="chord" hidden>
           <div class="chord-tab-label">LEAD PART / RIFF</div>
           <div class="chord-tab-body" id="chord-tab-body"></div>
         </div>
