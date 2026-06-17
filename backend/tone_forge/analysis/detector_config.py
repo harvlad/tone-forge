@@ -79,3 +79,20 @@ class DetectorConfig:
     power_chord_penalty: float = 0.0
     power_chord_third_min_streak: int = 0
     power_chord_minor_key_only: bool = False
+
+    # Stage 1.4.2 — post-Viterbi power-chord substitution. Stage 1.4.1
+    # demotes maj/min cells during emission scoring but the dyad/triad
+    # mass asymmetry means the triad templates still usually win.
+    # This complementary pass re-scores each emitted region against
+    # the region-averaged chroma and substitutes the region's quality
+    # to '5' when (a) the region's third bin is weak (third_ratio <
+    # post_viterbi_third_ratio) AND (b) the power-5 template's raw
+    # cosine is within ``post_viterbi_margin`` of the winning maj/min
+    # cosine. The same key gate as Stage 1.4.1 applies: only fires
+    # when ``power_chord_minor_key_only=True`` and the detected key
+    # is minor with strength >= 0.7.
+    #
+    # Defaults to no-op (both = 0.0), so bench corpus stays bit-exact
+    # and only chord-lane stage opts in.
+    power_chord_post_viterbi_third_ratio: float = 0.0
+    power_chord_post_viterbi_margin: float = 0.0

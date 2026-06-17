@@ -1381,3 +1381,181 @@ def test_detect_chords_no_beats_matches_fixed_window_path() -> None:
         assert a.name == b.name
         assert a.start_time == pytest.approx(b.start_time)
         assert a.end_time == pytest.approx(b.end_time)
+
+
+# ---------------------------------------------------------------------------
+# Stage 1.4.2 — _substitute_power_chords_on_dyads unit tests.
+#
+# The helper is the post-Viterbi pass that re-scores each emitted maj/min
+# region against region-averaged chroma and substitutes the quality to '5'
+# when (a) the region's third bin is weak and (b) the power-5 template's
+# raw cosine is within a configured margin of the winning triad's raw
+# cosine. Caller (detect_chords_from_audio) applies the minor-key gate.
+# ---------------------------------------------------------------------------
+
+
+def _make_chroma_with_voicing(
+    pitch_classes_strength: list,
+    n_frames: int = 4,
+) -> np.ndarray:
+    """Build a deterministic (12, n_frames) chroma matrix.
+
+    ``pitch_classes_strength`` is a list of (pc, strength) pairs.
+    Each pc gets ``strength`` in every frame; other bins are 0.0.
+    """
+    chroma = np.zeros((12, n_frames), dtype=np.float64)
+    for pc, s in pitch_classes_strength:
+        chroma[pc, :] = float(s)
+    return chroma
+
+
+def test_substitute_power_chords_on_dyads_fires_on_pure_dyad():
+    """Pure F+C dyad chroma under an Fm region: should substitute to F5."""
+    # F = pc 5, C = pc 0 (the perfect 5th above F is C).
+    chroma = _make_chroma_with_voicing([(5, 1.0), (0, 1.0)])
+    times = np.array([0.0, 0.5, 1.0, 1.5])
+    fm = chord_detector.Chord(
+        root=5, quality='min',
+        start_time=0.0, end_time=1.5, confidence=0.7,
+    )
+    out = chord_detector._substitute_power_chords_on_dyads(
+        [fm], chroma, times,
+        third_ratio_max=0.4, margin=0.05,
+    )
+    assert len(out) == 1
+    assert out[0].root == 5
+    assert out[0].quality == '5'  # substituted
+    assert out[0].start_time == 0.0
+    assert out[0].end_time == 1.5
+
+
+def test_substitute_power_chords_on_dyads_skips_real_triad():
+    """Strong third in chroma → real triad → no substitution."""
+    # F major triad chroma: F (5) + A (9) + C (0), all strong.
+    # Third bin (A=9, +4 from F) at 1.0 = 100% of root bin → above
+    # threshold so the gate rejects substitution.
+    chroma = _make_chroma_with_voicing([(5, 1.0), (9, 1.0), (0, 1.0)])
+    times = np.array([0.0, 0.5, 1.0, 1.5])
+    f_maj = chord_detector.Chord(
+        root=5, quality='maj',
+        start_time=0.0, end_time=1.5, confidence=0.85,
+    )
+    out = chord_detector._substitute_power_chords_on_dyads(
+        [f_maj], chroma, times,
+        third_ratio_max=0.4, margin=0.05,
+    )
+    assert len(out) == 1
+    assert out[0].quality == 'maj'  # unchanged
+
+
+def test_substitute_power_chords_on_dyads_skips_non_maj_min():
+    """Already-power-chord, dim, sus, etc. regions are pass-through."""
+    chroma = _make_chroma_with_voicing([(5, 1.0), (0, 1.0)])
+    times = np.array([0.0, 0.5, 1.0, 1.5])
+    f5 = chord_detector.Chord(
+        root=5, quality='5',
+        start_time=0.0, end_time=1.5, confidence=0.7,
+    )
+    out = chord_detector._substitute_power_chords_on_dyads(
+        [f5], chroma, times,
+        third_ratio_max=0.4, margin=0.05,
+    )
+    assert len(out) == 1
+    assert out[0].quality == '5'  # unchanged
+    assert out[0] is f5  # pass-through
+
+
+def test_substitute_power_chords_on_dyads_noop_when_ratio_zero():
+    """third_ratio_max=0 short-circuits — must return input unchanged.
+
+    This is the production no-op path: bench corpus passes default
+    DetectorConfig (zeros) so this short-circuit is what makes Stage
+    1.4.2 bit-exact identical to pre-1.4.2 when not opted in.
+    """
+    chroma = _make_chroma_with_voicing([(5, 1.0), (0, 1.0)])
+    times = np.array([0.0, 0.5, 1.0, 1.5])
+    fm = chord_detector.Chord(
+        root=5, quality='min',
+        start_time=0.0, end_time=1.5, confidence=0.7,
+    )
+    out = chord_detector._substitute_power_chords_on_dyads(
+        [fm], chroma, times,
+        third_ratio_max=0.0, margin=0.05,
+    )
+    assert out is [fm] or (len(out) == 1 and out[0] is fm)
+
+
+def test_substitute_power_chords_on_dyads_noop_when_margin_zero():
+    """margin=0 short-circuits — must return input unchanged."""
+    chroma = _make_chroma_with_voicing([(5, 1.0), (0, 1.0)])
+    times = np.array([0.0, 0.5, 1.0, 1.5])
+    fm = chord_detector.Chord(
+        root=5, quality='min',
+        start_time=0.0, end_time=1.5, confidence=0.7,
+    )
+    out = chord_detector._substitute_power_chords_on_dyads(
+        [fm], chroma, times,
+        third_ratio_max=0.4, margin=0.0,
+    )
+    assert len(out) == 1 and out[0] is fm
+
+
+def test_substitute_power_chords_on_dyads_preserves_timestamps_and_root():
+    """When substitution fires, start_time/end_time/root are preserved."""
+    chroma = _make_chroma_with_voicing([(5, 1.0), (0, 1.0)])
+    times = np.linspace(0.0, 2.0, 5)
+    fm = chord_detector.Chord(
+        root=5, quality='min',
+        start_time=0.5, end_time=1.7, confidence=0.6,
+    )
+    out = chord_detector._substitute_power_chords_on_dyads(
+        [fm], chroma, times,
+        third_ratio_max=0.4, margin=0.05,
+    )
+    assert out[0].root == 5
+    assert out[0].start_time == 0.5
+    assert out[0].end_time == 1.7
+    assert out[0].quality == '5'
+
+
+def test_substitute_power_chords_on_dyads_empty_input_is_noop():
+    """Empty chord list returns the same empty list."""
+    chroma = _make_chroma_with_voicing([(5, 1.0), (0, 1.0)])
+    times = np.array([0.0, 0.5, 1.0, 1.5])
+    out = chord_detector._substitute_power_chords_on_dyads(
+        [], chroma, times,
+        third_ratio_max=0.4, margin=0.05,
+    )
+    assert out == []
+
+
+def test_substitute_power_chords_on_dyads_default_config_is_bit_exact():
+    """End-to-end: default DetectorConfig must produce identical chord output.
+
+    The Stage 1.4.2 changes must not perturb behaviour when callers
+    pass the default DetectorConfig — this is the same defensibility
+    contract test_detector_config_equivalence locks for the
+    emission-side levers. Replays the rock-idiom synthetic fixture
+    used elsewhere in this file and asserts the chord *names* are
+    unchanged between an explicit-default-config call and a
+    no-config call.
+    """
+    from tone_forge.analysis.detector_config import DetectorConfig
+    sr = 22050
+    duration = 8.0
+    t_axis = np.linspace(0, duration, int(sr * duration), endpoint=False)
+    # F minor triad
+    y = 0.0
+    for f in (174.61, 207.65, 261.63):
+        y = y + 0.3 * np.sin(2 * np.pi * f * t_axis)
+    y = y.astype(np.float32)
+
+    out_no_cfg = chord_detector.detect_chords_from_audio(y, sr)
+    out_default = chord_detector.detect_chords_from_audio(
+        y, sr, config=DetectorConfig(),
+    )
+    assert len(out_no_cfg) == len(out_default)
+    for a, b in zip(out_no_cfg, out_default):
+        assert a.name == b.name
+        assert a.start_time == pytest.approx(b.start_time)
+        assert a.end_time == pytest.approx(b.end_time)

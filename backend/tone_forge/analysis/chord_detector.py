@@ -967,6 +967,27 @@ def detect_chords_from_audio(
     chords = _viterbi_states_to_chords(
         states, boundaries, times, emissions,
     )
+    # Stage 1.4.2 — post-Viterbi power-chord substitution. Complements
+    # the Stage 1.4.1 emission-side penalty: 1.4.1 demotes maj/min
+    # cells during per-window argmax, but the dyad/triad mass
+    # asymmetry means the triad templates still usually win after the
+    # Viterbi argmax bakes in the transition bonuses. This pass
+    # re-scores each emitted region's raw cosine against
+    # region-averaged chroma and substitutes the quality to '5' when
+    # the region is dyad-like. Same minor+strength>=0.7 key gate as
+    # 1.4.1; bench corpus stays bit-exact because the default config
+    # leaves both fields at 0.0.
+    _pv_ratio = float(_cfg.power_chord_post_viterbi_third_ratio)
+    _pv_margin = float(_cfg.power_chord_post_viterbi_margin)
+    if _cfg.power_chord_minor_key_only:
+        if not (key_mode == 'minor' and key_strength >= 0.7):
+            _pv_ratio = 0.0
+            _pv_margin = 0.0
+    chords = _substitute_power_chords_on_dyads(
+        chords, chroma, times,
+        third_ratio_max=_pv_ratio,
+        margin=_pv_margin,
+    )
     # Merge adjacent identical-label regions defensively. The
     # state-to-chord step already collapses adjacent identical *states*,
     # but it cannot merge two different states that collapse to the
@@ -1855,6 +1876,128 @@ def _viterbi_states_to_chords(
                 ))
             run_start = t
     return chords
+
+
+def _substitute_power_chords_on_dyads(
+    chords: List["Chord"],
+    chroma: np.ndarray,
+    times: np.ndarray,
+    *,
+    third_ratio_max: float,
+    margin: float,
+) -> List["Chord"]:
+    """Stage 1.4.2 — post-Viterbi power-chord substitution on dyads.
+
+    Walks each emitted maj/min region, aggregates the chroma over the
+    region's frame range, and substitutes the region's quality to
+    ``'5'`` when the region looks dyad-like:
+
+      1. The region's third bin is weak: third_bin / root_bin <
+         ``third_ratio_max``. Same gate as the Stage-3 in-window
+         disambiguation at the top of ``_match_chord_template``;
+         re-applied here against region-averaged chroma so the
+         dyad/triad asymmetry doesn't bury it under the Viterbi's
+         emission+transition argmax.
+
+      2. The ``'5'`` template's raw cosine against the region-averaged
+         chroma is within ``margin`` of the winning maj/min raw cosine
+         (computed against the same region-averaged chroma — NOT the
+         per-window emission score, which was already biased by
+         Stage-1.4.1 / DIATONIC_BIAS).
+
+    When both conditions hold, the region is rewritten with
+    ``quality='5'`` and ``confidence`` updated to the power-template
+    raw cosine. start_time/end_time/root unchanged.
+
+    Caller is responsible for the key gate (Stage 1.4.1's
+    minor+strength>=0.7 condition). This function performs no
+    key-context inspection so it can be unit-tested against synthetic
+    chroma without a full pipeline.
+
+    No-op if ``third_ratio_max <= 0`` OR ``margin <= 0`` OR
+    ``len(chords) == 0`` OR ``chroma`` is empty. These short-circuits
+    keep production callers (default DetectorConfig → zeros) bit-exact
+    identical to pre-Stage 1.4.2.
+
+    Args:
+        chords: Output of ``_viterbi_states_to_chords``, modified
+            functionally — the returned list is a fresh list of fresh
+            Chord records; the input is not mutated.
+        chroma: Per-frame chroma matrix shape (12, n_frames). Same
+            array fed to ``_compute_emission_scores``.
+        times: Per-frame timestamps in seconds.
+        third_ratio_max: Third-bin ratio threshold. The third bin must
+            be at most this fraction of the root bin for the
+            substitution to fire.
+        margin: Raw-cosine gap: ``power_raw >= maj_raw - margin``.
+    """
+    if third_ratio_max <= 0.0 or margin <= 0.0:
+        return chords
+    if not chords or chroma.size == 0 or times.size == 0:
+        return chords
+
+    n_frames = chroma.shape[1]
+    if n_frames == 0:
+        return chords
+
+    out: List[Chord] = []
+    for c in chords:
+        if c.quality not in ('maj', 'min'):
+            out.append(c)
+            continue
+
+        # Map region timestamps back to chroma frame indices via
+        # np.searchsorted on the per-frame ``times`` array. Same
+        # mapping convention as ``_viterbi_states_to_chords`` which
+        # indexes ``times[boundaries[run_start]]``.
+        start_frame = int(np.searchsorted(times, c.start_time, side='left'))
+        end_frame = int(np.searchsorted(times, c.end_time, side='right'))
+        start_frame = max(0, min(start_frame, n_frames - 1))
+        end_frame = max(start_frame + 1, min(end_frame, n_frames))
+        region_chroma = np.mean(chroma[:, start_frame:end_frame], axis=1)
+
+        root = c.root
+        third_interval = 4 if c.quality == 'maj' else 3
+        root_bin = float(region_chroma[root])
+        third_bin = float(region_chroma[(root + third_interval) % 12])
+        if root_bin <= 1e-9:
+            out.append(c)
+            continue
+        if third_bin >= third_ratio_max * root_bin:
+            # Third is present at expected mass — region really is a
+            # triad. Skip substitution.
+            out.append(c)
+            continue
+
+        # Recompute raw cosines on the region-averaged chroma for the
+        # winning triad and the power-5 template. Cosine math mirrors
+        # ``_match_chord_template`` exactly so behaviour aligns.
+        chroma_norm = region_chroma / (np.linalg.norm(region_chroma) + 1e-9)
+
+        triad_intervals = (0, 4, 7) if c.quality == 'maj' else (0, 3, 7)
+        triad_template = np.zeros(12)
+        for iv in triad_intervals:
+            triad_template[(root + iv) % 12] = 1.0
+        triad_template /= (np.linalg.norm(triad_template) + 1e-9)
+        triad_raw = float(np.dot(chroma_norm, triad_template))
+
+        power_template = np.zeros(12)
+        power_template[root] = 1.0
+        power_template[(root + 7) % 12] = 1.0
+        power_template /= (np.linalg.norm(power_template) + 1e-9)
+        power_raw = float(np.dot(chroma_norm, power_template))
+
+        if power_raw >= triad_raw - margin:
+            out.append(Chord(
+                root=c.root,
+                quality='5',
+                start_time=c.start_time,
+                end_time=c.end_time,
+                confidence=float(np.clip(power_raw, 0.0, 1.0)),
+            ))
+        else:
+            out.append(c)
+    return out
 
 
 # ---------------------------------------------------------------------------

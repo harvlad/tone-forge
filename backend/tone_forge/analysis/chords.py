@@ -128,6 +128,14 @@ def detect_chords_with_key(
         power_chord_penalty=0.03,
         power_chord_third_min_streak=3,
         power_chord_minor_key_only=True,
+        # Stage 1.4.2 — post-Viterbi substitution complementing the
+        # emission-side penalty above. Same key gate, more aggressive
+        # margin (raw-cosine 0.05 — generous because the third-ratio
+        # gate already filters out true triads). Calibrated alongside
+        # 1.4.1 to surface F5/Bb5/Ab5/Db5 in the rock idiom without
+        # firing on real triads.
+        power_chord_post_viterbi_third_ratio=0.4,
+        power_chord_post_viterbi_margin=0.05,
     )
 
     key_out: Dict[str, Any] = {}
