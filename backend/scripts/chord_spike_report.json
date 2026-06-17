@@ -7,12 +7,12 @@
       "tempo_bpm": 120,
       "beats_per_chord": 4,
       "truth": "C > G > Am > F",
-      "detected": "C > G > Am > F",
-      "n_detected": 4,
+      "detected": "C > G > G5 > Am > F > F5 > F",
+      "n_detected": 7,
       "scores": {
-        "strict": 0.99375,
-        "triad_relaxed": 0.99375,
-        "root_only": 0.99375
+        "strict": 0.55625,
+        "triad_relaxed": 0.55625,
+        "root_only": 0.98125
       }
     },
     {
@@ -20,12 +20,12 @@
       "tempo_bpm": 110,
       "beats_per_chord": 4,
       "truth": "C > Am > F > G",
-      "detected": "C > Am > F > G",
-      "n_detected": 4,
+      "detected": "C > Am > F > F5 > F > G5 > G",
+      "n_detected": 7,
       "scores": {
-        "strict": 0.9942857142857143,
-        "triad_relaxed": 0.9942857142857143,
-        "root_only": 0.9942857142857143
+        "strict": 0.5257142857142857,
+        "triad_relaxed": 0.5257142857142857,
+        "root_only": 0.9371428571428572
       }
     },
     {
@@ -33,12 +33,12 @@
       "tempo_bpm": 100,
       "beats_per_chord": 4,
       "truth": "Am > F > C > G",
-      "detected": "Am > F > C > G",
-      "n_detected": 4,
+      "detected": "Am > F > F5 > F > F5 > C > C5 > G > G5 > G",
+      "n_detected": 10,
       "scores": {
-        "strict": 0.9947916666666666,
-        "triad_relaxed": 0.9947916666666666,
-        "root_only": 0.9947916666666666
+        "strict": 0.5520833333333334,
+        "triad_relaxed": 0.5520833333333334,
+        "root_only": 0.953125
       }
     },
     {
@@ -46,12 +46,12 @@
       "tempo_bpm": 90,
       "beats_per_chord": 4,
       "truth": "C > F > Gdom7 > C",
-      "detected": "C > F > C",
-      "n_detected": 3,
+      "detected": "C > F5 > F > G7 > C",
+      "n_detected": 5,
       "scores": {
-        "strict": 0.7523364485981309,
-        "triad_relaxed": 0.7523364485981309,
-        "root_only": 0.7523364485981309
+        "strict": 0.5654205607476636,
+        "triad_relaxed": 0.5654205607476636,
+        "root_only": 0.9672897196261683
       }
     },
     {
@@ -59,19 +59,19 @@
       "tempo_bpm": 130,
       "beats_per_chord": 4,
       "truth": "Dm > G > C > C",
-      "detected": "Dm > G > C",
-      "n_detected": 3,
+      "detected": "Dm > G5 > G > C5 > C",
+      "n_detected": 5,
       "scores": {
-        "strict": 1.0,
-        "triad_relaxed": 1.0,
-        "root_only": 1.0
+        "strict": 0.7364864864864865,
+        "triad_relaxed": 0.7364864864864865,
+        "root_only": 0.972972972972973
       }
     }
   ],
   "average": {
-    "strict": 0.9470327659101023,
-    "triad_relaxed": 0.9470327659101023,
-    "root_only": 0.9470327659101023
+    "strict": 0.5871909332563539,
+    "triad_relaxed": 0.5871909332563539,
+    "root_only": 0.9623561099483997
   },
   "decision_rule": {
     "ship_as_is": "root_only >= 0.90 AND triad_relaxed >= 0.75",

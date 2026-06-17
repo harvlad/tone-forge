@@ -5,11 +5,21 @@ This is the public entry point that other subsystems (specifically
 internal librosa-based ``chord_detector`` and emits the platform
 ``contracts.Chord`` shape so callers never see the internal dataclass.
 
-Spike results (see ``backend/scripts/chord_spike_report.json``): the
-underlying detector averages ~94.7% on root + triad metrics across
-five synthetic guitar-style progressions. The known weak case is
-dom7 fusion (G7 collapses into an adjacent C in I-IV-V7-I). Good
-enough for the Jam chord lane; not a research project.
+Spike results (``backend/scripts/chord_spike.py``, re-run from
+this docstring): the current detector averages ~96% **root-only**
+accuracy across five synthetic guitar-style progressions but only
+~58% strict/triad-relaxed. The strict gap is over-segmentation:
+the Viterbi state sequence emits short quality-mislabel slivers
+between long correct regions, so root identity is solid while
+the precise quality flickers on the boundaries. Dom7 is no longer
+the dominant failure mode — ``I-IV-V7-I`` now surfaces 5 regions
+(truth 4) with G7 detected as a distinct region, same over-
+segmentation shape as the all-triad progressions. The cached
+``backend/scripts/chord_spike_report.json`` predates the Viterbi
+rebuild (commit ``8f8df6b``) and reports the older, less-over-
+segmented averages; re-run the spike to refresh.
+
+Good enough for the Jam chord lane; not a research project.
 """
 from __future__ import annotations
 
