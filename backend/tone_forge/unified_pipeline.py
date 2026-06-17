@@ -732,6 +732,46 @@ class UnifiedPipeline:
                         "chords_found": len(chords) if chords else 0,
                     }
 
+            # 7.6 Per-section guidance-mode classification (chord/riff/lead).
+            # Runs after chord detection so chord_density can feed the
+            # classifier, and before _build_result so the persisted
+            # AnalysisResult carries one (mode, confidence, reason) triple
+            # per section. The chord detector is unchanged — we just gate
+            # the display.
+            if sections:
+                try:
+                    from tone_forge.analysis.guidance_mode import classify_section
+                    from tone_forge.analysis.section_features import (
+                        compute_section_features,
+                    )
+
+                    chord_regions = chords or ()
+                    stem_notes_by_name = {
+                        name: (data.get("notes") or [])
+                        for name, data in (midi_stems or {}).items()
+                    }
+                    classified = []
+                    for section in sections:
+                        per_stem = [
+                            compute_section_features(
+                                stem_name=name,
+                                stem_midi=notes,
+                                chord_regions=chord_regions,
+                                section_start_s=float(section.start_time),
+                                section_end_s=float(section.end_time),
+                                beats_s=beats_s,
+                            )
+                            for name, notes in stem_notes_by_name.items()
+                        ]
+                        decision = classify_section(per_stem)
+                        section.guidance_mode = decision.mode
+                        section.guidance_confidence = float(decision.confidence)
+                        section.guidance_reason = decision.reason
+                        classified.append(section)
+                    sections = classified
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(f"Guidance-mode classification failed: {e}")
+
             # 8. Generate waveform visualization
             waveform = None
             if config.include_waveform:

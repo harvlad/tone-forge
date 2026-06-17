@@ -61,6 +61,16 @@ class ArrangementSection:
     has_buildup: bool = False
     has_drop: bool = False
 
+    # Per-section practice-guidance classification (chord/riff/lead).
+    # Populated by the guidance_mode classifier (see
+    # ``analysis.guidance_mode``). Defaults keep legacy ArrangementSection
+    # construction (e.g. SectionDetector._classify_sections, older bundle
+    # round-trips) producing the same behaviour as before — silent
+    # fallback to the chord ribbon.
+    guidance_mode: str = "chord"
+    guidance_confidence: float = 0.0
+    guidance_reason: str = ""
+
     @property
     def duration(self) -> float:
         """Duration of the section."""
@@ -80,6 +90,9 @@ class ArrangementSection:
             "harmonic_density": self.harmonic_density,
             "has_buildup": self.has_buildup,
             "has_drop": self.has_drop,
+            "guidance_mode": self.guidance_mode,
+            "guidance_confidence": float(self.guidance_confidence),
+            "guidance_reason": self.guidance_reason,
         }
 
 
