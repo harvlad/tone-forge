@@ -1,0 +1,100 @@
+{
+  "_description": "Five-song trial corpus assembled 2026-06-18. Seed of the calibration corpus described in the 'engine learning' design note. Each entry pairs a YouTube URL (the audio source the JAM UI consumes via /api/analyze-url) with the Songsterr tab PDF used as ground truth for per-section guidance-mode labels. Tab PDFs live outside the repo under /Users/mattharvey/Downloads/ because they are copyrighted; reproducing them locally requires re-downloading from Songsterr. The structure is intentionally machine-readable so a future sweep script (see TODO 'Write up findings + propose engine fixes (incl. calibration corpus)') can ingest it.",
+  "_blocked_on": "Stem separation must run for the guidance-mode classifier to do useful work. Engine-fix shipped 2026-06-18 enables separate_stems=True on PipelineConfig.standard() so the 'studio' analysis_mode (the JAM UI default) actually produces 4 stems for Demucs to feed into the multi-stem voter.",
+  "_rerun_command": "for song in songs: curl -X POST http://localhost:8000/api/analyze-url -H 'Content-Type: application/json' -d '{\"url\":<url>,\"source_kind\":\"auto\",\"platform\":\"auto\",\"fast_mode\":false,\"analysis_mode\":\"studio\",\"extract_midi\":true,\"use_local_engine\":false}'",
+  "songs": [
+    {
+      "slug": "stairway_to_heaven",
+      "title": "Stairway to Heaven",
+      "artist": "Led Zeppelin",
+      "youtube_url": "https://www.youtube.com/watch?v=QkF3oxziUI4",
+      "tab_pdf": "/Users/mattharvey/Downloads/Stairway to Heaven Tab by Led Zeppelin | Songsterr Tabs with Rhythm.pdf",
+      "tab_facts": {
+        "tempo_bpm": 71,
+        "time_signature": "4/4",
+        "key": "Am",
+        "chord_seed": "Am -> E/G# -> C/G -> D/F# -> Fmaj7"
+      },
+      "ground_truth_sections": [
+        {"label": "Intro",   "guidance_mode": "chord", "notes": "fingerpicked arpeggios (mono-attack, poly-texture)"},
+        {"label": "Verse",   "guidance_mode": "chord", "notes": "same arpeggios under vocal"},
+        {"label": "Solo",    "guidance_mode": "lead",  "notes": "Jimmy Page lead, ~257-292s in the YouTube source"},
+        {"label": "Outro",   "guidance_mode": "riff",  "notes": "power-chord riff under vocal climax"}
+      ],
+      "first_trial_failure_mode": "Single 'guitar' stem (no Demucs); 29 notes total; every section classified chord/conf=1.00"
+    },
+    {
+      "slug": "hotel_california",
+      "title": "Hotel California",
+      "artist": "Eagles",
+      "youtube_url": "https://www.youtube.com/watch?v=dLl4PZtxia8",
+      "tab_pdf": "/Users/mattharvey/Downloads/Hotel California Tab by The Eagles | Songsterr Tabs with Rhythm.pdf",
+      "tab_facts": {
+        "tempo_bpm": 73,
+        "time_signature": "4/4",
+        "capo": 7,
+        "key": "Bm (Em shapes w/ capo)",
+        "chord_seed": "Em -> B7 -> Dsus2 -> C#m7b5 -> C -> G -> Am7 -> B7"
+      },
+      "ground_truth_sections": [
+        {"label": "Intro",     "guidance_mode": "chord", "notes": "12-string arpeggios"},
+        {"label": "Verses",    "guidance_mode": "chord"},
+        {"label": "Chorus",    "guidance_mode": "chord"},
+        {"label": "Outro twin lead", "guidance_mode": "lead", "notes": "Felder/Walsh harmony solo"}
+      ],
+      "first_trial_failure_mode": "NOT YET ANALYZED — held until stem separation is enabled"
+    },
+    {
+      "slug": "wish_you_were_here",
+      "title": "Wish You Were Here",
+      "artist": "Pink Floyd",
+      "youtube_url": "https://www.youtube.com/watch?v=K6qj09OHvjw",
+      "tab_pdf": "/Users/mattharvey/Downloads/Wish You Were Here Solo Tab by Pink Floyd | Songsterr Tabs with Rhythm.pdf",
+      "tab_facts": {
+        "tempo_bpm": 61,
+        "time_signature": "4/4",
+        "key": "G",
+        "performer": "David Gilmour"
+      },
+      "ground_truth_sections": [
+        {"label": "Intro",         "guidance_mode": "chord", "notes": "acoustic 12-string"},
+        {"label": "Verses",        "guidance_mode": "chord"},
+        {"label": "Chorus",        "guidance_mode": "chord"},
+        {"label": "Guitar Solo 2", "guidance_mode": "lead",  "notes": "Gilmour outro lead"}
+      ],
+      "first_trial_failure_mode": "NOT YET ANALYZED — held until stem separation is enabled"
+    },
+    {
+      "slug": "romance_de_amor",
+      "title": "Romance de Amor",
+      "artist": "Anonymous (Trad.)",
+      "youtube_url": "https://www.youtube.com/watch?v=I7XnCPtfa14",
+      "tab_pdf": "/Users/mattharvey/Downloads/Romance de Amor Tab by Anonymous | Songsterr Tabs with Rhythm.pdf",
+      "tab_facts": {
+        "tempo_bpm": 84,
+        "time_signature": "3/4",
+        "key": "Em -> E (modulates)",
+        "instrumentation": "solo classical nylon"
+      },
+      "ground_truth_sections": [
+        {"label": "Em section",   "guidance_mode": "lead", "notes": "polyphonic guitar — melody floats above accompaniment in the same stem. Classifier trichotomy DOES NOT cleanly apply."},
+        {"label": "E section",    "guidance_mode": "lead", "notes": "same shape, parallel major"}
+      ],
+      "first_trial_failure_mode": "NOT YET ANALYZED — held until stem separation is enabled. CRITICAL EDGE CASE: solo polyphonic guitar means even with Demucs we get one 'other' stem; the chord/riff/lead trichotomy needs a fourth 'fingerstyle' branch or a sub-window classifier."
+    },
+    {
+      "slug": "sex_on_fire",
+      "title": "Sex On Fire",
+      "artist": "Kings Of Leon",
+      "youtube_url": "https://www.youtube.com/watch?v=RF0HhrwIwp0",
+      "tab_pdf": "/Users/mattharvey/Downloads/Sex On Fire Solo Tab by Kings Of Leon | Songsterr Tabs with Rhythm.pdf",
+      "tab_facts": {
+        "tempo_bpm": null,
+        "time_signature": null,
+        "_status": "tab not yet read in detail"
+      },
+      "ground_truth_sections": [],
+      "first_trial_failure_mode": "NOT YET ANALYZED — held until stem separation is enabled. Ground-truth section labels still TODO."
+    }
+  ]
+}
