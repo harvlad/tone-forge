@@ -30,6 +30,20 @@ from tone_forge.analysis.section_features import SectionFeatures
 GuidanceModeStr = Literal["chord", "riff", "lead"]
 
 
+# Stem names that are not pitched/harmonic and therefore should not
+# contribute to chord/riff/lead voting. The CoreML MIDI extractor
+# still assigns pitches to drum hits as artifacts. Real-song run
+# evidence: Jump and Die s6 (42.91-50.71s) and s7 (50.71-56.56s)
+# flipped chord→lead solely because the drums stem voted lead with
+# confidences 0.58 and 0.40 driven by spurious-pitch lead_activity ×
+# pitch_class_diversity scores. The same mechanism flips Let's Make
+# It Pain s0 and s4 chord→lead. Excluding these stems from the vote
+# keeps non-tonal stems out of tonal classification; the
+# dominant_stem walk below still considers them so the JAM UI can
+# render drums when relevant. Matched case-insensitively.
+_NON_TONAL_STEM_NAMES = frozenset({"drums", "percussion"})
+
+
 @dataclass(frozen=True)
 class GuidanceThresholds:
     """Tunable thresholds for the classifier.
@@ -158,7 +172,29 @@ def classify_section(
             mode="chord", confidence=0.0, reason="empty", dominant_stem=""
         )
 
-    per_stem_decisions = [_classify_stem(sf, thresholds) for sf in per_stem_features]
+    # Filter out non-tonal stems (drums, percussion) before voting.
+    # Their pitched-note artifacts can produce spurious lead votes
+    # that shift the aggregate. The dominant_stem walk below still
+    # considers them so the JAM UI can render the right stem for
+    # any guidance mode that wants drums on screen.
+    voting_features = [
+        sf for sf in per_stem_features
+        if sf.stem_name.lower() not in _NON_TONAL_STEM_NAMES
+    ]
+    if not voting_features:
+        # All stems were non-tonal; fall back to chord default with
+        # zero confidence so the UI shows the safe ribbon.
+        return GuidanceDecision(
+            mode="chord",
+            confidence=0.0,
+            reason=(
+                "non_tonal_only: "
+                + ", ".join(sf.stem_name for sf in per_stem_features)
+            ),
+            dominant_stem="",
+        )
+
+    per_stem_decisions = [_classify_stem(sf, thresholds) for sf in voting_features]
 
     # Dominant stem = argmax over voiced_frame_ratio * duration_s, ties
     # broken by note_count, then by stem_name for determinism. Computed
@@ -181,7 +217,7 @@ def classify_section(
     )
 
     vote: dict[GuidanceModeStr, float] = defaultdict(float)
-    for sf, (mode, conf) in zip(per_stem_features, per_stem_decisions):
+    for sf, (mode, conf) in zip(voting_features, per_stem_decisions):
         weight = sf.voiced_frame_ratio * max(sf.duration_s, 0.0)
         vote[mode] += weight * conf
 
@@ -199,9 +235,17 @@ def classify_section(
 
     reason_parts = [
         f"{sf.stem_name}={mode}({conf:.2f})"
-        for sf, (mode, conf) in zip(per_stem_features, per_stem_decisions)
+        for sf, (mode, conf) in zip(voting_features, per_stem_decisions)
     ]
-    reason = f"{winning_mode}: " + ", ".join(reason_parts)
+    # Non-tonal stems still get a presence note in the reason string
+    # for traceability ("drums=excluded(non_tonal)") so the JAM UI's
+    # debug overlay can show why a stem didn't vote.
+    excluded = [
+        f"{sf.stem_name}=excluded(non_tonal)"
+        for sf in per_stem_features
+        if sf.stem_name.lower() in _NON_TONAL_STEM_NAMES
+    ]
+    reason = f"{winning_mode}: " + ", ".join(reason_parts + excluded)
     return GuidanceDecision(
         mode=winning_mode,
         confidence=float(winning_conf),
