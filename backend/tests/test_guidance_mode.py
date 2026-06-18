@@ -76,9 +76,12 @@ def test_silent_stem_falls_back_to_chord_zero_confidence() -> None:
 
 
 def test_tie_falls_back_to_chord() -> None:
-    # score_chord == 0.30 (poly only), score_riff == 0.30 (mono*rep),
-    # within default tie_margin=0.08 → chord.
-    sf = _sf(mono=0.6, rep=0.5, poly=0.3, lead=0.0, chord_density=0.0)
+    # Post-calibration: polyphony dropped from score_chord; cdens is
+    # the sole chord-axis input. Tie scenario:
+    #   score_chord = 0.5 * cdens = 0.5 * 0.60 = 0.30
+    #   score_riff  = mono * rep  = 0.6 * 0.5  = 0.30
+    # Diff 0.0 < tie_margin 0.08 → chord by tie.
+    sf = _sf(chord_density=0.60, mono=0.6, rep=0.5, lead=0.0)
     d = classify_section([sf])
     assert d.mode == "chord"
 
@@ -86,10 +89,11 @@ def test_tie_falls_back_to_chord() -> None:
 def test_tie_margin_knob_flips_decision() -> None:
     # Construct a stem where riff edges out chord by 0.05. With
     # default tie_margin=0.08 → chord. With tie_margin=0.02 → riff.
-    sf = _sf(mono=0.7, rep=0.5, poly=0.3, lead=0.0, chord_density=0.0)
-    # score_chord = 0.3 + 0.5*0 = 0.30
-    # score_riff  = 0.7 * 0.5    = 0.35
-    # diff 0.05; tie at margin 0.08 → chord, margin 0.02 → riff
+    # Post-calibration:
+    #   score_chord = 0.5 * 0.60 = 0.30
+    #   score_riff  = 0.7 * 0.5  = 0.35
+    # Diff 0.05; tie at margin 0.08 → chord, margin 0.02 → riff.
+    sf = _sf(chord_density=0.60, mono=0.7, rep=0.5, lead=0.0)
     d_default = classify_section([sf])
     assert d_default.mode == "chord"
     d_tight = classify_section([sf], GuidanceThresholds(tie_margin=0.02))
@@ -218,6 +222,11 @@ def test_low_pc_diversity_bass_loses_to_chord_pad_in_vote() -> None:
     bass voted lead with confidence ~0.665 and out-weighed a
     moderately-voiced chord pad. Post-fix the bass lead score is
     discounted by pc_diversity and the chord pad wins the section.
+
+    Post-calibration (polyphony dropped from score_chord), the chord
+    pad carries its chord vote on chord_density_per_s alone — set to
+    1.0/s (a realistic chord-pad rate) so the test's intent (pc-div
+    discount makes bass lose at the aggregator) still holds.
     """
     import math
     pc_div_4 = math.log(4) / math.log(12)
@@ -229,7 +238,7 @@ def test_low_pc_diversity_bass_loses_to_chord_pad_in_vote() -> None:
     )
     chord_pad = _sf(
         stem="other",
-        chord_density=0.5, mono=0.02, poly=0.6, rep=0.05, lead=0.05,
+        chord_density=1.0, mono=0.02, poly=0.6, rep=0.05, lead=0.05,
         voiced=0.8, duration=8.0,
         pc_diversity=1.0,
     )

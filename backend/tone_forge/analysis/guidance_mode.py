@@ -60,8 +60,9 @@ class GuidanceThresholds:
     # detector's view is allowed to influence a per-stem call.
     chord_density_weight: float = 0.5
     """Coefficient on chord_density inside score_chord. 0.5 means a
-    chord-rate of 1.0/sec adds 0.5 to the chord score on top of the
-    polyphony component."""
+    chord-rate of 1.0/sec contributes 0.5 to the chord score. With
+    polyphony dropped (see ``_score_chord``), this is the sole
+    chord-axis input."""
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,18 @@ class GuidanceDecision:
 
 
 def _score_chord(sf: SectionFeatures, t: GuidanceThresholds) -> float:
-    raw = sf.polyphony_score + t.chord_density_weight * sf.chord_density_per_s
+    """Chord-axis score for one stem.
+
+    Calibration finding (see ``test_guidance_mode_calibration.py``):
+    ``polyphony_score`` is pinned at ~1/6 ≈ 0.17 under the CoreML
+    monophonic-per-stem MIDI extraction path. Previously this term
+    was summed into ``score_chord``, which gave every voiced stem a
+    free 0.17 chord-vote floor regardless of actual chord content —
+    five such floors outvoted a single real riff on Let's Make It
+    Pain s1. The polyphony term is dropped as degenerate;
+    ``chord_density_per_s`` carries the chord axis on its own.
+    """
+    raw = t.chord_density_weight * sf.chord_density_per_s
     return float(max(0.0, min(1.0, raw)))
 
 
