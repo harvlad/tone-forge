@@ -475,6 +475,62 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         _record_stage("midi_extraction_wallclock",
                       _st_midi_wall, time.perf_counter())
 
+        # Engine-level normalization: ensure each stem dict carries a
+        # JSON ``notes`` list alongside the persisted base64 ``content``.
+        # The unified pipeline's ensemble extractor already does this
+        # (unified_pipeline.py:1377 notes_list); the GPU hybrid extractor
+        # (gpu_extractor.py:extract_midi_hybrid) returns content only.
+        # Decoding once here makes ``midi_stems`` shape-consistent across
+        # both backends so every downstream consumer — the riff-first
+        # guidance-mode classifier (see step 4c below), the JAM UI's
+        # lead-tab lane, the API payload decoder — can read ``notes``
+        # without per-pipeline branching. Without this, the classifier
+        # silently saw ``notes=[]`` for every stem and voted every
+        # section as ``chord/0.0``, defeating the whole riff-first plan
+        # on the local-engine path.
+        try:
+            import base64 as _b64
+            import io as _io
+            import pretty_midi as _pm
+            for _stem_name, _midi_result in midi_stems.items():
+                if not isinstance(_midi_result, dict):
+                    continue
+                if _midi_result.get("notes"):
+                    continue  # ensemble path already populated it
+                _content = _midi_result.get("content")
+                if not _content:
+                    continue
+                try:
+                    _raw = _b64.b64decode(_content)
+                    _pmf = _pm.PrettyMIDI(_io.BytesIO(_raw))
+                except Exception as _decode_exc:
+                    logger.warning(
+                        f"[notes-normalize] {_stem_name} decode failed: "
+                        f"{_decode_exc}"
+                    )
+                    continue
+                _notes_out: list[dict] = []
+                for _inst in _pmf.instruments:
+                    if _inst.is_drum:
+                        continue
+                    for _n in _inst.notes:
+                        _dur = float(_n.end) - float(_n.start)
+                        if _dur <= 0:
+                            continue
+                        _notes_out.append({
+                            "pitch": int(_n.pitch),
+                            "start": float(_n.start),
+                            "end": float(_n.end),
+                            "velocity": int(max(1, min(127, _n.velocity))),
+                        })
+                _notes_out.sort(key=lambda d: (d["start"], d["pitch"]))
+                _midi_result["notes"] = _notes_out
+        except ImportError:
+            logger.warning(
+                "[notes-normalize] pretty_midi unavailable; guidance-mode "
+                "classifier will see notes=[] for every stem and default to chord."
+            )
+
         # Bracket the harm_ratio future so the per-stage timeline
         # shows whether it overlapped successfully (finished_ms close
         # to or before midi_extraction.other.started_ms) or whether
@@ -601,6 +657,11 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         send_progress(queue, "sections", 0.85, "Detecting song sections...")
         sections_data = None
         energy_curve_data = None
+        # Hoisted out of the try so the post-chord-detection guidance-mode
+        # classifier (Step 4a3 below) sees an empty list rather than a
+        # NameError when section detection fails. Mirrors unified_pipeline,
+        # where the classifier short-circuits when ``sections`` is empty.
+        merged_sections: list = []
         _st = time.perf_counter()
         try:
             from tone_forge.analysis.sections import SectionDetector
@@ -609,7 +670,6 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             arrangement = detector.detect_sections(y_dur, sr_dur)
 
             # Post-process: merge adjacent sections of the same type
-            merged_sections = []
             for section in arrangement.sections:
                 if merged_sections and merged_sections[-1].type == section.type:
                     # Merge with previous section of same type
@@ -663,6 +723,12 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         send_progress(queue, "chords", 0.87, "Detecting chord lane...")
         chords_data = None
         chords_data_beat_snapped = None
+        # Hoisted out of the try so the post-chord-detection guidance-mode
+        # classifier (Step 4a3 below) can pass an empty tuple as
+        # chord_regions when chord detection fails, rather than tripping
+        # NameError on the unbound local. Mirrors unified_pipeline's
+        # ``chords or ()`` fallback.
+        chord_records: list = []
         _st = time.perf_counter()
         try:
             from tone_forge.analysis import detect_chords
@@ -791,6 +857,86 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             logger.warning(f"Chord detection failed: {e}")
             chords_data = None
         _record_stage("chord_detection", _st, time.perf_counter())
+
+        # Step 4a3: Per-section guidance-mode classification (chord/riff/lead).
+        #
+        # Mirrors unified_pipeline.py:735-773. Runs after chord detection so
+        # chord_density can feed the classifier, and re-serialises
+        # sections_data so the persisted JSON carries one
+        # (mode, confidence, reason) triple per section. The chord detector
+        # is unchanged — we just gate the JAM UI's display per section.
+        #
+        # Engine-bug context: without this wireup, every section routed
+        # through the local engine (MoP, SLTS) was emitted with the
+        # default ``chord/0.0/""`` and the JAM UI defaulted to the chord
+        # ribbon everywhere, defeating the riff-first plan on the
+        # local-engine path. The unified path was already correctly
+        # wired. Both paths are now shape-consistent.
+        _st_guidance = time.perf_counter()
+        if merged_sections:
+            try:
+                from tone_forge.analysis.guidance_mode import classify_section
+                from tone_forge.analysis.section_features import (
+                    compute_section_features,
+                    select_landmark_notes,
+                )
+
+                chord_regions = tuple(chord_records) if chord_records else ()
+                stem_notes_by_name = {
+                    name: (data.get("notes") or [])
+                    for name, data in (midi_stems or {}).items()
+                    if isinstance(data, dict)
+                }
+                for section in merged_sections:
+                    per_stem = [
+                        compute_section_features(
+                            stem_name=name,
+                            stem_midi=notes,
+                            chord_regions=chord_regions,
+                            section_start_s=float(section.start_time),
+                            section_end_s=float(section.end_time),
+                            beats_s=None,
+                        )
+                        for name, notes in stem_notes_by_name.items()
+                    ]
+                    decision = classify_section(per_stem)
+                    section.guidance_mode = decision.mode
+                    section.guidance_confidence = float(decision.confidence)
+                    section.guidance_reason = decision.reason
+                    # Engine-fix-#5: persist dominant_stem and
+                    # density-capped landmark_notes for the JAM riff/
+                    # lead lane (mirrors unified_pipeline.py wireup so
+                    # both paths emit shape-consistent bundles).
+                    section.dominant_stem = decision.dominant_stem
+                    if (
+                        decision.dominant_stem
+                        and decision.dominant_stem in stem_notes_by_name
+                    ):
+                        section.landmark_notes = select_landmark_notes(
+                            stem_midi=stem_notes_by_name[decision.dominant_stem],
+                            section_start_s=float(section.start_time),
+                            section_end_s=float(section.end_time),
+                        )
+                    else:
+                        section.landmark_notes = ()
+                # Re-serialise so guidance fields land in the persisted
+                # sections_data payload. The earlier serialisation inside
+                # the section-detection try block ran before the
+                # classifier and therefore carried only defaults.
+                sections_data = [s.to_dict() for s in merged_sections]
+                logger.info(
+                    "Guidance-mode classification complete: "
+                    + ", ".join(
+                        f"{(s.type.value if hasattr(s.type, 'value') else s.type)}"
+                        f"={s.guidance_mode}({s.guidance_confidence:.2f})"
+                        for s in merged_sections
+                    )
+                )
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(
+                    f"Guidance-mode classification failed: {e}"
+                )
+        _record_stage("guidance_mode", _st_guidance, time.perf_counter())
 
         # Step 4b: Tempo + key estimation
         #

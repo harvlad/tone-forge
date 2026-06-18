@@ -174,10 +174,29 @@ class PipelineConfig:
 
     @classmethod
     def standard(cls) -> "PipelineConfig":
-        """Standard mode - balanced quality and speed."""
+        """Standard mode - balanced quality and speed.
+
+        ``separate_stems=True`` was flipped 2026-06-18 after the
+        five-song trial (see ``backend/tests/fixtures/song_trial_corpus.json``)
+        exposed that the guidance-mode classifier ships dead in
+        production: without stems the pipeline feeds the FULL MIX to
+        basic_pitch under a single ``detected_type`` label (see
+        ``_extract_midi`` fallback at line 1322), the ensemble
+        agreement filter then prunes 99% of candidate notes because
+        the spectral detector disagrees with basic_pitch on a mix
+        with drums/vocals/keys, and the classifier — built for
+        multi-stem voting — sees one starved stem per song and
+        defaults every section to chord/conf=1.00. The
+        ``should_separate`` gate at line 581 still requires
+        ``detection.is_full_mix`` (or ``force_stem_separation``)
+        before Demucs actually runs, so isolated guitar uploads
+        skip stem separation as before; only full mixes pay the
+        Demucs cost. That cost lands once per song and is cached in
+        the bundle, so per-section JAM UI rendering stays cheap.
+        """
         return cls(
             mode=AnalysisMode.STANDARD,
-            separate_stems=False,
+            separate_stems=True,
             extract_midi=True,
             use_ensemble=True,
             analyze_quality=True,
@@ -743,6 +762,7 @@ class UnifiedPipeline:
                     from tone_forge.analysis.guidance_mode import classify_section
                     from tone_forge.analysis.section_features import (
                         compute_section_features,
+                        select_landmark_notes,
                     )
 
                     chord_regions = chords or ()
@@ -750,23 +770,50 @@ class UnifiedPipeline:
                         name: (data.get("notes") or [])
                         for name, data in (midi_stems or {}).items()
                     }
+                    # ``sections`` here is a list of dicts (the contract
+                    # established by ``_detect_sections``: it returns
+                    # ``[s.to_dict() for s in result.sections]`` so the
+                    # rest of the pipeline — ``_build_result`` and
+                    # ``AnalysisResult.sections`` — can carry the same
+                    # JSON-ready shape downstream. The wireup updates
+                    # the dict's guidance keys in place; defaults for
+                    # those keys are already populated by
+                    # ``ArrangementSection.to_dict()``.
                     classified = []
                     for section in sections:
+                        section_start_s = float(section["start_time"])
+                        section_end_s = float(section["end_time"])
                         per_stem = [
                             compute_section_features(
                                 stem_name=name,
                                 stem_midi=notes,
                                 chord_regions=chord_regions,
-                                section_start_s=float(section.start_time),
-                                section_end_s=float(section.end_time),
+                                section_start_s=section_start_s,
+                                section_end_s=section_end_s,
                                 beats_s=beats_s,
                             )
                             for name, notes in stem_notes_by_name.items()
                         ]
                         decision = classify_section(per_stem)
-                        section.guidance_mode = decision.mode
-                        section.guidance_confidence = float(decision.confidence)
-                        section.guidance_reason = decision.reason
+                        section["guidance_mode"] = decision.mode
+                        section["guidance_confidence"] = float(decision.confidence)
+                        section["guidance_reason"] = decision.reason
+                        # Engine-fix-#5: persist dominant_stem and
+                        # density-capped landmark_notes for the JAM riff/
+                        # lead lane so the UI doesn't have to re-run the
+                        # stem-preference walk or guess at note ranking.
+                        # When no stem dominates (all silent / empty
+                        # input), landmark_notes stays empty and the
+                        # client falls back to the chord ribbon.
+                        section["dominant_stem"] = decision.dominant_stem
+                        if decision.dominant_stem and decision.dominant_stem in stem_notes_by_name:
+                            section["landmark_notes"] = list(select_landmark_notes(
+                                stem_midi=stem_notes_by_name[decision.dominant_stem],
+                                section_start_s=section_start_s,
+                                section_end_s=section_end_s,
+                            ))
+                        else:
+                            section["landmark_notes"] = []
                         classified.append(section)
                     sections = classified
                 except Exception as e:  # pragma: no cover - defensive

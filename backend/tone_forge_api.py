@@ -30,7 +30,7 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -2625,8 +2625,85 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
     payload["legacy_preset_matches"] = result.get("preset_matches") or {}
     payload["legacy_tempo_bpm"] = result.get("tempo_bpm")
     payload["legacy_detected_key"] = result.get("detected_key")
+    # Decode per-stem MIDI binaries into JSON notes so the deep-link
+    # path can render the lead-tab lane on /jam/:id reloads. The
+    # persisted history.json carries ``midi_stems[k].content`` as a
+    # base64 MIDI file and a ``note_count`` summary, but no JSON notes
+    # array — without decoding here, ``_pickLeadMidiNotes`` on the
+    # client gets nothing to render and the lane shows the empty
+    # placeholder. Live-analyze flow already ships ``midi_stems``
+    # directly through SSE, so this only matters on deep-link reload.
+    payload["legacy_midi_stems"] = _decode_midi_stems_for_payload(
+        result.get("midi_stems") or {}
+    )
 
     return JSONResponse(_convert_numpy_types(payload))
+
+
+def _decode_midi_stems_for_payload(midi_stems: dict) -> dict:
+    """Decode each per-stem base64 MIDI blob into a JSON notes array.
+
+    Input:  ``{stem_key: {content: b64-str, note_count: N, ...}}``
+            (shape produced by tone_forge_api at extraction time)
+    Output: ``{stem_key: {notes: [{start, end, pitch, velocity}, ...],
+                          note_count: N, ...}}``
+
+    Preserves all non-``content`` summary keys (note_count, pitch_range,
+    extraction_tempo_bpm, label, …) so the client can still surface
+    them. Drops ``content`` to keep the payload light — the JSON notes
+    are what the lead lane needs; the base64 binary is only useful for
+    export and isn't loaded on /jam/:id today.
+
+    Decode failures (corrupt MIDI, missing pretty_midi) yield a stem
+    with ``notes=[]`` so the picker falls through to the next stem
+    rather than the whole request 500-ing on a single bad blob.
+    """
+    if not isinstance(midi_stems, dict):
+        return {}
+    import base64
+    import io
+    try:
+        import pretty_midi  # transitive via midi_extractor
+    except ImportError:
+        logger.warning("[session] pretty_midi unavailable; midi_stems notes will be empty")
+        pretty_midi = None  # type: ignore[assignment]
+
+    decoded: dict = {}
+    for stem_key, stem in midi_stems.items():
+        if not isinstance(stem, dict):
+            continue
+        out = {k: v for k, v in stem.items() if k != "content"}
+        out["notes"] = []
+        content_b64 = stem.get("content")
+        if pretty_midi is None or not isinstance(content_b64, str) or not content_b64:
+            decoded[stem_key] = out
+            continue
+        try:
+            raw = base64.b64decode(content_b64)
+            pm = pretty_midi.PrettyMIDI(io.BytesIO(raw))
+        except Exception as exc:
+            logger.warning(f"[session] midi_stems[{stem_key}] decode failed: {exc}")
+            decoded[stem_key] = out
+            continue
+        notes_out: list[dict] = []
+        for instrument in pm.instruments:
+            # Drums are unpitched onsets — useless for the lead lane.
+            if instrument.is_drum:
+                continue
+            for n in instrument.notes:
+                duration = float(n.end) - float(n.start)
+                if duration <= 0:
+                    continue
+                notes_out.append({
+                    "start": float(n.start),
+                    "end": float(n.end),
+                    "pitch": int(n.pitch),
+                    "velocity": int(max(1, min(127, n.velocity))),
+                })
+        notes_out.sort(key=lambda x: (x["start"], x["pitch"]))
+        out["notes"] = notes_out
+        decoded[stem_key] = out
+    return decoded
 
 
 def _device_caps_for_session():
@@ -4784,6 +4861,59 @@ async def submit_analysis_feedback(feedback: AnalysisFeedbackRequest):
     except Exception as e:
         logger.exception("Failed to submit analysis feedback")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class LearningCorrectionRequest(BaseModel):
+    """One user-reported correction routed into the evidence store.
+
+    Phase 7 of the JAM Learning System V1: the JAM UI surfaces a
+    "report wrong" affordance on per-section guidance + chord
+    labels. The payload is captured as evidence (append-only) and
+    *never* applied to the detector directly. Engine changes follow
+    consensus accumulation, not individual reports.
+    """
+
+    song_id: str
+    section_id: str
+    correction_type: str  # see SUPPORTED_CORRECTION_TYPES
+    previous_value: Optional[Any] = None
+    corrected_value: Optional[Any] = None
+    user_id: Optional[str] = None
+    note: Optional[str] = None
+
+
+from bench.learning import (
+    CorrectionPayload as _CorrectionPayload,
+    CorrectionRecordingError as _CorrectionRecordingError,
+    record_correction as _record_correction,
+)
+
+
+@app.post("/api/learning/correct")
+async def submit_learning_correction(request: LearningCorrectionRequest):
+    """Append one user correction to the evidence store."""
+    payload = _CorrectionPayload(
+        song_id=request.song_id,
+        section_id=request.section_id,
+        correction_type=request.correction_type,
+        previous_value=request.previous_value,
+        corrected_value=request.corrected_value,
+        user_id=request.user_id,
+        note=request.note,
+    )
+    try:
+        record = _record_correction(payload)
+    except _CorrectionRecordingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Failed to record learning correction")
+        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "success": True,
+        "song_id": record.song_id,
+        "section_id": record.section_id,
+        "timestamp_utc": record.timestamp_utc,
+    }
 
 
 @app.get("/api/feedback/stats")

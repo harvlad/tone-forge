@@ -2292,12 +2292,36 @@
         ? s.guidance_confidence : 0.0;
       const guidanceReason = typeof s.guidance_reason === 'string'
         ? s.guidance_reason : '';
+      // Engine fix #5/#6: per-section engine-as-source-of-truth for the
+      // riff/lead lane. ``dominantStem`` is the stem the classifier
+      // weighted highest (argmax voiced_frame_ratio × duration_s), and
+      // ``landmarkNotes`` is the pre-ranked density-capped sequence of
+      // notes for that stem inside the section window (see
+      // analysis/section_features.select_landmark_notes). When
+      // populated, the LEAD-PART/RIFF lane renders these directly
+      // instead of re-walking the per-song stem-preference list —
+      // which fixes the dense-section smear (e.g. SLTS verse, 104
+      // notes in 16s).
+      const dominantStem = typeof s.dominant_stem === 'string' ? s.dominant_stem : '';
+      const landmarkNotes = Array.isArray(s.landmark_notes)
+        ? s.landmark_notes.filter((n) =>
+            n && typeof n.pitch === 'number'
+            && typeof n.start === 'number' && typeof n.end === 'number'
+            && n.end > n.start
+          ).map((n) => ({
+            pitch: n.pitch,
+            start: n.start,
+            end: n.end,
+            velocity: typeof n.velocity === 'number' ? n.velocity : 80,
+          }))
+        : [];
       pill.textContent = `${label} ${formatTime(start)}`;
       pill.addEventListener('click', () => toggleSectionLoop({ name: label, startSec: start, endSec: end, el: pill }));
       bar.appendChild(pill);
       return {
         name: label, startSec: start, endSec: end, el: pill,
         guidanceMode, guidanceConfidence, guidanceReason,
+        dominantStem, landmarkNotes,
       };
     });
     // Fallback: when section detection returns nothing (some short
@@ -2314,6 +2338,7 @@
         state.sections = [{
           name: 'Full song', startSec: 0, endSec: dur, el: pill,
           guidanceMode: 'chord', guidanceConfidence: 0.0, guidanceReason: '',
+          dominantStem: '', landmarkNotes: [],
         }];
       } else {
         bar.innerHTML = '<div style="color: var(--text-dim); font-size:13px;">Section detection unavailable for this song</div>';
@@ -2410,26 +2435,52 @@
   // Walk the analysis result and return the best lead-line MIDI
   // notes array we can find. See the caller comment in
   // onAnalysisComplete for the preference order.
+  //
+  // Stem preference (first hit wins): guitar → other → piano → bass
+  // → vocals. The first three are the historical lead candidates;
+  // bass and vocals are added as last-ditch fallbacks so a song
+  // whose demucs run didn't separate a guitar stem (rare on solo
+  // piano / bass-driven tracks) still surfaces *something* in the
+  // lead-tab lane instead of the empty placeholder.
+  // Drums are excluded — drum onsets aren't pitched melodic info.
   function _pickLeadMidiNotes(r) {
     if (!r) return [];
     const stems = r.midi_stems;
+    const picked = [];
     if (stems && typeof stems === 'object') {
-      for (const key of ['guitar', 'other', 'piano']) {
+      const STEM_PREF = ['guitar', 'other', 'piano', 'bass', 'vocals'];
+      for (const key of STEM_PREF) {
         const stem = stems[key];
         if (!stem) continue;
+        let notes = null;
         if (Array.isArray(stem.notes) && stem.notes.length > 0) {
-          return stem.notes;
+          notes = stem.notes;
+        } else if (stem.content && Array.isArray(stem.content.notes) && stem.content.notes.length > 0) {
+          // Some per-stem extractor outputs nest notes inside ``content``
+          // (PrettyMIDI dict shape from tone_forge_api.py:2055).
+          notes = stem.content.notes;
         }
-        // Some per-stem extractor outputs nest notes inside ``content``
-        // (PrettyMIDI dict shape from tone_forge_api.py:2055).
-        if (stem.content && Array.isArray(stem.content.notes) && stem.content.notes.length > 0) {
-          return stem.content.notes;
+        picked.push(`${key}=${stem.note_count ?? (notes ? notes.length : 0)}`);
+        if (notes) {
+          try {
+            console.info(`[lead-picker] picked stem=${key} notes=${notes.length} `
+              + `(considered: ${picked.join(', ')})`);
+          } catch (_) {}
+          return notes;
         }
       }
     }
-    if (r.midi && Array.isArray(r.midi.notes)) {
+    if (r.midi && Array.isArray(r.midi.notes) && r.midi.notes.length > 0) {
+      try {
+        console.info(`[lead-picker] fell back to r.midi.notes (n=${r.midi.notes.length}); `
+          + `midi_stems considered: ${picked.join(', ') || '(none)'}`);
+      } catch (_) {}
       return r.midi.notes;
     }
+    try {
+      console.warn(`[lead-picker] no lead notes found. midi_stems considered: `
+        + `${picked.join(', ') || '(none)'}; r.midi=${r.midi ? 'present' : 'missing'}`);
+    } catch (_) {}
     return [];
   }
 
@@ -2578,6 +2629,86 @@
     // countdown. Updated on every active-chord change since the
     // shape pair only changes at chord boundaries.
     _updateChordTransitionHint(activeIdx);
+
+    // Phase 7 (JAM Learning V1) — "Report wrong" affordance. We need
+    // a song_id (state.analysisId) and a current chord symbol; the
+    // button is hidden otherwise. On click we prompt for the
+    // corrected chord and POST it as evidence.
+    _refreshReportWrongAffordance(nowSymbol);
+  }
+
+  // Phase 7 — bind / refresh the "Report wrong" button. Idempotent;
+  // safe to call on every chord-change tick. Click handler is
+  // rebound each time so the closure captures the current nowSymbol
+  // without leaking listeners.
+  function _refreshReportWrongAffordance(nowSymbol) {
+    const btn = document.getElementById('chord-now-report-wrong');
+    if (!btn) return;
+    const hasSong = !!state.analysisId;
+    const hasChord = !!nowSymbol && nowSymbol !== '—' && nowSymbol !== '?';
+    if (!hasSong || !hasChord) {
+      btn.hidden = true;
+      btn.onclick = null;
+      return;
+    }
+    btn.hidden = false;
+    btn.onclick = () => _submitChordCorrection(nowSymbol);
+  }
+
+  // POST one chord correction to /api/learning/correct as evidence.
+  // section_id follows the bench convention {song_id}:{section_idx:04d};
+  // we derive the index by finding the section containing the current
+  // playhead time. Falls back to section 0 if the playhead is outside
+  // any known section (shouldn't happen post-analysis but defensive).
+  function _submitChordCorrection(previousChord) {
+    const btn = document.getElementById('chord-now-report-wrong');
+    if (!btn) return;
+    const songId = state.analysisId;
+    if (!songId) return;
+
+    const corrected = window.prompt(
+      `Correct chord at this moment? (was "${previousChord}")\n` +
+      `Enter the right symbol, or leave blank to flag as wrong:`,
+      previousChord,
+    );
+    if (corrected === null) return;  // user cancelled
+
+    // Section index — bench convention is `{song_id}:{idx:04d}`.
+    const t = (typeof state.lastT === 'number') ? state.lastT
+            : (typeof state.currentTime === 'number') ? state.currentTime
+            : 0;
+    let sectionIdx = 0;
+    if (Array.isArray(state.sections)) {
+      for (let i = 0; i < state.sections.length; i++) {
+        const s = state.sections[i];
+        const s0 = typeof s.startSec === 'number' ? s.startSec : null;
+        const s1 = typeof s.endSec === 'number' ? s.endSec : null;
+        if (s0 !== null && s1 !== null && t >= s0 && t < s1) {
+          sectionIdx = i;
+          break;
+        }
+      }
+    }
+    const sectionId = `${songId}:${String(sectionIdx).padStart(4, '0')}`;
+
+    btn.classList.add('is-busy');
+    fetch('/api/learning/correct', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        song_id: songId,
+        section_id: sectionId,
+        correction_type: 'chord',
+        previous_value: previousChord,
+        corrected_value: corrected.trim() || null,
+      }),
+    })
+      .then((r) => r.ok ? r.json() : r.json().then((j) => Promise.reject(j)))
+      .then(() => { btn.classList.remove('is-busy'); })
+      .catch((err) => {
+        btn.classList.remove('is-busy');
+        console.warn('[learning/correct] failed', err);
+      });
   }
 
   // Render one of the two up-next preview cards (slotNumber in {1, 2}).
@@ -3036,7 +3167,26 @@
     const t1 = section ? section.endSec : chord.endSec;
 
     body.innerHTML = '';
-    const notes = Array.isArray(state.leadMidiNotes) ? state.leadMidiNotes : [];
+    // Engine fix #6: when the section carries engine-provided
+    // ``landmarkNotes`` (already density-capped at max=12 and ranked
+    // by clipped in-window duration via select_landmark_notes), use
+    // them directly. This is the source-of-truth path that fixes the
+    // dense-section smear by trusting the engine's pre-selected
+    // notes instead of slamming the whole stem's notes into the
+    // lane and letting the renderer overdraw.
+    //
+    // When the section lacks landmark notes (legacy bundles or
+    // empty-section fallbacks), fall back to the per-song
+    // ``state.leadMidiNotes`` walk so nothing regresses for older
+    // sessions.
+    let notes;
+    if (section
+        && Array.isArray(section.landmarkNotes)
+        && section.landmarkNotes.length > 0) {
+      notes = section.landmarkNotes;
+    } else {
+      notes = Array.isArray(state.leadMidiNotes) ? state.leadMidiNotes : [];
+    }
     if (notes.length === 0) {
       const placeholder = document.createElement('div');
       placeholder.className = 'chord-tab-empty';
@@ -4221,6 +4371,19 @@
         notes: userMidi.notes || [],
         overall_confidence: userMidi.overall_confidence ?? 0,
       } : null,
+      // Per-stem MIDI for the lead-tab lane. The session route
+      // (tone_forge_api.py:2636) decodes the persisted base64 MIDI
+      // blobs into JSON notes and ships them as the
+      // ``legacy_midi_stems`` sidecar so deep-link reloads can render
+      // the lead lane without re-running extraction. Project them
+      // straight onto ``midi_stems`` so the existing
+      // ``_pickLeadMidiNotes`` walk (guitar → other → piano → bass →
+      // vocals) finds them with no further plumbing. Empty / missing
+      // sidecar projects to ``{}`` so the picker falls through to
+      // ``r.midi.notes`` and finally to the empty-state placeholder.
+      midi_stems: bundle.legacy_midi_stems && typeof bundle.legacy_midi_stems === 'object'
+        ? bundle.legacy_midi_stems
+        : {},
       // Tone — carries the persisted ``to_wire_dict`` payload so
       // renderToneCard can re-render the SUGGESTED chain after refresh.
       tone,
@@ -5575,11 +5738,42 @@
       // an in-flight WBSUserMediaPermissionController query) crashes
       // the tab.
       if (track) {
+        // Capture-failure forensics. The browser emits "MediaStreamTrack
+        // ended due to a capture failure" in the Issues panel without
+        // any actionable detail. Logging readyState + muted + settings
+        // at ended-time lets us tell apart:
+        //   - "ended in <1s of start" → Core Audio rejected the grab
+        //     (device contention with Connect.app, or HX Stomp USB
+        //     sample-rate flap during enumeration).
+        //   - "ended mid-stream"      → device hot-unplugged, or USB
+        //     re-enumeration during a stereo<->mono channel-count flap.
+        const startedAt = performance.now();
         const onEnded = () => {
-          console.warn('[monitor] MediaStreamTrack ended (capture failure)');
+          const elapsedMs = Math.round(performance.now() - startedAt);
           const lostLabel = state.monitor.deviceLabel || 'input device';
+          const post = track.getSettings ? track.getSettings() : {};
+          console.warn(
+            `[monitor] MediaStreamTrack ended (capture failure) `
+            + `elapsedMs=${elapsedMs} readyState=${track.readyState} `
+            + `muted=${track.muted} sr=${post.sampleRate || '?'} `
+            + `ch=${post.channelCount || '?'} label="${lostLabel}" `
+            + `connectPaired=${_isConnectPaired()} `
+            + `connectStatus=${state.connectBridge ? state.connectBridge.status : 'none'} `
+            + `connectPeers=${state.connectBridge ? state.connectBridge.peers : 0}`
+          );
           _stopMonitor();
-          _setMonitorStatus(`Disconnected — ${lostLabel} dropped`, 'err');
+          // Immediate failures (<1.5s) almost always mean Core Audio
+          // refused the grab. The "device disconnected" copy is wrong
+          // and unhelpful in that case — point the user at the actual
+          // resolution (quit Connect, or try System default).
+          if (elapsedMs < 1500) {
+            _setMonitorStatus(
+              `${lostLabel} couldn't be captured — quit Connect.app or try System default`,
+              'err',
+            );
+          } else {
+            _setMonitorStatus(`Disconnected — ${lostLabel} dropped`, 'err');
+          }
         };
         state.monitor.trackEndedHandler = onEnded;
         track.addEventListener('ended', onEnded);
@@ -6209,4 +6403,23 @@
       });
     } catch {}
   })();
+
+  // Debug handle. The whole script is IIFE-wrapped, so `state` is
+  // unreachable from the DevTools console — pasting `state.connectBridge`
+  // throws ReferenceError. Expose a thin read accessor for triage:
+  //
+  //   __jam.state.connectBridge   // {status, peers, installed, …}
+  //   __jam.state.monitor         // {enabled, deviceId, deviceLabel, …}
+  //   __jam._isConnectPaired()    // bool
+  //
+  // Read-only by convention. The getter returns the live `state`
+  // object (no clone), so mutations from the console will affect the
+  // running app — caveat developer.
+  try {
+    window.__jam = {
+      get state() { return state; },
+      _isConnectPaired,
+      _pickLeadMidiNotes,
+    };
+  } catch (_) {}
 })();

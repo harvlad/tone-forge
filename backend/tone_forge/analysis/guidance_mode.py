@@ -71,6 +71,14 @@ class GuidanceDecision:
     mode: GuidanceModeStr
     confidence: float
     reason: str
+    # The stem that contributed the most weight to the aggregator vote
+    # (i.e. argmax of ``voiced_frame_ratio × duration_s`` across
+    # non-silent stems; ties broken by ``note_count``). Persists in the
+    # bundle so the JAM UI can render the riff/lead lane from the
+    # right stem's notes without re-running the hard-coded preference
+    # walk (``guitar → other → piano → bass → vocals``). Empty string
+    # when no stems are present or every stem is silent.
+    dominant_stem: str = ""
 
 
 def _score_chord(sf: SectionFeatures, t: GuidanceThresholds) -> float:
@@ -84,7 +92,16 @@ def _score_riff(sf: SectionFeatures, _t: GuidanceThresholds) -> float:
 
 
 def _score_lead(sf: SectionFeatures, _t: GuidanceThresholds) -> float:
-    raw = sf.monophonic_ratio * sf.lead_activity_score
+    # Engine fix #8: discount the lead score by the section's
+    # pitch-class diversity. A monophonic stem with a high
+    # lead-activity score that nevertheless visits only a handful of
+    # pitch classes (e.g. a chord-shaped bass riff like SLTS verse
+    # walking F/Bb/Ab/Db) is not a *lead* — leads carry tunes that
+    # span more of the chromatic alphabet. Multiplying by
+    # ``pitch_class_diversity`` (Shannon entropy / log(12), in [0,1])
+    # leaves real leads ~unchanged (varied melodies have diversity
+    # near 1.0) while collapsing the chord-rooted-riff false-positive.
+    raw = sf.monophonic_ratio * sf.lead_activity_score * sf.pitch_class_diversity
     return float(max(0.0, min(1.0, raw)))
 
 
@@ -125,9 +142,31 @@ def classify_section(
     raising.
     """
     if not per_stem_features:
-        return GuidanceDecision(mode="chord", confidence=0.0, reason="empty")
+        return GuidanceDecision(
+            mode="chord", confidence=0.0, reason="empty", dominant_stem=""
+        )
 
     per_stem_decisions = [_classify_stem(sf, thresholds) for sf in per_stem_features]
+
+    # Dominant stem = argmax over voiced_frame_ratio * duration_s, ties
+    # broken by note_count, then by stem_name for determinism. Computed
+    # over *all* per-stem features (not just the winning-mode ones) so
+    # the JAM UI gets a usable stem even when the section votes ``chord``
+    # — the chord ribbon doesn't need the field, but the lead-tab lane
+    # may still render when the user toggles "show tab anyway".
+    dominant_sf = max(
+        per_stem_features,
+        key=lambda sf: (
+            sf.voiced_frame_ratio * max(sf.duration_s, 0.0),
+            sf.note_count,
+            sf.stem_name,
+        ),
+    )
+    dominant_stem_name = (
+        dominant_sf.stem_name
+        if dominant_sf.voiced_frame_ratio * max(dominant_sf.duration_s, 0.0) > 0.0
+        else ""
+    )
 
     vote: dict[GuidanceModeStr, float] = defaultdict(float)
     for sf, (mode, conf) in zip(per_stem_features, per_stem_decisions):
@@ -140,6 +179,7 @@ def classify_section(
             mode="chord",
             confidence=0.0,
             reason="all_silent: " + ", ".join(sf.stem_name for sf in per_stem_features),
+            dominant_stem=dominant_stem_name,
         )
 
     winning_mode: GuidanceModeStr = max(vote.items(), key=lambda kv: kv[1])[0]
@@ -151,7 +191,10 @@ def classify_section(
     ]
     reason = f"{winning_mode}: " + ", ".join(reason_parts)
     return GuidanceDecision(
-        mode=winning_mode, confidence=float(winning_conf), reason=reason
+        mode=winning_mode,
+        confidence=float(winning_conf),
+        reason=reason,
+        dominant_stem=dominant_stem_name,
     )
 
 

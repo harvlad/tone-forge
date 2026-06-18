@@ -508,7 +508,76 @@ def _iter_sections(raw: Any) -> Iterable[Section]:
             or "section"
         )
         conf = _safe_float(item.get("confidence"), default=0.5) or 0.5
-        yield Section(start_s=start, end_s=end, label=label, confidence=conf)
+        # Riff-first guidance-mode round-trip. The producer
+        # (``ArrangementSection.to_dict()`` in analysis/sections.py)
+        # emits ``guidance_mode`` ∈ {chord, riff, lead} along with a
+        # confidence and reason string. Older bundles (analysed before
+        # the riff-first milestone) lack these keys; we fall back to
+        # the same defaults the contract dataclass declares so the JAM
+        # UI silently shows the chord ribbon.
+        guidance_mode = _str_or_none(item.get("guidance_mode")) or "chord"
+        if guidance_mode not in ("chord", "riff", "lead"):
+            guidance_mode = "chord"
+        guidance_confidence = (
+            _safe_float(item.get("guidance_confidence"), default=0.0) or 0.0
+        )
+        guidance_reason = _str_or_none(item.get("guidance_reason")) or ""
+        # Engine-fix-#5 round-trip: dominant_stem + landmark_notes.
+        # ``dominant_stem`` is a plain string (stem name, or "" if no
+        # stem contributed). ``landmark_notes`` is a list of dicts
+        # ``{pitch, start, end, velocity}`` pre-selected by
+        # ``analysis.section_features.select_landmark_notes``; each
+        # entry is validated here so a malformed/legacy bundle can't
+        # crash the JAM renderer downstream — bad rows are silently
+        # dropped (consistent with how _iter_chords skips invalid
+        # rows above).
+        dominant_stem = _str_or_none(item.get("dominant_stem")) or ""
+        raw_landmarks = item.get("landmark_notes")
+        landmark_notes: list[dict] = []
+        if isinstance(raw_landmarks, Iterable) and not isinstance(
+            raw_landmarks, (str, bytes)
+        ):
+            for note in raw_landmarks:
+                if not isinstance(note, Mapping):
+                    continue
+                pitch = note.get("pitch")
+                n_start = _safe_float(note.get("start"), default=None)
+                n_end = _safe_float(note.get("end"), default=None)
+                if (
+                    pitch is None
+                    or n_start is None
+                    or n_end is None
+                    or n_end <= n_start
+                ):
+                    continue
+                try:
+                    pitch_int = int(pitch)
+                except (TypeError, ValueError):
+                    continue
+                velocity = note.get("velocity", 80)
+                try:
+                    velocity_int = int(velocity) if velocity is not None else 80
+                except (TypeError, ValueError):
+                    velocity_int = 80
+                landmark_notes.append(
+                    {
+                        "pitch": pitch_int,
+                        "start": float(n_start),
+                        "end": float(n_end),
+                        "velocity": velocity_int,
+                    }
+                )
+        yield Section(
+            start_s=start,
+            end_s=end,
+            label=label,
+            confidence=conf,
+            guidance_mode=guidance_mode,
+            guidance_confidence=guidance_confidence,
+            guidance_reason=guidance_reason,
+            dominant_stem=dominant_stem,
+            landmark_notes=tuple(landmark_notes),
+        )
 
 
 def _iter_chords(raw: Any) -> Iterable[Chord]:

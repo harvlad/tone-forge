@@ -1261,6 +1261,10 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+  /* Allow long status copy ("Off — Connect is using your input",
+     "Connect is using your input — quit it to monitor here") to
+     wrap to its own line instead of being ellipsed at 60% width. */
+  flex-wrap: wrap;
 }
 .monitor-title {
   font-weight: 600;
@@ -1276,10 +1280,10 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 60%;
+  text-align: right;
+  /* No truncation — see .monitor-header flex-wrap. The full status
+     copy is always readable; if it doesn't fit next to the title
+     it wraps to the next line within the header row. */
 }
 .monitor-status-ok { color: var(--good); }
 .monitor-status-err { color: var(--bad); }
@@ -1749,6 +1753,31 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   font-size: 14px;
   color: var(--accent);
   font-weight: 600;
+}
+/* Phase 7 (JAM Learning V1) — per-section "Report wrong" affordance.
+   Compact ghost button living in the chord-now-footer. The button is
+   shown only when the current section has a defined section_id; the
+   click handler captures the current chord symbol and POSTs to
+   /api/learning/correct as evidence. */
+.chord-now-report-wrong {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.chord-now-report-wrong:hover,
+.chord-now-report-wrong:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  outline: none;
+}
+.chord-now-report-wrong.is-busy {
+  opacity: 0.5;
+  pointer-events: none;
 }
 /* Up-next preview cards (activeIdx+1, +2). Smaller than NOW PLAYING
    with a dim border so the eye isn't tempted away from the focal

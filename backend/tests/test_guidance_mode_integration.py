@@ -78,17 +78,30 @@ def _riff_loop_notes(t0: float, loops: int = 4, period_s: float = 2.0) -> list[d
 
 
 def _lead_phrase_notes(t0: float, duration_s: float = 8.0) -> list[dict]:
-    """Sparse melodic phrase with wide intervals — top of guitar range."""
-    # 8 notes across 8 s = 1 note/s, mean interval ~5-7 semitones
+    """Melodic phrase with wide intervals and full chromatic palette.
+
+    Intentionally non-repetitive (distinct interval pattern, no
+    pc reuse inside the window) so the classifier reads it cleanly
+    as lead rather than riff — and so the pitch-class-diversity
+    discount on _score_lead (engine fix #8) doesn't collapse it
+    into the chord tie-margin floor.
+
+    12 notes across 8 s ≈ 1.5 notes/s, mean interval ~6 semitones,
+    all 12 pitch classes visited exactly once.
+    """
     schedule = [
-        (76, 0.0, 0.7),  # E5
-        (72, 0.9, 1.5),  # C5
-        (79, 1.7, 2.5),  # G5
-        (74, 2.7, 3.4),  # D5
-        (81, 3.6, 4.4),  # A5
-        (76, 4.6, 5.3),  # E5
-        (83, 5.5, 6.4),  # B5
-        (77, 6.6, 7.6),  # F5
+        (76, 0.0, 0.55),   # E5  (pc 4)
+        (80, 0.65, 1.20),  # G#5 (pc 8)
+        (73, 1.30, 1.85),  # C#5 (pc 1)
+        (81, 1.95, 2.50),  # A5  (pc 9)
+        (75, 2.60, 3.15),  # D#5 (pc 3)
+        (78, 3.25, 3.80),  # F#5 (pc 6)
+        (82, 3.90, 4.45),  # A#5 (pc 10)
+        (77, 4.55, 5.10),  # F5  (pc 5)
+        (84, 5.20, 5.75),  # C6  (pc 0)
+        (71, 5.85, 6.40),  # B4  (pc 11)
+        (79, 6.50, 7.05),  # G5  (pc 7)
+        (74, 7.15, 7.85),  # D5  (pc 2)
     ]
     return [_note(p, t0 + s, t0 + e) for (p, s, e) in schedule]
 
@@ -108,30 +121,43 @@ def _apply_pipeline_wireup(
     sections: List[ArrangementSection],
     midi_stems: dict,
     chord_regions: tuple,
-) -> List[ArrangementSection]:
+) -> List[dict]:
     """Mirror of the wire-up block in ``unified_pipeline.analyze_streaming``.
 
     Kept in sync with the call site so a drift in either flips this test.
+
+    The production wireup operates on *dicts* (the output of
+    ``_detect_sections`` which calls ``s.to_dict()`` before the
+    classifier ever runs), not ``ArrangementSection`` objects. The
+    historical mirror used attribute access and silently agreed with
+    itself while the real wireup raised ``AttributeError`` in
+    production — a regression the test suite couldn't see. This
+    mirror now operates on the same dict contract so any future
+    drift fires on the assertions below.
     """
+    section_dicts: List[dict] = [s.to_dict() for s in sections]
     stem_notes_by_name = {
         name: (data.get("notes") or []) for name, data in midi_stems.items()
     }
-    out: List[ArrangementSection] = []
-    for section in sections:
+    out: List[dict] = []
+    for section in section_dicts:
+        section_start_s = float(section["start_time"])
+        section_end_s = float(section["end_time"])
         per_stem = [
             compute_section_features(
                 stem_name=name,
                 stem_midi=notes,
                 chord_regions=chord_regions,
-                section_start_s=float(section.start_time),
-                section_end_s=float(section.end_time),
+                section_start_s=section_start_s,
+                section_end_s=section_end_s,
             )
             for name, notes in stem_notes_by_name.items()
         ]
         decision = classify_section(per_stem)
-        section.guidance_mode = decision.mode
-        section.guidance_confidence = float(decision.confidence)
-        section.guidance_reason = decision.reason
+        section["guidance_mode"] = decision.mode
+        section["guidance_confidence"] = float(decision.confidence)
+        section["guidance_reason"] = decision.reason
+        section["dominant_stem"] = decision.dominant_stem
         out.append(section)
     return out
 
@@ -176,15 +202,15 @@ def test_three_section_progression_classifies_chord_riff_lead() -> None:
 
     classified = _apply_pipeline_wireup(sections, midi_stems, chord_regions)
 
-    assert [s.guidance_mode for s in classified] == ["chord", "riff", "lead"]
+    assert [s["guidance_mode"] for s in classified] == ["chord", "riff", "lead"]
     for s in classified:
-        assert s.guidance_confidence >= 0.5, (
-            f"{s.type.value} section confidence too low: "
-            f"{s.guidance_confidence:.2f} ({s.guidance_reason})"
+        assert s["guidance_confidence"] >= 0.5, (
+            f"{s.get('type')} section confidence too low: "
+            f"{s['guidance_confidence']:.2f} ({s['guidance_reason']})"
         )
         # Reason string must include the contributing stem so the JAM
         # UI can later surface "why".
-        assert "other=" in s.guidance_reason
+        assert "other=" in s["guidance_reason"]
 
 
 def test_section_to_dict_round_trips_guidance_fields() -> None:
@@ -223,5 +249,5 @@ def test_empty_midi_stems_silently_yields_chord_default() -> None:
     """
     sections = [_make_section(kind=SectionType.INTRO, start=0.0, end=4.0)]
     classified = _apply_pipeline_wireup(sections, midi_stems={}, chord_regions=())
-    assert classified[0].guidance_mode == "chord"
-    assert classified[0].guidance_confidence == 0.0
+    assert classified[0]["guidance_mode"] == "chord"
+    assert classified[0]["guidance_confidence"] == 0.0

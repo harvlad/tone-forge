@@ -19,6 +19,7 @@ import numpy as np
 from tone_forge.analysis.section_features import (
     SectionFeatures,
     compute_section_features,
+    select_landmark_notes,
 )
 
 
@@ -236,3 +237,161 @@ def test_note_dict_and_object_inputs_equivalent() -> None:
         section_start_s=0.0, section_end_s=2.0,
     )
     assert sf_dict == sf_obj
+
+
+# ---------------------------------------------------------------------------
+# select_landmark_notes — pitch-class-diversity-first ranking (engine fix #7)
+# ---------------------------------------------------------------------------
+
+def test_landmark_notes_empty_returns_empty_tuple() -> None:
+    assert select_landmark_notes(
+        stem_midi=None, section_start_s=0.0, section_end_s=4.0
+    ) == ()
+    assert select_landmark_notes(
+        stem_midi=[], section_start_s=0.0, section_end_s=4.0
+    ) == ()
+
+
+def test_landmark_notes_excludes_notes_outside_section() -> None:
+    notes = [
+        _note(60, -1.0, -0.5),   # entirely before
+        _note(62, 5.0, 6.0),     # entirely after
+        _note(64, 1.0, 2.0),     # inside
+    ]
+    out = select_landmark_notes(
+        stem_midi=notes, section_start_s=0.0, section_end_s=4.0
+    )
+    assert len(out) == 1
+    assert out[0]["pitch"] == 64
+
+
+def test_landmark_notes_clips_duration_to_section() -> None:
+    # A pad bleeding in from before should be ranked by its clipped
+    # (in-window) duration, not its full duration.
+    notes = [
+        _note(60, -10.0, 0.5),   # full=10.5s, clipped=0.5s
+        _note(64, 1.0, 3.0),     # fully in-window, dur=2.0s
+    ]
+    out = select_landmark_notes(
+        stem_midi=notes, section_start_s=0.0, section_end_s=4.0, max_notes=2
+    )
+    pitches = [n["pitch"] for n in out]
+    # Both survive (budget=2), playback order by start.
+    assert pitches == [60, 64]
+    # Clipped end should be section_start (0.0) + 0.5 for the bleeding pad.
+    pad = next(n for n in out if n["pitch"] == 60)
+    assert pad["start"] == 0.0
+    assert abs(pad["end"] - 0.5) < 1e-9
+
+
+def test_landmark_notes_diversity_preserves_short_pulse_roots() -> None:
+    """The SLTS regression: long held F/Ab roots interleaved with
+    short-pulse Bb/Db roots. Pre-fix ranking by raw duration evicts
+    the short pulses; diversity-first ranking must keep all four
+    distinct pitch classes at any reasonable budget.
+
+    Pitches: F2=41, Bb2=46, Ab2=44, Db2=37.
+    Held notes have duration 0.5s; pulses have duration 0.25s.
+    """
+    # 6 held F + 5 held Ab dominate by duration; 1 Bb + 1 Db are
+    # short-pulse and would be evicted under pure-duration ranking
+    # with max_notes=8 (8 < 6+5+1+1 = 13; the two short pulses
+    # would be ranked 12th and 13th by raw duration).
+    notes: List[dict] = []
+    t = 0.0
+    # Six F2 held
+    for _ in range(6):
+        notes.append(_note(41, t, t + 0.5))
+        t += 0.6
+    # Five Ab2 held
+    for _ in range(5):
+        notes.append(_note(44, t, t + 0.5))
+        t += 0.6
+    # One Bb2 short-pulse
+    notes.append(_note(46, t, t + 0.25))
+    t += 0.3
+    # One Db2 short-pulse
+    notes.append(_note(37, t, t + 0.25))
+    t += 0.3
+
+    out = select_landmark_notes(
+        stem_midi=notes,
+        section_start_s=0.0,
+        section_end_s=20.0,
+        max_notes=8,
+    )
+    pcs = {n["pitch"] % 12 for n in out}
+    # F=5, Bb=10, Ab=8, Db=1 (mod 12). All four chord roots must survive.
+    assert 5 in pcs, f"missing F pitch class; got {sorted(pcs)}"
+    assert 10 in pcs, f"missing Bb pitch class; got {sorted(pcs)}"
+    assert 8 in pcs, f"missing Ab pitch class; got {sorted(pcs)}"
+    assert 1 in pcs, f"missing Db pitch class; got {sorted(pcs)}"
+    assert len(out) <= 8
+
+
+def test_landmark_notes_budget_smaller_than_pc_count_keeps_longest_pcs() -> None:
+    # Three distinct pitch classes but budget=2: should keep the two
+    # diversity reps with the largest duration.
+    notes = [
+        _note(60, 0.0, 0.1),   # short C
+        _note(62, 1.0, 2.0),   # long D
+        _note(64, 3.0, 3.8),   # medium E
+    ]
+    out = select_landmark_notes(
+        stem_midi=notes, section_start_s=0.0, section_end_s=4.0, max_notes=2
+    )
+    pitches = sorted(n["pitch"] for n in out)
+    assert pitches == [62, 64], (
+        f"expected D+E (longest 2 distinct pcs); got {pitches}"
+    )
+
+
+def test_landmark_notes_fills_remaining_budget_after_diversity_pass() -> None:
+    # Two pitch classes, budget=4: diversity pass picks 2; pass 2
+    # fills the remaining 2 with the next-longest duplicate-pc notes.
+    notes = [
+        _note(60, 0.0, 1.0),   # C long
+        _note(60, 2.0, 2.9),   # C medium
+        _note(60, 4.0, 4.4),   # C short
+        _note(64, 5.0, 5.6),   # E mid-short
+    ]
+    out = select_landmark_notes(
+        stem_midi=notes, section_start_s=0.0, section_end_s=6.0, max_notes=4
+    )
+    assert len(out) == 4
+    pitches = [n["pitch"] for n in out]
+    # Playback order; should include all four candidates.
+    assert pitches == [60, 60, 60, 64]
+
+
+def test_landmark_notes_output_sorted_by_start_time() -> None:
+    notes = [
+        _note(64, 3.0, 3.5),
+        _note(60, 0.0, 0.5),
+        _note(62, 1.5, 2.0),
+    ]
+    out = select_landmark_notes(
+        stem_midi=notes, section_start_s=0.0, section_end_s=4.0
+    )
+    starts = [n["start"] for n in out]
+    assert starts == sorted(starts)
+
+
+def test_landmark_notes_max_notes_zero_returns_empty() -> None:
+    notes = [_note(60, 0.0, 1.0)]
+    assert select_landmark_notes(
+        stem_midi=notes,
+        section_start_s=0.0,
+        section_end_s=4.0,
+        max_notes=0,
+    ) == ()
+
+
+def test_landmark_notes_velocity_default_when_missing() -> None:
+    # Notes without explicit velocity should fall back to 80.
+    notes = [{"pitch": 60, "start": 0.0, "end": 1.0}]
+    out = select_landmark_notes(
+        stem_midi=notes, section_start_s=0.0, section_end_s=2.0
+    )
+    assert len(out) == 1
+    assert out[0]["velocity"] == 80

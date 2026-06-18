@@ -72,6 +72,22 @@ class SectionFeatures:
     note_count: int
     duration_s: float
 
+    # Signal F — Pitch-class diversity (engine fix #8).
+    # Shannon entropy of the in-section pitch-class histogram,
+    # normalised by ``log(12)`` so the value lives in ``[0.0, 1.0]``.
+    # 1.0 means all 12 pitch classes equally represented; 0.0 means
+    # the section is monotonal (one pc). Used by the guidance-mode
+    # classifier to discount the "lead" score when a stem is
+    # monophonic *but* harmonically narrow (e.g. SLTS bass riff
+    # playing only F/Bb/Ab/Db — monophonic, yes; lead, no).
+    #
+    # Defaulted to 1.0 (neutral) so hand-constructed test
+    # SectionFeatures from older fixtures don't have to learn the
+    # field, and so they continue to score on the lead axis purely
+    # via the existing monophonic_ratio × lead_activity_score
+    # product.
+    pitch_class_diversity: float = 1.0
+
 
 def _note_pitch(note: Any) -> int:
     if isinstance(note, dict):
@@ -89,6 +105,131 @@ def _note_end(note: Any) -> float:
     if isinstance(note, dict):
         return float(note["end"])
     return float(getattr(note, "end"))
+
+
+def _note_velocity(note: Any) -> int:
+    """Return MIDI velocity for a note, defaulting to 80 when absent.
+
+    Matches the tolerance of the other ``_note_*`` helpers: dicts or
+    dataclasses both work, and missing velocity (e.g. fixture notes
+    that omit the field) falls back to a sensible mid-range default
+    rather than raising. 80 lines up with the median emitted by
+    ``unified_pipeline._build_midi_stems_payload``.
+    """
+    if isinstance(note, dict):
+        v = note.get("velocity", 80)
+        return int(v) if v is not None else 80
+    v = getattr(note, "velocity", 80)
+    return int(v) if v is not None else 80
+
+
+def select_landmark_notes(
+    *,
+    stem_midi: Optional[Iterable[Any]],
+    section_start_s: float,
+    section_end_s: float,
+    max_notes: int = 12,
+) -> tuple[dict, ...]:
+    """Select up to ``max_notes`` 'landmark' notes inside a section.
+
+    Selection rule — pitch-class-diversity-first (engine fix #7):
+
+    1. **Pass 1 (diversity reps).** Group every in-window candidate
+       by pitch class (``pitch % 12``). For each pitch class, pick
+       the single candidate with the best ``(-clipped_duration,
+       clipped_start, pitch)`` ranking. These "diversity reps"
+       guarantee that *every* distinct pitch class actually played
+       inside the section gets at least one landmark, before
+       duration alone steals all the slots.
+
+    2. **Pass 2 (fill by duration).** If the diversity reps already
+       exceed ``max_notes``, keep the top ``max_notes`` by the same
+       ranking. Otherwise, fill the remaining budget with the
+       next-longest candidates not already represented.
+
+    3. **Render order.** Survivors are sorted by ``(start, pitch)``
+       so the JAM client can render them in playback order.
+
+    Why diversity-first? Before this rule, ``select_landmark_notes``
+    ranked purely by clipped duration. On songs like SLTS where the
+    bass plays held roots interleaved with short-pulse passing roots
+    (F2 held / Bb2 pulse / Ab2 held / Db2 pulse), the long held
+    pitches monopolised the top-N and the short-pulse roots —
+    which carry just as much chordal information — got evicted.
+    Diversity-first ensures the chord-root *set* survives at any
+    reasonable budget.
+
+    Notes whose support does not intersect ``[section_start_s,
+    section_end_s)`` are excluded. Durations are measured *clipped*
+    to the section so a sustained pad bleeding in from a previous
+    section doesn't outrank a fully-in-window lead note.
+
+    Returns a tuple of plain ``dict`` payloads
+    ``{"pitch": int, "start": float, "end": float, "velocity": int}``
+    in start-time order. Empty tuple when ``stem_midi`` is ``None``,
+    empty, or has no in-window notes.
+
+    The returned shape is intentionally JSON-clean so the value can
+    be embedded directly in ``ArrangementSection``/``Section`` and
+    round-tripped through ``to_dict``/``from_dict`` without a
+    custom encoder.
+    """
+    if stem_midi is None or max_notes <= 0:
+        return ()
+    candidates: list[tuple[float, float, int, int]] = []
+    # (clipped_duration, clipped_start, pitch, velocity)
+    for n in stem_midi:
+        s = _note_start(n)
+        e = _note_end(n)
+        if e <= section_start_s or s >= section_end_s:
+            continue
+        cs = max(s, section_start_s)
+        ce = min(e, section_end_s)
+        if ce <= cs:
+            continue
+        candidates.append((ce - cs, cs, _note_pitch(n), _note_velocity(n)))
+    if not candidates:
+        return ()
+    # Canonical ranking key: longest first, then earliest, then
+    # lowest pitch (final tiebreak for determinism on identical
+    # weights — pretty rare but possible with synthetic fixtures).
+    rank_key = lambda t: (-t[0], t[1], t[2])
+
+    # Pass 1: best candidate per pitch class.
+    best_per_pc: dict[int, tuple[float, float, int, int]] = {}
+    for cand in candidates:
+        pc = cand[2] % 12
+        prev = best_per_pc.get(pc)
+        if prev is None or rank_key(cand) < rank_key(prev):
+            best_per_pc[pc] = cand
+    diversity_reps = list(best_per_pc.values())
+    diversity_reps.sort(key=rank_key)
+
+    if len(diversity_reps) >= max_notes:
+        chosen = diversity_reps[:max_notes]
+    else:
+        # Pass 2: fill remaining budget from the global candidate pool
+        # by descending duration, skipping any we already picked.
+        chosen = list(diversity_reps)
+        rep_ids = {id(c) for c in diversity_reps}
+        remaining = sorted(
+            (c for c in candidates if id(c) not in rep_ids),
+            key=rank_key,
+        )
+        budget = max_notes - len(chosen)
+        chosen.extend(remaining[:budget])
+
+    # Render order: by start time, then pitch.
+    chosen.sort(key=lambda t: (t[1], t[2]))
+    return tuple(
+        {
+            "pitch": pitch,
+            "start": float(start),
+            "end": float(start + dur),
+            "velocity": velocity,
+        }
+        for dur, start, pitch, velocity in chosen
+    )
 
 
 def _clip_notes_to_section(
@@ -250,6 +391,41 @@ def _repetition(
     return float(best_score), period_beats
 
 
+def _pitch_class_diversity(
+    clipped: Sequence[tuple[int, float, float]],
+) -> float:
+    """Shannon entropy of the pitch-class histogram, normalised to [0,1].
+
+    Histogram is weighted by *clipped duration*, not note count: a
+    sustained F2 contributes more than a single 16th-note grace.
+    Returns 0.0 when the section is empty or monotonal, 1.0 when all
+    twelve pitch classes are equally represented.
+
+    Used by the classifier to discount the lead-score for stems that
+    are monophonic but harmonically narrow (chord-shaped bass riffs).
+    """
+    if not clipped:
+        return 0.0
+    weights: dict[int, float] = {}
+    total = 0.0
+    for pitch, cs, ce in clipped:
+        w = max(ce - cs, 0.0)
+        if w <= 0.0:
+            continue
+        pc = pitch % 12
+        weights[pc] = weights.get(pc, 0.0) + w
+        total += w
+    if total <= 0.0 or len(weights) <= 1:
+        return 0.0
+    entropy = 0.0
+    for w in weights.values():
+        p = w / total
+        if p > 0.0:
+            entropy -= p * np.log(p)
+    # log(12) is the max entropy on a 12-bin alphabet.
+    return float(np.clip(entropy / np.log(12.0), 0.0, 1.0))
+
+
 def _lead_activity(
     clipped: Sequence[tuple[int, float, float]],
     duration_s: float,
@@ -314,6 +490,7 @@ def compute_section_features(
         clipped, beats_s, section_start_s, section_end_s
     )
     lead_score = _lead_activity(clipped, duration_s)
+    pc_diversity = _pitch_class_diversity(clipped)
     density, count_in = _chord_density(
         chord_regions, section_start_s, section_end_s, duration_s
     )
@@ -330,10 +507,12 @@ def compute_section_features(
         voiced_frame_ratio=voiced_ratio,
         note_count=note_count,
         duration_s=duration_s,
+        pitch_class_diversity=pc_diversity,
     )
 
 
 __all__ = [
     "SectionFeatures",
     "compute_section_features",
+    "select_landmark_notes",
 ]

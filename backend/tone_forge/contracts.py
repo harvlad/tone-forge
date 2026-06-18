@@ -210,6 +210,27 @@ class Section:
     end_s: float
     label: str
     confidence: float = 1.0
+    # Per-section practice-guidance classification (chord/riff/lead)
+    # produced by the riff-first detection plan's classifier and
+    # round-tripped from ``ArrangementSection.guidance_mode``. Defaults
+    # keep legacy bundle reads silent — pre-milestone bundles lack the
+    # field and fall back to the chord ribbon.
+    guidance_mode: str = "chord"
+    guidance_confidence: float = 0.0
+    guidance_reason: str = ""
+    # Engine-as-source-of-truth for the JAM riff/lead lane. The
+    # classifier picks ``dominant_stem`` as argmax over
+    # ``voiced_frame_ratio × duration_s`` (see
+    # ``analysis.guidance_mode.classify_section``); the UI renders the
+    # riff/lead lane from this stem's notes without re-running the
+    # legacy stem-preference walk. ``landmark_notes`` is a pre-ranked,
+    # density-capped sequence of dicts ``{pitch, start, end, velocity}``
+    # for that stem inside the section — see
+    # ``analysis.section_features.select_landmark_notes``. Both
+    # default to "absent" so legacy bundles (pre-engine-fix-#5) still
+    # parse and fall back to the chord ribbon.
+    dominant_stem: str = ""
+    landmark_notes: Tuple[Dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)

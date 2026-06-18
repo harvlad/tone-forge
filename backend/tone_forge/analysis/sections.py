@@ -71,6 +71,20 @@ class ArrangementSection:
     guidance_confidence: float = 0.0
     guidance_reason: str = ""
 
+    # Engine-as-source-of-truth for the JAM riff/lead lane (see
+    # riff-first plan §"renderRiffLane / renderLeadPhraseLane").
+    # ``dominant_stem`` names the stem whose notes the riff/lead
+    # lane should render from (chosen by the guidance_mode classifier
+    # as argmax over ``voiced_frame_ratio × duration_s``). Empty
+    # string when no stems contributed (all silent or empty input).
+    # ``landmark_notes`` is a pre-computed, density-capped sequence
+    # of dicts ``{pitch, start, end, velocity}`` for that stem
+    # inside the section window — selected upstream via
+    # ``analysis.section_features.select_landmark_notes`` so the UI
+    # doesn't need to re-rank notes or worry about smear.
+    dominant_stem: str = ""
+    landmark_notes: tuple = field(default_factory=tuple)
+
     @property
     def duration(self) -> float:
         """Duration of the section."""
@@ -93,6 +107,11 @@ class ArrangementSection:
             "guidance_mode": self.guidance_mode,
             "guidance_confidence": float(self.guidance_confidence),
             "guidance_reason": self.guidance_reason,
+            "dominant_stem": self.dominant_stem,
+            # ``landmark_notes`` is already a tuple of JSON-clean dicts
+            # (see ``select_landmark_notes``); list() so JSON encoders
+            # that special-case tuples don't trip.
+            "landmark_notes": [dict(n) for n in self.landmark_notes],
         }
 
 
