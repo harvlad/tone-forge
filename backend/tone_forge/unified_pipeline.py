@@ -170,6 +170,7 @@ class PipelineConfig:
             detect_synth_behavior=False,
             include_waveform=False,
             include_profiling=False,
+            stem_serve_url_base="/api/admin/serve-file",  # Default for web playback
         )
 
     @classmethod
@@ -204,6 +205,7 @@ class PipelineConfig:
             detect_synth_behavior=True,
             include_waveform=True,  # Enable for studio visualization
             include_profiling=True,  # Enable for Technical tab
+            stem_serve_url_base="/api/admin/serve-file",  # Default for web playback
         )
 
     @classmethod
