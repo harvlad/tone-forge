@@ -203,6 +203,7 @@ class SectionDetector:
         audio: np.ndarray,
         sr: int = None,
         tempo: float = None,
+        beats_s: Optional[np.ndarray] = None,
     ) -> ArrangementAnalysis:
         """Detect arrangement sections.
 
@@ -210,6 +211,13 @@ class SectionDetector:
             audio: Audio samples (mono)
             sr: Sample rate (uses default if None)
             tempo: Tempo in BPM (detected if None)
+            beats_s: Beat positions in seconds. When provided with
+                ``len(beats_s) >= 2`` the boundary quantizer snaps each
+                detected boundary to the nearest beat (Probe-5 design
+                — see ``backend/segmenter_followup_probes.md``).
+                When ``None`` or degraded (< 2 entries) the quantizer
+                falls back to the legacy ``(60/tempo)*4`` bar grid so
+                callers without a beat grid keep working.
 
         Returns:
             ArrangementAnalysis with detected sections
@@ -230,7 +238,9 @@ class SectionDetector:
         energy_curve = self._compute_energy_curve(audio, sr)
 
         # Detect section boundaries from energy
-        boundaries = self._detect_boundaries(energy_curve, duration, tempo)
+        boundaries = self._detect_boundaries(
+            energy_curve, duration, tempo, beats_s=beats_s,
+        )
 
         # Classify each section
         sections = self._classify_sections(audio, sr, boundaries, energy_curve)
@@ -277,10 +287,22 @@ class SectionDetector:
         energy_curve: np.ndarray,
         duration: float,
         tempo: float,
+        beats_s: Optional[np.ndarray] = None,
     ) -> List[float]:
         """Detect section boundaries from energy curve.
 
         Uses novelty detection on energy to find structural changes.
+
+        When ``beats_s`` is supplied with ≥2 entries the boundaries
+        snap to the nearest tracked beat (Probe-5 design). Snap-to-beat
+        is an order of magnitude more stable than the legacy
+        ``(60/tempo)*4`` bar grid under sub-BPM tempo perturbations
+        (see ``backend/segmenter_followup_probes.md`` Q4: 0.05s vs
+        2.34s median drift on Disco Of Doom). The bar-grid path is
+        preserved verbatim as a fallback for the
+        ``detect_sections(audio)`` convenience entry point and any
+        caller that doesn't have a beat grid (e.g. test fixtures, the
+        module-level ``detect_sections`` function below).
         """
         # Calculate novelty function (derivative of energy)
         novelty = np.abs(np.diff(energy_curve))
@@ -310,7 +332,52 @@ class SectionDetector:
         boundaries.extend([p * times_per_sample for p in peaks])
         boundaries.append(duration)  # Always end at duration
 
-        # Quantize to bar boundaries if we have tempo
+        # Snap-to-beats path (preferred). Each interior boundary snaps
+        # to the nearest tracked beat; the same min_section_duration
+        # consolidation cascade then runs on the snapped positions so
+        # we preserve the "fewer, well-spaced" section count that the
+        # bar-grid path historically produced.
+        #
+        # Per-boundary snap-distance clamp: when the nearest tracked
+        # beat is more than one bar away from the raw boundary, fall
+        # through to the bar-grid quantizer for that specific boundary
+        # instead of dragging it back to a distant beat. This covers
+        # the real-world edge case where librosa beat-track terminates
+        # before the song ends (e.g. outro fadeouts): without the
+        # clamp the last interior boundary collapses to the last
+        # tracked beat — see ``/tmp/jam_smoke_fcbb84bf.md``, where
+        # Sex On Fire's verse→outro boundary at 205.3s was being
+        # pulled back to 177.9s (the last tracked beat) instead of
+        # staying on the bar grid where it belonged.
+        if beats_s is not None and len(beats_s) >= 2:
+            beats_arr = np.asarray(beats_s, dtype=float)
+            bar_duration = (60.0 / tempo) * 4
+            snapped: List[float] = [0.0]
+            for b in boundaries[1:-1]:
+                idx = int(np.searchsorted(beats_arr, b))
+                candidates: List[float] = []
+                if idx > 0:
+                    candidates.append(float(beats_arr[idx - 1]))
+                if idx < len(beats_arr):
+                    candidates.append(float(beats_arr[idx]))
+                if not candidates:
+                    continue
+                snapped_time = min(candidates, key=lambda t: abs(t - b))
+                # Clamp: nearest beat too far → use the bar grid.
+                if abs(snapped_time - b) > bar_duration:
+                    bar_num = round(b / bar_duration)
+                    snapped_time = bar_num * bar_duration
+                if snapped_time >= duration:
+                    continue
+                if snapped_time > snapped[-1] + self.min_section_duration:
+                    snapped.append(snapped_time)
+            snapped.append(duration)
+            return snapped
+
+        # Bar-grid fallback: used when no beat grid is available
+        # (legacy callers, the module-level convenience function, or
+        # the pipeline's belt-and-braces path when ``_track_beats``
+        # degraded). Behaviour unchanged from before Probe-5.
         beats_per_bar = 4
         bar_duration = (60.0 / tempo) * beats_per_bar
 

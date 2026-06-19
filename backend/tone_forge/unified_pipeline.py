@@ -692,7 +692,9 @@ class UnifiedPipeline:
             stage_start = time.time()
             try:
                 section_result = await self._detect_sections(
-                    audio_data, midi_stems, tempo_hint=tempo_bpm,
+                    audio_data, midi_stems,
+                    tempo_hint=tempo_bpm,
+                    beats_s=beats_s,
                 )
                 if section_result:
                     sections = section_result.get("sections")
@@ -1634,6 +1636,7 @@ class UnifiedPipeline:
         audio_data: AudioData,
         midi_stems: Dict[str, Dict[str, Any]],
         tempo_hint: float = 0.0,
+        beats_s: Optional[List[float]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Detect arrangement sections using section detector.
 
@@ -1642,6 +1645,15 @@ class UnifiedPipeline:
         beat-track call, avoiding the duplicate computation that
         previously fed two stages independently and produced
         inconsistent tempo values between them.
+
+        ``beats_s`` is the same stage's tracked beat grid. When
+        non-empty (≥2 entries) the section detector snaps boundaries
+        to the nearest tracked beat instead of the legacy
+        ``(60/tempo)*4`` bar grid — an order-of-magnitude reduction in
+        sub-BPM tempo sensitivity (see Probe-5 in
+        ``backend/segmenter_followup_probes.md``). Degraded grids
+        (None or < 2 beats) fall back to the bar grid so the section
+        detector still produces output when ``_track_beats`` failed.
         """
         def detect():
             from tone_forge.analysis.sections import SectionDetector
@@ -1660,6 +1672,7 @@ class UnifiedPipeline:
                 audio_data.audio,
                 sr=audio_data.sr,
                 tempo=tempo,
+                beats_s=beats_s,
             )
 
             return {
