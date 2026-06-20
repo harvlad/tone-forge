@@ -133,7 +133,18 @@ def separate_guitar(
 
         # Apply the model
         with torch.no_grad():
-            sources = apply_model(model, wav, device=device)
+            # shifts=0 disables Demucs's random temporal-shift averaging
+            # so stem separation is bit-exact across runs. The default
+            # shifts=1 draws a random shift per chunk from PyTorch RNG
+            # (no seed pinned), which made every downstream signal
+            # drift between pipeline runs even on the same source
+            # audio: piano stem RMS-differed by 57%, other by 39%, bass
+            # by 6%, etc., and that drift propagated into chord_density
+            # (bass-pitch biasing) and per-stem MIDI features, flipping
+            # 20 of 22 guidance-mode classifications on Sex On Fire.
+            # The quality cost of shifts=0 is imperceptible for
+            # downstream analysis (we don't ship stems as final mix).
+            sources = apply_model(model, wav, device=device, shifts=0)
 
         # sources shape: (batch, num_sources, channels, samples)
         # Get source names from model
@@ -230,7 +241,9 @@ def separate_all_stems(
 
     # Separate
     with torch.no_grad():
-        sources = apply_model(model, wav, device=device)
+        # shifts=0: see comment at separate_guitar's apply_model call
+        # for full rationale. Bit-exact stems across runs.
+        sources = apply_model(model, wav, device=device, shifts=0)
 
     # Save each stem using soundfile
     stem_paths = {}
@@ -308,7 +321,18 @@ def separate_bass(
         wav = wav.unsqueeze(0).to(device)
 
         with torch.no_grad():
-            sources = apply_model(model, wav, device=device)
+            # shifts=0 disables Demucs's random temporal-shift averaging
+            # so stem separation is bit-exact across runs. The default
+            # shifts=1 draws a random shift per chunk from PyTorch RNG
+            # (no seed pinned), which made every downstream signal
+            # drift between pipeline runs even on the same source
+            # audio: piano stem RMS-differed by 57%, other by 39%, bass
+            # by 6%, etc., and that drift propagated into chord_density
+            # (bass-pitch biasing) and per-stem MIDI features, flipping
+            # 20 of 22 guidance-mode classifications on Sex On Fire.
+            # The quality cost of shifts=0 is imperceptible for
+            # downstream analysis (we don't ship stems as final mix).
+            sources = apply_model(model, wav, device=device, shifts=0)
 
         source_names = model.sources
         if "bass" not in source_names:
@@ -391,7 +415,18 @@ def separate_drums(
         wav = wav.unsqueeze(0).to(device)
 
         with torch.no_grad():
-            sources = apply_model(model, wav, device=device)
+            # shifts=0 disables Demucs's random temporal-shift averaging
+            # so stem separation is bit-exact across runs. The default
+            # shifts=1 draws a random shift per chunk from PyTorch RNG
+            # (no seed pinned), which made every downstream signal
+            # drift between pipeline runs even on the same source
+            # audio: piano stem RMS-differed by 57%, other by 39%, bass
+            # by 6%, etc., and that drift propagated into chord_density
+            # (bass-pitch biasing) and per-stem MIDI features, flipping
+            # 20 of 22 guidance-mode classifications on Sex On Fire.
+            # The quality cost of shifts=0 is imperceptible for
+            # downstream analysis (we don't ship stems as final mix).
+            sources = apply_model(model, wav, device=device, shifts=0)
 
         source_names = model.sources
         if "drums" not in source_names:
