@@ -2279,8 +2279,14 @@
       // (see ArrangementSection.to_dict in tone_forge/analysis/sections.py).
       // Tolerate the older {name, start, end} shape as a fallback.
       const label = s.type || s.name || s.label || 'Section';
-      const start = secondsOf(s.start_time ?? s.start ?? s.start_sec ?? s.startSec);
-      const end = secondsOf(s.end_time ?? s.end ?? s.end_sec ?? s.endSec);
+      // Deep-link path (/jam/:id) projects SongUnderstanding.sections,
+      // whose Section contract dicts use start_s/end_s (see
+      // backend/tone_forge/session/bundle.py:570). The streaming
+      // analyze path emits start_time/end_time (ArrangementSection
+      // legacy shape). Tolerate both so chips don't render 0:00 when
+      // loaded from a persisted bundle.
+      const start = secondsOf(s.start_time ?? s.start_s ?? s.start ?? s.start_sec ?? s.startSec);
+      const end = secondsOf(s.end_time ?? s.end_s ?? s.end ?? s.end_sec ?? s.endSec);
       // Per-section guidance-mode classification (chord/riff/lead).
       // Persisted by ArrangementSection.to_dict; legacy bundles
       // (pre-milestone) lack the field and we default to chord so the
