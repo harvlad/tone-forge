@@ -226,6 +226,42 @@ class PipelineConfig:
         )
 
 
+def select_pipeline_config(
+    *, analysis_mode: Optional[str], fast_mode: bool
+) -> "PipelineConfig":
+    """Resolve a PipelineConfig factory from request-level mode fields.
+
+    Phase 0D unblocker: ``analysis_mode == "deep"`` MUST reach
+    ``PipelineConfig.deep()`` even when ``fast_mode`` retains its legacy
+    default of True. Before this helper, four ladder sites
+    (analyze, analyze-stream, analyze-url, analyze-url-stream) checked
+    ``fast_mode`` first, making the deep branch unreachable for any
+    client that did not explicitly pass ``fast_mode=False``.
+
+    Precedence (highest to lowest):
+      1. ``analysis_mode == "deep"``                 -> deep()
+      2. ``analysis_mode in {"quick", "fast"}``      -> fast()
+      3. ``fast_mode is True`` (legacy default path) -> fast()
+      4. otherwise                                    -> standard()
+
+    Legacy invariants preserved:
+      - Clients sending only ``fast_mode=True`` (or no fields)
+        still get fast(). (Rule 3.)
+      - Clients sending ``fast_mode=False`` with no analysis_mode
+        still get standard(). (Rule 4.)
+      - Clients sending ``fast_mode=False, analysis_mode="deep"``
+        still get deep(). (Rule 1.)
+    """
+    mode = (analysis_mode or "").strip().lower()
+    if mode == "deep":
+        return PipelineConfig.deep()
+    if mode in ("quick", "fast"):
+        return PipelineConfig.fast()
+    if fast_mode:
+        return PipelineConfig.fast()
+    return PipelineConfig.standard()
+
+
 # =============================================================================
 # Result Types
 # =============================================================================
@@ -600,6 +636,20 @@ class UnifiedPipeline:
             # 3. Separate stems (if configured)
             stems = {}
             should_separate = config.separate_stems and (detection.is_full_mix or config.force_stem_separation)
+            # Phase 0D instrumentation: emit a structured line per analysis so
+            # the next investigator can determine why stems were or were not
+            # generated from logs alone. Format is intentionally grep-friendly:
+            #   [stem-gate] mode=... detected_type=... separate_stems=... ...
+            logger.info(
+                "[stem-gate] mode=%s detected_type=%s is_full_mix=%s "
+                "separate_stems=%s force_stem_separation=%s should_separate=%s",
+                getattr(config.mode, "value", str(config.mode)),
+                getattr(detection, "detected_type", "unknown"),
+                bool(getattr(detection, "is_full_mix", False)),
+                bool(config.separate_stems),
+                bool(config.force_stem_separation),
+                bool(should_separate),
+            )
             if should_separate:
                 yield ProgressEvent("stems", "Separating stems (GPU)...", 20)
                 stage_start = time.time()

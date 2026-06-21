@@ -170,6 +170,7 @@ from tone_forge.unified_pipeline import (
     ProgressEvent,
     AnalysisResult,
     get_pipeline as get_unified_pipeline,
+    select_pipeline_config,
 )
 
 # Session engine — canonical SessionBundle assembler (Priority 5).
@@ -1162,13 +1163,10 @@ async def analyze_stream_endpoint(
     extract_midi_bool = extract_midi.lower() not in ("false", "0", "no")
     fast_mode_bool = fast_mode.lower() not in ("false", "0", "no")
 
-    # Build unified pipeline config
-    if fast_mode_bool:
-        config = PipelineConfig.fast()
-    elif analysis_mode.lower() == "deep":
-        config = PipelineConfig.deep()
-    else:
-        config = PipelineConfig.standard()
+    # Build unified pipeline config (Phase 0D: deep wins over fast_mode default).
+    config = select_pipeline_config(
+        analysis_mode=analysis_mode, fast_mode=fast_mode_bool
+    )
 
     # Apply options
     config.extract_midi = extract_midi_bool
@@ -4374,13 +4372,11 @@ async def analyze_url_endpoint(request: UrlAnalyzeRequest) -> JSONResponse:
     if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid URL format.")
 
-    # Build unified pipeline config
-    if request.fast_mode:
-        config = PipelineConfig.fast()
-    elif getattr(request, 'analysis_mode', 'studio').lower() == "deep":
-        config = PipelineConfig.deep()
-    else:
-        config = PipelineConfig.standard()
+    # Build unified pipeline config (Phase 0D: deep wins over fast_mode default).
+    config = select_pipeline_config(
+        analysis_mode=getattr(request, "analysis_mode", "studio"),
+        fast_mode=request.fast_mode,
+    )
 
     # Apply options from request
     config.extract_midi = request.extract_midi
@@ -4456,13 +4452,11 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
             }
         )
 
-    # Build unified pipeline config
-    if request.fast_mode:
-        config = PipelineConfig.fast()
-    elif getattr(request, 'analysis_mode', 'studio').lower() == "deep":
-        config = PipelineConfig.deep()
-    else:
-        config = PipelineConfig.standard()
+    # Build unified pipeline config (Phase 0D: deep wins over fast_mode default).
+    config = select_pipeline_config(
+        analysis_mode=getattr(request, "analysis_mode", "studio"),
+        fast_mode=request.fast_mode,
+    )
 
     # Apply options from request
     config.extract_midi = request.extract_midi
