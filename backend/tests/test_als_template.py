@@ -148,6 +148,120 @@ class TestCreateFromAnalysis:
         except ImportError:
             pytest.skip("pretty_midi not available")
 
+    def test_create_from_midi_stems_dict_notes_shape(self):
+        """Regression for the 2026-06-21 silent ALS-download failure.
+
+        Both `unified_pipeline._extract_midi_ensemble` (L1481-1489) and
+        `_extract_midi_basic` (L1532-1540) emit each midi_stems entry's
+        `notes` field as a list of dicts shaped
+        ``{"pitch", "start", "end", "velocity"}`` (added for the
+        arrangement view). Before the fix, `create_als_from_analysis`
+        attempted `note_data[:4]` on each dict, raised TypeError, and
+        the caller in preset_export silently substituted a JSON file
+        with content-type ``application/json`` — the client received
+        a `.json` masquerading as a Live Set and either failed to
+        download (browser opened it inline) or saved with the wrong
+        extension. This test locks the dict shape as a first-class
+        input so the regression cannot recur silently.
+        """
+        midi_stems = {
+            "drums": {
+                "label": "Drums",
+                "notes": [
+                    {"pitch": 36, "start": 0.0, "end": 0.25, "velocity": 110},
+                    {"pitch": 38, "start": 0.5, "end": 0.75, "velocity": 95},
+                ],
+            },
+            "bass": {
+                "label": "Bass",
+                "notes": [
+                    {"pitch": 28, "start": 0.0, "end": 1.0, "velocity": 90},
+                    {"pitch": 31, "start": 1.0, "end": 2.0, "velocity": 90},
+                    {"pitch": 33, "start": 2.0, "end": 3.0, "velocity": 90},
+                ],
+            },
+        }
+
+        als_bytes, filename = create_als_from_analysis(
+            name="Dict Shape Regression",
+            tempo_bpm=120.0,
+            key_root=0,
+            key_scale="major",
+            midi_stems=midi_stems,
+        )
+
+        assert filename.endswith(".als")
+
+        xml_str = gzip.decompress(als_bytes).decode("utf-8")
+        # Both tracks must render — no silent skip on TypeError.
+        assert "Drums MIDI" in xml_str
+        assert "Bass MIDI" in xml_str
+        # All 5 notes (2 drums + 3 bass) must reach the ALS.
+        assert xml_str.count("<MidiNoteEvent") == 5
+        # And velocities from the dict must round-trip exactly.
+        assert 'Velocity="110"' in xml_str
+        assert 'Velocity="95"' in xml_str
+        assert 'Velocity="90"' in xml_str
+
+    def test_create_from_midi_stems_mixed_dict_and_tuple_shapes(self):
+        """Verify dict and tuple note shapes coexist (one stem each).
+
+        Belt-and-suspenders: production today is all dicts, but tests
+        and some legacy paths still use tuples. The template must
+        accept either per-stem without conflict.
+        """
+        midi_stems = {
+            "drums": {  # tuple shape (test/legacy)
+                "label": "Drums",
+                "notes": [(36, 0.0, 0.1, 127)],
+            },
+            "bass": {  # dict shape (production)
+                "label": "Bass",
+                "notes": [
+                    {"pitch": 28, "start": 0.0, "end": 1.0, "velocity": 90},
+                ],
+            },
+        }
+
+        als_bytes, _ = create_als_from_analysis(
+            name="Mixed Shapes",
+            tempo_bpm=120.0,
+            key_root=0,
+            key_scale="major",
+            midi_stems=midi_stems,
+        )
+        xml_str = gzip.decompress(als_bytes).decode("utf-8")
+        assert "Drums MIDI" in xml_str
+        assert "Bass MIDI" in xml_str
+        assert xml_str.count("<MidiNoteEvent") == 2
+
+    def test_create_from_dict_notes_skips_malformed_entries(self):
+        """A dict missing required keys must be skipped, not crash."""
+        midi_stems = {
+            "bass": {
+                "label": "Bass",
+                "notes": [
+                    {"pitch": 28, "start": 0.0, "end": 1.0, "velocity": 90},
+                    {"pitch": 30, "start": 1.0},  # missing 'end' — skip
+                    {"start": 2.0, "end": 3.0, "velocity": 80},  # missing 'pitch' — skip
+                    {"pitch": 32, "start": 3.0, "end": 4.0},  # velocity defaults to 100
+                ],
+            },
+        }
+
+        als_bytes, _ = create_als_from_analysis(
+            name="Malformed",
+            tempo_bpm=120.0,
+            key_root=0,
+            key_scale="major",
+            midi_stems=midi_stems,
+        )
+        xml_str = gzip.decompress(als_bytes).decode("utf-8")
+        # 2 valid notes survive; 2 malformed entries silently dropped.
+        assert xml_str.count("<MidiNoteEvent") == 2
+        # The default velocity (100) is applied where 'velocity' is absent.
+        assert 'Velocity="100"' in xml_str
+
     def test_stem_order_preserved(self):
         """Verify stems are added in logical order."""
         midi_stems = {
@@ -231,6 +345,143 @@ class TestCreateFromAnalysis:
         assert '<LiveSet>' in xml_str
         # Should have no MIDI tracks
         assert 'MidiTrack' not in xml_str or xml_str.count('MidiTrack') == 0
+
+
+class TestDurationFidelity:
+    """Regression coverage for the tempo-aware minimum-duration floor.
+
+    Before 2026-06-21 the export floored every note duration to
+    `max(0.0625 beats, ...)` — a fixed 1/16-note floor that lengthened
+    any extractor-emitted note shorter than the 16th at the song's
+    tempo (e.g. anything under ~51 ms at 73 BPM, ~31 ms at 120 BPM).
+    The audit showed this silently mutated staccato/palm-muted attacks
+    from the CoreML MIDI extractor.
+
+    The floor is now a tempo-aware 10 ms wall-clock minimum — below
+    the human onset-perception threshold (~25 ms), so any legitimate
+    musical attack passes through unmodified while zero- and
+    near-zero-duration extractor edge cases are still padded to a
+    safe value Ableton can render.
+    """
+
+    @staticmethod
+    def _durations_in(als_bytes: bytes) -> list[float]:
+        """Extract every MidiNoteEvent Duration value from an .als blob."""
+        import re
+        xml_str = gzip.decompress(als_bytes).decode('utf-8')
+        return [
+            float(m.group(1))
+            for m in re.finditer(r'<MidiNoteEvent[^>]*Duration="([^"]+)"', xml_str)
+        ]
+
+    def test_25ms_note_preserved_exactly_at_120_bpm(self):
+        """A 25 ms note (0.05 beats at 120 BPM) is below the old 1/16 floor
+        (0.0625 beats) but above the new tempo-aware 10 ms floor
+        (0.02 beats at 120 BPM). Must pass through unmodified."""
+        midi_stems = {
+            "bass": {
+                "label": "Bass",
+                # (pitch, start_sec, end_sec, velocity); end-start = 0.025s
+                "notes": [(36, 0.0, 0.025, 100)],
+            },
+        }
+        als_bytes, _ = create_als_from_analysis(
+            name="Fidelity 25ms@120",
+            tempo_bpm=120.0,
+            key_root=0,
+            key_scale="major",
+            midi_stems=midi_stems,
+        )
+        durations = self._durations_in(als_bytes)
+        assert len(durations) == 1
+        # 0.025 sec at 120 BPM = 0.05 beats — must not be padded to 0.0625.
+        assert durations[0] == pytest.approx(0.05, abs=1e-4)
+
+    def test_25ms_note_preserved_exactly_at_73_bpm(self):
+        """At the Hotel California tempo (73 BPM) the old floor padded
+        anything under 51 ms to a 16th note. A 25 ms hit (0.03042 beats)
+        must now pass through; the new floor is 0.01217 beats."""
+        midi_stems = {
+            "bass": {
+                "label": "Bass",
+                "notes": [(36, 0.0, 0.025, 100)],
+            },
+        }
+        als_bytes, _ = create_als_from_analysis(
+            name="Fidelity 25ms@73",
+            tempo_bpm=73.0,
+            key_root=0,
+            key_scale="major",
+            midi_stems=midi_stems,
+        )
+        durations = self._durations_in(als_bytes)
+        assert len(durations) == 1
+        expected_beats = (0.025 / 60.0) * 73.0  # ~0.03042
+        assert durations[0] == pytest.approx(expected_beats, abs=1e-4)
+
+    def test_subfloor_note_padded_to_10ms_at_120_bpm(self):
+        """A 5 ms input note is below the 10 ms wall-clock floor; the
+        export must pad it to exactly 10 ms (0.02 beats at 120 BPM).
+        This protects Ableton from invalid sub-millisecond MIDI events
+        without lengthening anything perceptually audible."""
+        midi_stems = {
+            "bass": {
+                "label": "Bass",
+                "notes": [(36, 0.0, 0.005, 100)],
+            },
+        }
+        als_bytes, _ = create_als_from_analysis(
+            name="Floor 5ms@120",
+            tempo_bpm=120.0,
+            key_root=0,
+            key_scale="major",
+            midi_stems=midi_stems,
+        )
+        durations = self._durations_in(als_bytes)
+        assert len(durations) == 1
+        # 10 ms at 120 BPM = (10/1000) * (120/60) = 0.02 beats.
+        assert durations[0] == pytest.approx(0.02, abs=1e-4)
+
+    def test_zero_duration_note_padded_to_floor(self):
+        """A pathological zero-duration extractor emission must be padded
+        to the floor rather than rejected or written as Duration="0"."""
+        midi_stems = {
+            "bass": {
+                "label": "Bass",
+                "notes": [(36, 1.0, 1.0, 100)],
+            },
+        }
+        als_bytes, _ = create_als_from_analysis(
+            name="Zero duration",
+            tempo_bpm=120.0,
+            key_root=0,
+            key_scale="major",
+            midi_stems=midi_stems,
+        )
+        durations = self._durations_in(als_bytes)
+        assert len(durations) == 1
+        assert durations[0] == pytest.approx(0.02, abs=1e-4)
+
+    def test_long_note_unchanged(self):
+        """Sanity: a 1-beat note is well above the floor and must round-
+        trip exactly (no mutation, no quantization)."""
+        midi_stems = {
+            "bass": {
+                "label": "Bass",
+                # 0.5 sec at 120 BPM = 1.0 beat.
+                "notes": [(36, 0.0, 0.5, 100)],
+            },
+        }
+        als_bytes, _ = create_als_from_analysis(
+            name="Long note",
+            tempo_bpm=120.0,
+            key_root=0,
+            key_scale="major",
+            midi_stems=midi_stems,
+        )
+        durations = self._durations_in(als_bytes)
+        assert len(durations) == 1
+        assert durations[0] == pytest.approx(1.0, abs=1e-4)
 
 
 class TestBase64Export:

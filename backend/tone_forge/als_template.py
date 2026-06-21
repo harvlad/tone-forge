@@ -62,6 +62,32 @@ class MidiNote:
     velocity: int = 100
 
 
+# Minimum wall-clock note duration enforced in the ALS export.
+#
+# 10 ms is below human onset perception (~25 ms minimum perceptible
+# note length for pitched material), so legitimate musical attacks
+# — including staccato and palm-muted hits emitted by the CoreML
+# MIDI extractor — pass through unmodified. The floor only catches
+# zero- or near-zero-duration notes that would otherwise produce
+# invalid `<MidiNoteEvent Duration="0"/>` entries.
+#
+# Tempo-aware: converted to beats at the song's tempo so the same
+# wall-clock floor applies regardless of BPM. Previously this site
+# used a fixed 0.0625-beat (1/16-note) floor, which lengthened
+# sub-16th hits at every tempo (e.g. anything under ~51 ms at
+# 73 BPM, ~31 ms at 120 BPM). That over-padding was the headline
+# .als-export fidelity issue called out in the 2026-06-21 audit.
+_MIN_NOTE_DURATION_MS = 10.0
+
+
+def _min_duration_beats(tempo_bpm: float) -> float:
+    """Tempo-aware minimum note duration in beats.
+
+    See `_MIN_NOTE_DURATION_MS` for the rationale and provenance.
+    """
+    return (tempo_bpm / 60.0) * (_MIN_NOTE_DURATION_MS / 1000.0)
+
+
 def create_als_from_analysis(
     name: str,
     tempo_bpm: float,
@@ -131,19 +157,32 @@ def create_als_from_analysis(
         label = stem_data.get('label', stem_key.title())
         color = STEM_COLORS.get(stem_key, -1)
 
-        # Convert notes to MidiNote objects
+        # Convert notes to MidiNote objects. Accept either the dict
+        # shape emitted by unified_pipeline._extract_midi_{ensemble,basic}
+        # ({"pitch", "start", "end", "velocity"}) or the tuple shape
+        # (pitch, start_sec, end_sec, velocity) used by tests and by
+        # _extract_notes_from_midi_content's base64-MIDI decode path.
         notes = []
         for note_data in notes_raw:
-            if len(note_data) >= 4:
+            if isinstance(note_data, dict):
+                pitch = note_data.get('pitch')
+                start_sec = note_data.get('start')
+                end_sec = note_data.get('end')
+                vel = note_data.get('velocity', 100)
+                if pitch is None or start_sec is None or end_sec is None:
+                    continue
+            else:
+                if not hasattr(note_data, '__len__') or len(note_data) < 4:
+                    continue
                 pitch, start_sec, end_sec, vel = note_data[:4]
-                start_beats = (start_sec / 60.0) * tempo_bpm
-                duration_beats = ((end_sec - start_sec) / 60.0) * tempo_bpm
-                notes.append(MidiNote(
-                    pitch=int(pitch),
-                    start_beats=start_beats,
-                    duration_beats=max(0.0625, duration_beats),
-                    velocity=int(vel),
-                ))
+            start_beats = (float(start_sec) / 60.0) * tempo_bpm
+            duration_beats = ((float(end_sec) - float(start_sec)) / 60.0) * tempo_bpm
+            notes.append(MidiNote(
+                pitch=int(pitch),
+                start_beats=start_beats,
+                duration_beats=max(_min_duration_beats(tempo_bpm), duration_beats),
+                velocity=int(vel),
+            ))
 
         if notes:
             track_xml, auto_id = _create_midi_track(
@@ -1004,7 +1043,7 @@ def _notes_for_stem(stem_data: Dict, tempo_bpm: float) -> List[MidiNote]:
         notes.append(MidiNote(
             pitch=int(pitch),
             start_beats=start_beats,
-            duration_beats=max(0.0625, duration_beats),
+            duration_beats=max(_min_duration_beats(tempo_bpm), duration_beats),
             velocity=int(vel),
         ))
     return notes

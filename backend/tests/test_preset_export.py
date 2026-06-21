@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tone_forge.preset_export import (
     ExportedPreset,
+    export_ableton_live_set,
     export_helix_preset,
     export_hx_stomp_preset,
     export_json_preset,
@@ -294,6 +295,92 @@ class TestHelperFunctions:
         assert isinstance(block, dict)
         # Should have model or block info
         assert "@model" in block or "model" in block or len(block) > 0
+
+
+class TestExportAbletonLiveSet:
+    """Tests for export_ableton_live_set's loud-failure contract.
+
+    The pre-2026-06-21 implementation silently substituted a JSON
+    blob with content-type ``application/json`` whenever ALS
+    generation failed or input was missing. That swallowed both
+    user error ("no MIDI in this analysis") and template bugs
+    (the dict-shape regression). These tests lock the new contract:
+    failures raise; success returns a real ALS payload.
+    """
+
+    def test_missing_midi_stems_raises_value_error(self):
+        """No MIDI stems → ValueError, not a JSON masquerading as .als."""
+        with pytest.raises(ValueError, match="midi_stems"):
+            export_ableton_live_set(
+                full_result={"detected_type": "guitar"},  # no midi_stems
+                preset_name="empty",
+            )
+
+    def test_empty_midi_stems_dict_raises_value_error(self):
+        """An empty midi_stems dict is the same failure mode as missing."""
+        with pytest.raises(ValueError, match="midi_stems"):
+            export_ableton_live_set(
+                full_result={"midi_stems": {}},
+                preset_name="empty",
+            )
+
+    def test_success_path_returns_ableton_live_set_content_type(self):
+        """Happy path: dict-shape notes → real .als with the right MIME.
+
+        Mirrors the production midi_stems shape from
+        unified_pipeline._extract_midi_{ensemble,basic}.
+        """
+        full_result = {
+            "tempo_bpm": 120.0,
+            "midi_stems": {
+                "bass": {
+                    "label": "Bass",
+                    "notes": [
+                        {"pitch": 28, "start": 0.0, "end": 1.0, "velocity": 90},
+                    ],
+                },
+            },
+        }
+        result = export_ableton_live_set(full_result, preset_name="happy")
+        assert result.content_type == "application/x-ableton-live-set"
+        assert result.filename.endswith(".als")
+        assert result.format == "ableton_live_set"
+        # Content is base64-encoded gzipped XML — non-empty and decodable.
+        import base64, gzip
+        als_bytes = base64.b64decode(result.content)
+        xml_str = gzip.decompress(als_bytes).decode("utf-8")
+        assert "<Ableton" in xml_str
+        assert "Bass MIDI" in xml_str
+
+    def test_top_level_tempo_bpm_used_when_present(self):
+        """Phase-7 canonical session tempo wins over descriptor fallbacks.
+
+        Before the fix the per-stem ``tempo_bpm`` field (renamed to
+        ``extraction_tempo_bpm`` in commit 74e278f) was consulted as
+        a final fallback, but the top-level hoisted tempo was never
+        consulted at all. This test pins the new precedence.
+        """
+        full_result = {
+            "tempo_bpm": 73.0,  # canonical (e.g. Hotel California)
+            "guitar": {"descriptor": {"source": {"tempo_bpm": 999.0}}},  # legacy
+            "midi_stems": {
+                "bass": {
+                    "label": "Bass",
+                    "notes": [{"pitch": 28, "start": 0.0, "end": 1.0, "velocity": 90}],
+                },
+            },
+        }
+        result = export_ableton_live_set(full_result, preset_name="tempo_pref")
+        import base64, gzip, re
+        xml_str = gzip.decompress(base64.b64decode(result.content)).decode("utf-8")
+        # Top-level 73 BPM wins; the 999 descriptor value is ignored.
+        # The note is 1 sec long → at 73 BPM, that's 73/60 = ~1.2167 beats.
+        durations = [
+            float(m.group(1))
+            for m in re.finditer(r'<MidiNoteEvent[^>]*Duration="([^"]+)"', xml_str)
+        ]
+        assert len(durations) == 1
+        assert durations[0] == pytest.approx(73.0 / 60.0, abs=1e-3)
 
 
 if __name__ == "__main__":

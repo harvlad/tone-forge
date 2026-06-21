@@ -1010,19 +1010,21 @@ def export_ableton_live_set(
     """
     from . import als_template
 
-    # Extract tempo - check multiple sources
+    # Extract tempo. Phase 7 hoisted a canonical session tempo onto
+    # `full_result["tempo_bpm"]` (see unified_pipeline.AnalysisResult);
+    # the per-instrument descriptor fields are kept as legacy fallbacks
+    # for old bundles. The previous `midi_stems[*].tempo_bpm` fallback
+    # was orphaned by commit 74e278f (the per-stem field is now named
+    # `extraction_tempo_bpm` and is deliberately not the session tempo).
     tempo_bpm = 120.0  # Default
-    if full_result.get("guitar", {}).get("descriptor", {}).get("source", {}).get("tempo_bpm"):
+    if full_result.get("tempo_bpm"):
+        tempo_bpm = float(full_result["tempo_bpm"])
+    elif full_result.get("guitar", {}).get("descriptor", {}).get("source", {}).get("tempo_bpm"):
         tempo_bpm = full_result["guitar"]["descriptor"]["source"]["tempo_bpm"]
     elif full_result.get("synth", {}).get("descriptor", {}).get("tempo_bpm"):
         tempo_bpm = full_result["synth"]["descriptor"]["tempo_bpm"]
     elif full_result.get("drums", {}).get("descriptor", {}).get("tempo_bpm"):
         tempo_bpm = full_result["drums"]["descriptor"]["tempo_bpm"]
-    elif full_result.get("midi_stems"):
-        for stem_data in full_result["midi_stems"].values():
-            if stem_data.get("tempo_bpm"):
-                tempo_bpm = stem_data["tempo_bpm"]
-                break
 
     # Extract key info
     key_root = 0  # C
@@ -1046,43 +1048,38 @@ def export_ableton_live_set(
     # Get chords if available
     chords = full_result.get("chords", [])
 
-    # Check if we have enough data for a meaningful ALS
+    # Check if we have enough data for a meaningful ALS. Fail loudly
+    # rather than silently returning a JSON masquerading as a Live Set
+    # — see the 2026-06-21 regression where the dict-shape `notes`
+    # field from the new ensemble extractor tripped a template-side
+    # TypeError and the silent fallback emitted a `.json` file with
+    # MIME `application/json` that the client could not download as
+    # `.als`. The caller in tone_forge_api.export_preset wraps any
+    # exception raised here in an HTTPException(500) with the message
+    # verbatim, so the operator sees the actual failure.
     if not midi_stems:
-        # Fallback to project bundle if no MIDI data
-        logger.warning("No MIDI stems for ALS export, falling back to JSON")
-        return ExportedPreset(
-            filename=f"{preset_name}.json",
-            format="json",
-            content=json.dumps(full_result, indent=2, default=str),
-            content_type="application/json",
+        raise ValueError(
+            "Ableton Live Set export requires midi_stems in the analysis "
+            "result. Re-analyze with MIDI extraction enabled."
         )
 
-    # Create the ALS using template mutation
-    try:
-        als_b64, filename = als_template.create_als_from_analysis_base64(
-            name=preset_name,
-            tempo_bpm=tempo_bpm,
-            key_root=key_root,
-            key_scale=key_scale,
-            midi_stems=midi_stems,
-            chords=chords,
-        )
+    # Create the ALS using template mutation. Any exception in als_template
+    # propagates with the original traceback intact — no silent JSON fallback.
+    als_b64, filename = als_template.create_als_from_analysis_base64(
+        name=preset_name,
+        tempo_bpm=tempo_bpm,
+        key_root=key_root,
+        key_scale=key_scale,
+        midi_stems=midi_stems,
+        chords=chords,
+    )
 
-        return ExportedPreset(
-            filename=filename,
-            format="ableton_live_set",
-            content=als_b64,
-            content_type="application/x-ableton-live-set",
-        )
-    except Exception as e:
-        logger.error(f"ALS export failed: {e}", exc_info=True)
-        # Fallback to JSON on error
-        return ExportedPreset(
-            filename=f"{preset_name}.json",
-            format="json",
-            content=json.dumps(full_result, indent=2, default=str),
-            content_type="application/json",
-        )
+    return ExportedPreset(
+        filename=filename,
+        format="ableton_live_set",
+        content=als_b64,
+        content_type="application/x-ableton-live-set",
+    )
 
 
 def export_project_bundle(
