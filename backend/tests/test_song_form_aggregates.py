@@ -162,6 +162,44 @@ def test_shape_mismatch_per_stem_shorter_than_n_does_not_raise():
     assert out[2].vocal_activity_score == 0.0
 
 
+def test_energy_z_flags_low_energy_intro():
+    """A clearly-lower-energy first section gets a strongly
+    negative energy_z. Median sections sit near zero."""
+    # Energies: intro low, body uniform, outro low.
+    energies = [0.1, 0.6, 0.7, 0.65, 0.6, 0.7, 0.1]
+    out = aggregate_song_form({}, energies)
+    zs = [a.energy_z for a in out]
+    # First section: clearly negative.
+    assert zs[0] < -1.0
+    # Last section: clearly negative.
+    assert zs[-1] < -1.0
+    # Middle sections: near zero.
+    assert abs(zs[2]) < 1.0
+
+
+def test_energy_z_is_zero_for_constant_song():
+    """Constant energy across all sections → MAD and stdev both
+    zero → energy_z falls back to 0.0 everywhere."""
+    energies = [0.5, 0.5, 0.5, 0.5]
+    out = aggregate_song_form({}, energies)
+    assert all(a.energy_z == 0.0 for a in out)
+
+
+def test_energy_z_has_no_density_floor():
+    """Unlike drums, energy_z must not zero-out on quiet songs.
+    A low-but-uniform-bumpy energy track still produces non-zero
+    z-scores so a quieter intro section gets demoted."""
+    # All energies well below the drum-density floor (0.10), but
+    # one section is clearly lower than the rest.
+    energies = [0.001, 0.05, 0.05, 0.05]
+    out = aggregate_song_form({}, energies)
+    zs = [a.energy_z for a in out]
+    # First section is the outlier — z must be negative.
+    assert zs[0] < 0.0
+    # Median sections near zero.
+    assert abs(zs[2]) < 1e-6
+
+
 def test_aggregates_frozen():
     """SongFormAggregates is frozen — mutation must raise."""
     a = SongFormAggregates()

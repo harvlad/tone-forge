@@ -22,6 +22,7 @@ def _agg(
     drum_z: float = 0.0,
     ramp: float = 0.0,
     drum_rate: float = 0.0,
+    energy_z: float = 0.0,
 ) -> SongFormAggregates:
     """Shorthand for constructing a SongFormAggregates."""
     return SongFormAggregates(
@@ -29,6 +30,7 @@ def _agg(
         drum_density_per_s=drum_rate,
         drum_density_z=drum_z,
         energy_ramp_into_next=ramp,
+        energy_z=energy_z,
     )
 
 
@@ -227,6 +229,117 @@ def test_full_canonical_chain_intro_verse_prechorus_chorus_verse_chorus_outro():
         SectionType.CHORUS,
         SectionType.OUTRO,
     )
+
+
+# ---------------------------------------------------------------------------
+# Pass 4: edge-demotion (energy_z)
+# ---------------------------------------------------------------------------
+
+
+def test_low_energy_chorus_first_section_becomes_intro():
+    """Riff-uniform song: every Stage A label is CHORUS, but the
+    first section has clearly lower energy → demote to INTRO."""
+    types = (SectionType.CHORUS, SectionType.CHORUS, SectionType.CHORUS)
+    aggs = (
+        _agg(vocals=0.5, energy_z=-1.5),  # clearly lower energy
+        _agg(vocals=0.7, energy_z=0.4),
+        _agg(vocals=0.7, energy_z=0.4),
+    )
+    out = refine_section_types(types, aggs)
+    assert out[0] is SectionType.INTRO
+    assert out[1] is SectionType.CHORUS
+    assert out[2] is SectionType.CHORUS
+
+
+def test_low_energy_chorus_last_section_becomes_outro():
+    types = (SectionType.CHORUS, SectionType.CHORUS, SectionType.CHORUS)
+    aggs = (
+        _agg(vocals=0.7, energy_z=0.4),
+        _agg(vocals=0.7, energy_z=0.4),
+        _agg(vocals=0.5, energy_z=-1.5),
+    )
+    out = refine_section_types(types, aggs)
+    assert out[0] is SectionType.CHORUS
+    assert out[1] is SectionType.CHORUS
+    assert out[2] is SectionType.OUTRO
+
+
+def test_both_edges_demoted_when_riff_uniform_song_drops_at_both_ends():
+    """Birds-of-Tokyo shape: 5-section all-CHORUS Stage A with
+    low-energy edges at both ends."""
+    types = (
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+    )
+    aggs = (
+        _agg(vocals=0.4, energy_z=-1.4),
+        _agg(vocals=0.7, energy_z=0.5),
+        _agg(vocals=0.8, energy_z=0.6),
+        _agg(vocals=0.7, energy_z=0.5),
+        _agg(vocals=0.3, energy_z=-1.3),
+    )
+    out = refine_section_types(types, aggs)
+    assert out == (
+        SectionType.INTRO,
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.OUTRO,
+    )
+
+
+def test_edge_demotion_does_not_fire_above_ceiling():
+    """Edges with energy_z above ceiling stay CHORUS."""
+    types = (SectionType.CHORUS, SectionType.CHORUS, SectionType.CHORUS)
+    aggs = (
+        _agg(vocals=0.7, energy_z=-0.5),  # not low enough
+        _agg(vocals=0.7, energy_z=0.4),
+        _agg(vocals=0.7, energy_z=-0.5),  # not low enough
+    )
+    out = refine_section_types(types, aggs)
+    assert out == (SectionType.CHORUS, SectionType.CHORUS, SectionType.CHORUS)
+
+
+def test_edge_demotion_does_not_promote_verse_to_intro():
+    """Pass 4 only demotes CHORUS; a VERSE at the edge stays VERSE
+    even with very low energy_z."""
+    types = (SectionType.VERSE, SectionType.CHORUS, SectionType.VERSE)
+    aggs = (
+        _agg(vocals=0.4, energy_z=-2.0),
+        _agg(vocals=0.7, energy_z=0.5),
+        _agg(vocals=0.4, energy_z=-2.0),
+    )
+    out = refine_section_types(types, aggs)
+    assert out[0] is SectionType.VERSE
+    assert out[2] is SectionType.VERSE
+
+
+def test_edge_demotion_threshold_knob_wires_through():
+    """Tighter edge_energy_z_ceiling refuses to demote a borderline
+    edge that the default would have caught."""
+    types = (SectionType.CHORUS, SectionType.CHORUS, SectionType.CHORUS)
+    aggs = (
+        _agg(vocals=0.5, energy_z=-1.1),
+        _agg(vocals=0.7, energy_z=0.3),
+        _agg(vocals=0.7, energy_z=0.3),
+    )
+    # Default ceiling -1.0: -1.1 < -1.0 → INTRO.
+    assert refine_section_types(types, aggs)[0] is SectionType.INTRO
+    # Tighter ceiling -1.5: -1.1 NOT < -1.5 → CHORUS.
+    tighter = SongFormThresholds(edge_energy_z_ceiling=-1.5)
+    assert refine_section_types(types, aggs, tighter)[0] is SectionType.CHORUS
+
+
+def test_edge_demotion_single_section_no_op():
+    """n < 2 → Pass 4 cannot fire (the same section would be both
+    first and last edge)."""
+    types = (SectionType.CHORUS,)
+    aggs = (_agg(vocals=0.5, energy_z=-2.0),)
+    out = refine_section_types(types, aggs)
+    assert out == (SectionType.CHORUS,)
 
 
 # ---------------------------------------------------------------------------

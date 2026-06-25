@@ -62,6 +62,7 @@ section:
 | `drum_density_per_s` | drums-stem `note_count / duration_s` | BREAKDOWN (and as input to density z-score) |
 | `drum_density_z` | robust z-score of `drum_density_per_s` across the song (median + MAD, with a floor to avoid all-zero-drum songs) | BREAKDOWN |
 | `energy_ramp_into_next` | `(next.energy_mean − this.energy_mean) / this.energy_mean` | PRECHORUS, BUILDUP transition |
+| `energy_z` | robust z-score of `energy_mean` across the song (median + MAD, stdev fallback; no density floor) | Edge-demotion (riff-uniform-song INTRO/OUTRO recovery) |
 
 When a stem is absent (drums-only song, instrumental track), the
 relevant signal stays `0.0` and Stage B abstains — Stage A's label
@@ -69,12 +70,26 @@ survives.
 
 ## Refinement rules
 
-Stage B applies four rules to Stage A's output, in this order:
+Stage B applies five rules to Stage A's output, in this order:
+
+0. **Edge-demotion — CHORUS at first/last position with
+   `energy_z < edge_energy_z_ceiling` → INTRO/OUTRO.**
+   Catches riff-uniform songs where every section shares the same
+   chord progression (e.g. Birds of Tokyo — "If This Ship Sinks"):
+   H2 sees ANCHOR everywhere, Stage A maps every section to CHORUS,
+   but a clearly-lower-energy edge gives away the true intro/outro.
+   Runs first so that low-vocals edges (e.g. a quiet intro with
+   whisper-soft vocals) are demoted to INTRO before rule 1 would
+   otherwise re-classify them as INSTRUMENTAL.
+   One-sided: only demotes CHORUS at the edges; never promotes.
 
 1. **CHORUS + `vocal_activity_score < vocal_silence_ceiling` →
    INSTRUMENTAL.**
    One-sided threshold; only flips CHORUS down to INSTRUMENTAL,
-   never the reverse.
+   never the reverse. Gated on
+   `any(a.vocal_activity_score > 0 for a in aggregates)` so the
+   rule no-fires on songs whose bundle has no vocals stem at all
+   (B5a fix).
 
 2. **VERSE + next section is CHORUS + `energy_ramp_into_next >
    prechorus_ramp_floor` → PRECHORUS.**
@@ -101,10 +116,11 @@ Stage A label survives.
 
 ```python
 SongFormThresholds(
-    vocal_silence_ceiling = 0.15,
-    prechorus_ramp_floor  = 0.25,
-    breakdown_z_ceiling   = -1.0,
-    buildup_ramp_floor    = 0.40,
+    vocal_silence_ceiling  = 0.15,
+    prechorus_ramp_floor   = 0.25,
+    breakdown_z_ceiling    = -1.0,
+    buildup_ramp_floor     = 0.40,
+    edge_energy_z_ceiling  = -1.0,
 )
 ```
 

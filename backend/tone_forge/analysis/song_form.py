@@ -71,6 +71,14 @@ class SongFormThresholds:
     ``prechorus_ramp_floor`` because BUILDUP is the more
     visually-loaded annotation."""
 
+    edge_energy_z_ceiling: float = -1.0
+    """``energy_z`` below this — combined with "section is at the
+    first or last position AND Stage A labelled it CHORUS" — demotes
+    the edge to INTRO/OUTRO. Catches riff-uniform songs where H2
+    sees ANCHOR everywhere and Stage A maps every section to CHORUS,
+    but a clearly-lower-energy edge gives away the true intro/outro.
+    One-sided: only demotes CHORUS at edges, never promotes."""
+
 
 def refine_section_types(
     stage_a_types: Sequence[SectionType],
@@ -102,10 +110,32 @@ def refine_section_types(
     if len(aggregates) != n:
         return tuple(stage_a_types)
 
+    refined: list[SectionType] = list(stage_a_types)
+
+    # Pass 0: edge-demotion — riff-uniform songs where H2 sees
+    # ANCHOR everywhere and Stage A maps every section to CHORUS.
+    # A first/last section whose energy_z drops clearly below the
+    # song median is the true INTRO/OUTRO. Runs before the other
+    # passes so that low-vocals edges (e.g. a quiet intro with
+    # whisper-soft vocals) are demoted to INTRO before Pass 1
+    # would otherwise re-classify them as INSTRUMENTAL.
+    # One-sided: only demotes CHORUS at edges, never promotes.
+    if n >= 2:
+        if (
+            refined[0] is SectionType.CHORUS
+            and aggregates[0].energy_z < thresholds.edge_energy_z_ceiling
+        ):
+            refined[0] = SectionType.INTRO
+        if (
+            refined[n - 1] is SectionType.CHORUS
+            and aggregates[n - 1].energy_z < thresholds.edge_energy_z_ceiling
+        ):
+            refined[n - 1] = SectionType.OUTRO
+
     # Pass 1: INSTRUMENTAL — CHORUS with low vocals.
-    # Apply first so that later passes see the refined types
-    # (PRECHORUS detection should not treat an INSTRUMENTAL pass
-    # as a chorus to ramp into).
+    # Apply before PRECHORUS/BREAKDOWN so that later passes see the
+    # refined types (PRECHORUS detection should not treat an
+    # INSTRUMENTAL pass as a chorus to ramp into).
     #
     # Guard: only fires when at least one section in the song has
     # *some* vocal activity. When the vocals stem is absent entirely
@@ -114,7 +144,6 @@ def refine_section_types(
     # this guard, every CHORUS would be flipped to INSTRUMENTAL on
     # no-vocals songs. Mirrors the no-drum-song guard inside
     # ``_robust_z_scores``.
-    refined: list[SectionType] = list(stage_a_types)
     has_any_vocals = any(a.vocal_activity_score > 0.0 for a in aggregates)
     if has_any_vocals:
         for i in range(n):

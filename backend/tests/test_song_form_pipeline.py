@@ -202,6 +202,47 @@ def test_stage_b_no_vocals_stem_keeps_chorus_labels():
     assert SectionType.INSTRUMENTAL not in refined
 
 
+def test_stage_b_riff_uniform_song_low_energy_edges_demoted_to_intro_outro():
+    """Regression for the JAM "every section labeled chorus" bug
+    (Birds of Tokyo — "If This Ship Sinks").
+
+    A riff-uniform song where every section shares the same chord
+    progression makes H2 see ANCHOR everywhere; Stage A maps every
+    section to CHORUS. Stage B's Pass 4 (edge-demotion via
+    energy_z) should demote a clearly-lower-energy first/last
+    section back to INTRO/OUTRO.
+    """
+    # Stage A forced to all-CHORUS to mimic the all-ANCHOR H2
+    # output observed on the Birds-of-Tokyo bundle.
+    stage_a = (
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+    )
+    per_stem = {
+        "vocals": [
+            _vocals_row(lead_activity_score=0.2, voiced_frame_ratio=0.6),  # intro: quiet vocals
+            _vocals_row(lead_activity_score=0.6, voiced_frame_ratio=0.8),
+            _vocals_row(lead_activity_score=0.6, voiced_frame_ratio=0.8),
+            _vocals_row(lead_activity_score=0.6, voiced_frame_ratio=0.8),
+            _vocals_row(lead_activity_score=0.2, voiced_frame_ratio=0.6),  # outro
+        ],
+        "drums": [_drums_row(note_count=16.0)] * 5,
+    }
+    # Section 0 (intro) much lower energy than the body; section 4 (outro) tails off.
+    energy_means = [0.145, 0.65, 0.75, 0.70, 0.20]
+    aggregates = aggregate_song_form(per_stem, energy_means)
+    refined = refine_section_types(stage_a, aggregates)
+    assert refined[0] is SectionType.INTRO
+    assert refined[-1] is SectionType.OUTRO
+    # Middle three remain CHORUS.
+    assert refined[1] is SectionType.CHORUS
+    assert refined[2] is SectionType.CHORUS
+    assert refined[3] is SectionType.CHORUS
+
+
 def test_stage_b_defensive_no_op_with_empty_per_stem():
     """Empty per-stem dict + empty energy_means → empty aggregates →
     refine_section_types returns Stage A verbatim (defensive)."""

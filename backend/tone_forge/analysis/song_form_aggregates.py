@@ -83,6 +83,14 @@ class SongFormAggregates:
     the last section in the song. Used for PRECHORUS detection
     (when next is CHORUS) and BUILDUP transition annotation."""
 
+    energy_z: float = 0.0
+    """Robust z-score of ``energy_mean`` across the song (median +
+    MAD with stdev fallback). 0.0 when the song's energies are
+    constant or empty. Used by Stage B's edge-demotion rule to
+    catch riff-uniform songs where H2 sees ANCHOR everywhere and
+    Stage A maps every section to CHORUS: a clearly-lower-energy
+    edge gets demoted to INTRO/OUTRO."""
+
 
 def _get_attr_or_key(obj: Any, name: str, default: float = 0.0) -> float:
     """Read a field by either attribute or mapping key.
@@ -131,13 +139,12 @@ def _drum_density(row: Any) -> float:
     return note_count / duration
 
 
-def _robust_z_scores(values: Sequence[float]) -> tuple[float, ...]:
+def _robust_z_scores_core(values: Sequence[float]) -> tuple[float, ...]:
     """Median + MAD z-scores for a sequence of floats.
 
     Returns 0.0 for every entry when:
       - The sequence is empty.
-      - The median is below ``_DRUM_DENSITY_FLOOR`` (no-drum song).
-      - The MAD is zero (constant input; z is undefined).
+      - The MAD is zero AND stdev is zero (constant input).
 
     Robust to outliers (the all-quiet outro doesn't drag the median).
     """
@@ -145,16 +152,14 @@ def _robust_z_scores(values: Sequence[float]) -> tuple[float, ...]:
         return ()
     arr = np.asarray(values, dtype=np.float64)
     median = float(np.median(arr))
-    if median < _DRUM_DENSITY_FLOOR:
-        return tuple(0.0 for _ in values)
     mad = float(np.median(np.abs(arr - median)))
     if mad > 0.0:
         # 1.4826 scales MAD to match the standard deviation under a
-        # Gaussian; lets the ``breakdown_z_ceiling`` threshold be
-        # interpreted as "≈ N standard deviations below median".
+        # Gaussian; lets ceiling thresholds be interpreted as
+        # "≈ N standard deviations below median".
         scale = 1.4826 * mad
     else:
-        # Bimodal distribution: most sections share an exact density
+        # Bimodal distribution: most sections share an exact value
         # and one or two outliers differ. MAD collapses to zero;
         # fall back to plain stdev so the outlier still scores.
         std = float(np.std(arr))
@@ -162,6 +167,23 @@ def _robust_z_scores(values: Sequence[float]) -> tuple[float, ...]:
             return tuple(0.0 for _ in values)
         scale = std
     return tuple(float((v - median) / scale) for v in arr)
+
+
+def _robust_z_scores(values: Sequence[float]) -> tuple[float, ...]:
+    """Drum-density z-scores: ``_robust_z_scores_core`` plus a
+    no-drum-song guard.
+
+    Returns 0.0 for every entry when the median is below
+    ``_DRUM_DENSITY_FLOOR`` (no-drum song) so BREAKDOWN doesn't fire
+    on an acoustic ballad.
+    """
+    if not values:
+        return ()
+    arr = np.asarray(values, dtype=np.float64)
+    median = float(np.median(arr))
+    if median < _DRUM_DENSITY_FLOOR:
+        return tuple(0.0 for _ in values)
+    return _robust_z_scores_core(values)
 
 
 def aggregate_song_form(
@@ -233,12 +255,20 @@ def aggregate_song_form(
         denom = max(cur, _ENERGY_RAMP_DENOM_FLOOR)
         ramps.append((nxt - cur) / denom)
 
+    # Energy z-score: song-relative standardised energy. No
+    # density floor (unlike drums, energy is always meaningful;
+    # a silent intro is the signal we want to detect).
+    energy_zs = _robust_z_scores_core(energies[:n])
+    if len(energy_zs) < n:
+        energy_zs = energy_zs + tuple(0.0 for _ in range(n - len(energy_zs)))
+
     return tuple(
         SongFormAggregates(
             vocal_activity_score=vocal_scores[i],
             drum_density_per_s=drum_densities[i],
             drum_density_z=drum_zs[i],
             energy_ramp_into_next=ramps[i],
+            energy_z=energy_zs[i],
         )
         for i in range(n)
     )
