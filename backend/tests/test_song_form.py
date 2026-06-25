@@ -66,6 +66,26 @@ def test_chorus_with_high_vocals_stays_chorus():
     assert refine_section_types(types, aggs) == (SectionType.CHORUS,)
 
 
+def test_no_vocals_stem_does_not_trigger_instrumental():
+    """When the vocals stem is absent entirely (every section has
+    vocal_activity_score == 0.0), CHORUS labels must NOT flip to
+    INSTRUMENTAL. ``aggregate_song_form`` returns 0.0 for every
+    section when the vocals stem is missing; without this guard,
+    every CHORUS on an instrumental song (or a song bundled with
+    [guitar, bass, drums] only) would be relabeled.
+    """
+    types = (
+        SectionType.INTRO,
+        SectionType.VERSE,
+        SectionType.CHORUS,
+        SectionType.VERSE,
+        SectionType.CHORUS,
+        SectionType.OUTRO,
+    )
+    aggs = (_agg(vocals=0.0),) * 6
+    assert refine_section_types(types, aggs) == types
+
+
 def test_verse_before_chorus_with_strong_ramp_becomes_prechorus():
     types = (
         SectionType.INTRO,

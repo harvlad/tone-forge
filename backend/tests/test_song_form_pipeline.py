@@ -177,6 +177,31 @@ def test_stage_b_pop_bundle_breakdown_via_low_drum_density():
     assert refined[2] is SectionType.BREAKDOWN
 
 
+def test_stage_b_no_vocals_stem_keeps_chorus_labels():
+    """Regression for the JAM "every section labeled instrumental" bug.
+
+    When ``midi_stems`` contains [guitar, bass, drums] only (no vocals
+    stem at all), ``aggregate_song_form`` produces
+    ``vocal_activity_score == 0.0`` for every section. The Stage B
+    INSTRUMENTAL rule must NOT fire on this case; Stage A's CHORUS
+    labels survive.
+    """
+    stage_a = _stage_a_for_pop_bundle()
+    per_stem = {
+        "guitar": [_drums_row(note_count=8.0)] * 5,
+        "bass": [_drums_row(note_count=8.0)] * 5,
+        "drums": [_drums_row(note_count=16.0)] * 5,
+    }
+    energy_means = [0.5, 0.6, 0.5, 0.6, 0.5]
+    aggregates = aggregate_song_form(per_stem, energy_means)
+    refined = refine_section_types(stage_a, aggregates)
+    # Stage A's chorus labels (s1, s3) must survive.
+    assert refined[1] is SectionType.CHORUS
+    assert refined[3] is SectionType.CHORUS
+    # No INSTRUMENTAL at all.
+    assert SectionType.INSTRUMENTAL not in refined
+
+
 def test_stage_b_defensive_no_op_with_empty_per_stem():
     """Empty per-stem dict + empty energy_means → empty aggregates →
     refine_section_types returns Stage A verbatim (defensive)."""
