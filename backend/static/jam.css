@@ -472,6 +472,63 @@ html, body {
 }
 .section-pill:hover { border-color: var(--accent); }
 .section-pill.active { background: var(--accent); color: #1a0f06; border-color: var(--accent); }
+
+/* Phase-5 structural-role badge on section pills.
+ *
+ * Renders the ANCHOR/DEVELOPMENT/UNIQUE classification from
+ * backend/structural_role_classifier_design.md as a single-letter
+ * chip appended to the pill text. The pill TEXT still names the
+ * detected section type (Verse 1, Chorus, etc.); the badge surfaces
+ * how recurrent the chord trigrams in this section are versus the
+ * rest of the song.
+ *
+ * Color semantics:
+ *   ANCHOR      — warm accent (this is "the part you hear all song")
+ *   DEVELOPMENT — neutral panel (variation on the anchor material)
+ *   UNIQUE      — desaturated dim (one-off material: intro, bridge)
+ *
+ * Glyph stays 1 char to keep the bar legible on songs with many
+ * sections.
+ */
+.section-role-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+}
+.section-role-badge.role-anchor {
+  background: var(--accent);
+  color: #1a0f06;
+  border-color: var(--accent);
+}
+.section-role-badge.role-development {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--border);
+}
+.section-role-badge.role-unique {
+  background: transparent;
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+/* When the pill itself is the active loop region, keep the badge
+ * legible against the orange background by inverting only the
+ * anchor variant (which would otherwise blend in). */
+.section-pill.active .section-role-badge.role-anchor {
+  background: #1a0f06;
+  color: var(--accent);
+  border-color: #1a0f06;
+}
+.section-pill.active .section-role-badge.role-development,
+.section-pill.active .section-role-badge.role-unique {
+  border-color: #1a0f06;
+}
 .loop-status { color: var(--text-dim); font-size: 13px; margin-top: 10px; }
 
 /* ----------------------------------------------------- chord ribbon
@@ -539,21 +596,30 @@ html, body {
   font-weight: 700;
 }
 
-/* Guidance-mode visual gating intentionally NOT shipped yet.
+/* Guidance-mode visual gating intentionally still parked.
  *
  * The per-section classifier (analysis/guidance_mode.py) emits a
  * mode + confidence per section and JS reflects that on the chord
- * ribbon / lane via data-guidance-mode. We previously muted the
- * ribbon (opacity 0.45 + "reference" badge) and re-labelled the lane
- * on non-chord sections, but the synthetic-fixture-tuned thresholds
- * over-classify real songs as riff/lead — flipping the visuals on
- * sections that are still musically chord-shaped. Visual gating
- * stays parked here as a no-op until the classifier is calibrated
- * on a real-song corpus.
+ * ribbon / lane via data-guidance-mode. The synthetic-fixture-tuned
+ * thresholds over-classify real songs as riff/lead — flipping the
+ * visuals on sections that are still musically chord-shaped — so
+ * mode-based muting stays parked here as a no-op until the
+ * classifier is calibrated on a real-song corpus.
  *
- * The data attribute is still written so a future calibration pass
- * or a debug overlay can read it without re-plumbing.
+ * What IS shipped is the observation-based data-section-chordy
+ * gate (no classifier dependency). JS computes chord count + rate
+ * inside the active section in _applyGuidanceModeForActiveSection
+ * and emits data-section-chordy="true|false". When chordy=false
+ * the chord ribbon would be showing the rapid-flip garbage labels
+ * that the chord detector produces on picked notes (Birds-of-Tokyo
+ * failure mode), and the dual chord-bar / tab-lane display is hard
+ * to follow. We hide the ribbon entirely so the tab lane stands
+ * alone as the primary guidance. The chord-guidance NOW PLAYING
+ * card stays visible because it carries shape/finger info that's
+ * still useful when valid chord data exists (this is a no-op when
+ * the card already shows nothing because there are no chords).
  */
+#chord-ribbon[data-section-chordy="false"] { display: none; }
 
 /* ---------------------------------------------------------- buttons */
 button {
@@ -2115,6 +2181,97 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   font-family: inherit;
 }
 
+/* ─── Picking-tab-lane header + controls ──────────────────────────
+ * The LEAD PART panel grew a header row that pairs the label with
+ * Difficulty / Note-display selectors. The lane itself is rendered
+ * by picking-tab-lane.js::createTabLane into #chord-tab-body and
+ * scrolls notes past a fixed playhead. CSS only handles theming;
+ * geometry lives in the JS module. */
+.chord-tab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.chord-tab-controls {
+  display: inline-flex;
+  gap: 8px;
+}
+.tab-control-group {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.tab-control-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  min-width: 28px;
+  border-right: 1px solid var(--border);
+}
+.tab-control-group .tab-control-btn:last-child {
+  border-right: 0;
+}
+.tab-control-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+.tab-control-btn.is-active {
+  color: var(--bg);
+  background: var(--accent);
+}
+
+/* The scrolling tab SVG. Sits inside #chord-tab-body, alongside or
+   in place of the legacy renderLeadTabSVG output. */
+.picking-tab-lane {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 140px;
+}
+.picking-tab-lane .tab-string {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+.picking-tab-lane .tab-string-label {
+  fill: var(--text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  font-family: inherit;
+  letter-spacing: 0.05em;
+}
+.picking-tab-lane .tab-playhead {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  opacity: 0.85;
+}
+.picking-tab-lane .tab-note-dot {
+  fill: var(--accent);
+  opacity: 0.95;
+}
+.picking-tab-lane .tab-note-fret {
+  fill: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+}
+.picking-tab-lane .tab-note-name {
+  fill: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
 /* View-mode toggle row: Diagrams / Tab / Both. Mirrors the
    chord-snap-row typography so the two toggles look like a family. */
 .chord-view-mode-row {
@@ -2207,4 +2364,83 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
   font-size: 13px;
+}
+
+
+/* ─── NOW PLAYING view toggle ──────────────────────────────────────
+   Chord-diagram vs scrolling-tab-lane switcher inside the chord-now-
+   block. The Tab view shows landmark notes from picking-tab-lane.js;
+   the glyph subgroup lets the user A/B different rendering styles
+   (dot, fret number, note name) for effectiveness evaluation. */
+.chord-now-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 8px;
+  font-size: 12px;
+}
+.cv-toggle-btn,
+.cv-style-btn {
+  background: transparent;
+  border: 1px solid var(--border, #2c2c2c);
+  color: var(--text-dim, #888);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.4;
+}
+.cv-toggle-btn.is-active,
+.cv-style-btn.is-active {
+  background: var(--accent, #e8743b);
+  color: #0b0b0b;
+  border-color: var(--accent, #e8743b);
+}
+.cv-toggle-btn:hover:not(.is-active),
+.cv-style-btn:hover:not(.is-active) {
+  color: var(--text, #ddd);
+  border-color: var(--text-dim, #888);
+}
+.cv-style-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border, #2c2c2c);
+}
+
+/* The tab lane SVG fills the same horizontal envelope as the chord
+   diagram. Only one of {diagram, lane} is visible at a time; the
+   hidden attribute on either container drives display. */
+.chord-now-tab-lane {
+  width: 100%;
+  max-width: 360px;
+  margin: 0 auto;
+}
+.chord-now-tab-lane svg.picking-tab-lane {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.chord-now-tab-lane .tab-string {
+  stroke: var(--border, #2c2c2c);
+  stroke-width: 1;
+}
+.chord-now-tab-lane .tab-playhead {
+  stroke: var(--accent, #e8743b);
+  stroke-width: 1.5;
+}
+.chord-now-tab-lane .tab-string-label {
+  fill: var(--text-dim, #888);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.chord-now-tab-lane .tab-note-dot {
+  fill: var(--accent, #e8743b);
+}
+.chord-now-tab-lane .tab-note-fret,
+.chord-now-tab-lane .tab-note-name {
+  fill: var(--accent, #e8743b);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
 }

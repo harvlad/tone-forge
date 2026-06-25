@@ -103,6 +103,19 @@
     // analysis-complete so the tab renderer can slice [t0, t1)
     // without touching the network.
     leadMidiNotes: [],
+    // Picking-tab-lane instance (picking-tab-lane.js::createTabLane).
+    // Built lazily on the first _renderLeadTabLane call once
+    // ensureChordDiagramAssets resolved and notes are available.
+    // Reused for the whole session: difficulty/glyph changes call
+    // setLookahead / setGlyph rather than rebuilding the lane;
+    // section/chord changes don't rebuild either (lane shows the
+    // whole song's notes and scrolls).
+    tabLane: null,
+    // User prefs for the picking-tab-lane controls. Persisted to
+    // localStorage under TAB_LANE_PREFS_KEY. Difficulty selects the
+    // lookahead window (Beginner 4s, Intermediate 2s, Advanced 1s).
+    // Glyph selects the visual style (dot / fret / note).
+    tabLanePrefs: { difficulty: 'intermediate', glyph: 'dot' },
     // Loop window in seconds or null
     loop: null,
     // Web Audio context (created lazily on first play)
@@ -2321,13 +2334,41 @@
             velocity: typeof n.velocity === 'number' ? n.velocity : 80,
           }))
         : [];
+      // Phase-5 structural role (ANCHOR / DEVELOPMENT / UNIQUE).
+      // Persisted by ArrangementSection.to_dict and Section contract
+      // round-trip (see backend/structural_role_classifier_design.md).
+      // Pre-milestone bundles lack the field; render no badge in that
+      // case so legacy songs keep their plain pill. This is a
+      // structural-recurrence label, NOT a verse/chorus name — the
+      // pill text itself still shows the section type from the
+      // detector ("Verse 1", "Chorus", etc.).
+      const VALID_ROLES = { ANCHOR: 1, DEVELOPMENT: 1, UNIQUE: 1 };
+      const structuralRole = (typeof s.structural_role === 'string'
+        && VALID_ROLES[s.structural_role]) ? s.structural_role : '';
+      const structuralConfidence = typeof s.structural_confidence === 'number'
+        ? s.structural_confidence : 0.0;
       pill.textContent = `${label} ${formatTime(start)}`;
+      if (structuralRole) {
+        const badge = document.createElement('span');
+        badge.className = `section-role-badge role-${structuralRole.toLowerCase()}`;
+        // Short glyph: A / D / U. Confidence as tooltip; pill stays
+        // compact so a 20-section song still fits the bar.
+        const glyph = structuralRole.charAt(0);
+        badge.textContent = glyph;
+        badge.title = `Structural role: ${structuralRole} `
+          + `(confidence ${(structuralConfidence * 100).toFixed(0)}%) `
+          + '— chord-trigram recurrence over the section, not a '
+          + 'verse/chorus label.';
+        pill.appendChild(badge);
+        pill.classList.add(`section-pill-role-${structuralRole.toLowerCase()}`);
+      }
       pill.addEventListener('click', () => toggleSectionLoop({ name: label, startSec: start, endSec: end, el: pill }));
       bar.appendChild(pill);
       return {
         name: label, startSec: start, endSec: end, el: pill,
         guidanceMode, guidanceConfidence, guidanceReason,
         dominantStem, landmarkNotes,
+        structuralRole, structuralConfidence,
       };
     });
     // Fallback: when section detection returns nothing (some short
@@ -2345,6 +2386,7 @@
           name: 'Full song', startSec: 0, endSec: dur, el: pill,
           guidanceMode: 'chord', guidanceConfidence: 0.0, guidanceReason: '',
           dominantStem: '', landmarkNotes: [],
+          structuralRole: '', structuralConfidence: 0.0,
         }];
       } else {
         bar.innerHTML = '<div style="color: var(--text-dim); font-size:13px;">Section detection unavailable for this song</div>';
@@ -2410,6 +2452,18 @@
   const VALID_CHORD_VIEW_MODES = new Set(['diagrams', 'tab', 'both']);
   const VOICING_PREFS_KEY = 'toneforge.jam.voicings';
   const CHORD_OVERLAYS_KEY = 'toneforge.jam.overlays';
+  const TAB_LANE_PREFS_KEY = 'toneforge.jam.tabLane';
+  const VALID_TAB_DIFFICULTIES = new Set(['beginner', 'intermediate', 'advanced']);
+  const VALID_TAB_GLYPHS = new Set(['dot', 'fret', 'note']);
+  // Difficulty → lookahead seconds. Beginner gives ~4 seconds of
+  // anticipation (one bar at 60 BPM, two bars at 120 BPM); Advanced
+  // is read-as-you-play. Bars-based and continuous-slider modes are
+  // intentional follow-up scope.
+  const TAB_DIFFICULTY_LOOKAHEAD_S = {
+    beginner: 4.0,
+    intermediate: 2.0,
+    advanced: 1.0,
+  };
   try {
     const stored = localStorage.getItem(CHORD_VIEW_MODE_PREF_KEY);
     if (stored && VALID_CHORD_VIEW_MODES.has(stored)) {
@@ -2431,6 +2485,18 @@
           roman: !!parsed.roman,
           scales: !!parsed.scales,
         };
+      }
+    }
+    const tabPrefsStr = localStorage.getItem(TAB_LANE_PREFS_KEY);
+    if (tabPrefsStr) {
+      const parsed = JSON.parse(tabPrefsStr);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        if (VALID_TAB_DIFFICULTIES.has(parsed.difficulty)) {
+          state.tabLanePrefs.difficulty = parsed.difficulty;
+        }
+        if (VALID_TAB_GLYPHS.has(parsed.glyph)) {
+          state.tabLanePrefs.glyph = parsed.glyph;
+        }
       }
     }
   } catch (_) {
@@ -2607,8 +2673,9 @@
             nowSymbol, shape,
             { highlighted: true, hideTitle: true },
           );
-          if (svg) nowDiagramEl.appendChild(svg);
-          else {
+          if (svg) {
+            nowDiagramEl.appendChild(svg);
+          } else {
             const txt = document.createElement('div');
             txt.className = 'chord-diagram-empty';
             txt.textContent = nowSymbol;
@@ -2641,6 +2708,20 @@
     // button is hidden otherwise. On click we prompt for the
     // corrected chord and POST it as evidence.
     _refreshReportWrongAffordance(nowSymbol);
+
+    // Bind the chord/tab view toggle once. Idempotent: subsequent
+    // calls short-circuit on the `bound` flag.
+    _bindTabLaneToggle();
+    // Keep the lane's notes in sync when a fresh analysis loads. We
+    // re-pull lead notes on every render of the chord guidance card;
+    // setNotes is a one-shot rebuild but cheap (≪10ms for typical
+    // guitar-stem MIDI <2000 notes) and only runs when the lane
+    // instance already exists.
+    if (state.tabLaneView.instance) {
+      try {
+        state.tabLaneView.instance.setNotes(_pickLeadMidiNotes(state.r));
+      } catch (_) { /* defensive: never block chord guidance render */ }
+    }
   }
 
   // Phase 7 — bind / refresh the "Report wrong" button. Idempotent;
@@ -2867,6 +2948,110 @@
   // ~10Hz via _chordCountdownLastTextTs throttle, so we don't churn
   // the DOM 60 times per second for a value that only changes every
   // 100ms in user-visible precision.
+  // ─── NOW PLAYING view toggle (chord diagram vs picking-tab lane) ──
+  //
+  // Single source of truth lives on `state.tabLaneView`:
+  //   active : boolean  — is the tab lane currently shown?
+  //   glyph  : 'dot' | 'fret' | 'note' — current style for evaluation
+  //   instance : TabLane handle from createTabLane() or null
+  //
+  // The instance is created lazily on the first switch to 'tab' view
+  // (avoids loading picking-tab-lane.js when the user never opens the
+  // toggle). Notes are pulled via the existing _pickLeadMidiNotes()
+  // helper so the picker stays the canonical lead-stem chooser.
+  state.tabLaneView = state.tabLaneView || {
+    active: false, glyph: 'dot', instance: null,
+  };
+
+  function _ensureTabLane() {
+    const tlv = state.tabLaneView;
+    if (tlv.instance) return Promise.resolve(tlv.instance);
+    const host = document.getElementById('chord-now-tab-lane');
+    if (!host) return Promise.resolve(null);
+    return import('/static/picking-tab-lane.js').then((mod) => {
+      if (tlv.instance) return tlv.instance;  // race-safe
+      tlv.instance = mod.createTabLane(host, { glyph: tlv.glyph });
+      const notes = _pickLeadMidiNotes(state.r);
+      tlv.instance.setNotes(notes);
+      return tlv.instance;
+    }).catch((err) => {
+      try { console.warn('[tab-lane] failed to load:', err); } catch (_) {}
+      return null;
+    });
+  }
+
+  function _applyTabLaneActive(active) {
+    const tlv = state.tabLaneView;
+    tlv.active = !!active;
+    const diagram = document.getElementById('chord-now-diagram');
+    const lane = document.getElementById('chord-now-tab-lane');
+    const styleGroup = document.getElementById('cv-style-group');
+    if (diagram) diagram.hidden = tlv.active;
+    if (lane) lane.hidden = !tlv.active;
+    if (styleGroup) styleGroup.hidden = !tlv.active;
+    // Reflect on toggle button is-active classes.
+    const toggleRoot = document.getElementById('chord-now-view-toggle');
+    if (toggleRoot) {
+      const buttons = toggleRoot.querySelectorAll('.cv-toggle-btn');
+      buttons.forEach((b) => {
+        const isMatch = (b.getAttribute('data-view') === (tlv.active ? 'tab' : 'chord'));
+        b.classList.toggle('is-active', isMatch);
+      });
+    }
+    if (tlv.active) _ensureTabLane();
+  }
+
+  function _applyTabLaneGlyph(glyph) {
+    const tlv = state.tabLaneView;
+    if (glyph !== 'dot' && glyph !== 'fret' && glyph !== 'note') return;
+    tlv.glyph = glyph;
+    if (tlv.instance && typeof tlv.instance.setGlyph === 'function') {
+      tlv.instance.setGlyph(glyph);
+    }
+    const styleGroup = document.getElementById('cv-style-group');
+    if (styleGroup) {
+      const buttons = styleGroup.querySelectorAll('.cv-style-btn');
+      buttons.forEach((b) => {
+        b.classList.toggle('is-active', b.getAttribute('data-glyph') === glyph);
+      });
+    }
+  }
+
+  // Per-frame: drive the tab lane's playhead. Cheap no-op when the
+  // lane isn't active (the instance is also still in DOM but hidden;
+  // we skip the transform mutation in that case).
+  function _updateTabLane(t) {
+    const tlv = state.tabLaneView;
+    if (!tlv.active || !tlv.instance) return;
+    if (typeof t !== 'number' || !isFinite(t)) return;
+    tlv.instance.update(t);
+  }
+
+  // Idempotent wireup of the toggle bar's click handlers. Called once
+  // after the chord-guidance UI is in the DOM; the buttons are bound
+  // via event delegation on the toggle root so we don't re-bind on
+  // every chord-change tick.
+  function _bindTabLaneToggle() {
+    const root = document.getElementById('chord-now-view-toggle');
+    if (!root || root.dataset.bound === '1') return;
+    root.dataset.bound = '1';
+    root.addEventListener('click', (ev) => {
+      const t = ev.target;
+      if (!(t instanceof Element)) return;
+      const viewBtn = t.closest('.cv-toggle-btn');
+      if (viewBtn) {
+        const v = viewBtn.getAttribute('data-view');
+        _applyTabLaneActive(v === 'tab');
+        return;
+      }
+      const styleBtn = t.closest('.cv-style-btn');
+      if (styleBtn) {
+        const g = styleBtn.getAttribute('data-glyph');
+        _applyTabLaneGlyph(g);
+      }
+    });
+  }
+
   let _chordCountdownLastText = '';
   function _updateChordCountdown(t, activeIdx) {
     const el = document.getElementById('chord-countdown');
@@ -3153,66 +3338,131 @@
     wire('chord-overlay-scales', 'scales');
   })();
 
-  // Render the LEAD PART / RIFF lane for the active section's time
-  // window — widened from per-chord so an intro phrase that spans
-  // multiple chords appears as one cohesive riff. Falls back to the
-  // per-chord window when section info is missing.
-  function _renderLeadTabLane(activeIdx) {
+  // Persist picking-tab-lane prefs (difficulty + glyph). Keyed under
+  // TAB_LANE_PREFS_KEY; private-mode failures are silently swallowed
+  // so the runtime UI keeps working even if storage rejects writes.
+  function _persistTabLanePrefs() {
+    try {
+      localStorage.setItem(
+        TAB_LANE_PREFS_KEY,
+        JSON.stringify(state.tabLanePrefs),
+      );
+    } catch (_) {}
+  }
+
+  // Wire the segmented Difficulty + Glyph controls inside the LEAD
+  // PART / RIFF panel. Click a button → update state + persist +
+  // push the change to the active tabLane (if built). is-active
+  // class is toggled here too so the visual state matches the
+  // pref store on initial load.
+  (function wireTabLaneControls() {
+    const controls = document.querySelector('.chord-tab-controls');
+    if (!controls) return;
+    // Sync initial visual state to persisted prefs.
+    controls.querySelectorAll('[data-difficulty]').forEach((btn) => {
+      btn.classList.toggle('is-active',
+        btn.dataset.difficulty === state.tabLanePrefs.difficulty);
+    });
+    controls.querySelectorAll('[data-glyph]').forEach((btn) => {
+      btn.classList.toggle('is-active',
+        btn.dataset.glyph === state.tabLanePrefs.glyph);
+    });
+    controls.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button.tab-control-btn');
+      if (!btn) return;
+      if (btn.dataset.difficulty
+          && VALID_TAB_DIFFICULTIES.has(btn.dataset.difficulty)) {
+        const d = btn.dataset.difficulty;
+        state.tabLanePrefs.difficulty = d;
+        _persistTabLanePrefs();
+        // Update segmented visual.
+        controls.querySelectorAll('[data-difficulty]').forEach((b) => {
+          b.classList.toggle('is-active', b.dataset.difficulty === d);
+        });
+        // Apply to the live lane if it's built — re-laying out the
+        // notes group with the new pxPerSec. Then snap the playhead.
+        if (state.tabLane) {
+          const s = TAB_DIFFICULTY_LOOKAHEAD_S[d] || 2.0;
+          state.tabLane.setLookahead(s);
+          try { state.tabLane.update(currentPlayTime()); } catch (_) {}
+        }
+      } else if (btn.dataset.glyph
+          && VALID_TAB_GLYPHS.has(btn.dataset.glyph)) {
+        const g = btn.dataset.glyph;
+        state.tabLanePrefs.glyph = g;
+        _persistTabLanePrefs();
+        controls.querySelectorAll('[data-glyph]').forEach((b) => {
+          b.classList.toggle('is-active', b.dataset.glyph === g);
+        });
+        if (state.tabLane) {
+          state.tabLane.setGlyph(g);
+          try { state.tabLane.update(currentPlayTime()); } catch (_) {}
+        }
+      }
+    });
+  })();
+
+  // Render (or, after first call, no-op) the scrolling LEAD PART /
+  // RIFF lane. Replaces the prior static per-section renderer: the
+  // scrolling lane shows the whole song's MIDI notes once and slides
+  // them past a fixed playhead via tickClock-driven transforms, so
+  // there's nothing to re-render on chord transitions. The activeIdx
+  // arg is retained for call-site compatibility but is now unused.
+  //
+  // Building the lane requires:
+  //   * state.chords populated (we gate visibility on this)
+  //   * state.leadMidiNotes populated (the scrolling data source)
+  // If notes are still empty at first invocation, drops a
+  // placeholder; the next chord change re-enters this function and
+  // re-attempts.
+  function _renderLeadTabLane(_activeIdx) {  // eslint-disable-line no-unused-vars
     const lane = document.getElementById('chord-tab-queue');
     const body = document.getElementById('chord-tab-body');
     if (!lane || !body) return;
     if (!Array.isArray(state.chords) || state.chords.length === 0) return;
-    if (activeIdx < 0 || activeIdx >= state.chords.length) return;
+    // Already built — the lane is session-lived; difficulty / glyph
+    // changes route through setLookahead / setGlyph, not rebuild.
+    if (state.tabLane) return;
 
-    const chord = state.chords[activeIdx];
-    // Prefer the active section's window so an intro riff that spans
-    // 4 chords renders as one phrase. If no section info, fall back
-    // to the chord's own [startSec, endSec).
-    const section = _findSectionAt(chord.startSec);
-    const t0 = section ? section.startSec : chord.startSec;
-    const t1 = section ? section.endSec : chord.endSec;
-
-    body.innerHTML = '';
-    // Engine fix #6: when the section carries engine-provided
-    // ``landmarkNotes`` (already density-capped at max=12 and ranked
-    // by clipped in-window duration via select_landmark_notes), use
-    // them directly. This is the source-of-truth path that fixes the
-    // dense-section smear by trusting the engine's pre-selected
-    // notes instead of slamming the whole stem's notes into the
-    // lane and letting the renderer overdraw.
-    //
-    // When the section lacks landmark notes (legacy bundles or
-    // empty-section fallbacks), fall back to the per-song
-    // ``state.leadMidiNotes`` walk so nothing regresses for older
-    // sessions.
-    let notes;
-    if (section
-        && Array.isArray(section.landmarkNotes)
-        && section.landmarkNotes.length > 0) {
-      notes = section.landmarkNotes;
-    } else {
-      notes = Array.isArray(state.leadMidiNotes) ? state.leadMidiNotes : [];
-    }
+    const notes = Array.isArray(state.leadMidiNotes) ? state.leadMidiNotes : [];
     if (notes.length === 0) {
+      // Render placeholder; don't return early on the lane build, so
+      // a later call (after leadMidiNotes populates) can retry.
+      body.innerHTML = '';
       const placeholder = document.createElement('div');
       placeholder.className = 'chord-tab-empty';
-      placeholder.textContent = 'No lead phrase detected for this region';
+      placeholder.textContent = 'No lead phrase detected for this song';
       body.appendChild(placeholder);
       return;
     }
 
-    ensureChordDiagramAssets().then((assets) => {
-      if (!assets || !assets.mod) return;
-      const svg = assets.mod.renderLeadTabSVG(notes, t0, t1, { highlighted: true });
-      body.innerHTML = '';
-      if (svg) {
-        body.appendChild(svg);
-      } else {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'chord-tab-empty';
-        placeholder.textContent = 'No lead phrase detected for this region';
-        body.appendChild(placeholder);
+    const lookaheadS =
+      TAB_DIFFICULTY_LOOKAHEAD_S[state.tabLanePrefs.difficulty] || 2.0;
+
+    body.innerHTML = '';
+    // Lazy-import the scrolling lane module. ensureChordDiagramAssets
+    // already paid the network cost for the chord_diagrams.js it
+    // imports for STANDARD_TUNING, so this is a near-instant resolve.
+    import('/static/picking-tab-lane.js').then((mod) => {
+      if (state.tabLane) return; // race-guard (another caller built it)
+      // Defensive: body may have been overwritten by another render
+      // (rare, but the chord-now panel does shuffle DOM on chord change).
+      if (!body.isConnected) return;
+      try {
+        state.tabLane = mod.createTabLane(body, {
+          notes,
+          lookaheadS,
+          glyph: state.tabLanePrefs.glyph,
+        });
+        // Snap the playhead transform to the current play time
+        // immediately so a paused user sees notes positioned even
+        // before the next tick.
+        try { state.tabLane.update(currentPlayTime()); } catch (_) {}
+      } catch (e) {
+        console.warn('[jam] picking-tab-lane build failed:', e);
       }
+    }).catch((e) => {
+      console.warn('[jam] picking-tab-lane import failed:', e);
     });
   }
 
@@ -3226,22 +3476,70 @@
   }
 
   // Reflect the current section's guidance_mode on the chord-ribbon
-  // and lead/riff lane DOM via data attributes. The CSS rules that
-  // would *visually* mute the ribbon and re-label the lane on
-  // riff/lead sections are intentionally not shipped yet — the
-  // synthetic-fixture-tuned classifier thresholds over-classify
-  // real songs, so flipping the visuals here would mis-mute chord
-  // ribbons on songs that are still musically chord-shaped. Setting
-  // the data attribute remains harmless: a future calibration pass
-  // or a debug overlay can read it without re-plumbing.
+  // and lead/riff lane DOM via data attributes. The CSS rule that
+  // would *visually* mute the ribbon based on guidance_mode is
+  // intentionally still parked (synthetic-fixture-tuned classifier
+  // thresholds over-classify real songs).
+  //
+  // What IS shipped here is a separate, observation-based signal:
+  // ``data-section-chordy``. The chord detector mislabels rapid
+  // picked notes as a churn of single-pitch "chords" (the Birds-of-
+  // Tokyo failure mode), and running the chord ribbon in parallel
+  // with the LEAD PART / RIFF lane is hard to follow on those
+  // sections. We compute chord-region count + chord-change rate
+  // inside the active section directly from ``state.chords`` (no
+  // classifier dependency), and hide the ribbon via CSS when the
+  // numbers say there's nothing musically chordal to anchor on.
   function _applyGuidanceModeForActiveSection(t) {
     const mode = _currentGuidanceMode(t);
+    const section = _findSectionAt(t);
     const ribbon = document.getElementById('chord-ribbon');
     const guidance = document.getElementById('chord-guidance');
     const lane = document.getElementById('chord-tab-queue');
-    if (ribbon) ribbon.setAttribute('data-guidance-mode', mode);
+    const laneLabel = lane ? lane.querySelector('.chord-tab-label') : null;
+
+    // Section-chordy signal — pure observation, no classifier.
+    //   * count = chord regions whose midpoint falls inside the
+    //             section window [startSec, endSec).
+    //   * rate  = count / max(duration, 0.5)  (chord changes/sec)
+    //
+    // A section is "chordy" when count > 0 AND rate ≤ 1.2/s. Above
+    // 1.2/s the chord detector is almost certainly churning fake
+    // chord labels on picked notes; below it we trust the labels.
+    // Floor of 0.5 on duration prevents divide-by-noise on very
+    // short opener/closer sections.
+    let chordy = true;
+    if (section && Array.isArray(state.chords) && state.chords.length > 0) {
+      const s0 = section.startSec;
+      const s1 = section.endSec;
+      let count = 0;
+      for (const c of state.chords) {
+        const mid = (c.startSec + c.endSec) / 2;
+        if (mid >= s0 && mid < s1) count++;
+      }
+      const dur = Math.max(0.5, s1 - s0);
+      const rate = count / dur;
+      chordy = count > 0 && rate <= 1.2;
+    }
+    const chordyAttr = chordy ? 'true' : 'false';
+
+    if (ribbon) {
+      ribbon.setAttribute('data-guidance-mode', mode);
+      ribbon.setAttribute('data-section-chordy', chordyAttr);
+    }
     if (guidance) guidance.setAttribute('data-guidance-mode', mode);
-    if (lane) lane.setAttribute('data-guidance-mode', mode);
+    if (lane) {
+      lane.setAttribute('data-guidance-mode', mode);
+      lane.setAttribute('data-section-chordy', chordyAttr);
+    }
+    // Re-label the lane header so the user knows the lane is the
+    // primary guidance for this section when the chord ribbon is
+    // suppressed. Pure text swap — CSS handles ribbon visibility.
+    if (laneLabel) {
+      laneLabel.textContent = chordy
+        ? 'LEAD PART / RIFF'
+        : 'LEAD PART / RIFF (primary)';
+    }
   }
 
   // Active-chord-change dispatcher. Called from inside
@@ -3447,6 +3745,8 @@
     // actual DOM write so churn is bounded to ~10Hz user-visible
     // precision).
     _updateChordCountdown(t, highlightIdx);
+    // Tab-lane playhead — no-op when the lane isn't active.
+    _updateTabLane(t);
 
     strip.style.transform = `translateX(${-activeCentrePx}px)`;
   }
@@ -3999,8 +4299,13 @@
       state.playOffset = target;
       $('t-time').textContent = `${formatTime(target)} / ${formatTime(state.duration)}`;
       // While paused, tickClock isn't running, so the ribbon needs an
-      // explicit nudge when the user seeks via a section pill.
+      // explicit nudge when the user seeks via a section pill. The
+      // tab lane gets the same nudge so paused scrub-clicks reposition
+      // the scrolling notes; no-op when the lane isn't built.
       updateChordPlayhead(target);
+      if (state.tabLane) {
+        try { state.tabLane.update(target); } catch (_) {}
+      }
       try { drawWaveform(); } catch (_) {}
     }
   }
@@ -4012,6 +4317,13 @@
     // JAM Alpha chord ribbon: cheap per-frame update (O(log n) binary
     // search + one style write). No-op when state.chords is empty.
     updateChordPlayhead(t);
+    // Picking-tab-lane: shift the notes group transform so the
+    // playhead-anchored note window matches t. One SVG attribute
+    // write — cheaper than the ribbon update. No-op when the lane
+    // hasn't been built yet (song without lead MIDI, or pre-build).
+    if (state.tabLane) {
+      try { state.tabLane.update(t); } catch (_) { /* keep ticking */ }
+    }
     // v2 waveform playhead. Cheap canvas redraw (~1600 bars + 1 line).
     drawWaveform();
     // Looping: jump back to loop start when we cross the end.

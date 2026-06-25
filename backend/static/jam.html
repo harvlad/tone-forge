@@ -4,14 +4,15 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=22" />
+<link rel="stylesheet" href="/static/jam.css?v=25" />
 </head>
 <body>
 <header class="jam-header">
   <a class="brand" href="/">ToneForge</a>
   <nav>
     <a class="active" href="/jam">Jam</a>
-    <a href="/">Studio</a>
+    <a href="/studio">Studio</a>
+    <a href="/debug">Debug</a>
   </nav>
 </header>
 
@@ -474,7 +475,21 @@
               <span class="chord-overlay-nashville" id="chord-now-nashville" hidden></span>
               <span class="chord-overlay-roman" id="chord-now-roman" hidden></span>
             </div>
+            <!-- View toggle: chord diagram (default) vs scrolling tab
+                 lane. The tab lane consumes the lead-stem MIDI through
+                 picking-tab-lane.js; glyph buttons let the user
+                 evaluate dot vs fret-number vs note-name styles. -->
+            <div class="chord-now-view-toggle" id="chord-now-view-toggle">
+              <button class="cv-toggle-btn is-active" data-view="chord" type="button">Chord</button>
+              <button class="cv-toggle-btn" data-view="tab" type="button">Tab</button>
+              <span class="cv-style-group" id="cv-style-group" hidden>
+                <button class="cv-style-btn is-active" data-glyph="dot" type="button">Dot</button>
+                <button class="cv-style-btn" data-glyph="fret" type="button">Fret</button>
+                <button class="cv-style-btn" data-glyph="note" type="button">Note</button>
+              </span>
+            </div>
             <div class="chord-now-diagram" id="chord-now-diagram"></div>
+            <div class="chord-now-tab-lane" id="chord-now-tab-lane" hidden></div>
             <div class="chord-overlay-scales" id="chord-now-scale" hidden></div>
             <!-- Footer: countdown to next chord change + transition
                  hint ("Barre at fret 1", "Move one finger only", ...).
@@ -531,7 +546,26 @@
              explanatory placeholder when no MIDI notes are detected
              (per the "no blank cards" UX rule). -->
         <div id="chord-tab-queue" class="chord-tab-queue" data-guidance-mode="chord" hidden>
-          <div class="chord-tab-label">LEAD PART / RIFF</div>
+          <div class="chord-tab-header">
+            <div class="chord-tab-label">LEAD PART / RIFF</div>
+            <!-- Picking-tab-lane controls. Difficulty drives the
+                 lookahead window (Beginner = more lead time, Advanced
+                 = read-as-you-play). Glyph picks the visual style of
+                 each plucked note. Both prefs persist to localStorage
+                 (jam.tabLane.difficulty / jam.tabLane.glyph). -->
+            <div class="chord-tab-controls">
+              <div class="tab-control-group" role="radiogroup" aria-label="Difficulty">
+                <button type="button" class="tab-control-btn" data-difficulty="beginner" title="Beginner — 4s lookahead">Beg</button>
+                <button type="button" class="tab-control-btn is-active" data-difficulty="intermediate" title="Intermediate — 2s lookahead">Int</button>
+                <button type="button" class="tab-control-btn" data-difficulty="advanced" title="Advanced — 1s lookahead">Adv</button>
+              </div>
+              <div class="tab-control-group" role="radiogroup" aria-label="Note display">
+                <button type="button" class="tab-control-btn is-active" data-glyph="dot" title="Dot on string row">●</button>
+                <button type="button" class="tab-control-btn" data-glyph="fret" title="Fret number">7</button>
+                <button type="button" class="tab-control-btn" data-glyph="note" title="Note name">E</button>
+              </div>
+            </div>
+          </div>
           <div class="chord-tab-body" id="chord-tab-body"></div>
         </div>
         <!-- Beat-snap toggle: switches the chord ribbon between
@@ -581,6 +615,6 @@
   </section>
 </main>
 
-<script src="/static/jam.js?v=38"></script>
+<script src="/static/jam.js?v=42"></script>
 </body>
 </html>
