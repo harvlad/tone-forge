@@ -27,10 +27,25 @@ Determinism: pure function, stdlib-only, no I/O, no RNG.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Protocol, Sequence, runtime_checkable
 
 from tone_forge.analysis.sections import SectionType
-from tone_forge.song_form.role_classifier import RoleDecision
+
+
+@runtime_checkable
+class RoleDecisionLike(Protocol):
+    """Structural type for objects this module consumes.
+
+    Matches ``tone_forge.song_form.role_classifier.RoleDecision`` by
+    duck-typing — we deliberately don't import the concrete class so
+    the ``analysis`` subsystem keeps a clean boundary (cross-subsystem
+    types travel through ``tone_forge.contracts``; until song_form is
+    promoted to a contract type, structural typing is the
+    boundary-friendly bridge).
+    """
+
+    role: str
+    confidence: float
 
 
 @dataclass(frozen=True)
@@ -57,7 +72,7 @@ def _position_default(is_first: bool, is_last: bool) -> SectionType:
 
 
 def derive_section_types(
-    role_decisions: Sequence[RoleDecision],
+    role_decisions: Sequence[RoleDecisionLike],
     thresholds: SectionNamingThresholds = SectionNamingThresholds(),
 ) -> tuple[SectionType, ...]:
     """Map H2 role decisions to musical-form section types.
