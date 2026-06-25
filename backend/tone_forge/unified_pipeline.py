@@ -811,6 +811,13 @@ class UnifiedPipeline:
             # AnalysisResult carries one (mode, confidence, reason) triple
             # per section. The chord detector is unchanged — we just gate
             # the display.
+            #
+            # Side product: ``per_stem_features_by_stem`` accumulates the
+            # per-stem ``SectionFeatures`` rows computed inside the
+            # classifier loop. Stage B (song-form refinement, §7.7) reuses
+            # them as aggregate input. When the guidance block doesn't
+            # run, the dict stays empty and Stage B no-ops.
+            per_stem_features_by_stem: dict[str, list] = {}
             if sections:
                 try:
                     from tone_forge.analysis.guidance_mode import classify_section
@@ -848,6 +855,11 @@ class UnifiedPipeline:
                             )
                             for name, notes in stem_notes_by_name.items()
                         ]
+                        # Accumulate per-stem rows for Stage B (§7.7).
+                        for sf in per_stem:
+                            per_stem_features_by_stem.setdefault(
+                                sf.stem_name, []
+                            ).append(sf)
                         decision = classify_section(per_stem)
                         section["guidance_mode"] = decision.mode
                         section["guidance_confidence"] = float(decision.confidence)
@@ -936,6 +948,36 @@ class UnifiedPipeline:
                         derived_types = derive_section_types(decisions)
                         for section, st in zip(sections, derived_types):
                             section["type"] = st.value
+
+                        # Stage B: refine using per-stem song-form
+                        # aggregates (vocals, drums, energy ramp).
+                        # See ``backend/song_form_classifier_design.md``.
+                        # No-op when the guidance block didn't run or
+                        # didn't produce a feature row per section (the
+                        # ``len`` guard) — Stage A labels survive.
+                        if per_stem_features_by_stem and all(
+                            len(rows) == len(sections)
+                            for rows in per_stem_features_by_stem.values()
+                        ):
+                            from tone_forge.analysis.song_form import (
+                                refine_section_types,
+                            )
+                            from tone_forge.analysis.song_form_aggregates import (
+                                aggregate_song_form,
+                            )
+
+                            energy_means = [
+                                float(s.get("energy_mean", 0.0))
+                                for s in sections
+                            ]
+                            aggregates = aggregate_song_form(
+                                per_stem_features_by_stem, energy_means
+                            )
+                            refined_types = refine_section_types(
+                                derived_types, aggregates
+                            )
+                            for section, st in zip(sections, refined_types):
+                                section["type"] = st.value
                 except Exception as e:  # pragma: no cover - defensive
                     logger.warning(
                         f"Structural-role classification failed: {e}"

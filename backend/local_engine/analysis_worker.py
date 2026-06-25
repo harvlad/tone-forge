@@ -923,6 +923,10 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         # local-engine path. The unified path was already correctly
         # wired. Both paths are now shape-consistent.
         _st_guidance = time.perf_counter()
+        # Side product of the guidance loop: per-stem feature rows,
+        # transposed for Stage B song-form refinement (§4a4). Stays
+        # empty when guidance-mode doesn't run; Stage B then no-ops.
+        per_stem_features_by_stem: dict[str, list] = {}
         if merged_sections:
             try:
                 from tone_forge.analysis.guidance_mode import classify_section
@@ -949,6 +953,11 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                         )
                         for name, notes in stem_notes_by_name.items()
                     ]
+                    # Accumulate per-stem rows for Stage B (§4a4).
+                    for sf in per_stem:
+                        per_stem_features_by_stem.setdefault(
+                            sf.stem_name, []
+                        ).append(sf)
                     decision = classify_section(per_stem)
                     section.guidance_mode = decision.mode
                     section.guidance_confidence = float(decision.confidence)
@@ -1035,6 +1044,32 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                     derived_types = derive_section_types(decisions)
                     for section, st in zip(merged_sections, derived_types):
                         section.type = st
+                    # Stage B: refine using per-stem song-form aggregates.
+                    # Defensive no-op when per_stem_features_by_stem is empty
+                    # (guidance-mode classification didn't run) or when row
+                    # counts disagree with the section count.
+                    if per_stem_features_by_stem and all(
+                        len(rows) == len(merged_sections)
+                        for rows in per_stem_features_by_stem.values()
+                    ):
+                        from tone_forge.analysis.song_form import (
+                            refine_section_types,
+                        )
+                        from tone_forge.analysis.song_form_aggregates import (
+                            aggregate_song_form,
+                        )
+
+                        energy_means = [
+                            float(s.energy_mean) for s in merged_sections
+                        ]
+                        aggregates = aggregate_song_form(
+                            per_stem_features_by_stem, energy_means
+                        )
+                        refined_types = refine_section_types(
+                            derived_types, aggregates
+                        )
+                        for section, st in zip(merged_sections, refined_types):
+                            section.type = st
                     # Re-serialise so the structural-role fields AND the
                     # H2-derived ``type`` land in the persisted
                     # sections_data payload.
