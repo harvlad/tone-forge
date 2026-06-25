@@ -15,10 +15,14 @@
 |------|--------|
 | Design doc skeleton | shipped — B1 |
 | `SectionType.INSTRUMENTAL` enum value | shipped — B1 |
-| `SongFormAggregates` module | pending — B2 |
-| `song_form.refine_section_types` | pending — B3 |
-| Pipeline wire-in | pending — B4 |
-| Canonical-corpus regression + threshold calibration | pending — B5 |
+| `SongFormAggregates` module | shipped — B2 |
+| `song_form.refine_section_types` | shipped — B3 |
+| Pipeline wire-in (both backends) | shipped — B4 |
+| No-vocals-stem misfire fix | shipped — B5a |
+| `energy_z` aggregate + Pass 0 edge-demotion | shipped — B5b |
+| Canonical-corpus regression test scaffold | shipped — B5c |
+| Canonical-6 ground-truth labels populated | **pending** — needs canonical bundles in `data/history.json` |
+| Threshold calibration sweep against canonical-6 | **pending** — blocked on ground truth |
 
 ## Premise
 
@@ -124,9 +128,17 @@ SongFormThresholds(
 )
 ```
 
-These defaults are placeholders. B5 sweeps them against the
-canonical-6 hand-labelled ground truth and locks the final values
-back into this section of the doc.
+These defaults are placeholders. B5c shipped the regression test
+scaffold (`backend/tests/test_song_form_canonical.py`) and the
+real-world Birds-of-Tokyo regression that locks down the visible
+"every section labeled chorus" fix. Full calibration — sweeping
+the four thresholds against canonical-6 ground truth — is
+**blocked on populating the canonical bundles in
+`data/history.json`** and hand-labelling the
+`SONG_FORM_GROUND_TRUTH` recall floors in
+`test_song_form_canonical.py`. The canonical bundles are still
+absent at the time B5c shipped; the test infrastructure skips
+gracefully and waits.
 
 ## Calibration corpus
 
