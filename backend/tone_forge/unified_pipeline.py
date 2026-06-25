@@ -852,6 +852,13 @@ class UnifiedPipeline:
                         section["guidance_mode"] = decision.mode
                         section["guidance_confidence"] = float(decision.confidence)
                         section["guidance_reason"] = decision.reason
+                        # Engine-fix-debug-#1: persist the raw per-stem
+                        # feature vectors that fed the classifier so the
+                        # /debug visualizer can render the per-section
+                        # radar + table without recomputing. Stored as
+                        # plain dicts (one per stem) — matches the
+                        # ``Section.debug_features`` contract default.
+                        section["debug_features"] = [asdict(sf) for sf in per_stem]
                         # Engine-fix-#5: persist dominant_stem and
                         # density-capped landmark_notes for the JAM riff/
                         # lead lane so the UI doesn't have to re-run the
@@ -872,6 +879,67 @@ class UnifiedPipeline:
                     sections = classified
                 except Exception as e:  # pragma: no cover - defensive
                     logger.warning(f"Guidance-mode classification failed: {e}")
+
+            # 7.7 Per-section structural-role classification
+            # (ANCHOR / DEVELOPMENT / UNIQUE).
+            #
+            # Consumes only the H2 chord-trigram recurrence signal:
+            #   * H2 per-section vector  (extract_h2(...).per_section)
+            #   * H2 song-level scalar   (extract_h2(...).h2_sep)
+            # Per ``backend/structural_role_classifier_design.md`` this
+            # is deliberately NOT a musical-form label
+            # (verse/chorus/bridge) — those would require evidence we
+            # don't yet have. The JAM UI surfaces these labels as
+            # structural-role badges; the rest of the pipeline ignores
+            # them.
+            #
+            # Failure modes are non-fatal: if extract_h2 raises or
+            # returns a vector of wrong length, sections keep their
+            # default empty ``structural_role`` (UI treats "" as
+            # "no role available" and falls back to plain pills).
+            if sections and chords:
+                try:
+                    from tone_forge.song_form import classify_roles, extract_h2
+
+                    # Bundle shape matches ``H2 specification §2``:
+                    # chords carry start_s/end_s; sections carry
+                    # start_time/end_time. ``_section_bounds`` handles
+                    # both naming conventions.
+                    h2_bundle = {"chords": chords, "sections": sections}
+                    h2_result = extract_h2(h2_bundle)
+                    if (
+                        not h2_result.degenerate
+                        and len(h2_result.per_section) == len(sections)
+                    ):
+                        decisions = classify_roles(
+                            h2_result.per_section, h2_result.h2_sep
+                        )
+                        for section, decision in zip(sections, decisions):
+                            section["structural_role"] = decision.role
+                            section["structural_confidence"] = float(
+                                decision.confidence
+                            )
+                        # Derive musical-form labels from the H2
+                        # decisions, overwriting the energy-heuristic
+                        # ``type`` that ``_classify_section_type``
+                        # produced upstream. See
+                        # ``tone_forge/analysis/section_naming.py`` and
+                        # the H2-First Section Naming plan (Stage A).
+                        # When ``h2_result.degenerate`` is True (short
+                        # songs, no usable chord data) we leave the
+                        # energy-heuristic ``type`` in place — the H2
+                        # signal has no evidence to override it.
+                        from tone_forge.analysis.section_naming import (
+                            derive_section_types,
+                        )
+
+                        derived_types = derive_section_types(decisions)
+                        for section, st in zip(sections, derived_types):
+                            section["type"] = st.value
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(
+                        f"Structural-role classification failed: {e}"
+                    )
 
             # 8. Generate waveform visualization
             waveform = None

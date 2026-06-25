@@ -330,11 +330,30 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         # Step 2: MIDI extraction
         midi_stems = {}
         midi_extraction_time = 0.0
+        # Stem → stem_type mapping consumed by extract_midi_hybrid
+        # (backend/tone_forge/midi/gpu_extractor.py:1921).
+        #
+        # Routing implications inside extract_midi_hybrid:
+        #   stem_type == "drums"               → onset-based drum extractor
+        #   stem_type == "bass"                → pYIN+torchcrepe ensemble (mono)
+        #   stem_type in ("lead", "vocals")    → pYIN+torchcrepe ensemble (mono)
+        #   anything else                      → CoreML polyphonic
+        #
+        # "other" and "guitar" used to route as "lead" (monophonic
+        # ensemble). That truncates overlapping picked-guitar notes
+        # because pYIN/torchcrepe can only track one pitch per frame —
+        # the picked-arpeggio failure mode where the LEAD PART / RIFF
+        # lane was nearly empty on rock songs. Routing both through
+        # the polyphonic CoreML path captures the picked arpeggios
+        # honestly. The shape of the returned midi dict is identical
+        # (filename/content/note_count/duration/method/pitch_range),
+        # so downstream consumers (preset_export, jam.js, bundle
+        # persistence) need no changes.
         stem_types = {
             "drums": "drums",
             "bass": "bass",
-            "other": "lead",
-            "guitar": "lead",
+            "other": "other",
+            "guitar": "other",
         }
 
         # Progress ranges for each stem (50% to 80%)
@@ -653,6 +672,37 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         _record_stage("audio_reload", _st, time.perf_counter())
         duration_sec = len(y_dur) / sr_dur
 
+        # Tuning-offset diagnostic. The chord detector reads chromagram
+        # bins at absolute concert pitch (A=440) and labels chords from
+        # the highest-energy bin. If the source audio is pitched (a
+        # YouTube re-encoding artefact, or a band tuned a half-step
+        # down with no compensation), the chromagram peaks land in the
+        # wrong bins and every chord label shifts.
+        #
+        # ``librosa.estimate_tuning`` returns an offset in semitones
+        # (e.g. 0.5 == quarter-tone-up); we expose it in cents because
+        # that's the unit musicians intuit. A clean concert-pitch source
+        # lands within ±5¢. Larger deviations (≥20¢) usually mean the
+        # source is detuned; ≥45¢ is "the chord detector is going to
+        # be wrong by a semitone" territory. Logged unconditionally so
+        # the value shows up in worker logs for every analysis.
+        tuning_offset_cents: float = 0.0
+        try:
+            _st_tuning = time.perf_counter()
+            tuning_semitones = float(librosa.estimate_tuning(y=y_dur, sr=sr_dur))
+            tuning_offset_cents = round(tuning_semitones * 100.0, 1)
+            _record_stage("tuning_estimation", _st_tuning, time.perf_counter())
+            if abs(tuning_offset_cents) >= 20.0:
+                logger.warning(
+                    f"Source audio is detuned: {tuning_offset_cents:+.1f}¢ "
+                    f"from A=440 concert pitch. Chord labels may be wrong "
+                    f"by a semitone if offset ≥ 45¢."
+                )
+            else:
+                logger.info(f"Tuning offset: {tuning_offset_cents:+.1f}¢ (concert pitch)")
+        except Exception as e:
+            logger.warning(f"Tuning estimation failed: {e}")
+
         # Step 4: Section detection
         send_progress(queue, "sections", 0.85, "Detecting song sections...")
         sections_data = None
@@ -938,6 +988,71 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 )
         _record_stage("guidance_mode", _st_guidance, time.perf_counter())
 
+        # Step 4a4: Per-section structural-role classification
+        # (ANCHOR / DEVELOPMENT / UNIQUE).
+        #
+        # Mirrors unified_pipeline.py §7.7. Runs over the freshly-
+        # serialised chord + section dicts so we don't need to re-
+        # implement the H2 input contract. The classifier is
+        # deliberately decoupled from musical-form labels — it only
+        # measures chord-trigram recurrence per section (see
+        # backend/structural_role_classifier_design.md).
+        #
+        # Engine-bug context: this wireup was missing from the local-
+        # engine path, so every bundle produced via MoP/SLTS shipped
+        # with empty ``structural_role`` and ``structural_confidence``
+        # fields, suppressing the JAM section-pill role badges. The
+        # unified path was already correct.
+        _st_role = time.perf_counter()
+        if merged_sections and chords_data:
+            try:
+                from tone_forge.song_form import classify_roles, extract_h2
+
+                h2_bundle = {"chords": chords_data, "sections": sections_data}
+                h2_result = extract_h2(h2_bundle)
+                if (
+                    not h2_result.degenerate
+                    and len(h2_result.per_section) == len(merged_sections)
+                ):
+                    decisions = classify_roles(
+                        h2_result.per_section, h2_result.h2_sep
+                    )
+                    for section, decision in zip(merged_sections, decisions):
+                        section.structural_role = decision.role
+                        section.structural_confidence = float(decision.confidence)
+                    # Derive musical-form labels from the H2 decisions,
+                    # overwriting the energy-heuristic ``type`` that
+                    # ``_classify_section_type`` produced upstream. See
+                    # ``tone_forge/analysis/section_naming.py`` and the
+                    # H2-First Section Naming plan (Stage A). When
+                    # ``h2_result.degenerate`` is True (short songs, no
+                    # usable chord data) the energy-heuristic ``type``
+                    # is left in place.
+                    from tone_forge.analysis.section_naming import (
+                        derive_section_types,
+                    )
+
+                    derived_types = derive_section_types(decisions)
+                    for section, st in zip(merged_sections, derived_types):
+                        section.type = st
+                    # Re-serialise so the structural-role fields AND the
+                    # H2-derived ``type`` land in the persisted
+                    # sections_data payload.
+                    sections_data = [s.to_dict() for s in merged_sections]
+                    logger.info(
+                        "Structural-role classification complete: "
+                        + ", ".join(
+                            f"{(s.type.value if hasattr(s.type, 'value') else s.type)}"
+                            f"={s.structural_role}({s.structural_confidence:.2f})"
+                            for s in merged_sections
+                        )
+                    )
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(
+                    f"Structural-role classification failed: {e}"
+                )
+        _record_stage("structural_role", _st_role, time.perf_counter())
+
         # Step 4b: Tempo + key estimation
         #
         # The Jam UI needs these for the now-playing strip and (eventually)
@@ -1205,6 +1320,11 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             # bundle contract.
             "tempo_bpm": tempo_bpm,
             "detected_key": detected_key,
+            # Tuning offset from A=440 concert pitch, in cents.
+            # 0.0 = standard tuning, ±5¢ = clean, ≥20¢ = detuned source,
+            # ≥45¢ = chord labels likely off by a semitone. Computed by
+            # librosa.estimate_tuning on the full mix at audio_reload time.
+            "tuning_offset_cents": tuning_offset_cents,
             "beat_times": beat_times,
             "beats_s": beat_times,
             "downbeats_s": beat_times[::4] if beat_times else [],
