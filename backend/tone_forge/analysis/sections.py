@@ -36,6 +36,7 @@ class SectionType(str, Enum):
     BUILDUP = "buildup"
     TRANSITION = "transition"
     OUTRO = "outro"
+    INSTRUMENTAL = "instrumental"
     UNKNOWN = "unknown"
 
 
@@ -85,6 +86,16 @@ class ArrangementSection:
     dominant_stem: str = ""
     landmark_notes: tuple = field(default_factory=tuple)
 
+    # Phase-5: structural-role classification (ANCHOR / DEVELOPMENT /
+    # UNIQUE) over H2 per-section recurrence. Deliberately NOT a
+    # musical-form label (verse/chorus/bridge) — see
+    # ``backend/structural_role_classifier_design.md``. Empty string
+    # default keeps legacy bundles (analysed before this milestone)
+    # rendering exactly the same as before; the UI treats "" as
+    # "no role available".
+    structural_role: str = ""
+    structural_confidence: float = 0.0
+
     @property
     def duration(self) -> float:
         """Duration of the section."""
@@ -112,6 +123,8 @@ class ArrangementSection:
             # (see ``select_landmark_notes``); list() so JSON encoders
             # that special-case tuples don't trip.
             "landmark_notes": [dict(n) for n in self.landmark_notes],
+            "structural_role": self.structural_role,
+            "structural_confidence": float(self.structural_confidence),
         }
 
 
