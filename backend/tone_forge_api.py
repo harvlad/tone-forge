@@ -4373,6 +4373,35 @@ def _download_youtube_audio(url: str, output_dir: Path, duration: int = 30) -> t
 
     logger.info(f"Downloading {duration}s starting at {start_str} (t={start_time}s)")
 
+    # YouTube bot-check + signature-challenge bypass flags.
+    # As of 2026-06, YouTube requires both browser cookies (to pass the
+    # "Sign in to confirm you're not a bot" gate) and a JS challenge
+    # solver (the signature/n-parameter challenge) to obtain audio
+    # stream URLs. Without these, yt-dlp can only see image formats and
+    # the download fails with "Requested format is not available".
+    #
+    # Defaults:
+    #   * ``--cookies-from-browser chrome`` — pulls auth cookies from
+    #     the local Chrome profile. Override with the
+    #     ``TONEFORGE_YTDLP_COOKIES_BROWSER`` env var (set to "none"
+    #     to disable, or e.g. "firefox", "safari", "brave").
+    #   * ``--remote-components ejs:github`` — fetches the EJS
+    #     challenge-solver bundle from the official yt-dlp-ejs GitHub
+    #     release on first use (cached after). Override with
+    #     ``TONEFORGE_YTDLP_REMOTE_COMPONENTS`` (set to "none" to
+    #     disable). Requires deno on PATH (brew install deno).
+    extra_flags: list[str] = []
+    cookies_browser = os.environ.get(
+        "TONEFORGE_YTDLP_COOKIES_BROWSER", "chrome"
+    ).strip()
+    if cookies_browser and cookies_browser.lower() != "none":
+        extra_flags.extend(["--cookies-from-browser", cookies_browser])
+    remote_components = os.environ.get(
+        "TONEFORGE_YTDLP_REMOTE_COMPONENTS", "ejs:github"
+    ).strip()
+    if remote_components and remote_components.lower() != "none":
+        extra_flags.extend(["--remote-components", remote_components])
+
     # Use python -m yt_dlp to ensure we find the installed package
     cmd = [
         sys.executable, "-m", "yt_dlp",
@@ -4380,6 +4409,7 @@ def _download_youtube_audio(url: str, output_dir: Path, duration: int = 30) -> t
         "--audio-format", "wav",
         "--audio-quality", "0",
         "--no-playlist",
+        *extra_flags,
         # Download specific section based on timestamp
         "--download-sections", f"*{start_str}-{end_str}",
         "--output", output_template,
@@ -4397,6 +4427,7 @@ def _download_youtube_audio(url: str, output_dir: Path, duration: int = 30) -> t
             "--audio-format", "wav",
             "--audio-quality", "0",
             "--no-playlist",
+            *extra_flags,
             "--output", output_template,
             url,
         ]
