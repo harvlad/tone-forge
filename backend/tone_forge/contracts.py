@@ -231,6 +231,23 @@ class Section:
     # parse and fall back to the chord ribbon.
     dominant_stem: str = ""
     landmark_notes: Tuple[Dict[str, Any], ...] = ()
+    # Engine-fix-debug-#1: raw per-stem feature vectors that fed the
+    # guidance-mode classifier (one dict per stem, mirroring
+    # ``SectionFeatures`` field-for-field). Kept as plain dicts so this
+    # module stays free of ``analysis/`` imports — ``contracts`` is the
+    # leaf layer. The /debug visualizer surfaces these as the per-stem
+    # radar + table for each section. Defaulted to () so pre-debug
+    # bundles (and any analysis path that skips classification) parse
+    # silently.
+    debug_features: Tuple[Dict[str, Any], ...] = ()
+    # Phase-5: structural-role classification (ANCHOR / DEVELOPMENT /
+    # UNIQUE) over H2 per-section chord-trigram recurrence. See
+    # ``backend/structural_role_classifier_design.md``. This is
+    # explicitly NOT a musical-form label — the JAM UI renders it as
+    # a separate "structural role" badge, not a section name. Empty
+    # string default keeps pre-Phase-5 bundles parsing unchanged.
+    structural_role: str = ""
+    structural_confidence: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -270,6 +287,20 @@ class SongUnderstanding:
     # detected). The Jam UI's "Snap chords to beats" toggle renders
     # this array instead of ``chords`` when non-empty.
     chords_beat_snapped: Tuple[Chord, ...] = ()
+    # Per-stem chord lanes (additive — JAM chord-lane selector
+    # milestone). Maps stem name (``other`` / ``bass`` / ``vocals``
+    # / ``drums`` / ``guitar_left`` / ``guitar_right``) to the
+    # detected chord regions for that stem. Legacy ``chords`` and
+    # ``chords_beat_snapped`` above stay populated with the
+    # ``other``-stem lane; clients that don't know about the per-
+    # stem dict see no change. Empty when chord detection didn't
+    # run or the pipeline that produced the bundle predates C1.
+    chords_by_stem: Dict[str, Tuple[Chord, ...]] = field(
+        default_factory=dict,
+    )
+    chords_beat_snapped_by_stem: Dict[str, Tuple[Chord, ...]] = field(
+        default_factory=dict,
+    )
     key: Optional[str] = None  # e.g. "C major", "A minor"
     key_confidence: float = 0.0
     # Phase 3 — none of these populated in MVP:

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from enum import Enum
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from tone_forge.contracts import (
     AcquiredAudio,
@@ -261,6 +261,14 @@ def _build_understanding(result: Mapping[str, Any]) -> SongUnderstanding:
     # null on the wire collapses to an empty tuple so the UI toggle
     # stays hidden on legacy sessions without beats.
     chords_beat_snapped = tuple(_iter_chords(result.get("chords_beat_snapped")))
+    # C1: per-stem chord lanes (additive). Empty dict on legacy bundles
+    # (no ``chords_by_stem`` key in the persisted result) — the JAM UI
+    # selector hides when the dict has ≤1 entry, so behaviour is
+    # unchanged for old sessions.
+    chords_by_stem = _iter_chords_by_stem(result.get("chords_by_stem"))
+    chords_beat_snapped_by_stem = _iter_chords_by_stem(
+        result.get("chords_beat_snapped_by_stem")
+    )
 
     return SongUnderstanding(
         tempo_bpm=tempo,
@@ -273,6 +281,8 @@ def _build_understanding(result: Mapping[str, Any]) -> SongUnderstanding:
         sections=sections,
         chords=chords,
         chords_beat_snapped=chords_beat_snapped,
+        chords_by_stem=chords_by_stem,
+        chords_beat_snapped_by_stem=chords_beat_snapped_by_stem,
     )
 
 
@@ -567,6 +577,34 @@ def _iter_sections(raw: Any) -> Iterable[Section]:
                         "velocity": velocity_int,
                     }
                 )
+        # Engine-fix-debug-#1 round-trip: per-stem ``SectionFeatures``
+        # dicts that fed the guidance-mode classifier. Stored as
+        # plain dicts (one per stem) on the persisted section. Light
+        # defensive read — we trust the producer (asdict over a frozen
+        # SectionFeatures) but guard against malformed/legacy entries
+        # by dropping non-Mapping rows. Pre-debug bundles lack the
+        # key and yield an empty tuple, matching the contract default.
+        raw_features = item.get("debug_features")
+        debug_features: list[dict] = []
+        if isinstance(raw_features, Iterable) and not isinstance(
+            raw_features, (str, bytes)
+        ):
+            for entry in raw_features:
+                if not isinstance(entry, Mapping):
+                    continue
+                debug_features.append(dict(entry))
+        # Phase-5 structural-role round-trip. Producer
+        # (``ArrangementSection.to_dict()``) emits ``structural_role``
+        # ∈ {"", "ANCHOR", "DEVELOPMENT", "UNIQUE"} alongside a
+        # confidence. Legacy bundles lack these keys; we default to
+        # the contract's empty-string sentinel ("no role available")
+        # so the JAM UI silently omits the badge.
+        structural_role = _str_or_none(item.get("structural_role")) or ""
+        if structural_role not in ("", "ANCHOR", "DEVELOPMENT", "UNIQUE"):
+            structural_role = ""
+        structural_confidence = (
+            _safe_float(item.get("structural_confidence"), default=0.0) or 0.0
+        )
         yield Section(
             start_s=start,
             end_s=end,
@@ -577,6 +615,9 @@ def _iter_sections(raw: Any) -> Iterable[Section]:
             guidance_reason=guidance_reason,
             dominant_stem=dominant_stem,
             landmark_notes=tuple(landmark_notes),
+            debug_features=tuple(debug_features),
+            structural_role=structural_role,
+            structural_confidence=structural_confidence,
         )
 
 
@@ -593,6 +634,27 @@ def _iter_chords(raw: Any) -> Iterable[Chord]:
             continue
         conf = _safe_float(item.get("confidence"), default=0.5) or 0.5
         yield Chord(start_s=start, end_s=end, symbol=symbol, confidence=conf)
+
+
+def _iter_chords_by_stem(raw: Any) -> Dict[str, Tuple[Chord, ...]]:
+    """Coerce a persisted per-stem chord dict into typed contracts.
+
+    Tolerates the wire shape's nulls — when ``snapped_by_stem`` has
+    ``None`` entries for stems where the snapper degraded, those
+    collapse to empty tuples on the bundle side so callers can
+    iterate without nullability checks.
+
+    Returns an empty dict for legacy bundles that don't carry the
+    per-stem field at all, matching ``SongUnderstanding``'s default.
+    """
+    if not isinstance(raw, Mapping):
+        return {}
+    out: Dict[str, Tuple[Chord, ...]] = {}
+    for stem_name, stem_records in raw.items():
+        if not isinstance(stem_name, str):
+            continue
+        out[stem_name] = tuple(_iter_chords(stem_records))
+    return out
 
 
 def _iter_floats(raw: Any) -> Iterable[float]:
