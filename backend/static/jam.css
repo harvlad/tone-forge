@@ -1717,6 +1717,10 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   margin-top: 8px;
   font-size: 13px;
   color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 .chord-snap-label {
   display: inline-flex;
@@ -1728,6 +1732,31 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .chord-snap-label input[type="checkbox"] {
   cursor: pointer;
   margin: 0;
+}
+/* Chord-lane stem selector: lives on the same row as the snap toggle
+   and mirrors .chord-snap-label so the two controls read as a family.
+   The <select> uses the same dim-on-dark palette as surrounding UI.
+   Hidden via the [hidden] attribute when only one stem-lane exists
+   (legacy bundles, single-source mixes). */
+.chord-lane-stem-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.chord-lane-stem-label select {
+  background: var(--bg-elev, #1c1c1c);
+  color: var(--text, #e8e8e8);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chord-lane-stem-label select:focus {
+  outline: 1px solid var(--accent, #6aa6ff);
+  outline-offset: 1px;
 }
 
 /* Queued chord diagrams row (Phase C of chord-diagram feature).

@@ -72,6 +72,19 @@
     // beat (Phase 6 hybrid). `snapped` is null when the analysis lane
     // didn't produce a beat-snapped version (e.g. no beats detected).
     rawChords: { fixed: [], snapped: null },
+    // C1+C3: per-stem chord lanes. Maps stem name (other/bass/
+    // vocals/drums/guitar_left/guitar_right) to {fixed, snapped}.
+    // Default empty — the legacy "other" lane lives in `rawChords`
+    // above for backwards compatibility. Populated by
+    // onAnalysisComplete from the bundle's `chords_by_stem` /
+    // `chords_beat_snapped_by_stem` fields when present.
+    rawChordsByStem: {},
+    // Which stem-lane the chord ribbon follows. Persisted to
+    // localStorage under CHORD_LANE_STEM_PREF_KEY. Default "other"
+    // preserves identical behaviour to pre-C1 builds. Falls back to
+    // "other" when the persisted value isn't in the current
+    // bundle's lane set.
+    chordLaneStem: 'other',
     // User preference: render the beat-snapped chord array when
     // available. Persisted to localStorage under
     // CHORD_BEAT_SNAP_PREF_KEY. Falsy by default — WCSR floor is
@@ -2135,6 +2148,20 @@
       fixed: result.chords || [],
       snapped: result.chords_beat_snapped || null,
     };
+    // C1+C3: per-stem chord lanes. Build the per-stem map by zipping
+    // `chords_by_stem` and `chords_beat_snapped_by_stem` (both keyed
+    // by stem name). Legacy bundles without these fields → empty
+    // map; the lane-selector dropdown stays hidden when there's
+    // only one entry (or fewer).
+    const _fixedByStem = (result && result.chords_by_stem) || {};
+    const _snappedByStem = (result && result.chords_beat_snapped_by_stem) || {};
+    state.rawChordsByStem = {};
+    Object.keys(_fixedByStem).forEach((stemName) => {
+      state.rawChordsByStem[stemName] = {
+        fixed: _fixedByStem[stemName] || [],
+        snapped: _snappedByStem[stemName] || null,
+      };
+    });
     // Phase 4 (D4): once every post-analysis field is populated
     // (songKey, beatTimes, sections via buildSectionBar, rawChords
     // above), push the session-data v2 frame to Connect. Gated on
@@ -2155,6 +2182,7 @@
     // behaviour rather than throwing.
     state.leadMidiNotes = _pickLeadMidiNotes(result);
     syncChordSnapToggleVisibility();
+    syncChordLaneStemSelect();
     buildChordRibbon(activeChordArray());
     syncChordViewModeRowVisibility();
     syncChordOverlaysVisibility();
@@ -2402,15 +2430,37 @@
   // analysis pipeline; the toggle is a render-time choice persisted
   // to localStorage so the user's preference survives reloads.
   const CHORD_BEAT_SNAP_PREF_KEY = 'toneforge.jam.chordBeatSnap';
+  // C3: which stem-lane the chord ribbon follows. Default 'other'
+  // preserves identical behaviour to pre-C1 builds — the chord
+  // ribbon reads the same array it did before per-stem detection
+  // shipped. localStorage value sticks across reloads; defensive
+  // fallback to 'other' if the persisted value isn't in the
+  // current bundle's lane set (handled in
+  // syncChordLaneStemSelect).
+  const CHORD_LANE_STEM_PREF_KEY = 'toneforge.jam.chordLaneStem';
   try {
     state.chordBeatSnap = localStorage.getItem(CHORD_BEAT_SNAP_PREF_KEY) === '1';
   } catch (_) {
     // localStorage may throw in private-mode Safari; default stays
     // false which matches the safer (higher-WCSR) view.
   }
+  try {
+    state.chordLaneStem =
+      localStorage.getItem(CHORD_LANE_STEM_PREF_KEY) || 'other';
+  } catch (_) {
+    state.chordLaneStem = 'other';
+  }
 
   function activeChordArray() {
-    const raw = state.rawChords || { fixed: [], snapped: null };
+    // C3: prefer the per-stem lane chosen by the user, falling back
+    // to the legacy single-lane shape when no per-stem dict was
+    // loaded (legacy bundles, or current bundle missing the
+    // selected stem). The legacy `rawChords` is itself the "other"
+    // lane, so the default chordLaneStem='other' path is identical
+    // to pre-C3 behaviour.
+    const byStem = state.rawChordsByStem || {};
+    const laneEntry = byStem[state.chordLaneStem];
+    const raw = laneEntry || state.rawChords || { fixed: [], snapped: null };
     if (state.chordBeatSnap && Array.isArray(raw.snapped) && raw.snapped.length > 0) {
       return raw.snapped;
     }
@@ -2421,13 +2471,54 @@
     const row = document.getElementById('chord-snap-row');
     const cb = document.getElementById('chord-snap-toggle');
     if (!row || !cb) return;
-    const raw = state.rawChords || { fixed: [], snapped: null };
+    // Pick the lane currently being shown so the toggle visibility
+    // tracks the active stem's snap availability rather than just
+    // the legacy "other" lane's.
+    const byStem = state.rawChordsByStem || {};
+    const laneEntry = byStem[state.chordLaneStem];
+    const raw = laneEntry || state.rawChords || { fixed: [], snapped: null };
     const hasSnapped = Array.isArray(raw.snapped) && raw.snapped.length > 0;
     const hasFixed = Array.isArray(raw.fixed) && raw.fixed.length > 0;
-    // Only surface the toggle when there's a meaningful choice: both
-    // a chord lane to show AND a beat-snapped alternative.
-    row.hidden = !(hasFixed && hasSnapped);
+    // Surface the row when EITHER the snap toggle is meaningful
+    // (fixed + snapped both present) OR there's a per-stem lane
+    // choice to make (>1 stem available). The chord-lane selector
+    // lives in the same row.
+    const stemNames = Object.keys(state.rawChordsByStem || {});
+    const showRow = (hasFixed && hasSnapped) || stemNames.length > 1;
+    row.hidden = !showRow;
     cb.checked = !!state.chordBeatSnap;
+    // Hide the snap toggle itself when it wouldn't do anything for
+    // this lane — keeps the row from carrying a misleading
+    // checkbox when the active stem has no beat-snapped variant.
+    const snapLabel = cb.closest('label');
+    if (snapLabel) snapLabel.hidden = !(hasFixed && hasSnapped);
+  }
+
+  function syncChordLaneStemSelect() {
+    const select = document.getElementById('chord-lane-stem-select');
+    const label = document.getElementById('chord-lane-stem-label');
+    if (!select) return;
+    const stemNames = Object.keys(state.rawChordsByStem || {}).sort();
+    // Hide the dropdown entirely when there's at most one lane to
+    // choose between — legacy bundles (no per-stem dict) and
+    // single-stem analyses both collapse to "no choice", and the
+    // ribbon falls back to the legacy `rawChords` array.
+    if (label) label.hidden = stemNames.length <= 1;
+    if (stemNames.length <= 1) {
+      select.innerHTML = '';
+      return;
+    }
+    // If the persisted chordLaneStem isn't in the current bundle's
+    // set, fall back to 'other' (or the first available lane).
+    if (!stemNames.includes(state.chordLaneStem)) {
+      state.chordLaneStem = stemNames.includes('other') ? 'other' : stemNames[0];
+    }
+    // Repopulate options. innerHTML reset is cheap (≤6 entries) and
+    // avoids stale options leaking across analyses.
+    select.innerHTML = stemNames.map((name) => {
+      const sel = name === state.chordLaneStem ? ' selected' : '';
+      return `<option value="${name}"${sel}>${name}</option>`;
+    }).join('');
   }
 
   // Wire the toggle once at module load. The handler flips the
@@ -2440,6 +2531,23 @@
     cb.addEventListener('change', () => {
       state.chordBeatSnap = !!cb.checked;
       try { localStorage.setItem(CHORD_BEAT_SNAP_PREF_KEY, state.chordBeatSnap ? '1' : '0'); } catch (_) {}
+      buildChordRibbon(activeChordArray());
+    });
+  })();
+
+  // C3: chord-lane stem selector. Mirrors wireChordSnapToggle — one-
+  // shot wire at module load, persists choice to localStorage,
+  // re-renders the ribbon from cached arrays. Also re-syncs the
+  // snap-toggle visibility because the snap toggle's relevance
+  // depends on the active lane's `snapped` availability.
+  (function wireChordLaneStemSelect() {
+    const select = document.getElementById('chord-lane-stem-select');
+    if (!select) return;
+    select.addEventListener('change', () => {
+      const next = select.value || 'other';
+      state.chordLaneStem = next;
+      try { localStorage.setItem(CHORD_LANE_STEM_PREF_KEY, next); } catch (_) {}
+      syncChordSnapToggleVisibility();
       buildChordRibbon(activeChordArray());
     });
   })();

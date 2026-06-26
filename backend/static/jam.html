@@ -579,6 +579,15 @@
             <input type="checkbox" id="chord-snap-toggle" />
             <span>Snap chords to beats</span>
           </label>
+          <!-- Chord-lane stem selector: lets the user pick which stem's
+               chord lane the ribbon follows. Populated at analysis time
+               from result.chords_by_stem (one entry per available stem).
+               Hidden when only the legacy single-lane "other" entry is
+               present, so older bundles look identical to today. -->
+          <label id="chord-lane-stem-label" class="chord-lane-stem-label" hidden>
+            <span>Lane:</span>
+            <select id="chord-lane-stem-select"></select>
+          </label>
         </div>
         <div id="loop-status" class="loop-status">Loop: off</div>
 
