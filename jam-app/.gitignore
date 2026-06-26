@@ -1,0 +1,9 @@
+# Swift Package Manager build artifacts.
+.build/
+.swiftpm/
+
+# macOS app bundle output from build_app.sh.
+dist/
+
+# macOS Finder metadata.
+.DS_Store

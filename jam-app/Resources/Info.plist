@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist for JamApp.app — the native macOS shell for the Jam web UI.
+
+  Notes:
+  - NSPrincipalClass = NSApplication is required for SwiftUI's @main
+    App scene to fully initialize when launched from a .app bundle.
+  - NSAppTransportSecurity → NSAllowsLocalNetworking lets WKWebView
+    load http://localhost:8000/jam without a TLS cert. Without it App
+    Transport Security blocks plaintext HTTP from inside an app bundle
+    even though it works fine via `swift run`.
+  - Versioning: bump CFBundleShortVersionString for user-visible
+    releases; CFBundleVersion is a build counter that must monotonically
+    increase if you ever notarize.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+
+    <key>CFBundleExecutable</key>
+    <string>JamApp</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>com.toneforge.jam</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <key>CFBundleName</key>
+    <string>Jam</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>Jam</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright (c) ToneForge. All rights reserved.</string>
+</dict>
+</plist>
