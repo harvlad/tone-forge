@@ -70,6 +70,22 @@ backend/data/history.json
 # bench/ harness outputs (M1)
 backend/bench/runs/
 
+# song-form scratch artifacts — generated per-song JSON/PNG outputs.
+# The runner scripts (run_feasibility.py, run_discovery.py) and any
+# manually-curated .md notes are tracked; the regenerated data isn't.
+backend/song_form_feasibility/*
+!backend/song_form_feasibility/*.py
+!backend/song_form_feasibility/*.md
+backend/song_form_phase0c/*
+!backend/song_form_phase0c/*.py
+!backend/song_form_phase0c/*.md
+backend/song_form_signal_discovery/*
+!backend/song_form_signal_discovery/*.py
+!backend/song_form_signal_discovery/*.md
+
+# history.json point-in-time backups (created by data-migration scripts).
+backend/data/history.json.bak.*
+
 # Node (frontend)
 node_modules/
 .next/
