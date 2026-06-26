@@ -395,3 +395,49 @@ def test_landmark_notes_velocity_default_when_missing() -> None:
     )
     assert len(out) == 1
     assert out[0]["velocity"] == 80
+
+
+# ---------------------------------------------------------------------------
+# debug_features serialization round-trip (engine-fix-debug-#1)
+# ---------------------------------------------------------------------------
+#
+# The pipeline persists per-stem SectionFeatures into the section dict
+# via ``asdict`` (one dict per stem). The /debug visualizer renders
+# those dicts directly. This test pins that the asdict shape round-trips
+# losslessly through json, so the persistence chain (history.json →
+# bundle → API → frontend) doesn't silently drop a field.
+
+
+def test_section_features_asdict_json_round_trip() -> None:
+    import json
+    from dataclasses import asdict
+
+    notes, regions, window = _chord_block_4bar()
+    sf = _features(stem_name="guitar_left", notes=notes, regions=regions, window=window)
+
+    as_dict = asdict(sf)
+    # Every contract field appears in the dict so the radar/table can
+    # render without missing axes.
+    expected_keys = {
+        "stem_name",
+        "chord_density_per_s",
+        "chord_count_in_section",
+        "monophonic_ratio",
+        "repetition_score",
+        "repetition_period_beats",
+        "polyphony_score",
+        "lead_activity_score",
+        "voiced_frame_ratio",
+        "note_count",
+        "duration_s",
+        "pitch_class_diversity",
+    }
+    assert set(as_dict.keys()) == expected_keys
+
+    # JSON round-trip — the path the bundle takes on persistence.
+    encoded = json.dumps(as_dict)
+    decoded = json.loads(encoded)
+    assert decoded["stem_name"] == sf.stem_name
+    assert decoded["chord_density_per_s"] == sf.chord_density_per_s
+    assert decoded["monophonic_ratio"] == sf.monophonic_ratio
+    assert decoded["pitch_class_diversity"] == sf.pitch_class_diversity

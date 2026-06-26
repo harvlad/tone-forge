@@ -1,0 +1,419 @@
+/*
+ * debug.css — ML & corpus visualizer styling
+ *
+ * Reuses jam.css color tokens via @import so the debug page stays in
+ * sync with the rest of the app's dark palette. Adds debug-specific
+ * tokens for the three guidance modes (chord/riff/lead) so they read
+ * the same across the timeline strip, radar chart, and confusion matrix.
+ */
+
+@import url("/static/jam.css?v=22");
+
+:root {
+  --guidance-chord: #60a5fa;  /* cool blue */
+  --guidance-riff:  #f97316;  /* warm orange (matches --accent) */
+  --guidance-lead:  #f43f5e;  /* hot pink/red */
+}
+
+/* ---------------------------------------------------------------- header */
+.debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.debug-header .brand {
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+.debug-header nav { display: flex; gap: 18px; }
+.debug-header nav a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 14px;
+}
+.debug-header nav a.active { color: var(--accent); }
+.debug-header nav a:hover { color: var(--text); }
+
+/* ---------------------------------------------------------------- tabs */
+.debug-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 12px 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+.debug-tabs button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: var(--text-dim);
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+}
+.debug-tabs button:hover { color: var(--text); }
+.debug-tabs button.active {
+  color: var(--text);
+  background: var(--panel);
+  border-color: var(--border);
+  border-bottom-color: var(--panel);
+  margin-bottom: -1px;
+}
+
+/* ---------------------------------------------------------------- views */
+.debug-main {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.tab-view { display: none; }
+.tab-view.active { display: block; }
+.view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.view-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+.empty-state {
+  padding: 48px;
+  text-align: center;
+  color: var(--text-dim);
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+/* ---------------------------------------------------------------- inspector */
+.picker-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.picker-row label {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.picker-row select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  min-width: 320px;
+}
+.picker-row select option:disabled { color: var(--text-dim); }
+.picker-row button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.picker-row button:hover { border-color: var(--accent); }
+
+.timeline-panel, .chord-strip-panel, .detail-panel,
+.confusion-panel, .corpus-table-panel,
+.histogram-panel, .history-table-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.timeline-panel h3, .chord-strip-panel h3, .detail-panel h3,
+.confusion-panel h3, .corpus-table-panel h3,
+.histogram-panel h3, .history-table-panel h3,
+.detail-block h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.timeline-strip, .chord-strip {
+  width: 100%;
+  height: 56px;
+  background: var(--panel-2);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+.chord-strip { height: 32px; }
+.timeline-strip svg, .chord-strip svg { width: 100%; height: 100%; }
+
+.timeline-section {
+  cursor: pointer;
+  transition: stroke 0.15s;
+  stroke: transparent;
+  stroke-width: 2;
+}
+.timeline-section:hover { stroke: var(--text); }
+.timeline-section.selected { stroke: var(--text); stroke-width: 3; }
+.timeline-label {
+  font-size: 11px;
+  fill: var(--text);
+  pointer-events: none;
+}
+.chord-pill {
+  fill: var(--panel);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.chord-pill-label {
+  font-size: 10px;
+  fill: var(--text-dim);
+  pointer-events: none;
+}
+
+.legend {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.legend-pill {
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  color: var(--bg);
+}
+.legend-pill.chord { background: var(--guidance-chord); }
+.legend-pill.riff  { background: var(--guidance-riff); }
+.legend-pill.lead  { background: var(--guidance-lead); }
+
+/* --------------------------------------------------------- detail panel */
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.detail-summary {
+  display: flex;
+  gap: 14px;
+  font-size: 13px;
+}
+.detail-summary span { color: var(--text-dim); }
+.detail-summary b { color: var(--text); font-weight: 600; }
+.detail-summary .mode-badge {
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--bg);
+}
+.detail-summary .mode-badge.chord { background: var(--guidance-chord); }
+.detail-summary .mode-badge.riff  { background: var(--guidance-riff); }
+.detail-summary .mode-badge.lead  { background: var(--guidance-lead); }
+
+.detail-grid {
+  display: grid;
+  /* minmax(0, …) instead of plain 1fr/1.4fr so the columns can shrink
+     below their min-content size. Without minmax(0, …), the per-stem
+     table panel forces its grid track to ~1300px (11 nowrap columns)
+     and the row overflows the viewport, pushing the radar off-screen
+     to the right. With minmax(0, …) the table's overflow-x: auto kicks
+     in and scrolls inside its column. */
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+  /* Each panel sizes to its content; without this the shorter panel
+     (usually the per-stem table) stretches to match the radar's
+     fixed-height SVG and leaves dead space at the bottom. */
+  align-items: start;
+}
+.detail-block {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+.landmark-block { margin-top: 0; }
+
+.per-stem-table {
+  overflow-x: auto;
+  font-size: 12px;
+}
+.per-stem-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.per-stem-table th,
+.per-stem-table td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.per-stem-table th {
+  text-align: left;
+  color: var(--text-dim);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.per-stem-table th:first-child,
+.per-stem-table td:first-child {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--panel-2);
+}
+.per-stem-table tr.dominant td { background: rgba(249, 115, 22, 0.08); }
+.per-stem-table tr.dominant td:first-child { color: var(--accent); font-weight: 600; }
+
+/* Locked-height containers so percentage-height SVG children resolve to
+   definite pixels (otherwise SVGs with a viewBox can blow up to many
+   screens tall when the parent's height is auto). */
+.radar-chart {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.radar-chart svg {
+  width: 100%;
+  height: 240px;
+  display: block;
+}
+.radar-chart .legend {
+  flex-wrap: wrap;
+  margin-top: 0;
+}
+.landmark-roll {
+  width: 100%;
+  height: 200px;
+  position: relative;
+}
+.landmark-roll svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.radar-axis-line { stroke: var(--border); stroke-width: 1; }
+.radar-axis-label { font-size: 10px; fill: var(--text-dim); }
+.radar-poly { fill-opacity: 0.18; stroke-width: 2; }
+
+.landmark-roll-note { rx: 1; }
+
+/* ---------------------------------------------------------------- corpus */
+.corpus-aggregate {
+  display: flex;
+  gap: 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.corpus-aggregate .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.corpus-aggregate .stat-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.corpus-aggregate .stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.confusion-matrix table {
+  border-collapse: collapse;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.confusion-matrix th, .confusion-matrix td {
+  padding: 10px 14px;
+  text-align: center;
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+.confusion-matrix th { color: var(--text-dim); font-weight: 600; }
+.confusion-matrix td { background: var(--panel-2); }
+.confusion-matrix td.diag { font-weight: 700; }
+
+.corpus-table table, .history-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.corpus-table th, .corpus-table td,
+.history-table th, .history-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.corpus-table th, .history-table th {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.history-table tr { cursor: pointer; }
+.history-table tr:hover { background: var(--panel-2); }
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.status-badge.analyzed { background: var(--good); color: var(--bg); }
+.status-badge.fuzzy    { background: var(--warn); color: var(--bg); }
+.status-badge.missing  { background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--border); }
+
+/* ---------------------------------------------------------------- histograms */
+.histograms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+.histogram {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+.histogram h4 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.histogram svg { width: 100%; height: 80px; }
+.histogram-bar { fill: var(--accent); }
+.histogram-bar:hover { fill: var(--accent-2); }
+.histogram-label { font-size: 9px; fill: var(--text-dim); }
+
+/* ---------------------------------------------------------------- misc */
+.muted { color: var(--text-dim); }

@@ -315,6 +315,12 @@ async def jam_session_page(analysis_id: str) -> FileResponse:
     return FileResponse(_STATIC_DIR / "jam.html")
 
 
+@app.get("/debug")
+async def debug_page() -> FileResponse:
+    """Internal /debug visualizer — ML decisions, corpus, and history."""
+    return FileResponse(_STATIC_DIR / "debug.html")
+
+
 # ---------------------------------------------------------------------------
 # Connect bridge — WebSocket hub for browser ↔ Connect (native macOS app).
 #
@@ -2525,6 +2531,65 @@ async def get_history(
 
     # Convert numpy types and handle inf/nan values
     return JSONResponse(_convert_numpy_types({"history": history[:limit]}))
+
+
+# ---------------------------------------------------------------------------
+# /debug visualizer endpoints — backing the internal /debug page.
+#
+# These exist to serve the ML-decision Inspector, the ground-truth Corpus
+# dashboard, and the History explorer without coupling those tools to the
+# product surface. They read existing fixtures and history — no new
+# persistence, no new state. See ``backend/static/debug.html``.
+# ---------------------------------------------------------------------------
+
+_CORPUS_PATH = (
+    Path(__file__).parent / "tests" / "fixtures" / "song_trial_corpus.json"
+)
+
+
+def _section_has_debug_features(result: dict) -> bool:
+    """True iff the analysis result carries per-stem ``debug_features``.
+
+    The schema bump (engine-fix-debug-#1) adds ``debug_features`` to every
+    section dict. Legacy entries lack the key — the Inspector greys those
+    sessions out in the picker so the user knows they need re-analysis.
+    """
+    sections = (result or {}).get("sections") or []
+    for section in sections:
+        if isinstance(section, dict) and section.get("debug_features"):
+            return True
+    return False
+
+
+@app.get("/api/debug/corpus")
+async def get_debug_corpus() -> JSONResponse:
+    """Return the trial corpus (ground-truth labels) for the Corpus tab."""
+    if not _CORPUS_PATH.exists():
+        raise HTTPException(status_code=404, detail="Corpus fixture not found")
+    return JSONResponse(json.loads(_CORPUS_PATH.read_text()))
+
+
+@app.get("/api/debug/sessions")
+async def get_debug_sessions() -> JSONResponse:
+    """Lightweight catalog of analyzed sessions for the Inspector picker.
+
+    Returns metadata only (id, name, timestamp, section_count, whether
+    raw per-stem features are persisted). The Inspector then fetches the
+    full bundle via ``/api/session/{id}`` on selection.
+    """
+    history = _load_history()
+    sessions = []
+    for entry in history:
+        result = entry.get("result") or {}
+        sessions.append({
+            "id": entry.get("id"),
+            "name": entry.get("name") or entry.get("filename") or "untitled",
+            "timestamp": entry.get("timestamp"),
+            "detected_type": entry.get("detected_type"),
+            "section_count": len(result.get("sections") or []),
+            "has_debug_features": _section_has_debug_features(result),
+        })
+    return JSONResponse(_convert_numpy_types({"sessions": sessions}))
 
 
 @app.delete("/api/history")

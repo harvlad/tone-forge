@@ -865,3 +865,131 @@ def test_legacy_bundle_without_landmark_notes_defaults_to_empty():
     assert len(secs) == 1
     assert secs[0].dominant_stem == ""
     assert secs[0].landmark_notes == ()
+
+
+# ---------------------------------------------------------------------------
+# 9. debug_features round-trip — engine-fix-debug-#1 schema bump
+# ---------------------------------------------------------------------------
+#
+# The /debug visualizer reads raw per-stem ``SectionFeatures`` from
+# ``Section.debug_features``. The producer writes them as a list of dicts
+# (one per stem) on every analyzed section; the bundle reader must
+# round-trip them as a tuple of dicts. Legacy bundles persisted before
+# the schema bump lack the key and must degrade silently to ().
+
+def test_bundle_reads_section_debug_features():
+    """A persisted section dict with debug_features round-trips into
+    ``Section.debug_features`` as a tuple of plain dicts, preserving
+    every key the classifier consumed."""
+    persisted = {
+        "detected_type": "full_mix",
+        "duration_sec": 8.0,
+        "sample_rate": 22050,
+        "sections": [
+            {
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "label": "verse",
+                "confidence": 0.9,
+                "guidance_mode": "riff",
+                "guidance_confidence": 0.71,
+                "dominant_stem": "guitar_left",
+                "debug_features": [
+                    {
+                        "stem_name": "guitar_left",
+                        "chord_density_per_s": 0.25,
+                        "chord_count_in_section": 1,
+                        "monophonic_ratio": 0.92,
+                        "repetition_score": 0.88,
+                        "repetition_period_beats": 4.0,
+                        "polyphony_score": 0.05,
+                        "lead_activity_score": 0.45,
+                        "voiced_frame_ratio": 0.95,
+                        "note_count": 16,
+                        "duration_s": 4.0,
+                        "pitch_class_diversity": 0.62,
+                    },
+                    {
+                        "stem_name": "bass",
+                        "chord_density_per_s": 0.0,
+                        "chord_count_in_section": 0,
+                        "monophonic_ratio": 1.0,
+                        "repetition_score": 0.5,
+                        "repetition_period_beats": None,
+                        "polyphony_score": 0.0,
+                        "lead_activity_score": 0.1,
+                        "voiced_frame_ratio": 0.6,
+                        "note_count": 8,
+                        "duration_s": 4.0,
+                        "pitch_class_diversity": 0.2,
+                    },
+                ],
+            }
+        ],
+    }
+    bundle = build_bundle(persisted, session_id="debug-features-roundtrip")
+    secs = bundle.understanding.sections
+    assert len(secs) == 1
+    feats = secs[0].debug_features
+    assert isinstance(feats, tuple)
+    assert len(feats) == 2
+    assert feats[0]["stem_name"] == "guitar_left"
+    assert feats[0]["monophonic_ratio"] == pytest.approx(0.92)
+    assert feats[0]["pitch_class_diversity"] == pytest.approx(0.62)
+    assert feats[1]["stem_name"] == "bass"
+    assert feats[1]["repetition_period_beats"] is None
+
+
+def test_bundle_legacy_section_without_debug_features_defaults_empty():
+    """Pre-debug-bump entries lack the ``debug_features`` key entirely.
+    The bundle reader must default to () so the Inspector can detect
+    legacy sessions and render the "no features" placeholder."""
+    persisted = {
+        "detected_type": "full_mix",
+        "duration_sec": 4.0,
+        "sample_rate": 22050,
+        "sections": [
+            {
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "label": "verse",
+                "confidence": 0.7,
+                "guidance_mode": "chord",
+                # No debug_features key — pre-bump.
+            }
+        ],
+    }
+    bundle = build_bundle(persisted, session_id="legacy-no-debug-features")
+    secs = bundle.understanding.sections
+    assert len(secs) == 1
+    assert secs[0].debug_features == ()
+
+
+def test_bundle_skips_malformed_debug_feature_entries():
+    """Defensive parse: non-Mapping entries in the debug_features list
+    are dropped silently (matches the landmark_notes pattern). A
+    well-formed entry mixed with garbage still round-trips."""
+    persisted = {
+        "detected_type": "full_mix",
+        "duration_sec": 4.0,
+        "sample_rate": 22050,
+        "sections": [
+            {
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "label": "v",
+                "confidence": 0.9,
+                "guidance_mode": "chord",
+                "debug_features": [
+                    "not a dict",
+                    None,
+                    {"stem_name": "drums", "chord_density_per_s": 0.0},
+                    42,
+                ],
+            }
+        ],
+    }
+    bundle = build_bundle(persisted, session_id="malformed-debug-features")
+    feats = bundle.understanding.sections[0].debug_features
+    assert len(feats) == 1
+    assert feats[0]["stem_name"] == "drums"

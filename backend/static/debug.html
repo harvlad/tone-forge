@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ToneForge Debug — ML & Corpus Inspector</title>
+<link rel="stylesheet" href="/static/debug.css?v=6" />
+</head>
+<body>
+<header class="debug-header">
+  <a class="brand" href="/">ToneForge</a>
+  <nav>
+    <a href="/jam">Jam</a>
+    <a href="/studio">Studio</a>
+    <a class="active" href="/debug">Debug</a>
+  </nav>
+</header>
+
+<nav class="debug-tabs" id="debug-tabs">
+  <button type="button" class="active" data-tab="inspector">Inspector</button>
+  <button type="button" data-tab="corpus">Corpus</button>
+  <button type="button" data-tab="history">History</button>
+</nav>
+
+<main class="debug-main">
+  <!-- ============================== INSPECTOR ============================== -->
+  <section id="view-inspector" class="tab-view active" aria-labelledby="inspector-title">
+    <header class="view-header">
+      <h2 id="inspector-title">ML Decision Inspector</h2>
+      <div class="picker-row">
+        <label for="session-picker">Session</label>
+        <select id="session-picker"></select>
+        <button type="button" id="refresh-sessions">Refresh</button>
+      </div>
+    </header>
+
+    <div id="inspector-empty" class="empty-state">
+      Pick a session above to inspect its guidance-mode decisions.
+    </div>
+
+    <div id="inspector-content" hidden>
+      <section class="timeline-panel">
+        <h3>Sections (color = guidance_mode, opacity = confidence)</h3>
+        <div id="timeline-strip" class="timeline-strip"></div>
+        <div class="legend">
+          <span class="legend-pill chord">chord</span>
+          <span class="legend-pill riff">riff</span>
+          <span class="legend-pill lead">lead</span>
+        </div>
+      </section>
+
+      <section class="chord-strip-panel">
+        <h3>Chord progression</h3>
+        <div id="chord-strip" class="chord-strip"></div>
+      </section>
+
+      <section id="section-detail" class="detail-panel" hidden>
+        <header class="detail-header">
+          <h3>Section detail</h3>
+          <div id="detail-summary" class="detail-summary"></div>
+        </header>
+
+        <div class="detail-grid">
+          <div class="detail-block">
+            <h4>Per-stem features</h4>
+            <div id="per-stem-table" class="per-stem-table"></div>
+          </div>
+          <div class="detail-block">
+            <h4>Radar (6 signals × stems)</h4>
+            <div id="radar-chart" class="radar-chart"></div>
+          </div>
+        </div>
+
+        <div class="detail-block landmark-block">
+          <h4>Landmark notes (dominant stem)</h4>
+          <div id="landmark-roll" class="landmark-roll"></div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ============================== CORPUS ============================== -->
+  <section id="view-corpus" class="tab-view" aria-labelledby="corpus-title" hidden>
+    <header class="view-header">
+      <h2 id="corpus-title">Corpus — Ground truth vs. predictions</h2>
+    </header>
+
+    <div id="corpus-aggregate" class="corpus-aggregate"></div>
+
+    <section class="confusion-panel">
+      <h3>Confusion matrix (predicted ↓ × actual →)</h3>
+      <div id="confusion-matrix" class="confusion-matrix"></div>
+    </section>
+
+    <section class="corpus-table-panel">
+      <h3>Trial songs</h3>
+      <div id="corpus-table" class="corpus-table"></div>
+    </section>
+  </section>
+
+  <!-- ============================== HISTORY ============================== -->
+  <section id="view-history" class="tab-view" aria-labelledby="history-title" hidden>
+    <header class="view-header">
+      <h2 id="history-title">History — Past analyses</h2>
+    </header>
+
+    <section class="histogram-panel">
+      <h3>Aggregate distributions</h3>
+      <div id="histograms" class="histograms"></div>
+    </section>
+
+    <section class="history-table-panel">
+      <h3>All analyses</h3>
+      <div id="history-table" class="history-table"></div>
+    </section>
+  </section>
+</main>
+
+<script src="/static/debug.js?v=6"></script>
+</body>
+</html>
