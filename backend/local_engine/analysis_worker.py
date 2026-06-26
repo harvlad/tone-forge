@@ -773,6 +773,14 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         send_progress(queue, "chords", 0.87, "Detecting chord lane...")
         chords_data = None
         chords_data_beat_snapped = None
+        # Per-stem chord lanes (additive). Keyed by stem name (e.g.
+        # "other", "bass", "vocals", "drums", "guitar_left",
+        # "guitar_right"). The legacy ``chords`` / ``chords_beat_snapped``
+        # fields below stay = the "other"-stem lane for backwards
+        # compatibility; clients that haven't been updated for the
+        # JAM stem-lane selector ignore the new fields entirely.
+        chords_by_stem: dict = {}
+        chords_beat_snapped_by_stem: dict = {}
         # Hoisted out of the try so the post-chord-detection guidance-mode
         # classifier (Step 4a3 below) can pass an empty tuple as
         # chord_regions when chord detection fails, rather than tripping
@@ -782,6 +790,30 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         _st = time.perf_counter()
         try:
             from tone_forge.analysis import detect_chords
+            from tone_forge.analysis.chords import snap_chord_boundaries_to_beats
+            # Build the set of stems we'll run chord detection on. The
+            # legacy single-lane behaviour used only ``stems["other"]``.
+            # We now run on every available stem so the JAM UI can let
+            # the user pick which one the chord ribbon follows.
+            # ``guitar_parts`` (from the multi-guitar pan-split at
+            # ~line 591) contributes ``guitar_left`` / ``guitar_right``
+            # when stereo separation succeeded; mono songs collapse
+            # ``guitar_parts`` to a single entry and we surface it as
+            # an extra lane too.
+            chord_input_stems: dict = {}
+            for _stem_name in ("other", "bass", "vocals", "drums"):
+                _p = stems.get(_stem_name)
+                if _p is not None:
+                    chord_input_stems[_stem_name] = _p
+            for _gp_name, _gp_path in (guitar_parts or {}).items():
+                if _gp_path is not None:
+                    chord_input_stems[_gp_name] = _gp_path
+            # Reference sample rate is taken from "other" (the legacy
+            # primary lane); falls back to the full-mix sr when "other"
+            # is unavailable. The bass-bias audio and the beats array
+            # are derived once at this sample rate and reused across
+            # every per-stem detection call so all lanes share the
+            # same root-bias and beat grid.
             _chord_path = stems.get("other")
             if _chord_path is not None:
                 try:
@@ -789,13 +821,13 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                         str(_chord_path), sr=22050, mono=True
                     )
                     logger.info(
-                        f"Chord detection: using 'other' stem "
-                        f"({len(y_chord)/sr_chord:.1f}s) instead of full mix"
+                        f"Chord detection: 'other' stem loaded "
+                        f"({len(y_chord)/sr_chord:.1f}s) — reference lane"
                     )
                 except Exception as e:
                     logger.warning(
                         f"Chord detection: 'other' stem load failed ({e}); "
-                        f"falling back to full mix"
+                        f"falling back to full mix as reference"
                     )
                     y_chord, sr_chord = y_dur, sr_dur
             else:
@@ -862,45 +894,101 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                     f"falling back to fixed-window grid"
                 )
                 beats_for_chord = None
-            # Phase 6 (hybrid grid + UI toggle): call the detector once
-            # with beats_s=None so chroma/Viterbi run on the fixed 0.5s
-            # grid that maximises WCSR. Then produce a SECOND beat-snapped
-            # array via the cheap post-processing utility. Both arrays
-            # ship to the client; jam.js toggles between them at render
-            # time. See ``snap_chord_boundaries_to_beats`` for why the
-            # snap is cosmetic, not WCSR-improving.
-            from tone_forge.analysis.chords import snap_chord_boundaries_to_beats
-            chord_records = detect_chords(
-                y_chord, sr_chord,
-                bass_audio=y_bass,
-                beats_s=None,
-            )
-            chords_data = [
-                {
-                    "start_s": float(c.start_s),
-                    "end_s": float(c.end_s),
-                    "symbol": c.symbol,
-                    "confidence": float(c.confidence),
-                }
-                for c in chord_records
-            ]
-            chords_data_beat_snapped = None
-            if beats_for_chord is not None and len(chord_records) >= 2:
-                _song_dur_s = float(len(y_chord) / sr_chord) if sr_chord else 0.0
-                snapped = snap_chord_boundaries_to_beats(
-                    chord_records, beats_for_chord, _song_dur_s,
-                )
-                chords_data_beat_snapped = [
+
+            def _records_to_dicts(records) -> list:
+                return [
                     {
                         "start_s": float(c.start_s),
                         "end_s": float(c.end_s),
                         "symbol": c.symbol,
                         "confidence": float(c.confidence),
                     }
-                    for c in snapped
+                    for c in records
+                ]
+
+            def _detect_one_stem(name_path):
+                """Run chord detection on a single stem path.
+
+                Returns ``(name, fixed_records, snapped_records)`` so
+                the caller can fan-in into per-stem dicts. Internal
+                failures degrade to empty lists rather than raising;
+                the aggregate ``chord_detection`` stage still wraps
+                the loop so a hard failure in detection-of-other
+                still yields ``chords_data = None`` via the outer
+                except block below.
+                """
+                _name, _path = name_path
+                try:
+                    _y, _sr = librosa.load(str(_path), sr=22050, mono=True)
+                except Exception as _e:
+                    logger.warning(
+                        f"Chord lane ({_name}): audio load failed ({_e})"
+                    )
+                    return _name, [], []
+                _recs = detect_chords(
+                    _y, _sr,
+                    bass_audio=y_bass,
+                    beats_s=None,
+                )
+                _snapped: list = []
+                if beats_for_chord is not None and len(_recs) >= 2:
+                    _dur_s = float(len(_y) / _sr) if _sr else 0.0
+                    _snapped = list(snap_chord_boundaries_to_beats(
+                        _recs, beats_for_chord, _dur_s,
+                    ))
+                return _name, list(_recs), _snapped
+
+            # Run per-stem chord detection in parallel. ThreadPool
+            # mirrors the midi_stems pattern at ~line 435-492; each
+            # detect_chords call releases the GIL inside librosa /
+            # numpy so wall-clock cost is dominated by the slowest
+            # single-stem run rather than the sum.
+            from concurrent.futures import ThreadPoolExecutor
+            _max_workers = max(1, min(len(chord_input_stems) or 1, 4))
+            with ThreadPoolExecutor(max_workers=_max_workers) as _ex:
+                _futures = [
+                    _ex.submit(_detect_one_stem, item)
+                    for item in chord_input_stems.items()
+                ]
+                _per_stem_results = [f.result() for f in _futures]
+            for _name, _recs, _snapped in _per_stem_results:
+                chords_by_stem[_name] = _records_to_dicts(_recs)
+                if _snapped:
+                    chords_beat_snapped_by_stem[_name] = _records_to_dicts(_snapped)
+                else:
+                    chords_beat_snapped_by_stem[_name] = None
+
+            # Legacy single-lane fields: the "other" stem stays the
+            # canonical chord lane. Falls back to whichever stem ran
+            # if "other" is somehow missing (defensive — should not
+            # happen, since "other" is in the input set when present).
+            chord_records = []
+            _legacy_name = "other" if "other" in chords_by_stem else (
+                next(iter(chords_by_stem)) if chords_by_stem else None
+            )
+            if _legacy_name is not None:
+                chords_data = list(chords_by_stem.get(_legacy_name) or [])
+                chords_data_beat_snapped = (
+                    chords_beat_snapped_by_stem.get(_legacy_name)
+                )
+                # Reconstruct ``chord_records`` (typed Chord tuple) from
+                # the dict form for the downstream guidance-mode +
+                # structural-role classifiers. Mirrors the prior shape
+                # so callers don't have to change.
+                from tone_forge.contracts import Chord as _Chord
+                chord_records = [
+                    _Chord(
+                        start_s=float(d["start_s"]),
+                        end_s=float(d["end_s"]),
+                        symbol=str(d["symbol"]),
+                        confidence=float(d.get("confidence", 0.5)),
+                    )
+                    for d in chords_data
                 ]
             logger.info(
-                f"Chord detection complete: {len(chords_data)} fixed regions, "
+                f"Chord detection complete: per-stem lanes = "
+                f"{list(chords_by_stem.keys())}; legacy 'other' lane = "
+                f"{len(chords_data) if chords_data else 0} fixed regions, "
                 f"{len(chords_data_beat_snapped) if chords_data_beat_snapped else 0} beat-snapped"
             )
         except Exception as e:
@@ -1411,6 +1499,15 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             # regions; the frontend treats None/missing as "snap mode
             # unavailable" and disables the toggle.
             "chords_beat_snapped": chords_data_beat_snapped,
+            # Per-stem chord lanes (additive — JAM chord-lane selector).
+            # Maps stem name (other/bass/vocals/drums/guitar_left/
+            # guitar_right) → fixed regions or beat-snapped regions.
+            # Legacy ``chords`` / ``chords_beat_snapped`` above stay =
+            # the "other" lane for backwards compatibility; clients
+            # that don't know about the per-stem dict simply ignore
+            # these keys.
+            "chords_by_stem": chords_by_stem,
+            "chords_beat_snapped_by_stem": chords_beat_snapped_by_stem,
             # Quality analysis
             "quality": {
                 "role": role_data,

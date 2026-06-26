@@ -196,8 +196,15 @@ def test_detect_chord_lane_emits_persisted_dict_shape(tmp_path: Path):
     # Bug-C hoist (Phase 7+): the post-tie-break key decision the
     # chord_detector reaches internally is surfaced under "key" so
     # AnalysisResult can persist detected_key at the top level.
+    # C1 (per-stem chord lanes): two additional keys —
+    # ``fixed_by_stem`` / ``snapped_by_stem`` — map stem name to
+    # per-stem chord regions; the "other" lane is always present
+    # (it's the chroma source for the legacy lane).
     assert isinstance(chord_lane, dict)
-    assert set(chord_lane.keys()) == {"fixed", "snapped", "key"}
+    assert set(chord_lane.keys()) == {
+        "fixed", "snapped", "key",
+        "fixed_by_stem", "snapped_by_stem",
+    }
 
     fixed = chord_lane["fixed"]
     assert isinstance(fixed, list)

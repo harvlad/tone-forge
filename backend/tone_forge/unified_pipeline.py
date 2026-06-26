@@ -404,6 +404,15 @@ class AnalysisResult:
     # surfaced (frontend disables the toggle in that case).
     chords_beat_snapped: Optional[List[Dict[str, Any]]] = None
 
+    # Per-stem chord lanes (additive — JAM chord-lane selector).
+    # Maps stem name → chord-region dicts (same shape as ``chords``).
+    # Legacy ``chords`` / ``chords_beat_snapped`` above remain the
+    # "other"-stem lane; clients that haven't been updated for the
+    # selector see no change. Empty dict when chord detection
+    # didn't run.
+    chords_by_stem: Optional[Dict[str, List[Dict[str, Any]]]] = None
+    chords_beat_snapped_by_stem: Optional[Dict[str, Optional[List[Dict[str, Any]]]]] = None
+
     # Backward compatibility
     type: Optional[str] = None
     descriptor: Optional[Dict[str, Any]] = None
@@ -445,6 +454,8 @@ class AnalysisResult:
                           "detected_key", "detected_key_root",
                           "chords",
                           "chords_beat_snapped",
+                          "chords_by_stem",
+                          "chords_beat_snapped_by_stem",
                           "type", "descriptor", "chain", "tweak_hints"]:
             value = getattr(self, field_name)
             if value is not None:
@@ -770,6 +781,8 @@ class UnifiedPipeline:
             # the result would be noise and Jam wouldn't display it.
             chords = None
             chords_beat_snapped = None
+            chords_by_stem: Optional[Dict[str, List[Dict[str, Any]]]] = None
+            chords_beat_snapped_by_stem: Optional[Dict[str, Optional[List[Dict[str, Any]]]]] = None
             # Phase-7+: detected_key surfaces out of the chord-lane
             # stage (chord_detector internally runs Krumhansl + the
             # bass-tiebreak; ``detect_chords_with_key`` returns it
@@ -787,6 +800,10 @@ class UnifiedPipeline:
                     if chord_lane is not None:
                         chords = chord_lane.get("fixed")
                         chords_beat_snapped = chord_lane.get("snapped")
+                        chords_by_stem = chord_lane.get("fixed_by_stem")
+                        chords_beat_snapped_by_stem = chord_lane.get(
+                            "snapped_by_stem"
+                        )
                         key_dict = chord_lane.get("key") or {}
                         if key_dict.get("label"):
                             detected_key = str(key_dict["label"])
@@ -1011,6 +1028,8 @@ class UnifiedPipeline:
                 detected_key=detected_key,
                 detected_key_root=detected_key_root,
                 detected_key_strength=detected_key_strength,
+                chords_by_stem=chords_by_stem,
+                chords_beat_snapped_by_stem=chords_beat_snapped_by_stem,
             )
 
             yield ProgressEvent("complete", "Analysis complete", 100)
@@ -1942,31 +1961,78 @@ class UnifiedPipeline:
             chord_records, key_dict = detect_chords_with_key(
                 y, sr, bass_audio=y_bass, beats_s=None,
             )
-            fixed = [
-                {
-                    "start_s": c.start_s,
-                    "end_s": c.end_s,
-                    "symbol": c.symbol,
-                    "confidence": c.confidence,
-                }
-                for c in chord_records
-            ]
-            snapped = None
-            if beats_array is not None and len(chord_records) >= 2:
-                song_dur_s = float(len(y) / sr) if sr else 0.0
-                snapped_records = snap_chord_boundaries_to_beats(
-                    chord_records, beats_array, song_dur_s,
-                )
-                snapped = [
+
+            def _to_dicts(records) -> List[Dict[str, Any]]:
+                return [
                     {
                         "start_s": c.start_s,
                         "end_s": c.end_s,
                         "symbol": c.symbol,
                         "confidence": c.confidence,
                     }
-                    for c in snapped_records
+                    for c in records
                 ]
-            return {"fixed": fixed, "snapped": snapped, "key": key_dict}
+
+            def _snap_if_possible(records, y_local, sr_local):
+                if beats_array is None or len(records) < 2:
+                    return None
+                song_dur_s = float(len(y_local) / sr_local) if sr_local else 0.0
+                return _to_dicts(snap_chord_boundaries_to_beats(
+                    records, beats_array, song_dur_s,
+                ))
+
+            fixed = _to_dicts(chord_records)
+            snapped = _snap_if_possible(chord_records, y, sr)
+
+            # Per-stem chord lanes (additive). The unified pipeline only
+            # has the four demucs stems available (no pan-split happens
+            # here — that lives in the local engine). Each non-"other"
+            # stem runs ``detect_chords`` plain (no key dict — the key
+            # comes from the "other" reference lane only); same
+            # ``y_bass`` for root bias so all lanes share that
+            # disambiguation. Failures per stem degrade to empty rather
+            # than failing the whole detection pass.
+            fixed_by_stem: Dict[str, List[Dict[str, Any]]] = {
+                "other": fixed,
+            }
+            snapped_by_stem: Dict[str, Optional[List[Dict[str, Any]]]] = {
+                "other": snapped,
+            }
+            if stems:
+                for _stem_name in ("bass", "vocals", "drums"):
+                    _p = stems.get(_stem_name)
+                    if _p is None:
+                        continue
+                    try:
+                        _y, _sr = _lr.load(str(_p), sr=22050, mono=True)
+                    except Exception as _e:
+                        logger.warning(
+                            f"Chord lane ({_stem_name}): audio load "
+                            f"failed ({_e})"
+                        )
+                        continue
+                    try:
+                        _recs = detect_chords(
+                            _y, _sr, bass_audio=y_bass, beats_s=None,
+                        )
+                    except Exception as _e:
+                        logger.warning(
+                            f"Chord lane ({_stem_name}): detection "
+                            f"failed ({_e})"
+                        )
+                        continue
+                    fixed_by_stem[_stem_name] = _to_dicts(_recs)
+                    snapped_by_stem[_stem_name] = _snap_if_possible(
+                        _recs, _y, _sr,
+                    )
+
+            return {
+                "fixed": fixed,
+                "snapped": snapped,
+                "key": key_dict,
+                "fixed_by_stem": fixed_by_stem,
+                "snapped_by_stem": snapped_by_stem,
+            }
 
         return await run_in_thread(detect)
 
@@ -1991,6 +2057,8 @@ class UnifiedPipeline:
         detected_key: Optional[str] = None,
         detected_key_root: Optional[int] = None,
         detected_key_strength: float = 0.0,
+        chords_by_stem: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        chords_beat_snapped_by_stem: Optional[Dict[str, Optional[List[Dict[str, Any]]]]] = None,
     ) -> AnalysisResult:
         """Build the final analysis result."""
         # Build stems paths dict - optionally as URLs for web playback
@@ -2093,6 +2161,9 @@ class UnifiedPipeline:
             # Chord lane (P4a)
             chords=chords,
             chords_beat_snapped=chords_beat_snapped,
+            # Per-stem chord lanes (additive — JAM chord-lane selector)
+            chords_by_stem=chords_by_stem,
+            chords_beat_snapped_by_stem=chords_beat_snapped_by_stem,
             # Provenance
             provenance=provenance,
             # Backward compatibility
