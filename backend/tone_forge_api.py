@@ -2561,6 +2561,24 @@ def _section_has_debug_features(result: dict) -> bool:
     return False
 
 
+@app.post("/api/debug/jam-log")
+async def post_debug_jam_log(request: Request) -> JSONResponse:
+    """Sink for ad-hoc JAM client diagnostics. Logs body to stderr.
+
+    Lets us correlate client-side picker/renderer state with the server
+    log without forcing users to copy-paste from devtools console. Used
+    by `[tab-lane]` + `[lead-picker]` instrumentation during the chord-
+    lanes milestone debugging.
+    """
+    try:
+        body = await request.body()
+        text = body.decode("utf-8", errors="replace")[:2000]
+    except Exception as e:
+        text = f"<decode error: {e!r}>"
+    logger.warning(f"[JAM-DEBUG] {text}")
+    return JSONResponse({"ok": True})
+
+
 @app.get("/api/debug/corpus")
 async def get_debug_corpus() -> JSONResponse:
     """Return the trial corpus (ground-truth labels) for the Corpus tab."""
