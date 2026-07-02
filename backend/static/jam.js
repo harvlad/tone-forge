@@ -2527,6 +2527,11 @@
         ? s.group_id : null;
       const recurrenceCount = (typeof s.recurrence_count === 'number'
         && s.recurrence_count >= 1) ? s.recurrence_count : null;
+      // Backend-authoritative per-section BPM (see
+      // analysis.sections._populate_section_bpm). Legacy bundles ship
+      // 0.0 and _bpmForSection falls back to the local derivation.
+      const bpm = (typeof s.bpm === 'number' && s.bpm >= 40 && s.bpm <= 240)
+        ? s.bpm : 0;
       pill.textContent = `${label} ${formatTime(start)}`;
       if (durationFlag) {
         pill.classList.add('section-pill-suspicious');
@@ -2563,6 +2568,7 @@
         structuralRole, structuralConfidence,
         durationFlag,
         groupId, recurrenceCount,
+        bpm,
       };
     });
     // Fallback: when section detection returns nothing (some short
@@ -7701,6 +7707,15 @@
   // librosa estimate. Returns null when no tempo is known at all.
   function _bpmForSection(section) {
     if (!section) return null;
+    // Prefer the backend-authoritative value when present. The unified
+    // pipeline populates ``section.bpm`` via ``_populate_section_bpm``
+    // using the same heuristic we implement below, so this makes the
+    // engine the single source of truth. Legacy bundles (or any
+    // section that survived _classify_sections without a beat grid)
+    // ship 0.0 and fall through to the local derivation.
+    if (typeof section.bpm === 'number' && section.bpm >= 40 && section.bpm <= 240) {
+      return section.bpm;
+    }
     const startS = typeof section.startSec === 'number' ? section.startSec
       : (typeof section.start_s === 'number' ? section.start_s : 0);
     const endS = typeof section.endSec === 'number' ? section.endSec

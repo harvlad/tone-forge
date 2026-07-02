@@ -106,6 +106,15 @@ class ArrangementSection:
     # Empty default keeps legacy bundles round-tripping unchanged.
     duration_flag: str = ""
 
+    # Per-section local BPM, derived from the beat grid inside the
+    # section window (see ``_populate_section_bpm``). Authoritative
+    # single source of truth for the JAM UI's per-section tempo chip
+    # + warm-up bar length, replacing the frontend's earlier
+    # heuristic derivation from ``beats_s``. 0.0 default when the
+    # beat grid is absent or too sparse (< 2 beats in the window);
+    # the frontend re-derives locally in that case.
+    bpm: float = 0.0
+
     @property
     def duration(self) -> float:
         """Duration of the section."""
@@ -136,6 +145,7 @@ class ArrangementSection:
             "structural_role": self.structural_role,
             "structural_confidence": float(self.structural_confidence),
             "duration_flag": self.duration_flag,
+            "bpm": float(self.bpm),
         }
 
 
@@ -274,6 +284,13 @@ class SectionDetector:
 
         # Refine intro/outro
         sections = self._refine_intro_outro(sections, energy_curve)
+
+        # Populate per-section BPM from the beat grid so the JAM UI's
+        # tempo chip has an authoritative value rather than re-deriving
+        # from ``beats_s`` in the browser. Falls back silently to the
+        # global tempo when a section has < 2 beats inside its window
+        # (very short sections, or beat tracker degraded).
+        _populate_section_bpm(sections, beats_s, fallback_bpm=tempo)
 
         return ArrangementAnalysis(
             sections=sections,
@@ -729,6 +746,59 @@ class SectionDetector:
                 )
 
         return sections
+
+
+# Clamp window matches the frontend fallback bounds so a mis-scaled
+# beat detector can't smuggle absurd values into the JAM UI's tempo
+# chip. Anything outside 40..240 is treated as a signal that the beat
+# grid degraded and we should fall back to the global tempo instead.
+_SECTION_BPM_MIN = 40.0
+_SECTION_BPM_MAX = 240.0
+
+
+def _populate_section_bpm(
+    sections: List[ArrangementSection],
+    beats_s: Optional[np.ndarray],
+    fallback_bpm: Optional[float] = None,
+) -> None:
+    """Compute per-section BPM in-place from the beat grid.
+
+    Mirrors the frontend's ``_bpmForSection`` heuristic so the
+    engine emits the same value the browser would have derived,
+    letting the JAM UI treat this as authoritative and skip the
+    re-derivation. Sections with < 2 beats inside their window fall
+    back to ``fallback_bpm`` (the pipeline's global tempo estimate)
+    so the chip still renders instead of showing nothing.
+    """
+    if beats_s is None or len(beats_s) < 2:
+        # Even without a beat grid we can still surface the global
+        # tempo as a per-section value — the chip is more useful when
+        # it's always present.
+        if fallback_bpm and _SECTION_BPM_MIN <= float(fallback_bpm) <= _SECTION_BPM_MAX:
+            for s in sections:
+                s.bpm = float(fallback_bpm)
+        return
+
+    beats = np.asarray(beats_s, dtype=float)
+    for s in sections:
+        lo, hi = float(s.start_time), float(s.end_time)
+        if hi <= lo:
+            continue
+        # Beats falling inside [lo, hi); tolerate float rounding by
+        # using half-open intervals matched to the frontend.
+        mask = (beats >= lo) & (beats < hi)
+        window = beats[mask]
+        if len(window) >= 2:
+            span = float(window[-1] - window[0])
+            if span > 0:
+                bpm = 60.0 * (len(window) - 1) / span
+                if _SECTION_BPM_MIN <= bpm <= _SECTION_BPM_MAX:
+                    s.bpm = bpm
+                    continue
+        # Sparse-beat fallback keeps the chip populated with the
+        # song's global tempo so the UI never has to render "?? BPM".
+        if fallback_bpm and _SECTION_BPM_MIN <= float(fallback_bpm) <= _SECTION_BPM_MAX:
+            s.bpm = float(fallback_bpm)
 
 
 def detect_sections(

@@ -266,6 +266,13 @@ class Section:
     # None defaults keep pre-Phase-3 bundles parsing unchanged.
     group_id: Optional[str] = None
     recurrence_count: Optional[int] = None
+    # Per-section local BPM, derived from the beat grid inside
+    # [start_s, end_s). Populated by
+    # ``ArrangementSection._populate_section_bpm`` in the unified
+    # pipeline. 0.0 default keeps pre-BPM bundles parsing unchanged;
+    # the JAM UI's ``_bpmForSection`` falls back to its own
+    # derivation from ``beats_s`` in that case.
+    bpm: float = 0.0
 
 
 @dataclass(frozen=True)

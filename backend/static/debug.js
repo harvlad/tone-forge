@@ -382,6 +382,7 @@
     add('dominant_stem', sec.dominant_stem || '—');
     add('label', sec.label || '—');
     add('window', `${(sec.start_s || 0).toFixed(1)}s → ${(sec.end_s || 0).toFixed(1)}s`);
+    if (typeof sec.bpm === 'number' && sec.bpm > 0) add('bpm', Math.round(sec.bpm));
     if (sec.guidance_reason) add('reason', escapeHTML(sec.guidance_reason));
 
     const tags = detectSectionTags(sec, getChords(bundle));

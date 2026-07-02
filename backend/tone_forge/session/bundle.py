@@ -660,6 +660,12 @@ def _iter_sections(raw: Any) -> Iterable[Section]:
                     recurrence_count = None
             except (TypeError, ValueError):
                 recurrence_count = None
+        # Per-section BPM round-trip. Producer
+        # (``ArrangementSection.to_dict()``) emits ``bpm`` as a float
+        # derived from the beat grid inside the section window.
+        # Legacy bundles lack the key and fall back to 0.0, at which
+        # point the JAM UI re-derives locally from ``beats_s``.
+        bpm = _safe_float(item.get("bpm"), default=0.0) or 0.0
         yield Section(
             start_s=start,
             end_s=end,
@@ -676,6 +682,7 @@ def _iter_sections(raw: Any) -> Iterable[Section]:
             duration_flag=duration_flag,
             group_id=group_id,
             recurrence_count=recurrence_count,
+            bpm=bpm,
         )
 
 
