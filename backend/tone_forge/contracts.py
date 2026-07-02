@@ -248,6 +248,24 @@ class Section:
     # string default keeps pre-Phase-5 bundles parsing unchanged.
     structural_role: str = ""
     structural_confidence: float = 0.0
+    # Fix B: duration-guard flag surfaced to the JAM UI. Populated by
+    # ``analysis.section_naming.flag_suspicious_durations`` when a
+    # section's duration is structurally implausible for its assigned
+    # ``label`` (e.g. a 70s CHORUS that clearly ate multiple
+    # neighbouring sections because the boundary detector under-
+    # segmented). Values: "", "chorus_too_long", "prechorus_too_long",
+    # "verse_too_long", "bridge_too_long", "fragment". Empty default
+    # keeps pre-Fix-B bundles rendering unchanged.
+    duration_flag: str = ""
+    # Phase 3 (rehearsal v2): authoritative section grouping so the
+    # JAM rehearsal view can collapse recurring sections under a
+    # single anchor without guessing from labels. ``group_id`` is the
+    # refined section type (e.g. "Chorus 1") shared by all sections
+    # that map to the same cluster; ``recurrence_count`` is the size
+    # of that cluster. Both are None for singleton sections. Empty /
+    # None defaults keep pre-Phase-3 bundles parsing unchanged.
+    group_id: Optional[str] = None
+    recurrence_count: Optional[int] = None
 
 
 @dataclass(frozen=True)

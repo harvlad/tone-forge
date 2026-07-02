@@ -529,6 +529,45 @@ html, body {
 .section-pill.active .section-role-badge.role-unique {
   border-color: #1a0f06;
 }
+
+/* Fix B: suspicious-section indicator.
+ *
+ * When the duration-guard post-pass
+ * (analysis/section_naming.py:flag_suspicious_durations) decides a
+ * section's duration is structurally implausible for its label
+ * (e.g. a 70s CHORUS that clearly ate several boundaries the
+ * RMS-novelty detector missed), the pill gets an amber dashed
+ * border plus a ⚠ glyph. The label itself is unchanged — this is
+ * an advisory hint that the boundary detector under-segmented,
+ * not a re-classification.
+ *
+ * Amber (not red) so it doesn't compete visually with the active
+ * loop pill (which uses --accent = orange). Dashed border makes
+ * "something's provisional here" legible at a glance.
+ */
+.section-pill-suspicious {
+  border-style: dashed;
+  border-color: #d4a017;
+}
+.section-pill-suspicious:hover { border-color: #f0b820; }
+.section-pill-suspicious.active {
+  /* Keep the dashed provisional look even when this pill is the
+   * active loop region — swapping to a solid orange border would
+   * hide the fact that this section boundary is untrusted. */
+  border-style: dashed;
+  border-color: #d4a017;
+}
+.section-duration-warn {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 1;
+  color: #d4a017;
+  vertical-align: middle;
+  cursor: help;
+}
+.section-pill.active .section-duration-warn { color: #1a0f06; }
+
 .loop-status { color: var(--text-dim); font-size: 13px; margin-top: 10px; }
 
 /* ----------------------------------------------------- chord ribbon
@@ -1810,10 +1849,10 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   line-height: 1;
 }
 .chord-now-diagram {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   width: 100%;
   max-width: 520px;
-  min-height: 340px;
+  height: 380px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -1822,7 +1861,7 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .chord-now-diagram svg {
   width: 100%;
   height: 100%;
-  max-height: 400px;
+  max-height: 380px;
   display: block;
 }
 /* Footer row inside NOW PLAYING — countdown on the left, transition
@@ -2003,7 +2042,7 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   display: flex;
   gap: 10px;
   align-items: baseline;
-  min-height: 0;
+  min-height: 20px;
   margin-bottom: 4px;
 }
 .chord-overlay-nashville {
@@ -2077,7 +2116,10 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
     font-size: 44px;
   }
   .chord-now-diagram {
-    min-height: 240px;
+    height: 260px;
+  }
+  .chord-now-diagram svg {
+    max-height: 260px;
   }
 }
 
@@ -2264,8 +2306,31 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .picking-tab-lane {
   width: 100%;
   height: auto;
+  /* Explicit aspect-ratio: older Safari resolves height:auto on an SVG
+     with only viewBox (no width/height attrs) to 0, collapsing the lane
+     vertically even though child glyphs are correctly positioned.
+     viewBox is 640×110 → aspect 64:11. */
+  aspect-ratio: 64 / 11;
+  min-height: 90px;
   display: block;
   max-height: 140px;
+  /* SVG root clips to viewBox by default. We rely on that for hiding
+     off-screen scrolling notes and disable the per-group clip-path
+     below — see .tab-notes rule for rationale. */
+  overflow: hidden;
+}
+/* Disable the SVG-attribute clip-path that picking-tab-lane.js sets on
+   the notes group. The clipPath rect is authored in viewBox space
+   (x=padLeft, width=usable area), but Safari applies the group's own
+   translate(-tx 0) transform to the clip rect coordinates as well —
+   so at runtime the clip rect moves thousands of viewBox units
+   off-screen with the content, and every glyph gets clipped out.
+   The SVG root's intrinsic overflow:hidden handles bleed past the
+   string-label gutter; the gutter sits at viewBox x ∈ [0,36], so
+   labels can be briefly overdrawn by a scrolling glyph near the
+   edge — a minor cosmetic cost for the notes being visible at all. */
+.picking-tab-lane .tab-notes {
+  clip-path: none !important;
 }
 .picking-tab-lane .tab-string {
   stroke: var(--text-dim);
@@ -2472,4 +2537,624 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   fill: var(--accent, #e8743b);
   font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ------------------------------------------------------- rehearsal view
+ * Section-by-section onboarding practice. The layout is a two-column
+ * grid (section list + main pane) with a fixed transport strip below.
+ * Colours reuse the existing palette (--accent for progress, --good
+ * for pass state, --bad for fail state) so the surface feels native
+ * next to the perform view. */
+#view-rehearsal {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.rehearsal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 24px 0 20px;
+}
+.rehearsal-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+}
+.rehearsal-meta {
+  color: var(--text-dim);
+  font-size: 14px;
+  margin-top: 4px;
+}
+.rehearsal-header-actions {
+  display: flex;
+  gap: 10px;
+}
+.rehearsal-grid {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+.rehearsal-sections {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.rehearsal-sections-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+}
+.rehearsal-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rehearsal-section-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.rehearsal-section-item:hover {
+  border-color: var(--border);
+}
+.rehearsal-section-item.is-active {
+  border-color: var(--accent);
+  background: rgba(249, 115, 22, 0.08);
+}
+.rehearsal-section-item .rehearsal-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  color: var(--good);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.rehearsal-section-item.is-complete .rehearsal-check {
+  border-color: var(--good);
+  background: rgba(74, 222, 128, 0.16);
+}
+.rehearsal-section-item .rehearsal-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rehearsal-section-item .rehearsal-item-role {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.rehearsal-section-variant {
+  padding-left: 24px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.rehearsal-main {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  min-height: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rehearsal-section-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.rehearsal-section-heading-name {
+  font-size: 22px;
+  font-weight: 700;
+}
+.rehearsal-section-heading-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: rgba(249, 115, 22, 0.12);
+  color: var(--accent-2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.rehearsal-mic-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  align-self: flex-start;
+}
+.rehearsal-mic-chip .rehearsal-mic-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.rehearsal-mic-chip.rehearsal-mic-on .rehearsal-mic-dot {
+  background: var(--good);
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
+}
+.rehearsal-mic-chip.rehearsal-mic-off .rehearsal-mic-label { color: var(--text-dim); }
+.rehearsal-mic-pitch {
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+}
+.rehearsal-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-content: flex-start;
+  flex: 1;
+  min-height: 200px;
+  padding: 8px;
+  background: var(--panel-2);
+  border-radius: 8px;
+}
+.rehearsal-tile {
+  min-width: 96px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1.5px solid var(--border);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  transition: transform 0.12s, border-color 0.12s, background 0.12s;
+}
+.rehearsal-tile-label {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+.rehearsal-tile-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.rehearsal-tile.is-active {
+  border-color: var(--accent);
+  background: rgba(249, 115, 22, 0.10);
+  transform: translateY(-1px);
+}
+.rehearsal-tile.is-pass {
+  border-color: var(--good);
+  background: rgba(74, 222, 128, 0.12);
+}
+.rehearsal-tile.is-fail {
+  border-color: var(--bad);
+  background: rgba(248, 113, 113, 0.10);
+}
+.rehearsal-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 40px 0;
+  text-align: center;
+}
+.rehearsal-score {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.rehearsal-score-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 11px;
+}
+.rehearsal-score-value {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-weight: 700;
+  color: var(--text);
+}
+.rehearsal-score-hint { color: var(--text-dim); margin-left: auto; }
+
+.rehearsal-transport {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 40px;
+}
+.rehearsal-transport button.is-active {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+.rehearsal-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+.rehearsal-speed-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-right: 4px;
+}
+.rehearsal-speed-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+.rehearsal-speed-btn.is-active {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.rehearsal-speed-btn:hover:not(.is-active) { color: var(--text); }
+#rehearsal-next { margin-left: auto; }
+
+/* ─── v2 rehearsal redesign ──────────────────────────────────────
+   Musician-language IA: three group buckets in the left list
+   (Parts to Learn / Moments / Extras), warm status line replacing
+   the "Passes 0/0" scoreboard, quieter Skip-to-jam text link, and
+   soft-label italics for low-confidence sections. Row layout has
+   a reserved beads slot so the Phase-2 mastery rollout drops in
+   without a second grid-shift.
+   ───────────────────────────────────────────────────────────── */
+.rehearsal-header-meta,
+#rehearsal-meta {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-top: 4px;
+  letter-spacing: 0.1px;
+}
+.text-link {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+}
+.text-link:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  text-decoration: underline;
+}
+
+/* Left list — group headings (Parts to learn / Moments / Extras). */
+.rehearsal-group-heading {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.1px;
+  font-weight: 600;
+  margin: 14px 0 8px;
+  padding: 0 4px;
+}
+.rehearsal-group-heading:first-child { margin-top: 0; }
+.rehearsal-group-heading--extras {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+.rehearsal-group-heading--extras::before {
+  content: '▸';
+  font-size: 10px;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+.rehearsal-group-heading--extras.is-open::before {
+  transform: rotate(90deg);
+}
+.rehearsal-extras-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.rehearsal-extras-tray.is-collapsed {
+  display: none;
+}
+
+/* Section row. Grid columns: name, mastery beads, state chip, check.
+   Keeps baseline consistent across variants and hover states. */
+.rehearsal-section-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  transition: border-color 0.12s, background 0.12s;
+}
+.rehearsal-section-row + .rehearsal-section-row { margin-top: 6px; }
+.rehearsal-section-row:hover:not(.is-active) {
+  border-color: var(--border);
+}
+.rehearsal-section-row.is-active {
+  border-color: var(--accent);
+  background: rgba(249, 115, 22, 0.10);
+}
+.rehearsal-section-row.is-variant {
+  padding-left: 28px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  background: transparent;
+}
+.rehearsal-section-row.is-variant.is-active {
+  color: var(--text);
+  background: rgba(249, 115, 22, 0.08);
+}
+.rehearsal-section-row.is-soft .rehearsal-section-row-name {
+  font-style: italic;
+  color: var(--text-dim);
+}
+.rehearsal-section-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rehearsal-section-row-beads {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  min-width: 0;
+}
+.rehearsal-section-row .rehearsal-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  color: var(--good);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.rehearsal-section-row.is-complete .rehearsal-check {
+  border-color: var(--good);
+  background: rgba(74, 222, 128, 0.16);
+}
+
+/* Section heading — "Maybe …" italics for low-confidence labels. */
+.rehearsal-section-heading-name.is-soft {
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+/* Phase 3: recurrence subtitle under an anchor row ("repeats 4×").
+   Rendered inline inside .rehearsal-section-row-name so it wraps
+   below the label without stealing width from the beads column. */
+.rehearsal-section-row-subtitle {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 400;
+  margin-top: 1px;
+  letter-spacing: 0.01em;
+}
+
+/* Phase 3: locked-row treatment. The row is still visible so
+   musicians see what's coming, but it's desaturated + non-
+   interactive-looking. The 🔒 sits in the check slot. Long-press
+   hint provided by title attr, no explicit affordance in the row
+   itself (matches the design memo — "let the musician discover it,
+   don't clutter the list"). */
+.rehearsal-section-row.is-locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.rehearsal-section-row.is-locked:hover {
+  background: transparent;
+}
+.rehearsal-section-row .rehearsal-check.is-lock {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* Phase 3: difficulty hints under the section heading. Chips flow
+   inline so multiple hints ("has a barre chord", "quick change")
+   read as a comma-less short list. Colour is intentionally subdued
+   — this is context, not a warning. */
+.rehearsal-section-heading-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.rehearsal-section-heading-hints[hidden] {
+  display: none;
+}
+.difficulty-hint {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+/* Status line replacing the "Passes 0/0" scoreboard. Warm sentence
+   copy from _rehearsalStatusCopy(); container reuses the
+   #rehearsal-score div so DOM ids stay stable. */
+.rehearsal-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  min-height: 34px;
+}
+.rehearsal-status-line {
+  color: var(--text);
+  font-family: inherit;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.rehearsal-status-line.is-complete {
+  color: var(--good);
+  font-weight: 600;
+}
+.rehearsal-status-hint {
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+/* ─── Phase 2 mastery beads, state chip, tile fine-grained states ─── */
+
+/* Bead: 5-dot row rendered inside .rehearsal-section-row-beads. Empty
+   beads are a hollow outline; graded beads pick up quality colour. */
+.bead {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  display: inline-block;
+  transition: background 0.15s, border-color 0.15s;
+}
+.bead.is-empty {
+  /* explicit for readability; same as default */
+  background: transparent;
+}
+.bead.is-rough {
+  background: #f4c063;
+  border-color: #f4c063;
+}
+.bead.is-clean {
+  background: #86efac;
+  border-color: #86efac;
+}
+.bead.is-perfect {
+  background: var(--good);
+  border-color: var(--good);
+  box-shadow: 0 0 4px rgba(74, 222, 128, 0.5);
+}
+
+/* State chip: small pill shown next to the beads. Hidden when
+   rec.state === 'not_tried'. */
+.mastery-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: transparent;
+  white-space: nowrap;
+}
+.mastery-chip[hidden] { display: none; }
+.mastery-chip.is-learning {
+  color: #f4c063;
+  border-color: rgba(244, 192, 99, 0.35);
+  background: rgba(244, 192, 99, 0.08);
+}
+.mastery-chip.is-practicing {
+  color: #86efac;
+  border-color: rgba(134, 239, 172, 0.35);
+  background: rgba(134, 239, 172, 0.08);
+}
+.mastery-chip.is-locked-in {
+  color: var(--good);
+  border-color: rgba(74, 222, 128, 0.45);
+  background: rgba(74, 222, 128, 0.14);
+}
+.mastery-chip.is-mastered {
+  color: #ffffff;
+  border-color: var(--good);
+  background: rgba(74, 222, 128, 0.35);
+}
+
+/* Tile fine-grained failure states. is-fail keeps the existing red
+   treatment (defined elsewhere); is-close/early/late nudge the
+   colour warmer so a musician sees "almost there" vs "wrong". */
+.rehearsal-tile.is-close {
+  border-color: #86efac;
+  background: rgba(134, 239, 172, 0.10);
+}
+.rehearsal-tile.is-early {
+  border-color: #93c5fd;
+  background: rgba(147, 197, 253, 0.10);
+}
+.rehearsal-tile.is-late {
+  border-color: #f4c063;
+  background: rgba(244, 192, 99, 0.10);
+}
+
+/* Per-tile why-hint. One line max, breaks below the tile's main
+   content. Written by _setWhyHint on fail; cleared on next active. */
+.tile-why-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-dim);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rehearsal-tile.is-close .tile-why-hint { color: #86efac; }
+.rehearsal-tile.is-early .tile-why-hint { color: #93c5fd; }
+.rehearsal-tile.is-late .tile-why-hint { color: #f4c063; }
+
+/* Bandroom post-analysis CTA pair. Hidden until onAnalysisComplete
+   flips the bandroom into "Ready". Skip-to-jam is styled ghost so the
+   primary rehearsal CTA reads first. */
+.bandroom-cta {
+  display: flex;
+  gap: 12px;
+  margin-top: 18px;
+  justify-content: center;
 }

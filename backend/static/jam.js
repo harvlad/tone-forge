@@ -29,15 +29,32 @@
   const views = {
     intake: $('view-intake'),
     bandroom: $('view-bandroom'),
+    // Rehearsal — optional per-section practice view. Sits between
+    // bandroom and perform in the state machine. Always skippable;
+    // entering it never blocks the perform path.
+    rehearsal: $('view-rehearsal'),
     perform: $('view-perform'),
   };
   function showView(name) {
-    Object.values(views).forEach(v => v.classList.remove('active'));
-    views[name].classList.add('active');
+    Object.values(views).forEach(v => v && v.classList.remove('active'));
+    if (views[name]) views[name].classList.add('active');
     // perform v2: the 1440px wide layout + fixed playback bar only
-    // apply on the perform view. Intake / band-room keep the legacy
-    // 1100px max-width to stay byte-identical.
+    // apply on the perform view. Intake / band-room / rehearsal keep
+    // the legacy 1100px max-width to stay byte-identical.
     document.body.classList.toggle('perform-active', name === 'perform');
+    // Rehearsal lifecycle hooks — enter/leave lets the module arm
+    // its transport, mic pipeline, and playhead tracking. Hooks are
+    // defined lower in the file; guarded so this callsite still works
+    // during the initial script parse before the definitions bind.
+    if (name === 'rehearsal') {
+      if (typeof _onEnterRehearsalView === 'function') {
+        try { _onEnterRehearsalView(); } catch (e) { console.warn('[rehearsal] enter failed:', e); }
+      }
+    } else if (state && state.rehearsal && state.rehearsal.active) {
+      if (typeof _onLeaveRehearsalView === 'function') {
+        try { _onLeaveRehearsalView(); } catch (e) { console.warn('[rehearsal] leave failed:', e); }
+      }
+    }
   }
 
   // -------------------------------------------------------- constants
@@ -240,6 +257,52 @@
     songMix: {
       gain: 1.0,
       muted: false,
+    },
+    // Rehearsal mode — optional per-section practice surface. Sits
+    // between bandroom and perform in the state machine; strictly
+    // skippable. Populated by _enterRehearsal / rebuildRehearsalUI
+    // when the user opts in from the bandroom CTA.
+    //
+    //   active         — true while the rehearsal view owns transport
+    //   sectionIndex   — index into state.sections that's being drilled
+    //   speed          — 0.5 / 0.75 / 1.0 (AudioBufferSource.playbackRate)
+    //   loopOn         — section loop toggle; on by default
+    //   items          — array of tiles for the current section
+    //                    ({ kind, symbol|pitch, start, end, pcs?, verifyState })
+    //   activeItemIdx  — index of the currently-highlighted tile
+    //   perSection     — { [sectionIdx]: { passes, fails, total, lastLoopId } }
+    //   completed      — { [sectionIdx]: true } — persisted per session
+    //   lastPersistKey — analysis id at last save (invalidation guard)
+    //   verifyRafHandle — RAF handle for the verify loop (10Hz)
+    //   loopStartedAt   — playback-time offset at which the current loop
+    //                     iteration began (for one-pass scoring)
+    rehearsal: {
+      active: false,
+      sectionIndex: 0,
+      speed: 1.0,
+      loopOn: true,
+      items: [],
+      activeItemIdx: -1,
+      perSection: {},
+      completed: {},
+      // Phase 2: per-section mastery record.
+      //   beads: rolling last-5 loop grades ('rough'|'clean'|'perfect'|null)
+      //   state: 'not_tried'|'learning'|'practicing'|'locked_in'|'mastered'
+      //   speedAtLastClean: last speed at which a clean+ bead was earned
+      //   consecutiveRough: downgrade guard (needs 3 in a row)
+      //   lastRun: {passes, fails, total, speed, at}
+      mastery: {},
+      // Phase 3: manual lock overrides (long-press "I know what I'm
+      // doing" bypass). idx → true. Persists across reloads alongside
+      // completed / mastery.
+      manualUnlocks: {},
+      _extrasCollapsed: true,
+      // Phase 2: why-hint copy per failed item, keyed by item idx of the
+      // currently-active section. Cleared on section change / loop reset.
+      whyHints: {},
+      lastPersistKey: null,
+      verifyRafHandle: null,
+      loopStartedAt: 0,
     },
     // Mic-capture pipeline (built lazily when listening is enabled).
     listen: {
@@ -1758,6 +1821,12 @@
     $('bandroom-title').textContent = 'Setting up your band…';
     $('bandroom-status').textContent = 'Downloading audio';
     $('bandroom-bar').style.width = '5%';
+    // Reset the post-analysis CTA and re-show the cancel button so the
+    // bandroom starts each new jam in its "still working" shape.
+    const _ctaRow = $('bandroom-cta');
+    if (_ctaRow) _ctaRow.hidden = true;
+    const _cancelBtn = $('bandroom-cancel');
+    if (_cancelBtn) _cancelBtn.hidden = false;
     // Reset slot states.
     // Remove any guitar-split slots injected by a previous jam, then
     // reset the static slot states back to Waiting.
@@ -2198,7 +2267,23 @@
     await prepareStemAudio();
     markTtfj('audio_ready', { stems: state.stems.size });
 
-    showView('perform');
+    // Rehearsal opt-in surface — expose the "Start rehearsal" / "Skip
+    // to jam" CTA pair on the bandroom before switching views. If the
+    // bandroom-cta container is missing (e.g. deep-link path without
+    // the new markup) we fall back to the pre-rehearsal behaviour of
+    // going straight to perform.
+    const ctaRow = $('bandroom-cta');
+    const cancelBtn = $('bandroom-cancel');
+    if (ctaRow) {
+      ctaRow.hidden = false;
+      if (cancelBtn) cancelBtn.hidden = true;
+      // Load any prior completion state now that analysisId is known.
+      _loadRehearsalProgress();
+      // Stay on the bandroom so the user can pick between rehearsal
+      // and karaoke. The perform view is entered by the CTA handlers.
+    } else {
+      showView('perform');
+    }
     // The browser is the session "owner"; open the Connect bridge so
     // the helper has a channel to join even if no preset has been
     // pushed yet. The push has already happened above on success.
@@ -2375,7 +2460,46 @@
         && VALID_ROLES[s.structural_role]) ? s.structural_role : '';
       const structuralConfidence = typeof s.structural_confidence === 'number'
         ? s.structural_confidence : 0.0;
+      // Fix B: duration-guard flag. Populated by
+      // ``analysis.section_naming.flag_suspicious_durations`` when the
+      // section's duration is structurally implausible for its label
+      // (e.g. a 70s CHORUS that clearly ate several boundaries the
+      // RMS-novelty detector missed). Values are one of the
+      // whitelisted strings below; anything else is silently ignored
+      // so a stale bundle can't inject arbitrary strings into class
+      // names. Empty / missing → no indicator (legacy pill).
+      const VALID_DURATION_FLAGS = {
+        chorus_too_long: 'Chorus is unusually long — the boundary detector may have merged multiple sections.',
+        prechorus_too_long: 'Pre-chorus is unusually long — the boundary detector may have merged multiple sections.',
+        verse_too_long: 'Verse is unusually long — the boundary detector may have merged multiple sections.',
+        bridge_too_long: 'Bridge is unusually long — the boundary detector may have merged multiple sections.',
+        fragment: 'Section is unusually short — may be a detection fragment.',
+      };
+      const durationFlag = (typeof s.duration_flag === 'string'
+        && VALID_DURATION_FLAGS[s.duration_flag]) ? s.duration_flag : '';
+      // Phase 3 (rehearsal v2): authoritative section grouping from
+      // the backend (unified_pipeline step 7e → session/bundle
+      // round-trip). ``groupId`` is a shared string when this section
+      // is a recurrence of another; ``recurrenceCount`` is the
+      // cluster size. Both are null on legacy bundles — the rehearsal
+      // view falls back to the Phase-1 name heuristic in that case.
+      const groupId = (typeof s.group_id === 'string' && s.group_id)
+        ? s.group_id : null;
+      const recurrenceCount = (typeof s.recurrence_count === 'number'
+        && s.recurrence_count >= 1) ? s.recurrence_count : null;
       pill.textContent = `${label} ${formatTime(start)}`;
+      if (durationFlag) {
+        pill.classList.add('section-pill-suspicious');
+        pill.classList.add(`section-pill-flag-${durationFlag.replace(/_/g, '-')}`);
+        // Warning glyph badge (⚠). Tooltip explains the specific
+        // reason. Rendered as a real <span> so screen readers pick it
+        // up (the ::before pseudo-element wouldn't be announced).
+        const warn = document.createElement('span');
+        warn.className = 'section-duration-warn';
+        warn.textContent = '\u26A0'; // ⚠ (BMP, avoids narrow emoji fallback)
+        warn.title = VALID_DURATION_FLAGS[durationFlag];
+        pill.appendChild(warn);
+      }
       if (structuralRole) {
         const badge = document.createElement('span');
         badge.className = `section-role-badge role-${structuralRole.toLowerCase()}`;
@@ -2397,6 +2521,8 @@
         guidanceMode, guidanceConfidence, guidanceReason,
         dominantStem, landmarkNotes,
         structuralRole, structuralConfidence,
+        durationFlag,
+        groupId, recurrenceCount,
       };
     });
     // Fallback: when section detection returns nothing (some short
@@ -2623,12 +2749,35 @@
   // piano / bass-driven tracks) still surfaces *something* in the
   // lead-tab lane instead of the empty placeholder.
   // Drums are excluded — drum onsets aren't pitched melodic info.
+  // Minimum lead-stem density (notes per second) for the picker to
+  // accept the first-choice stem. Below this, the picker falls
+  // through to the next candidate looking for a denser one — and if
+  // every candidate is sparse, returns the densest of the lot.
+  //
+  // 0.5 notes/sec ≈ one note every 2s; below that, the scrolling
+  // tab lane runs visibly empty between phrases (the symptom that
+  // motivated this fallback). Real guitar lead lines comfortably
+  // run 2-8 notes/sec, so the threshold trips only when the stem
+  // separator (or pan-split) produced a sparse output for what
+  // ought to be a richer source.
+  const _LEAD_PICKER_MIN_DENSITY = 0.5;
   function _pickLeadMidiNotes(r) {
     if (!r) return [];
     const stems = r.midi_stems;
+    // Use the result's reported duration when available; clamp to a
+    // 1s floor so a degenerate / missing duration can't divide-by-zero.
+    const dur = Math.max(
+      1,
+      Number(r.duration_sec) || Number(r.duration) || 0,
+    );
     const picked = [];
     if (stems && typeof stems === 'object') {
+      // Preference order: guitar → other → piano → bass → vocals.
+      // Walk it, but instead of returning the first non-empty stem,
+      // collect EVERY candidate that has notes along with its density
+      // and pick a winner by preference + density threshold.
       const STEM_PREF = ['guitar', 'other', 'piano', 'bass', 'vocals'];
+      const candidates = [];
       for (const key of STEM_PREF) {
         const stem = stems[key];
         if (!stem) continue;
@@ -2642,12 +2791,42 @@
         }
         picked.push(`${key}=${stem.note_count ?? (notes ? notes.length : 0)}`);
         if (notes) {
-          try {
-            console.info(`[lead-picker] picked stem=${key} notes=${notes.length} `
-              + `(considered: ${picked.join(', ')})`);
-          } catch (_) {}
-          return notes;
+          const density = notes.length / dur;
+          candidates.push({ key, notes, density });
         }
+      }
+      if (candidates.length > 0) {
+        // First, prefer the highest-priority stem whose density
+        // clears the threshold. Walk the candidates in preference
+        // order (they're already in walk-order because we iterated
+        // STEM_PREF) and return the first one that's dense enough.
+        for (const c of candidates) {
+          if (c.density >= _LEAD_PICKER_MIN_DENSITY) {
+            const _msg = `[lead-picker] picked stem=${c.key} `
+              + `notes=${c.notes.length} density=${c.density.toFixed(2)}/s `
+              + `(considered: ${picked.join(', ')})`;
+            try { console.info(_msg); } catch (_) {}
+            try {
+              fetch('/api/debug/jam-log', { method: 'POST', body: _msg, keepalive: true })
+                .catch(() => {});
+            } catch (_) {}
+            return c.notes;
+          }
+        }
+        // Every candidate is below the density floor — every stem
+        // genuinely sparse for this song. Return the densest one so
+        // the lane shows the most lead-shaped data available rather
+        // than the highest-priority empty pick.
+        const densest = candidates.reduce(
+          (a, b) => (b.density > a.density ? b : a),
+        );
+        try {
+          console.info(`[lead-picker] all sparse; picked densest stem=`
+            + `${densest.key} notes=${densest.notes.length} `
+            + `density=${densest.density.toFixed(2)}/s `
+            + `(considered: ${picked.join(', ')})`);
+        } catch (_) {}
+        return densest.notes;
       }
     }
     if (r.midi && Array.isArray(r.midi.notes) && r.midi.notes.length > 0) {
@@ -2827,7 +3006,12 @@
     // instance already exists.
     if (state.tabLaneView.instance) {
       try {
-        state.tabLaneView.instance.setNotes(_pickLeadMidiNotes(state.r));
+        // state.leadMidiNotes is the canonical pre-picked list set by
+        // onAnalysisComplete; passing the never-assigned state.r through
+        // _pickLeadMidiNotes always returned [].
+        state.tabLaneView.instance.setNotes(
+          Array.isArray(state.leadMidiNotes) ? state.leadMidiNotes : [],
+        );
       } catch (_) { /* defensive: never block chord guidance render */ }
     }
   }
@@ -3076,10 +3260,13 @@
     if (tlv.instance) return Promise.resolve(tlv.instance);
     const host = document.getElementById('chord-now-tab-lane');
     if (!host) return Promise.resolve(null);
-    return import('/static/picking-tab-lane.js').then((mod) => {
+    return import('/static/picking-tab-lane.js?v=3').then((mod) => {
       if (tlv.instance) return tlv.instance;  // race-safe
       tlv.instance = mod.createTabLane(host, { glyph: tlv.glyph });
-      const notes = _pickLeadMidiNotes(state.r);
+      // Pull from the canonical pre-picked list. state.r is never
+      // assigned anywhere, so the prior _pickLeadMidiNotes(state.r) call
+      // always returned [] and the lane stayed empty.
+      const notes = Array.isArray(state.leadMidiNotes) ? state.leadMidiNotes : [];
       tlv.instance.setNotes(notes);
       return tlv.instance;
     }).catch((err) => {
@@ -3551,24 +3738,39 @@
     // Lazy-import the scrolling lane module. ensureChordDiagramAssets
     // already paid the network cost for the chord_diagrams.js it
     // imports for STANDARD_TUNING, so this is a near-instant resolve.
-    import('/static/picking-tab-lane.js').then((mod) => {
-      if (state.tabLane) return; // race-guard (another caller built it)
-      // Defensive: body may have been overwritten by another render
-      // (rare, but the chord-now panel does shuffle DOM on chord change).
-      if (!body.isConnected) return;
-      try {
-        state.tabLane = mod.createTabLane(body, {
-          notes,
-          lookaheadS,
-          glyph: state.tabLanePrefs.glyph,
-        });
-        // Snap the playhead transform to the current play time
-        // immediately so a paused user sees notes positioned even
-        // before the next tick.
-        try { state.tabLane.update(currentPlayTime()); } catch (_) {}
-      } catch (e) {
-        console.warn('[jam] picking-tab-lane build failed:', e);
-      }
+    import('/static/picking-tab-lane.js?v=3').then((mod) => {
+      // Build deferred: the import can resolve while the perform view
+      // is still hidden (display:none ancestor → host.clientWidth=0).
+      // SVGs built into a zero-width flex parent lock in at zero size
+      // and don't always recover when the parent later expands. Wait
+      // for the host to actually have layout width before building.
+      // Bounded retry: typical layout settles in 1-2 RAFs, but we cap
+      // at ~1s to avoid spinning forever on a permanently hidden host.
+      let _waited = 0;
+      const _MAX_WAIT_FRAMES = 60;
+      const _buildWhenSized = () => {
+        if (state.tabLane) return; // race-guard (another caller built it)
+        if (!body.isConnected) return;
+        if (body.clientWidth === 0 && _waited < _MAX_WAIT_FRAMES) {
+          _waited++;
+          requestAnimationFrame(_buildWhenSized);
+          return;
+        }
+        try {
+          state.tabLane = mod.createTabLane(body, {
+            notes,
+            lookaheadS,
+            glyph: state.tabLanePrefs.glyph,
+          });
+          // Snap the playhead transform to the current play time
+          // immediately so a paused user sees notes positioned even
+          // before the next tick.
+          try { state.tabLane.update(currentPlayTime()); } catch (_) {}
+        } catch (e) {
+          console.warn('[jam] picking-tab-lane build failed:', e);
+        }
+      };
+      _buildWhenSized();
     }).catch((e) => {
       console.warn('[jam] picking-tab-lane import failed:', e);
     });
@@ -3903,6 +4105,16 @@
         state.masterGain = state.ctx.createGain();
         state.masterGain.gain.value = 1.0;
         state.masterGain.connect(state.ctx.destination);
+        // Engine watchdog: without this, the playback engine has no
+        // observation loop for AudioContext state transitions and
+        // silently freezes when the browser/OS suspends the context
+        // (Safari tab-switch, macOS audio device change, another app
+        // grabbing exclusive audio, memory-pressure suspend, or the
+        // Chrome background-tab autoplay policy). The engine goes on
+        // believing it's playing — sources appear scheduled, the UI
+        // says "Pause" — but no audio flows. That's the primary root
+        // cause of the sporadic dropouts users report.
+        _installAudioContextWatchdog();
       } catch (e) {
         console.warn('[jam] AudioContext not available:', e);
         return;
@@ -4133,10 +4345,21 @@
   }
 
   // Current playhead in seconds (derived from the audio clock).
+  // When rehearsal is active with a non-1× playback rate, the
+  // AudioBufferSourceNodes have `playbackRate.value = state.rehearsal.speed`,
+  // so a ctx.currentTime elapsed of Δt corresponds to Δt·speed
+  // song-seconds. Callers that need "real song position" go through
+  // this helper — the ribbon, tab lane, chord highlighter, click
+  // scheduler, section-loop wraparound, etc. all use it, so the
+  // rate scaling flows to the entire UI in one place.
+  function _rehearsalRate() {
+    return (state.rehearsal && state.rehearsal.active) ? state.rehearsal.speed : 1.0;
+  }
+
   function currentPlayTime() {
     if (!state.ctx) return 0;
     if (!state.isPlaying) return state.playOffset;
-    return state.playOffset + (state.ctx.currentTime - state.playClockAnchor);
+    return state.playOffset + (state.ctx.currentTime - state.playClockAnchor) * _rehearsalRate();
   }
 
   $('t-play').addEventListener('click', () => {
@@ -4311,14 +4534,113 @@
     });
   }
 
+  // Playback-engine watchdog: observe the AudioContext lifecycle so
+  // suspend/interrupt events cause the transport to teardown cleanly
+  // and (when the context comes back) restart playback from where it
+  // was interrupted. Installed once, at ctx creation time.
+  //
+  // Failure modes this fixes (all previously silent):
+  //   * Safari suspends the ctx when the tab loses focus / backgrounds
+  //   * macOS suspends the ctx on audio-device swap (e.g. plugging in
+  //     the HX Stomp, AirPods pairing) — the source nodes survive but
+  //     no audio flows until the ctx runs again
+  //   * Another app takes exclusive audio → ctx transitions to
+  //     'interrupted' (Safari-specific state)
+  //   * Chrome/Safari auto-suspend after a long idle
+  //   * Memory pressure suspends the audio thread
+  //
+  // Recovery contract:
+  //   * On suspend/interrupted DURING playback: capture the current
+  //     playhead into state.playOffset, stop sources cleanly, mark
+  //     the transport paused BUT set state._resumeAfterCtx so the
+  //     next running edge auto-restarts.
+  //   * On running: if we had been playing when we lost the ctx,
+  //     re-enter playAll() from the captured offset.
+  //
+  // Idempotent: safe to call more than once (the listener is only
+  // attached the first time).
+  function _installAudioContextWatchdog() {
+    if (!state.ctx || state._ctxWatchdogInstalled) return;
+    state._ctxWatchdogInstalled = true;
+    state._resumeAfterCtx = false;
+    const onStateChange = () => {
+      const s = state.ctx && state.ctx.state;
+      console.log(`[jam:engine] AudioContext state → ${s}`);
+      if (s === 'suspended' || s === 'interrupted') {
+        // Only capture-and-teardown if we were actually playing —
+        // an idle suspend (user hasn't hit play) is a no-op.
+        if (state.isPlaying) {
+          try { state.playOffset = Math.min(state.duration, currentPlayTime()); }
+          catch (_) { /* leave playOffset alone */ }
+          stopSources();
+          stopClickScheduler();
+          state.isPlaying = false;
+          state._resumeAfterCtx = true;
+          const btn = $('t-play');
+          if (btn) btn.textContent = 'Play';
+          console.warn(
+            `[jam:engine] context ${s} mid-playback; captured offset `
+            + `${state.playOffset.toFixed(2)}s, will auto-resume on running`
+          );
+        }
+      } else if (s === 'running') {
+        // Ctx came back. If we auto-paused above, re-enter playAll
+        // from the captured offset.
+        if (state._resumeAfterCtx) {
+          state._resumeAfterCtx = false;
+          console.info(
+            `[jam:engine] context running; auto-resuming from `
+            + `${state.playOffset.toFixed(2)}s`
+          );
+          playAll().catch((err) => {
+            console.error('[jam:engine] auto-resume playAll failed:', err);
+          });
+        }
+      }
+    };
+    try {
+      state.ctx.addEventListener('statechange', onStateChange);
+    } catch (e) {
+      // Older Safaris only expose the property setter, not the event
+      // listener. Fall back to onstatechange assignment.
+      try { state.ctx.onstatechange = onStateChange; }
+      catch (e2) { console.warn('[jam:engine] statechange hookup failed:', e2); }
+    }
+  }
+
   // Schedule all stems to start at the same absolute audio-clock time.
   // Sample-accurate sync across stems is the entire reason we decoded
   // to AudioBuffers up front.
   async function playAll() {
     if (!state.ctx || !state.stems.size) return;
-    if (state.ctx.state === 'suspended') {
+    // Engine invariant: never enter the source-creation loop unless
+    // the ctx is in 'running' state. A suspended ctx accepts .start()
+    // calls without error but produces zero audio — that's the exact
+    // silent-freeze failure mode the watchdog exists to prevent.
+    // We loop with a small delay because ctx.resume() can complete
+    // before the state transition actually settles (Safari).
+    if (state.ctx.state !== 'running') {
       try { await state.ctx.resume(); }
-      catch (e) { console.warn('[jam] ctx.resume failed:', e); }
+      catch (e) {
+        console.error('[jam:engine] ctx.resume rejected:', e);
+        // Do NOT proceed — sources would appear scheduled but be
+        // silent. Mark _resumeAfterCtx so the watchdog picks up the
+        // next running edge and retries.
+        state._resumeAfterCtx = true;
+        return;
+      }
+      if (state.ctx.state !== 'running') {
+        // resume() resolved but state is still 'suspended' — this
+        // happens on Safari when there's no user gesture in the
+        // event loop that led here. Refuse to schedule silent
+        // sources; register for auto-resume once the ctx recovers.
+        console.warn(
+          `[jam:engine] ctx.resume settled but state=${state.ctx.state}; `
+          + `refusing to create sources. Auto-resume armed.`
+        );
+        state._resumeAfterCtx = true;
+        return;
+      }
     }
 
     // If a loop is active and we're outside it, snap to its start.
@@ -4333,20 +4655,73 @@
     // Small lookahead so all .start() calls land BEFORE the scheduled time.
     const startWhen = state.ctx.currentTime + 0.05;
     const startOffset = state.playOffset;
+    // Track how many sources actually got scheduled so we can surface
+    // silent-partial-mix bugs (e.g. stem loading race, decode failure
+    // on one stem). Missing stems used to be caught silently by the
+    // `if (!stem.buffer) continue` skip.
+    let scheduled = 0;
+    const missing = [];
 
-    for (const stem of state.stems.values()) {
-      if (!stem.buffer) continue;
+    for (const [name, stem] of state.stems.entries()) {
+      if (!stem.buffer) {
+        missing.push(name);
+        continue;
+      }
+      if (!stem.gainNode) {
+        missing.push(`${name}(no-gain)`);
+        continue;
+      }
       const src = state.ctx.createBufferSource();
       src.buffer = stem.buffer;
+      // Rehearsal: slow the stems for practice (0.5×/0.75×/1×). All
+      // stems share the same rate so they stay sample-aligned; the
+      // click scheduler and section-loop math read currentPlayTime()
+      // which is now scaled by _rehearsalRate().
+      try {
+        src.playbackRate.value = _rehearsalRate();
+      } catch (_) {}
       src.connect(stem.gainNode);
       // Clamp offset to buffer duration; .start() throws otherwise.
       const off = Math.min(Math.max(0, startOffset), Math.max(0, stem.buffer.duration - 0.01));
+      // onended observability: a source ending BEFORE we asked it to
+      // (e.g. its buffer is shorter than state.duration, or the ctx
+      // interrupted it) used to be invisible. Now we see it in the
+      // console with the stem name so we can correlate against user-
+      // reported dropouts.
+      const expectedEndAt = startWhen + Math.max(0, stem.buffer.duration - off);
+      src.onended = () => {
+        const now = state.ctx ? state.ctx.currentTime : 0;
+        const early = expectedEndAt - now;
+        if (early > 0.1 && state.isPlaying) {
+          console.warn(
+            `[jam:engine] stem "${name}" source ended ${early.toFixed(2)}s `
+            + `early (buffer=${stem.buffer && stem.buffer.duration.toFixed(2)}s, `
+            + `ctx.state=${state.ctx && state.ctx.state})`
+          );
+        }
+      };
       try {
         src.start(startWhen, off);
+        scheduled += 1;
       } catch (e) {
-        console.warn('[jam] source.start failed:', e);
+        console.warn(`[jam:engine] source.start failed for stem "${name}":`, e);
       }
       stem.source = src;
+    }
+    if (missing.length) {
+      console.warn(
+        `[jam:engine] playAll scheduled ${scheduled}/${state.stems.size} stems `
+        + `— missing: ${missing.join(', ')}`
+      );
+    }
+    if (scheduled === 0) {
+      // Every stem was missing — refuse to enter isPlaying state so
+      // the UI doesn't lie about audio flowing. This happens if the
+      // user hits Play before prepareStemAudio's Promise.all resolved.
+      console.error(
+        '[jam:engine] playAll: zero sources scheduled, aborting transport'
+      );
+      return;
     }
 
     state.playClockAnchor = startWhen;
@@ -4789,6 +5164,15 @@
       // beats unavailable). onAnalysisComplete caches both and the
       // beat-snap toggle picks at render time.
       chords_beat_snapped: understanding.chords_beat_snapped || null,
+      // C1+C3: per-stem chord lanes. The bundle persists these under
+      // SongUnderstanding (one entry per analysed stem: other / bass
+      // / vocals / drums / guitar_center / guitar_sides). Project
+      // them onto the top-level shape onAnalysisComplete expects so
+      // the Lane dropdown populates on deep-link reload. Empty/missing
+      // bundles project to {} → the selector stays hidden via
+      // syncChordLaneStemSelectVisibility's <=1 entry guard.
+      chords_by_stem: understanding.chords_by_stem || {},
+      chords_beat_snapped_by_stem: understanding.chords_beat_snapped_by_stem || {},
       beat_times: understanding.beats_s || [],
       // Stems
       stems_paths: stemsPaths,
@@ -5138,7 +5522,11 @@
       const pc = ((rounded % 12) + 12) % 12;
       const inKey = state.songKey ? state.songKey.pitchClasses.has(pc) : null;
       updateIntonationDisplay(midi, cents, inKey);
-      state.listen.history.push({ t_ms: now, cents, inKey });
+      // Rehearsal verification needs the pitch itself, not just cents-
+      // to-nearest-note. Store `midi` (float) and `pc` (integer 0-11)
+      // so verifyChordTile / verifyNoteTile can compute PC recall and
+      // ±cents on demand without recomputing autoCorrelate results.
+      state.listen.history.push({ t_ms: now, cents, inKey, midi, pc });
     } else {
       // Decay the needle visually when no pitch
       $('into-cents').textContent = '—';
@@ -6846,6 +7234,1474 @@
       get state() { return state; },
       _isConnectPaired,
       _pickLeadMidiNotes,
+    };
+  } catch (_) {}
+
+  // ═════════════════════════════════════════════════════════════════
+  // REHEARSAL MODULE
+  //
+  // Optional song-onboarding view between bandroom and perform. The
+  // musician picks a section (deduplicated via structural_role),
+  // hears it looping at 0.5/0.75/1× while chord tiles or note tiles
+  // scroll under a playhead. Their mic feeds the existing pitch +
+  // onset pipeline; verifyChordTile / verifyNoteTile decide whether
+  // each item passed. A rolling passes/fails counter flips the
+  // section's ✓ once ≥ 70% pass on a full loop with at least 4 items.
+  //
+  // Persistence is localStorage-only, keyed by analysisId. Karaoke
+  // is NEVER gated by rehearsal — the "Skip to jam" buttons exist
+  // in both the bandroom CTA row and the rehearsal header.
+  // ═════════════════════════════════════════════════════════════════
+
+  const _REHEARSAL_STORAGE_PREFIX = 'rehearsal:v1:';
+  const _REHEARSAL_SPEEDS = [0.5, 0.75, 1.0];
+  const _REHEARSAL_MIN_ITEMS = 4;
+  const _REHEARSAL_COMPLETION_THRESHOLD = 0.70;
+  const _REHEARSAL_CHORD_RECALL = 0.66;
+  const _REHEARSAL_NOTE_CENTS = 50;
+  const _REHEARSAL_ONSET_TOLERANCE_MS = 80;
+  const _REHEARSAL_POST_ATTACK_MS = 30;
+
+  // Chord pitch-class templates keyed by _parseChordSymbolLocal quality.
+  const _REHEARSAL_QUALITY_INTERVALS = {
+    maj:  [0, 4, 7],
+    min:  [0, 3, 7],
+    dim:  [0, 3, 6],
+    aug:  [0, 4, 8],
+    '5':  [0, 7],
+    '7':  [0, 4, 7, 10],
+    m7:   [0, 3, 7, 10],
+    maj7: [0, 4, 7, 11],
+    sus2: [0, 2, 7],
+    sus4: [0, 5, 7],
+  };
+
+  function _rehearsalStorageKey() {
+    const id = state.analysisId || 'unknown';
+    return `${_REHEARSAL_STORAGE_PREFIX}${id}`;
+  }
+
+  // Phase 2: canonical fresh mastery record for a section.
+  function _newMasteryRecord() {
+    return {
+      beads: [null, null, null, null, null],
+      state: 'not_tried',
+      speedAtLastClean: 0,
+      consecutiveRough: 0,
+      lastRun: null,
+    };
+  }
+
+  function _loadRehearsalProgress() {
+    try {
+      const key = _rehearsalStorageKey();
+      const raw = localStorage.getItem(key);
+      state.rehearsal.completed = {};
+      state.rehearsal.mastery = {};
+      state.rehearsal.manualUnlocks = {};
+      if (!raw) { state.rehearsal.lastPersistKey = key; return; }
+      const parsed = JSON.parse(raw);
+      const version = parsed && Number.isFinite(parsed.version) ? parsed.version : 1;
+      if (parsed && Array.isArray(parsed.completed)) {
+        for (const idx of parsed.completed) {
+          if (Number.isFinite(idx)) state.rehearsal.completed[idx] = true;
+        }
+      }
+      if (version >= 2 && parsed && parsed.mastery && typeof parsed.mastery === 'object') {
+        for (const k of Object.keys(parsed.mastery)) {
+          const idx = Number(k);
+          if (!Number.isFinite(idx)) continue;
+          const rec = parsed.mastery[k] || {};
+          state.rehearsal.mastery[idx] = {
+            beads: Array.isArray(rec.beads) && rec.beads.length === 5
+              ? rec.beads.map(b => (b === 'rough' || b === 'clean' || b === 'perfect') ? b : null)
+              : [null, null, null, null, null],
+            state: typeof rec.state === 'string' ? rec.state : 'not_tried',
+            speedAtLastClean: Number.isFinite(rec.speedAtLastClean) ? rec.speedAtLastClean : 0,
+            consecutiveRough: Number.isFinite(rec.consecutiveRough) ? rec.consecutiveRough : 0,
+            lastRun: rec.lastRun && typeof rec.lastRun === 'object' ? rec.lastRun : null,
+          };
+        }
+      }
+      // Phase 3: manual lock overrides ("I know what I'm doing" — the
+      // long-press bypass). Persisted as a plain int-idx dict so old
+      // v2 records (no manualUnlocks key) load with an empty set.
+      if (parsed && parsed.manualUnlocks && typeof parsed.manualUnlocks === 'object') {
+        for (const k of Object.keys(parsed.manualUnlocks)) {
+          const idx = Number(k);
+          if (Number.isFinite(idx) && parsed.manualUnlocks[k]) {
+            state.rehearsal.manualUnlocks[idx] = true;
+          }
+        }
+      }
+      if (version < 2) {
+        // v1 → v2 migration. Every previously-completed section becomes a
+        // "locked_in" state with three clean beads so the musician doesn't
+        // lose their progress on the schema bump.
+        for (const idxStr of Object.keys(state.rehearsal.completed)) {
+          const idx = Number(idxStr);
+          if (!Number.isFinite(idx)) continue;
+          state.rehearsal.mastery[idx] = {
+            beads: ['clean', 'clean', 'clean', null, null],
+            state: 'locked_in',
+            speedAtLastClean: 1.0,
+            consecutiveRough: 0,
+            lastRun: null,
+          };
+        }
+      }
+      state.rehearsal.lastPersistKey = key;
+    } catch (e) {
+      console.warn('[rehearsal] load failed:', e);
+      state.rehearsal.completed = {};
+      state.rehearsal.mastery = {};
+      state.rehearsal.manualUnlocks = {};
+    }
+  }
+
+  function _saveRehearsalProgress() {
+    try {
+      const key = _rehearsalStorageKey();
+      const completed = Object.keys(state.rehearsal.completed)
+        .map(Number).filter(Number.isFinite);
+      const mastery = {};
+      for (const idxStr of Object.keys(state.rehearsal.mastery || {})) {
+        const idx = Number(idxStr);
+        if (!Number.isFinite(idx)) continue;
+        mastery[idx] = state.rehearsal.mastery[idx];
+      }
+      const manualUnlocks = {};
+      for (const idxStr of Object.keys(state.rehearsal.manualUnlocks || {})) {
+        const idx = Number(idxStr);
+        if (Number.isFinite(idx) && state.rehearsal.manualUnlocks[idx]) {
+          manualUnlocks[idx] = true;
+        }
+      }
+      localStorage.setItem(key, JSON.stringify({
+        version: 2, completed, mastery, manualUnlocks,
+      }));
+    } catch (e) {
+      console.warn('[rehearsal] save failed:', e);
+    }
+  }
+
+  // Confidence gate for "we're not sure what this section is". Either
+  // structural or guidance confidence dropping below this softens the
+  // display copy ("Maybe the bridge") and, when lower than the extras
+  // gate, banishes the section into the Extras tray.
+  const _REHEARSAL_SOFT_CONFIDENCE = 0.5;
+  const _REHEARSAL_EXTRAS_CONFIDENCE = 0.35;
+  // Sections shorter than this and marked UNIQUE-chord are treated as
+  // intro/outro fills rather than bridges — matches how listeners
+  // hear a 3-second turnaround.
+  const _REHEARSAL_FILL_MAX_SEC = 8.0;
+
+  // Phase 3: prerequisite lock graph. Keys are the musician-facing
+  // *base* label emitted by ``_rehearsalLabelForSection``; values are
+  // the base label of the section that must reach the ``locked_in``
+  // (or ``mastered``) mastery state before the key section unlocks.
+  // Only fires when the required prereq label actually exists in the
+  // current arrangement — songs that don't have a chorus, for
+  // example, never render their solo break as locked. Manual
+  // long-press bypass sets ``state.rehearsal.manualUnlocks[idx]`` and
+  // persists across reloads.
+  const _REHEARSAL_LOCK_GRAPH = {
+    'The Solo Break': 'The Chorus Hook',
+    'The Bridge': 'The Main Groove',
+  };
+  const _REHEARSAL_LONGPRESS_MS = 600;
+
+  // Section is considered "cleared" for the prereq check when its
+  // mastery state has reached locked_in or mastered. Legacy
+  // ``completed`` bit (used for shorter fills where mastery beads
+  // don't fire) also counts so v1 progress unlocks the graph.
+  function _rehearsalSectionCleared(sectionIdx) {
+    if (state.rehearsal.completed && state.rehearsal.completed[sectionIdx]) return true;
+    const rec = state.rehearsal.mastery && state.rehearsal.mastery[sectionIdx];
+    if (!rec) return false;
+    return rec.state === 'locked_in' || rec.state === 'mastered';
+  }
+
+  // Phase 3: musician-facing difficulty hints derived from the
+  // section's chord vocabulary and landmark-note span. Purely
+  // frontend heuristics — no backend enrichment. Returns an array of
+  // short one-liners; empty when no rule fires so the heading area
+  // collapses without leaving an orphan wrapper.
+  function _difficultyHintsFor(section) {
+    if (!section) return [];
+    const hints = [];
+    const chordsIn = [];
+    const allChords = Array.isArray(state.chords) ? state.chords : [];
+    const startS = section.startSec || 0;
+    const endS = section.endSec || 0;
+    for (const c of allChords) {
+      if (!c || typeof c.symbol !== 'string') continue;
+      const cs = typeof c.start_s === 'number' ? c.start_s
+        : (typeof c.startSec === 'number' ? c.startSec : NaN);
+      const ce = typeof c.end_s === 'number' ? c.end_s
+        : (typeof c.endSec === 'number' ? c.endSec : NaN);
+      if (!Number.isFinite(cs) || !Number.isFinite(ce)) continue;
+      const mid = 0.5 * (cs + ce);
+      if (mid >= startS && mid < endS) chordsIn.push(c.symbol);
+    }
+    // Barre-shape hint: F, B, Bm (and their sharps/flats) are the
+    // classic first-position roadblocks. Match root note + optional
+    // accidental at symbol start; ignore extensions like "F7".
+    const BARRE_RE = /^(F#?|B|Bb)(m?)(?![a-z0-9])/;
+    const barreHit = chordsIn.some((sym) => BARRE_RE.test(sym));
+    if (barreHit) hints.push('has a barre chord');
+    // Colour-chord hint: any 7th / sus2 / sus4 / add9 in the vocab.
+    const COLOUR_RE = /(7|sus2|sus4|add9|maj7|m7)/i;
+    const colourHit = chordsIn.some((sym) => COLOUR_RE.test(sym));
+    if (colourHit) hints.push('has a colour chord');
+    // Landmark-note span > 10 semitones ≈ big register jumps.
+    const landmarks = Array.isArray(section.landmarkNotes) ? section.landmarkNotes : [];
+    if (landmarks.length >= 2) {
+      let lo = Infinity, hi = -Infinity;
+      for (const n of landmarks) {
+        const p = typeof n.pitch === 'number' ? n.pitch : NaN;
+        if (!Number.isFinite(p)) continue;
+        if (p < lo) lo = p;
+        if (p > hi) hi = p;
+      }
+      if (Number.isFinite(lo) && Number.isFinite(hi) && (hi - lo) > 10) {
+        hints.push('big jumps between notes');
+      }
+    }
+    // Duration < 4 s ≈ tight turnaround.
+    const dur = Math.max(0, endS - startS);
+    if (dur > 0 && dur < 4) hints.push('quick change');
+    return hints;
+  }
+
+  function _renderDifficultyHints(section) {
+    const el = document.getElementById('rehearsal-section-hints');
+    if (!el) return;
+    el.innerHTML = '';
+    const hints = _difficultyHintsFor(section);
+    if (!hints.length) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    for (const text of hints) {
+      const chip = document.createElement('span');
+      chip.className = 'difficulty-hint';
+      chip.textContent = text;
+      el.appendChild(chip);
+    }
+  }
+
+  // Pretty ordinal for DEVELOPMENT variant subtitles.
+  function _rehearsalOrdinalPass(n) {
+    if (n === 1) return 'second pass';
+    if (n === 2) return 'third pass';
+    if (n === 3) return 'fourth pass';
+    return `pass ${n + 1}`;
+  }
+
+  // Produce a musician-facing label for a section from
+  // structuralRole + guidanceMode + name hint + duration. `ctx` carries
+  // group-scope info the section object doesn't know:
+  //   ctx.isFirstAnchorInSong  — first ANCHOR encountered by song order
+  //   ctx.groupSize             — total sections that share this anchor
+  //   ctx.groupKind             — 'part' | 'moment' | 'extra'
+  function _rehearsalLabelForSection(section, ctx) {
+    if (!section) return { title: 'Section', soft: false };
+    const role = section.structuralRole || '';
+    const mode = section.guidanceMode || 'chord';
+    const confPieces = [];
+    if (typeof section.structuralConfidence === 'number') {
+      confPieces.push(section.structuralConfidence);
+    }
+    if (typeof section.guidanceConfidence === 'number') {
+      confPieces.push(section.guidanceConfidence);
+    }
+    const conf = confPieces.length ? Math.min.apply(null, confPieces) : 1;
+    const soft = conf < _REHEARSAL_SOFT_CONFIDENCE;
+    const nameHint = String(section.name || '').toLowerCase();
+    const duration = Math.max(0, (section.endSec || 0) - (section.startSec || 0));
+
+    let base = 'The Groove';
+    if (ctx && ctx.groupKind === 'moment') {
+      if (mode === 'lead' || mode === 'riff') base = 'The Solo Break';
+      else if (nameHint.includes('bridge')) base = 'The Bridge';
+      else if (nameHint.includes('intro') || nameHint.includes('outro')
+               || nameHint.includes('fill')) base = 'Intro / Outro Fill';
+      else if (duration && duration < _REHEARSAL_FILL_MAX_SEC) base = 'Intro / Outro Fill';
+      else base = 'The Bridge';
+    } else {
+      // parts (anchors) and extras (fallback) reach here.
+      if (mode === 'riff' || mode === 'lead') {
+        base = 'The Signature Riff';
+      } else if (nameHint.includes('chorus')) {
+        base = 'The Chorus Hook';
+      } else if (nameHint.includes('verse')) {
+        base = 'The Verse Groove';
+      } else if (ctx && ctx.isFirstAnchorInSong) {
+        base = 'The Main Groove';
+      } else if (ctx && ctx.groupSize >= 3) {
+        base = 'The Chorus Hook';
+      } else {
+        base = 'The Verse Groove';
+      }
+    }
+    return { title: soft ? `Maybe ${base.toLowerCase()}` : base, soft, base };
+  }
+
+  // Section → three-bucket layout for the rehearsal list.
+  // Returns { parts, moments, extras } where each bucket is an array of
+  // group records: { anchorIdx, variantIdxs, label, soft }.
+  //
+  // Phase 3: prefers the backend-supplied ``groupId`` (populated by
+  // ``song_form.grouping.assign_section_groups``) as the authoritative
+  // cluster key when present, so DEVELOPMENTs and their anchor share
+  // one bucket even if the name heuristic would split them. Falls
+  // back to lowercased section name (the Phase-1 heuristic) for
+  // legacy bundles that lack the field. ANCHOR is canonical per
+  // group; other members become collapsible "second pass" variants.
+  function _rehearsalGroupsFromSections() {
+    const sections = Array.isArray(state.sections) ? state.sections : [];
+    const buckets = new Map();
+    for (let i = 0; i < sections.length; i++) {
+      const s = sections[i];
+      if (!s) continue;
+      // Authoritative cluster key when the backend supplied one;
+      // otherwise fall back to the name heuristic. Prefixed so a
+      // group_id like "chorus" can't collide with a section literally
+      // named "chorus" that lacks a group_id.
+      const key = (typeof s.groupId === 'string' && s.groupId)
+        ? `gid:${s.groupId}`
+        : `name:${(s.name || `section-${i}`).toLowerCase().trim()}`;
+      if (!buckets.has(key)) buckets.set(key, { anchorIdx: -1, variantIdxs: [], memberIdxs: [] });
+      const g = buckets.get(key);
+      g.memberIdxs.push(i);
+      if (s.structuralRole === 'ANCHOR' && g.anchorIdx < 0) g.anchorIdx = i;
+      else g.variantIdxs.push(i);
+    }
+    // Promote the earliest member as anchor if no ANCHOR role was set.
+    for (const g of buckets.values()) {
+      if (g.anchorIdx < 0) {
+        g.anchorIdx = g.variantIdxs.shift();
+      }
+    }
+    // Sort by song order (start time of the anchor).
+    const orderedGroups = Array.from(buckets.values())
+      .filter(g => g.anchorIdx >= 0)
+      .sort((a, b) => {
+        const aS = sections[a.anchorIdx] || {};
+        const bS = sections[b.anchorIdx] || {};
+        return (aS.startSec || 0) - (bS.startSec || 0);
+      });
+
+    const parts = [];
+    const moments = [];
+    const extras = [];
+    let firstAnchorClaimed = false;
+
+    for (const g of orderedGroups) {
+      const anchor = sections[g.anchorIdx];
+      if (!anchor) continue;
+      const confPieces = [];
+      if (typeof anchor.structuralConfidence === 'number') {
+        confPieces.push(anchor.structuralConfidence);
+      }
+      if (typeof anchor.guidanceConfidence === 'number') {
+        confPieces.push(anchor.guidanceConfidence);
+      }
+      const conf = confPieces.length ? Math.min.apply(null, confPieces) : 1;
+      const badDuration = !!anchor.durationFlag;
+      let kind;
+      if (conf < _REHEARSAL_EXTRAS_CONFIDENCE || badDuration) {
+        kind = 'extra';
+      } else if (anchor.structuralRole === 'UNIQUE') {
+        kind = 'moment';
+      } else {
+        kind = 'part';
+      }
+      const ctx = {
+        isFirstAnchorInSong: kind === 'part' && !firstAnchorClaimed,
+        groupSize: g.memberIdxs.length,
+        groupKind: kind,
+      };
+      if (kind === 'part') firstAnchorClaimed = true;
+      const label = _rehearsalLabelForSection(anchor, ctx);
+      // Phase 3: prefer the backend recurrence_count when supplied so
+      // the "repeats N×" subtitle reflects the authoritative cluster
+      // size, not just the members that survived Phase-1 heuristic
+      // grouping. Falls back to the local group size for legacy
+      // bundles.
+      const recurrenceCount = (typeof anchor.recurrenceCount === 'number'
+        && anchor.recurrenceCount >= 1)
+        ? anchor.recurrenceCount
+        : g.memberIdxs.length;
+      const record = {
+        anchorIdx: g.anchorIdx,
+        variantIdxs: g.variantIdxs.slice(),
+        label: label.title,
+        base: label.base,
+        soft: label.soft,
+        groupSize: g.memberIdxs.length,
+        recurrenceCount,
+        kind,
+      };
+      if (kind === 'part') parts.push(record);
+      else if (kind === 'moment') moments.push(record);
+      else extras.push(record);
+    }
+    // Phase 3: prerequisite locks. Walk the lock graph once we have
+    // all records so a locked section can point at the prereq's
+    // *anchor idx* rather than a fragile label re-lookup at render
+    // time. Songs missing a prereq label leave the dependent section
+    // untouched (never locked when there's no chorus to gate on).
+    const allRecords = parts.concat(moments, extras);
+    const baseToAnchorIdx = new Map();
+    for (const r of allRecords) {
+      if (r.base && !baseToAnchorIdx.has(r.base)) {
+        baseToAnchorIdx.set(r.base, r.anchorIdx);
+      }
+    }
+    for (const r of allRecords) {
+      const prereqBase = _REHEARSAL_LOCK_GRAPH[r.base];
+      if (!prereqBase) continue;
+      if (!baseToAnchorIdx.has(prereqBase)) continue;
+      const prereqIdx = baseToAnchorIdx.get(prereqBase);
+      if (prereqIdx === r.anchorIdx) continue;  // no self-locks
+      const manuallyUnlocked = !!(state.rehearsal.manualUnlocks
+        && state.rehearsal.manualUnlocks[r.anchorIdx]);
+      if (manuallyUnlocked) continue;
+      if (_rehearsalSectionCleared(prereqIdx)) continue;
+      r.locked = true;
+      r.prereqIdx = prereqIdx;
+      r.prereqLabel = prereqBase;
+    }
+    return { parts, moments, extras };
+  }
+
+  // Compact "1 of 4 parts locked in today" header meta.
+  function _rehearsalHeaderMeta(groups) {
+    const parts = groups && Array.isArray(groups.parts) ? groups.parts : [];
+    const moments = groups && Array.isArray(groups.moments) ? groups.moments : [];
+    const learnable = parts.concat(moments);
+    if (!learnable.length) return 'Pick a section to practice, then jump into the jam.';
+    let locked = 0;
+    for (const g of learnable) {
+      if (state.rehearsal.completed[g.anchorIdx]) locked += 1;
+    }
+    if (locked === 0) return `Locked in 0 of ${learnable.length} parts so far.`;
+    if (locked === learnable.length) return 'All parts locked in — ready when you are.';
+    return `Locked in ${locked} of ${learnable.length} parts so far.`;
+  }
+
+  function _updateRehearsalHeaderMeta() {
+    const el = document.getElementById('rehearsal-meta');
+    if (!el) return;
+    const groups = _rehearsalGroupsFromSections();
+    el.textContent = _rehearsalHeaderMeta(groups);
+  }
+
+  // Phase 2: build a 5-bead <span> for a section row. Empty beads use
+  // a hollow style; graded beads carry their quality class.
+  function _renderMasteryBeads(beadsSpan, masteryRec) {
+    beadsSpan.innerHTML = '';
+    const beads = masteryRec && Array.isArray(masteryRec.beads)
+      ? masteryRec.beads
+      : [null, null, null, null, null];
+    for (let i = 0; i < 5; i++) {
+      const dot = document.createElement('span');
+      dot.className = 'bead';
+      const v = beads[i];
+      if (v === 'rough' || v === 'clean' || v === 'perfect') {
+        dot.classList.add(`is-${v}`);
+      } else {
+        dot.classList.add('is-empty');
+      }
+      beadsSpan.appendChild(dot);
+    }
+  }
+
+  // Phase 2: state chip. Hidden for not_tried.
+  function _renderMasteryChip(chipSpan, masteryRec) {
+    const name = masteryRec ? masteryRec.state : 'not_tried';
+    const label = _rehearsalStateLabel(name);
+    chipSpan.textContent = label;
+    chipSpan.classList.remove('is-learning', 'is-practicing', 'is-locked-in', 'is-mastered');
+    if (name === 'learning') chipSpan.classList.add('is-learning');
+    else if (name === 'practicing') chipSpan.classList.add('is-practicing');
+    else if (name === 'locked_in') chipSpan.classList.add('is-locked-in');
+    else if (name === 'mastered') chipSpan.classList.add('is-mastered');
+    chipSpan.hidden = !label;
+  }
+
+  // Update just the beads + chip for one row without re-rendering the
+  // full list. Called after _gradeLoop lands a new bead.
+  function _updateRehearsalRowMastery(sectionIdx) {
+    const row = document.querySelector(
+      `.rehearsal-section-row[data-section-idx="${sectionIdx}"]`,
+    );
+    if (!row) return;
+    const rec = state.rehearsal.mastery[sectionIdx];
+    const beadsSpan = row.querySelector('.rehearsal-section-row-beads');
+    const chipSpan = row.querySelector('.mastery-chip');
+    if (beadsSpan) _renderMasteryBeads(beadsSpan, rec);
+    if (chipSpan) _renderMasteryChip(chipSpan, rec);
+    row.classList.toggle('is-complete', !!state.rehearsal.completed[sectionIdx]);
+    const check = row.querySelector('.rehearsal-check');
+    if (check) check.textContent = state.rehearsal.completed[sectionIdx] ? '✓' : '';
+  }
+
+  function _appendRehearsalRow(listEl, sectionIdx, record, isVariant, variantOrdinal) {
+    const section = state.sections[sectionIdx];
+    if (!section) return;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'rehearsal-section-row';
+    if (isVariant) row.classList.add('is-variant');
+    if (record && record.soft) row.classList.add('is-soft');
+    row.dataset.sectionIdx = String(sectionIdx);
+    if (sectionIdx === state.rehearsal.sectionIndex) row.classList.add('is-active');
+    if (state.rehearsal.completed[sectionIdx]) row.classList.add('is-complete');
+
+    const label = document.createElement('span');
+    label.className = 'rehearsal-section-row-name';
+    if (isVariant) {
+      label.textContent = _rehearsalOrdinalPass(variantOrdinal);
+    } else {
+      label.textContent = record ? record.label : (section.name || 'Section');
+      // Phase 3: authoritative recurrence subtitle ("repeats 4×") on
+      // anchors whose cluster has ≥ 2 members. Rendered as a subtitle
+      // span rather than merged into the label so the mastery beads
+      // stay aligned with the title line.
+      const count = record && typeof record.recurrenceCount === 'number'
+        ? record.recurrenceCount : 0;
+      if (count >= 2) {
+        const sub = document.createElement('span');
+        sub.className = 'rehearsal-section-row-subtitle';
+        sub.textContent = `repeats ${count}×`;
+        label.appendChild(sub);
+      }
+    }
+    row.appendChild(label);
+
+    const rec = state.rehearsal.mastery[sectionIdx];
+
+    const beads = document.createElement('span');
+    beads.className = 'rehearsal-section-row-beads';
+    _renderMasteryBeads(beads, rec);
+    row.appendChild(beads);
+
+    const chip = document.createElement('span');
+    chip.className = 'mastery-chip';
+    _renderMasteryChip(chip, rec);
+    row.appendChild(chip);
+
+    const check = document.createElement('span');
+    check.className = 'rehearsal-check';
+    // Phase 3: locked anchors render 🔒 in the checkmark slot instead
+    // of the completion tick. Variants inherit their anchor's lock
+    // state (walking the graph per-variant would be redundant — the
+    // rehearsal loop always drives the anchor row when a variant
+    // is selected).
+    const isLocked = !isVariant && !!(record && record.locked);
+    if (isLocked) {
+      check.textContent = '🔒';
+      check.classList.add('is-lock');
+      row.classList.add('is-locked');
+      row.title = record.prereqLabel
+        ? `Unlocks when you lock in "${record.prereqLabel}". Long-press to override.`
+        : 'Locked. Long-press to override.';
+    } else {
+      check.textContent = state.rehearsal.completed[sectionIdx] ? '✓' : '';
+    }
+    row.appendChild(check);
+
+    // Phase 3: long-press bypass ("I know what I'm doing"). Fires
+    // after _REHEARSAL_LONGPRESS_MS of held pointerdown on a locked
+    // row, sets the manual-unlock flag, persists it, then rebuilds
+    // the list so the row becomes selectable. Cancel on pointerup /
+    // pointermove-outside / pointercancel. Also block the click
+    // handler from firing after a successful long-press so we don't
+    // accidentally select the newly-unlocked row on release.
+    let longPressTimer = null;
+    let longPressFired = false;
+    const clearLongPress = () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    };
+    if (isLocked) {
+      row.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+        longPressFired = false;
+        clearLongPress();
+        longPressTimer = setTimeout(() => {
+          longPressFired = true;
+          state.rehearsal.manualUnlocks[sectionIdx] = true;
+          _saveRehearsalProgress();
+          _buildRehearsalSectionList();
+        }, _REHEARSAL_LONGPRESS_MS);
+      });
+      row.addEventListener('pointerup', clearLongPress);
+      row.addEventListener('pointerleave', clearLongPress);
+      row.addEventListener('pointercancel', clearLongPress);
+    }
+
+    row.addEventListener('click', (ev) => {
+      if (longPressFired) {
+        ev.preventDefault();
+        longPressFired = false;
+        return;
+      }
+      if (isLocked) {
+        ev.preventDefault();
+        return;
+      }
+      _selectRehearsalSection(sectionIdx);
+    });
+    listEl.appendChild(row);
+  }
+
+  function _renderRehearsalGroupHeading(listEl, text, extraClass) {
+    const h = document.createElement('div');
+    h.className = 'rehearsal-group-heading';
+    if (extraClass) h.classList.add(extraClass);
+    h.textContent = text;
+    listEl.appendChild(h);
+    return h;
+  }
+
+  function _buildRehearsalSectionList() {
+    const listEl = document.getElementById('rehearsal-section-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    const groups = _rehearsalGroupsFromSections();
+    if (!groups.parts.length && !groups.moments.length && !groups.extras.length) {
+      const empty = document.createElement('div');
+      empty.className = 'rehearsal-section-empty';
+      empty.textContent = 'No sections detected — skip to jam to continue.';
+      listEl.appendChild(empty);
+      _updateRehearsalHeaderMeta();
+      return;
+    }
+
+    if (groups.parts.length) {
+      _renderRehearsalGroupHeading(listEl, 'Parts to learn');
+      for (const g of groups.parts) {
+        _appendRehearsalRow(listEl, g.anchorIdx, g, false, 0);
+        for (let vi = 0; vi < g.variantIdxs.length; vi++) {
+          _appendRehearsalRow(listEl, g.variantIdxs[vi], g, true, vi);
+        }
+      }
+    }
+
+    if (groups.moments.length) {
+      _renderRehearsalGroupHeading(listEl, 'Moments');
+      for (const g of groups.moments) {
+        _appendRehearsalRow(listEl, g.anchorIdx, g, false, 0);
+        for (let vi = 0; vi < g.variantIdxs.length; vi++) {
+          _appendRehearsalRow(listEl, g.variantIdxs[vi], g, true, vi);
+        }
+      }
+    }
+
+    if (groups.extras.length) {
+      const heading = _renderRehearsalGroupHeading(
+        listEl, `Extras (${groups.extras.length})`, 'rehearsal-group-heading--extras',
+      );
+      const tray = document.createElement('div');
+      tray.className = 'rehearsal-extras-tray';
+      const collapsed = state.rehearsal._extrasCollapsed !== false;
+      if (collapsed) tray.classList.add('is-collapsed');
+      heading.addEventListener('click', () => {
+        const nowCollapsed = !tray.classList.contains('is-collapsed');
+        tray.classList.toggle('is-collapsed', nowCollapsed);
+        state.rehearsal._extrasCollapsed = nowCollapsed;
+        heading.classList.toggle('is-open', !nowCollapsed);
+      });
+      heading.classList.toggle('is-open', !collapsed);
+      listEl.appendChild(tray);
+      for (const g of groups.extras) {
+        _appendRehearsalRow(tray, g.anchorIdx, g, false, 0);
+        for (let vi = 0; vi < g.variantIdxs.length; vi++) {
+          _appendRehearsalRow(tray, g.variantIdxs[vi], g, true, vi);
+        }
+      }
+    }
+
+    _updateRehearsalHeaderMeta();
+  }
+
+  // Look up a section index's musician-facing label from the current
+  // groups snapshot. Used by _selectRehearsalSection so the heading
+  // matches the list row exactly.
+  function _rehearsalLabelForIdx(idx) {
+    const groups = _rehearsalGroupsFromSections();
+    const all = groups.parts.concat(groups.moments, groups.extras);
+    for (const g of all) {
+      if (g.anchorIdx === idx) {
+        return { title: g.label, soft: g.soft, variantOrdinal: null };
+      }
+      const vi = g.variantIdxs.indexOf(idx);
+      if (vi >= 0) {
+        return {
+          title: g.label,
+          soft: g.soft,
+          variantOrdinal: vi,
+        };
+      }
+    }
+    // Fallback: section outside the grouping (shouldn't happen but the
+    // rehearsal view should never blow up on a stale bundle).
+    const section = state.sections && state.sections[idx];
+    if (section) {
+      const lbl = _rehearsalLabelForSection(section, { groupKind: 'part', groupSize: 1, isFirstAnchorInSong: false });
+      return { title: lbl.title, soft: lbl.soft, variantOrdinal: null };
+    }
+    return { title: 'Section', soft: false, variantOrdinal: null };
+  }
+
+  function _selectRehearsalSection(idx) {
+    const section = state.sections && state.sections[idx];
+    if (!section) return;
+    state.rehearsal.sectionIndex = idx;
+    state.rehearsal.perSection[idx] = { passes: 0, fails: 0, total: 0, done: new Set() };
+    state.rehearsal.activeItemIdx = -1;
+    state.rehearsal.items = _buildRehearsalItems(section);
+    state.rehearsal.loopStartedAt = section.startSec;
+
+    // Existing tickClock wraparound (jam.js:4787) uses state.loop
+    // truthiness as the enable-flag: object = loop on, null = loop
+    // off. Mirror that convention so the section-loop and rehearsal
+    // loop share the same wraparound path.
+    if (state.rehearsal.loopOn) {
+      state.loop = {
+        name: section.name,
+        startSec: section.startSec,
+        endSec: section.endSec,
+      };
+    } else {
+      state.loop = null;
+    }
+
+    const label = _rehearsalLabelForIdx(idx);
+    const nameEl = document.getElementById('rehearsal-section-name');
+    if (nameEl) {
+      // For DEVELOPMENT variants, still show the anchor's label but
+      // suffix the variant ordinal so the musician can tell which
+      // pass they're on.
+      if (label.variantOrdinal != null) {
+        nameEl.textContent = `${label.title} — ${_rehearsalOrdinalPass(label.variantOrdinal)}`;
+      } else {
+        nameEl.textContent = label.title;
+      }
+      nameEl.classList.toggle('is-soft', !!label.soft);
+    }
+    // The guidance-mode badge is intentionally left blank; the tile
+    // type in the main pane already communicates chords vs riff.
+    const badgeEl = document.getElementById('rehearsal-section-badge');
+    if (badgeEl) {
+      badgeEl.textContent = '';
+      badgeEl.hidden = true;
+    }
+    // Phase 3: heuristic difficulty hints under the heading. Empty
+    // when no rule fires so the heading stays clean.
+    _renderDifficultyHints(section);
+
+    _renderRehearsalMain(section);
+    _buildRehearsalSectionList();
+    _updateRehearsalScoreDisplay();
+
+    try { seekAll(section.startSec); } catch (_) {}
+  }
+
+  function _midiToNoteName(midi) {
+    if (!Number.isFinite(midi)) return '?';
+    const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const r = Math.round(midi);
+    const pc = ((r % 12) + 12) % 12;
+    const octave = Math.floor(r / 12) - 1;
+    return `${NAMES[pc]}${octave}`;
+  }
+
+  function _chordSymbolToPitchClasses(symbol) {
+    const parsed = _parseChordSymbolLocal(symbol);
+    if (!parsed) return new Set();
+    const intervals = _REHEARSAL_QUALITY_INTERVALS[parsed.quality]
+      || _REHEARSAL_QUALITY_INTERVALS.maj;
+    const pcs = new Set();
+    for (const iv of intervals) {
+      pcs.add(((parsed.rootPc + iv) % 12 + 12) % 12);
+    }
+    return pcs;
+  }
+
+  function _buildRehearsalItems(section) {
+    const items = [];
+    const isNoteMode = (section.guidanceMode === 'riff' || section.guidanceMode === 'lead')
+      && Array.isArray(section.landmarkNotes) && section.landmarkNotes.length > 0;
+    if (isNoteMode) {
+      for (const n of section.landmarkNotes) {
+        items.push({
+          kind: 'note',
+          pitch: n.pitch,
+          startSec: n.start,
+          endSec: n.end,
+          symbol: _midiToNoteName(n.pitch),
+        });
+      }
+      return items;
+    }
+    const chords = Array.isArray(state.chords) ? state.chords : [];
+    for (const c of chords) {
+      if (c.endSec <= section.startSec) continue;
+      if (c.startSec >= section.endSec) break;
+      items.push({
+        kind: 'chord',
+        symbol: c.symbol || '?',
+        startSec: Math.max(c.startSec, section.startSec),
+        endSec: Math.min(c.endSec, section.endSec),
+        pcSet: _chordSymbolToPitchClasses(c.symbol || ''),
+      });
+    }
+    return items;
+  }
+
+  async function _renderRehearsalMain(section) {
+    const host = document.getElementById('rehearsal-items');
+    const empty = document.getElementById('rehearsal-empty');
+    if (!host) return;
+    host.innerHTML = '';
+    if (!state.rehearsal.items.length) {
+      if (empty) empty.hidden = false;
+      return;
+    }
+    if (empty) empty.hidden = true;
+
+    if (state.rehearsal.items[0].kind === 'chord') {
+      let assets = null;
+      try { assets = await ensureChordDiagramAssets(); } catch (_) {}
+      state.rehearsal.items.forEach((item, i) => {
+        const tile = document.createElement('div');
+        tile.className = 'rehearsal-tile rehearsal-tile-chord';
+        tile.dataset.itemIdx = String(i);
+
+        const label = document.createElement('div');
+        label.className = 'rehearsal-tile-label';
+        label.textContent = item.symbol;
+        tile.appendChild(label);
+
+        const diagram = document.createElement('div');
+        diagram.className = 'rehearsal-tile-diagram';
+        if (assets && assets.mod && assets.registry) {
+          try {
+            const svg = assets.mod.renderChordDiagramSVG(
+              item.symbol, assets.registry, {},
+            );
+            if (svg) diagram.appendChild(svg);
+          } catch (_) {}
+        }
+        tile.appendChild(diagram);
+
+        const time = document.createElement('div');
+        time.className = 'rehearsal-tile-time';
+        const dur = Math.max(0, item.endSec - item.startSec);
+        time.textContent = `${dur.toFixed(1)}s`;
+        tile.appendChild(time);
+
+        host.appendChild(tile);
+      });
+    } else {
+      state.rehearsal.items.forEach((item, i) => {
+        const tile = document.createElement('div');
+        tile.className = 'rehearsal-tile rehearsal-tile-note';
+        tile.dataset.itemIdx = String(i);
+
+        const label = document.createElement('div');
+        label.className = 'rehearsal-tile-label';
+        label.textContent = item.symbol;
+        tile.appendChild(label);
+
+        const time = document.createElement('div');
+        time.className = 'rehearsal-tile-time';
+        time.textContent = `${item.startSec.toFixed(1)}s`;
+        tile.appendChild(time);
+
+        host.appendChild(tile);
+      });
+    }
+  }
+
+  // Chord vs pitch-class name helper for why-hints ("missing the 3rd").
+  const _PC_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  function _intervalRoleName(rootPc, pc) {
+    const iv = ((pc - rootPc) % 12 + 12) % 12;
+    switch (iv) {
+      case 0: return 'root';
+      case 3: return 'minor 3rd';
+      case 4: return 'major 3rd';
+      case 5: return '4th';
+      case 6: return 'tritone';
+      case 7: return '5th';
+      case 8: return '#5';
+      case 10: return 'flat 7';
+      case 11: return 'major 7';
+      case 2: return '9th';
+      default: return _PC_NAMES[pc];
+    }
+  }
+
+  function _verifyChordTile(item) {
+    const nowPerf = performance.now();
+    const rate = _rehearsalRate() || 1.0;
+    const windowDurSongSec = Math.max(0.001, item.endSec - item.startSec);
+    const windowRealMs = (windowDurSongSec / rate) * 1000;
+    const startPerf = nowPerf - windowRealMs - 200;
+    const seen = new Set();
+    const hist = state.listen.history || [];
+    for (let i = hist.length - 1; i >= 0; i--) {
+      const h = hist[i];
+      if (h.t_ms < startPerf) break;
+      if (typeof h.pc === 'number') seen.add(h.pc);
+    }
+    if (!item.pcSet || item.pcSet.size === 0) {
+      return { pass: false, recall: 0, missingClasses: [] };
+    }
+    let hits = 0;
+    const missing = [];
+    for (const pc of item.pcSet) {
+      if (seen.has(pc)) hits += 1;
+      else missing.push(pc);
+    }
+    const recall = hits / item.pcSet.size;
+    return {
+      pass: recall >= _REHEARSAL_CHORD_RECALL,
+      recall,
+      missingClasses: missing,
+    };
+  }
+
+  function _verifyNoteTile(item) {
+    const onsets = state.listen.onsets || [];
+    if (!onsets.length) {
+      return { pass: false, reason: 'no_onset', centsError: null, timingMs: null };
+    }
+    const rate = _rehearsalRate() || 1.0;
+    const songNow = currentPlayTime();
+    const perfNow = performance.now();
+    const targetPerf = perfNow + ((item.startSec - songNow) / rate) * 1000;
+    let best = null;
+    let bestAbs = Infinity;
+    let bestSigned = 0;
+    for (let i = onsets.length - 1; i >= 0; i--) {
+      const o = onsets[i];
+      const signed = o.t_perf - targetPerf;
+      const d = Math.abs(signed);
+      if (d < bestAbs) { best = o; bestAbs = d; bestSigned = signed; }
+      if (o.t_perf < targetPerf - 500) break;
+    }
+    if (!best) {
+      return { pass: false, reason: 'no_onset', centsError: null, timingMs: null };
+    }
+    // Even far-off onsets are surfaced as timing hints so the caller
+    // can render is-early / is-late without treating it as a pass.
+    if (bestAbs > _REHEARSAL_ONSET_TOLERANCE_MS) {
+      return {
+        pass: false,
+        reason: bestSigned > 0 ? 'late' : 'early',
+        centsError: null,
+        timingMs: bestSigned,
+      };
+    }
+    const sampleAt = best.t_perf + _REHEARSAL_POST_ATTACK_MS;
+    const hist = state.listen.history || [];
+    let sample = null;
+    let sampleAbs = Infinity;
+    for (let i = hist.length - 1; i >= 0; i--) {
+      const h = hist[i];
+      if (typeof h.midi !== 'number') continue;
+      const d = Math.abs(h.t_ms - sampleAt);
+      if (d < sampleAbs) { sample = h; sampleAbs = d; }
+      if (h.t_ms < sampleAt - 200) break;
+    }
+    if (!sample) {
+      return { pass: false, reason: 'no_pitch', centsError: null, timingMs: bestSigned };
+    }
+    const centsSigned = (sample.midi - item.pitch) * 100;
+    const centsOff = Math.abs(centsSigned);
+    const pass = centsOff <= _REHEARSAL_NOTE_CENTS;
+    // "close" heuristic: within an octave and correct pitch class, but
+    // outside the strict cents window. Renders as is-close on the tile.
+    const pcMatch = (((sample.midi | 0) - (item.pitch | 0)) % 12 + 12) % 12 === 0;
+    let reason = null;
+    if (!pass) reason = pcMatch ? 'close' : 'off_pitch';
+    return {
+      pass,
+      reason,
+      centsError: centsSigned,
+      timingMs: bestSigned,
+    };
+  }
+
+  function _rehearsalTileEl(idx) {
+    const host = document.getElementById('rehearsal-items');
+    if (!host) return null;
+    return host.querySelector(`[data-item-idx="${idx}"]`);
+  }
+
+  // Tile visual states.
+  //   'active' — currently under playhead
+  //   verdict object — post-item pass/fail with is-close/is-early/is-late
+  function _markRehearsalTileActive(idx) {
+    const el = _rehearsalTileEl(idx);
+    if (!el) return;
+    el.classList.remove('is-pass', 'is-fail', 'is-close', 'is-early', 'is-late');
+    el.classList.add('is-active');
+  }
+
+  function _markRehearsalTileVerdict(idx, verdict, kind, item) {
+    const el = _rehearsalTileEl(idx);
+    if (!el) return;
+    el.classList.remove('is-active', 'is-pass', 'is-fail', 'is-close', 'is-early', 'is-late');
+    _setWhyHint(el, '');
+    if (verdict && verdict.pass) {
+      el.classList.add('is-pass');
+      return;
+    }
+    el.classList.add('is-fail');
+    if (verdict && verdict.reason === 'close') el.classList.add('is-close');
+    else if (verdict && verdict.reason === 'late') el.classList.add('is-late');
+    else if (verdict && verdict.reason === 'early') el.classList.add('is-early');
+    const hint = _rehearsalWhyHint(verdict, kind, item);
+    if (hint) _setWhyHint(el, hint);
+  }
+
+  // One-line coaching copy for a failed item.
+  function _rehearsalWhyHint(verdict, kind, item) {
+    if (!verdict) return '';
+    if (kind === 'chord') {
+      const miss = Array.isArray(verdict.missingClasses) ? verdict.missingClasses : [];
+      if (!miss.length) return 'Chord wasn\'t there yet';
+      const names = miss.slice(0, 2).map(pc => _PC_NAMES[((pc % 12) + 12) % 12]);
+      return `Missing the ${names.join(' and ')}`;
+    }
+    if (kind === 'note') {
+      switch (verdict.reason) {
+        case 'early':
+          return `Early by ${Math.round(Math.abs(verdict.timingMs || 0))} ms`;
+        case 'late':
+          return `Late by ${Math.round(Math.abs(verdict.timingMs || 0))} ms`;
+        case 'close': {
+          const c = verdict.centsError;
+          if (c != null && Number.isFinite(c)) {
+            const dir = c > 0 ? 'sharp' : 'flat';
+            return `Right note, ${Math.round(Math.abs(c))}c ${dir}`;
+          }
+          return 'Right note, off pitch';
+        }
+        case 'off_pitch':
+          return item && item.symbol ? `Aim for ${item.symbol}` : 'Different note';
+        case 'no_pitch':
+          return 'Couldn\'t catch a clear pitch';
+        case 'no_onset':
+          return 'Missed the attack';
+        default:
+          return '';
+      }
+    }
+    return '';
+  }
+
+  function _setWhyHint(tileEl, text) {
+    let hint = tileEl.querySelector('.tile-why-hint');
+    if (!text) {
+      if (hint) hint.remove();
+      return;
+    }
+    if (!hint) {
+      hint = document.createElement('div');
+      hint.className = 'tile-why-hint';
+      tileEl.appendChild(hint);
+    }
+    hint.textContent = text;
+  }
+
+  // Phase 2: grade a completed loop → push mastery bead + advance state.
+  // Called from tick loop wraparound. Returns { bead, state } for callers
+  // that want to trigger UI transitions (or null when the loop was too
+  // short to grade — the musician got interrupted mid-pass).
+  function _gradeLoop(idx, perSection, speed) {
+    if (!perSection || perSection.total < _REHEARSAL_MIN_ITEMS) return null;
+    const total = perSection.total;
+    const passes = perSection.passes;
+    const pct = passes / Math.max(1, total);
+    let bead = 'rough';
+    if (pct >= 0.75) bead = 'perfect';
+    else if (pct >= 0.40) bead = 'clean';
+
+    let rec = state.rehearsal.mastery[idx];
+    if (!rec) {
+      rec = _newMasteryRecord();
+      state.rehearsal.mastery[idx] = rec;
+    }
+    // Rolling last-5 window.
+    rec.beads.push(bead);
+    rec.beads.shift();
+
+    if (bead === 'rough') {
+      rec.consecutiveRough += 1;
+    } else {
+      rec.consecutiveRough = 0;
+      if (speed >= (rec.speedAtLastClean || 0)) rec.speedAtLastClean = speed;
+    }
+
+    rec.lastRun = { passes, fails: perSection.fails, total, speed, at: Date.now() };
+
+    // State machine (see plan §2.1). Simplified counters over the last-5
+    // window; we treat the current bead's speed as representative for
+    // the "at 1×" gate (mastery/lock thresholds only advance when the
+    // current bead was earned at full speed).
+    const STATE_DOWN = {
+      mastered: 'locked_in',
+      locked_in: 'practicing',
+      practicing: 'learning',
+      learning: 'learning',
+      not_tried: 'not_tried',
+    };
+    if (bead !== 'rough') {
+      if (rec.state === 'not_tried') rec.state = 'learning';
+      const cleanish = rec.beads.filter(b => b === 'clean' || b === 'perfect').length;
+      const perfectCount = rec.beads.filter(b => b === 'perfect').length;
+      if (speed >= 1.0) {
+        if (perfectCount >= 5) rec.state = 'mastered';
+        else if (cleanish >= 3
+          && (rec.state === 'not_tried' || rec.state === 'learning' || rec.state === 'practicing')) {
+          rec.state = 'locked_in';
+        } else if (rec.state === 'learning') {
+          rec.state = 'practicing';
+        }
+      } else if (speed >= 0.75 && bead === 'perfect') {
+        if (rec.state === 'learning') rec.state = 'practicing';
+      }
+    } else if (rec.consecutiveRough >= 3) {
+      rec.state = STATE_DOWN[rec.state] || rec.state;
+      rec.consecutiveRough = 0;
+    }
+
+    // Locked-in / mastered mirrors the legacy `completed` flag so the
+    // header-meta counter and (Phase 3) lock graph continue to work
+    // without cross-referencing both stores.
+    if (rec.state === 'locked_in' || rec.state === 'mastered') {
+      state.rehearsal.completed[idx] = true;
+    }
+    _saveRehearsalProgress();
+    return { bead, state: rec.state };
+  }
+
+  // Human-readable label for the mastery state chip.
+  function _rehearsalStateLabel(stateName) {
+    switch (stateName) {
+      case 'learning': return 'Learning';
+      case 'practicing': return 'Practicing';
+      case 'locked_in': return 'Locked in';
+      case 'mastered': return 'Mastered';
+      case 'not_tried':
+      default: return '';
+    }
+  }
+
+  // Warm, state-aware status copy that replaces the "Passes 0/0"
+  // scoreboard. Returns a plain string; the caller writes it into
+  // the status-line span. Split out so it's directly unit-testable
+  // from DevTools via __jam._rehearsal.
+  function _rehearsalStatusCopy(section, perSection, completed) {
+    const p = perSection || { passes: 0, fails: 0, total: 0 };
+    const isChord = section
+      && section.guidanceMode !== 'riff'
+      && section.guidanceMode !== 'lead';
+    const noun = isChord ? 'chords' : 'notes';
+    if (completed) {
+      return 'Locked in. Ready for the jam whenever you are.';
+    }
+    if (p.total === 0) {
+      return `Hit play and try a pass — I'll count the ${noun} you nail.`;
+    }
+    if (p.total < _REHEARSAL_MIN_ITEMS) {
+      return `${p.passes} clean so far. Keep going — full loop unlocks the check.`;
+    }
+    const pct = Math.round(100 * (p.passes / Math.max(1, p.total)));
+    if (pct >= _REHEARSAL_COMPLETION_THRESHOLD * 100) {
+      return `${pct}% clean — one more loop like that and it's locked in.`;
+    }
+    if (pct >= 50) {
+      return `${pct}% clean. Try one more loop — 70% locks it in.`;
+    }
+    return `${p.passes} of ${p.total} clean. Slow it down and take another pass.`;
+  }
+
+  function _updateRehearsalScoreDisplay() {
+    const idx = state.rehearsal.sectionIndex;
+    const section = state.sections && state.sections[idx];
+    const p = state.rehearsal.perSection[idx];
+    const done = !!state.rehearsal.completed[idx];
+    const copy = _rehearsalStatusCopy(section, p, done);
+    // Repurpose the legacy #rehearsal-score-value element as the
+    // status line — keeping the DOM id preserves any DevTools
+    // scripts and Playwright selectors targeting v1.
+    const el = document.getElementById('rehearsal-score-value');
+    if (el) {
+      el.textContent = copy;
+      el.classList.toggle('is-complete', done);
+    }
+    const hint = document.getElementById('rehearsal-score-hint');
+    if (hint) hint.textContent = '';
+    _updateRehearsalHeaderMeta();
+  }
+
+  function _checkRehearsalCompletion() {
+    const idx = state.rehearsal.sectionIndex;
+    const p = state.rehearsal.perSection[idx];
+    if (!p || p.total < _REHEARSAL_MIN_ITEMS) return;
+    if (p.passes / p.total < _REHEARSAL_COMPLETION_THRESHOLD) return;
+    if (state.rehearsal.completed[idx]) return;
+    state.rehearsal.completed[idx] = true;
+    _saveRehearsalProgress();
+    _buildRehearsalSectionList();
+    _updateRehearsalScoreDisplay();
+  }
+
+  let _rehearsalVerifyTimer = null;
+  let _rehearsalLastPlayT = null;
+  function _startRehearsalVerifyLoop() {
+    _stopRehearsalVerifyLoop();
+    _rehearsalLastPlayT = null;
+    _rehearsalVerifyTimer = setInterval(_tickRehearsalVerify, 100);
+  }
+  function _stopRehearsalVerifyLoop() {
+    if (_rehearsalVerifyTimer) {
+      clearInterval(_rehearsalVerifyTimer);
+      _rehearsalVerifyTimer = null;
+    }
+  }
+  function _tickRehearsalVerify() {
+    _updateRehearsalMicChip();
+    if (!state.rehearsal.active) return;
+    const items = state.rehearsal.items;
+    if (!items || !items.length) return;
+    const t = currentPlayTime();
+    if (_rehearsalLastPlayT != null && t < _rehearsalLastPlayT - 0.05) {
+      const idx = state.rehearsal.sectionIndex;
+      // Grade the just-completed loop → new bead + state advance.
+      const graded = _gradeLoop(idx, state.rehearsal.perSection[idx], state.rehearsal.speed);
+      // Reset the per-section counters and item-visit set for the next
+      // pass. Kept legacy `_checkRehearsalCompletion` path for the case
+      // where the loop was too short to earn a bead (below MIN_ITEMS):
+      // it still upgrades to completed on 70%+ so shorter fills work.
+      if (!graded) _checkRehearsalCompletion();
+      state.rehearsal.perSection[idx] = { passes: 0, fails: 0, total: 0, done: new Set() };
+      state.rehearsal.activeItemIdx = -1;
+      state.rehearsal.whyHints = {};
+      _updateRehearsalScoreDisplay();
+      _updateRehearsalRowMastery(idx);
+      const host = document.getElementById('rehearsal-items');
+      if (host) {
+        host.querySelectorAll('.rehearsal-tile').forEach(el => {
+          el.classList.remove('is-active', 'is-pass', 'is-fail', 'is-close', 'is-early', 'is-late');
+          _setWhyHint(el, '');
+        });
+      }
+    }
+    _rehearsalLastPlayT = t;
+
+    let activeIdx = -1;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].startSec <= t && t < items[i].endSec) { activeIdx = i; break; }
+    }
+    const prev = state.rehearsal.activeItemIdx;
+    if (activeIdx !== prev) {
+      if (prev >= 0 && prev < items.length) {
+        const idx = state.rehearsal.sectionIndex;
+        const p = state.rehearsal.perSection[idx]
+          || { passes: 0, fails: 0, total: 0, done: new Set() };
+        if (!p.done.has(prev)) {
+          p.done.add(prev);
+          p.total += 1;
+          const item = items[prev];
+          const verdict = item.kind === 'chord'
+            ? _verifyChordTile(item)
+            : _verifyNoteTile(item);
+          if (verdict.pass) p.passes += 1;
+          else p.fails += 1;
+          _markRehearsalTileVerdict(prev, verdict, item.kind, item);
+          state.rehearsal.perSection[idx] = p;
+          _updateRehearsalScoreDisplay();
+        }
+      }
+      if (activeIdx >= 0) _markRehearsalTileActive(activeIdx);
+      state.rehearsal.activeItemIdx = activeIdx;
+    }
+  }
+
+  function _updateRehearsalMicChip() {
+    const chip = document.getElementById('rehearsal-mic-chip');
+    const label = document.getElementById('rehearsal-mic-label');
+    const pitchEl = document.getElementById('rehearsal-mic-pitch');
+    if (!chip) return;
+    const armed = !!state.listen.stream;
+    chip.classList.toggle('rehearsal-mic-on', armed);
+    chip.classList.toggle('rehearsal-mic-off', !armed);
+    if (label) label.textContent = armed ? 'Mic armed' : 'Mic off';
+    if (pitchEl) {
+      const hist = state.listen.history || [];
+      const last = hist.length ? hist[hist.length - 1] : null;
+      if (armed && last && typeof last.midi === 'number') {
+        pitchEl.textContent = _midiToNoteName(last.midi);
+      } else {
+        pitchEl.textContent = '';
+      }
+    }
+  }
+
+  function _renderRehearsalTransport() {
+    document.querySelectorAll('.rehearsal-speed-btn').forEach(btn => {
+      const s = parseFloat(btn.dataset.speed);
+      btn.classList.toggle('is-active', Math.abs(s - state.rehearsal.speed) < 0.01);
+    });
+    const loopBtn = document.getElementById('rehearsal-loop');
+    if (loopBtn) {
+      loopBtn.classList.toggle('is-active', !!state.rehearsal.loopOn);
+      loopBtn.textContent = state.rehearsal.loopOn ? 'Loop: on' : 'Loop: off';
+    }
+    const playBtn = document.getElementById('rehearsal-play');
+    if (playBtn) playBtn.textContent = state.isPlaying ? 'Pause' : 'Play';
+  }
+
+  function _rehearsalPlayPause() {
+    if (state.isPlaying) pauseAll();
+    else playAll();
+    _renderRehearsalTransport();
+  }
+
+  function _rehearsalToggleLoop() {
+    state.rehearsal.loopOn = !state.rehearsal.loopOn;
+    // Rebuild the loop object so tickClock's truthiness-based
+    // wraparound (jam.js:4787) reflects the new state.
+    const section = state.sections && state.sections[state.rehearsal.sectionIndex];
+    if (state.rehearsal.loopOn && section) {
+      state.loop = {
+        name: section.name,
+        startSec: section.startSec,
+        endSec: section.endSec,
+      };
+    } else {
+      state.loop = null;
+    }
+    _renderRehearsalTransport();
+  }
+
+  function _rehearsalSetSpeed(speed) {
+    if (!_REHEARSAL_SPEEDS.includes(speed)) return;
+    state.rehearsal.speed = speed;
+    if (state.isPlaying) {
+      try { seekAll(currentPlayTime()); } catch (_) {}
+    }
+    _renderRehearsalTransport();
+  }
+
+  function _rehearsalNextSection() {
+    const groups = _rehearsalGroupsFromSections();
+    // Walk Parts → Moments (skip Extras — they're intentionally
+    // demoted; the musician can drill in manually).
+    const ordered = groups.parts.concat(groups.moments);
+    if (!ordered.length) return;
+    const cur = state.rehearsal.sectionIndex;
+    let curGi = ordered.findIndex(g => g.anchorIdx === cur
+      || g.variantIdxs.includes(cur));
+    if (curGi < 0) curGi = 0;
+    const nextGi = (curGi + 1) % ordered.length;
+    _selectRehearsalSection(ordered[nextGi].anchorIdx);
+  }
+
+  function _onEnterRehearsalView() {
+    state.rehearsal.active = true;
+    const key = _rehearsalStorageKey();
+    if (state.rehearsal.lastPersistKey !== key) _loadRehearsalProgress();
+    if (!state.sections || !state.sections.length) {
+      _buildRehearsalSectionList();
+      _updateRehearsalMicChip();
+      _renderRehearsalTransport();
+      _startRehearsalVerifyLoop();
+      return;
+    }
+    let idx = state.rehearsal.sectionIndex;
+    if (typeof idx !== 'number' || idx < 0 || idx >= state.sections.length) idx = 0;
+    _selectRehearsalSection(idx);
+    if (!state.listen.stream) {
+      startListening().catch(err => {
+        console.warn('[rehearsal] mic arm failed:', err);
+      });
+    }
+    _updateRehearsalMicChip();
+    _renderRehearsalTransport();
+    _startRehearsalVerifyLoop();
+  }
+
+  function _onLeaveRehearsalView() {
+    state.rehearsal.active = false;
+    _stopRehearsalVerifyLoop();
+    if (state.isPlaying) {
+      try { pauseAll(); } catch (_) {}
+    }
+    state.rehearsal.speed = 1.0;
+  }
+
+  // ─── Event wiring (bandroom CTAs + rehearsal transport) ────────
+  (function _wireRehearsalDom() {
+    const startRehearsal = document.getElementById('bandroom-start-rehearsal');
+    if (startRehearsal) {
+      startRehearsal.addEventListener('click', () => showView('rehearsal'));
+    }
+    const startJam = document.getElementById('bandroom-start-jam');
+    if (startJam) {
+      startJam.addEventListener('click', () => showView('perform'));
+    }
+    const backBtn = document.getElementById('rehearsal-back-to-bandroom');
+    if (backBtn) backBtn.addEventListener('click', () => showView('bandroom'));
+    const skipBtn = document.getElementById('rehearsal-skip-to-jam');
+    if (skipBtn) skipBtn.addEventListener('click', () => showView('perform'));
+    const playBtn = document.getElementById('rehearsal-play');
+    if (playBtn) playBtn.addEventListener('click', _rehearsalPlayPause);
+    const loopBtn = document.getElementById('rehearsal-loop');
+    if (loopBtn) loopBtn.addEventListener('click', _rehearsalToggleLoop);
+    const nextBtn = document.getElementById('rehearsal-next');
+    if (nextBtn) nextBtn.addEventListener('click', _rehearsalNextSection);
+    document.querySelectorAll('.rehearsal-speed-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const s = parseFloat(btn.dataset.speed);
+        if (Number.isFinite(s)) _rehearsalSetSpeed(s);
+      });
+    });
+  })();
+
+  // Expose rehearsal internals on __jam for DevTools triage.
+  try {
+    window.__jam._rehearsal = {
+      get state() { return state.rehearsal; },
+      _rehearsalGroupsFromSections,
+      _rehearsalLabelForSection,
+      _rehearsalLabelForIdx,
+      _rehearsalStatusCopy,
+      _rehearsalHeaderMeta,
+      _chordSymbolToPitchClasses,
+      _verifyChordTile,
+      _verifyNoteTile,
+      _gradeLoop,
+      _rehearsalWhyHint,
+      _rehearsalStateLabel,
+      _newMasteryRecord,
+      _rehearsalSectionCleared,
+      _difficultyHintsFor,
+      _REHEARSAL_LOCK_GRAPH,
     };
   } catch (_) {}
 })();

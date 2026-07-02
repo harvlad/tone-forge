@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=25" />
+<link rel="stylesheet" href="/static/jam.css?v=33" />
 </head>
 <body>
 <header class="jam-header">
@@ -162,7 +162,100 @@
       </div>
     </div>
 
+    <!-- Post-analysis CTAs. Both are hidden until onAnalysisComplete
+         flips the bandroom into its "Ready" state. The two are equal
+         siblings so rehearsal is strictly optional — "Start jam"
+         still bypasses rehearsal entirely. -->
+    <div id="bandroom-cta" class="bandroom-cta" hidden>
+      <button id="bandroom-start-rehearsal" class="primary" type="button">Start rehearsal</button>
+      <button id="bandroom-start-jam" class="ghost" type="button">Just jam</button>
+    </div>
+
     <button id="bandroom-cancel" class="ghost">Cancel</button>
+  </section>
+
+  <!-- ============================= REHEARSAL ============================ -->
+  <!--
+    Rehearsal view — optional per-section onboarding practice mode.
+    Sits between bandroom and perform in the state machine. Reuses
+    section data from the SessionBundle (guidance_mode, landmark_notes,
+    chords, structural_role). Verification runs entirely in the browser
+    against the existing mic pitch/onset pipeline (state.listen).
+    Skippable at any time via the "Skip to jam" header button.
+  -->
+  <section id="view-rehearsal" class="view">
+    <div id="rehearsal-header" class="rehearsal-header">
+      <div class="rehearsal-header-song">
+        <div class="rehearsal-title" id="rehearsal-title">Rehearsal</div>
+        <div class="rehearsal-meta" id="rehearsal-meta">Pick a section to practice, then jump into the jam.</div>
+      </div>
+      <div class="rehearsal-header-actions">
+        <button id="rehearsal-back-to-bandroom" class="ghost" type="button">Back</button>
+        <button id="rehearsal-skip-to-jam" class="text-link" type="button">Skip to jam</button>
+      </div>
+    </div>
+
+    <div id="rehearsal-grid" class="rehearsal-grid">
+      <!-- LEFT: section list. Group headings (Parts to learn, Moments,
+           Extras) are rendered inline by _buildRehearsalSectionList so
+           the list adapts to what the bundle actually contains. -->
+      <aside id="rehearsal-sections" class="rehearsal-sections">
+        <div id="rehearsal-section-list" class="rehearsal-section-list"></div>
+      </aside>
+
+      <!-- MAIN: chord tiles or tab lane, per section guidance_mode. -->
+      <div id="rehearsal-main" class="rehearsal-main">
+        <div id="rehearsal-section-heading" class="rehearsal-section-heading">
+          <div class="rehearsal-section-heading-name" id="rehearsal-section-name">—</div>
+          <!-- Guidance-mode badge is intentionally hidden; the tile
+               type in the pane below already tells you chords vs riff.
+               Retained (hidden) for backward-compat with any DOM
+               observers introduced in v1. -->
+          <div class="rehearsal-section-heading-badge" id="rehearsal-section-badge" hidden></div>
+          <!-- Phase 3: musician-facing difficulty hints ("has a barre F",
+               "big jumps between notes"). Populated by
+               _renderDifficultyHints in jam.js from the section's
+               chord list + landmark_notes span; empty when no
+               heuristic fires so the heading collapses cleanly. -->
+          <div class="rehearsal-section-heading-hints" id="rehearsal-section-hints"></div>
+        </div>
+
+        <div id="rehearsal-mic-chip" class="rehearsal-mic-chip rehearsal-mic-off">
+          <span class="rehearsal-mic-dot"></span>
+          <span class="rehearsal-mic-label" id="rehearsal-mic-label">Mic off</span>
+          <span class="rehearsal-mic-pitch" id="rehearsal-mic-pitch"></span>
+        </div>
+
+        <div id="rehearsal-items" class="rehearsal-items"></div>
+        <div id="rehearsal-empty" class="rehearsal-empty" hidden>
+          This section doesn't have anything to rehearse yet.
+        </div>
+
+        <!-- Status line. The legacy #rehearsal-score-value id is kept
+             so DevTools scripts still resolve it; visually it now
+             carries state-aware prose (e.g. "Hit play and try a pass
+             — I'll count the chords you nail."). -->
+        <div id="rehearsal-score" class="rehearsal-status">
+          <span id="rehearsal-score-value" class="rehearsal-status-line">Hit play and try a pass — I'll count the chords you nail.</span>
+          <span id="rehearsal-score-hint" class="rehearsal-status-hint"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRANSPORT: play/pause, loop toggle, speed selector, next
+         section. Loop defaults ON in rehearsal so the player can
+         practice a section against a repeating backing track. -->
+    <div id="rehearsal-transport" class="rehearsal-transport">
+      <button id="rehearsal-play" class="primary" type="button">Play</button>
+      <button id="rehearsal-loop" class="ghost is-active" type="button" title="Toggle section loop">Loop: on</button>
+      <div class="rehearsal-speed" role="radiogroup" aria-label="Playback speed">
+        <span class="rehearsal-speed-label">Speed</span>
+        <button class="rehearsal-speed-btn" data-speed="0.5" type="button">0.5×</button>
+        <button class="rehearsal-speed-btn" data-speed="0.75" type="button">0.75×</button>
+        <button class="rehearsal-speed-btn is-active" data-speed="1" type="button">1×</button>
+      </div>
+      <button id="rehearsal-next" class="ghost" type="button" title="Next section">Next section →</button>
+    </div>
   </section>
 
   <!-- =========================== PERFORMANCE ============================ -->
@@ -624,6 +717,6 @@
   </section>
 </main>
 
-<script src="/static/jam.js?v=42"></script>
+<script src="/static/jam.js?v=62"></script>
 </body>
 </html>

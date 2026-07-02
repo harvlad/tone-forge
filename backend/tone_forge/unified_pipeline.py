@@ -822,6 +822,62 @@ class UnifiedPipeline:
                         "chords_found": len(chords) if chords else 0,
                     }
 
+            # 7.5.7 Round-2 Fix 4 — chord-vocabulary Jaccard boundary
+            # refinement. Splits any section carrying an
+            # energy-stable harmonic-content shift (Jaccard distance
+            # >= 0.6 across a 2-bar sliding window). Runs after Stage
+            # 7 (RMS-novelty sections) and Stage 7.5 (chord lane) so
+            # both signals are available; runs BEFORE Stage 7.6
+            # guidance-mode and Stage 7.7 H2/Pass-2b so the refined
+            # segmentation is what every downstream stage sees.
+            # Bench-bit-exact: this stage does not touch chord
+            # detection, only section boundaries in the
+            # unified_pipeline path.
+            if sections and chords and beats_s is not None:
+                try:
+                    from tone_forge.analysis.chord_vocab_boundaries import (
+                        detect_chord_vocab_boundaries,
+                    )
+                    new_boundaries = detect_chord_vocab_boundaries(
+                        sections, chords, beats_s,
+                    )
+                    if new_boundaries:
+                        # Group new split points by source section
+                        # index so we can insert them in order.
+                        by_section: dict[int, list[float]] = {}
+                        for row in new_boundaries:
+                            by_section.setdefault(
+                                int(row["source_section_index"]), []
+                            ).append(float(row["time_s"]))
+                        refined_sections: list[dict] = []
+                        for idx, section in enumerate(sections):
+                            split_times = sorted(
+                                by_section.get(idx, [])
+                            )
+                            if not split_times:
+                                refined_sections.append(section)
+                                continue
+                            # Walk the section, emitting a sub-
+                            # section per split. Each sub-section
+                            # inherits the parent's fields; only
+                            # start/end/duration change. Downstream
+                            # stages (H2, Pass 2b, resegment) will
+                            # relabel ``type`` as needed.
+                            s_start = float(section["start_time"])
+                            s_end = float(section["end_time"])
+                            edges = [s_start] + split_times + [s_end]
+                            for k in range(len(edges) - 1):
+                                sub = dict(section)
+                                sub["start_time"] = edges[k]
+                                sub["end_time"] = edges[k + 1]
+                                sub["duration"] = edges[k + 1] - edges[k]
+                                refined_sections.append(sub)
+                        sections = refined_sections
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(
+                        f"Chord-vocab boundary refinement failed: {e}"
+                    )
+
             # 7.6 Per-section guidance-mode classification (chord/riff/lead).
             # Runs after chord detection so chord_density can feed the
             # classifier, and before _build_result so the persisted
@@ -909,6 +965,104 @@ class UnifiedPipeline:
                 except Exception as e:  # pragma: no cover - defensive
                     logger.warning(f"Guidance-mode classification failed: {e}")
 
+            # 7.5.5 Round-2 Fix 2 — same-root region collapse on the
+            # persisted chord lanes. ``detect_chords_with_key`` already
+            # runs this on the analysis-side ``Chord`` tuple; here we
+            # re-apply it to the dict-shaped ``chords`` +
+            # ``chords_beat_snapped`` (and per-stem variants) so the
+            # collapse survives the pipeline serialization boundary and
+            # lands in the persisted AnalysisResult. Absorbs the
+            # C#m ↔ C#5 quality flicker within a stable root pitch
+            # class — same signal defect on every stem lane, same fix
+            # applied uniformly.
+            if chords or chords_beat_snapped or chords_by_stem:
+                try:
+                    from tone_forge.analysis.chords import (
+                        collapse_same_root_regions,
+                    )
+                    _beats_np = (
+                        np.asarray(beats_s, dtype=np.float64)
+                        if beats_s is not None else None
+                    )
+                    if chords:
+                        chords = collapse_same_root_regions(
+                            chords, _beats_np,
+                        )
+                    if chords_beat_snapped:
+                        chords_beat_snapped = collapse_same_root_regions(
+                            chords_beat_snapped, _beats_np,
+                        )
+                    if chords_by_stem:
+                        chords_by_stem = {
+                            stem: collapse_same_root_regions(
+                                stem_chords, _beats_np,
+                            )
+                            for stem, stem_chords in chords_by_stem.items()
+                        }
+                    if chords_beat_snapped_by_stem:
+                        chords_beat_snapped_by_stem = {
+                            stem: (
+                                collapse_same_root_regions(
+                                    stem_chords, _beats_np,
+                                )
+                                if stem_chords is not None else None
+                            )
+                            for stem, stem_chords
+                            in chords_beat_snapped_by_stem.items()
+                        }
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(
+                        f"Same-root chord collapse failed: {e}"
+                    )
+
+            # 7.6.5 Monophonic-section chord gate (Stage 1.6).
+            # Now that ``section['debug_features']`` carries the per-stem
+            # monophonic_ratio + pitch_class_diversity signals (populated
+            # by 7.6 above), drop chord regions whose midpoint lies
+            # inside a section that is both strongly monophonic AND has
+            # a narrow pitch-class vocabulary. Chord recognition on a
+            # single-note riff has no polyphonic signal to latch onto —
+            # this filter enforces that physical constraint.
+            #
+            # Applied to ``chords``, ``chords_beat_snapped``, and every
+            # entry in the per-stem dicts so H2 role classification
+            # (7.7) sees a cleaner chord stream, no confabulated triads
+            # in monophonic sections leak into recurrence stats.
+            if sections and chords:
+                try:
+                    from tone_forge.analysis.chords import (
+                        filter_chords_in_monophonic_sections,
+                    )
+                    chords = filter_chords_in_monophonic_sections(
+                        chords, sections,
+                    )
+                    if chords_beat_snapped is not None:
+                        chords_beat_snapped = (
+                            filter_chords_in_monophonic_sections(
+                                chords_beat_snapped, sections,
+                            )
+                        )
+                    if chords_by_stem is not None:
+                        chords_by_stem = {
+                            stem: filter_chords_in_monophonic_sections(
+                                stem_chords, sections,
+                            )
+                            for stem, stem_chords in chords_by_stem.items()
+                        }
+                    if chords_beat_snapped_by_stem is not None:
+                        chords_beat_snapped_by_stem = {
+                            stem: (
+                                filter_chords_in_monophonic_sections(
+                                    stem_chords, sections,
+                                )
+                                if stem_chords is not None else None
+                            )
+                            for stem, stem_chords
+                            in chords_beat_snapped_by_stem.items()
+                        }
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(f"Monophonic chord gate failed: {e}")
+
             # 7.7 Per-section structural-role classification
             # (ANCHOR / DEVELOPMENT / UNIQUE).
             #
@@ -990,14 +1144,102 @@ class UnifiedPipeline:
                             aggregates = aggregate_song_form(
                                 per_stem_features_by_stem, energy_means
                             )
+                            # Bucket chord dicts into per-section lists
+                            # by midpoint so Pass 2b (CHORUS→CHORUS
+                            # PRECHORUS by vocab narrowing) can fire.
+                            chords_per_section: list[list[dict]] = [
+                                [] for _ in sections
+                            ]
+                            if chords:
+                                _sec_bounds = [
+                                    (float(s.get("start_time", 0.0)),
+                                     float(s.get("end_time", 0.0)))
+                                    for s in sections
+                                ]
+                                for c in chords:
+                                    mid = 0.5 * (
+                                        float(c.get("start_s", 0.0))
+                                        + float(c.get("end_s", 0.0))
+                                    )
+                                    for idx, (a, b) in enumerate(_sec_bounds):
+                                        if a <= mid < b:
+                                            chords_per_section[idx].append(c)
+                                            break
                             refined_types = refine_section_types(
-                                derived_types, aggregates
+                                derived_types, aggregates,
+                                chords_per_section=chords_per_section,
                             )
                             for section, st in zip(sections, refined_types):
                                 section["type"] = st.value
                 except Exception as e:  # pragma: no cover - defensive
                     logger.warning(
                         f"Structural-role classification failed: {e}"
+                    )
+
+            # 7c. Duration-guard post-pass (Fix B: suspicious-section
+            # flagging). Runs after Stage A/B so it sees the final
+            # section ``type``. Purely advisory — attaches a
+            # ``duration_flag`` string to each section dict which the
+            # JAM UI renders as a dashed border + warning glyph on the
+            # section pill. Lives outside the H2 try-block so a Stage B
+            # failure (or degenerate H2) doesn't skip the flagging.
+            if sections:
+                try:
+                    from tone_forge.analysis.section_naming import (
+                        flag_suspicious_durations,
+                    )
+                    flag_suspicious_durations(sections)
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(
+                        f"Duration-guard flagging failed: {e}"
+                    )
+
+            # 7d. Boundary re-detection inside long ANCHOR sections
+            # (Fix C). Splits sections that Fix B flagged as too long
+            # by looking for MIDI-onset density novelty peaks inside
+            # the flagged span. After splitting we re-run H2 role
+            # classification + Stage A labeling on the new
+            # segmentation so sub-sections can pick up their own
+            # role (a split 70s chorus typically decomposes into
+            # verse2/prechorus2/chorus2/bridge rather than four
+            # copies of ``chorus``). Stage B (per-stem aggregate
+            # refinement) is not re-run — its feature rows are keyed
+            # by the original section indices and don't survive the
+            # split without an upstream re-fit which is out of scope
+            # here. Finally re-run the duration guard so any sub-
+            # section still exceeding the threshold keeps its flag.
+            if sections:
+                try:
+                    from tone_forge.analysis.section_resegment import (
+                        resegment_flagged_sections,
+                        relabel_sections_from_h2,
+                    )
+                    resegmented = resegment_flagged_sections(
+                        sections, midi_stems or {}
+                    )
+                    if len(resegmented) != len(sections):
+                        sections = resegmented
+                        if chords:
+                            relabel_sections_from_h2(sections, chords)
+                        flag_suspicious_durations(sections)
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(
+                        f"Boundary re-detection failed: {e}"
+                    )
+
+            # 7e. Section grouping for the JAM rehearsal-v2 view
+            # (Phase 3). See ``song_form/grouping.py`` for the
+            # ``group_id`` / ``recurrence_count`` semantics. Purely
+            # derivative — never overrides upstream fields.
+            if sections:
+                try:
+                    from tone_forge.song_form.grouping import (
+                        assign_section_groups,
+                    )
+                    assign_section_groups(sections)
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning(
+                        f"Section grouping failed: {e}"
                     )
 
             # 8. Generate waveform visualization
