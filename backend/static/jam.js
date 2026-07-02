@@ -55,11 +55,31 @@
         try { _onLeaveRehearsalView(); } catch (e) { console.warn('[rehearsal] leave failed:', e); }
       }
     }
+    // Follow-up: when the user lands on the bandroom and has ≥3
+    // cached rehearsals, auto-surface the skill map so cross-song
+    // progress is visible without a manual click. Sessionstorage
+    // gates it to once per visit.
+    if (name === 'bandroom' && typeof _maybeAutoOpenSkillMap === 'function') {
+      try { _maybeAutoOpenSkillMap(); } catch (e) { console.warn('[skill-map] auto-open failed:', e); }
+    }
   }
 
   // -------------------------------------------------------- constants
   const LOCAL_ENGINE_URL = 'http://127.0.0.1:7777';
   const ENGINE_POLL_MS = 3000;
+
+  // Dev/tester escape hatch. When the page is loaded with ?debug=1,
+  // developer-only affordances turn on: today that's a small strip
+  // of tag-id badges rendered next to each rehearsal section row so
+  // the tag machinery is inspectable without hopping to /debug.
+  // Cheap boolean — captured once at parse time, no live re-check.
+  let _DEBUG_TAGS_VISIBLE = false;
+  try {
+    _DEBUG_TAGS_VISIBLE = new URLSearchParams(window.location.search).get('debug') === '1';
+  } catch (_) { _DEBUG_TAGS_VISIBLE = false; }
+  if (_DEBUG_TAGS_VISIBLE) {
+    try { document.body.classList.add('debug-tags-visible'); } catch (_) {}
+  }
 
   // -------------------------------------------------------- state
   const state = {
@@ -7673,16 +7693,61 @@
     return out;
   }
 
+  // Per-section BPM derivation. Filters state.beatTimes to those
+  // that fall inside [startSec, endSec) and derives the local
+  // tempo from the beat spacing. Falls back to state.tempo_bpm when
+  // fewer than 2 beats sit inside the window (short intro / outro).
+  // Clamped to 40..240 BPM to guard against outliers from a runaway
+  // librosa estimate. Returns null when no tempo is known at all.
+  function _bpmForSection(section) {
+    if (!section) return null;
+    const startS = typeof section.startSec === 'number' ? section.startSec
+      : (typeof section.start_s === 'number' ? section.start_s : 0);
+    const endS = typeof section.endSec === 'number' ? section.endSec
+      : (typeof section.end_s === 'number' ? section.end_s : 0);
+    const beats = Array.isArray(state.beatTimes) ? state.beatTimes : [];
+    const inRange = [];
+    for (const b of beats) {
+      if (!Number.isFinite(b)) continue;
+      if (b >= startS && b < endS) inRange.push(b);
+      if (b >= endS) break;   // beats are monotonic
+    }
+    if (inRange.length >= 2) {
+      const span = inRange[inRange.length - 1] - inRange[0];
+      if (span > 0) {
+        const bpm = 60 * (inRange.length - 1) / span;
+        if (Number.isFinite(bpm) && bpm >= 40 && bpm <= 240) return bpm;
+      }
+    }
+    const global = (typeof state.tempo_bpm === 'number' && state.tempo_bpm >= 40 && state.tempo_bpm <= 240)
+      ? state.tempo_bpm : null;
+    return global;
+  }
+
   function _renderDifficultyHints(section) {
     const el = document.getElementById('rehearsal-section-hints');
     if (!el) return;
     el.innerHTML = '';
     const tags = _detectSectionTags(section);
-    if (!tags.length) {
+    // Follow-up: surface the per-section BPM alongside the difficulty
+    // tags so the musician can see the loop's local tempo at a glance.
+    // Rendered as a subtle leading chip; suppressed entirely when no
+    // tempo estimate exists (e.g. beat detection produced nothing).
+    const bpm = _bpmForSection(section);
+    const bpmChip = bpm ? Math.round(bpm) : null;
+    if (!tags.length && !bpmChip) {
       el.hidden = true;
       return;
     }
     el.hidden = false;
+    if (bpmChip) {
+      const chip = document.createElement('span');
+      chip.className = 'difficulty-hint tag-hand-timing tag-severity-1';
+      chip.dataset.tagId = 'bpm';
+      chip.textContent = `${bpmChip} BPM`;
+      chip.title = 'Local tempo across this section (derived from beat detection).';
+      el.appendChild(chip);
+    }
     for (const tag of tags) {
       const chip = document.createElement('span');
       chip.className = 'difficulty-hint';
@@ -8115,6 +8180,37 @@
     view.hidden = true;
   }
 
+  // Follow-up: auto-surface the skill map when the user has enough
+  // cached rehearsals for the map to feel populated (≥3 songs). Fires
+  // at most once per browser session (sessionStorage flag) so the
+  // overlay never interrupts the same visit twice, and only when the
+  // bandroom is entered — never on a rehearsal/perform transition.
+  // Guarded through _showSkillMap so a missing overlay is a no-op.
+  const _SKILL_MAP_AUTOOPEN_KEY = 'skillmap:autoopen:v1';
+  const _SKILL_MAP_AUTOOPEN_MIN = 3;
+  function _maybeAutoOpenSkillMap() {
+    let alreadyShown = false;
+    try {
+      alreadyShown = sessionStorage.getItem(_SKILL_MAP_AUTOOPEN_KEY) === '1';
+    } catch (_) { return; }
+    if (alreadyShown) return;
+    let cached = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(_REHEARSAL_STORAGE_PREFIX)) cached += 1;
+      }
+    } catch (_) { return; }
+    if (cached < _SKILL_MAP_AUTOOPEN_MIN) return;
+    try { sessionStorage.setItem(_SKILL_MAP_AUTOOPEN_KEY, '1'); } catch (_) {}
+    // Defer one tick so the bandroom view paints first — the overlay
+    // then feels like an announcement rather than a mid-navigation
+    // interruption.
+    setTimeout(() => {
+      try { _showSkillMap(); } catch (_) {}
+    }, 250);
+  }
+
   // ─── Phase C: warm-up mode ───────────────────────────────────
   //
   // A pre-jam finger-stretch flow. Modal overlay reachable from the
@@ -8134,11 +8230,40 @@
   // No music playback, no transport — this is a metronome-style
   // exercise, not a song rehearsal.
 
-  const _WARMUP_BAR_SEC = 4.0;         // 60 bpm × 4 beats
+  const _WARMUP_BAR_SEC = 4.0;         // 60 bpm × 4 beats (fallback)
   const _WARMUP_PASSES_TO_COMPLETE = 3;
   const _WARMUP_FALLBACK_CHORDS = ['C', 'G', 'Am', 'F'];
   const _WARMUP_COOLDOWN_KEY = 'warmup:v1:completedAt';
   const _WARMUP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+  // Warm-up tempo bounds. When a song is loaded, we scale the local
+  // section BPM down to feel like a warm-up (75% of the song tempo);
+  // then clamp between 50 and 90 BPM so the loop never feels frantic
+  // or funereal.
+  const _WARMUP_TEMPO_MIN_BPM = 50;
+  const _WARMUP_TEMPO_MAX_BPM = 90;
+  const _WARMUP_TEMPO_SCALE = 0.75;
+
+  // Pick a warm-up bar length that echoes the current song's local
+  // tempo when possible. Walks the loaded sections looking for the
+  // most representative BPM (median across sections that have a
+  // confident local estimate), scales it down for a warm-up feel,
+  // then converts to seconds per bar (4 beats). Falls back to
+  // _WARMUP_BAR_SEC when no song is loaded.
+  function _warmupBarSec() {
+    if (!Array.isArray(state.sections) || !state.sections.length) return _WARMUP_BAR_SEC;
+    const bpms = [];
+    for (const s of state.sections) {
+      const bpm = _bpmForSection(s);
+      if (Number.isFinite(bpm) && bpm > 0) bpms.push(bpm);
+    }
+    if (!bpms.length) return _WARMUP_BAR_SEC;
+    bpms.sort((a, b) => a - b);
+    const median = bpms[Math.floor(bpms.length / 2)];
+    let target = median * _WARMUP_TEMPO_SCALE;
+    if (target < _WARMUP_TEMPO_MIN_BPM) target = _WARMUP_TEMPO_MIN_BPM;
+    if (target > _WARMUP_TEMPO_MAX_BPM) target = _WARMUP_TEMPO_MAX_BPM;
+    return (60 / target) * 4;
+  }
 
   // Warm-up transient state. Not persisted — a warm-up in progress
   // is discarded on reload. ``rafHandle`` drives the tile advance
@@ -8150,6 +8275,9 @@
     tileIdx: 0,              // 0..chords.length-1
     tileStartedAt: 0,        // performance.now()
     rafHandle: 0,
+    // Resolved on warm-up start via _warmupBarSec(); frozen for the
+    // duration of the warm-up so passes stay a consistent tempo.
+    barSec: _WARMUP_BAR_SEC,
   };
 
   function _buildWarmupLoop() {
@@ -8297,13 +8425,15 @@
     if (!_warmup.active) return;
     const now = performance.now();
     const elapsed = now - _warmup.tileStartedAt;
-    if (elapsed >= _WARMUP_BAR_SEC * 1000) {
+    const barSec = (typeof _warmup.barSec === 'number' && _warmup.barSec > 0)
+      ? _warmup.barSec : _WARMUP_BAR_SEC;
+    if (elapsed >= barSec * 1000) {
       // Evaluate current tile before advancing.
       const cur = _warmup.chords[_warmup.tileIdx];
       if (cur) {
         const verdict = _verifyChordTile({
           startSec: 0,
-          endSec: _WARMUP_BAR_SEC,
+          endSec: barSec,
           pcSet: cur.pcSet,
         });
         cur.passed = !!verdict.pass;
@@ -8334,6 +8464,10 @@
     _warmup.passIdx = 0;
     _warmup.tileIdx = 0;
     _warmup.tileStartedAt = performance.now();
+    // Freeze the bar length up front so the warm-up runs at a
+    // consistent tempo even if state.sections mutates mid-warm-up
+    // (e.g. loading a new song without ending the current session).
+    _warmup.barSec = _warmupBarSec();
     _warmup.active = true;
     overlay.hidden = false;
     overlay.classList.add('is-visible');
@@ -8671,6 +8805,65 @@
       audio.onended = () => URL.revokeObjectURL(url);
       audio.play().catch(() => URL.revokeObjectURL(url));
     });
+  }
+
+  // Sanitize a string for use as a filename fragment: strip anything
+  // outside [A-Za-z0-9 _-.] and collapse whitespace to single hyphens
+  // so the resulting file is legal on Windows/macOS/Linux alike.
+  function _bestRepFilenameFragment(s) {
+    if (typeof s !== 'string' || !s) return '';
+    return s
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')          // strip combining marks
+      .replace(/[^A-Za-z0-9 _.-]+/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .slice(0, 60);
+  }
+
+  // Compose a friendly filename for the saved best rep. Uses the
+  // current song title and the section's rehearsal label when known,
+  // falls back to "best-rep-<sectionIdx>.wav" so we never emit an
+  // empty name. Extension is always .wav (matches what _ringToWav
+  // encodes).
+  function _bestRepFilename(sectionIdx) {
+    const title = _bestRepFilenameFragment(_currentSongTitle ? _currentSongTitle() : '');
+    let sectionLabel = '';
+    try {
+      const lbl = _rehearsalLabelForIdx ? _rehearsalLabelForIdx(sectionIdx) : null;
+      if (lbl && typeof lbl.title === 'string') sectionLabel = _bestRepFilenameFragment(lbl.title);
+    } catch (_) { sectionLabel = ''; }
+    const parts = [];
+    if (title) parts.push(title);
+    if (sectionLabel) parts.push(sectionLabel);
+    if (!parts.length) parts.push(`best-rep-${sectionIdx}`);
+    return `${parts.join(' - ')}.wav`;
+  }
+
+  // Save the best-rep blob to the user's Downloads folder. Loads the
+  // blob synchronously off IndexedDB, wraps it in an object URL, and
+  // triggers a click on a synthetic <a download> so the browser
+  // routes it to the download manager. Silently no-ops when no blob
+  // exists (the caller should have gated on _hasBestRep).
+  function _downloadBestRep(analysisId, sectionIdx) {
+    _loadBestRep(analysisId, sectionIdx).then((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = _bestRepFilename(sectionIdx);
+        // Anchor must be in the DOM in Firefox for the click to fire.
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        // Give the browser a tick to start the download before we
+        // revoke the object URL — revoking too eagerly cancels the
+        // download in some browsers.
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
+    }).catch(() => {});
   }
 
   // Pretty ordinal for DEVELOPMENT variants. These are "variations"
@@ -9030,6 +9223,28 @@
     }
     row.appendChild(label);
 
+    // Debug tag-id badges (?debug=1). Renders one small monospace
+    // pill per detected tag id so the tag machinery is inspectable
+    // in the section list. Variant rows inherit their anchor's tags
+    // via the section index — no per-variant walk needed. The
+    // wrapping span always renders when _DEBUG_TAGS_VISIBLE so
+    // untagged rows still align in the flex row; CSS handles the
+    // fully-hidden case for non-debug loads.
+    if (_DEBUG_TAGS_VISIBLE) {
+      const debugTags = document.createElement('span');
+      debugTags.className = 'rehearsal-row-debug-tags';
+      const tags = _detectSectionTags(section);
+      for (const tag of tags) {
+        const pill = document.createElement('span');
+        pill.className = 'rehearsal-row-debug-tag';
+        pill.dataset.tagId = tag.id;
+        pill.title = tag.copy && tag.copy.teacher ? tag.copy.teacher : tag.label;
+        pill.textContent = tag.id;
+        debugTags.appendChild(pill);
+      }
+      row.appendChild(debugTags);
+    }
+
     const rec = state.rehearsal.mastery[sectionIdx];
 
     const beads = document.createElement('span');
@@ -9122,6 +9337,21 @@
         _playBestRep(state.analysisId, sectionIdx);
       });
       listEl.appendChild(rep);
+      // Sibling download button — pulls the same blob out of
+      // IndexedDB and hands it to the browser's download manager.
+      // Rendered next to Play so both affordances share visual
+      // context; kept as a separate <button> so the click doesn't
+      // trigger playback.
+      const dl = document.createElement('button');
+      dl.type = 'button';
+      dl.className = 'best-rep-download-button';
+      dl.textContent = '⬇ WAV';
+      dl.title = 'Download this best rep as a WAV file';
+      dl.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        _downloadBestRep(state.analysisId, sectionIdx);
+      });
+      listEl.appendChild(dl);
     }
   }
 
@@ -10182,6 +10412,8 @@
       _difficultyHintsFor,
       _detectSectionTags,
       _debugTagSummary,
+      _bpmForSection,
+      _warmupBarSec,
       _TAG_REGISTRY,
       _REHEARSAL_LOCK_GRAPH,
       _computeSessionSummary,
@@ -10209,6 +10441,8 @@
       _loadBestRep,
       _hasBestRep,
       _playBestRep,
+      _downloadBestRep,
+      _bestRepFilename,
       _primeBestRepCache,
       _bestRepOptIn,
       _setBestRepOptIn,
