@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Debug — ML & Corpus Inspector</title>
-<link rel="stylesheet" href="/static/debug.css?v=6" />
+<link rel="stylesheet" href="/static/debug.css?v=7" />
 </head>
 <body>
 <header class="debug-header">
@@ -41,6 +41,7 @@
     <div id="inspector-content" hidden>
       <section class="timeline-panel">
         <h3>Sections (color = guidance_mode, opacity = confidence)</h3>
+        <div id="tag-filter" class="tag-filter"></div>
         <div id="timeline-strip" class="timeline-strip"></div>
         <div class="legend">
           <span class="legend-pill chord">chord</span>
@@ -116,6 +117,6 @@
   </section>
 </main>
 
-<script src="/static/debug.js?v=6"></script>
+<script src="/static/debug.js?v=7"></script>
 </body>
 </html>

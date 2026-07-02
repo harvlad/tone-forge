@@ -58,6 +58,20 @@
     { key: 'pitch_class_diversity',label: 'pitch div' },
   ];
 
+  // -------------------------------------------------------- tag registry
+  // Mirrors the ``_TAG_REGISTRY`` + ``_detectSectionTags`` heuristics in
+  // jam.js so /debug can filter/annotate sections by the same taxonomy
+  // the rehearsal UI uses. Kept in lock-step by convention — if the
+  // rules change in jam.js, mirror them here. Only the id + label +
+  // severity are surfaced; the copy/warmup props are jam-specific.
+  const TAG_REGISTRY = {
+    barre:  { id: 'barre',  label: 'Barre chord',  severity: 3 },
+    colour: { id: 'colour', label: 'Colour chord', severity: 2 },
+    jumps:  { id: 'jumps',  label: 'Big jumps',    severity: 2 },
+    quick:  { id: 'quick',  label: 'Fast changes', severity: 2 },
+  };
+  const TAG_ORDER = ['barre', 'colour', 'jumps', 'quick'];
+
   // -------------------------------------------------------- state
   const state = {
     activeTab: 'inspector',
@@ -65,6 +79,7 @@
     currentSessionId: null,
     currentBundle: null,
     selectedSectionIdx: null,
+    tagFilter: null,         // null = show all; else a tag id (barre/colour/jumps/quick)
     corpus: null,            // {songs: [...]}
     history: null,           // [{...}]
     historyBundles: new Map(), // id → bundle (lazy fetched for histograms)
@@ -139,6 +154,7 @@
       state.currentSessionId = id;
       state.currentBundle = bundle;
       state.selectedSectionIdx = null;
+      state.tagFilter = null;
       renderInspector();
     } catch (err) {
       console.error('loadBundle failed', err);
@@ -154,6 +170,7 @@
     }
     $('inspector-empty').hidden = true;
     $('inspector-content').hidden = false;
+    renderTagFilter(bundle);
     renderTimelineStrip(bundle);
     renderChordStrip(bundle);
     renderSectionDetail(bundle);
@@ -173,25 +190,117 @@
            Math.max(0, ...getSections(bundle).map((s) => s.end_s || 0));
   }
 
+  // -------------------------------------------------------- tag detection
+  // Persisted-shape port of jam.js:_detectSectionTags. Reads section
+  // (start_s/end_s/landmark_notes) and the bundle-level chord list
+  // (chord.start_s/end_s/symbol). Returns an array of tag records in
+  // fire order. Kept intentionally close to the jam.js source so
+  // future rule changes are copy-paste safe.
+  function detectSectionTags(sec, chords) {
+    if (!sec) return [];
+    const tags = [];
+    const startS = sec.start_s || 0;
+    const endS = sec.end_s || 0;
+    const symbolsIn = [];
+    for (const c of chords) {
+      if (!c || typeof c.symbol !== 'string') continue;
+      const cs = typeof c.start_s === 'number' ? c.start_s : NaN;
+      const ce = typeof c.end_s === 'number' ? c.end_s : NaN;
+      if (!Number.isFinite(cs) || !Number.isFinite(ce)) continue;
+      const mid = 0.5 * (cs + ce);
+      if (mid >= startS && mid < endS) symbolsIn.push(c.symbol);
+    }
+    const BARRE_RE = /^(F#?|B|Bb)(m?)(?![a-z0-9])/;
+    if (symbolsIn.some((sym) => BARRE_RE.test(sym))) tags.push(TAG_REGISTRY.barre);
+    const COLOUR_RE = /(7|sus2|sus4|add9|maj7|m7)/i;
+    if (symbolsIn.some((sym) => COLOUR_RE.test(sym))) tags.push(TAG_REGISTRY.colour);
+    const landmarks = Array.isArray(sec.landmark_notes) ? sec.landmark_notes : [];
+    if (landmarks.length >= 2) {
+      let lo = Infinity, hi = -Infinity;
+      for (const n of landmarks) {
+        const p = typeof n.pitch === 'number' ? n.pitch : NaN;
+        if (!Number.isFinite(p)) continue;
+        if (p < lo) lo = p;
+        if (p > hi) hi = p;
+      }
+      if (Number.isFinite(lo) && Number.isFinite(hi) && (hi - lo) > 10) {
+        tags.push(TAG_REGISTRY.jumps);
+      }
+    }
+    const dur = Math.max(0, endS - startS);
+    if (dur > 0 && dur < 4) tags.push(TAG_REGISTRY.quick);
+    return tags;
+  }
+
+  // Bundle-level cache — recomputed on each bundle load so we don't
+  // re-run the regex sweep on every hover/click.
+  function tagSummary(bundle) {
+    const sections = getSections(bundle);
+    const chords = getChords(bundle);
+    return sections.map((sec, idx) => ({
+      idx,
+      startS: sec.start_s || 0,
+      endS: sec.end_s || 0,
+      label: sec.label || `section ${idx + 1}`,
+      tags: detectSectionTags(sec, chords),
+    }));
+  }
+
+  // -------------------------------------------------------- tag filter chips
+  function renderTagFilter(bundle) {
+    const host = $('tag-filter');
+    if (!host) return;
+    host.innerHTML = '';
+    const summary = tagSummary(bundle);
+    const counts = { barre: 0, colour: 0, jumps: 0, quick: 0 };
+    for (const row of summary) {
+      for (const t of row.tags) counts[t.id] = (counts[t.id] || 0) + 1;
+    }
+    const mkChip = (tagId, label, count, active) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tag-filter-chip'
+        + (tagId ? ` tag-${tagId}` : '')
+        + (active ? ' active' : '');
+      btn.textContent = count === null ? label : `${label} · ${count}`;
+      btn.disabled = count === 0;
+      btn.addEventListener('click', () => {
+        state.tagFilter = tagId;
+        renderInspector();
+      });
+      host.appendChild(btn);
+    };
+    mkChip(null, 'All', null, state.tagFilter === null);
+    for (const id of TAG_ORDER) {
+      mkChip(id, TAG_REGISTRY[id].label, counts[id] || 0, state.tagFilter === id);
+    }
+  }
+
   // ----------------------------------------------------- timeline strip
   function renderTimelineStrip(bundle) {
     const host = $('timeline-strip');
     host.innerHTML = '';
     const sections = getSections(bundle);
+    const chords = getChords(bundle);
     const dur = getDuration(bundle) || 1;
     const W = host.clientWidth || 800;
     const H = 56;
     const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none' }, host);
+    const filter = state.tagFilter;
     sections.forEach((sec, idx) => {
       const x = ((sec.start_s || 0) / dur) * W;
       const w = Math.max(2, (((sec.end_s || 0) - (sec.start_s || 0)) / dur) * W);
       const mode = sec.guidance_mode || 'chord';
       const conf = Math.max(0, Math.min(1, sec.guidance_confidence || 0));
+      const tags = detectSectionTags(sec, chords);
+      const matchesFilter = !filter || tags.some((t) => t.id === filter);
       const rect = svgEl('rect', {
         x, y: 0, width: w, height: H,
         fill: MODE_COLOR[mode] || MODE_COLOR.chord,
-        'fill-opacity': 0.3 + 0.7 * conf,
-        class: 'timeline-section' + (idx === state.selectedSectionIdx ? ' selected' : ''),
+        'fill-opacity': matchesFilter ? (0.3 + 0.7 * conf) : 0.08,
+        class: 'timeline-section'
+          + (idx === state.selectedSectionIdx ? ' selected' : '')
+          + (matchesFilter ? '' : ' filtered-out'),
       }, svg);
       rect.addEventListener('click', () => {
         state.selectedSectionIdx = idx;
@@ -203,6 +312,18 @@
         svgEl('text', {
           x: x + 4, y: 14, class: 'timeline-label',
         }, svg).textContent = sec.label || 'section';
+      }
+      // Tag dots — one small circle per tag stacked along the bottom
+      // edge so long sections don't dominate the visual weight. Skips
+      // dots on filtered-out sections to keep the eye on matches.
+      if (matchesFilter && tags.length && w > 12) {
+        const dotY = H - 8;
+        tags.forEach((t, k) => {
+          svgEl('circle', {
+            cx: x + 6 + k * 10, cy: dotY, r: 3.5,
+            class: `timeline-tag-dot tag-${t.id}`,
+          }, svg);
+        });
       }
     });
   }
@@ -262,6 +383,20 @@
     add('label', sec.label || '—');
     add('window', `${(sec.start_s || 0).toFixed(1)}s → ${(sec.end_s || 0).toFixed(1)}s`);
     if (sec.guidance_reason) add('reason', escapeHTML(sec.guidance_reason));
+
+    const tags = detectSectionTags(sec, getChords(bundle));
+    if (tags.length) {
+      const wrap = document.createElement('span');
+      wrap.className = 'detail-tag-row';
+      wrap.innerHTML = '<span>tags:</span> ';
+      for (const t of tags) {
+        const pill = document.createElement('span');
+        pill.className = `tag-pill tag-${t.id}`;
+        pill.textContent = t.label;
+        wrap.appendChild(pill);
+      }
+      sum.appendChild(wrap);
+    }
 
     renderPerStemTable(sec);
     renderRadar(sec);

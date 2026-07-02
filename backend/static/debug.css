@@ -415,5 +415,76 @@
 .histogram-bar:hover { fill: var(--accent-2); }
 .histogram-label { font-size: 9px; fill: var(--text-dim); }
 
+/* ---------------------------------------------------------------- tags */
+/* Colour tokens for the four rehearsal-taxonomy tag ids. Sourced from
+ * the jam.css palette (barre = severity red, colour = amber, jumps =
+ * violet, quick = teal) so /debug and /jam share a language when the
+ * user flips between them. */
+:root {
+  --tag-barre:  #ef4444;
+  --tag-colour: #f59e0b;
+  --tag-jumps:  #a78bfa;
+  --tag-quick:  #2dd4bf;
+}
+.tag-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 10px;
+}
+.tag-filter-chip {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.tag-filter-chip:hover:not(:disabled) { color: var(--text); border-color: var(--text-dim); }
+.tag-filter-chip:disabled { opacity: 0.35; cursor: default; }
+.tag-filter-chip.active {
+  color: var(--panel);
+  background: var(--text);
+  border-color: var(--text);
+}
+.tag-filter-chip.tag-barre.active  { background: var(--tag-barre);  border-color: var(--tag-barre); }
+.tag-filter-chip.tag-colour.active { background: var(--tag-colour); border-color: var(--tag-colour); }
+.tag-filter-chip.tag-jumps.active  { background: var(--tag-jumps);  border-color: var(--tag-jumps); }
+.tag-filter-chip.tag-quick.active  { background: var(--tag-quick);  border-color: var(--tag-quick); }
+
+.timeline-tag-dot {
+  stroke: var(--panel);
+  stroke-width: 1;
+  pointer-events: none;
+}
+.timeline-tag-dot.tag-barre  { fill: var(--tag-barre); }
+.timeline-tag-dot.tag-colour { fill: var(--tag-colour); }
+.timeline-tag-dot.tag-jumps  { fill: var(--tag-jumps); }
+.timeline-tag-dot.tag-quick  { fill: var(--tag-quick); }
+
+.timeline-section.filtered-out { cursor: default; }
+
+.tag-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--panel);
+  line-height: 1.3;
+  margin-left: 4px;
+}
+.tag-pill.tag-barre  { background: var(--tag-barre); }
+.tag-pill.tag-colour { background: var(--tag-colour); }
+.tag-pill.tag-jumps  { background: var(--tag-jumps); }
+.tag-pill.tag-quick  { background: var(--tag-quick); }
+.detail-tag-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* ---------------------------------------------------------------- misc */
 .muted { color: var(--text-dim); }
