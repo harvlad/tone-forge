@@ -96,6 +96,16 @@ class ArrangementSection:
     structural_role: str = ""
     structural_confidence: float = 0.0
 
+    # Fix B: duration-guard flag. Populated by
+    # ``analysis.section_naming.flag_suspicious_durations`` after
+    # Stage A/B labelling in the unified pipeline. Values are one of
+    # {"", "chorus_too_long", "prechorus_too_long", "verse_too_long",
+    # "bridge_too_long", "fragment"}. Purely advisory — the JAM UI
+    # renders a "suspicious" indicator on the pill so users see when
+    # the RMS-novelty boundary detector under-segmented the song.
+    # Empty default keeps legacy bundles round-tripping unchanged.
+    duration_flag: str = ""
+
     @property
     def duration(self) -> float:
         """Duration of the section."""
@@ -125,6 +135,7 @@ class ArrangementSection:
             "landmark_notes": [dict(n) for n in self.landmark_notes],
             "structural_role": self.structural_role,
             "structural_confidence": float(self.structural_confidence),
+            "duration_flag": self.duration_flag,
         }
 
 

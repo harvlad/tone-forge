@@ -96,3 +96,33 @@ class DetectorConfig:
     # and only chord-lane stage opts in.
     power_chord_post_viterbi_third_ratio: float = 0.0
     power_chord_post_viterbi_margin: float = 0.0
+
+    # Round-2 Fix 1 — Spectral-shape ratio gate for post-Viterbi
+    # power-chord substitution.
+    #
+    # The raw third-bin ratio (``power_chord_post_viterbi_third_ratio``)
+    # is a magnitude test on a single chroma bin: on distorted guitar,
+    # harmonic-distortion intermodulation products push energy into
+    # the third bin so that real power chords straddle the 0.4 gate.
+    # The shape ratio is a geometric property of the (root, 3rd, 5th,
+    # 7th) chroma vector that is invariant under overtone inflation
+    # because both numerator and denominator inflate together under
+    # a diatonic tone stack:
+    #
+    #   harmonic_mass = root_bin + fifth_bin
+    #   melodic_mass  = third_bin + seventh_bin
+    #   shape_ratio   = harmonic_mass / (melodic_mass + eps)
+    #
+    # Triads (major, minor, 7) with all four bins carrying mass score
+    # 1.0–1.5. Power chords (root+5th dominant; 3rd/7th only from
+    # intermodulation residue) score >= 2.0. When
+    # ``power_chord_shape_ratio_min > 0``, ``_substitute_power_chords_on_dyads``
+    # gates substitution on ``shape_ratio >= power_chord_shape_ratio_min``.
+    #
+    # Defaults to 0.0 → gate disabled → bench corpus stays bit-exact.
+    # Only chord-lane (``analysis.chords.detect_chords_with_key``) opts
+    # in (with 2.0 typical). The chord-lane config also flips
+    # ``power_chord_post_viterbi_third_ratio`` to 0.0 to remove the
+    # old magnitude gate entirely; the shape-ratio and raw-cosine-margin
+    # criteria carry the substitution decision alone.
+    power_chord_shape_ratio_min: float = 0.0

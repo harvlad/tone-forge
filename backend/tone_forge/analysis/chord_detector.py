@@ -979,14 +979,17 @@ def detect_chords_from_audio(
     # leaves both fields at 0.0.
     _pv_ratio = float(_cfg.power_chord_post_viterbi_third_ratio)
     _pv_margin = float(_cfg.power_chord_post_viterbi_margin)
+    _pv_shape = float(getattr(_cfg, 'power_chord_shape_ratio_min', 0.0))
     if _cfg.power_chord_minor_key_only:
         if not (key_mode == 'minor' and key_strength >= 0.7):
             _pv_ratio = 0.0
             _pv_margin = 0.0
+            _pv_shape = 0.0
     chords = _substitute_power_chords_on_dyads(
         chords, chroma, times,
         third_ratio_max=_pv_ratio,
         margin=_pv_margin,
+        shape_ratio_min=_pv_shape,
     )
     # Merge adjacent identical-label regions defensively. The
     # state-to-chord step already collapses adjacent identical *states*,
@@ -1885,27 +1888,38 @@ def _substitute_power_chords_on_dyads(
     *,
     third_ratio_max: float,
     margin: float,
+    shape_ratio_min: float = 0.0,
 ) -> List["Chord"]:
     """Stage 1.4.2 — post-Viterbi power-chord substitution on dyads.
 
     Walks each emitted maj/min region, aggregates the chroma over the
     region's frame range, and substitutes the region's quality to
-    ``'5'`` when the region looks dyad-like:
+    ``'5'`` when the region looks dyad-like. Two independent geometric
+    gates can be enabled (either one, both, or neither):
 
-      1. The region's third bin is weak: third_bin / root_bin <
-         ``third_ratio_max``. Same gate as the Stage-3 in-window
-         disambiguation at the top of ``_match_chord_template``;
-         re-applied here against region-averaged chroma so the
-         dyad/triad asymmetry doesn't bury it under the Viterbi's
-         emission+transition argmax.
+      1. Raw third-bin ratio (Stage 1.4.2, legacy): third_bin /
+         root_bin < ``third_ratio_max``. A magnitude test on a single
+         chroma bin. Kept for backward compat.
 
-      2. The ``'5'`` template's raw cosine against the region-averaged
+      2. Spectral-shape ratio (Round-2 Fix 1):
+         ``(root_bin + fifth_bin) / (third_bin + seventh_bin + eps)
+         >= shape_ratio_min``. A geometric property of the four
+         diatonic bins that is invariant under harmonic-distortion
+         overtone inflation because both numerator and denominator
+         inflate together under a diatonic tone stack. Fires on real
+         distorted power chords that the raw third-ratio misses.
+
+    A region must pass *every configured* gate (gates with a threshold
+    ``<= 0`` are treated as disabled). In addition, the raw-cosine
+    margin criterion must always hold:
+
+      3. The ``'5'`` template's raw cosine against the region-averaged
          chroma is within ``margin`` of the winning maj/min raw cosine
          (computed against the same region-averaged chroma — NOT the
          per-window emission score, which was already biased by
          Stage-1.4.1 / DIATONIC_BIAS).
 
-    When both conditions hold, the region is rewritten with
+    When all active conditions hold, the region is rewritten with
     ``quality='5'`` and ``confidence`` updated to the power-template
     raw cosine. start_time/end_time/root unchanged.
 
@@ -1914,10 +1928,10 @@ def _substitute_power_chords_on_dyads(
     key-context inspection so it can be unit-tested against synthetic
     chroma without a full pipeline.
 
-    No-op if ``third_ratio_max <= 0`` OR ``margin <= 0`` OR
-    ``len(chords) == 0`` OR ``chroma`` is empty. These short-circuits
-    keep production callers (default DetectorConfig → zeros) bit-exact
-    identical to pre-Stage 1.4.2.
+    No-op if ``margin <= 0`` OR (``third_ratio_max <= 0`` AND
+    ``shape_ratio_min <= 0``) OR ``len(chords) == 0`` OR ``chroma`` is
+    empty. These short-circuits keep production callers (default
+    DetectorConfig → zeros) bit-exact identical to pre-Stage 1.4.2.
 
     Args:
         chords: Output of ``_viterbi_states_to_chords``, modified
@@ -1928,10 +1942,16 @@ def _substitute_power_chords_on_dyads(
         times: Per-frame timestamps in seconds.
         third_ratio_max: Third-bin ratio threshold. The third bin must
             be at most this fraction of the root bin for the
-            substitution to fire.
+            substitution to fire. Set to 0.0 to disable this gate.
         margin: Raw-cosine gap: ``power_raw >= maj_raw - margin``.
+        shape_ratio_min: Spectral-shape ratio floor. Region's
+            ``(root+5th) / (3rd+7th + eps)`` must be at least this
+            value for the substitution to fire. Set to 0.0 to disable
+            this gate.
     """
-    if third_ratio_max <= 0.0 or margin <= 0.0:
+    if margin <= 0.0:
+        return chords
+    if third_ratio_max <= 0.0 and shape_ratio_min <= 0.0:
         return chords
     if not chords or chroma.size == 0 or times.size == 0:
         return chords
@@ -1958,16 +1978,38 @@ def _substitute_power_chords_on_dyads(
 
         root = c.root
         third_interval = 4 if c.quality == 'maj' else 3
+        # Minor-7th interval is 10 semitones from root; major-7th
+        # would be 11. We use the minor-7th convention because power
+        # chord idiom sits inside minor-key rock; the shape ratio
+        # is nearly identical for the alternate choice on realistic
+        # chroma (a real major-7th triad has energy in both bins).
+        seventh_interval = 10
+        fifth_interval = 7
         root_bin = float(region_chroma[root])
         third_bin = float(region_chroma[(root + third_interval) % 12])
+        fifth_bin = float(region_chroma[(root + fifth_interval) % 12])
+        seventh_bin = float(region_chroma[(root + seventh_interval) % 12])
         if root_bin <= 1e-9:
             out.append(c)
             continue
-        if third_bin >= third_ratio_max * root_bin:
+
+        # Gate 1: raw third-bin ratio (legacy).
+        if third_ratio_max > 0.0 and third_bin >= third_ratio_max * root_bin:
             # Third is present at expected mass — region really is a
             # triad. Skip substitution.
             out.append(c)
             continue
+
+        # Gate 2: spectral-shape ratio (Round-2 Fix 1). Genre-neutral
+        # geometric signature of a power chord: root+5th dominate,
+        # 3rd/7th are only intermodulation residue.
+        if shape_ratio_min > 0.0:
+            harmonic_mass = root_bin + fifth_bin
+            melodic_mass = third_bin + seventh_bin
+            shape_ratio = harmonic_mass / (melodic_mass + 1e-9)
+            if shape_ratio < shape_ratio_min:
+                out.append(c)
+                continue
 
         # Recompute raw cosines on the region-averaged chroma for the
         # winning triad and the power-5 template. Cosine math mirrors

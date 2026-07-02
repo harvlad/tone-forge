@@ -34,10 +34,79 @@ analysis subsystem boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 from tone_forge.analysis.sections import SectionType
 from tone_forge.analysis.song_form_aggregates import SongFormAggregates
+
+
+# Pitch-class letters — the leading tokens of a chord symbol.
+# Used by the CHORUS→CHORUS PRECHORUS refinement (Pass 2b) to compare
+# chord-root vocabularies without needing full chord parsing.
+_ROOT_PC = {
+    "C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11,
+}
+
+
+def _chord_root_pc(symbol: str) -> Optional[int]:
+    """Return the pitch class of a chord symbol's root (0-11) or None.
+
+    Accepts standard symbols: ``C``, ``C#``, ``Db``, ``Am``, ``F#7``,
+    ``G5``, ``Csus4``, etc. Enharmonic-equivalent roots collapse to
+    the same pitch class so ``C#`` == ``Db``.
+    """
+    if not symbol:
+        return None
+    letter = symbol[0].upper()
+    if letter not in _ROOT_PC:
+        return None
+    pc = _ROOT_PC[letter]
+    if len(symbol) > 1:
+        accidental = symbol[1]
+        if accidental == "#":
+            pc = (pc + 1) % 12
+        elif accidental == "b":
+            pc = (pc - 1) % 12
+    return pc
+
+
+def _extract_root_set(chord_symbols: Iterable[Any]) -> frozenset[int]:
+    """Collect the pitch-class set of a section's chord roots."""
+    roots: set[int] = set()
+    for c in chord_symbols:
+        if isinstance(c, str):
+            symbol = c
+        elif isinstance(c, dict):
+            symbol = str(c.get("symbol") or "")
+        else:
+            symbol = str(getattr(c, "symbol", "") or "")
+        pc = _chord_root_pc(symbol)
+        if pc is not None:
+            roots.add(pc)
+    return frozenset(roots)
+
+
+def _is_chord_vocab_subset(
+    prev_symbols: Iterable[Any],
+    next_symbols: Iterable[Any],
+) -> bool:
+    """Return True iff ``prev`` has a strictly-narrower chord-root
+    vocabulary that is a subset of ``next``.
+
+    Fires the CHORUS→CHORUS PRECHORUS rule (Pass 2b): a section whose
+    chord-root set is a proper subset of the anchor's roots AND whose
+    vocabulary is at most 60% the size of the anchor's is the classic
+    pre-chorus "vamp narrowing into the chorus" pattern.
+    """
+    prev_roots = _extract_root_set(prev_symbols)
+    next_roots = _extract_root_set(next_symbols)
+    if not prev_roots or not next_roots:
+        return False
+    if not prev_roots.issubset(next_roots):
+        return False
+    if prev_roots == next_roots:
+        return False
+    return len(prev_roots) <= 0.6 * len(next_roots)
 
 
 @dataclass(frozen=True)
@@ -84,6 +153,7 @@ def refine_section_types(
     stage_a_types: Sequence[SectionType],
     aggregates: Sequence[SongFormAggregates],
     thresholds: SongFormThresholds = SongFormThresholds(),
+    chords_per_section: Optional[Sequence[Sequence[Any]]] = None,
 ) -> tuple[SectionType, ...]:
     """Refine Stage A labels using per-section song-form aggregates.
 
@@ -96,6 +166,12 @@ def refine_section_types(
             ``SongFormAggregates`` per section, aligned 1-to-1
             with ``stage_a_types``.
         thresholds: Frozen tuning knobs.
+        chords_per_section: Optional sequence of chord lists (one per
+            section, aligned 1-to-1 with ``stage_a_types``). Each entry
+            is a sequence of chord symbols (str), chord dicts with a
+            ``symbol`` key, or ``Chord`` records. When provided, Pass
+            2b (CHORUS→CHORUS vocab-narrow PRECHORUS) can fire; when
+            None or shape-mismatched, Pass 2b is silently disabled.
 
     Returns:
         Tuple of ``SectionType`` values, aligned 1-to-1 with
@@ -161,6 +237,36 @@ def refine_section_types(
             continue
         if aggregates[i].energy_ramp_into_next > thresholds.prechorus_ramp_floor:
             refined[i] = SectionType.PRECHORUS
+
+    # Pass 2b: PRECHORUS — CHORUS→CHORUS with vocab narrowing + ramp.
+    # Generalises Pass 2 to the Fix-C-split case: when boundary
+    # re-detection splits one long CHORUS block into sub-sections and
+    # H2 relabel gives all children the ANCHOR (→ CHORUS) label, the
+    # classic pre-chorus vamp is still wearing the CHORUS jersey.
+    # The rule fires when the first section's chord-root set is a
+    # proper subset of the next section's AND the vocabulary is at
+    # most 60% the size AND there is a rising energy ramp
+    # (relaxed to 0.6× the Pass 2 floor since the anchor-child
+    # signal is already strong evidence).
+    #
+    # Requires ``chords_per_section`` — silently disabled when None
+    # or shape-mismatched.
+    if (
+        chords_per_section is not None
+        and len(chords_per_section) == n
+    ):
+        ramp_floor_2b = thresholds.prechorus_ramp_floor * 0.6
+        for i in range(n - 1):
+            if refined[i] is not SectionType.CHORUS:
+                continue
+            if refined[i + 1] is not SectionType.CHORUS:
+                continue
+            if aggregates[i].energy_ramp_into_next <= ramp_floor_2b:
+                continue
+            if _is_chord_vocab_subset(
+                chords_per_section[i], chords_per_section[i + 1]
+            ):
+                refined[i] = SectionType.PRECHORUS
 
     # Pass 3: BREAKDOWN — low drum density inside the song.
     # Edges (INTRO/OUTRO/INSTRUMENTAL at edges) are preserved.

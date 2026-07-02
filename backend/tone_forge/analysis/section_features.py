@@ -337,6 +337,80 @@ def _monophonic_and_polyphony(
     return mono_ratio, poly, voiced_ratio
 
 
+# Minimum note duration (ms) for a note-event to count as "real" tonal
+# content. Below this threshold notes are dropped as drum-transient
+# artefacts or MIDI-extractor fragmentation residue (Round-2 Fix 3).
+# 40 ms is comfortably above typical drum-bleed transient durations
+# (10-25 ms) and well below the fastest realistic melodic note (a
+# 16th at 200 BPM = 75 ms). Physical constraint, genre-neutral.
+_MIN_NOTE_DUR_MS: float = 40.0
+
+
+def _filter_drum_transient_notes(
+    clipped: Sequence[tuple[int, float, float]],
+    min_dur_ms: float = _MIN_NOTE_DUR_MS,
+) -> list[tuple[int, float, float]]:
+    """Drop notes shorter than ``min_dur_ms`` from a clipped-notes list.
+
+    Round-2 Fix 3 — physical-constraint filter that removes MIDI
+    extractor artefacts (drum-transient bleed through Demucs "other"
+    stem separation) and palm-mute attack fragments while preserving
+    real melodic content. Guitar riff notes on distorted rock —
+    even palm-muted ones — have durations >= 50 ms. Drum bleed
+    transients are typically 10-25 ms.
+
+    The filter runs on the ``_clip_notes_to_section`` output shape:
+    tuples of ``(pitch, clipped_start, clipped_end)``.
+    """
+    if not clipped:
+        return list(clipped)
+    threshold_s = float(min_dur_ms) / 1000.0
+    return [
+        (pitch, cs, ce) for pitch, cs, ce in clipped
+        if (ce - cs) >= threshold_s
+    ]
+
+
+def _note_level_mono_ratio(
+    clipped: Sequence[tuple[int, float, float]],
+    min_dur_ms: float = _MIN_NOTE_DUR_MS,
+) -> float:
+    """Fraction of note events with no concurrent overlap at their midpoint.
+
+    Round-2 Fix 3 — note-event-level monophony metric, robust to voxel-
+    quantisation artefacts. Complements the voxel-based mono ratio
+    (``_monophonic_and_polyphony``): a real chord scores 0.0 (every
+    note overlaps its chord siblings at the midpoint), a real riff
+    scores 1.0 (no note overlaps any other), while the voxel-based
+    metric on the same riff can score 0.3-0.5 when drum-transient
+    bleed overlaps riff notes in even a single 50-ms voxel.
+
+    Drum-transient filter is applied first with the same threshold as
+    ``_filter_drum_transient_notes`` (default 40 ms). This is critical
+    on Demucs-separated "other" stems where the MIDI extractor
+    produces spurious short notes from drum bleed.
+
+    Returns 0.0 when no real notes survive the duration filter (matches
+    the voxel metric's degenerate-input convention).
+    """
+    real = _filter_drum_transient_notes(clipped, min_dur_ms=min_dur_ms)
+    if not real:
+        return 0.0
+    solo = 0
+    for i, (_, s_i, e_i) in enumerate(real):
+        mid = 0.5 * (s_i + e_i)
+        overlap = False
+        for j, (_, s_j, e_j) in enumerate(real):
+            if j == i:
+                continue
+            if s_j <= mid < e_j:
+                overlap = True
+                break
+        if not overlap:
+            solo += 1
+    return float(solo) / float(len(real))
+
+
 def _repetition(
     clipped: Sequence[tuple[int, float, float]],
     beats_s: Optional[np.ndarray],
@@ -483,8 +557,27 @@ def compute_section_features(
     clipped = _clip_notes_to_section(notes_iter, section_start_s, section_end_s)
     note_count = len(clipped)
 
-    voxel_counts = _voxelise(clipped, section_start_s, section_end_s)
-    mono_ratio, poly_score, voiced_ratio = _monophonic_and_polyphony(voxel_counts)
+    # Round-2 Fix 3 — physical-constraint duration filter before
+    # voxelisation. Drum-transient bleed (Demucs "other" stem
+    # leakage) and MIDI-extractor palm-mute attack fragments produce
+    # spurious sub-40 ms "notes" that overlap real riff notes in the
+    # voxel grid, artificially deflating the mono ratio. Drop them.
+    clipped_stable = _filter_drum_transient_notes(
+        clipped, min_dur_ms=_MIN_NOTE_DUR_MS
+    )
+    voxel_counts = _voxelise(clipped_stable, section_start_s, section_end_s)
+    voxel_mono_ratio, poly_score, voiced_ratio = _monophonic_and_polyphony(
+        voxel_counts
+    )
+    # Round-2 Fix 3 — note-event-level monophony (resolution-
+    # independent, robust to voxel quantisation). Section counts as
+    # monophonic if EITHER metric says so (conservative — a real
+    # riff clears the mono gate even when drum bleed clutters the
+    # voxel grid; a real chord passage still scores 0 on both).
+    note_mono_ratio = _note_level_mono_ratio(
+        clipped, min_dur_ms=_MIN_NOTE_DUR_MS
+    )
+    mono_ratio = max(voxel_mono_ratio, note_mono_ratio)
 
     rep_score, rep_period = _repetition(
         clipped, beats_s, section_start_s, section_end_s
