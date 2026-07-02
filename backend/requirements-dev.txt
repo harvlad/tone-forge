@@ -3,3 +3,8 @@
 
 # bench.sweep parses YAML space definitions.
 PyYAML>=6.0
+
+# End-to-end verification harnesses under ``tests/e2e/`` drive
+# a real headless Chromium against the running dev server.
+# Not required for the pytest suite.
+playwright>=1.61.0
