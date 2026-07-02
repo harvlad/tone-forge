@@ -296,6 +296,20 @@
       // doing" bypass). idx → true. Persists across reloads alongside
       // completed / mastery.
       manualUnlocks: {},
+      // Phase A (session-end summary): timestamp of the current
+      // rehearsal session's start. Set on _onEnterRehearsalView(),
+      // cleared on _onLeaveRehearsalView() after the summary card is
+      // dismissed. Used by _shouldShowSummary() to decide whether
+      // this session actually did any practising (had time to earn
+      // beads) before firing the card, and by the "Locked in today"
+      // copy in _computeSessionSummary().
+      sessionStartedAt: 0,
+      // Phase A: snapshot of the mastery record for each section at
+      // the moment we entered the current rehearsal session. Used to
+      // compute "beads earned *this session*" without touching the
+      // running state.rehearsal.mastery record. Keyed by section idx
+      // → deep copy of the mastery record.
+      sessionStartMastery: {},
       _extrasCollapsed: true,
       // Phase 2: why-hint copy per failed item, keyed by item idx of the
       // currently-active section. Cleared on section change / loop reset.
@@ -2279,6 +2293,12 @@
       if (cancelBtn) cancelBtn.hidden = true;
       // Load any prior completion state now that analysisId is known.
       _loadRehearsalProgress();
+      // Phase C: refresh the warm-up suggestion chip now that the
+      // session's rehearsal groups are known and any prior barre
+      // difficulty hints are computable. Same IIFE, direct call —
+      // function-declaration hoisting makes this safe even though
+      // the definition is further down the file.
+      try { _refreshWarmupSuggestion(); } catch (_) {}
       // Stay on the bandroom so the user can pick between rehearsal
       // and karaoke. The perform view is entered by the CTA handlers.
     } else {
@@ -5533,6 +5553,11 @@
     }
     // Onset detection runs on the same buffer (RMS spike vs moving baseline).
     detectOnset(buffer, now);
+    // Phase D: mic ring buffer for "best rep" snapshots. Direct
+    // call — same IIFE, function-declaration hoisted. Internal
+    // opt-in check makes this a cheap no-op when the user has
+    // opted out.
+    _writeRingFromBuffer(buffer);
     // Trim history to last 5 s
     const cutoff = now - 5000;
     while (state.listen.history.length && state.listen.history[0].t_ms < cutoff) {
@@ -7292,6 +7317,23 @@
     };
   }
 
+  // Phase B: extract a display-friendly title from the currently
+  // loaded analysis result. Falls back through the same chain the
+  // perform-view header uses so a saved metadata block always
+  // matches what the musician sees on-screen. Returns null if we
+  // can't derive anything more meaningful than the analysis id.
+  function _currentSongTitle() {
+    const r = state.fullResult;
+    if (!r) return null;
+    const t = r.title || r.source_name || r.source_title;
+    if (t && typeof t === 'string' && t.trim()) return t.trim();
+    if (state.sourceUrl && typeof extractYouTubeId === 'function') {
+      const yt = extractYouTubeId(state.sourceUrl);
+      if (yt) return yt;
+    }
+    return null;
+  }
+
   function _loadRehearsalProgress() {
     try {
       const key = _rehearsalStorageKey();
@@ -7351,6 +7393,11 @@
         }
       }
       state.rehearsal.lastPersistKey = key;
+      // Phase D: warm up the best-rep sync cache for this song so
+      // section rows can synchronously decide whether to render the
+      // "▶ Best rep" button. Non-blocking; the list rebuilds itself
+      // when the IDB cursor finishes.
+      _primeBestRepCache();
     } catch (e) {
       console.warn('[rehearsal] load failed:', e);
       state.rehearsal.completed = {};
@@ -7377,8 +7424,21 @@
           manualUnlocks[idx] = true;
         }
       }
+      // Phase B: metadata block so the cross-song skill-map walker
+      // can label rows without re-loading each bundle. Populated from
+      // the current session's analysis result; if the record is
+      // being saved before the result loaded (should never happen
+      // in practice — save is only called from the rehearsal module)
+      // we fall back to what we've got. ``savedAt`` is a real epoch
+      // so "3 days ago" copy stays deterministic across reloads.
+      const title = _currentSongTitle();
+      const metadata = {
+        analysisId: state.analysisId || null,
+        title: title || null,
+        savedAt: Date.now(),
+      };
       localStorage.setItem(key, JSON.stringify({
-        version: 2, completed, mastery, manualUnlocks,
+        version: 3, completed, mastery, manualUnlocks, metadata,
       }));
     } catch (e) {
       console.warn('[rehearsal] save failed:', e);
@@ -7422,14 +7482,86 @@
     return rec.state === 'locked_in' || rec.state === 'mastered';
   }
 
-  // Phase 3: musician-facing difficulty hints derived from the
-  // section's chord vocabulary and landmark-note span. Purely
-  // frontend heuristics — no backend enrichment. Returns an array of
-  // short one-liners; empty when no rule fires so the heading area
-  // collapses without leaving an orphan wrapper.
-  function _difficultyHintsFor(section) {
+  // ─── Structured skill-tag registry ───────────────────────────
+  //
+  // Musician-facing difficulty hints modelled as first-class Tag
+  // records rather than opaque strings so downstream copy
+  // (heading chip, "needs-work" recommendation, warm-up suggestion,
+  // skill-map bucket) can share a single source of truth.
+  //
+  // Schema — every tag exposes:
+  //   id        stable machine key ('barre', 'colour', 'jumps', 'quick')
+  //   label     short chip copy ('Barre chord', 'Big jumps')
+  //   hand      'fretting' | 'picking' | 'both' | 'timing'
+  //   scope     'chord' | 'sequence' | 'section' | 'song'
+  //   severity  1 (context) | 2 (heads-up) | 3 (roadblock)
+  //   copy      { short, teacher, fix, warmup: [id] }
+  //
+  // Only the four Phase-3 heuristics are seeded now — new tags can
+  // be added by appending a record here and firing it from
+  // _detectSectionTags.
+  const _TAG_REGISTRY = {
+    barre: {
+      id: 'barre',
+      label: 'Barre chord',
+      hand: 'fretting',
+      scope: 'chord',
+      severity: 3,
+      copy: {
+        short: 'Barre chord',
+        teacher: 'A full-barre shape is in here — the finger sits across every string.',
+        fix: 'Try {label} slow — the barre needs reps.',
+        warmup: ['barre-drill'],
+      },
+    },
+    colour: {
+      id: 'colour',
+      label: 'Colour chord',
+      hand: 'fretting',
+      scope: 'chord',
+      severity: 2,
+      copy: {
+        short: 'Colour chord',
+        teacher: 'A 7th, sus, or add9 flavour shows up — look up the shape before you loop.',
+        fix: 'Look up the shape for the colour chord in {label}.',
+        warmup: [],
+      },
+    },
+    jumps: {
+      id: 'jumps',
+      label: 'Big jumps',
+      hand: 'fretting',
+      scope: 'sequence',
+      severity: 2,
+      copy: {
+        short: 'Big jumps',
+        teacher: 'The melody covers a wide range — plan the position shift.',
+        fix: 'Walk the jumps in {label} at 0.5× first.',
+        warmup: [],
+      },
+    },
+    quick: {
+      id: 'quick',
+      label: 'Fast changes',
+      hand: 'timing',
+      scope: 'section',
+      severity: 2,
+      copy: {
+        short: 'Fast changes',
+        teacher: 'The section is short — chords fly by, plan pivots ahead.',
+        fix: '{label} is a quick change — practice the pivot chord.',
+        warmup: [],
+      },
+    },
+  };
+
+  // Phase 3 heuristics rewritten to emit tag ids instead of prose.
+  // Returns an array of Tag records in fire order; empty when no
+  // rule triggers so the heading collapses without leaving an
+  // orphan wrapper.
+  function _detectSectionTags(section) {
     if (!section) return [];
-    const hints = [];
+    const tags = [];
     const chordsIn = [];
     const allChords = Array.isArray(state.chords) ? state.chords : [];
     const startS = section.startSec || 0;
@@ -7444,16 +7576,12 @@
       const mid = 0.5 * (cs + ce);
       if (mid >= startS && mid < endS) chordsIn.push(c.symbol);
     }
-    // Barre-shape hint: F, B, Bm (and their sharps/flats) are the
-    // classic first-position roadblocks. Match root note + optional
-    // accidental at symbol start; ignore extensions like "F7".
+    // Barre-shape rule (F/B/Bb ± minor at symbol start).
     const BARRE_RE = /^(F#?|B|Bb)(m?)(?![a-z0-9])/;
-    const barreHit = chordsIn.some((sym) => BARRE_RE.test(sym));
-    if (barreHit) hints.push('has a barre chord');
-    // Colour-chord hint: any 7th / sus2 / sus4 / add9 in the vocab.
+    if (chordsIn.some((sym) => BARRE_RE.test(sym))) tags.push(_TAG_REGISTRY.barre);
+    // Colour-chord rule (7 / sus2 / sus4 / add9 / maj7 / m7).
     const COLOUR_RE = /(7|sus2|sus4|add9|maj7|m7)/i;
-    const colourHit = chordsIn.some((sym) => COLOUR_RE.test(sym));
-    if (colourHit) hints.push('has a colour chord');
+    if (chordsIn.some((sym) => COLOUR_RE.test(sym))) tags.push(_TAG_REGISTRY.colour);
     // Landmark-note span > 10 semitones ≈ big register jumps.
     const landmarks = Array.isArray(section.landmarkNotes) ? section.landmarkNotes : [];
     if (landmarks.length >= 2) {
@@ -7465,39 +7593,935 @@
         if (p > hi) hi = p;
       }
       if (Number.isFinite(lo) && Number.isFinite(hi) && (hi - lo) > 10) {
-        hints.push('big jumps between notes');
+        tags.push(_TAG_REGISTRY.jumps);
       }
     }
     // Duration < 4 s ≈ tight turnaround.
     const dur = Math.max(0, endS - startS);
-    if (dur > 0 && dur < 4) hints.push('quick change');
-    return hints;
+    if (dur > 0 && dur < 4) tags.push(_TAG_REGISTRY.quick);
+    return tags;
+  }
+
+  // Legacy string-form retained for the skill-map walker + any
+  // outside DevTools consumers that treat hints as opaque strings.
+  // Every string is now the tag's canonical `label`; if a call site
+  // needs richer info it should call _detectSectionTags directly.
+  function _difficultyHintsFor(section) {
+    return _detectSectionTags(section).map((t) => t.label);
   }
 
   function _renderDifficultyHints(section) {
     const el = document.getElementById('rehearsal-section-hints');
     if (!el) return;
     el.innerHTML = '';
-    const hints = _difficultyHintsFor(section);
-    if (!hints.length) {
+    const tags = _detectSectionTags(section);
+    if (!tags.length) {
       el.hidden = true;
       return;
     }
     el.hidden = false;
-    for (const text of hints) {
+    for (const tag of tags) {
       const chip = document.createElement('span');
       chip.className = 'difficulty-hint';
-      chip.textContent = text;
+      chip.classList.add(`tag-scope-${tag.scope}`);
+      chip.classList.add(`tag-severity-${tag.severity}`);
+      chip.classList.add(`tag-hand-${tag.hand}`);
+      chip.dataset.tagId = tag.id;
+      chip.textContent = tag.label;
+      // Teacher-voice tooltip on hover surfaces the "why".
+      chip.title = tag.copy && tag.copy.teacher ? tag.copy.teacher : tag.label;
       el.appendChild(chip);
     }
   }
 
-  // Pretty ordinal for DEVELOPMENT variant subtitles.
+  // ─── Phase A: session-end summary card ───────────────────────
+  //
+  // Fires when the user leaves rehearsal via "Skip to jam" or the
+  // transport, provided they actually did some practice this
+  // session (at least one bead was earned). Reads the running
+  // ``state.rehearsal.mastery`` + Phase-3 groups and produces a
+  // small card summarising what they locked in and recommending
+  // what to work on next.
+  //
+  // Storage: none. Every field is derived from the live state at
+  // the moment the card renders.
+
+  // Numeric weight per bead so we can pick "best" and "needs work"
+  // rows deterministically. Perfect > clean > rough > empty.
+  const _REHEARSAL_BEAD_SCORE = { perfect: 3, clean: 2, rough: 1 };
+
+  function _rehearsalBeadTotal(rec) {
+    if (!rec || !Array.isArray(rec.beads)) return 0;
+    let total = 0;
+    for (const b of rec.beads) {
+      total += _REHEARSAL_BEAD_SCORE[b] || 0;
+    }
+    return total;
+  }
+
+  function _rehearsalBeadCount(rec) {
+    if (!rec || !Array.isArray(rec.beads)) return 0;
+    let n = 0;
+    for (const b of rec.beads) if (b) n += 1;
+    return n;
+  }
+
+  // Practice recommendation copy for the "needs work" row. Now
+  // reads from the structured tag registry's `copy.fix` field so
+  // the summary card, warm-up suggestion, and heading chip all pull
+  // from a single source of truth. Highest-severity tag wins;
+  // ties keep fire order.
+  function _practiceRecommendation(row, section) {
+    if (!row || !section) return 'Run the loop once at 0.75×.';
+    const label = row.label || 'this section';
+    const tags = _detectSectionTags(section);
+    if (tags.length) {
+      let best = tags[0];
+      for (const t of tags) {
+        if ((t.severity || 0) > (best.severity || 0)) best = t;
+      }
+      const tmpl = best.copy && best.copy.fix;
+      if (tmpl) return tmpl.replace(/\{label\}/g, label);
+    }
+    return `Run ${label} once at 0.75× to lock it in.`;
+  }
+
+  // Build the summary snapshot from the current state. Returns null
+  // when there's nothing to summarise so the caller can skip
+  // rendering entirely.
+  function _computeSessionSummary() {
+    const groups = _rehearsalGroupsFromSections();
+    const parts = Array.isArray(groups.parts) ? groups.parts : [];
+    const moments = Array.isArray(groups.moments) ? groups.moments : [];
+    const learnable = parts.concat(moments);
+    if (!learnable.length) return null;
+
+    let lockedIn = 0;
+    let best = null; let bestScore = -1;
+    let worst = null; let worstScore = Infinity;
+    for (const row of learnable) {
+      const rec = state.rehearsal.mastery[row.anchorIdx];
+      const score = _rehearsalBeadTotal(rec);
+      const cleared = _rehearsalSectionCleared(row.anchorIdx);
+      if (cleared) lockedIn += 1;
+      if (score > bestScore) { best = row; bestScore = score; }
+      // "Needs work" only considers rows the user actually touched
+      // this session — otherwise every untouched row would tie at 0
+      // and we'd recommend practising something the musician never
+      // played. Uses the mastery-record bead count as the touched
+      // signal so we're not fooled by a stale zero-bead record.
+      if (_rehearsalBeadCount(rec) > 0 && !cleared && score < worstScore) {
+        worst = row; worstScore = score;
+      }
+    }
+    // If nothing was played this session, no card. The gate in
+    // _shouldShowSummary catches this earlier but we double-check
+    // here so external callers can still reason about the result.
+    const anyBead = learnable.some(row => _rehearsalBeadCount(
+      state.rehearsal.mastery[row.anchorIdx],
+    ) > 0);
+    if (!anyBead) return null;
+
+    const worstSection = worst ? state.sections[worst.anchorIdx] : null;
+    return {
+      lockedIn,
+      totalParts: learnable.length,
+      bestLabel: best ? best.label : null,
+      // Phase D: expose the anchor idx of the "best mastery" row so
+      // _showSessionSummary can toggle the "Hear your best rep" link.
+      bestAnchorIdx: best ? best.anchorIdx : null,
+      needsWorkLabel: worst ? worst.label : null,
+      recommendation: _practiceRecommendation(worst, worstSection),
+    };
+  }
+
+  // Should the summary card fire when the user leaves rehearsal?
+  // Suppressed when the session did no practice — matches the
+  // "nothing to summarise" gate but caught up-front so we don't
+  // waste a render on the empty state.
+  function _shouldShowSummary() {
+    if (!state.rehearsal.sessionStartedAt) return false;
+    const mastery = state.rehearsal.mastery || {};
+    for (const key of Object.keys(mastery)) {
+      if (_rehearsalBeadCount(mastery[key]) > 0) return true;
+    }
+    return false;
+  }
+
+  // Render + show the overlay. If the summary is empty, do nothing
+  // and return false so callers can proceed with their default
+  // navigation without waiting on a dismiss.
+  let _sessionSummaryPending = null;
+  function _showSessionSummary(summary, onJustJam) {
+    if (!summary) return false;
+    const overlay = document.getElementById('session-summary-view');
+    if (!overlay) return false;
+    _sessionSummaryPending = { onJustJam: typeof onJustJam === 'function' ? onJustJam : null };
+    const lockedEl = document.getElementById('session-summary-locked-in');
+    const bestEl = document.getElementById('session-summary-best');
+    const needsEl = document.getElementById('session-summary-needs');
+    const recEl = document.getElementById('session-summary-recommendation');
+    const needsRow = document.getElementById('session-summary-needs-row');
+    if (lockedEl) {
+      lockedEl.textContent = `${summary.lockedIn} of ${summary.totalParts} parts`;
+    }
+    if (bestEl) {
+      bestEl.textContent = summary.bestLabel || '—';
+    }
+    if (needsEl) {
+      needsEl.textContent = summary.needsWorkLabel || '';
+    }
+    // Hide the "Needs work" row when there's nothing to flag (every
+    // learnable row was cleared this session). Nice-work sessions
+    // don't need a scolding.
+    if (needsRow) {
+      needsRow.hidden = !summary.needsWorkLabel;
+    }
+    if (recEl) {
+      recEl.textContent = summary.recommendation || '';
+    }
+    // Phase D: toggle the "Hear your best rep" link if the best row
+    // has a saved blob. The button's click is wired once here so
+    // the closure captures the correct anchor idx.
+    const bestRepBtn = document.getElementById('session-summary-best-rep');
+    if (bestRepBtn) {
+      const idx = summary.bestAnchorIdx;
+      const has = Number.isFinite(idx) && _hasBestRep(state.analysisId, idx);
+      bestRepBtn.hidden = !has;
+      if (has) {
+        bestRepBtn.onclick = (ev) => {
+          ev.stopPropagation();
+          _playBestRep(state.analysisId, idx);
+        };
+      }
+    }
+    overlay.hidden = false;
+    overlay.classList.add('is-visible');
+    return true;
+  }
+
+  function _dismissSessionSummary(kind) {
+    const overlay = document.getElementById('session-summary-view');
+    if (overlay) {
+      overlay.classList.remove('is-visible');
+      overlay.hidden = true;
+    }
+    const pending = _sessionSummaryPending;
+    _sessionSummaryPending = null;
+    if (kind === 'jam' && pending && pending.onJustJam) {
+      try { pending.onJustJam(); } catch (e) { console.warn('[summary] just-jam handler failed:', e); }
+    }
+  }
+
+  // ─── Phase B: cross-song skill map ───────────────────────────
+  //
+  // Walks every ``rehearsal:v1:*`` key in localStorage, aggregates
+  // mastery + metadata into a single map, and renders a card in
+  // ``#skill-map-view``. Purely a read pass — the walker never
+  // writes back. Records missing a ``metadata`` block (v1/v2 legacy)
+  // still contribute to the mastery tally; they just render as
+  // "Unknown song" until the user opens them again and the save
+  // pass upgrades them.
+
+  // Rough "how long ago" copy for the Recent Songs strip. Kept
+  // frontend-only so nothing depends on Intl.RelativeTimeFormat
+  // availability in older webviews.
+  function _relativeTimeCopy(msAgo) {
+    if (!Number.isFinite(msAgo) || msAgo < 0) return '';
+    const min = 60 * 1000;
+    const hour = 60 * min;
+    const day = 24 * hour;
+    if (msAgo < 2 * min) return 'just now';
+    if (msAgo < hour) return `${Math.round(msAgo / min)} minutes ago`;
+    if (msAgo < 2 * hour) return '1 hour ago';
+    if (msAgo < day) return `${Math.round(msAgo / hour)} hours ago`;
+    if (msAgo < 2 * day) return 'yesterday';
+    if (msAgo < 30 * day) return `${Math.round(msAgo / day)} days ago`;
+    return 'over a month ago';
+  }
+
+  function _computeSkillMap() {
+    const songs = [];
+    const chordBuckets = new Map();   // label → {lockedIn, needsWork}
+    let totalKeys = 0;
+
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(_REHEARSAL_STORAGE_PREFIX)) continue;
+      totalKeys += 1;
+      let parsed;
+      try { parsed = JSON.parse(localStorage.getItem(key)); } catch (_) { continue; }
+      if (!parsed || typeof parsed !== 'object') continue;
+      const analysisId = key.slice(_REHEARSAL_STORAGE_PREFIX.length);
+      const mastery = (parsed.mastery && typeof parsed.mastery === 'object') ? parsed.mastery : {};
+      const completed = Array.isArray(parsed.completed) ? parsed.completed : [];
+      const meta = (parsed.metadata && typeof parsed.metadata === 'object') ? parsed.metadata : {};
+
+      // Per-song tally: count sections that reached locked_in /
+      // mastered (or the legacy completed bit) versus the total
+      // sections with any mastery record.
+      const idxs = Object.keys(mastery);
+      let locked = 0;
+      for (const idxStr of idxs) {
+        const rec = mastery[idxStr];
+        if (rec && (rec.state === 'locked_in' || rec.state === 'mastered')) locked += 1;
+      }
+      for (const idx of completed) {
+        // Completed-but-no-mastery-record path (v1 legacy) — count
+        // as locked, but avoid double-counting an idx already tallied
+        // via its mastery record.
+        if (Number.isFinite(idx) && !mastery[idx]) locked += 1;
+      }
+      const totalParts = Math.max(idxs.length, completed.length);
+      songs.push({
+        analysisId,
+        title: (typeof meta.title === 'string' && meta.title) ? meta.title : null,
+        savedAt: Number.isFinite(meta.savedAt) ? meta.savedAt : 0,
+        partsLockedIn: locked,
+        totalParts,
+      });
+
+      // Chord-family aggregation: we only know per-section bead
+      // scores here, not the underlying chord list (that requires
+      // the bundle to be loaded). So the bucket key is the mastery
+      // state itself — "locked in" vs "needs work" — coarsened to
+      // whichever mode the section was practising. This is the
+      // best signal available without dragging the full analysis
+      // into localStorage; the plan's "Barre F" tile is a follow-up
+      // once bundles cache their chord vocab per section here too.
+      for (const idxStr of idxs) {
+        const rec = mastery[idxStr];
+        if (!rec) continue;
+        const bucketLabel = _skillBucketLabel(rec);
+        if (!bucketLabel) continue;
+        if (!chordBuckets.has(bucketLabel)) {
+          chordBuckets.set(bucketLabel, { lockedIn: 0, needsWork: 0 });
+        }
+        const b = chordBuckets.get(bucketLabel);
+        if (rec.state === 'locked_in' || rec.state === 'mastered') b.lockedIn += 1;
+        else b.needsWork += 1;
+      }
+    }
+
+    songs.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+    const lockedIn = [];
+    const needsWork = [];
+    for (const [label, tallies] of chordBuckets.entries()) {
+      if (tallies.lockedIn > tallies.needsWork) lockedIn.push({ label, count: tallies.lockedIn });
+      else needsWork.push({ label, count: tallies.needsWork });
+    }
+    lockedIn.sort((a, b) => b.count - a.count);
+    needsWork.sort((a, b) => b.count - a.count);
+
+    return {
+      songs,
+      lockedIn,
+      needsWork,
+      totalKeys,
+    };
+  }
+
+  // Coarse bucket label for the aggregate map. Uses the mastery
+  // state name so the copy stays honest — until a follow-up caches
+  // per-section chord vocab, "Open shapes" (chord mode) and "Lead
+  // lines" (riff/lead mode) is the truthful granularity we can
+  // deliver. Returns null when the record hasn't been touched
+  // (no bucket entry created).
+  function _skillBucketLabel(rec) {
+    if (!rec || !Array.isArray(rec.beads)) return null;
+    const any = rec.beads.some(b => b);
+    if (!any) return null;
+    // Without per-section guidance_mode in storage, we can't tell
+    // riff from chord here. Group everything under one label so
+    // the two columns still balance meaningfully. Follow-up phase
+    // caches guidance_mode into the mastery record on save.
+    return 'Practised sections';
+  }
+
+  function _renderSkillMap(map) {
+    const listSongs = document.getElementById('skill-map-recent-songs');
+    const lockedList = document.getElementById('skill-map-locked-in');
+    const needsList = document.getElementById('skill-map-needs-work');
+    const emptyEl = document.getElementById('skill-map-empty');
+    if (!listSongs || !lockedList || !needsList) return;
+
+    listSongs.innerHTML = '';
+    lockedList.innerHTML = '';
+    needsList.innerHTML = '';
+
+    if (!map || map.totalKeys === 0) {
+      if (emptyEl) emptyEl.hidden = false;
+      return;
+    }
+    if (emptyEl) emptyEl.hidden = true;
+
+    const now = Date.now();
+    for (const song of map.songs) {
+      const row = document.createElement('div');
+      row.className = 'skill-map-recent-song';
+      const title = document.createElement('span');
+      title.className = 'skill-map-recent-song-title';
+      title.textContent = song.title || 'Unknown song';
+      const parts = document.createElement('span');
+      parts.className = 'skill-map-recent-song-parts';
+      parts.textContent = song.totalParts
+        ? `${song.partsLockedIn} of ${song.totalParts} parts`
+        : `${song.partsLockedIn} locked in`;
+      const when = document.createElement('span');
+      when.className = 'skill-map-recent-song-when';
+      when.textContent = song.savedAt ? _relativeTimeCopy(now - song.savedAt) : '';
+      row.appendChild(title);
+      row.appendChild(parts);
+      row.appendChild(when);
+      listSongs.appendChild(row);
+    }
+
+    const renderTallyList = (parent, items) => {
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'skill-map-column-empty';
+        empty.textContent = 'Nothing here yet.';
+        parent.appendChild(empty);
+        return;
+      }
+      for (const it of items) {
+        const row = document.createElement('div');
+        row.className = 'skill-map-row';
+        const label = document.createElement('span');
+        label.className = 'skill-map-row-label';
+        label.textContent = it.label;
+        const dots = document.createElement('span');
+        dots.className = 'skill-map-row-dots';
+        dots.textContent = '●'.repeat(Math.min(5, Math.max(1, it.count)));
+        row.appendChild(label);
+        row.appendChild(dots);
+        parent.appendChild(row);
+      }
+    };
+    renderTallyList(lockedList, map.lockedIn);
+    renderTallyList(needsList, map.needsWork);
+  }
+
+  function _showSkillMap() {
+    const view = document.getElementById('view-skill-map');
+    if (!view) return;
+    _renderSkillMap(_computeSkillMap());
+    view.hidden = false;
+    view.classList.add('is-visible');
+  }
+
+  function _hideSkillMap() {
+    const view = document.getElementById('view-skill-map');
+    if (!view) return;
+    view.classList.remove('is-visible');
+    view.hidden = true;
+  }
+
+  // ─── Phase C: warm-up mode ───────────────────────────────────
+  //
+  // A pre-jam finger-stretch flow. Modal overlay reachable from the
+  // bandroom. Chord tiles march at 60 bpm (one chord per bar, four
+  // bars per pass, three passes to complete). Uses the existing
+  // ``state.listen`` mic pipeline + ``_verifyChordTile`` so a chord
+  // "passes" when its pitch classes have all been heard during its
+  // active window.
+  //
+  // Vocabulary rules:
+  //   - Session loaded: pick the four most frequent chord symbols
+  //     from ``state.chords``.
+  //   - No session: fall back to ``C, G, Am, F``.
+  //   - F barre present in the current song: add F to the front of
+  //     the vocab so the warm-up primes the hardest shape first.
+  //
+  // No music playback, no transport — this is a metronome-style
+  // exercise, not a song rehearsal.
+
+  const _WARMUP_BAR_SEC = 4.0;         // 60 bpm × 4 beats
+  const _WARMUP_PASSES_TO_COMPLETE = 3;
+  const _WARMUP_FALLBACK_CHORDS = ['C', 'G', 'Am', 'F'];
+  const _WARMUP_COOLDOWN_KEY = 'warmup:v1:completedAt';
+  const _WARMUP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+  // Warm-up transient state. Not persisted — a warm-up in progress
+  // is discarded on reload. ``rafHandle`` drives the tile advance
+  // and per-tile pass evaluation.
+  const _warmup = {
+    active: false,
+    chords: [],              // parallel to tiles: { symbol, pcSet, passed }
+    passIdx: 0,              // 0..N-1
+    tileIdx: 0,              // 0..chords.length-1
+    tileStartedAt: 0,        // performance.now()
+    rafHandle: 0,
+  };
+
+  function _buildWarmupLoop() {
+    const counts = new Map();
+    const chords = Array.isArray(state.chords) ? state.chords : [];
+    for (const c of chords) {
+      if (!c || typeof c.symbol !== 'string') continue;
+      counts.set(c.symbol, (counts.get(c.symbol) || 0) + 1);
+    }
+    let vocab;
+    if (counts.size >= 4) {
+      vocab = Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([sym]) => sym);
+    } else if (counts.size > 0) {
+      // Song loaded but chord vocab is small — pad from the
+      // canonical fallback so the loop still has 4 tiles.
+      const have = new Set(counts.keys());
+      vocab = Array.from(counts.keys());
+      for (const c of _WARMUP_FALLBACK_CHORDS) {
+        if (!have.has(c)) vocab.push(c);
+        if (vocab.length >= 4) break;
+      }
+    } else {
+      vocab = _WARMUP_FALLBACK_CHORDS.slice();
+    }
+    return vocab.map((sym) => ({
+      symbol: sym,
+      pcSet: _chordSymbolToPitchClasses(sym),
+      passed: false,
+    }));
+  }
+
+  function _shouldSuggestWarmup() {
+    if (!Array.isArray(state.sections) || !state.sections.length) return false;
+    // Suggestion only fires if a section carries the 'barre' tag
+    // (severity 3, hand=fretting) — matches the plan's "quiet chip
+    // when the song has a hard chord". Suppressed inside the 24h
+    // cooldown after a completed warm-up.
+    let hasBarre = false;
+    for (const s of state.sections) {
+      const tags = _detectSectionTags(s);
+      if (tags.some((t) => t.id === 'barre')) { hasBarre = true; break; }
+    }
+    if (!hasBarre) return false;
+    try {
+      const raw = localStorage.getItem(_WARMUP_COOLDOWN_KEY);
+      const t = raw ? Number(raw) : 0;
+      if (t && Date.now() - t < _WARMUP_COOLDOWN_MS) return false;
+    } catch (_) { /* localStorage might be blocked; ignore */ }
+    return true;
+  }
+
+  function _refreshWarmupSuggestion() {
+    const chip = document.getElementById('bandroom-warmup-chip');
+    if (!chip) return;
+    chip.hidden = !_shouldSuggestWarmup();
+  }
+
+  function _renderWarmupTiles() {
+    const strip = document.getElementById('warmup-tile-strip');
+    if (!strip) return;
+    strip.innerHTML = '';
+    for (let i = 0; i < _warmup.chords.length; i++) {
+      const c = _warmup.chords[i];
+      const tile = document.createElement('div');
+      tile.className = 'warmup-tile';
+      if (i === _warmup.tileIdx) tile.classList.add('is-active');
+      if (c.passed) tile.classList.add('is-passed');
+      tile.textContent = c.symbol;
+      strip.appendChild(tile);
+    }
+    const progress = document.getElementById('warmup-progress');
+    if (progress) {
+      const remaining = Math.max(0, _WARMUP_PASSES_TO_COMPLETE - _warmup.passIdx);
+      progress.textContent = remaining > 0
+        ? `${remaining} pass${remaining === 1 ? '' : 'es'} to go`
+        : 'Warm-up complete';
+    }
+  }
+
+  function _warmupTick() {
+    if (!_warmup.active) return;
+    const now = performance.now();
+    const elapsed = now - _warmup.tileStartedAt;
+    if (elapsed >= _WARMUP_BAR_SEC * 1000) {
+      // Evaluate current tile before advancing.
+      const cur = _warmup.chords[_warmup.tileIdx];
+      if (cur) {
+        const verdict = _verifyChordTile({
+          startSec: 0,
+          endSec: _WARMUP_BAR_SEC,
+          pcSet: cur.pcSet,
+        });
+        cur.passed = !!verdict.pass;
+      }
+      _warmup.tileIdx += 1;
+      if (_warmup.tileIdx >= _warmup.chords.length) {
+        _warmup.tileIdx = 0;
+        _warmup.passIdx += 1;
+        // Reset per-tile pass flags at each new pass so the visual
+        // reflects only the current pass's performance.
+        for (const c of _warmup.chords) c.passed = false;
+      }
+      _warmup.tileStartedAt = now;
+      if (_warmup.passIdx >= _WARMUP_PASSES_TO_COMPLETE) {
+        _endWarmup(true);
+        return;
+      }
+      _renderWarmupTiles();
+    }
+    _warmup.rafHandle = requestAnimationFrame(_warmupTick);
+  }
+
+  function _startWarmup() {
+    if (_warmup.active) return;
+    const overlay = document.getElementById('view-warmup');
+    if (!overlay) return;
+    _warmup.chords = _buildWarmupLoop();
+    _warmup.passIdx = 0;
+    _warmup.tileIdx = 0;
+    _warmup.tileStartedAt = performance.now();
+    _warmup.active = true;
+    overlay.hidden = false;
+    overlay.classList.add('is-visible');
+    _renderWarmupTiles();
+    // Arm the mic pipeline if it's not already running so
+    // _verifyChordTile has pitch history to read against. Ignore
+    // failures (user hasn't granted mic) — warm-up still runs but
+    // no chord will pass; the visual timing still helps.
+    if (!state.listen.stream) {
+      try { startListening().catch(() => {}); } catch (_) {}
+    }
+    _warmup.rafHandle = requestAnimationFrame(_warmupTick);
+  }
+
+  function _endWarmup(completed) {
+    if (!_warmup.active) return;
+    _warmup.active = false;
+    if (_warmup.rafHandle) cancelAnimationFrame(_warmup.rafHandle);
+    _warmup.rafHandle = 0;
+    if (completed) {
+      try {
+        localStorage.setItem(_WARMUP_COOLDOWN_KEY, String(Date.now()));
+      } catch (_) { /* ignore */ }
+      _refreshWarmupSuggestion();
+      const done = document.getElementById('warmup-done-copy');
+      if (done) done.hidden = false;
+    } else {
+      const done = document.getElementById('warmup-done-copy');
+      if (done) done.hidden = true;
+    }
+  }
+
+  function _hideWarmup() {
+    _endWarmup(false);
+    const overlay = document.getElementById('view-warmup');
+    if (!overlay) return;
+    overlay.classList.remove('is-visible');
+    overlay.hidden = true;
+    const done = document.getElementById('warmup-done-copy');
+    if (done) done.hidden = true;
+  }
+
+  // ─── Phase D: record-your-best-rep ───────────────────────────────────
+  //
+  // Keeps a rolling mic ring buffer while rehearsal is running so the
+  // moment a section earns three consecutive `perfect` beads we can
+  // snapshot the last ~loop-length of audio, encode it as a WAV blob,
+  // and stash it in IndexedDB keyed by (analysisId, sectionIdx).
+  //
+  // Opt-in ladder: the ring is only written while ``_bestRepOptIn ===
+  // 'on'``. A one-time prompt asks on the first would-be snapshot; the
+  // user's choice (on / off / pending) is persisted globally so the
+  // question isn't repeated across songs.
+  //
+  // Playback is a simple ``<audio>`` element on the section row, with
+  // a mirrored "Hear your best rep" link on the session-summary card
+  // for the best-mastery row. IndexedDB (not localStorage) so a single
+  // WAV can be several MB without evicting the rehearsal progress
+  // record.
+
+  const _BESTREP_OPT_IN_KEY = 'bestRep:v1:optIn';
+  const _BESTREP_RING_SECONDS = 30;       // cap; loops longer than this are truncated
+  const _BESTREP_PERFECTS_REQUIRED = 3;   // consecutive perfect beads before snapshot
+  const _BESTREP_DB_NAME = 'toneforge_jam';
+  const _BESTREP_DB_VERSION = 1;
+  const _BESTREP_STORE = 'bestReps';
+
+  let _micRingBuffer = null;              // Float32Array
+  let _micWriteHead = 0;                  // integer index into ring
+  let _micRingSampleRate = 0;
+  let _bestRepDbPromise = null;
+  // Sync cache: {analysisId: {sectionIdx: true}} — populated as we
+  // load or save reps so `_appendRehearsalRow` can synchronously know
+  // whether to show the "▶ Best rep" button.
+  const _bestRepCache = Object.create(null);
+
+  function _bestRepOptIn() {
+    try { return localStorage.getItem(_BESTREP_OPT_IN_KEY) || 'pending'; }
+    catch (_) { return 'pending'; }
+  }
+  function _setBestRepOptIn(v) {
+    try { localStorage.setItem(_BESTREP_OPT_IN_KEY, v); } catch (_) {}
+  }
+
+  // Lazy init: the ring buffer is only allocated when opt-in is `on`
+  // and the audio context sample rate is known. Called from
+  // `_writeRingFromBuffer`.
+  function _ensureRingBuffer(sampleRate) {
+    if (_micRingBuffer && _micRingSampleRate === sampleRate) return;
+    _micRingSampleRate = sampleRate;
+    _micRingBuffer = new Float32Array(sampleRate * _BESTREP_RING_SECONDS);
+    _micWriteHead = 0;
+  }
+
+  function _writeRingFromBuffer(buffer) {
+    // Fill whenever the user hasn't explicitly opted out. This makes
+    // the *first* qualifying perfect run actually capturable — if we
+    // gated on 'on' only, the toast would arrive with an empty ring
+    // and the "Yes" click would save silence. 'off' skips completely.
+    if (_bestRepOptIn() === 'off') return;
+    const sampleRate = state.ctx && state.ctx.sampleRate;
+    if (!sampleRate) return;
+    _ensureRingBuffer(sampleRate);
+    const ring = _micRingBuffer;
+    const N = ring.length;
+    const src = buffer;
+    let head = _micWriteHead;
+    // Fast-path: contiguous write (no wrap).
+    if (head + src.length <= N) {
+      ring.set(src, head);
+      head += src.length;
+      if (head >= N) head = 0;
+    } else {
+      const first = N - head;
+      ring.set(src.subarray(0, first), head);
+      ring.set(src.subarray(first), 0);
+      head = src.length - first;
+    }
+    _micWriteHead = head;
+  }
+
+  // Snapshot the last ``seconds`` of ring audio into a WAV Blob. Reads
+  // backwards from ``_micWriteHead`` so the freshest samples land at
+  // the end of the file.
+  function _ringToWav(seconds) {
+    if (!_micRingBuffer || !_micRingSampleRate) return null;
+    const wantSamples = Math.min(
+      _micRingBuffer.length,
+      Math.floor(seconds * _micRingSampleRate),
+    );
+    if (wantSamples <= 0) return null;
+    const out = new Float32Array(wantSamples);
+    const N = _micRingBuffer.length;
+    let readStart = _micWriteHead - wantSamples;
+    while (readStart < 0) readStart += N;
+    if (readStart + wantSamples <= N) {
+      out.set(_micRingBuffer.subarray(readStart, readStart + wantSamples));
+    } else {
+      const first = N - readStart;
+      out.set(_micRingBuffer.subarray(readStart), 0);
+      out.set(_micRingBuffer.subarray(0, wantSamples - first), first);
+    }
+    // Encode as 16-bit PCM WAV.
+    const byteLen = 44 + wantSamples * 2;
+    const buf = new ArrayBuffer(byteLen);
+    const dv = new DataView(buf);
+    const writeString = (offset, s) => {
+      for (let i = 0; i < s.length; i++) dv.setUint8(offset + i, s.charCodeAt(i));
+    };
+    writeString(0, 'RIFF');
+    dv.setUint32(4, byteLen - 8, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true);            // PCM
+    dv.setUint16(22, 1, true);            // mono
+    dv.setUint32(24, _micRingSampleRate, true);
+    dv.setUint32(28, _micRingSampleRate * 2, true);
+    dv.setUint16(32, 2, true);            // block align
+    dv.setUint16(34, 16, true);           // bits per sample
+    writeString(36, 'data');
+    dv.setUint32(40, wantSamples * 2, true);
+    let off = 44;
+    for (let i = 0; i < wantSamples; i++) {
+      let s = Math.max(-1, Math.min(1, out[i]));
+      s = s < 0 ? s * 0x8000 : s * 0x7fff;
+      dv.setInt16(off, s | 0, true);
+      off += 2;
+    }
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+
+  function _bestRepDb() {
+    if (_bestRepDbPromise) return _bestRepDbPromise;
+    _bestRepDbPromise = new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) { reject(new Error('no-idb')); return; }
+      const req = indexedDB.open(_BESTREP_DB_NAME, _BESTREP_DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(_BESTREP_STORE)) {
+          db.createObjectStore(_BESTREP_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return _bestRepDbPromise;
+  }
+
+  function _bestRepKey(analysisId, sectionIdx) {
+    return `${analysisId || 'no-song'}::${sectionIdx}`;
+  }
+
+  async function _saveBestRep(analysisId, sectionIdx, blob) {
+    if (!analysisId || !blob) return false;
+    try {
+      const db = await _bestRepDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(_BESTREP_STORE, 'readwrite');
+        tx.objectStore(_BESTREP_STORE).put(blob, _bestRepKey(analysisId, sectionIdx));
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+      if (!_bestRepCache[analysisId]) _bestRepCache[analysisId] = {};
+      _bestRepCache[analysisId][sectionIdx] = true;
+      return true;
+    } catch (_) { return false; }
+  }
+
+  async function _loadBestRep(analysisId, sectionIdx) {
+    if (!analysisId) return null;
+    try {
+      const db = await _bestRepDb();
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(_BESTREP_STORE, 'readonly');
+        const req = tx.objectStore(_BESTREP_STORE).get(_bestRepKey(analysisId, sectionIdx));
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (_) { return null; }
+  }
+
+  // Populate ``_bestRepCache`` for the current song. Called from
+  // `_loadRehearsalProgress` so section rows can synchronously
+  // decide whether to render the "▶ Best rep" button. Non-blocking.
+  async function _primeBestRepCache() {
+    const aid = state.analysisId;
+    if (!aid) return;
+    try {
+      const db = await _bestRepDb();
+      const prefix = `${aid}::`;
+      await new Promise((resolve) => {
+        const tx = db.transaction(_BESTREP_STORE, 'readonly');
+        const req = tx.objectStore(_BESTREP_STORE).openKeyCursor();
+        const found = {};
+        req.onsuccess = () => {
+          const cur = req.result;
+          if (!cur) { resolve(); return; }
+          const k = String(cur.key);
+          if (k.startsWith(prefix)) {
+            const idx = parseInt(k.slice(prefix.length), 10);
+            if (Number.isFinite(idx)) found[idx] = true;
+          }
+          cur.continue();
+        };
+        req.onerror = () => resolve();
+        tx.oncomplete = () => {
+          _bestRepCache[aid] = found;
+          // Rebuild the list so any rows can pick up the button now.
+          try { _buildRehearsalSectionList(); } catch (_) {}
+          resolve();
+        };
+      });
+    } catch (_) {}
+  }
+
+  function _hasBestRep(analysisId, sectionIdx) {
+    const bucket = _bestRepCache[analysisId];
+    return !!(bucket && bucket[sectionIdx]);
+  }
+
+  // One-time opt-in prompt. Simple inline toast styled via CSS; the
+  // callback runs only if the user chose Yes. Never re-prompts once
+  // the choice is 'on' or 'off'; 'pending' keeps asking on subsequent
+  // qualifying beads until the user commits.
+  function _promptBestRepOptIn(onYes) {
+    if (_bestRepOptIn() !== 'pending') { onYes(); return; }
+    let toast = document.getElementById('bestrep-optin-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'bestrep-optin-toast';
+      toast.className = 'bestrep-optin-toast';
+      toast.innerHTML = `
+        <div class="bestrep-optin-copy">Nice run — save your best rep?</div>
+        <div class="bestrep-optin-cta">
+          <button type="button" data-choice="yes" class="primary">Yes</button>
+          <button type="button" data-choice="later" class="ghost">Not now</button>
+          <button type="button" data-choice="never" class="ghost">Never</button>
+        </div>
+      `;
+      document.body.appendChild(toast);
+      toast.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-choice]');
+        if (!btn) return;
+        const choice = btn.dataset.choice;
+        if (choice === 'yes') {
+          _setBestRepOptIn('on');
+          try { onYes(); } catch (_) {}
+        } else if (choice === 'never') {
+          _setBestRepOptIn('off');
+        } // 'later' leaves flag as 'pending'
+        toast.remove();
+      });
+    }
+  }
+
+  // Called from _gradeLoop when a perfect bead lands. Checks the
+  // ``consecutive perfect`` streak on the mastery record and either
+  // triggers the opt-in toast or snapshots immediately.
+  function _maybeSnapshotBestRep(sectionIdx, rec, speed) {
+    // Only snapshot at full tempo — a "best rep" at 0.75× isn't the
+    // trophy we want to preserve.
+    if (speed < 1.0) return;
+    const beads = rec.beads || [];
+    let streak = 0;
+    for (let i = beads.length - 1; i >= 0; i--) {
+      if (beads[i] === 'perfect') streak += 1; else break;
+    }
+    if (streak < _BESTREP_PERFECTS_REQUIRED) return;
+    const doSnap = () => {
+      const section = state.sections && state.sections[sectionIdx];
+      const seconds = section
+        ? Math.min(_BESTREP_RING_SECONDS, Math.max(2, (section.end || 0) - (section.start || 0)))
+        : _BESTREP_RING_SECONDS;
+      const blob = _ringToWav(seconds);
+      if (!blob) return;
+      _saveBestRep(state.analysisId, sectionIdx, blob).then((ok) => {
+        if (ok) {
+          try { _buildRehearsalSectionList(); } catch (_) {}
+        }
+      });
+    };
+    _promptBestRepOptIn(doSnap);
+  }
+
+  // Playback helper — used by row "▶ Best rep" button and the
+  // summary-card link. Fetches the blob, wraps it in an <audio>, and
+  // plays via the default output.
+  function _playBestRep(analysisId, sectionIdx) {
+    _loadBestRep(analysisId, sectionIdx).then((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play().catch(() => URL.revokeObjectURL(url));
+    });
+  }
+
+  // Pretty ordinal for DEVELOPMENT variants. These are "variations"
+  // of the same pattern — the second time the chorus comes around,
+  // the third time, etc. — not separate rehearsal attempts.
   function _rehearsalOrdinalPass(n) {
-    if (n === 1) return 'second pass';
-    if (n === 2) return 'third pass';
-    if (n === 3) return 'fourth pass';
-    return `pass ${n + 1}`;
+    // n is 0-based across variants (0 = first variant after the anchor).
+    // Display 1-based so users see "variation 2, 3, 4…" (the anchor
+    // itself is "variation 1" implicitly).
+    return `variation ${n + 2}`;
   }
 
   // Produce a musician-facing label for a section from
@@ -7635,6 +8659,18 @@
         && anchor.recurrenceCount >= 1)
         ? anchor.recurrenceCount
         : g.memberIdxs.length;
+      // Pattern ROI: sum of every group-member's duration divided by
+      // the total song length. Answers "how much of the song does
+      // locking this pattern in unlock?" — the mastery framing the
+      // design pass called out ("appears 4× · 41% of the song").
+      let groupDur = 0;
+      for (const midx of g.memberIdxs) {
+        const m = sections[midx];
+        if (!m) continue;
+        groupDur += Math.max(0, (m.endSec || 0) - (m.startSec || 0));
+      }
+      const totalDur = Math.max(0, state.duration || 0);
+      const songPct = totalDur > 0 ? (groupDur / totalDur) : 0;
       const record = {
         anchorIdx: g.anchorIdx,
         variantIdxs: g.variantIdxs.slice(),
@@ -7643,6 +8679,7 @@
         soft: label.soft,
         groupSize: g.memberIdxs.length,
         recurrenceCount,
+        songPct,
         kind,
       };
       if (kind === 'part') parts.push(record);
@@ -7721,12 +8758,56 @@
   }
 
   // Phase 2: state chip. Hidden for not_tried.
+  // Today's-goal budget: soft target for a single sitting. Ticks
+  // forward as the session runs; frontend-only, no persistence.
+  const _REHEARSAL_SESSION_GOAL_MIN = 15;
+
+  function _updateSessionGoal() {
+    const el = document.getElementById('rehearsal-session-goal');
+    const val = document.getElementById('rehearsal-session-goal-value');
+    const fill = document.getElementById('rehearsal-session-goal-fill');
+    if (!el) return;
+    const started = state.rehearsal.sessionStartedAt || 0;
+    if (!started) {
+      el.hidden = true;
+      return;
+    }
+    const elapsedMin = Math.max(0, (Date.now() - started) / 60000);
+    const shown = Math.floor(elapsedMin);
+    const pct = Math.max(0, Math.min(100, (elapsedMin / _REHEARSAL_SESSION_GOAL_MIN) * 100));
+    el.hidden = false;
+    if (val) val.textContent = `${_REHEARSAL_SESSION_GOAL_MIN} min · ${shown} min in`;
+    if (fill) fill.style.width = `${pct.toFixed(1)}%`;
+    el.classList.toggle('is-complete', pct >= 100);
+  }
+
+  // Confidence-decay: a locked_in / mastered record whose last clean
+  // run is older than the fading threshold gets its own chip so the
+  // musician knows "this needs a refresher, not new learning". The
+  // rec's persisted state doesn't change — the row keeps its beads
+  // and remains counted in the skill map — but the chip surface
+  // routes practice-time back to it.
+  const _REHEARSAL_FADING_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+  function _isFadingRec(masteryRec) {
+    if (!masteryRec) return false;
+    const s = masteryRec.state;
+    if (s !== 'locked_in' && s !== 'mastered') return false;
+    const at = masteryRec.lastRun && masteryRec.lastRun.at;
+    if (!Number.isFinite(at)) return false;
+    return (Date.now() - at) > _REHEARSAL_FADING_MS;
+  }
+
   function _renderMasteryChip(chipSpan, masteryRec) {
     const name = masteryRec ? masteryRec.state : 'not_tried';
-    const label = _rehearsalStateLabel(name);
+    let label = _rehearsalStateLabel(name);
+    const fading = _isFadingRec(masteryRec);
+    if (fading) label = 'Fading';
     chipSpan.textContent = label;
-    chipSpan.classList.remove('is-learning', 'is-practicing', 'is-locked-in', 'is-mastered');
-    if (name === 'learning') chipSpan.classList.add('is-learning');
+    chipSpan.classList.remove(
+      'is-learning', 'is-practicing', 'is-locked-in', 'is-mastered', 'is-fading',
+    );
+    if (fading) chipSpan.classList.add('is-fading');
+    else if (name === 'learning') chipSpan.classList.add('is-learning');
     else if (name === 'practicing') chipSpan.classList.add('is-practicing');
     else if (name === 'locked_in') chipSpan.classList.add('is-locked-in');
     else if (name === 'mastered') chipSpan.classList.add('is-mastered');
@@ -7768,16 +8849,23 @@
       label.textContent = _rehearsalOrdinalPass(variantOrdinal);
     } else {
       label.textContent = record ? record.label : (section.name || 'Section');
-      // Phase 3: authoritative recurrence subtitle ("repeats 4×") on
-      // anchors whose cluster has ≥ 2 members. Rendered as a subtitle
-      // span rather than merged into the label so the mastery beads
-      // stay aligned with the title line.
+      // Pattern-ROI subtitle: "appears 4× · 41% of the song". The
+      // recurrence count comes from the anchor's grouped cluster
+      // (Phase 3 backend field). The song percentage comes from
+      // step-2's summed group duration / total song length. Rendered
+      // as a subtitle span so the mastery beads keep aligning with
+      // the title line.
       const count = record && typeof record.recurrenceCount === 'number'
         ? record.recurrenceCount : 0;
-      if (count >= 2) {
+      const pct = record && typeof record.songPct === 'number'
+        ? Math.round(record.songPct * 100) : 0;
+      const parts = [];
+      if (count >= 2) parts.push(`appears ${count}×`);
+      if (pct >= 1) parts.push(`${pct}% of song`);
+      if (parts.length) {
         const sub = document.createElement('span');
         sub.className = 'rehearsal-section-row-subtitle';
-        sub.textContent = `repeats ${count}×`;
+        sub.textContent = parts.join(' · ');
         label.appendChild(sub);
       }
     }
@@ -7860,6 +8948,22 @@
       _selectRehearsalSection(sectionIdx);
     });
     listEl.appendChild(row);
+    // Phase D: sibling "▶ Best rep" button. Rendered outside the
+    // main row button so its click doesn't select the section (which
+    // would restart playback). Only visible when a blob exists in
+    // the sync cache.
+    if (!isVariant && _hasBestRep(state.analysisId, sectionIdx)) {
+      const rep = document.createElement('button');
+      rep.type = 'button';
+      rep.className = 'best-rep-button';
+      rep.textContent = '▶ Best rep';
+      rep.title = 'Play the last perfect run you saved for this section';
+      rep.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        _playBestRep(state.analysisId, sectionIdx);
+      });
+      listEl.appendChild(rep);
+    }
   }
 
   function _renderRehearsalGroupHeading(listEl, text, extraClass) {
@@ -7869,6 +8973,68 @@
     h.textContent = text;
     listEl.appendChild(h);
     return h;
+  }
+
+  // Render one anchor row + collapsible drawer of variation rows into
+  // the given parent. Variants are hidden behind a per-group toggle
+  // so the left rail focuses on the pattern first; drilling into
+  // "which time round" is opt-in. Drawer open-state persists in
+  // session-scoped state so switching anchors doesn't collapse
+  // everything.
+  function _appendRehearsalCluster(parent, g) {
+    if (!state.rehearsal._variationDrawers) {
+      state.rehearsal._variationDrawers = {};
+    }
+    const cluster = document.createElement('div');
+    cluster.className = 'rehearsal-cluster';
+    cluster.dataset.anchorIdx = String(g.anchorIdx);
+    _appendRehearsalRow(cluster, g.anchorIdx, g, false, 0);
+
+    if (!g.variantIdxs || !g.variantIdxs.length) {
+      parent.appendChild(cluster);
+      return;
+    }
+
+    // Drawer toggle button — placed under the anchor row so the
+    // primary target (the pattern) still owns the top of the cluster.
+    // If a variant is currently selected the drawer opens by default
+    // so the musician can see which return of the pattern is active.
+    const activeIdx = state.rehearsal.sectionIndex;
+    const activeIsVariant = g.variantIdxs.indexOf(activeIdx) >= 0;
+    const key = String(g.anchorIdx);
+    if (activeIsVariant) state.rehearsal._variationDrawers[key] = true;
+    const open = !!state.rehearsal._variationDrawers[key];
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'rehearsal-variation-toggle';
+    if (open) toggle.classList.add('is-open');
+    const n = g.variantIdxs.length;
+    toggle.textContent = open
+      ? `Hide ${n} variation${n === 1 ? '' : 's'}`
+      : `Show ${n} variation${n === 1 ? '' : 's'}`;
+    cluster.appendChild(toggle);
+
+    const drawer = document.createElement('div');
+    drawer.className = 'rehearsal-variation-drawer';
+    if (!open) drawer.classList.add('is-collapsed');
+    for (let vi = 0; vi < g.variantIdxs.length; vi++) {
+      _appendRehearsalRow(drawer, g.variantIdxs[vi], g, true, vi);
+    }
+    cluster.appendChild(drawer);
+
+    toggle.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const nowOpen = drawer.classList.contains('is-collapsed');
+      drawer.classList.toggle('is-collapsed', !nowOpen);
+      toggle.classList.toggle('is-open', nowOpen);
+      state.rehearsal._variationDrawers[key] = nowOpen;
+      toggle.textContent = nowOpen
+        ? `Hide ${n} variation${n === 1 ? '' : 's'}`
+        : `Show ${n} variation${n === 1 ? '' : 's'}`;
+    });
+
+    parent.appendChild(cluster);
   }
 
   function _buildRehearsalSectionList() {
@@ -7887,22 +9053,12 @@
 
     if (groups.parts.length) {
       _renderRehearsalGroupHeading(listEl, 'Parts to learn');
-      for (const g of groups.parts) {
-        _appendRehearsalRow(listEl, g.anchorIdx, g, false, 0);
-        for (let vi = 0; vi < g.variantIdxs.length; vi++) {
-          _appendRehearsalRow(listEl, g.variantIdxs[vi], g, true, vi);
-        }
-      }
+      for (const g of groups.parts) _appendRehearsalCluster(listEl, g);
     }
 
     if (groups.moments.length) {
       _renderRehearsalGroupHeading(listEl, 'Moments');
-      for (const g of groups.moments) {
-        _appendRehearsalRow(listEl, g.anchorIdx, g, false, 0);
-        for (let vi = 0; vi < g.variantIdxs.length; vi++) {
-          _appendRehearsalRow(listEl, g.variantIdxs[vi], g, true, vi);
-        }
-      }
+      for (const g of groups.moments) _appendRehearsalCluster(listEl, g);
     }
 
     if (groups.extras.length) {
@@ -7921,12 +9077,7 @@
       });
       heading.classList.toggle('is-open', !collapsed);
       listEl.appendChild(tray);
-      for (const g of groups.extras) {
-        _appendRehearsalRow(tray, g.anchorIdx, g, false, 0);
-        for (let vi = 0; vi < g.variantIdxs.length; vi++) {
-          _appendRehearsalRow(tray, g.variantIdxs[vi], g, true, vi);
-        }
-      }
+      for (const g of groups.extras) _appendRehearsalCluster(tray, g);
     }
 
     _updateRehearsalHeaderMeta();
@@ -7940,7 +9091,13 @@
     const all = groups.parts.concat(groups.moments, groups.extras);
     for (const g of all) {
       if (g.anchorIdx === idx) {
-        return { title: g.label, soft: g.soft, variantOrdinal: null };
+        return {
+          title: g.label,
+          soft: g.soft,
+          variantOrdinal: null,
+          recurrenceCount: g.recurrenceCount,
+          songPct: g.songPct,
+        };
       }
       const vi = g.variantIdxs.indexOf(idx);
       if (vi >= 0) {
@@ -7948,6 +9105,8 @@
           title: g.label,
           soft: g.soft,
           variantOrdinal: vi,
+          recurrenceCount: g.recurrenceCount,
+          songPct: g.songPct,
         };
       }
     }
@@ -7956,9 +9115,9 @@
     const section = state.sections && state.sections[idx];
     if (section) {
       const lbl = _rehearsalLabelForSection(section, { groupKind: 'part', groupSize: 1, isFirstAnchorInSong: false });
-      return { title: lbl.title, soft: lbl.soft, variantOrdinal: null };
+      return { title: lbl.title, soft: lbl.soft, variantOrdinal: null, recurrenceCount: 1, songPct: 0 };
     }
-    return { title: 'Section', soft: false, variantOrdinal: null };
+    return { title: 'Section', soft: false, variantOrdinal: null, recurrenceCount: 1, songPct: 0 };
   }
 
   function _selectRehearsalSection(idx) {
@@ -7988,14 +9147,28 @@
     const nameEl = document.getElementById('rehearsal-section-name');
     if (nameEl) {
       // For DEVELOPMENT variants, still show the anchor's label but
-      // suffix the variant ordinal so the musician can tell which
-      // pass they're on.
+      // suffix the variation ordinal so the musician can tell which
+      // return of the pattern they're on.
       if (label.variantOrdinal != null) {
         nameEl.textContent = `${label.title} — ${_rehearsalOrdinalPass(label.variantOrdinal)}`;
       } else {
         nameEl.textContent = label.title;
       }
       nameEl.classList.toggle('is-soft', !!label.soft);
+    }
+    // Pattern-ROI subtitle. Uses "Appears N×" (capitalised for the
+    // heading treatment) and "unlocks X% of the song" to frame the
+    // pattern as a mastery investment. Empty when the section is
+    // unique or its ROI is negligible so the heading collapses.
+    const roiEl = document.getElementById('rehearsal-section-roi');
+    if (roiEl) {
+      const count = typeof label.recurrenceCount === 'number' ? label.recurrenceCount : 0;
+      const pct = typeof label.songPct === 'number' ? Math.round(label.songPct * 100) : 0;
+      const parts = [];
+      if (count >= 2) parts.push(`Appears ${count}×`);
+      if (pct >= 1) parts.push(`unlocks ${pct}% of the song`);
+      roiEl.textContent = parts.join(' · ');
+      roiEl.hidden = parts.length === 0;
     }
     // The guidance-mode badge is intentionally left blank; the tile
     // type in the main pane already communicates chords vs riff.
@@ -8067,6 +9240,33 @@
     return items;
   }
 
+  // Convert a duration in seconds into musician-language ("2 bars",
+  // "half a bar", "quick"). Assumes 4/4 (the guitar-teacher default);
+  // falls back gracefully when tempo is missing.
+  function _durationToBars(durSec) {
+    const bpm = (typeof state.tempo_bpm === 'number' && state.tempo_bpm > 20)
+      ? state.tempo_bpm : null;
+    if (!bpm || !Number.isFinite(durSec) || durSec <= 0) return '';
+    const beatSec = 60 / bpm;
+    const beats = durSec / beatSec;
+    const bars = beats / 4;
+    if (bars >= 1.75) return `${Math.round(bars)} bars`;
+    if (bars >= 0.9) return '1 bar';
+    if (bars >= 0.4) return 'half a bar';
+    if (beats >= 1.4) return `${Math.round(beats)} beats`;
+    return 'quick';
+  }
+
+  // Detect whether a single chord symbol falls under one of the
+  // fretting-hand roadblock tags — used to stamp the inline chip on
+  // its own tile. Kept in sync with _detectSectionTags rules.
+  function _tagForChordSymbol(symbol) {
+    if (typeof symbol !== 'string' || !symbol) return null;
+    if (/^(F#?|B|Bb)(m?)(?![a-z0-9])/.test(symbol)) return _TAG_REGISTRY.barre;
+    if (/(7|sus2|sus4|add9|maj7|m7)/i.test(symbol)) return _TAG_REGISTRY.colour;
+    return null;
+  }
+
   async function _renderRehearsalMain(section) {
     const host = document.getElementById('rehearsal-items');
     const empty = document.getElementById('rehearsal-empty');
@@ -8103,11 +9303,44 @@
         }
         tile.appendChild(diagram);
 
-        const time = document.createElement('div');
-        time.className = 'rehearsal-tile-time';
+        // Meta row: musician-language duration ("2 bars") + inline
+        // fretting-hand tag chip so the card advertises its own
+        // difficulty. Empty when tempo is missing and the chord
+        // carries no tag — the diagram carries the meaning either way.
         const dur = Math.max(0, item.endSec - item.startSec);
-        time.textContent = `${dur.toFixed(1)}s`;
-        tile.appendChild(time);
+        const bars = _durationToBars(dur);
+        const tag = _tagForChordSymbol(item.symbol);
+        if (bars || tag) {
+          const meta = document.createElement('div');
+          meta.className = 'rehearsal-tile-meta';
+          if (bars) {
+            const b = document.createElement('span');
+            b.className = 'rehearsal-tile-bars';
+            b.textContent = bars;
+            meta.appendChild(b);
+          }
+          if (tag) {
+            const chip = document.createElement('span');
+            chip.className = 'rehearsal-tile-tag';
+            chip.classList.add(`tag-severity-${tag.severity}`);
+            chip.classList.add(`tag-hand-${tag.hand}`);
+            chip.textContent = tag.label;
+            chip.title = tag.copy && tag.copy.teacher ? tag.copy.teacher : tag.label;
+            meta.appendChild(chip);
+          }
+          tile.appendChild(meta);
+        }
+
+        // Next-chord preview so the musician is always looking one
+        // step ahead — the way a teacher would call out the next
+        // change. Suppressed on the final tile.
+        const nextItem = state.rehearsal.items[i + 1];
+        if (nextItem && nextItem.symbol) {
+          const nxt = document.createElement('div');
+          nxt.className = 'rehearsal-tile-next';
+          nxt.textContent = `Next: ${nextItem.symbol} →`;
+          tile.appendChild(nxt);
+        }
 
         host.appendChild(tile);
       });
@@ -8122,10 +9355,15 @@
         label.textContent = item.symbol;
         tile.appendChild(label);
 
-        const time = document.createElement('div');
-        time.className = 'rehearsal-tile-time';
-        time.textContent = `${item.startSec.toFixed(1)}s`;
-        tile.appendChild(time);
+        // Next-note preview mirrors the chord tile so lead-part
+        // practice also gets the "look ahead" nudge.
+        const nextItem = state.rehearsal.items[i + 1];
+        if (nextItem && nextItem.symbol) {
+          const nxt = document.createElement('div');
+          nxt.className = 'rehearsal-tile-next';
+          nxt.textContent = `Next: ${nextItem.symbol} →`;
+          tile.appendChild(nxt);
+        }
 
         host.appendChild(tile);
       });
@@ -8395,6 +9633,12 @@
       state.rehearsal.completed[idx] = true;
     }
     _saveRehearsalProgress();
+    // Phase D: snapshot the mic ring buffer if the user has just
+    // earned three consecutive perfect beads at 1×. Guarded by an
+    // opt-in prompt inside the helper.
+    if (bead === 'perfect') {
+      _maybeSnapshotBestRep(idx, rec, speed);
+    }
     return { bead, state: rec.state };
   }
 
@@ -8424,7 +9668,7 @@
       return 'Locked in. Ready for the jam whenever you are.';
     }
     if (p.total === 0) {
-      return `Hit play and try a pass — I'll count the ${noun} you nail.`;
+      return `Hit play and try a rep — I'll count the ${noun} you nail.`;
     }
     if (p.total < _REHEARSAL_MIN_ITEMS) {
       return `${p.passes} clean so far. Keep going — full loop unlocks the check.`;
@@ -8436,7 +9680,7 @@
     if (pct >= 50) {
       return `${pct}% clean. Try one more loop — 70% locks it in.`;
     }
-    return `${p.passes} of ${p.total} clean. Slow it down and take another pass.`;
+    return `${p.passes} of ${p.total} clean. Slow it down and take another rep.`;
   }
 
   function _updateRehearsalScoreDisplay() {
@@ -8624,6 +9868,12 @@
 
   function _onEnterRehearsalView() {
     state.rehearsal.active = true;
+    // Phase A: stamp the session start so _shouldShowSummary can
+    // distinguish "opened rehearsal but never played" from "practised
+    // for real". We stamp on every enter (not just cold loads) so a
+    // musician who tabs out and comes back gets a fresh session-goal
+    // rather than an accumulated one.
+    state.rehearsal.sessionStartedAt = Date.now();
     const key = _rehearsalStorageKey();
     if (state.rehearsal.lastPersistKey !== key) _loadRehearsalProgress();
     if (!state.sections || !state.sections.length) {
@@ -8644,6 +9894,14 @@
     _updateRehearsalMicChip();
     _renderRehearsalTransport();
     _startRehearsalVerifyLoop();
+    // Kick the session-goal strip once on entry and then tick it
+    // every 30 s while the view is up. Persistent interval id is
+    // kept on state so the leave hook can clear it cleanly.
+    _updateSessionGoal();
+    if (state.rehearsal._goalTimer) {
+      try { clearInterval(state.rehearsal._goalTimer); } catch (_) {}
+    }
+    state.rehearsal._goalTimer = setInterval(_updateSessionGoal, 30 * 1000);
   }
 
   function _onLeaveRehearsalView() {
@@ -8653,6 +9911,10 @@
       try { pauseAll(); } catch (_) {}
     }
     state.rehearsal.speed = 1.0;
+    if (state.rehearsal._goalTimer) {
+      try { clearInterval(state.rehearsal._goalTimer); } catch (_) {}
+      state.rehearsal._goalTimer = null;
+    }
   }
 
   // ─── Event wiring (bandroom CTAs + rehearsal transport) ────────
@@ -8665,10 +9927,65 @@
     if (startJam) {
       startJam.addEventListener('click', () => showView('perform'));
     }
+    // Phase A: both "back to bandroom" and "skip to jam" first check
+    // whether the session earned any beads. If yes, the summary card
+    // intercepts and the actual navigation happens from its "Just
+    // jam" button (which the caller wires to the appropriate target).
+    // "Keep practicing" simply dismisses without leaving. Sessions
+    // with no beads pass through instantly so the exits stay snappy.
     const backBtn = document.getElementById('rehearsal-back-to-bandroom');
-    if (backBtn) backBtn.addEventListener('click', () => showView('bandroom'));
+    if (backBtn) backBtn.addEventListener('click', () => {
+      if (_shouldShowSummary() && _showSessionSummary(
+        _computeSessionSummary(),
+        () => showView('bandroom'),
+      )) return;
+      showView('bandroom');
+    });
     const skipBtn = document.getElementById('rehearsal-skip-to-jam');
-    if (skipBtn) skipBtn.addEventListener('click', () => showView('perform'));
+    if (skipBtn) skipBtn.addEventListener('click', () => {
+      if (_shouldShowSummary() && _showSessionSummary(
+        _computeSessionSummary(),
+        () => showView('perform'),
+      )) return;
+      showView('perform');
+    });
+    // Phase A: summary-card CTAs.
+    const summaryKeep = document.getElementById('session-summary-keep');
+    if (summaryKeep) summaryKeep.addEventListener('click', () => _dismissSessionSummary('keep'));
+    const summaryJam = document.getElementById('session-summary-jam');
+    if (summaryJam) summaryJam.addEventListener('click', () => _dismissSessionSummary('jam'));
+    // Phase B: skill-map entry points. Bandroom text-link opens it
+    // directly; the summary-card link dismisses the card first so
+    // the skill map isn't stacked on top of it.
+    const bandroomSkillMap = document.getElementById('bandroom-skill-map');
+    if (bandroomSkillMap) bandroomSkillMap.addEventListener('click', () => _showSkillMap());
+    const summarySkillMap = document.getElementById('session-summary-skill-map');
+    if (summarySkillMap) summarySkillMap.addEventListener('click', () => {
+      _dismissSessionSummary('keep');
+      _showSkillMap();
+    });
+    const skillMapClose = document.getElementById('skill-map-close');
+    if (skillMapClose) skillMapClose.addEventListener('click', () => _hideSkillMap());
+    // Backdrop click dismisses the skill-map (matches modal
+    // conventions). Uses the overlay itself as the click target so
+    // clicks inside the card don't close it.
+    const skillMapOverlay = document.getElementById('view-skill-map');
+    if (skillMapOverlay) skillMapOverlay.addEventListener('click', (e) => {
+      if (e.target === skillMapOverlay) _hideSkillMap();
+    });
+    // Phase C: warm-up entry points. Bandroom "Warm up" button and
+    // the suggestion chip both call _startWarmup(). Close button and
+    // backdrop click both call _hideWarmup().
+    const bandroomWarmup = document.getElementById('bandroom-warmup');
+    if (bandroomWarmup) bandroomWarmup.addEventListener('click', () => _startWarmup());
+    const bandroomWarmupChip = document.getElementById('bandroom-warmup-chip');
+    if (bandroomWarmupChip) bandroomWarmupChip.addEventListener('click', () => _startWarmup());
+    const warmupClose = document.getElementById('warmup-close');
+    if (warmupClose) warmupClose.addEventListener('click', () => _hideWarmup());
+    const warmupOverlay = document.getElementById('view-warmup');
+    if (warmupOverlay) warmupOverlay.addEventListener('click', (e) => {
+      if (e.target === warmupOverlay) _hideWarmup();
+    });
     const playBtn = document.getElementById('rehearsal-play');
     if (playBtn) playBtn.addEventListener('click', _rehearsalPlayPause);
     const loopBtn = document.getElementById('rehearsal-loop');
@@ -8701,7 +10018,37 @@
       _newMasteryRecord,
       _rehearsalSectionCleared,
       _difficultyHintsFor,
+      _detectSectionTags,
+      _TAG_REGISTRY,
       _REHEARSAL_LOCK_GRAPH,
+      _computeSessionSummary,
+      _practiceRecommendation,
+      _shouldShowSummary,
+      _showSessionSummary,
+      _dismissSessionSummary,
+      _computeSkillMap,
+      _renderSkillMap,
+      _showSkillMap,
+      _hideSkillMap,
+      _currentSongTitle,
+      _relativeTimeCopy,
+      _buildWarmupLoop,
+      _shouldSuggestWarmup,
+      _refreshWarmupSuggestion,
+      _startWarmup,
+      _endWarmup,
+      _hideWarmup,
+      get _warmup() { return _warmup; },
+      _writeRingFromBuffer,
+      _ringToWav,
+      _saveBestRep,
+      _loadBestRep,
+      _hasBestRep,
+      _playBestRep,
+      _primeBestRepCache,
+      _bestRepOptIn,
+      _setBestRepOptIn,
+      _maybeSnapshotBestRep,
     };
   } catch (_) {}
 })();

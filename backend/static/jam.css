@@ -2664,11 +2664,26 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .rehearsal-section-heading {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: 10px;
 }
 .rehearsal-section-heading-name {
   font-size: 22px;
   font-weight: 700;
+}
+/* Pattern-ROI subtitle: "Appears 4× · unlocks 41% of the song".
+   Sits on its own line under the heading name to frame the section
+   as a mastery investment. Colour intentionally dim so it reads
+   as context, not competing with the name. */
+.rehearsal-section-heading-roi {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 0.01em;
+  margin-top: 2px;
+}
+.rehearsal-section-heading-roi[hidden] {
+  display: none;
 }
 .rehearsal-section-heading-badge {
   font-size: 11px;
@@ -2738,6 +2753,47 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .rehearsal-tile-sub {
   font-size: 11px;
   color: var(--text-dim);
+}
+/* Card meta strip under the diagram: musician-language duration
+   ("2 bars") + inline fretting-hand tag chip. The chip reuses the
+   same severity/hand mixins as the heading strip so a barre tile
+   glows warm without needing bespoke styling. */
+.rehearsal-tile-meta {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 11px;
+}
+.rehearsal-tile-bars {
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+.rehearsal-tile-tag {
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+.rehearsal-tile-tag.tag-severity-3 {
+  background: rgba(249, 115, 22, 0.16);
+  color: var(--accent-2);
+}
+/* Next-chord preview under the meta strip. Muted colour keeps it
+   subordinate to the current chord label; the arrow suggests
+   forward motion. */
+.rehearsal-tile-next {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.28);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
 }
 .rehearsal-tile.is-active {
   border-color: var(--accent);
@@ -2928,6 +2984,48 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   color: var(--text);
   background: rgba(249, 115, 22, 0.08);
 }
+/* Cluster wraps one anchor + its variation drawer. Kept transparent
+   so it's invisible when a group has no variants; the drawer
+   toggle only appears when there's something to reveal. */
+.rehearsal-cluster {
+  display: flex;
+  flex-direction: column;
+}
+.rehearsal-variation-toggle {
+  align-self: flex-start;
+  margin: 2px 0 2px 28px;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  text-align: left;
+}
+.rehearsal-variation-toggle::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 4px;
+  transition: transform 0.12s;
+}
+.rehearsal-variation-toggle.is-open::before {
+  transform: rotate(90deg);
+}
+.rehearsal-variation-toggle:hover {
+  color: var(--text);
+}
+.rehearsal-variation-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  max-height: 400px;
+  transition: max-height 0.16s ease-out;
+}
+.rehearsal-variation-drawer.is-collapsed {
+  max-height: 0;
+}
 .rehearsal-section-row.is-soft .rehearsal-section-row-name {
   font-style: italic;
   color: var(--text-dim);
@@ -3022,6 +3120,429 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   font-weight: 500;
   letter-spacing: 0.01em;
 }
+/* Severity styling: severity 3 (roadblock) gets the warm accent so
+   barre chords stand out in the heading strip; severity 2 keeps the
+   neutral default. */
+.difficulty-hint.tag-severity-3 {
+  background: rgba(249, 115, 22, 0.14);
+  color: var(--accent-2);
+}
+/* Hand hint: a small leading marker tells the musician at a glance
+   which hand or timing dimension the tag targets. Purely
+   decorative — the chip label carries the copy. */
+.difficulty-hint::before {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  margin-right: 4px;
+  opacity: 0.6;
+  text-transform: uppercase;
+}
+.difficulty-hint.tag-hand-fretting::before { content: 'FRET'; }
+.difficulty-hint.tag-hand-picking::before { content: 'PICK'; }
+.difficulty-hint.tag-hand-timing::before { content: 'TIME'; }
+.difficulty-hint.tag-hand-both::before { content: 'BOTH'; }
+
+/* Phase A: session-end summary card. Overlays #view-rehearsal
+   without unmounting it so the practice state is still behind the
+   card if the user picks "Keep practicing". The card carries the
+   locked-in tally, best/needs-work rows, and a practice
+   recommendation; sits on a translucent scrim so the rehearsal
+   view visibly recedes but doesn't disappear. */
+.session-summary-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 14, 20, 0.72);
+  z-index: 20;
+  padding: 24px;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+  pointer-events: none;
+}
+.session-summary-overlay.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.session-summary-overlay[hidden] {
+  display: none;
+}
+.session-summary-card {
+  background: var(--surface, #131922);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px 32px;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+.session-summary-heading {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: var(--text, #e9edf2);
+}
+.session-summary-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.session-summary-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 14px;
+}
+.session-summary-line[hidden] {
+  display: none;
+}
+.session-summary-line-label {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.session-summary-line-value {
+  color: var(--text, #e9edf2);
+  font-weight: 600;
+  text-align: right;
+}
+.session-summary-recommendation {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 20px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--accent, #6ea8ff);
+  background: rgba(110, 168, 255, 0.06);
+  border-radius: 4px;
+}
+.session-summary-recommendation:empty {
+  display: none;
+}
+.session-summary-cta-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.session-summary-footer {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+/* view-rehearsal needs to be a positioned container so the overlay
+   can inset:0 to it rather than the whole viewport. */
+#view-rehearsal {
+  position: relative;
+}
+
+/* Phase B: cross-song skill map. Modal overlay pinned to the
+   viewport so it works from any view (bandroom or rehearsal
+   summary card). Two-column mastery breakdown + Recent Songs
+   strip. Read-only — dismissed via Close button or backdrop
+   click. */
+.skill-map-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 14, 20, 0.72);
+  z-index: 50;
+  padding: 24px;
+}
+.skill-map-overlay[hidden] {
+  display: none;
+}
+.skill-map-card {
+  background: var(--surface, #131922);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px 32px;
+  max-width: 640px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+.skill-map-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.skill-map-heading {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text, #e9edf2);
+}
+.skill-map-empty {
+  color: var(--text-dim);
+  font-size: 14px;
+  text-align: center;
+  padding: 32px 0;
+}
+.skill-map-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+.skill-map-column-heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.skill-map-column-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.skill-map-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: rgba(148, 163, 184, 0.06);
+}
+.skill-map-row-label {
+  color: var(--text, #e9edf2);
+  font-weight: 500;
+}
+.skill-map-row-dots {
+  color: var(--accent, #6ea8ff);
+  letter-spacing: 2px;
+  font-size: 10px;
+}
+.skill-map-column-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 8px;
+  font-style: italic;
+}
+.skill-map-recent {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+.skill-map-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.skill-map-recent-song {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.06);
+  font-size: 13px;
+  align-items: baseline;
+}
+.skill-map-recent-song-title {
+  color: var(--text, #e9edf2);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skill-map-recent-song-parts {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.skill-map-recent-song-when {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ─── Phase C warm-up mode ─── */
+
+/* Bandroom suggestion chip. Appears under the CTA row when the
+   session includes a barre section and no warm-up in the last 24h. */
+.warmup-suggestion-chip {
+  align-self: stretch;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  background: rgba(148, 163, 184, 0.05);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  font-style: italic;
+  transition: background 0.15s, color 0.15s;
+}
+.warmup-suggestion-chip:hover {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text);
+}
+
+/* Tertiary CTA style for the bandroom "Warm up" button — quieter
+   than .ghost so it doesn't compete visually with Just jam. */
+.bandroom-cta .ghost.tertiary {
+  opacity: 0.78;
+  font-size: 13px;
+}
+
+/* Modal overlay wrapper — mirrors .skill-map-overlay so the two
+   feel like the same class of surface. */
+.warmup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 14, 20, 0.72);
+}
+.warmup-overlay[hidden] {
+  display: none;
+}
+.warmup-card {
+  width: min(560px, 100%);
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--card, #1c2028);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.warmup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.warmup-heading {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.warmup-hint {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.warmup-tile-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.warmup-tile {
+  padding: 20px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(148, 163, 184, 0.05);
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.warmup-tile.is-active {
+  border-color: var(--accent, #6ea8ff);
+  box-shadow: 0 0 0 2px rgba(110, 168, 255, 0.25);
+  background: rgba(110, 168, 255, 0.08);
+}
+.warmup-tile.is-passed {
+  border-color: var(--good, #66c67d);
+  background: rgba(102, 198, 125, 0.12);
+  color: var(--good, #66c67d);
+}
+.warmup-progress {
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+.warmup-done-copy {
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(102, 198, 125, 0.10);
+  color: var(--good, #66c67d);
+  text-align: center;
+  font-weight: 500;
+}
+.warmup-done-copy[hidden] {
+  display: none;
+}
+
+/* ─── Phase D best-rep playback ─── */
+
+/* Small sibling button rendered after each rehearsal-section-row.
+   Uses text-link styling so it doesn't compete with the row itself
+   but is discoverable. */
+.best-rep-button {
+  align-self: flex-end;
+  margin: -4px 12px 8px auto;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--accent, #6ea8ff);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.best-rep-button:hover {
+  background: rgba(110, 168, 255, 0.10);
+}
+
+/* Session-summary "Hear your best rep" link. Inline next to the
+   Best mastery value; text-link sizing keeps the line clean. */
+#session-summary-best-rep {
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent, #6ea8ff);
+  font-size: 12px;
+  cursor: pointer;
+}
+#session-summary-best-rep[hidden] {
+  display: none;
+}
+
+/* Opt-in toast — bottom-centre fixed banner. Auto-inserted by
+   _promptBestRepOptIn on the first qualifying perfect run. */
+.bestrep-optin-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+  background: var(--card, #1c2028);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  color: var(--text);
+  font-size: 13px;
+}
+.bestrep-optin-copy {
+  font-weight: 500;
+}
+.bestrep-optin-cta {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.bestrep-optin-cta button {
+  padding: 6px 12px;
+  font-size: 12px;
+}
 
 /* Status line replacing the "Passes 0/0" scoreboard. Warm sentence
    copy from _rehearsalStatusCopy(); container reuses the
@@ -3115,6 +3636,61 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   color: #ffffff;
   border-color: var(--good);
   background: rgba(74, 222, 128, 0.35);
+}
+/* Fading: previously locked-in, but stale. Muted amber signals
+   "refresher needed" without the alarm of a fail state. */
+.mastery-chip.is-fading {
+  color: #f4c063;
+  border-color: rgba(244, 192, 99, 0.4);
+  background: rgba(244, 192, 99, 0.10);
+}
+
+/* Today's-goal strip: a quiet, single-row session-budget indicator
+   above the section list. Not a hard cap — just a nudge to help a
+   practicer notice they've been at it long enough to hit their
+   Duolingo-style daily goal. Progress bar fills in real time. */
+.rehearsal-session-goal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 0 0 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 12px;
+  color: var(--dim);
+}
+.rehearsal-session-goal[hidden] { display: none; }
+.rehearsal-session-goal-label {
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.rehearsal-session-goal-value {
+  color: var(--dim);
+  white-space: nowrap;
+}
+.rehearsal-session-goal-bar {
+  flex: 1 1 auto;
+  height: 4px;
+  min-width: 40px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.rehearsal-session-goal-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.4s ease-out;
+}
+.rehearsal-session-goal.is-complete .rehearsal-session-goal-fill {
+  background: var(--good);
+}
+.rehearsal-session-goal.is-complete .rehearsal-session-goal-label {
+  color: var(--good);
 }
 
 /* Tile fine-grained failure states. is-fail keeps the existing red

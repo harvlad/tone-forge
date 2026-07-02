@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=33" />
+<link rel="stylesheet" href="/static/jam.css?v=39" />
 </head>
 <body>
 <header class="jam-header">
@@ -169,6 +169,20 @@
     <div id="bandroom-cta" class="bandroom-cta" hidden>
       <button id="bandroom-start-rehearsal" class="primary" type="button">Start rehearsal</button>
       <button id="bandroom-start-jam" class="ghost" type="button">Just jam</button>
+      <!-- Phase C: warm-up mode. Tertiary style — quieter than the
+           two above so the primary flow is unchanged. -->
+      <button id="bandroom-warmup" class="ghost tertiary" type="button">Warm up</button>
+      <!-- Phase B: cross-song skill map. Text-link styled so it
+           reads as a secondary discovery affordance rather than a
+           third primary CTA. -->
+      <button id="bandroom-skill-map" class="text-link" type="button">See your skill map</button>
+      <!-- Phase C: contextual warm-up suggestion — only appears when
+           the current session has a barre section that would benefit
+           from a warm-up. Hidden by default; _refreshWarmupSuggestion
+           toggles the hidden attr. -->
+      <button id="bandroom-warmup-chip" class="warmup-suggestion-chip" type="button" hidden>
+        Ease into it: try a warm-up first
+      </button>
     </div>
 
     <button id="bandroom-cancel" class="ghost">Cancel</button>
@@ -200,6 +214,16 @@
            Extras) are rendered inline by _buildRehearsalSectionList so
            the list adapts to what the bundle actually contains. -->
       <aside id="rehearsal-sections" class="rehearsal-sections">
+        <!-- Today's-goal strip: quiet session-budget nudge at the
+             top of the left rail. Populated by _updateSessionGoal
+             from state.rehearsal.sessionStartedAt; hidden until a
+             session has started so the sidebar stays clean before
+             the first play. -->
+        <div id="rehearsal-session-goal" class="rehearsal-session-goal" hidden>
+          <span class="rehearsal-session-goal-label">Today's goal</span>
+          <span class="rehearsal-session-goal-value" id="rehearsal-session-goal-value">15 min · 0 min in</span>
+          <span class="rehearsal-session-goal-bar"><span class="rehearsal-session-goal-fill" id="rehearsal-session-goal-fill"></span></span>
+        </div>
         <div id="rehearsal-section-list" class="rehearsal-section-list"></div>
       </aside>
 
@@ -207,6 +231,12 @@
       <div id="rehearsal-main" class="rehearsal-main">
         <div id="rehearsal-section-heading" class="rehearsal-section-heading">
           <div class="rehearsal-section-heading-name" id="rehearsal-section-name">—</div>
+          <!-- Pattern-ROI subtitle ("Appears 4× · unlocks 41% of the
+               song"). Populated by _selectRehearsalSection from the
+               group record produced by _rehearsalGroupsFromSections.
+               Empty when the section is unique or its ROI is
+               negligible so the heading collapses cleanly. -->
+          <div class="rehearsal-section-heading-roi" id="rehearsal-section-roi"></div>
           <!-- Guidance-mode badge is intentionally hidden; the tile
                type in the pane below already tells you chords vs riff.
                Retained (hidden) for backward-compat with any DOM
@@ -233,10 +263,10 @@
 
         <!-- Status line. The legacy #rehearsal-score-value id is kept
              so DevTools scripts still resolve it; visually it now
-             carries state-aware prose (e.g. "Hit play and try a pass
+             carries state-aware prose (e.g. "Hit play and try a rep
              — I'll count the chords you nail."). -->
         <div id="rehearsal-score" class="rehearsal-status">
-          <span id="rehearsal-score-value" class="rehearsal-status-line">Hit play and try a pass — I'll count the chords you nail.</span>
+          <span id="rehearsal-score-value" class="rehearsal-status-line">Hit play and try a rep — I'll count the chords you nail.</span>
           <span id="rehearsal-score-hint" class="rehearsal-status-hint"></span>
         </div>
       </div>
@@ -255,6 +285,50 @@
         <button class="rehearsal-speed-btn is-active" data-speed="1" type="button">1×</button>
       </div>
       <button id="rehearsal-next" class="ghost" type="button" title="Next section">Next section →</button>
+    </div>
+
+    <!-- Phase A: session-end summary card. Overlays #view-rehearsal
+         so it feels like a "nice session" flourish rather than a
+         route change. Populated + shown by _showSessionSummary in
+         jam.js; hidden by default so it doesn't flash on load. The
+         card intercepts _both_ Back and Skip-to-jam when the session
+         did any practice; the wire-up in _wireRehearsalDom passes a
+         closure that navigates from the "Just jam" click. -->
+    <div id="session-summary-view" class="session-summary-overlay" hidden>
+      <div class="session-summary-card" role="dialog" aria-labelledby="session-summary-heading">
+        <div class="session-summary-heading" id="session-summary-heading">Nice session.</div>
+        <div class="session-summary-lines">
+          <div class="session-summary-line">
+            <span class="session-summary-line-label">Locked in</span>
+            <span class="session-summary-line-value" id="session-summary-locked-in">0 of 0 parts</span>
+          </div>
+          <div class="session-summary-line">
+            <span class="session-summary-line-label">Best mastery</span>
+            <span class="session-summary-line-value" id="session-summary-best">—</span>
+            <!-- Phase D: "Hear your best rep" link. Only shown by
+                 _showSessionSummary when a saved rep exists for the
+                 best-mastery row. -->
+            <button id="session-summary-best-rep" class="text-link" type="button" hidden>
+              ▶ Hear your best rep
+            </button>
+          </div>
+          <div class="session-summary-line" id="session-summary-needs-row">
+            <span class="session-summary-line-label">Needs work</span>
+            <span class="session-summary-line-value" id="session-summary-needs">—</span>
+          </div>
+        </div>
+        <div class="session-summary-recommendation" id="session-summary-recommendation"></div>
+        <div class="session-summary-cta-row">
+          <button id="session-summary-keep" class="ghost" type="button">Keep practicing</button>
+          <button id="session-summary-jam" class="primary" type="button">Just jam</button>
+        </div>
+        <!-- Phase B: link into the cross-song skill map from the
+             summary card so a musician can go straight from "nice
+             session" to "how am I doing overall?". -->
+        <div class="session-summary-footer">
+          <button id="session-summary-skill-map" class="text-link" type="button">See your progress →</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -715,8 +789,69 @@
       <div id="t-time" class="time">0:00 / 0:00</div>
     </div>
   </section>
+
+  <!-- ========================= SKILL MAP ============================= -->
+  <!--
+    Phase B: cross-song skill map. Modal overlay reachable from the
+    bandroom via "See your skill map" and from the session-summary
+    card. Reads every rehearsal:v1:* localStorage key — no
+    per-song bundle lookup — so it's snappy even with a few dozen
+    sessions cached. All fields populated by _renderSkillMap in
+    jam.js.
+  -->
+  <div id="view-skill-map" class="skill-map-overlay" hidden>
+    <div class="skill-map-card" role="dialog" aria-labelledby="skill-map-heading">
+      <div class="skill-map-header">
+        <div class="skill-map-heading" id="skill-map-heading">Your skill map</div>
+        <button id="skill-map-close" class="ghost" type="button" aria-label="Close skill map">Close</button>
+      </div>
+      <div id="skill-map-empty" class="skill-map-empty" hidden>
+        No practice yet. Start a rehearsal to build your skill map.
+      </div>
+      <div class="skill-map-columns">
+        <div class="skill-map-column">
+          <div class="skill-map-column-heading">Chords you've locked in</div>
+          <div id="skill-map-locked-in" class="skill-map-column-list"></div>
+        </div>
+        <div class="skill-map-column">
+          <div class="skill-map-column-heading">Chords that still trip you</div>
+          <div id="skill-map-needs-work" class="skill-map-column-list"></div>
+        </div>
+      </div>
+      <div class="skill-map-recent">
+        <div class="skill-map-column-heading">Recent songs</div>
+        <div id="skill-map-recent-songs" class="skill-map-recent-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================ WARM-UP (Phase C) =================== -->
+  <!--
+    Warm-up view. Sits on top as a modal overlay reachable from the
+    bandroom without entering rehearsal state. Vocabulary comes from
+    the current session's chord list (top-4 by frequency) or falls
+    back to C/G/Am/F. One chord per bar at 60 bpm; three passes
+    completes the warm-up. All rendering happens via _renderWarmupTiles
+    in jam.js.
+  -->
+  <div id="view-warmup" class="warmup-overlay" hidden>
+    <div class="warmup-card" role="dialog" aria-labelledby="warmup-heading">
+      <div class="warmup-header">
+        <div class="warmup-heading" id="warmup-heading">Warm up</div>
+        <button id="warmup-close" class="ghost" type="button" aria-label="Close warm-up">Close</button>
+      </div>
+      <div class="warmup-hint">
+        One chord per bar at 60 bpm. Three passes to complete.
+      </div>
+      <div id="warmup-tile-strip" class="warmup-tile-strip"></div>
+      <div id="warmup-progress" class="warmup-progress">3 passes to go</div>
+      <div id="warmup-done-copy" class="warmup-done-copy" hidden>
+        Nice — hands are warm. Enjoy the session.
+      </div>
+    </div>
+  </div>
 </main>
 
-<script src="/static/jam.js?v=62"></script>
+<script src="/static/jam.js?v=68"></script>
 </body>
 </html>
