@@ -1212,6 +1212,8 @@ class UnifiedPipeline:
                 try:
                     from tone_forge.analysis.section_resegment import (
                         resegment_flagged_sections,
+                    )
+                    from tone_forge.bundle_read_fixups import (
                         relabel_sections_from_h2,
                     )
                     resegmented = resegment_flagged_sections(

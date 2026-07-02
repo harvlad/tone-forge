@@ -257,184 +257,19 @@ def _build_understanding(result: Mapping[str, Any]) -> SongUnderstanding:
     tempo, tempo_conf = _resolve_tempo(result)
     key, key_conf = _resolve_key(result)
 
-    # Fix B: (re)compute the duration-guard flag on every read so
-    # pre-Fix-B persisted sessions (no ``duration_flag`` key) light up
-    # the suspicious-section indicator without needing re-analysis, and
-    # so any later tightening of the thresholds propagates to existing
-    # bundles. The guard is a pure function of (type, duration,
-    # position) with thresholds compiled into
-    # ``analysis.section_naming.DurationGuardThresholds`` — recomputing
-    # is O(N) with a tiny constant and idempotent. Missing / malformed
-    # sections list falls through as ``None`` and the guard no-ops.
+    # Fix B / Fix C / Round-2 legacy-bundle fixups previously ran here
+    # inline. They composed multiple analysis-subsystem modules and so
+    # violated the session-subsystem boundary discipline documented at
+    # the top of this file. The composition now lives in
+    # ``tone_forge.bundle_read_fixups`` and the API edge
+    # (``tone_forge_api.get_session_bundle``) applies it to the
+    # ``result`` dict before calling :func:`build`, mutating the dict
+    # in place. By the time we get here, ``sections`` /
+    # ``chords`` / ``chords_beat_snapped`` are already the
+    # post-fixup shape.
     raw_sections = result.get("sections")
-    if isinstance(raw_sections, list):
-        try:
-            from tone_forge.analysis.section_naming import (
-                flag_suspicious_durations,
-            )
-            flag_suspicious_durations(raw_sections)
-        except Exception:
-            # Defensive: never let the guard block bundle assembly.
-            # Legacy bundles then land with ``duration_flag=""`` and
-            # the JAM UI silently omits the indicator.
-            pass
-        # Fix C: boundary re-detection inside flagged spans. Runs on
-        # every read so legacy sessions get the split without needing
-        # re-analysis. Needs the persisted ``midi_stems`` blob which
-        # carries per-stem ``notes`` arrays; missing / malformed
-        # midi_stems short-circuits the resegment cleanly. After
-        # splitting we re-run H2 role classification on the new
-        # segmentation so sub-sections get their own labels (a split
-        # long chorus decomposes into verse/prechorus/chorus/bridge
-        # rather than repeating the parent's "chorus" label), then
-        # re-flag durations so any child still over the threshold
-        # keeps its indicator.
-        try:
-            from tone_forge.analysis.section_resegment import (
-                resegment_flagged_sections,
-                relabel_sections_from_h2,
-            )
-            midi_stems_blob = result.get("midi_stems") or {}
-            resegmented = resegment_flagged_sections(
-                raw_sections, midi_stems_blob
-            )
-            if len(resegmented) != len(raw_sections):
-                raw_sections = resegmented
-                raw_chords = result.get("chords")
-                if isinstance(raw_chords, list) and raw_chords:
-                    try:
-                        relabel_sections_from_h2(raw_sections, raw_chords)
-                    except Exception:
-                        pass
-                try:
-                    flag_suspicious_durations(raw_sections)
-                except Exception:
-                    pass
-        except Exception:
-            # Never let re-detection block bundle assembly. If it
-            # crashes, the bundle falls through with the Fix B flags
-            # only (unsplit but marked suspicious).
-            pass
-    # Round-2 Fix 4 — chord-vocabulary Jaccard boundary refinement on
-    # bundle read. Legacy sessions get harmonic-content-driven section
-    # splits without re-analysis. Runs after Fix C resegment so
-    # duration-flagged spans are already split; Fix 4 then catches
-    # energy-stable harmonic shifts Fix C's onset-density signal
-    # missed (e.g. pre-chorus F#5 vamp → chorus 6-chord progression).
-    # Needs a beat grid; legacy bundles without ``beats_s`` skip
-    # this stage cleanly.
-    if (
-        isinstance(raw_sections, list)
-        and isinstance(result, Mapping)
-        and result.get("chords")
-    ):
-        try:
-            from tone_forge.analysis.chord_vocab_boundaries import (
-                detect_chord_vocab_boundaries,
-            )
-            _fix4_beats_raw = result.get("beats_s")
-            _fix4_beats: Optional[np.ndarray] = None
-            if isinstance(_fix4_beats_raw, (list, tuple)):
-                try:
-                    _fix4_beats = np.asarray(
-                        [float(b) for b in _fix4_beats_raw],
-                        dtype=np.float64,
-                    )
-                except Exception:
-                    _fix4_beats = None
-            if _fix4_beats is not None:
-                new_boundaries = detect_chord_vocab_boundaries(
-                    raw_sections, result["chords"], _fix4_beats,
-                )
-                if new_boundaries:
-                    by_section: dict = {}
-                    for row in new_boundaries:
-                        by_section.setdefault(
-                            int(row["source_section_index"]), []
-                        ).append(float(row["time_s"]))
-                    refined: list = []
-                    for idx, section in enumerate(raw_sections):
-                        splits = sorted(by_section.get(idx, []))
-                        if not splits:
-                            refined.append(section)
-                            continue
-                        s_start = float(section.get("start_time", 0.0))
-                        s_end = float(section.get("end_time", 0.0))
-                        edges = [s_start] + splits + [s_end]
-                        for k in range(len(edges) - 1):
-                            sub = dict(section)
-                            sub["start_time"] = edges[k]
-                            sub["end_time"] = edges[k + 1]
-                            sub["duration"] = edges[k + 1] - edges[k]
-                            refined.append(sub)
-                    raw_sections = refined
-                    try:
-                        flag_suspicious_durations(raw_sections)
-                    except Exception:
-                        pass
-        except Exception:
-            # Defensive: never let the boundary refinement block
-            # bundle assembly.
-            pass
-    # Stage 1.6 — monophonic-section chord gate on bundle read. Legacy
-    # sessions get the fix on reload without re-analysis: drop chord
-    # regions whose midpoint lies inside a section that is strongly
-    # monophonic AND has a narrow pitch-class vocabulary. Runs on the
-    # persisted list-of-dicts shape so we can filter both ``chords``
-    # and ``chords_beat_snapped`` before they land on the immutable
-    # bundle tuples below. Sections without a debug_features blob
-    # (very old bundles pre-guidance-mode) short-circuit as "not
-    # gated" so nothing changes for them.
     raw_chords_list = result.get("chords")
     raw_chords_snapped_list = result.get("chords_beat_snapped")
-    # Round-2 Fix 2 — same-root region collapse on bundle read. Legacy
-    # sessions get the flicker-absorption fix on reload without needing
-    # re-analysis. Applied BEFORE the mono-section chord gate so the
-    # collapsed regions get gated together (no split-decision on halves
-    # of a formerly-flickering region). Missing beats → max-span guard
-    # disabled; that's fine on legacy bundles that never had a beat
-    # grid to protect long progressions against.
-    raw_beats_list = result.get("beats_s") if isinstance(result, Mapping) else None
-    _bundle_beats: Optional[np.ndarray] = None
-    if isinstance(raw_beats_list, (list, tuple)):
-        try:
-            _bundle_beats = np.asarray(
-                [float(b) for b in raw_beats_list], dtype=np.float64,
-            )
-        except Exception:
-            _bundle_beats = None
-    if isinstance(raw_chords_list, list) and raw_chords_list:
-        try:
-            from tone_forge.analysis.chords import (
-                collapse_same_root_regions,
-            )
-            raw_chords_list = collapse_same_root_regions(
-                raw_chords_list, _bundle_beats,
-            )
-            if isinstance(raw_chords_snapped_list, list):
-                raw_chords_snapped_list = collapse_same_root_regions(
-                    raw_chords_snapped_list, _bundle_beats,
-                )
-        except Exception:
-            # Defensive: never let the collapse block bundle assembly.
-            pass
-    if isinstance(raw_sections, list) and isinstance(raw_chords_list, list):
-        try:
-            from tone_forge.analysis.chords import (
-                filter_chords_in_monophonic_sections,
-            )
-            raw_chords_list = filter_chords_in_monophonic_sections(
-                raw_chords_list, raw_sections,
-            )
-            if isinstance(raw_chords_snapped_list, list):
-                raw_chords_snapped_list = (
-                    filter_chords_in_monophonic_sections(
-                        raw_chords_snapped_list, raw_sections,
-                    )
-                )
-        except Exception:
-            # Defensive: never let the filter block bundle assembly.
-            pass
 
     sections = tuple(_iter_sections(raw_sections))
     chords = tuple(_iter_chords(raw_chords_list))

@@ -2686,6 +2686,17 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
         )
     device_caps = _device_caps_for_session()
     tone_match = _retrieve_tone_for_history(result, device_caps=device_caps)
+    # Apply legacy-bundle fixups (Fix B / Fix C / Round-2 chord-detector)
+    # to the persisted result before handing it to the bundle assembler.
+    # Composition of analysis + song_form belongs at this edge, not in
+    # the session subsystem — see ``tone_forge.bundle_read_fixups``.
+    try:
+        from tone_forge.bundle_read_fixups import apply_bundle_read_fixups
+        apply_bundle_read_fixups(result)
+    except Exception:
+        # Never let a fixup failure block bundle assembly. The bundle
+        # will simply reflect the persisted shape as-is.
+        pass
     bundle = build_session_bundle(
         result,
         session_id=entry_id,
