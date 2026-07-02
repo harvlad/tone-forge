@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=39" />
+<link rel="stylesheet" href="/static/jam.css?v=40" />
 </head>
 <body>
 <header class="jam-header">
@@ -297,6 +297,13 @@
     <div id="session-summary-view" class="session-summary-overlay" hidden>
       <div class="session-summary-card" role="dialog" aria-labelledby="session-summary-heading">
         <div class="session-summary-heading" id="session-summary-heading">Nice session.</div>
+        <!-- Follow-up: today's-goal badge. Only rendered when the
+             session elapsed time cleared the 15 min soft target. Copy
+             is set by _showSessionSummary; hidden by default. -->
+        <div class="session-summary-goal" id="session-summary-goal" hidden>
+          <span class="session-summary-goal-icon" aria-hidden="true">✓</span>
+          <span class="session-summary-goal-copy" id="session-summary-goal-copy">You hit today's goal.</span>
+        </div>
         <div class="session-summary-lines">
           <div class="session-summary-line">
             <span class="session-summary-line-label">Locked in</span>
@@ -852,6 +859,6 @@
   </div>
 </main>
 
-<script src="/static/jam.js?v=68"></script>
+<script src="/static/jam.js?v=69"></script>
 </body>
 </html>

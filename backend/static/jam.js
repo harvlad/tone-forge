@@ -7341,6 +7341,7 @@
       state.rehearsal.completed = {};
       state.rehearsal.mastery = {};
       state.rehearsal.manualUnlocks = {};
+      state.rehearsal._variationDrawers = {};
       if (!raw) { state.rehearsal.lastPersistKey = key; return; }
       const parsed = JSON.parse(raw);
       const version = parsed && Number.isFinite(parsed.version) ? parsed.version : 1;
@@ -7373,6 +7374,16 @@
           const idx = Number(k);
           if (Number.isFinite(idx) && parsed.manualUnlocks[k]) {
             state.rehearsal.manualUnlocks[idx] = true;
+          }
+        }
+      }
+      // Follow-up: rehydrate variation-drawer open state (v4+). Missing
+      // key on older records is fine — every anchor starts closed.
+      if (version >= 4 && parsed && parsed.variationDrawers && typeof parsed.variationDrawers === 'object') {
+        for (const k of Object.keys(parsed.variationDrawers)) {
+          const idx = Number(k);
+          if (Number.isFinite(idx) && parsed.variationDrawers[k]) {
+            state.rehearsal._variationDrawers[idx] = true;
           }
         }
       }
@@ -7437,8 +7448,34 @@
         title: title || null,
         savedAt: Date.now(),
       };
+      // Follow-up: persist variation-drawer open state so anchors the
+      // user drilled into stay open across reloads. Only the "open"
+      // set is stored — closed is the default so an empty dict costs
+      // nothing.
+      const variationDrawers = {};
+      const drawers = state.rehearsal._variationDrawers || {};
+      for (const k of Object.keys(drawers)) {
+        const idx = Number(k);
+        if (Number.isFinite(idx) && drawers[k]) variationDrawers[idx] = true;
+      }
+      // Follow-up: snapshot detected tag ids per section so the
+      // cross-song skill-map walker can bucket by tag id (barre /
+      // colour / jumps / quick) without re-loading each song's full
+      // bundle. Only sections that have a mastery record are stored;
+      // untouched sections don't contribute to the map anyway.
+      const sectionTags = {};
+      const sections = Array.isArray(state.sections) ? state.sections : [];
+      for (const idxStr of Object.keys(state.rehearsal.mastery || {})) {
+        const idx = Number(idxStr);
+        if (!Number.isFinite(idx)) continue;
+        const s = sections[idx];
+        if (!s) continue;
+        const tagIds = _detectSectionTags(s).map((t) => t.id);
+        if (tagIds.length) sectionTags[idx] = tagIds;
+      }
       localStorage.setItem(key, JSON.stringify({
-        version: 3, completed, mastery, manualUnlocks, metadata,
+        version: 4, completed, mastery, manualUnlocks, metadata,
+        variationDrawers, sectionTags,
       }));
     } catch (e) {
       console.warn('[rehearsal] save failed:', e);
@@ -7610,6 +7647,32 @@
     return _detectSectionTags(section).map((t) => t.label);
   }
 
+  // Serializable per-section tag summary for /debug and DevTools.
+  // Returns an array of {idx, label, tagIds, tagSeverities} so the
+  // debug visualizer can filter/color sections by tag id (e.g. show
+  // only sections with the 'barre' tag) without re-implementing the
+  // detection heuristics. Cheap to compute — walks state.sections
+  // once and calls _detectSectionTags per section.
+  function _debugTagSummary() {
+    const out = [];
+    const sections = Array.isArray(state.sections) ? state.sections : [];
+    for (let i = 0; i < sections.length; i++) {
+      const s = sections[i];
+      if (!s) continue;
+      const tags = _detectSectionTags(s);
+      const label = _rehearsalLabelForSection ? _rehearsalLabelForSection(s) : null;
+      out.push({
+        idx: i,
+        label: label ? (label.title || null) : null,
+        startSec: s.startSec || 0,
+        endSec: s.endSec || 0,
+        tagIds: tags.map((t) => t.id),
+        tagSeverities: tags.map((t) => t.severity || 0),
+      });
+    }
+    return out;
+  }
+
   function _renderDifficultyHints(section) {
     const el = document.getElementById('rehearsal-section-hints');
     if (!el) return;
@@ -7723,6 +7786,16 @@
     if (!anyBead) return null;
 
     const worstSection = worst ? state.sections[worst.anchorIdx] : null;
+
+    // Follow-up: today's-goal check. The session-goal strip uses a
+    // 15 min soft target; the summary card echoes that so a musician
+    // who cleared their goal gets a small "✓ You hit today's goal"
+    // stripe. Elapsed is computed from state.rehearsal.sessionStartedAt
+    // so it survives page reloads within a session.
+    const started = state.rehearsal.sessionStartedAt || 0;
+    const goalMin = _REHEARSAL_SESSION_GOAL_MIN;
+    const elapsedMin = started ? Math.max(0, (Date.now() - started) / 60000) : 0;
+
     return {
       lockedIn,
       totalParts: learnable.length,
@@ -7732,6 +7805,9 @@
       bestAnchorIdx: best ? best.anchorIdx : null,
       needsWorkLabel: worst ? worst.label : null,
       recommendation: _practiceRecommendation(worst, worstSection),
+      goalMin,
+      elapsedMin,
+      goalHit: elapsedMin >= goalMin,
     };
   }
 
@@ -7779,6 +7855,22 @@
     }
     if (recEl) {
       recEl.textContent = summary.recommendation || '';
+    }
+    // Follow-up: today's-goal badge. Shown only when the session
+    // elapsed time met the soft target; the copy names the actual
+    // elapsed minutes so it feels earned rather than boilerplate.
+    const goalEl = document.getElementById('session-summary-goal');
+    const goalCopyEl = document.getElementById('session-summary-goal-copy');
+    if (goalEl) {
+      if (summary.goalHit) {
+        const mins = Math.round(summary.elapsedMin || 0);
+        if (goalCopyEl) {
+          goalCopyEl.textContent = `You hit today's goal — ${mins} min in.`;
+        }
+        goalEl.hidden = false;
+      } else {
+        goalEl.hidden = true;
+      }
     }
     // Phase D: toggle the "Hear your best rep" link if the best row
     // has a saved blob. The button's click is wired once here so
@@ -7842,7 +7934,11 @@
 
   function _computeSkillMap() {
     const songs = [];
-    const chordBuckets = new Map();   // label → {lockedIn, needsWork}
+    // Follow-up: bucket by tag id ('barre', 'colour', 'jumps', 'quick')
+    // rather than the coarse "Practised sections" label. Records saved
+    // pre-v4 don't carry sectionTags — those sections fall into the
+    // legacy 'practised' bucket so their progress still shows up.
+    const chordBuckets = new Map();   // tagId → {label, lockedIn, needsWork}
     let totalKeys = 0;
 
     for (let i = 0; i < localStorage.length; i++) {
@@ -7856,6 +7952,7 @@
       const mastery = (parsed.mastery && typeof parsed.mastery === 'object') ? parsed.mastery : {};
       const completed = Array.isArray(parsed.completed) ? parsed.completed : [];
       const meta = (parsed.metadata && typeof parsed.metadata === 'object') ? parsed.metadata : {};
+      const sectionTags = (parsed.sectionTags && typeof parsed.sectionTags === 'object') ? parsed.sectionTags : {};
 
       // Per-song tally: count sections that reached locked_in /
       // mastered (or the legacy completed bit) versus the total
@@ -7881,34 +7978,41 @@
         totalParts,
       });
 
-      // Chord-family aggregation: we only know per-section bead
-      // scores here, not the underlying chord list (that requires
-      // the bundle to be loaded). So the bucket key is the mastery
-      // state itself — "locked in" vs "needs work" — coarsened to
-      // whichever mode the section was practising. This is the
-      // best signal available without dragging the full analysis
-      // into localStorage; the plan's "Barre F" tile is a follow-up
-      // once bundles cache their chord vocab per section here too.
+      // Bucket every touched section under each of its detected tag
+      // ids (a section may carry multiple tags — e.g. a bridge with
+      // a barre F and a colour 7th chord contributes to both). The
+      // label attached to the bucket comes from the tag registry so
+      // renaming stays cheap. Sections with no snapshotted tags fall
+      // into the 'practised' catch-all so pre-v4 records still count.
       for (const idxStr of idxs) {
         const rec = mastery[idxStr];
-        if (!rec) continue;
-        const bucketLabel = _skillBucketLabel(rec);
-        if (!bucketLabel) continue;
-        if (!chordBuckets.has(bucketLabel)) {
-          chordBuckets.set(bucketLabel, { lockedIn: 0, needsWork: 0 });
+        if (!rec || !Array.isArray(rec.beads) || !rec.beads.some((b) => b)) continue;
+        const isLocked = rec.state === 'locked_in' || rec.state === 'mastered';
+        const tagIds = Array.isArray(sectionTags[idxStr]) ? sectionTags[idxStr]
+                     : (Array.isArray(sectionTags[Number(idxStr)]) ? sectionTags[Number(idxStr)] : []);
+        const bucketIds = tagIds.length ? tagIds : ['practised'];
+        for (const tagId of bucketIds) {
+          const label = _skillMapBucketLabel(tagId);
+          if (!label) continue;
+          if (!chordBuckets.has(tagId)) {
+            chordBuckets.set(tagId, { label, lockedIn: 0, needsWork: 0 });
+          }
+          const b = chordBuckets.get(tagId);
+          if (isLocked) b.lockedIn += 1;
+          else b.needsWork += 1;
         }
-        const b = chordBuckets.get(bucketLabel);
-        if (rec.state === 'locked_in' || rec.state === 'mastered') b.lockedIn += 1;
-        else b.needsWork += 1;
       }
     }
 
     songs.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
     const lockedIn = [];
     const needsWork = [];
-    for (const [label, tallies] of chordBuckets.entries()) {
-      if (tallies.lockedIn > tallies.needsWork) lockedIn.push({ label, count: tallies.lockedIn });
-      else needsWork.push({ label, count: tallies.needsWork });
+    for (const [tagId, tallies] of chordBuckets.entries()) {
+      if (tallies.lockedIn > tallies.needsWork) {
+        lockedIn.push({ tagId, label: tallies.label, count: tallies.lockedIn });
+      } else {
+        needsWork.push({ tagId, label: tallies.label, count: tallies.needsWork });
+      }
     }
     lockedIn.sort((a, b) => b.count - a.count);
     needsWork.sort((a, b) => b.count - a.count);
@@ -7921,21 +8025,15 @@
     };
   }
 
-  // Coarse bucket label for the aggregate map. Uses the mastery
-  // state name so the copy stays honest — until a follow-up caches
-  // per-section chord vocab, "Open shapes" (chord mode) and "Lead
-  // lines" (riff/lead mode) is the truthful granularity we can
-  // deliver. Returns null when the record hasn't been touched
-  // (no bucket entry created).
-  function _skillBucketLabel(rec) {
-    if (!rec || !Array.isArray(rec.beads)) return null;
-    const any = rec.beads.some(b => b);
-    if (!any) return null;
-    // Without per-section guidance_mode in storage, we can't tell
-    // riff from chord here. Group everything under one label so
-    // the two columns still balance meaningfully. Follow-up phase
-    // caches guidance_mode into the mastery record on save.
-    return 'Practised sections';
+  // Human-facing label for a skill-map bucket. Looks up the tag id
+  // in the registry so renaming a tag once cascades everywhere.
+  // 'practised' is a synthesized catch-all for pre-v4 records that
+  // didn't snapshot section tags at save time.
+  function _skillMapBucketLabel(tagId) {
+    if (!tagId) return null;
+    if (tagId === 'practised') return 'Practised sections';
+    const tag = _TAG_REGISTRY[tagId];
+    return tag ? tag.label : null;
   }
 
   function _renderSkillMap(map) {
@@ -8079,11 +8177,72 @@
     } else {
       vocab = _WARMUP_FALLBACK_CHORDS.slice();
     }
+    // Follow-up: bias vocab so the chord attached to the highest-
+    // severity tag in this song lands first. Rationale: a warm-up
+    // primes the hardest shape while fingers are fresh. Scans every
+    // section for its detected tags; picks the max-severity tag;
+    // then looks for a chord symbol in the current vocab that the
+    // per-chord tag detector attributes back to that tag.
+    const promoted = _warmupPromotedChord(vocab);
+    if (promoted) {
+      const idx = vocab.indexOf(promoted);
+      if (idx > 0) {
+        vocab.splice(idx, 1);
+        vocab.unshift(promoted);
+      } else if (idx < 0 && vocab.length >= 4) {
+        // Not in the top-4 vocab — swap out the last (least-frequent)
+        // slot so the challenge chord earns its place.
+        vocab[vocab.length - 1] = promoted;
+        vocab.unshift(vocab.pop());
+      } else if (idx < 0) {
+        vocab.unshift(promoted);
+      }
+    }
     return vocab.map((sym) => ({
       symbol: sym,
       pcSet: _chordSymbolToPitchClasses(sym),
       passed: false,
     }));
+  }
+
+  // Pick a challenge chord to prime the warm-up with. Walks every
+  // section, records its highest-severity tag, then picks the
+  // matching chord symbol from state.chords whose per-chord tag has
+  // the same id. Returns null when no section carries a tag or no
+  // chord in the song matches — the caller then leaves the vocab
+  // frequency-sorted.
+  function _warmupPromotedChord(vocabHint) {
+    if (!Array.isArray(state.sections) || !state.sections.length) return null;
+    let bestSev = 0;
+    let bestId = null;
+    for (const s of state.sections) {
+      const tags = _detectSectionTags(s);
+      for (const t of tags) {
+        const sev = t.severity || 0;
+        if (sev > bestSev) { bestSev = sev; bestId = t.id; }
+      }
+    }
+    if (!bestId) return null;
+    // Prefer chords that already appear in the frequency-ranked vocab
+    // hint (avoids surprising the musician with a chord the song
+    // barely uses). Falls back to any matching chord in state.chords.
+    const chords = Array.isArray(state.chords) ? state.chords : [];
+    const seen = new Set();
+    let inVocab = null;
+    let anyMatch = null;
+    for (const c of chords) {
+      if (!c || typeof c.symbol !== 'string') continue;
+      if (seen.has(c.symbol)) continue;
+      seen.add(c.symbol);
+      const tag = _tagForChordSymbol(c.symbol);
+      if (!tag || tag.id !== bestId) continue;
+      if (!anyMatch) anyMatch = c.symbol;
+      if (Array.isArray(vocabHint) && vocabHint.indexOf(c.symbol) >= 0) {
+        inVocab = c.symbol;
+        break;
+      }
+    }
+    return inVocab || anyMatch;
   }
 
   function _shouldSuggestWarmup() {
@@ -9032,6 +9191,9 @@
       toggle.textContent = nowOpen
         ? `Hide ${n} variation${n === 1 ? '' : 's'}`
         : `Show ${n} variation${n === 1 ? '' : 's'}`;
+      // Follow-up: persist drawer state so anchors the user drilled
+      // into stay open across reloads.
+      _saveRehearsalProgress();
     });
 
     parent.appendChild(cluster);
@@ -10019,6 +10181,7 @@
       _rehearsalSectionCleared,
       _difficultyHintsFor,
       _detectSectionTags,
+      _debugTagSummary,
       _TAG_REGISTRY,
       _REHEARSAL_LOCK_GRAPH,
       _computeSessionSummary,
@@ -10033,6 +10196,7 @@
       _currentSongTitle,
       _relativeTimeCopy,
       _buildWarmupLoop,
+      _warmupPromotedChord,
       _shouldSuggestWarmup,
       _refreshWarmupSuggestion,
       _startWarmup,
