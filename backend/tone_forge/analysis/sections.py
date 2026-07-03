@@ -115,6 +115,17 @@ class ArrangementSection:
     # the frontend re-derives locally in that case.
     bpm: float = 0.0
 
+    # Per-stem SectionFeatures snapshot used by the /debug visualizer
+    # to render Stage B's evidence side-by-side with labels. Each
+    # entry is an ``asdict``-serialised ``SectionFeatures`` for one
+    # stem in this section window. Populated by the guidance-mode
+    # classification loop (see unified_pipeline.py:946 for the
+    # canonical assignment; local_engine/analysis_worker.py mirrors
+    # it). Empty tuple default keeps legacy bundles (analysed before
+    # this milestone) round-tripping unchanged; the /debug UI treats
+    # an empty tuple as "no evidence available for this bundle".
+    debug_features: tuple = field(default_factory=tuple)
+
     @property
     def duration(self) -> float:
         """Duration of the section."""
@@ -146,6 +157,11 @@ class ArrangementSection:
             "structural_confidence": float(self.structural_confidence),
             "duration_flag": self.duration_flag,
             "bpm": float(self.bpm),
+            # ``debug_features`` entries are already asdict()'d
+            # SectionFeatures records — dict() copy so JSON encoders
+            # don't retain the tuple sentinel and downstream mutation
+            # doesn't leak back into the dataclass instance.
+            "debug_features": [dict(d) for d in self.debug_features],
         }
 
 

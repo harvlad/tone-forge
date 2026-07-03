@@ -354,6 +354,17 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             "bass": "bass",
             "other": "other",
             "guitar": "other",
+            # Vocals routes to the pYIN+torchcrepe monophonic ensemble
+            # inside ``extract_midi_hybrid`` (see gpu_extractor.py:1994,
+            # ``stem_type in ("lead", "vocals")``). Without this entry
+            # the loop below skipped the vocals stem entirely, leaving
+            # ``midi_stems`` with no ``"vocals"`` key. Downstream
+            # consequence: Stage B Pass 4b (verse/chorus disambiguation
+            # by vocal pitch) had no evidence source and abstained on
+            # every local-engine bundle. See
+            # ``backend/song_form_classifier_design.md`` §"Pass 4b" for
+            # why vocal pitch is the disambiguating signal.
+            "vocals": "vocals",
         }
 
         # Progress ranges for each stem (50% to 80%)
@@ -362,6 +373,9 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             "bass": (0.58, 0.66),
             "other": (0.66, 0.76),
             "guitar": (0.66, 0.76),
+            # Runs concurrently with other/guitar; the wall time is
+            # bounded by the slowest of the parallel workers.
+            "vocals": (0.66, 0.76),
         }
 
         # MIDI extraction — parallelized across stems.
@@ -715,31 +729,25 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         _st = time.perf_counter()
         try:
             from tone_forge.analysis.sections import SectionDetector
-            # Use larger minimum section duration (8s) to avoid overly granular sections
-            detector = SectionDetector(sr=sr_dur, min_section_duration=8.0)
+            # Segmenter parity with unified_pipeline._detect_sections
+            # (unified_pipeline.py:2063). Both paths now share the
+            # SectionDetector defaults (min_section_duration=4.0s,
+            # max=64s). The prior 8.0s floor + adjacent-same-type
+            # merge below halved the section count on shared-
+            # progression songs (Paramore "That's What You Get":
+            # 5 local sections vs 14+ unified), starving Stage B's
+            # Pass 4 / Pass 4b relabellers of usable per-section
+            # evidence and manifesting as a wall of CHORUS pills in
+            # the JAM UI. Stage A relabels types downstream, so the
+            # merge-adjacent-same-type step was destructive without
+            # being informative.
+            detector = SectionDetector(sr=sr_dur)
             arrangement = detector.detect_sections(y_dur, sr_dur)
 
-            # Post-process: merge adjacent sections of the same type
-            for section in arrangement.sections:
-                if merged_sections and merged_sections[-1].type == section.type:
-                    # Merge with previous section of same type
-                    prev = merged_sections[-1]
-                    merged = type(prev)(
-                        type=prev.type,
-                        start_time=prev.start_time,
-                        end_time=section.end_time,
-                        confidence=(prev.confidence + section.confidence) / 2,
-                        energy_mean=(prev.energy_mean + section.energy_mean) / 2,
-                        energy_peak=max(prev.energy_peak, section.energy_peak),
-                        note_density=(prev.note_density + section.note_density) / 2,
-                    )
-                    merged_sections[-1] = merged
-                else:
-                    merged_sections.append(section)
-
+            merged_sections = list(arrangement.sections)
             sections_data = [s.to_dict() for s in merged_sections]
             energy_curve_data = arrangement.energy_curve.tolist() if len(arrangement.energy_curve) > 0 else None
-            logger.info(f"Section detection complete: {len(sections_data)} sections (merged from {len(arrangement.sections)})")
+            logger.info(f"Section detection complete: {len(sections_data)} sections")
         except Exception as e:
             logger.warning(f"Section detection failed: {e}")
             sections_data = []
@@ -1017,6 +1025,8 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         per_stem_features_by_stem: dict[str, list] = {}
         if merged_sections:
             try:
+                from dataclasses import asdict as _asdict
+
                 from tone_forge.analysis.guidance_mode import classify_section
                 from tone_forge.analysis.section_features import (
                     compute_section_features,
@@ -1046,6 +1056,18 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                         per_stem_features_by_stem.setdefault(
                             sf.stem_name, []
                         ).append(sf)
+                    # Persist the per-stem evidence snapshot for the
+                    # /debug visualizer. Mirrors unified_pipeline.py:946
+                    # (``section["debug_features"] = ...``). Without
+                    # this assignment the local-engine bundles surfaced
+                    # empty ``debug_features`` in the persisted JSON,
+                    # blanking the /debug page's Stage B evidence
+                    # column for every MoP/SLTS-analysed song. Tuple
+                    # so downstream to_dict() sees the same immutable
+                    # shape as ``landmark_notes``.
+                    section.debug_features = tuple(
+                        _asdict(sf) for sf in per_stem
+                    )
                     decision = classify_section(per_stem)
                     section.guidance_mode = decision.mode
                     section.guidance_confidence = float(decision.confidence)
