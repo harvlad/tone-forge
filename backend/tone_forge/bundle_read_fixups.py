@@ -34,16 +34,90 @@ Fixups applied, in order:
 from __future__ import annotations
 
 from collections.abc import Mapping as _Mapping
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
+
+
+def _try_stage_b_from_debug_features(
+    sections: list[dict],
+    stage_a_types: Sequence[Any],
+) -> Optional[tuple[Any, ...]]:
+    """Attempt Stage B refinement using per-section ``debug_features``.
+
+    ``ArrangementSection.debug_features`` (assigned by the analysis
+    workers when guidance-mode features are computed — see
+    ``local_engine/analysis_worker.py`` and ``unified_pipeline.py``)
+    is a tuple of ``asdict``-serialised ``SectionFeatures`` rows, one
+    per stem. That per-section snapshot survives ``dict(section)``
+    copies made by ``resegment_flagged_sections`` and
+    ``detect_chord_vocab_boundaries``, so we can reconstruct the
+    per-stem feature mapping that ``aggregate_song_form`` requires
+    even after Fix C / Fix 4 split boundaries.
+
+    Returns ``None`` (Stage B abstains, caller falls back to Stage A
+    only) when:
+
+    * Any section lacks a non-empty ``debug_features`` field
+      (legacy bundles written before the Plan B assignment landed).
+    * Any row is missing ``stem_name``.
+    * Per-stem row counts are misaligned across sections (a stem
+      present on one section but absent on another would break the
+      1-to-1 shape ``aggregate_song_form`` expects).
+
+    On success returns the ``refine_section_types`` output aligned
+    1-to-1 with ``sections``.
+    """
+    try:
+        from tone_forge.analysis.song_form import (
+            SongFormThresholds,
+            refine_section_types,
+        )
+        from tone_forge.analysis.song_form_aggregates import (
+            aggregate_song_form,
+        )
+    except Exception:
+        return None
+
+    per_stem: dict[str, list[dict]] = {}
+    energy_means: list[float] = []
+    for section in sections:
+        raw_debug = section.get("debug_features")
+        if not isinstance(raw_debug, (list, tuple)) or not raw_debug:
+            return None
+        try:
+            energy_means.append(float(section.get("energy_mean", 0.0)))
+        except (TypeError, ValueError):
+            return None
+        for row in raw_debug:
+            if not isinstance(row, dict):
+                return None
+            name = str(row.get("stem_name", "")).lower()
+            if not name:
+                return None
+            per_stem.setdefault(name, []).append(row)
+
+    n = len(sections)
+    for rows in per_stem.values():
+        if len(rows) != n:
+            # Ragged stem coverage — abstain rather than misalign
+            # rows to section indices they don't belong to.
+            return None
+
+    aggregates = aggregate_song_form(per_stem, energy_means)
+    if len(aggregates) != n:
+        return None
+
+    return refine_section_types(
+        stage_a_types, aggregates, SongFormThresholds(),
+    )
 
 
 def relabel_sections_from_h2(
     sections: list[dict],
     chords: Any,
 ) -> list[dict]:
-    """Re-run H2 role classification + Stage A labeling on ``sections``.
+    """Re-run H2 role classification + Stage A/B labeling on ``sections``.
 
     Intended for use after :func:`resegment_flagged_sections` splits a
     long ANCHOR block: the children inherit the parent's ``type``
@@ -75,12 +149,15 @@ def relabel_sections_from_h2(
     or a degenerate H2 result (short songs, missing chord data) also
     no-op.
 
-    Stage B (per-stem aggregate refinement) is deliberately not run
-    here — its inputs are keyed by the original section indices and
-    become misaligned after splitting. Stage B re-fitting is
-    out-of-scope for this helper; callers who need it should re-
-    compute ``per_stem_features_by_stem`` against the new segmentation
-    upstream.
+    Stage B refinement runs when every section carries a
+    non-empty ``debug_features`` snapshot (per-stem
+    ``SectionFeatures`` rows, populated by the analysis workers on
+    bundle write). The snapshot survives the ``dict(section)``
+    copies made by upstream section-splitters, so Stage B evidence
+    stays attached to each sub-section after Fix C / Fix 4 boundary
+    refinements. Legacy bundles written before the snapshot landed
+    fall through to Stage A only — the same behaviour this helper
+    had before.
 
     Determinism: pure over inputs (given determinism of ``extract_h2``
     and ``classify_roles``).
@@ -130,7 +207,20 @@ def relabel_sections_from_h2(
             per_section_insufficient=h2_result.per_section_insufficient,
         )
         derived_types = derive_section_types(decisions)
-        for section, decision, st in zip(sections, decisions, derived_types):
+        # Stage B rerun on the persisted per-section evidence. When
+        # every section carries a ``debug_features`` snapshot the
+        # helper returns refined types; otherwise it abstains and we
+        # keep the Stage A output. This is what restores Pass 1
+        # INSTRUMENTAL / Pass 4 VERSE / Pass 4b VERSE labels that
+        # would otherwise be wiped by the ANCHOR-→-CHORUS Stage A
+        # mapping every time Fix C / Fix 4 split boundaries above.
+        stage_b_types = _try_stage_b_from_debug_features(
+            sections, derived_types
+        )
+        final_types = (
+            stage_b_types if stage_b_types is not None else derived_types
+        )
+        for section, decision, st in zip(sections, decisions, final_types):
             section["structural_role"] = decision.role
             section["structural_confidence"] = float(decision.confidence)
             section["type"] = st.value
