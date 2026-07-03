@@ -229,3 +229,32 @@ def test_canonical_corpus_completeness(history):
     ]
     if missing:
         pytest.skip(f"missing canonical bundles: {missing}")
+
+
+@pytest.mark.parametrize(
+    "bundle_id",
+    list(CANONICAL_ROLE_ANCHORS.keys()),
+    ids=[v["slug"] for v in CANONICAL_ROLE_ANCHORS.values()],
+)
+def test_canonical_bundles_have_no_insufficient_sections(history, bundle_id):
+    """Regression guard for the H2 insufficient-data fix.
+
+    Canonical bundles are dense-chord songs; every section has more
+    than ``n_used`` chord symbols. The insufficient flag must be
+    False across every section, which is what keeps the classifier
+    anchors above byte-identical after the abstain-path fix (the
+    new branch is never entered on canonical inputs).
+
+    If any flag flips to True on a canonical bundle, the anchor
+    values above will drift and the primary canonical gate will
+    fail — this test surfaces the root cause directly.
+    """
+    bundle = _find_bundle(history, bundle_id)
+    if bundle is None:
+        pytest.skip(f"canonical bundle {bundle_id} not in history.json")
+    h2_result = extract_h2(bundle)
+    slug = CANONICAL_ROLE_ANCHORS[bundle_id]["slug"]
+    assert all(v is False for v in h2_result.per_section_insufficient), (
+        f"{slug}: unexpected insufficient sections at indices "
+        f"{[i for i, v in enumerate(h2_result.per_section_insufficient) if v]}"
+    )

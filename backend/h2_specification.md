@@ -169,6 +169,21 @@ else:
 `0.0`, not `NaN`. Sections with all-unique trigrams are `0.0`. Sections
 where every trigram has a global twin are `1.0`.
 
+**Abstain sentinel.** The `if not section_ngrams: h2_s = 0.0` branch
+folds two semantically distinct states onto the same `0.0` value:
+
+* **Genuine no-recurrence** — the section has `>= n` chord symbols
+  but none of its n-grams appear elsewhere in the song.
+* **Insufficient chord data** — the section has fewer than `n`
+  chord symbols in its window (`_ngrams` returns `[]`), so
+  recurrence cannot be tested at all.
+
+The `per_section_insufficient` field (see §4) is authoritative for
+the distinction. Downstream classifiers should treat insufficient
+sections as an abstain signal, not as evidence of uniqueness.
+`per_section` values remain unchanged (`0.0` in both states) so no
+canonical-6 anchor moves.
+
 ### 3.7 Song-level H2 separability
 
 ```
@@ -195,17 +210,31 @@ section reads `0.0`.
 ```python
 @dataclass(frozen=True)
 class H2Result:
-    per_section: tuple[float, ...]    # one value per input section, in order
-    h2_sep: float                      # clipped to [0, 1]
-    n_used: int                        # 3 (primary) or 2 (fallback)
-    degenerate: bool                   # True iff insufficient chord data
-    section_names: tuple[str, ...]     # passthrough for diagnostic output
+    per_section: tuple[float, ...]              # one value per input section, in order
+    h2_sep: float                                # clipped to [0, 1]
+    n_used: int                                  # 3 (primary) or 2 (fallback)
+    degenerate: bool                             # True iff insufficient chord data
+    section_names: tuple[str, ...]               # passthrough for diagnostic output
+    per_section_insufficient: tuple[bool, ...]   # abstain flag, see §3.6
 ```
 
 `per_section` length must equal `len(bundle["sections"])`. Order is
 preserved.
 
 `h2_sep` is the scalar that participates in song-level classification.
+
+`per_section_insufficient` is a parallel tuple (same length and
+ordering as `per_section`). `True` at index `i` means "section `i`
+had fewer than `n_used` chord symbols in its window; the matching
+`per_section[i]` is a `0.0` sentinel, not a measured recurrence
+value". `False` means "recurrence was tested; the value is real".
+On the empty-sections early return it is `()`; on the empty-chords
+and degenerate early returns it is `(True,) * len(sections)`.
+
+The field is additive over the pre-fix schema: the frozen dataclass
+default is `()` so external constructors that predate the field
+still compile, and the value tuple never mutates existing
+`per_section` values — canonical-6 anchors (§5) hold byte-identical.
 
 ---
 

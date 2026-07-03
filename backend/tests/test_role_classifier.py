@@ -49,19 +49,67 @@ def test_all_one_vector_is_all_anchor():
         assert d.confidence > 0.0
 
 
-# Item 3 — uniform-song escape
-def test_uniform_song_escape_fires_for_low_h2_sep():
-    # h2_sep < uniform_floor (0.25) → escape 1. All h >= 0.5 → ANCHOR;
-    # h < 0.5 → DEVELOPMENT. All confidences damped by h2_sep/uniform_floor.
+# Item 3 — uniform-song mode
+def test_uniform_song_mode_uses_same_thresholds_as_standard():
+    """h2_sep < uniform_floor engages uniform mode.
+
+    Uniform mode uses the same ``anchor_floor`` and
+    ``unique_ceiling`` as the standard path — only per-section
+    confidences are damped (blended toward 0.5 by
+    ``h2_sep / uniform_floor``). Previously the mode lowered
+    the ANCHOR threshold to 0.5, which conflated a confidence
+    signal with a label bias and hid structure that Stage B
+    needs. See ``song_form_classifier_design.md`` §Pass 4.
+    """
     decisions = classify_roles((0.6, 0.7, 0.8, 0.55, 0.4), h2_sep=0.10)
     assert _roles(decisions) == (
-        "ANCHOR", "ANCHOR", "ANCHOR", "ANCHOR", "DEVELOPMENT",
+        "DEVELOPMENT", "ANCHOR", "ANCHOR", "DEVELOPMENT", "DEVELOPMENT",
     )
     damp = 0.10 / 0.25  # = 0.4
-    # h=0.6 → conf = 0.6*0.4 + 0.6*0.5 = 0.24 + 0.30 = 0.54
-    assert math.isclose(decisions[0].confidence, 0.6 * damp + (1 - damp) * 0.5, abs_tol=_TOL)
-    # h=0.4 → DEVELOPMENT, conf = damp = 0.4
-    assert math.isclose(decisions[4].confidence, damp, abs_tol=_TOL)
+    # ANCHOR raw_conf = h → blended = h * damp + (1-damp)*0.5.
+    # h=0.7 → 0.7*0.4 + 0.6*0.5 = 0.28 + 0.30 = 0.58
+    assert math.isclose(
+        decisions[1].confidence,
+        0.7 * damp + (1 - damp) * 0.5,
+        abs_tol=_TOL,
+    )
+    # DEVELOPMENT raw_conf = 1 - abs(h-0.5)*2 → blended similarly.
+    # h=0.4 → raw = 1 - 0.2 = 0.8; blended = 0.8*0.4 + 0.6*0.5 = 0.62
+    raw_dev = 1.0 - abs(0.4 - 0.5) * 2.0
+    assert math.isclose(
+        decisions[4].confidence,
+        raw_dev * damp + (1 - damp) * 0.5,
+        abs_tol=_TOL,
+    )
+
+
+def test_uniform_mode_paramore_shaped_h2_yields_two_developments():
+    """Regression for Paramore "That's What You Get" (session
+    ``5fff8bd2``): a 14-section song whose H2 vector is nearly
+    flat (h2_sep ≈ 0.24, just under the uniform floor) but has
+    two genuinely-lower sections that must land as DEVELOPMENT
+    rather than being papered over as ANCHOR.
+
+    The old uniform-mode branch used ``uniform_anchor_threshold
+    = 0.50`` and would have promoted every section >= 0.50 to
+    ANCHOR, collapsing the song into all-CHORUS downstream. The
+    realigned branch uses ``anchor_floor = 0.66`` in both modes
+    so sections at 0.575 and 0.634 remain DEVELOPMENT.
+    """
+    h2 = (
+        0.672, 0.751, 0.751, 0.801, 0.801, 0.801, 0.575,
+        0.634, 0.801, 0.801, 0.664, 0.664, 0.664, 0.697,
+    )
+    decisions = classify_roles(h2, h2_sep=0.24)
+    roles = _roles(decisions)
+    # 0.575 and 0.634 (indices 6 and 7) sit below anchor_floor.
+    assert roles[6] == "DEVELOPMENT"
+    assert roles[7] == "DEVELOPMENT"
+    # Every other section clears 0.66 and must land ANCHOR.
+    for i, r in enumerate(roles):
+        if i in (6, 7):
+            continue
+        assert r == "ANCHOR", (i, r)
 
 
 # Item 4 — no-natural-anchor rescue
@@ -209,3 +257,57 @@ def test_standard_path_threshold_table(h, expected_role):
     # rescue rule never fires on borderline inputs.
     decisions = classify_roles((h, 1.0, 1.0), h2_sep=0.80)
     assert decisions[0].role == expected_role
+
+
+# --- Insufficient-data abstain path (H2 spec §4 field) -----------------------
+
+
+def test_classify_roles_insufficient_flag_routes_to_development_not_unique():
+    """A section whose ``insufficient=True`` (H2=0.0 sentinel for
+    'no chord data') must abstain to DEVELOPMENT with low confidence,
+    not confidently label as UNIQUE. This is the fix for the Paramore
+    over-labelling case where 30s no-chord spans landed as BRIDGE."""
+    decisions = classify_roles(
+        (0.8, 0.0, 0.8),
+        h2_sep=0.60,
+        per_section_insufficient=(False, True, False),
+    )
+    assert _roles(decisions) == ("ANCHOR", "DEVELOPMENT", "ANCHOR")
+    assert math.isclose(decisions[1].confidence, 0.25, abs_tol=_TOL)
+
+
+def test_classify_roles_genuine_zero_h2_still_unique_when_flag_false():
+    """Same shape but ``insufficient=False``: the H2 hard floor
+    survives and h==0.0 stays UNIQUE (genuine no-recurrence)."""
+    decisions = classify_roles(
+        (0.8, 0.0, 0.8),
+        h2_sep=0.60,
+        per_section_insufficient=(False, False, False),
+    )
+    assert _roles(decisions) == ("ANCHOR", "UNIQUE", "ANCHOR")
+    assert decisions[1].confidence == 1.0
+
+
+def test_classify_roles_insufficient_flag_optional_backwards_compatible():
+    """Legacy three-arg call (no ``per_section_insufficient``)
+    preserves the h==0.0 → UNIQUE hard floor. Guards existing callers
+    (canonical/extended regression suites) from behaviour drift."""
+    decisions = classify_roles((0.8, 0.0, 0.8), h2_sep=0.60)
+    assert _roles(decisions) == ("ANCHOR", "UNIQUE", "ANCHOR")
+
+
+def test_classify_roles_insufficient_flag_shorter_than_h2_vector():
+    """Defensive: a shorter ``per_section_insufficient`` tuple only
+    affects the indices it covers; out-of-range indices fall back to
+    the legacy path. Prevents silent misalignment from crashing."""
+    decisions = classify_roles(
+        (0.0, 0.0, 0.0),
+        h2_sep=0.60,
+        per_section_insufficient=(True,),
+    )
+    # Index 0 → abstain path
+    assert decisions[0].role == "DEVELOPMENT"
+    assert math.isclose(decisions[0].confidence, 0.25, abs_tol=_TOL)
+    # Indices 1 and 2 → legacy hard floor
+    assert decisions[1].role == "UNIQUE"
+    assert decisions[2].role == "UNIQUE"

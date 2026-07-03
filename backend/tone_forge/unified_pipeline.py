@@ -1095,7 +1095,11 @@ class UnifiedPipeline:
                         and len(h2_result.per_section) == len(sections)
                     ):
                         decisions = classify_roles(
-                            h2_result.per_section, h2_result.h2_sep
+                            h2_result.per_section,
+                            h2_result.h2_sep,
+                            per_section_insufficient=(
+                                h2_result.per_section_insufficient
+                            ),
                         )
                         for section, decision in zip(sections, decisions):
                             section["structural_role"] = decision.role

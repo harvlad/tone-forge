@@ -124,7 +124,11 @@ def relabel_sections_from_h2(
         if len(h2_result.per_section) != len(sections):
             return sections
 
-        decisions = classify_roles(h2_result.per_section, h2_result.h2_sep)
+        decisions = classify_roles(
+            h2_result.per_section,
+            h2_result.h2_sep,
+            per_section_insufficient=h2_result.per_section_insufficient,
+        )
         derived_types = derive_section_types(decisions)
         for section, decision, st in zip(sections, decisions, derived_types):
             section["structural_role"] = decision.role
@@ -235,6 +239,18 @@ def apply_bundle_read_fixups(result: dict) -> None:
                             refined.append(sub)
                     raw_sections = refined
                     result["sections"] = raw_sections
+                    # Re-run Stage A on the newly-subdivided boundaries.
+                    # The subdivided sections inherit their parent's
+                    # ``type`` / ``structural_role`` from ``dict(section)``
+                    # above — those labels are stale relative to the new
+                    # boundaries. Symmetric with the Fix C branch above,
+                    # which also relabels after resegmenting.
+                    raw_chords = result.get("chords")
+                    if isinstance(raw_chords, list) and raw_chords:
+                        try:
+                            relabel_sections_from_h2(raw_sections, raw_chords)
+                        except Exception:
+                            pass
                     try:
                         from tone_forge.analysis.section_naming import (
                             flag_suspicious_durations,

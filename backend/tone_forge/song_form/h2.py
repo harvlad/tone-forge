@@ -52,6 +52,20 @@ class H2Result:
     n_used: int
     degenerate: bool
     section_names: tuple[str, ...]
+    per_section_insufficient: tuple[bool, ...] = ()
+    """True where the section's chord sub-sequence had fewer than
+    ``n_used`` symbols, so no n-grams could form. The matching
+    ``per_section`` entry is 0.0 by convention (spec §3.6 unchanged)
+    but that 0.0 carries no recurrence information — it is a sentinel
+    for 'abstain'. Downstream classifiers should treat insufficient
+    sections as a separate signal from a genuine ``h == 0.0``
+    (recurrence tested and found none).
+
+    Default ``()`` keeps the frozen dataclass signature
+    backwards-compatible for external constructors that predate this
+    field; :func:`extract_h2` always populates the tuple with the
+    same length as ``per_section``.
+    """
 
 
 # --- Symbol parser (spec §3.1) ----------------------------------------------
@@ -150,25 +164,34 @@ def _h2_per_section(
     full_pc_seq: list[int],
     section_pcs_list: list[list[int]],
     n: int,
-) -> tuple[tuple[float, ...], Counter]:
+) -> tuple[tuple[float, ...], tuple[bool, ...], Counter]:
     """Per-section H2 + the global multiplicity table (spec §3.5 — §3.6).
 
     The global multiplicity table is built from n-grams over the full
     concatenated chord sequence (boundary trigrams included). Per-section
     H2 still counts only that section's n-grams in the numerator/
     denominator, but uses the global table for the `>= 2` lookup.
+
+    Also emits a parallel ``insufficient`` tuple flagging sections whose
+    chord sub-sequence had fewer than ``n`` symbols (no grams could
+    form). Those sections still receive ``0.0`` in ``per_section`` per
+    spec §3.6, but the flag lets downstream distinguish "abstain" from
+    "recurrence tested and found none".
     """
     global_counts: Counter = Counter(_ngrams(full_pc_seq, n))
 
     per_section: list[float] = []
+    insufficient: list[bool] = []
     for pcs in section_pcs_list:
         grams = _ngrams(pcs, n)
         if not grams:
             per_section.append(0.0)
+            insufficient.append(True)
             continue
         repeated = sum(1 for g in grams if global_counts[g] >= 2)
         per_section.append(repeated / len(grams))
-    return tuple(per_section), global_counts
+        insufficient.append(False)
+    return tuple(per_section), tuple(insufficient), global_counts
 
 
 def _h2_sep(per_section: tuple[float, ...]) -> float:
@@ -216,6 +239,7 @@ def extract_h2(bundle: dict) -> H2Result:
             n_used=0,
             degenerate=True,
             section_names=(),
+            per_section_insufficient=(),
         )
     if not chords_raw:
         return H2Result(
@@ -224,6 +248,7 @@ def extract_h2(bundle: dict) -> H2Result:
             n_used=0,
             degenerate=True,
             section_names=section_names,
+            per_section_insufficient=(True,) * len(sections_raw),
         )
 
     chord_pcs: list[tuple[float, int]] = [
@@ -243,9 +268,12 @@ def extract_h2(bundle: dict) -> H2Result:
             n_used=0,
             degenerate=True,
             section_names=section_names,
+            per_section_insufficient=(True,) * len(sections_raw),
         )
 
-    per_section, _ = _h2_per_section(full_pc_seq, section_pcs_list, n_used)
+    per_section, insufficient, _ = _h2_per_section(
+        full_pc_seq, section_pcs_list, n_used,
+    )
     h2_sep = _h2_sep(per_section)
 
     return H2Result(
@@ -254,6 +282,7 @@ def extract_h2(bundle: dict) -> H2Result:
         n_used=n_used,
         degenerate=False,
         section_names=section_names,
+        per_section_insufficient=insufficient,
     )
 
 

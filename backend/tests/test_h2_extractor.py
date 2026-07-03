@@ -225,3 +225,76 @@ def test_fixture_golden_output_bit_equivalent(fixture_name):
     bundle, expected = ALL_FIXTURES[fixture_name]()
     result = extract_h2(bundle)
     _assert_h2_close(result, expected)
+
+
+# --- Insufficient-data flag (spec §4 field) ---------------------------------
+
+
+def _mk_chord(mid: float, symbol: str) -> dict:
+    """Two-second chord centred on ``mid`` with the given symbol."""
+    return {"start_s": mid - 1.0, "end_s": mid + 1.0, "symbol": symbol}
+
+
+def test_h2_insufficient_flag_when_section_has_fewer_chords_than_n():
+    """Section with 2 chords in a 3-gram song → insufficient=True.
+
+    Full song has 11 chord symbols (n=3). Section 1 gets 4 chords,
+    section 2 gets 2 (below n=3, no grams), section 3 gets 5.
+    """
+    bundle = {
+        "sections": [
+            {"start_time": 0.0, "end_time": 10.0},
+            {"start_time": 10.0, "end_time": 15.0},
+            {"start_time": 15.0, "end_time": 27.0},
+        ],
+        "chords": [
+            _mk_chord(1.0, "C"), _mk_chord(3.0, "G"),
+            _mk_chord(5.0, "Am"), _mk_chord(7.0, "F"),
+            # Section 2 — only 2 chords, below n=3.
+            _mk_chord(11.0, "D"), _mk_chord(13.0, "E"),
+            # Section 3 — 5 chords.
+            _mk_chord(16.0, "C"), _mk_chord(18.0, "G"),
+            _mk_chord(20.0, "Am"), _mk_chord(22.0, "F"),
+            _mk_chord(24.0, "C"),
+        ],
+    }
+    result = extract_h2(bundle)
+    assert result.n_used == 3
+    assert result.per_section_insufficient == (False, True, False)
+
+
+def test_h2_insufficient_flag_all_false_on_dense_song():
+    """Every section has >= n chord symbols → all flags False."""
+    bundle, _ = fixture_asymmetric_three_section()
+    result = extract_h2(bundle)
+    assert result.degenerate is False
+    assert all(v is False for v in result.per_section_insufficient)
+    assert len(result.per_section_insufficient) == len(result.per_section)
+
+
+def test_h2_insufficient_flag_length_matches_per_section():
+    """Property: on every fixture, the flag tuple and value tuple
+    are the same length (or both empty on degenerate-empty-sections).
+    """
+    for name, fx in ALL_FIXTURES.items():
+        bundle, _ = fx()
+        result = extract_h2(bundle)
+        assert len(result.per_section_insufficient) == len(
+            result.per_section
+        ), f"length mismatch on fixture {name!r}"
+
+
+def test_h2_no_chords_marks_all_sections_insufficient():
+    """Bundle with chords=[] → every section flagged insufficient."""
+    bundle = {
+        "sections": [
+            {"start_time": 0.0, "end_time": 10.0},
+            {"start_time": 10.0, "end_time": 20.0},
+            {"start_time": 20.0, "end_time": 30.0},
+            {"start_time": 30.0, "end_time": 40.0},
+        ],
+        "chords": [],
+    }
+    result = extract_h2(bundle)
+    assert result.degenerate is True
+    assert result.per_section_insufficient == (True, True, True, True)
