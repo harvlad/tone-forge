@@ -34,6 +34,7 @@ analysis subsystem boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from statistics import median
 from typing import Any, Iterable, Optional, Sequence
 
 from tone_forge.analysis.sections import SectionType
@@ -147,6 +148,33 @@ class SongFormThresholds:
     sees ANCHOR everywhere and Stage A maps every section to CHORUS,
     but a clearly-lower-energy edge gives away the true intro/outro.
     One-sided: only demotes CHORUS at edges, never promotes."""
+
+    verse_demotion_min_choruses: int = 4
+    """Minimum count of Stage-A CHORUSes in the (post Pass 0-3)
+    refined tuple before the CHORUS→VERSE demotion (Pass 4)
+    considers firing. Below this the intra-CHORUS medians are too
+    noisy to trust; abstain. Motivating case: pop-punk / folk /
+    any genre where verse and chorus share the same chord
+    progression, so H2 chord-trigram recurrence collapses to
+    ANCHOR on every section and Stage A ships an all-CHORUS
+    tuple."""
+
+    verse_demotion_z_offset: float = 0.35
+    """``energy_z`` must be at least this far below the
+    intra-CHORUS median for Pass 4 demotion. 0.35 ≈ half a
+    MAD-scaled standard deviation; picked so a chorus with a
+    marginal energy dip stays CHORUS but a genuine verse
+    (typically ~1 z below chorus median) crosses the line."""
+
+    verse_demotion_vocal_ratio: float = 0.75
+    """``vocal_activity_score`` must be below this fraction of the
+    intra-CHORUS median for Pass 4 demotion. 0.75 gives real
+    headroom for pop-punk verses (which are sung with similar
+    intensity to the chorus) while still catching hushed /
+    whispered / low-density verse vocals. Multiplicative rather
+    than additive because ``vocal_activity_score`` is bounded on
+    [0, 1] and the useful dynamic range collapses near the
+    endpoints."""
 
 
 def refine_section_types(
@@ -278,7 +306,92 @@ def refine_section_types(
         if aggregates[i].drum_density_z < thresholds.breakdown_z_ceiling:
             refined[i] = SectionType.BREAKDOWN
 
+    # Pass 4: CHORUS → VERSE — intra-CHORUS energy + vocal dip.
+    #
+    # For songs where H2 chord-trigram recurrence cannot separate
+    # verse from chorus (they share the same progression — see
+    # pop-punk, folk, many pop songs), Stage A ships an all-CHORUS
+    # tuple. Passes 0-3 catch a handful of these cases at the
+    # edges (INTRO/OUTRO), when vocals disappear (INSTRUMENTAL),
+    # when drums drop out (BREAKDOWN), or when a chord-vocab
+    # narrowing pattern is visible (PRECHORUS). The remaining
+    # verses are indistinguishable from choruses by H2 or chord
+    # alone; the only signal left is energy + vocal density.
+    #
+    # A CHORUS is demoted to VERSE when *both* ``energy_z`` and
+    # ``vocal_activity_score`` fall meaningfully below the median
+    # of the surviving CHORUSes. Both signals are required so
+    # that:
+    #   * a chorus with a quiet variant doesn't get demoted on
+    #     energy alone (still sung at full intensity);
+    #   * an instrumental break Pass 1 missed doesn't get demoted
+    #     on vocals alone (still full energy).
+    #
+    # Runs *after* the other passes so it operates on the final
+    # refined types (not touching sections that Pass 0/1/3
+    # already reclassified). One-sided: never promotes VERSE to
+    # CHORUS. Preserves at least one CHORUS: pathological songs
+    # (say, an instrumental where every CHORUS is low-energy)
+    # keep the highest-signal survivor.
+    _pass_4_chorus_to_verse(refined, aggregates, thresholds)
+
     return tuple(refined)
+
+
+def _pass_4_chorus_to_verse(
+    refined: list[SectionType],
+    aggregates: Sequence[SongFormAggregates],
+    thresholds: SongFormThresholds,
+) -> None:
+    """Mutate ``refined`` in place: demote low-energy + low-vocal
+    CHORUSes to VERSE.
+
+    See the Pass 4 comment in ``refine_section_types`` for the
+    signal rationale. Extracted as a standalone helper so it's
+    unit-testable and the pass ordering in the caller reads as a
+    single grep-able list.
+    """
+    chorus_indices = [
+        i for i, t in enumerate(refined) if t is SectionType.CHORUS
+    ]
+    if len(chorus_indices) < thresholds.verse_demotion_min_choruses:
+        return
+
+    chorus_energy_zs = [aggregates[i].energy_z for i in chorus_indices]
+    chorus_vocals = [
+        aggregates[i].vocal_activity_score for i in chorus_indices
+    ]
+    median_z = median(chorus_energy_zs)
+    median_vocals = median(chorus_vocals)
+
+    # Rank candidates from most demotion-worthy (lowest combined
+    # signal) to least. Deterministic; ties resolve by index
+    # (Python's sort is stable).
+    candidates = sorted(
+        chorus_indices,
+        key=lambda i: (
+            aggregates[i].energy_z + aggregates[i].vocal_activity_score
+        ),
+    )
+
+    for i in candidates:
+        agg = aggregates[i]
+        if agg.energy_z >= median_z - thresholds.verse_demotion_z_offset:
+            continue
+        if (
+            agg.vocal_activity_score
+            >= median_vocals * thresholds.verse_demotion_vocal_ratio
+        ):
+            continue
+        # Sanity: keep at least one CHORUS in the song. Prevents
+        # pathological all-low-signal songs from ending up
+        # VERSE-only.
+        remaining_choruses = sum(
+            1 for t in refined if t is SectionType.CHORUS
+        )
+        if remaining_choruses <= 1:
+            break
+        refined[i] = SectionType.VERSE
 
 
 def annotate_transitions(

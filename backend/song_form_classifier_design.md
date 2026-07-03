@@ -74,7 +74,7 @@ survives.
 
 ## Refinement rules
 
-Stage B applies five rules to Stage A's output, in this order:
+Stage B applies six rules to Stage A's output, in this order:
 
 0. **Edge-demotion — CHORUS at first/last position with
    `energy_z < edge_energy_z_ceiling` → INTRO/OUTRO.**
@@ -108,7 +108,29 @@ Stage B applies five rules to Stage A's output, in this order:
    signal. A section that's already INTRO/OUTRO stays as-is — edges
    override breakdowns.
 
-4. **Transitions ending into a CHORUS with `energy_ramp_into_next >
+4. **CHORUS → VERSE demotion.**
+   Fires only when Stage A produced at least
+   `verse_demotion_min_choruses` CHORUSes — below that the
+   intra-CHORUS median is too noisy to trust and the pass
+   abstains. Computes the intra-CHORUS medians of `energy_z`
+   and `vocal_activity_score`; any CHORUS whose `energy_z` is
+   at least `verse_demotion_z_offset` below the median **and**
+   whose `vocal_activity_score` is below
+   `verse_demotion_vocal_ratio × median_vocals` is demoted to
+   VERSE. Both signals must independently agree — energy_z
+   alone false-positives on songs with a quiet chorus variant;
+   vocal_activity_score alone false-positives on instrumental
+   passes Rule 1 didn't catch.
+   One-sided: never promotes VERSE to CHORUS. Preserves at
+   least one CHORUS in the song (sanity check inside the loop).
+   Motivating case: pop-punk / folk / any genre where verse
+   and chorus share the same chord progression, so H2 chord-
+   trigram recurrence collapses to ANCHOR on every section
+   (Paramore "That's What You Get" is the canonical fixture).
+   Runs before the transition annotator so buildup detection
+   sees the final labels.
+
+5. **Transitions ending into a CHORUS with `energy_ramp_into_next >
    buildup_ramp_floor` → `SectionTransition.type = "buildup"`.**
    Modifies the transition, not the section. Existing buildup
    transitions are preserved.
@@ -120,13 +142,26 @@ Stage A label survives.
 
 ```python
 SongFormThresholds(
-    vocal_silence_ceiling  = 0.15,
-    prechorus_ramp_floor   = 0.25,
-    breakdown_z_ceiling    = -1.0,
-    buildup_ramp_floor     = 0.40,
-    edge_energy_z_ceiling  = -1.0,
+    vocal_silence_ceiling       = 0.15,
+    prechorus_ramp_floor        = 0.25,
+    breakdown_z_ceiling         = -1.0,
+    buildup_ramp_floor          = 0.40,
+    edge_energy_z_ceiling       = -1.0,
+    verse_demotion_min_choruses = 4,
+    verse_demotion_z_offset     = 0.35,
+    verse_demotion_vocal_ratio  = 0.75,
 )
 ```
+
+The Pass 4 fields are conservative initial values — I'd rather
+leave a real verse mislabelled as CHORUS than smuggle a chorus
+into VERSE. `verse_demotion_z_offset = 0.35` ≈ half a MAD-scaled
+standard deviation; `verse_demotion_vocal_ratio = 0.75` gives
+real headroom for pop-punk verses (sung with similar intensity
+to the chorus) while still catching hushed / whispered / low-
+density verse vocals. Full calibration will follow once
+canonical-6 ground truth grows `verse_indices` for the pop-punk
+bundle (`29b31695`).
 
 These defaults are placeholders. B5c shipped the regression test
 scaffold (`backend/tests/test_song_form_canonical.py`) and the
@@ -197,6 +232,15 @@ becomes meaningful.
 - **BREAKDOWN at song edges.** A section labelled INTRO that has
   low drums shouldn't become BREAKDOWN — the edge label is more
   important. Rule 3 leaves edges alone.
+- **~~CHORUS → VERSE demotion~~** — **shipped in Pass 4.**
+  Previously the classifier could not distinguish verse from
+  chorus when H2 chord-trigram recurrence collapsed to ANCHOR on
+  every section (pop-punk / folk / any genre where verse and
+  chorus share the same chord progression). Pass 4 uses the
+  per-stem `energy_z` and `vocal_activity_score` signals — both
+  must independently agree — to demote low-signal CHORUSes to
+  VERSE. Initial thresholds are conservative; canonical-corpus
+  calibration will follow.
 
 ## Boundary considerations
 

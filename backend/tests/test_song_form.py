@@ -232,7 +232,8 @@ def test_full_canonical_chain_intro_verse_prechorus_chorus_verse_chorus_outro():
 
 
 # ---------------------------------------------------------------------------
-# Pass 4: edge-demotion (energy_z)
+# Pass 0: edge-demotion (energy_z) — CHORUS at first/last section
+# with a clearly-below-median energy_z gets flipped to INTRO/OUTRO.
 # ---------------------------------------------------------------------------
 
 
@@ -340,6 +341,214 @@ def test_edge_demotion_single_section_no_op():
     aggs = (_agg(vocals=0.5, energy_z=-2.0),)
     out = refine_section_types(types, aggs)
     assert out == (SectionType.CHORUS,)
+
+
+# ---------------------------------------------------------------------------
+# Pass 4: CHORUS→VERSE demotion (energy_z + vocal_activity_score
+# both meaningfully below the intra-CHORUS median).
+# ---------------------------------------------------------------------------
+
+
+def test_chorus_demoted_to_verse_when_energy_z_and_vocals_below_median():
+    """Six Stage-A CHORUSes; two have low energy_z AND low vocals
+    (but still above ``vocal_silence_ceiling`` so Pass 1 does
+    not flip them to INSTRUMENTAL first). Pass 4 demotes them
+    to VERSE; the other four stay CHORUS."""
+    types = (SectionType.CHORUS,) * 6
+    # Median energy_z = 0.4, median vocals = 0.6 (after sort).
+    # Threshold z_offset = 0.35 → require energy_z < 0.05.
+    # Threshold vocal_ratio = 0.75 → require vocals < 0.45.
+    aggs = (
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.20, energy_z=-1.2),   # → VERSE
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.20, energy_z=-1.2),   # → VERSE
+        _agg(vocals=0.6, energy_z=0.4),
+    )
+    out = refine_section_types(types, aggs)
+    assert out == (
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.VERSE,
+        SectionType.CHORUS,
+        SectionType.VERSE,
+        SectionType.CHORUS,
+    )
+
+
+def test_chorus_verse_demotion_needs_at_least_min_choruses():
+    """Fewer than ``verse_demotion_min_choruses`` (default 4)
+    Stage-A CHORUSes → Pass 4 abstains. Median of a 3-element
+    sample is too noisy to trust."""
+    types = (SectionType.CHORUS, SectionType.CHORUS, SectionType.CHORUS)
+    aggs = (
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.20, energy_z=-1.2),  # would be demoted at ≥4
+        _agg(vocals=0.6, energy_z=0.4),
+    )
+    out = refine_section_types(types, aggs)
+    assert out == (SectionType.CHORUS, SectionType.CHORUS, SectionType.CHORUS)
+
+
+def test_chorus_verse_demotion_preserves_at_least_one_chorus():
+    """Sanity net: with thresholds set so every CHORUS qualifies
+    for demotion, Pass 4 stops one short so downstream code
+    always has at least one CHORUS to work with. The
+    highest-combined-signal survivor is retained
+    (deterministic by ascending sort of ``energy_z +
+    vocal_activity_score``)."""
+    types = (SectionType.CHORUS,) * 5
+    aggs = (
+        _agg(vocals=0.20, energy_z=-0.5),
+        _agg(vocals=0.20, energy_z=-0.4),   # highest combined signal
+        _agg(vocals=0.20, energy_z=-0.5),
+        _agg(vocals=0.20, energy_z=-0.5),
+        _agg(vocals=0.20, energy_z=-0.5),
+    )
+    # Relaxed thresholds so every section qualifies on both
+    # signals. Sanity check is the only reason ``refined[1]``
+    # survives.
+    thresholds = SongFormThresholds(
+        verse_demotion_z_offset=-1000.0,
+        verse_demotion_vocal_ratio=1000.0,
+    )
+    out = refine_section_types(types, aggs, thresholds)
+    assert out.count(SectionType.CHORUS) == 1
+    assert out.count(SectionType.VERSE) == 4
+    assert out[1] is SectionType.CHORUS
+
+
+def test_chorus_verse_demotion_only_energy_z_low_stays_chorus():
+    """Both signals must independently agree. When only
+    ``energy_z`` is low but vocals sit at the median, the
+    section is a legitimate quiet-chorus variant and stays
+    CHORUS."""
+    types = (SectionType.CHORUS,) * 6
+    # Median energy_z = 0.4, median vocals = 0.7.
+    # Two candidates have low energy_z (-1.2) but vocals at 0.7
+    # (== median, so not below 0.75 * 0.7 = 0.525) → stay CHORUS.
+    aggs = (
+        _agg(vocals=0.7, energy_z=0.4),
+        _agg(vocals=0.7, energy_z=0.4),
+        _agg(vocals=0.7, energy_z=-1.2),
+        _agg(vocals=0.7, energy_z=0.4),
+        _agg(vocals=0.7, energy_z=-1.2),
+        _agg(vocals=0.7, energy_z=0.4),
+    )
+    out = refine_section_types(types, aggs)
+    assert out == types  # no demotions
+
+
+def test_chorus_verse_demotion_only_vocals_low_stays_chorus():
+    """Mirror of the energy-only test. Low vocals alone (with
+    full-energy playback) suggests an instrumental break that
+    Pass 1 missed — but not a verse. Stays CHORUS. Vocals kept
+    above ``vocal_silence_ceiling`` so Pass 1 does not fire."""
+    types = (SectionType.CHORUS,) * 6
+    # Median vocals = 0.6, median energy_z = 0.4.
+    # Two candidates have low vocals (0.20 < 0.45 = 0.75 * 0.6)
+    # but energy_z at 0.4 (== median, not below 0.4 - 0.35 =
+    # 0.05) → stay CHORUS.
+    aggs = (
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.20, energy_z=0.4),
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.20, energy_z=0.4),
+        _agg(vocals=0.6, energy_z=0.4),
+    )
+    out = refine_section_types(types, aggs)
+    assert out == types  # no demotions
+
+
+def test_chorus_verse_demotion_one_sided_never_promotes_verse():
+    """Pass 4 is one-directional: only CHORUS → VERSE. A VERSE
+    with above-median signals surrounded by CHORUSes stays a
+    VERSE (the pass never inspects non-CHORUS sections)."""
+    types = (
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.VERSE,      # <- must stay VERSE
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+        SectionType.CHORUS,
+    )
+    aggs = (
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.9, energy_z=1.0),  # verse w/ above-median signals
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.6, energy_z=0.4),
+    )
+    out = refine_section_types(types, aggs)
+    assert out[2] is SectionType.VERSE
+    for i in (0, 1, 3, 4, 5):
+        assert out[i] is SectionType.CHORUS
+
+
+def test_chorus_verse_demotion_ignores_non_chorus_types():
+    """Pass 4 only touches sections whose refined type is
+    CHORUS. A BREAKDOWN / PRECHORUS / INSTRUMENTAL with
+    below-median signals stays as-is. Also demonstrates that
+    the intra-CHORUS median is computed only across the four
+    surviving CHORUSes, not the whole song."""
+    types = (
+        SectionType.CHORUS,
+        SectionType.PRECHORUS,     # non-chorus w/ low signals
+        SectionType.CHORUS,
+        SectionType.BREAKDOWN,     # non-chorus w/ low signals
+        SectionType.CHORUS,
+        SectionType.INSTRUMENTAL,  # non-chorus w/ low signals
+        SectionType.CHORUS,
+    )
+    # drum_density_z=0 keeps Pass 3 off the BREAKDOWN slot (Pass 3
+    # would otherwise mark other sections as BREAKDOWN too). Low
+    # vocals on the non-CHORUS slots don't trigger Pass 1 because
+    # Pass 1 only inspects CHORUS labels.
+    aggs = (
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.20, energy_z=-1.2),
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.20, energy_z=-1.2),
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.20, energy_z=-1.2),
+        _agg(vocals=0.6, energy_z=0.4),
+    )
+    out = refine_section_types(types, aggs)
+    # Non-CHORUS types unchanged.
+    assert out[1] is SectionType.PRECHORUS
+    assert out[3] is SectionType.BREAKDOWN
+    assert out[5] is SectionType.INSTRUMENTAL
+    # All four CHORUSes have identical (above-median relative to
+    # their own set of {0.4, 0.4, 0.4, 0.4}) signals → none
+    # demoted.
+    for i in (0, 2, 4, 6):
+        assert out[i] is SectionType.CHORUS
+
+
+def test_chorus_verse_demotion_thresholds_wire_through():
+    """Tightening ``verse_demotion_z_offset`` refuses to demote
+    a borderline section that the defaults would have caught."""
+    types = (SectionType.CHORUS,) * 5
+    # Median energy_z = 0.0 (mean of positions 3,4 sorted:
+    # -0.5, 0.0, 0.0, 0.4, 0.4 → median = 0.0). Median vocals =
+    # 0.6. Candidate at index 2 (vocals=0.25 < 0.75*0.6 = 0.45).
+    aggs = (
+        _agg(vocals=0.6, energy_z=0.4),
+        _agg(vocals=0.6, energy_z=0.0),
+        _agg(vocals=0.25, energy_z=-0.5),  # borderline: below 0-0.35
+        _agg(vocals=0.6, energy_z=0.0),
+        _agg(vocals=0.6, energy_z=0.4),
+    )
+    # Default z_offset=0.35: candidate energy_z=-0.5 < 0 - 0.35 = -0.35 → demote.
+    default_out = refine_section_types(types, aggs)
+    assert default_out[2] is SectionType.VERSE
+    # Tighter offset=1.0: candidate energy_z=-0.5 NOT < 0 - 1.0 = -1.0 → stay.
+    tight = SongFormThresholds(verse_demotion_z_offset=1.0)
+    tight_out = refine_section_types(types, aggs, tight)
+    assert tight_out[2] is SectionType.CHORUS
 
 
 # ---------------------------------------------------------------------------
