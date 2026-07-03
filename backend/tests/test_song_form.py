@@ -635,3 +635,211 @@ def test_annotate_transitions_into_instrumental_chorus_unchanged():
         aggregates=aggs,
     )
     assert out == (None,)
+
+
+# ---------------------------------------------------------------------------
+# Pass 4b: CHORUS→VERSE demotion by vocal pitch (median AND range
+# both meaningfully below the intra-CHORUS cohort).
+# ---------------------------------------------------------------------------
+#
+# Pass 4b is Pass 4's independent-evidence-axis sibling for
+# shared-progression songs (pop / rock / folk) where verse and
+# chorus use identical chord loops and identical energy/vocal
+# intensity — H2 sees ANCHOR everywhere, Pass 4 abstains, but the
+# singer sits lower AND moves less in the verse. Two signals in
+# AND-gate: median alone would over-fire on brief low-pitch chorus
+# moments; range alone would flip monotone choruses.
+
+
+def _agg_pitch(
+    vocals: float = 1.0,
+    energy_z: float = 0.0,
+    pitch_median: float = 0.0,
+    pitch_range: float = 0.0,
+) -> SongFormAggregates:
+    """Shorthand for constructing a SongFormAggregates with pitch
+    fields populated. Extends ``_agg`` with the Pass 4b signals so
+    Pass 4b tests stay readable."""
+    return SongFormAggregates(
+        vocal_activity_score=vocals,
+        drum_density_per_s=0.0,
+        drum_density_z=0.0,
+        energy_ramp_into_next=0.0,
+        energy_z=energy_z,
+        vocal_pitch_median_semitones=pitch_median,
+        vocal_pitch_range_semitones=pitch_range,
+    )
+
+
+def test_pass_4b_demotes_low_pitched_narrow_range_chorus_to_verse():
+    """Four CHORUSes with pitch evidence. Cohort median = 70,
+    cohort range = 8. Section 2 sits 4 semitones lower (66 < 70-2)
+    AND has half the range (4 < 0.75*8 = 6): demote. The other
+    three keep CHORUS. Signals kept away from the Pass 4
+    thresholds (vocals & energy_z at cohort levels) so Pass 4
+    itself abstains — this test isolates Pass 4b."""
+    types = (SectionType.CHORUS,) * 4
+    aggs = (
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=66.0, pitch_range=4.0),   # → VERSE
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=71.0, pitch_range=9.0),
+    )
+    out = refine_section_types(types, aggs)
+    assert out[1] is SectionType.VERSE
+    for i in (0, 2, 3):
+        assert out[i] is SectionType.CHORUS
+
+
+def test_pass_4b_no_op_when_only_median_dips():
+    """Both signals must agree. Median dip alone (range matches
+    cohort) → no demotion."""
+    types = (SectionType.CHORUS,) * 4
+    aggs = (
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=66.0, pitch_range=8.0),   # median dip only
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+    )
+    out = refine_section_types(types, aggs)
+    assert out == types  # nothing demoted
+
+
+def test_pass_4b_no_op_when_only_range_dips():
+    """Mirror of the median-only test. Range dip alone (median
+    matches cohort) → no demotion. Monotone choruses that happen
+    to land on the cohort's median pitch stay CHORUS."""
+    types = (SectionType.CHORUS,) * 4
+    aggs = (
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=3.0),   # range dip only
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+    )
+    out = refine_section_types(types, aggs)
+    assert out == types  # nothing demoted
+
+
+def test_pass_4b_preserves_at_least_one_chorus():
+    """Pathological input: every CHORUS qualifies for pitch
+    demotion. Pass 4b must stop one short so downstream code
+    keeps at least one CHORUS. Deterministic which one via the
+    ascending sort on ``median + range`` (highest joint signal
+    survives)."""
+    types = (SectionType.CHORUS,) * 4
+    # Loose thresholds so every section qualifies on both axes;
+    # cohort computed on the actual values.
+    aggs = (
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=60.0, pitch_range=2.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=60.5, pitch_range=2.1),   # highest joint
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=60.0, pitch_range=2.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=60.0, pitch_range=2.0),
+    )
+    # Force every candidate to qualify: absurdly small offset +
+    # ratio > 1 so ``range < cohort_range * ratio`` fires even at
+    # cohort value.
+    thresholds = SongFormThresholds(
+        verse_pitch_semitone_offset=-1000.0,
+        verse_pitch_range_ratio=1000.0,
+    )
+    out = refine_section_types(types, aggs, thresholds)
+    assert out.count(SectionType.CHORUS) == 1
+    assert out.count(SectionType.VERSE) == 3
+    # The highest-joint-signal CHORUS survives (index 1).
+    assert out[1] is SectionType.CHORUS
+
+
+def test_pass_4b_respects_verse_demotion_min_choruses():
+    """Fewer than ``verse_demotion_min_choruses`` (default 4)
+    CHORUSes → Pass 4b abstains, matching Pass 4's guardrail.
+    The intra-CHORUS median on tiny cohorts is too noisy to
+    trust."""
+    types = (SectionType.CHORUS, SectionType.CHORUS, SectionType.CHORUS)
+    aggs = (
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=66.0, pitch_range=4.0),   # would qualify at n>=4
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+    )
+    out = refine_section_types(types, aggs)
+    assert out == types
+
+
+def test_pass_4b_abstains_when_pitch_data_missing():
+    """0.0-sentinel-as-abstain: when every CHORUS has zero pitch
+    evidence (no vocals stem / all None upstream), Pass 4b must
+    abstain rather than firing on a phantom pitch dip. Signals
+    that would trigger Pass 4 are also kept above its
+    thresholds so this test isolates Pass 4b."""
+    types = (SectionType.CHORUS,) * 4
+    aggs = (
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=0.0, pitch_range=0.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=0.0, pitch_range=0.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=0.0, pitch_range=0.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=0.0, pitch_range=0.0),
+    )
+    out = refine_section_types(types, aggs)
+    assert out == types
+
+
+def test_pass_4b_runs_after_pass_4_in_refine_section_types():
+    """End-to-end: on a five-CHORUS fixture where one section
+    triggers Pass 4 (energy + vocal dip) and a different section
+    triggers Pass 4b (pitch dip), both fire independently. The
+    Pass-4b candidate must have Pass 4-safe energy and vocal
+    signals so that only Pass 4b flips it; the Pass-4 candidate
+    must have Pass 4b-safe pitch (or zero pitch evidence) so
+    that only Pass 4 flips it."""
+    types = (SectionType.CHORUS,) * 5
+    # Pass 4 cohort: median energy_z = 0.4, median vocals = 0.6.
+    #   → energy < 0.4-0.35 = 0.05 AND vocals < 0.75*0.6 = 0.45.
+    # Pass 4b cohort (after Pass 4): valid pitch entries only.
+    #   median = 70, range = 8 → median < 68 AND range < 6.
+    aggs = (
+        # 0: full-signal chorus
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+        # 1: Pass 4 target — low energy AND low vocals, but ZERO
+        #    pitch evidence (upstream row was None) so Pass 4b
+        #    ignores it.
+        _agg_pitch(vocals=0.20, energy_z=-1.2,
+                   pitch_median=0.0, pitch_range=0.0),
+        # 2: full-signal chorus
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+        # 3: Pass 4b target — Pass 4-safe (vocals & energy at
+        #    cohort levels) but pitch median and range both dip.
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=66.0, pitch_range=4.0),
+        # 4: full-signal chorus
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=8.0),
+    )
+    out = refine_section_types(types, aggs)
+    assert out[0] is SectionType.CHORUS
+    assert out[1] is SectionType.VERSE   # Pass 4 fired
+    assert out[2] is SectionType.CHORUS
+    assert out[3] is SectionType.VERSE   # Pass 4b fired
+    assert out[4] is SectionType.CHORUS

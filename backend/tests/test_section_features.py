@@ -431,6 +431,8 @@ def test_section_features_asdict_json_round_trip() -> None:
         "note_count",
         "duration_s",
         "pitch_class_diversity",
+        "pitch_median_semitones",
+        "pitch_range_semitones",
     }
     assert set(as_dict.keys()) == expected_keys
 
@@ -441,3 +443,101 @@ def test_section_features_asdict_json_round_trip() -> None:
     assert decoded["chord_density_per_s"] == sf.chord_density_per_s
     assert decoded["monophonic_ratio"] == sf.monophonic_ratio
     assert decoded["pitch_class_diversity"] == sf.pitch_class_diversity
+    # Pitch fields survive the round-trip. On this fixture (stem_name=
+    # ``guitar_left``, a non-vocals stem) they are ``None`` and JSON
+    # round-trips ``None`` → ``null`` → ``None``.
+    assert decoded["pitch_median_semitones"] == sf.pitch_median_semitones
+    assert decoded["pitch_range_semitones"] == sf.pitch_range_semitones
+
+
+# ---------------------------------------------------------------------------
+# Signal G — per-section vocal pitch statistics (Pass 4b)
+# ---------------------------------------------------------------------------
+#
+# Fields ``pitch_median_semitones`` / ``pitch_range_semitones`` feed
+# ``SongFormAggregates.vocal_pitch_*`` for Stage B's Pass 4b
+# CHORUS→VERSE demotion on shared-progression songs. Signal is
+# meaningful only on vocals stems; anywhere else it must be ``None``
+# so downstream code cleanly abstains.
+
+
+def test_pitch_median_and_range_from_stem_midi_vocals() -> None:
+    # Three sections; each has hand-computable median + p90-p10.
+    # Section A [0, 4): pitches {60, 62, 64, 66, 68}
+    #   median = 64; p10 = 60.8; p90 = 67.2; range = 6.4
+    # Section B [4, 8): pitches {70, 71, 72, 73, 74}
+    #   median = 72; p10 = 70.4; p90 = 73.6; range = 3.2
+    # Section C [8, 12): pitches {55, 55, 55, 55, 55}
+    #   median = 55; range = 0.0 (all identical)
+    notes: List[dict] = []
+    for i, p in enumerate((60, 62, 64, 66, 68)):
+        notes.append(_note(p, 0.1 + i * 0.6, 0.5 + i * 0.6))
+    for i, p in enumerate((70, 71, 72, 73, 74)):
+        notes.append(_note(p, 4.1 + i * 0.6, 4.5 + i * 0.6))
+    for i in range(5):
+        notes.append(_note(55, 8.1 + i * 0.6, 8.5 + i * 0.6))
+
+    sf_a = _features(
+        stem_name="vocals", notes=notes, regions=[], window=(0.0, 4.0)
+    )
+    sf_b = _features(
+        stem_name="vocals", notes=notes, regions=[], window=(4.0, 8.0)
+    )
+    sf_c = _features(
+        stem_name="vocals", notes=notes, regions=[], window=(8.0, 12.0)
+    )
+
+    assert sf_a.pitch_median_semitones == 64.0
+    assert abs(sf_a.pitch_range_semitones - 6.4) < 1e-9
+    assert sf_b.pitch_median_semitones == 72.0
+    assert abs(sf_b.pitch_range_semitones - 3.2) < 1e-9
+    assert sf_c.pitch_median_semitones == 55.0
+    assert sf_c.pitch_range_semitones == 0.0
+
+
+def test_pitch_fields_none_when_no_notes_in_section() -> None:
+    # Notes exist on the stem but fall entirely outside the window:
+    # both pitch fields must be ``None`` (abstain signal for Pass 4b).
+    notes = [_note(60, 10.0, 11.0), _note(72, 12.0, 13.0)]
+    sf = _features(
+        stem_name="vocals", notes=notes, regions=[], window=(0.0, 4.0)
+    )
+    assert sf.pitch_median_semitones is None
+    assert sf.pitch_range_semitones is None
+
+
+def test_pitch_fields_none_on_non_vocals_stem() -> None:
+    # Same notes as the vocals fixture, but the stem is ``drums`` —
+    # drum MIDI pitches are nominal and the median-and-range carry
+    # no verse/chorus signal, so both fields must be ``None``.
+    notes = [_note(p, 0.1 + i * 0.6, 0.5 + i * 0.6)
+             for i, p in enumerate((60, 62, 64, 66, 68))]
+    sf_drums = _features(
+        stem_name="drums", notes=notes, regions=[], window=(0.0, 4.0)
+    )
+    sf_bass = _features(
+        stem_name="bass", notes=notes, regions=[], window=(0.0, 4.0)
+    )
+    sf_other = _features(
+        stem_name="other", notes=notes, regions=[], window=(0.0, 4.0)
+    )
+    assert sf_drums.pitch_median_semitones is None
+    assert sf_drums.pitch_range_semitones is None
+    assert sf_bass.pitch_median_semitones is None
+    assert sf_bass.pitch_range_semitones is None
+    assert sf_other.pitch_median_semitones is None
+    assert sf_other.pitch_range_semitones is None
+
+
+def test_pitch_fields_none_when_stem_midi_absent() -> None:
+    # ``stem_midi=None`` is the "no notes for this stem" signal
+    # (e.g. Demucs failed to isolate vocals). Fields must be ``None``.
+    sf = compute_section_features(
+        stem_name="vocals",
+        stem_midi=None,
+        chord_regions=[],
+        section_start_s=0.0,
+        section_end_s=4.0,
+    )
+    assert sf.pitch_median_semitones is None
+    assert sf.pitch_range_semitones is None

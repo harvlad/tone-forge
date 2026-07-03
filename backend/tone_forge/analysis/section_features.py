@@ -43,6 +43,14 @@ import numpy as np
 # one cell.
 _VOXEL_HOP_S: float = 0.05
 
+# Stem-name convention for the vocals lane (case-insensitive). Only
+# stems whose name matches this set carry Signal G (pitch stats);
+# on any other stem the pitch fields are ``None``. Mirrors the
+# convention in ``song_form_aggregates._VOCAL_STEM_NAMES`` — kept
+# duplicated here rather than imported to preserve the "no cross-
+# module coupling" property of ``section_features``.
+_VOCALS_STEM_NAMES: frozenset[str] = frozenset({"vocals", "vocal"})
+
 
 @dataclass(frozen=True)
 class SectionFeatures:
@@ -87,6 +95,26 @@ class SectionFeatures:
     # via the existing monophonic_ratio × lead_activity_score
     # product.
     pitch_class_diversity: float = 1.0
+
+    # Signal G — Per-section vocal pitch statistics (Pass 4b).
+    # Populated only for vocals-like stems in
+    # ``compute_section_features``; ``None`` elsewhere. Feeds
+    # ``SongFormAggregates.vocal_pitch_*`` for Stage B's Pass 4b
+    # CHORUS→VERSE demotion on shared-progression songs (verses
+    # and choruses use identical chord loops, so H2 sees ANCHOR
+    # on every section; vocal pitch is the disambiguating signal).
+    pitch_median_semitones: Optional[float] = None
+    """Median MIDI pitch (semitones) of vocals-stem notes whose
+    support intersects this section. ``None`` when the stem is
+    not vocals-like, when ``stem_midi`` is absent, or when the
+    section has zero overlapping notes."""
+
+    pitch_range_semitones: Optional[float] = None
+    """p90 - p10 of MIDI pitches (semitones) in this section on
+    the vocals stem. Percentile spread rather than max-min so a
+    single octave-jump grace note does not dominate. ``None``
+    under the same absence conditions as
+    ``pitch_median_semitones``."""
 
 
 def _note_pitch(note: Any) -> int:
@@ -526,6 +554,31 @@ def _lead_activity(
     return float(np.clip(0.5 * rate_score + 0.5 * interval_score, 0.0, 1.0))
 
 
+def _vocal_pitch_stats(
+    clipped: Sequence[tuple[int, float, float]],
+) -> tuple[Optional[float], Optional[float]]:
+    """Return ``(median_pitch_semitones, range_p90_p10_semitones)``.
+
+    Both are ``None`` when ``clipped`` is empty. Pitches are in
+    MIDI note-number units (which equals semitones by
+    construction), so the caller can compare them directly to
+    the ``verse_pitch_semitone_offset`` threshold without unit
+    conversion.
+
+    Percentile spread (p90 - p10) rather than max-min so a single
+    octave-jump grace note does not dominate; matches the
+    robust-statistic convention used elsewhere in this module
+    (median + MAD for aggregate z-scores).
+    """
+    if not clipped:
+        return None, None
+    pitches = np.asarray([p for p, _, _ in clipped], dtype=np.float64)
+    median_p = float(np.median(pitches))
+    p10 = float(np.percentile(pitches, 10.0))
+    p90 = float(np.percentile(pitches, 90.0))
+    return median_p, max(p90 - p10, 0.0)
+
+
 def compute_section_features(
     *,
     stem_name: str,
@@ -588,6 +641,18 @@ def compute_section_features(
         chord_regions, section_start_s, section_end_s, duration_s
     )
 
+    # Signal G — vocal pitch stats. Only meaningful on the vocals
+    # stem; on drums/bass/other the median-and-range of MIDI
+    # pitches carries no verse/chorus signal (drum pitches are
+    # nominal, bass root sits at the tonic on both, etc.). Emit
+    # ``None`` on non-vocals stems so downstream code cleanly
+    # abstains rather than reading garbage.
+    if stem_name.lower() in _VOCALS_STEM_NAMES:
+        pitch_median, pitch_range = _vocal_pitch_stats(clipped)
+    else:
+        pitch_median = None
+        pitch_range = None
+
     return SectionFeatures(
         stem_name=stem_name,
         chord_density_per_s=density,
@@ -601,6 +666,8 @@ def compute_section_features(
         note_count=note_count,
         duration_s=duration_s,
         pitch_class_diversity=pc_diversity,
+        pitch_median_semitones=pitch_median,
+        pitch_range_semitones=pitch_range,
     )
 
 

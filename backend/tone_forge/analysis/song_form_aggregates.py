@@ -91,6 +91,23 @@ class SongFormAggregates:
     Stage A maps every section to CHORUS: a clearly-lower-energy
     edge gets demoted to INTRO/OUTRO."""
 
+    vocal_pitch_median_semitones: float = 0.0
+    """Median MIDI pitch (semitones) of vocals-stem notes in this
+    section. 0.0 = "no evidence" — either the vocals stem is
+    absent, this section has no overlapping vocal notes, or the
+    upstream ``SectionFeatures`` row carried ``None`` for the
+    pitch field. Consumers (Stage B's Pass 4b) treat 0.0 as
+    abstain rather than firing on a phantom pitch dip."""
+
+    vocal_pitch_range_semitones: float = 0.0
+    """p90-p10 spread (semitones) of vocals-stem note pitches in
+    this section. 0.0 = "no evidence" under the same conditions
+    as ``vocal_pitch_median_semitones``. Combined with the
+    median via an AND-gate in Pass 4b so that a chorus-labelled
+    section only demotes to VERSE when the singer both sits
+    lower AND has less pitch mobility than the intra-CHORUS
+    cohort."""
+
 
 def _get_attr_or_key(obj: Any, name: str, default: float = 0.0) -> float:
     """Read a field by either attribute or mapping key.
@@ -129,6 +146,35 @@ def _vocal_activity(row: Any) -> float:
     lead = _get_attr_or_key(row, "lead_activity_score", 0.0)
     voiced = _get_attr_or_key(row, "voiced_frame_ratio", 0.0)
     return lead * voiced
+
+
+def _optional_float(row: Any, name: str) -> float:
+    """Read a field that may be ``None`` on the source row.
+
+    ``_get_attr_or_key`` coerces to ``float`` unconditionally,
+    which crashes on ``None``. ``SectionFeatures`` emits ``None``
+    for ``pitch_median_semitones`` / ``pitch_range_semitones``
+    when the section has no vocal-note evidence; we surface that
+    as 0.0 = "abstain" to match the aggregate-field convention.
+    """
+    if isinstance(row, Mapping):
+        raw = row.get(name)
+    else:
+        raw = getattr(row, name, None)
+    if raw is None:
+        return 0.0
+    return float(raw)
+
+
+def _pitch_median(row: Any) -> float:
+    """Vocals-row pitch median (semitones), 0.0 when unavailable."""
+    return _optional_float(row, "pitch_median_semitones")
+
+
+def _pitch_range(row: Any) -> float:
+    """Vocals-row pitch spread (p90-p10 semitones), 0.0 when
+    unavailable."""
+    return _optional_float(row, "pitch_range_semitones")
 
 
 def _drum_density(row: Any) -> float:
@@ -231,6 +277,25 @@ def aggregate_song_form(
             for i in range(n)
         )
 
+    # Per-section vocal pitch stats (0.0 = abstain when stem
+    # absent, when this section has no vocal-note evidence, or
+    # when the upstream row carried ``None`` for the pitch field
+    # — see ``_optional_float``). Consumed by Stage B's Pass 4b
+    # CHORUS→VERSE demotion on shared-progression songs where H2
+    # alone can't tell verse from chorus.
+    if vocals_rows is None:
+        pitch_medians: tuple[float, ...] = tuple(0.0 for _ in range(n))
+        pitch_ranges: tuple[float, ...] = tuple(0.0 for _ in range(n))
+    else:
+        pitch_medians = tuple(
+            _pitch_median(vocals_rows[i]) if i < len(vocals_rows) else 0.0
+            for i in range(n)
+        )
+        pitch_ranges = tuple(
+            _pitch_range(vocals_rows[i]) if i < len(vocals_rows) else 0.0
+            for i in range(n)
+        )
+
     # Per-section drum density (0.0 when stem absent).
     if drums_rows is None:
         drum_densities: tuple[float, ...] = tuple(0.0 for _ in range(n))
@@ -269,6 +334,8 @@ def aggregate_song_form(
             drum_density_z=drum_zs[i],
             energy_ramp_into_next=ramps[i],
             energy_z=energy_zs[i],
+            vocal_pitch_median_semitones=pitch_medians[i],
+            vocal_pitch_range_semitones=pitch_ranges[i],
         )
         for i in range(n)
     )

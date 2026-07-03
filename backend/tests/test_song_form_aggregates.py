@@ -200,6 +200,71 @@ def test_energy_z_has_no_density_floor():
     assert abs(zs[2]) < 1e-6
 
 
+# ---------------------------------------------------------------------------
+# Signal G — vocal-pitch aggregate population (Pass 4b feeder)
+# ---------------------------------------------------------------------------
+#
+# ``vocal_pitch_median_semitones`` / ``vocal_pitch_range_semitones``
+# copy through from the vocals-stem per-section rows with a 0.0-as-
+# abstain convention. Downstream consumer is Stage B's Pass 4b.
+
+
+def _vocals_pitch_row(
+    lead: float = 0.0,
+    voiced: float = 0.0,
+    pitch_median=None,
+    pitch_range=None,
+) -> dict:
+    return {
+        "lead_activity_score": lead,
+        "voiced_frame_ratio": voiced,
+        "pitch_median_semitones": pitch_median,
+        "pitch_range_semitones": pitch_range,
+    }
+
+
+def test_aggregate_populates_vocal_pitch_from_vocals_stem():
+    vocals = [
+        _vocals_pitch_row(pitch_median=62.0, pitch_range=4.0),
+        _vocals_pitch_row(pitch_median=68.0, pitch_range=7.5),
+        _vocals_pitch_row(pitch_median=55.0, pitch_range=2.0),
+    ]
+    out = aggregate_song_form({"vocals": vocals}, [0.1, 0.2, 0.3])
+    assert out[0].vocal_pitch_median_semitones == 62.0
+    assert out[0].vocal_pitch_range_semitones == 4.0
+    assert out[1].vocal_pitch_median_semitones == 68.0
+    assert out[1].vocal_pitch_range_semitones == 7.5
+    assert out[2].vocal_pitch_median_semitones == 55.0
+    assert out[2].vocal_pitch_range_semitones == 2.0
+
+
+def test_aggregate_pitch_zero_when_vocals_stem_missing():
+    # No vocals key at all — Pass 4b must see 0.0 (abstain) on
+    # every section, and abstain from firing on this song.
+    drums = [_drums_row(10, 2.0), _drums_row(20, 2.0), _drums_row(15, 2.0)]
+    out = aggregate_song_form({"drums": drums}, [0.5, 0.6, 0.7])
+    assert all(a.vocal_pitch_median_semitones == 0.0 for a in out)
+    assert all(a.vocal_pitch_range_semitones == 0.0 for a in out)
+
+
+def test_aggregate_pitch_zero_when_section_row_has_none():
+    # Vocals stem is present but the row's pitch fields are ``None``
+    # (SectionFeatures emits None on sections with no in-window
+    # vocal notes). Aggregate coerces None → 0.0.
+    vocals = [
+        _vocals_pitch_row(pitch_median=64.0, pitch_range=3.0),
+        _vocals_pitch_row(pitch_median=None, pitch_range=None),
+        _vocals_pitch_row(pitch_median=70.0, pitch_range=5.0),
+    ]
+    out = aggregate_song_form({"vocals": vocals}, [0.1, 0.2, 0.3])
+    assert out[0].vocal_pitch_median_semitones == 64.0
+    assert out[0].vocal_pitch_range_semitones == 3.0
+    assert out[1].vocal_pitch_median_semitones == 0.0
+    assert out[1].vocal_pitch_range_semitones == 0.0
+    assert out[2].vocal_pitch_median_semitones == 70.0
+    assert out[2].vocal_pitch_range_semitones == 5.0
+
+
 def test_aggregates_frozen():
     """SongFormAggregates is frozen — mutation must raise."""
     a = SongFormAggregates()

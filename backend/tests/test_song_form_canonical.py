@@ -45,7 +45,10 @@ import pytest
 
 from tone_forge.analysis.section_naming import derive_section_types
 from tone_forge.analysis.sections import SectionType
-from tone_forge.analysis.song_form import refine_section_types
+from tone_forge.analysis.song_form import (
+    SongFormThresholds,
+    refine_section_types,
+)
 from tone_forge.analysis.song_form_aggregates import aggregate_song_form
 from tone_forge.song_form.h2 import extract_h2
 from tone_forge.song_form.role_classifier import classify_roles
@@ -247,6 +250,70 @@ def test_canonical_stage_b_ground_truth(history, bundle_id):
         assert refined[idx] is SectionType.BREAKDOWN, (
             f"{slug}[{idx}] expected BREAKDOWN, got {refined[idx].value}"
         )
+
+
+@pytest.mark.parametrize(
+    "bundle_id",
+    list(CANONICAL_BUNDLES.keys()),
+    ids=list(CANONICAL_BUNDLES.values()),
+)
+def test_canonical_6_pass_4b_does_not_change_labels(history, bundle_id):
+    """Pass 4b (vocal-pitch CHORUS→VERSE demotion) must abstain on
+    the canonical-6 corpus.
+
+    Compares two runs on each canonical bundle:
+      * defaults: Pass 4b enabled with production thresholds.
+      * disabled: Pass 4b's threshold gate configured so it can
+        never fire (offset ≫ any plausible cohort spread, ratio ≪
+        any plausible dip).
+
+    Identical outputs mean Pass 4b is silent on the canonical
+    corpus — verse/chorus disambiguation on shared-progression
+    songs is Pass 4b's job, but on the canonical bundles either
+    (a) H2 already separates verse from chorus (so Pass 4b sees
+    <4 CHORUSes and abstains via ``verse_demotion_min_choruses``),
+    or (b) pitch evidence is absent (fully instrumental /
+    canonical-6 Romance de Amor), or (c) the choruses genuinely
+    have consistent vocal pitch and no demotion candidate crosses
+    the AND-gate. If this test flips, the correct fix is to
+    tighten Pass 4b's thresholds — not to bypass the abstain-on-
+    canonical property.
+    """
+    bundle = _find_bundle(history, bundle_id)
+    if bundle is None:
+        pytest.skip(f"canonical bundle {bundle_id} not in history.json")
+
+    h2_result = extract_h2(bundle)
+    if h2_result.degenerate:
+        pytest.skip(
+            f"canonical bundle {bundle_id} has degenerate H2; "
+            "Stage B abstains by design"
+        )
+    decisions = classify_roles(h2_result.per_section, h2_result.h2_sep)
+    stage_a = derive_section_types(decisions)
+    per_stem, energies = _per_stem_features_from_bundle(bundle)
+    aggregates = aggregate_song_form(per_stem, energies)
+
+    with_pass_4b = refine_section_types(stage_a, aggregates)
+
+    # Disable Pass 4b entirely: negative offset means every
+    # candidate's median clears the "must dip below" gate; but
+    # combined with ratio=0.0 (candidate range must be strictly
+    # below 0.0 × cohort_range = 0.0, which is impossible for
+    # positive ranges) the AND-gate can never fire.
+    disabled = SongFormThresholds(
+        verse_pitch_semitone_offset=-1e9,
+        verse_pitch_range_ratio=0.0,
+    )
+    without_pass_4b = refine_section_types(stage_a, aggregates, disabled)
+
+    slug = CANONICAL_BUNDLES[bundle_id]
+    assert with_pass_4b == without_pass_4b, (
+        f"Pass 4b changed labels on canonical bundle {slug} "
+        f"({bundle_id}). With Pass 4b: "
+        f"{[t.value for t in with_pass_4b]}. Without: "
+        f"{[t.value for t in without_pass_4b]}."
+    )
 
 
 def test_canonical_corpus_completeness(history):

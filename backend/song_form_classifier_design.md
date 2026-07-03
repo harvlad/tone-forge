@@ -242,6 +242,41 @@ becomes meaningful.
   VERSE. Initial thresholds are conservative; canonical-corpus
   calibration will follow.
 
+- **~~CHORUS → VERSE demotion by vocal pitch~~** — **shipped in
+  Pass 4b.** Pass 4 covers the case where verses are quieter
+  and less vocally busy than choruses, but it misses shared-
+  progression songs where verse and chorus are performed at
+  matched intensity (driven pop-punk being the reference case:
+  Paramore "That's What You Get" — 12/14 sections came out as
+  CHORUS after Pass 4). Pass 4b introduces a new upstream
+  signal — vocal pitch statistics per section — derived from
+  the vocals-stem MIDI notes already computed in
+  `compute_section_features`. Two new `SectionFeatures` fields
+  (`pitch_median_semitones`, `pitch_range_semitones`) flow into
+  two new `SongFormAggregates` fields
+  (`vocal_pitch_median_semitones`, `vocal_pitch_range_semitones`).
+  A CHORUS is demoted to VERSE only when BOTH the median and the
+  p90-p10 spread dip below the intra-CHORUS cohort — a
+  conservative AND gate:
+
+    * median-only would over-fire on brief low-pitch chorus
+      moments (a chorus opening on a low note);
+    * range-only would flip monotone choruses;
+    * both together match the actual verse fingerprint — the
+      singer sits lower AND has less pitch mobility.
+
+  0.0 is the "no evidence" sentinel and is excluded from both
+  the cohort and the candidate set; instrumental sections,
+  no-vocal-note sections, and non-vocal songs all abstain
+  cleanly. Preserves at least one CHORUS, same guardrail as
+  Pass 4. Thresholds default to `verse_pitch_semitone_offset =
+  2.0` (≈ a whole tone below cohort median) and
+  `verse_pitch_range_ratio = 0.75` (matching the Pass 4 vocal
+  ratio). Canonical-6 anchors are unchanged: the pass either
+  finds no dip meeting both gates on those bundles (typical
+  case) or is filtered out by the pitch-evidence guard on
+  instrumental sections.
+
 ## Boundary considerations
 
 `tone_forge/analysis/song_form.py` and

@@ -176,6 +176,22 @@ class SongFormThresholds:
     [0, 1] and the useful dynamic range collapses near the
     endpoints."""
 
+    verse_pitch_semitone_offset: float = 2.0
+    """Pass 4b: a CHORUS demotion candidate must sit at least
+    this many semitones below the intra-CHORUS median vocal
+    pitch. Two semitones ≈ a whole tone; smaller dips are noise
+    (breath / grace-note variation within the same phrase). The
+    canonical verse/chorus separation on shared-progression pop
+    songs is 3-7 semitones — 2 gives conservative headroom
+    while still catching every real case."""
+
+    verse_pitch_range_ratio: float = 0.75
+    """Pass 4b: candidate must ALSO have ``vocal_pitch_range``
+    below this fraction of the intra-CHORUS median range. 0.75
+    matches ``verse_demotion_vocal_ratio``: multiplicative gate,
+    same rationale (pitch range in semitones has a similar
+    bounded dynamic range to vocal-activity)."""
+
 
 def refine_section_types(
     stage_a_types: Sequence[SectionType],
@@ -335,6 +351,22 @@ def refine_section_types(
     # keep the highest-signal survivor.
     _pass_4_chorus_to_verse(refined, aggregates, thresholds)
 
+    # Pass 4b: CHORUS → VERSE by vocal-pitch dip.
+    #
+    # Independent evidence axis to Pass 4. Pop / rock verses sit
+    # lower AND move less in the singer's range than choruses,
+    # even when energy and vocal-activity are indistinguishable
+    # (a driven pop-punk verse can match its chorus on
+    # loudness). Pass 4 misses that case; Pass 4b catches it via
+    # per-section vocal pitch median + spread, sourced from
+    # vocals-stem MIDI notes upstream in ``compute_section_features``.
+    #
+    # Both signals must dip together (AND gate) — see the
+    # threshold docstrings for rationale. Pass 4b is silent on
+    # non-vocal songs and on sections with no vocal-note
+    # evidence (0.0 sentinel = abstain).
+    _pass_4b_chorus_to_verse_by_pitch(refined, aggregates, thresholds)
+
     return tuple(refined)
 
 
@@ -386,6 +418,82 @@ def _pass_4_chorus_to_verse(
         # Sanity: keep at least one CHORUS in the song. Prevents
         # pathological all-low-signal songs from ending up
         # VERSE-only.
+        remaining_choruses = sum(
+            1 for t in refined if t is SectionType.CHORUS
+        )
+        if remaining_choruses <= 1:
+            break
+        refined[i] = SectionType.VERSE
+
+
+def _pass_4b_chorus_to_verse_by_pitch(
+    refined: list[SectionType],
+    aggregates: Sequence[SongFormAggregates],
+    thresholds: SongFormThresholds,
+) -> None:
+    """Mutate ``refined`` in place: demote CHORUSes whose vocal
+    pitch median AND spread both dip below the intra-CHORUS
+    cohort.
+
+    Independent-evidence-axis complement to Pass 4. Pass 4
+    catches choruses with lower energy + vocal activity; Pass 4b
+    catches shared-progression songs where verses and choruses
+    match on H2, on energy, and on vocal activity but the singer
+    sits lower and moves less in the verse. Both signals must
+    dip together — median alone would over-fire on brief
+    low-pitch chorus moments (a chorus opening on a low note);
+    range alone would flip monotone choruses.
+
+    Sections with no vocal-note evidence (median or range == 0.0
+    sentinel) are excluded from both the cohort and the
+    candidate set — 0.0 means "abstain", not "sits at pitch
+    C-1 with zero spread". Consequently instrumental / no-vocal
+    sections never demote here.
+
+    Preserves at least one CHORUS; matches Pass 4's guardrail.
+    """
+    chorus_indices = [
+        i for i, t in enumerate(refined) if t is SectionType.CHORUS
+    ]
+    if len(chorus_indices) < thresholds.verse_demotion_min_choruses:
+        return
+
+    # Filter to CHORUSes with pitch evidence on both axes.
+    valid = [
+        i for i in chorus_indices
+        if aggregates[i].vocal_pitch_median_semitones > 0.0
+        and aggregates[i].vocal_pitch_range_semitones > 0.0
+    ]
+    if len(valid) < thresholds.verse_demotion_min_choruses:
+        return
+
+    cohort_median = median(
+        aggregates[i].vocal_pitch_median_semitones for i in valid
+    )
+    cohort_range = median(
+        aggregates[i].vocal_pitch_range_semitones for i in valid
+    )
+
+    # Deepest joint dip first — deterministic tie-break by index
+    # via Python's stable sort.
+    candidates = sorted(
+        valid,
+        key=lambda i: (
+            aggregates[i].vocal_pitch_median_semitones
+            + aggregates[i].vocal_pitch_range_semitones
+        ),
+    )
+
+    for i in candidates:
+        agg = aggregates[i]
+        if agg.vocal_pitch_median_semitones >= (
+            cohort_median - thresholds.verse_pitch_semitone_offset
+        ):
+            continue
+        if agg.vocal_pitch_range_semitones >= (
+            cohort_range * thresholds.verse_pitch_range_ratio
+        ):
+            continue
         remaining_choruses = sum(
             1 for t in refined if t is SectionType.CHORUS
         )
