@@ -19,6 +19,7 @@ import numpy as np
 from tone_forge.analysis.section_features import (
     SectionFeatures,
     compute_section_features,
+    recompute_section_features_for_child,
     select_landmark_notes,
 )
 
@@ -541,3 +542,111 @@ def test_pitch_fields_none_when_stem_midi_absent() -> None:
     )
     assert sf.pitch_median_semitones is None
     assert sf.pitch_range_semitones is None
+
+
+# ---------------------------------------------------------------------------
+# recompute_section_features_for_child — post-split refresh helper.
+# ---------------------------------------------------------------------------
+
+def test_recompute_child_features_reflect_child_window_not_parent() -> None:
+    # Parent window [0, 4.0). Two disjoint sub-windows: [0, 2.0) has 4
+    # low-pitch vocals notes (pitches 60-63), [2.0, 4.0) has 4 high-
+    # pitch vocals notes (pitches 72-75). Split at 2.0 → child 0
+    # must reflect ONLY the low notes; child 1 ONLY the high notes.
+    # Same for chord density: low half has 2 chords, high half has
+    # 0 chords.
+    lo_notes = [_note(60 + i, 0.1 + i * 0.4, 0.4 + i * 0.4) for i in range(4)]
+    hi_notes = [_note(72 + i, 2.1 + i * 0.4, 2.4 + i * 0.4) for i in range(4)]
+    all_notes = lo_notes + hi_notes
+    regions = [_ChordRow(0.0, 1.0, "C"), _ChordRow(1.0, 2.0, "G")]
+
+    dbg_c0, em_c0 = recompute_section_features_for_child(
+        child_start_s=0.0,
+        child_end_s=2.0,
+        stem_names=("vocals",),
+        stem_notes_by_name={"vocals": all_notes},
+        chord_regions=regions,
+    )
+    dbg_c1, em_c1 = recompute_section_features_for_child(
+        child_start_s=2.0,
+        child_end_s=4.0,
+        stem_names=("vocals",),
+        stem_notes_by_name={"vocals": all_notes},
+        chord_regions=regions,
+    )
+
+    # No energy_curve → no energy_mean update.
+    assert em_c0 is None and em_c1 is None
+
+    assert len(dbg_c0) == 1 and dbg_c0[0]["stem_name"] == "vocals"
+    assert len(dbg_c1) == 1 and dbg_c1[0]["stem_name"] == "vocals"
+
+    # Child 0 sees only low-pitch notes → median in 60-63 band.
+    assert 60.0 <= dbg_c0[0]["pitch_median_semitones"] <= 63.0
+    # Child 1 sees only high-pitch notes → median in 72-75 band.
+    assert 72.0 <= dbg_c1[0]["pitch_median_semitones"] <= 75.0
+
+    # Chord density: 2 chord regions cover [0, 2.0) → 1.0/s; none in [2, 4).
+    assert dbg_c0[0]["chord_count_in_section"] == 2
+    assert dbg_c1[0]["chord_count_in_section"] == 0
+
+
+def test_recompute_child_features_missing_stem_treated_as_silent() -> None:
+    # stem_notes_by_name doesn't include "vocals" — helper must still
+    # emit a "vocals" row (preserving downstream aggregator shape),
+    # with note_count=0 and pitch fields None (silent stem contract).
+    dbg, _ = recompute_section_features_for_child(
+        child_start_s=0.0,
+        child_end_s=2.0,
+        stem_names=("vocals", "bass"),
+        stem_notes_by_name={"bass": [_note(40, 0.1, 1.9)]},
+        chord_regions=[],
+    )
+    assert tuple(row["stem_name"] for row in dbg) == ("vocals", "bass")
+    voc = dbg[0]
+    assert voc["note_count"] == 0
+    assert voc["pitch_median_semitones"] is None
+    assert voc["pitch_range_semitones"] is None
+    bs = dbg[1]
+    assert bs["note_count"] == 1
+
+
+def test_recompute_child_energy_mean_slices_from_curve() -> None:
+    # energy_curve is 10 Hz, 4.0s long → 40 samples. Sample values:
+    # first half all 0.2, second half all 0.8. Splitting at 2.0 must
+    # give child 0 energy_mean=0.2, child 1 energy_mean=0.8.
+    sr = 10.0
+    ec = np.concatenate([np.full(20, 0.2), np.full(20, 0.8)])
+    _, em_lo = recompute_section_features_for_child(
+        child_start_s=0.0,
+        child_end_s=2.0,
+        stem_names=(),
+        stem_notes_by_name={},
+        chord_regions=[],
+        energy_curve=ec,
+        energy_curve_sr=sr,
+    )
+    _, em_hi = recompute_section_features_for_child(
+        child_start_s=2.0,
+        child_end_s=4.0,
+        stem_names=(),
+        stem_notes_by_name={},
+        chord_regions=[],
+        energy_curve=ec,
+        energy_curve_sr=sr,
+    )
+    assert em_lo is not None and abs(em_lo - 0.2) < 1e-9
+    assert em_hi is not None and abs(em_hi - 0.8) < 1e-9
+
+
+def test_recompute_child_energy_mean_none_when_curve_absent() -> None:
+    # No energy_curve provided → returns None so caller preserves the
+    # parent's inherited energy_mean rather than nulling it out.
+    _, em = recompute_section_features_for_child(
+        child_start_s=0.0,
+        child_end_s=2.0,
+        stem_names=(),
+        stem_notes_by_name={},
+        chord_regions=[],
+    )
+    assert em is None

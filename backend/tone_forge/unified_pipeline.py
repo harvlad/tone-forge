@@ -1206,12 +1206,17 @@ class UnifiedPipeline:
             # segmentation so sub-sections can pick up their own
             # role (a split 70s chorus typically decomposes into
             # verse2/prechorus2/chorus2/bridge rather than four
-            # copies of ``chorus``). Stage B (per-stem aggregate
-            # refinement) is not re-run — its feature rows are keyed
-            # by the original section indices and don't survive the
-            # split without an upstream re-fit which is out of scope
-            # here. Finally re-run the duration guard so any sub-
-            # section still exceeding the threshold keeps its flag.
+            # copies of ``chorus``). Sub-sections' ``debug_features``
+            # and ``energy_mean`` are recomputed from primary sources
+            # (midi_stems, chords, energy_curve) inside
+            # ``resegment_flagged_sections`` — see the recompute-input
+            # kwargs below and the recompute helper in
+            # ``analysis/section_features.py``. Without recompute
+            # each child would inherit the parent's aggregate signals
+            # and Stage B rerun downstream would see identical
+            # evidence across sub-sections. Finally re-run the
+            # duration guard so any sub-section still exceeding the
+            # threshold keeps its flag.
             if sections:
                 try:
                     from tone_forge.analysis.section_resegment import (
@@ -1220,8 +1225,22 @@ class UnifiedPipeline:
                     from tone_forge.bundle_read_fixups import (
                         relabel_sections_from_h2,
                     )
+                    _fix_c_beats: Optional[np.ndarray] = (
+                        np.asarray(beats_s, dtype=np.float64)
+                        if beats_s else None
+                    )
+                    _fix_c_energy: Optional[np.ndarray] = (
+                        np.asarray(energy_curve, dtype=np.float64)
+                        if energy_curve is not None
+                        and len(energy_curve) > 0
+                        else None
+                    )
                     resegmented = resegment_flagged_sections(
-                        sections, midi_stems or {}
+                        sections, midi_stems or {},
+                        chord_regions=chords,
+                        beats_s=_fix_c_beats,
+                        energy_curve=_fix_c_energy,
+                        energy_curve_sr=10.0,
                     )
                     if len(resegmented) != len(sections):
                         sections = resegmented

@@ -31,8 +31,8 @@ only read attributes/keys, never construct.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
-from typing import Any, Iterable, Optional, Sequence
+from dataclasses import asdict, dataclass
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -671,8 +671,89 @@ def compute_section_features(
     )
 
 
+def recompute_section_features_for_child(
+    *,
+    child_start_s: float,
+    child_end_s: float,
+    stem_names: Sequence[str],
+    stem_notes_by_name: Mapping[str, Optional[Iterable[Any]]],
+    chord_regions: Sequence[Any],
+    beats_s: Optional[np.ndarray] = None,
+    energy_curve: Optional[np.ndarray] = None,
+    energy_curve_sr: float = 10.0,
+) -> tuple[tuple[dict, ...], Optional[float]]:
+    """Recompute debug_features + energy_mean for a split child section.
+
+    When Fix C (``section_resegment._split_section``) or Fix 4
+    (``bundle_read_fixups`` inline splitter) splits a parent section
+    into children via ``dict(parent)``, the ``debug_features`` list and
+    ``energy_mean`` scalar shallow-copy from the parent's window. Both
+    are structurally wrong for the child's ``[start_s, end_s]``
+    sub-window and mislead every downstream Stage B consumer.
+
+    This helper re-derives both quantities from primary sources for the
+    child window, applying the same recipe as the original write-time
+    computation (``compute_section_features`` per stem; mean of
+    ``energy_curve`` slice for ``energy_mean``).
+
+    Args:
+        child_start_s, child_end_s: Child window bounds in seconds.
+        stem_names: Ordered list of stem identifiers to recompute for.
+            Callers should pass the stem_name field from the parent's
+            existing debug_features tuple so downstream aggregators see
+            the same stem ordering and count.
+        stem_notes_by_name: Song-wide per-stem notes. Missing entries
+            (or entries whose value is None) are treated as silent —
+            ``compute_section_features`` still emits a row for the stem
+            but with zero-activity signals, mirroring how the write
+            path handles quiet stems.
+        chord_regions: Song-wide chord lane. Feeds Signal A.
+        beats_s: Optional beat times. Only affects
+            ``repetition_period_beats``.
+        energy_curve: Optional per-frame RMS-like energy signal sampled
+            at ``energy_curve_sr`` Hz. When absent, the returned
+            ``energy_mean`` is ``None`` and the caller keeps the
+            existing value.
+        energy_curve_sr: Sample rate of ``energy_curve`` (default
+            10.0 Hz, matching ``SectionDetector`` default hop).
+
+    Returns:
+        Tuple of ``(new_debug_features, new_energy_mean)``.
+        ``new_debug_features`` is a tuple of asdict'd SectionFeatures
+        rows, one per stem in ``stem_names`` in order. The caller
+        assigns it to ``section['debug_features']``.
+        ``new_energy_mean`` is ``float(np.mean(energy_curve[a:b]))`` or
+        ``None`` when no energy_curve was provided or the slice was
+        empty.
+    """
+    per_stem: list[dict] = []
+    for stem_name in stem_names:
+        notes = stem_notes_by_name.get(stem_name)
+        sf = compute_section_features(
+            stem_name=stem_name,
+            stem_midi=notes,
+            chord_regions=chord_regions,
+            section_start_s=child_start_s,
+            section_end_s=child_end_s,
+            beats_s=beats_s,
+        )
+        per_stem.append(asdict(sf))
+
+    new_energy_mean: Optional[float] = None
+    if energy_curve is not None and energy_curve_sr > 0.0:
+        arr = np.asarray(energy_curve, dtype=np.float64)
+        if arr.size > 0:
+            start_idx = max(0, int(round(child_start_s * energy_curve_sr)))
+            end_idx = min(arr.size, int(round(child_end_s * energy_curve_sr)))
+            if end_idx > start_idx:
+                new_energy_mean = float(np.mean(arr[start_idx:end_idx]))
+
+    return tuple(per_stem), new_energy_mean
+
+
 __all__ = [
     "SectionFeatures",
     "compute_section_features",
+    "recompute_section_features_for_child",
     "select_landmark_notes",
 ]

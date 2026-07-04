@@ -571,3 +571,247 @@ def test_relabel_abstains_stage_b_when_stem_name_missing():
     # vocals would have been low enough to demote had the row been
     # well-formed.
     assert sections[0]["type"] == "chorus"
+
+
+# ---------------------------------------------------------------------
+# Per-child feature recompute after read-path Fix 4 splits.
+#
+# Regression: prior to this fix, ``dict(section)`` shallow-copies the
+# parent's ``debug_features`` and ``energy_mean`` into every child of a
+# split section. Stage B's downstream passes (Pass 1 vocal-activity,
+# Pass 4 energy+vocal gate) then see identical numbers on every sub of
+# the same parent and cannot differentiate them. Diagnosed on the
+# Paramore session (12 CHORUS sub-sections of a single parent all
+# carrying identical drum/other/bass rows).
+# ---------------------------------------------------------------------
+
+
+def _debug_row_full(stem: str, *, chord_density: float = 0.0) -> dict[str, Any]:
+    """Debug-features row shaped like the write-time snapshot but with
+    a settable ``chord_density_per_s`` so tests can pin the pre-split
+    value and detect whether the child inherited (bug) or recomputed
+    (fix)."""
+    return {
+        "stem_name": stem,
+        "chord_density_per_s": chord_density,
+        "chord_count_in_section": 0,
+        "monophonic_ratio": 0.0,
+        "repetition_score": 0.0,
+        "repetition_period_beats": 0.0,
+        "polyphony_score": 0.0,
+        "lead_activity_score": 0.0,
+        "voiced_frame_ratio": 0.0,
+        "note_count": 0,
+        "duration_s": 0.0,
+        "pitch_class_diversity": 0.0,
+        "pitch_median_semitones": None,
+        "pitch_range_semitones": None,
+    }
+
+
+def test_fix4_recomputes_child_debug_features_from_primary_sources():
+    """After Fix 4 subdivides a parent, each child's ``debug_features``
+    reflects the child's own window, not the parent's stale snapshot.
+
+    Setup: one CHORUS-labelled section [0, 40s]. Parent carries a
+    ``debug_features`` snapshot with an obviously-fake sentinel
+    ``chord_density_per_s = 99.0`` — no legitimate re-computation
+    would ever produce that value. Chord content is asymmetric so
+    Fix 4 splits at ~20s AND the two children have different real
+    chord densities (8 chords per 20s in first half → 0.4 c/s;
+    4 chords per 20s in second half → 0.2 c/s).
+
+    After ``apply_bundle_read_fixups``:
+      * Both children must have ``chord_density_per_s != 99.0``
+        (recompute fired).
+      * The two children's ``chord_density_per_s`` must differ
+        (recompute uses child window, not parent).
+
+    Guards the fix for the "identical debug_features per child"
+    defect diagnosed on the Paramore case.
+    """
+    parent_row = _debug_row_full("other", chord_density=99.0)
+    result = {
+        "sections": [
+            {
+                "start_time": 0.0,
+                "end_time": 40.0,
+                "duration": 40.0,
+                "type": "chorus",
+                "structural_role": "ANCHOR",
+                "structural_confidence": 1.0,
+                "energy_mean": 0.5,
+                "debug_features": [parent_row],
+            }
+        ],
+        "chords": [
+            # First half — 8 distinct chords (dense) to trigger the
+            # Fix 4 vocab shift AND establish a high recomputed
+            # chord_density_per_s in the first-half child.
+            _chord(0.0, 2.5, "Bb"),
+            _chord(2.5, 5.0, "D#"),
+            _chord(5.0, 7.5, "F#"),
+            _chord(7.5, 10.0, "G#"),
+            _chord(10.0, 12.5, "Ab"),
+            _chord(12.5, 15.0, "Db"),
+            _chord(15.0, 17.5, "Eb"),
+            _chord(17.5, 20.0, "B"),
+            # Second half — 4 {C,G,Am,F} chords (sparser). Different
+            # vocab from first half → Fix 4 splits at 20s.
+            _chord(20.0, 25.0, "C"),
+            _chord(25.0, 30.0, "G"),
+            _chord(30.0, 35.0, "Am"),
+            _chord(35.0, 40.0, "F"),
+        ],
+        "beats_s": [i * 0.5 for i in range(80)],
+    }
+
+    apply_bundle_read_fixups(result)
+
+    sections = result["sections"]
+    assert len(sections) >= 2, (
+        f"Fix 4 must have split the parent; got {len(sections)}"
+    )
+    # Pull the debug_features off each sub-section.
+    child_densities: list[float] = []
+    for sub in sections:
+        rows = sub.get("debug_features") or []
+        # Recompute reproduces the same shape ({stem_name -> row});
+        # extract 'other' since that's the only stem in this fixture.
+        for row in rows:
+            if isinstance(row, dict) and row.get("stem_name") == "other":
+                child_densities.append(
+                    float(row.get("chord_density_per_s", -1.0))
+                )
+                break
+
+    assert len(child_densities) == len(sections), (
+        f"Each child must retain an 'other' row after recompute; "
+        f"got densities={child_densities}"
+    )
+    # No child may carry the stale 99.0 sentinel.
+    for d in child_densities:
+        assert d != 99.0, (
+            f"Child inherited stale parent chord_density_per_s=99.0 "
+            f"instead of recomputing; densities={child_densities}"
+        )
+    # The two children must differ (recompute used child windows).
+    assert len(set(round(d, 4) for d in child_densities)) >= 2, (
+        f"Children must have differing chord_density_per_s after "
+        f"recompute (asymmetric chord content); "
+        f"densities={child_densities}"
+    )
+
+
+def test_fix4_skips_recompute_when_parent_lacks_debug_features():
+    """Legacy parents (no ``debug_features``) → recompute abstains.
+
+    Backwards-compat guard: bundles persisted before the debug-
+    features snapshot landed have no per-stem rows to derive
+    ``parent_stem_names`` from. The Fix 4 split still runs (child
+    boundaries + relabel are still applied), but no
+    ``debug_features`` is fabricated on the child. This test
+    ensures the recompute path degrades gracefully rather than
+    crashing.
+    """
+    result = {
+        "sections": [
+            _section(0.0, 40.0, type_="chorus", role="ANCHOR"),
+        ],
+        "chords": [
+            _chord(0.0, 2.5, "Bb"),
+            _chord(2.5, 5.0, "D#"),
+            _chord(5.0, 7.5, "F#"),
+            _chord(7.5, 10.0, "G#"),
+            _chord(10.0, 12.5, "Ab"),
+            _chord(12.5, 15.0, "Db"),
+            _chord(15.0, 17.5, "Eb"),
+            _chord(17.5, 20.0, "B"),
+            _chord(20.0, 22.5, "C"),
+            _chord(22.5, 25.0, "G"),
+            _chord(25.0, 27.5, "Am"),
+            _chord(27.5, 30.0, "F"),
+            _chord(30.0, 32.5, "C"),
+            _chord(32.5, 35.0, "G"),
+            _chord(35.0, 37.5, "Am"),
+            _chord(37.5, 40.0, "F"),
+        ],
+        "beats_s": [i * 0.5 for i in range(80)],
+    }
+
+    apply_bundle_read_fixups(result)  # must not raise
+
+    sections = result["sections"]
+    assert len(sections) >= 2, "Fix 4 split still applies"
+    # No debug_features on any child (parent had none to derive from).
+    for sub in sections:
+        assert not sub.get("debug_features"), (
+            f"Legacy parent had no debug_features; child should not "
+            f"fabricate one. Got {sub.get('debug_features')!r}"
+        )
+
+
+def test_fix4_recompute_slices_energy_mean_per_child_window():
+    """Per-child ``energy_mean`` reflects the child's own window.
+
+    Parent's ``energy_mean=0.5`` is a stale copy after split. The
+    recompute helper slices ``result['energy_curve']`` at 10 Hz per
+    the persisted convention. First half of the curve is 0.1
+    everywhere, second half is 0.9 — after Fix 4 splits the parent
+    at ~20s, the two children must show energy_mean close to those
+    respective values, not the stale 0.5.
+    """
+    parent_row = _debug_row_full("other", chord_density=1.0)
+    # 40s at 10 Hz = 400 samples. First 200: 0.1. Last 200: 0.9.
+    energy_curve = [0.1] * 200 + [0.9] * 200
+
+    result = {
+        "sections": [
+            {
+                "start_time": 0.0,
+                "end_time": 40.0,
+                "duration": 40.0,
+                "type": "chorus",
+                "structural_role": "ANCHOR",
+                "structural_confidence": 1.0,
+                "energy_mean": 0.5,
+                "debug_features": [parent_row],
+            }
+        ],
+        "chords": [
+            _chord(0.0, 2.5, "Bb"),
+            _chord(2.5, 5.0, "D#"),
+            _chord(5.0, 7.5, "F#"),
+            _chord(7.5, 10.0, "G#"),
+            _chord(10.0, 12.5, "Ab"),
+            _chord(12.5, 15.0, "Db"),
+            _chord(15.0, 17.5, "Eb"),
+            _chord(17.5, 20.0, "B"),
+            _chord(20.0, 25.0, "C"),
+            _chord(25.0, 30.0, "G"),
+            _chord(30.0, 35.0, "Am"),
+            _chord(35.0, 40.0, "F"),
+        ],
+        "beats_s": [i * 0.5 for i in range(80)],
+        "energy_curve": energy_curve,
+    }
+
+    apply_bundle_read_fixups(result)
+
+    sections = result["sections"]
+    assert len(sections) >= 2, "Fix 4 must have split the parent"
+    # Sort by start_time to isolate first-half / second-half children.
+    sub_by_start = sorted(sections, key=lambda s: float(s["start_time"]))
+    first = sub_by_start[0]
+    last = sub_by_start[-1]
+    # First-half child covers a stretch of 0.1 energy; last-half a
+    # stretch of 0.9. Tolerate boundary-slice mixing near the split
+    # point but pin the ordering.
+    assert first["energy_mean"] < 0.5, (
+        f"First-half child should have energy_mean < 0.5 (curve is "
+        f"0.1 in that region); got {first['energy_mean']}"
+    )
+    assert last["energy_mean"] > 0.5, (
+        f"Second-half child should have energy_mean > 0.5 (curve is "
+        f"0.9 in that region); got {last['energy_mean']}"
+    )

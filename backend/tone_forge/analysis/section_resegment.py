@@ -47,7 +47,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping as _Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional, Sequence
 
 import numpy as np
 
@@ -102,6 +102,37 @@ class ResegmentThresholds:
     across all stems has too little signal to trust; skip splitting
     and leave the ``duration_flag`` in place so the UI still shows
     the warning."""
+
+
+def _stem_notes_by_name(midi_stems: Any) -> dict[str, list[dict]]:
+    """Return ``{stem_name: [note_dict, ...]}`` for feature recomputation.
+
+    Complement to ``_iter_stem_notes`` (which flattens onsets for
+    novelty scoring). Preserves stem partitioning so
+    ``recompute_section_features_for_child`` can call
+    ``compute_section_features`` per stem — the per-stem shape the
+    downstream aggregator (``aggregate_song_form``) requires.
+
+    Accepts the same two input shapes ``_iter_stem_notes`` accepts:
+    the pipeline shape (``midi_stems[k]["notes"] = [...]``) and the
+    API-decoded shape (identical). Stems lacking a ``notes`` list
+    map to ``[]``.
+    """
+    out: dict[str, list[dict]] = {}
+    if not isinstance(midi_stems, _Mapping):
+        return out
+    for stem_name, stem_data in midi_stems.items():
+        if not isinstance(stem_name, str):
+            continue
+        if not isinstance(stem_data, _Mapping):
+            out[stem_name] = []
+            continue
+        notes = stem_data.get("notes")
+        if not isinstance(notes, list):
+            out[stem_name] = []
+            continue
+        out[stem_name] = [n for n in notes if isinstance(n, _Mapping)]
+    return out
 
 
 def _iter_stem_notes(midi_stems: Any) -> list[dict]:
@@ -232,6 +263,12 @@ def _find_novelty_boundaries(
 def _split_section(
     section: dict,
     boundaries: list[float],
+    *,
+    stem_notes_by_name: Optional[dict[str, list[dict]]] = None,
+    chord_regions: Optional[Sequence[Any]] = None,
+    beats_s: Optional[np.ndarray] = None,
+    energy_curve: Optional[np.ndarray] = None,
+    energy_curve_sr: float = 10.0,
 ) -> list[dict]:
     """Split one section into N+1 children at the given boundary times.
 
@@ -241,13 +278,24 @@ def _split_section(
     boundary miss; if a child is still too long, the guard will re-
     flag it on the next post-pass.
 
-    Non-duration fields (guidance_mode, dominant_stem, landmark_notes,
-    debug_features, structural_role, energy metrics) are copied
-    verbatim to each child. They're now approximate for the child
-    span rather than exact — accepted trade-off because re-computing
-    them here would require re-invoking guidance_mode + section
-    features from inside this module, which would break the
-    determinism contract (numpy + dict manipulation only).
+    ``landmark_notes`` are filtered to the child window (section-scoped
+    UI signal); ``structural_role`` / ``dominant_stem`` /
+    ``guidance_mode`` copy verbatim (Stage A/B re-runs downstream).
+
+    ``debug_features`` and ``energy_mean`` are **recomputed per child**
+    when the recompute inputs (``stem_notes_by_name``, ``chord_regions``,
+    optionally ``beats_s`` / ``energy_curve``) are provided. Without
+    them the child inherits the parent's stale values (legacy contract,
+    preserved for backward-compat with unit tests that construct
+    fixture sections without carrying stem-source data through).
+
+    Recomputation matters because both those fields are the sole
+    Stage-B evidence downstream consumers (Plan D's
+    ``_try_stage_b_from_debug_features`` in ``bundle_read_fixups``,
+    all of ``song_form``'s Pass 1 / Pass 4 / Pass 4b thresholds) read
+    at read time. Without recomputation, every child of a split
+    reports its parent's aggregate signals — chorus vs verse becomes
+    indistinguishable inside a split block.
     """
     if not boundaries:
         return [section]
@@ -255,6 +303,35 @@ def _split_section(
     start = float(section.get("start_time", 0.0))
     end = float(section.get("end_time", 0.0))
     all_bounds = [start] + sorted(boundaries) + [end]
+
+    # Determine whether we can refresh child aggregates. Requires
+    # per-stem notes AND chord regions in scope; energy_curve is
+    # optional (energy_mean falls through to inherited when absent).
+    can_recompute = (
+        stem_notes_by_name is not None and chord_regions is not None
+    )
+    parent_stem_names: tuple[str, ...] = ()
+    if can_recompute:
+        # Preserve stem ordering + count from parent debug_features so
+        # ``aggregate_song_form`` sees the same shape across sub-
+        # sections it would see across pre-split parents.
+        raw_dbg = section.get("debug_features")
+        if isinstance(raw_dbg, (list, tuple)):
+            parent_stem_names = tuple(
+                str(row.get("stem_name"))
+                for row in raw_dbg
+                if isinstance(row, _Mapping)
+                and isinstance(row.get("stem_name"), str)
+            )
+        if not parent_stem_names:
+            # Parent had no debug_features (legacy section) — nothing
+            # to recompute against. Fall back to inherit-verbatim.
+            can_recompute = False
+
+    if can_recompute:
+        from tone_forge.analysis.section_features import (
+            recompute_section_features_for_child,
+        )
 
     children: list[dict] = []
     for i in range(len(all_bounds) - 1):
@@ -283,6 +360,20 @@ def _split_section(
                 if isinstance(n, _Mapping)
                 and child["start_time"] <= float(n.get("start", -1)) < child["end_time"]
             ]
+        if can_recompute:
+            new_dbg, new_em = recompute_section_features_for_child(
+                child_start_s=child["start_time"],
+                child_end_s=child["end_time"],
+                stem_names=parent_stem_names,
+                stem_notes_by_name=stem_notes_by_name,
+                chord_regions=chord_regions,
+                beats_s=beats_s,
+                energy_curve=energy_curve,
+                energy_curve_sr=energy_curve_sr,
+            )
+            child["debug_features"] = new_dbg
+            if new_em is not None:
+                child["energy_mean"] = new_em
         children.append(child)
     return children
 
@@ -291,6 +382,11 @@ def resegment_flagged_sections(
     sections: list[dict],
     midi_stems: Any,
     thresholds: ResegmentThresholds = ResegmentThresholds(),
+    *,
+    chord_regions: Optional[Sequence[Any]] = None,
+    beats_s: Optional[np.ndarray] = None,
+    energy_curve: Optional[np.ndarray] = None,
+    energy_curve_sr: float = 10.0,
 ) -> list[dict]:
     """Return a new sections list where flagged spans have been split.
 
@@ -327,6 +423,12 @@ def resegment_flagged_sections(
     }
 
     all_onsets = _iter_stem_notes(midi_stems)
+    # Per-stem notes for post-split feature recomputation. Built once
+    # for the whole call rather than per split. Empty dict is fine —
+    # ``_split_section`` gates recompute on both ``stem_notes_by_name``
+    # AND ``chord_regions`` being provided; the flag remains off when
+    # callers haven't opted in.
+    stem_notes = _stem_notes_by_name(midi_stems)
 
     out: list[dict] = []
     for section in sections:
@@ -349,7 +451,14 @@ def resegment_flagged_sections(
         if not boundaries:
             out.append(section)
             continue
-        out.extend(_split_section(section, boundaries))
+        out.extend(_split_section(
+            section, boundaries,
+            stem_notes_by_name=stem_notes,
+            chord_regions=chord_regions,
+            beats_s=beats_s,
+            energy_curve=energy_curve,
+            energy_curve_sr=energy_curve_sr,
+        ))
 
     return out
 
