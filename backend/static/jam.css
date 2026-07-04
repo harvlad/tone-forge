@@ -231,6 +231,25 @@ html, body {
 }
 .np-title { font-size: 22px; font-weight: 700; }
 .np-meta { color: var(--text-dim); font-size: 14px; margin-top: 4px; }
+a.np-source {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-decoration: none;
+  transition: border-color 120ms, color 120ms, background 120ms;
+}
+a.np-source:hover,
+a.np-source:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  background: rgba(249, 115, 22, 0.06);
+}
 
 .perform-stage {
   display: grid;

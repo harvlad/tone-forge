@@ -2178,6 +2178,19 @@
     const title = result.title || result.source_name || result.source_title || extractYouTubeId(state.sourceUrl) || 'Untitled jam';
     $('np-title').textContent = title;
     $('np-meta').textContent = `${tempo ? Math.round(tempo) + ' bpm' : '— bpm'} · ${key}`;
+    // Source link — visible only when the session actually has a
+    // remote source URL (uploaded audio has no meaningful href).
+    const npSource = $('np-source');
+    if (npSource) {
+      const src = state.sourceUrl || result.source_url || null;
+      if (src && /^https?:\/\//i.test(src)) {
+        npSource.href = src;
+        npSource.hidden = false;
+      } else {
+        npSource.removeAttribute('href');
+        npSource.hidden = true;
+      }
+    }
 
     // Parse the key string into a pitch-class set for intonation scoring.
     state.songKey = parseDetectedKey(key);
