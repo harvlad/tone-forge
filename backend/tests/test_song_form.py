@@ -646,9 +646,10 @@ def test_annotate_transitions_into_instrumental_chorus_unchanged():
 # shared-progression songs (pop / rock / folk) where verse and
 # chorus use identical chord loops and identical energy/vocal
 # intensity — H2 sees ANCHOR everywhere, Pass 4 abstains, but the
-# singer sits lower AND moves less in the verse. Two signals in
-# AND-gate: median alone would over-fire on brief low-pitch chorus
-# moments; range alone would flip monotone choruses.
+# singer moves less in the verse. Range dip is the primary
+# discriminator; a directional guard on median (must not sit
+# above cohort) blocks upward-shifted sections (bridges, ad-libs,
+# chorus-tag high harmonies) from misfiring the demotion.
 
 
 def _agg_pitch(
@@ -673,11 +674,12 @@ def _agg_pitch(
 
 def test_pass_4b_demotes_low_pitched_narrow_range_chorus_to_verse():
     """Four CHORUSes with pitch evidence. Cohort median = 70,
-    cohort range = 8. Section 2 sits 4 semitones lower (66 < 70-2)
-    AND has half the range (4 < 0.75*8 = 6): demote. The other
-    three keep CHORUS. Signals kept away from the Pass 4
-    thresholds (vocals & energy_z at cohort levels) so Pass 4
-    itself abstains — this test isolates Pass 4b."""
+    cohort range (upper-half mean of [4, 8, 8, 9]) = 8.5.
+    Section 1 has range 4 < 0.75 * 8.5 = 6.375 AND median 66
+    (well below cohort + 0.5 headroom): demote. The other three
+    keep CHORUS. Signals kept away from the Pass 4 thresholds
+    (vocals & energy_z at cohort levels) so Pass 4 itself
+    abstains — this test isolates Pass 4b."""
     types = (SectionType.CHORUS,) * 4
     aggs = (
         _agg_pitch(vocals=0.6, energy_z=0.4,
@@ -695,9 +697,39 @@ def test_pass_4b_demotes_low_pitched_narrow_range_chorus_to_verse():
         assert out[i] is SectionType.CHORUS
 
 
+def test_pass_4b_demotes_shared_tonal_center_narrow_range_chorus():
+    """Paramore fingerprint: verses and choruses at the same
+    tonal center (shared progression, singer in same register)
+    but the verse delivery is narrower. Four CHORUSes at median
+    70; three have wide range (15) and one has narrow range (5).
+
+    Cohort median = 70; cohort range = upper-half mean of
+    [5, 15, 15, 15] = 15. The narrow section: range 5 <
+    0.75 * 15 = 11.25 (range gate passes); median 70 <= 70 + 0.5
+    (directional guard passes) → demote to VERSE. This is the
+    case the old AND-gate on strict-median-dip could not catch.
+    """
+    types = (SectionType.CHORUS,) * 4
+    aggs = (
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=15.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=5.0),   # → VERSE
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=15.0),
+        _agg_pitch(vocals=0.6, energy_z=0.4,
+                   pitch_median=70.0, pitch_range=15.0),
+    )
+    out = refine_section_types(types, aggs)
+    assert out[1] is SectionType.VERSE
+    for i in (0, 2, 3):
+        assert out[i] is SectionType.CHORUS
+
+
 def test_pass_4b_no_op_when_only_median_dips():
-    """Both signals must agree. Median dip alone (range matches
-    cohort) → no demotion."""
+    """Range gate is primary. Median dip alone (range matches
+    cohort) → no demotion. A section sitting lower but delivered
+    with chorus-typical breadth is not verse-like."""
     types = (SectionType.CHORUS,) * 4
     aggs = (
         _agg_pitch(vocals=0.6, energy_z=0.4,
@@ -713,16 +745,19 @@ def test_pass_4b_no_op_when_only_median_dips():
     assert out == types  # nothing demoted
 
 
-def test_pass_4b_no_op_when_only_range_dips():
-    """Mirror of the median-only test. Range dip alone (median
-    matches cohort) → no demotion. Monotone choruses that happen
-    to land on the cohort's median pitch stay CHORUS."""
+def test_pass_4b_no_op_when_range_dips_but_median_above_cohort():
+    """Directional guard: a section with narrow pitch range but
+    median well ABOVE the cohort is not verse-like. Bridges to a
+    higher register, chorus-tag ad-libs, or short high-harmony
+    outros can be narrow-and-high — the median guard blocks them
+    from being flipped to VERSE. Cohort median = 70; candidate
+    at median 76 exceeds 70 + 0.5 headroom → skip."""
     types = (SectionType.CHORUS,) * 4
     aggs = (
         _agg_pitch(vocals=0.6, energy_z=0.4,
                    pitch_median=70.0, pitch_range=8.0),
         _agg_pitch(vocals=0.6, energy_z=0.4,
-                   pitch_median=70.0, pitch_range=3.0),   # range dip only
+                   pitch_median=76.0, pitch_range=3.0),   # range dip, high median
         _agg_pitch(vocals=0.6, energy_z=0.4,
                    pitch_median=70.0, pitch_range=8.0),
         _agg_pitch(vocals=0.6, energy_z=0.4,
@@ -736,32 +771,33 @@ def test_pass_4b_preserves_at_least_one_chorus():
     """Pathological input: every CHORUS qualifies for pitch
     demotion. Pass 4b must stop one short so downstream code
     keeps at least one CHORUS. Deterministic which one via the
-    ascending sort on ``median + range`` (highest joint signal
-    survives)."""
+    ascending sort on ``(range, median)`` — the widest-range
+    (highest range-signal) survivor wins."""
     types = (SectionType.CHORUS,) * 4
-    # Loose thresholds so every section qualifies on both axes;
-    # cohort computed on the actual values.
     aggs = (
         _agg_pitch(vocals=0.6, energy_z=0.4,
                    pitch_median=60.0, pitch_range=2.0),
         _agg_pitch(vocals=0.6, energy_z=0.4,
-                   pitch_median=60.5, pitch_range=2.1),   # highest joint
+                   pitch_median=60.5, pitch_range=2.1),   # widest range
         _agg_pitch(vocals=0.6, energy_z=0.4,
                    pitch_median=60.0, pitch_range=2.0),
         _agg_pitch(vocals=0.6, energy_z=0.4,
                    pitch_median=60.0, pitch_range=2.0),
     )
-    # Force every candidate to qualify: absurdly small offset +
-    # ratio > 1 so ``range < cohort_range * ratio`` fires even at
-    # cohort value.
+    # Force every candidate through both gates: ratio > 1 so the
+    # range gate accepts any candidate; large positive headroom
+    # so the directional median guard is inert.
     thresholds = SongFormThresholds(
-        verse_pitch_semitone_offset=-1000.0,
+        verse_pitch_median_headroom=1000.0,
         verse_pitch_range_ratio=1000.0,
     )
     out = refine_section_types(types, aggs, thresholds)
     assert out.count(SectionType.CHORUS) == 1
     assert out.count(SectionType.VERSE) == 3
-    # The highest-joint-signal CHORUS survives (index 1).
+    # The widest-range CHORUS survives (index 1, range 2.1 vs
+    # the others' 2.0). Iteration order is ascending on range,
+    # so 0/2/3 are demoted first and 1 is the last remaining
+    # CHORUS when the preserve guard fires.
     assert out[1] is SectionType.CHORUS
 
 
@@ -816,7 +852,9 @@ def test_pass_4b_runs_after_pass_4_in_refine_section_types():
     # Pass 4 cohort: median energy_z = 0.4, median vocals = 0.6.
     #   → energy < 0.4-0.35 = 0.05 AND vocals < 0.75*0.6 = 0.45.
     # Pass 4b cohort (after Pass 4): valid pitch entries only.
-    #   median = 70, range = 8 → median < 68 AND range < 6.
+    #   cohort median = median([70, 70, 66, 70]) = 70;
+    #   cohort range = upper-half-mean([4, 8, 8, 8]) = 8.
+    #   Section 3: range 4 < 0.75*8 = 6 AND median 66 <= 70+0.5.
     aggs = (
         # 0: full-signal chorus
         _agg_pitch(vocals=0.6, energy_z=0.4,

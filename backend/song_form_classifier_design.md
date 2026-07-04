@@ -255,27 +255,48 @@ becomes meaningful.
   (`pitch_median_semitones`, `pitch_range_semitones`) flow into
   two new `SongFormAggregates` fields
   (`vocal_pitch_median_semitones`, `vocal_pitch_range_semitones`).
-  A CHORUS is demoted to VERSE only when BOTH the median and the
-  p90-p10 spread dip below the intra-CHORUS cohort — a
-  conservative AND gate:
+  A CHORUS is demoted to VERSE when the section fingerprint
+  matches the verse shape on both axes — a range-primary AND
+  gate with a directional guard on median:
 
-    * median-only would over-fire on brief low-pitch chorus
-      moments (a chorus opening on a low note);
-    * range-only would flip monotone choruses;
-    * both together match the actual verse fingerprint — the
-      singer sits lower AND has less pitch mobility.
+    * **Range dip (primary discriminator)** —
+      `vocal_pitch_range_semitones < cohort_range *
+      verse_pitch_range_ratio`. Pop and rock verses are almost
+      universally more contained in vocal delivery than the
+      choruses they lead into, even when the two sections
+      share a tonal center. On shared-progression songs (the
+      failure mode this pass targets), range is the reliable
+      signal — verse and chorus land on the same H2, energy
+      and vocal-activity fingerprints, but the chorus opens up
+      the singer's range while the verse stays constrained.
+    * **Median directional guard** —
+      `vocal_pitch_median_semitones <= cohort_median +
+      verse_pitch_median_headroom`. Verses sit at or below the
+      chorus tonal center, never above; the small positive
+      headroom absorbs breath / grace-note variation. This
+      blocks bridges, ad-libs, and chorus-tag high harmonies
+      (all narrow-and-high) from being misread as verse.
+
+  The cohort baseline for range is not the naive intra-CHORUS
+  median but the **mean of the upper half of the sorted
+  cohort ranges** (`_upper_half_mean` helper). Stage A on
+  shared-progression songs routinely over-assigns CHORUS to
+  every ANCHOR section, so up to 50% of the labelled-CHORUS
+  pool may actually be verses; the upper-half mean stays close
+  to the true chorus baseline in that regime. On
+  uncontaminated cohorts the estimator adds ~10-25% headroom
+  over the median, which the ratio gate absorbs — canonical
+  anchors are unchanged.
 
   0.0 is the "no evidence" sentinel and is excluded from both
   the cohort and the candidate set; instrumental sections,
   no-vocal-note sections, and non-vocal songs all abstain
   cleanly. Preserves at least one CHORUS, same guardrail as
-  Pass 4. Thresholds default to `verse_pitch_semitone_offset =
-  2.0` (≈ a whole tone below cohort median) and
-  `verse_pitch_range_ratio = 0.75` (matching the Pass 4 vocal
-  ratio). Canonical-6 anchors are unchanged: the pass either
-  finds no dip meeting both gates on those bundles (typical
-  case) or is filtered out by the pitch-evidence guard on
-  instrumental sections.
+  Pass 4. Thresholds default to `verse_pitch_median_headroom =
+  0.5` semitones and `verse_pitch_range_ratio = 0.75` (matching
+  the Pass 4 vocal ratio). Candidates are considered in
+  ascending-range order so the narrowest-delivery sections
+  demote first before the preserve-one-chorus guard fires.
 
 ## Boundary considerations
 

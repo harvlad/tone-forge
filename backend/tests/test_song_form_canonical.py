@@ -296,13 +296,12 @@ def test_canonical_6_pass_4b_does_not_change_labels(history, bundle_id):
 
     with_pass_4b = refine_section_types(stage_a, aggregates)
 
-    # Disable Pass 4b entirely: negative offset means every
-    # candidate's median clears the "must dip below" gate; but
-    # combined with ratio=0.0 (candidate range must be strictly
-    # below 0.0 × cohort_range = 0.0, which is impossible for
-    # positive ranges) the AND-gate can never fire.
+    # Disable Pass 4b entirely: ratio=0.0 means the range gate
+    # requires ``range < 0.0``, impossible for positive ranges,
+    # so no candidate can qualify. A large-negative headroom
+    # would double-block via the directional median guard; we
+    # rely on the range gate alone here for clarity.
     disabled = SongFormThresholds(
-        verse_pitch_semitone_offset=-1e9,
         verse_pitch_range_ratio=0.0,
     )
     without_pass_4b = refine_section_types(stage_a, aggregates, disabled)

@@ -176,21 +176,29 @@ class SongFormThresholds:
     [0, 1] and the useful dynamic range collapses near the
     endpoints."""
 
-    verse_pitch_semitone_offset: float = 2.0
-    """Pass 4b: a CHORUS demotion candidate must sit at least
-    this many semitones below the intra-CHORUS median vocal
-    pitch. Two semitones ≈ a whole tone; smaller dips are noise
-    (breath / grace-note variation within the same phrase). The
-    canonical verse/chorus separation on shared-progression pop
-    songs is 3-7 semitones — 2 gives conservative headroom
-    while still catching every real case."""
+    verse_pitch_median_headroom: float = 0.5
+    """Pass 4b: directional guard on median pitch. A demotion
+    candidate's ``vocal_pitch_median_semitones`` must be no more
+    than this many semitones ABOVE the intra-CHORUS cohort
+    median. Verses may share the chorus's tonal center or dip
+    below it, but they do not sit above the chorus baseline —
+    a section whose median rises above cohort is not verse-like.
+    The small positive tolerance absorbs breath / grace-note
+    variation within the same phrase. Replaces the older
+    strict-median-dip requirement, which mis-abstained on
+    shared-tonal-center songs (verse and chorus in the same
+    register but with different vocal delivery)."""
 
     verse_pitch_range_ratio: float = 0.75
-    """Pass 4b: candidate must ALSO have ``vocal_pitch_range``
-    below this fraction of the intra-CHORUS median range. 0.75
-    matches ``verse_demotion_vocal_ratio``: multiplicative gate,
-    same rationale (pitch range in semitones has a similar
-    bounded dynamic range to vocal-activity)."""
+    """Pass 4b: primary discriminator. Candidate must have
+    ``vocal_pitch_range`` below this fraction of the cohort
+    range baseline. Vocal delivery in verses is characteristically
+    more contained than in choruses even when the tonal center
+    matches, so range dip is the reliable signal on shared-
+    progression songs. 0.75 matches ``verse_demotion_vocal_ratio``:
+    multiplicative gate, same rationale (pitch range in
+    semitones has a similar bounded dynamic range to
+    vocal-activity)."""
 
 
 def refine_section_types(
@@ -426,23 +434,74 @@ def _pass_4_chorus_to_verse(
         refined[i] = SectionType.VERSE
 
 
+def _upper_half_mean(values: Sequence[float]) -> float:
+    """Robust cohort baseline for a potentially-contaminated
+    labelled-CHORUS pool. Returns the arithmetic mean of the
+    upper half of the sorted values.
+
+    On uncontaminated cohorts (all sections are genuine choruses
+    with similar vocal delivery), the upper-half mean tracks the
+    median closely — the estimator adds ~10-25% headroom, which
+    the ratio gate absorbs. On cohorts where up to 50% of the
+    labels are wrong in the same direction (e.g., verses on a
+    shared-progression song bumping labelled-CHORUS ranges
+    downward), the upper-half mean tracks the true CHORUS
+    baseline rather than being dragged toward the verse
+    population's values. This matters because Stage A on
+    shared-progression songs routinely labels every ANCHOR-role
+    section CHORUS, so the naive median of an intra-CHORUS
+    cohort is not trustworthy as a chorus baseline.
+    """
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    n = len(sorted_values)
+    # ``sorted_values[n // 2:]`` yields the strict upper half for
+    # even n (e.g., n=4 → last 2) and the upper-half-including-
+    # median for odd n (e.g., n=5 → last 3). Both slices are
+    # non-empty for n >= 1.
+    upper = sorted_values[n // 2:]
+    return sum(upper) / len(upper)
+
+
 def _pass_4b_chorus_to_verse_by_pitch(
     refined: list[SectionType],
     aggregates: Sequence[SongFormAggregates],
     thresholds: SongFormThresholds,
 ) -> None:
     """Mutate ``refined`` in place: demote CHORUSes whose vocal
-    pitch median AND spread both dip below the intra-CHORUS
-    cohort.
+    pitch signature matches the verse fingerprint on a shared-
+    progression song — a contained pitch range AND a median
+    that does not rise above the cohort.
 
     Independent-evidence-axis complement to Pass 4. Pass 4
     catches choruses with lower energy + vocal activity; Pass 4b
     catches shared-progression songs where verses and choruses
     match on H2, on energy, and on vocal activity but the singer
-    sits lower and moves less in the verse. Both signals must
-    dip together — median alone would over-fire on brief
-    low-pitch chorus moments (a chorus opening on a low note);
-    range alone would flip monotone choruses.
+    moves less in the verse (and may or may not also sit lower).
+
+    Gate design:
+
+    * **Range dip (primary discriminator)** — a candidate's
+      ``vocal_pitch_range_semitones`` must be below
+      ``cohort_range * verse_pitch_range_ratio``. This is the
+      reliable signal even when verse and chorus share a tonal
+      center: pop and rock verses are almost universally more
+      contained in vocal delivery than the choruses that follow.
+
+    * **Median directional guard** — the candidate's median must
+      not sit more than ``verse_pitch_median_headroom`` semitones
+      above the cohort median. Verses at cohort median or lower
+      qualify; a section whose median rises above the cohort is
+      the opposite of verse-like (a bridge to a higher register,
+      a chorus-tag, an ad-lib) and stays CHORUS.
+
+    The cohort baselines are computed by :func:`_upper_half_mean`
+    over the labelled-CHORUS pool so the estimator remains
+    stable when Stage A has over-assigned CHORUS on a shared-
+    progression song (the majority-vs-minority breakdown of the
+    contaminated cohort still lets the upper half track the true
+    chorus baseline).
 
     Sections with no vocal-note evidence (median or range == 0.0
     sentinel) are excluded from both the cohort and the
@@ -470,28 +529,35 @@ def _pass_4b_chorus_to_verse_by_pitch(
     cohort_median = median(
         aggregates[i].vocal_pitch_median_semitones for i in valid
     )
-    cohort_range = median(
-        aggregates[i].vocal_pitch_range_semitones for i in valid
+    cohort_range = _upper_half_mean(
+        [aggregates[i].vocal_pitch_range_semitones for i in valid]
     )
 
-    # Deepest joint dip first — deterministic tie-break by index
-    # via Python's stable sort.
+    # Sort by ascending pitch range so the narrowest-delivery
+    # candidates are considered first (deepest verse-fingerprint
+    # signal). Median contributes to the sort as a secondary key
+    # so ties on range resolve by median dip; index is the final
+    # tie-break via Python's stable sort.
     candidates = sorted(
         valid,
         key=lambda i: (
-            aggregates[i].vocal_pitch_median_semitones
-            + aggregates[i].vocal_pitch_range_semitones
+            aggregates[i].vocal_pitch_range_semitones,
+            aggregates[i].vocal_pitch_median_semitones,
         ),
     )
 
     for i in candidates:
         agg = aggregates[i]
-        if agg.vocal_pitch_median_semitones >= (
-            cohort_median - thresholds.verse_pitch_semitone_offset
-        ):
-            continue
+        # Range dip is the primary gate; skip candidates that
+        # deliver as broadly as the cohort baseline.
         if agg.vocal_pitch_range_semitones >= (
             cohort_range * thresholds.verse_pitch_range_ratio
+        ):
+            continue
+        # Directional guard on median — verses never sit above
+        # the cohort by more than the headroom tolerance.
+        if agg.vocal_pitch_median_semitones > (
+            cohort_median + thresholds.verse_pitch_median_headroom
         ):
             continue
         remaining_choruses = sum(

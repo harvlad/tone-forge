@@ -562,8 +562,9 @@ def _vocal_pitch_stats(
     Both are ``None`` when ``clipped`` is empty. Pitches are in
     MIDI note-number units (which equals semitones by
     construction), so the caller can compare them directly to
-    the ``verse_pitch_semitone_offset`` threshold without unit
-    conversion.
+    Pass 4b's semitone-scaled thresholds
+    (``verse_pitch_median_headroom``, ``verse_pitch_range_ratio``)
+    without unit conversion.
 
     Percentile spread (p90 - p10) rather than max-min so a single
     octave-jump grace note does not dominate; matches the
