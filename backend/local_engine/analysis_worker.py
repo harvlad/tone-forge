@@ -731,9 +731,9 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             from tone_forge.analysis.sections import SectionDetector
             # Segmenter parity with unified_pipeline._detect_sections
             # (unified_pipeline.py:2063). Both paths now share the
-            # SectionDetector defaults (min_section_duration=4.0s,
-            # max=64s). The prior 8.0s floor + adjacent-same-type
-            # merge below halved the section count on shared-
+            # SectionDetector defaults (min_section_duration=8.0s,
+            # max=64s). The adjacent-same-type merge below was
+            # removed because it halved the section count on shared-
             # progression songs (Paramore "That's What You Get":
             # 5 local sections vs 14+ unified), starving Stage B's
             # Pass 4 / Pass 4b relabellers of usable per-section

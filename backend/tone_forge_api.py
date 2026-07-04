@@ -4009,7 +4009,7 @@ async def analyze_region_endpoint(
 async def detect_sections_endpoint(
     file: UploadFile = File(...),
     tempo: Optional[float] = Form(None),
-    min_section_duration: float = Form(4.0),
+    min_section_duration: float = Form(8.0),
 ) -> JSONResponse:
     """Detect arrangement sections in audio.
 

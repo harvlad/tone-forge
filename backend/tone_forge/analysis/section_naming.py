@@ -165,8 +165,9 @@ class DurationGuardThresholds:
 
     min_section_s: float = 6.0
     """Any section shorter than this is flagged as a fragment. The
-    boundary detector's ``min_section_duration`` is 4.0s, so anything
-    between 4-6s is a candidate for merge-with-neighbour."""
+    boundary detector's ``min_section_duration`` is 8.0s, so with the
+    detector at its default any section below 6s only appears via a
+    caller that lowered the boundary knob (e.g. tests)."""
 
     exempt_final_chorus: bool = True
     """When True, the last section is exempted from the CHORUS length

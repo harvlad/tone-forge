@@ -229,7 +229,7 @@ class SectionDetector:
         self,
         hop_length: int = 512,
         sr: int = 22050,
-        min_section_duration: float = 4.0,
+        min_section_duration: float = 8.0,
         max_section_duration: float = 64.0,
         energy_resolution: float = 0.1,  # Energy curve resolution in seconds
     ):
@@ -369,8 +369,19 @@ class SectionDetector:
         if len(novelty) > window:
             novelty = np.convolve(novelty, np.ones(window) / window, mode="same")
 
-        # Find peaks in novelty (potential boundaries)
-        threshold = np.mean(novelty) + np.std(novelty)
+        # Find peaks in novelty (potential boundaries).
+        # Threshold `mean + 1.5*std` (was `mean + std`): the 1x-std gate
+        # over-fires on slow-evolving material (atmospheric rock,
+        # ambient, black metal) where the RMS novelty is quasi-uniform
+        # and every gentle swell clears the bar. 1.5x-std keeps the
+        # gate cheap and content-adaptive but demands a genuine excursion
+        # above the noise floor, matching the "structural change" intent
+        # of the novelty peak. Paired with `min_section_duration=8.0`
+        # (aligned with `chord_vocab_boundaries.min_sub_duration_s=8.0`)
+        # this halves peak candidates on smooth-novelty songs while
+        # leaving tight-novelty pop/rock (canonical-6) untouched — the
+        # sharp attacks still clear 1.5x-std comfortably.
+        threshold = np.mean(novelty) + 1.5 * np.std(novelty)
         peaks = []
 
         # Minimum spacing based on min section duration
