@@ -220,7 +220,37 @@ def relabel_sections_from_h2(
         final_types = (
             stage_b_types if stage_b_types is not None else derived_types
         )
+        # Preserve-vs-overwrite gate for non-split sections. The
+        # asymmetry follows the label ontology:
+        #
+        #   * ``_from_split`` sub-sections always take the fresh
+        #     Stage A/B labels — their boundaries changed, so the
+        #     write-time label is stale by construction.
+        #
+        #   * Untagged sections whose write-time type is
+        #     ``"chorus"`` may still be refined by read-time Stage
+        #     B (a fresh Pass 1 / 4 / 4b can flip CHORUS to
+        #     INSTRUMENTAL / VERSE that write-time missed because
+        #     it hadn't seen the enlarged section set).
+        #
+        #   * Untagged sections whose write-time type is anything
+        #     else (BRIDGE, INSTRUMENTAL, VERSE, PRECHORUS,
+        #     INTRO, OUTRO, BREAKDOWN, BUILDUP) are preserved.
+        #     Those labels came from write-time evidence Stage A/B
+        #     cannot recover from the enlarged section set — in
+        #     particular BRIDGE requires H2 UNIQUE, which flips to
+        #     ANCHOR on shared-progression songs once the section
+        #     set is enlarged by Fix C / Fix 4 splits.
+        #
+        # Backward-compat: when NO section carries ``_from_split``
+        # (legacy caller, unit tests), overwrite all — preserves
+        # the pre-Plan-E contract.
+        any_tagged = any(bool(s.get("_from_split")) for s in sections)
         for section, decision, st in zip(sections, decisions, final_types):
+            if any_tagged and not section.get("_from_split"):
+                prior_type = str(section.get("type", "")).lower()
+                if prior_type != "chorus":
+                    continue
             section["structural_role"] = decision.role
             section["structural_confidence"] = float(decision.confidence)
             section["type"] = st.value
@@ -326,6 +356,16 @@ def apply_bundle_read_fixups(result: dict) -> None:
                             sub["start_time"] = edges[k]
                             sub["end_time"] = edges[k + 1]
                             sub["duration"] = edges[k + 1] - edges[k]
+                            # Tag as "needs read-path relabel" — see the
+                            # matching flag set by
+                            # ``section_resegment._split_section``. Fix
+                            # 4's inline splitter has the same
+                            # write-time-label-is-stale-on-child-
+                            # boundaries invariant; the flag lets
+                            # ``relabel_sections_from_h2`` preserve
+                            # untouched originals while overwriting
+                            # sub-sections here.
+                            sub["_from_split"] = True
                             refined.append(sub)
                     raw_sections = refined
                     result["sections"] = raw_sections
@@ -400,3 +440,13 @@ def apply_bundle_read_fixups(result: dict) -> None:
                 result["chords_beat_snapped"] = raw_chords_snapped_list
         except Exception:
             pass
+
+    # Strip the internal ``_from_split`` tag before the result
+    # dict leaves the fixup layer. The tag is an implementation
+    # detail of ``relabel_sections_from_h2``'s preserve-vs-
+    # overwrite gate; downstream serializers (session bundle,
+    # JAM UI) never see it.
+    if isinstance(raw_sections, list):
+        for _s in raw_sections:
+            if isinstance(_s, dict):
+                _s.pop("_from_split", None)

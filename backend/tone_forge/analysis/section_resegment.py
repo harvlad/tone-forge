@@ -262,6 +262,15 @@ def _split_section(
         child["start_time"] = float(all_bounds[i])
         child["end_time"] = float(all_bounds[i + 1])
         child["duration_flag"] = ""
+        # Tag as "needs read-path relabel". The write-time label the
+        # child inherits from ``section`` was computed on the pre-
+        # split parent boundaries; on the child boundaries it is
+        # stale. ``relabel_sections_from_h2`` overwrites only tagged
+        # sections so untouched originals keep the write-time Stage
+        # A/B decision (in particular any BRIDGE / INSTRUMENTAL
+        # labels that a fresh Stage A over the post-split section
+        # set would flip to CHORUS on shared-progression songs).
+        child["_from_split"] = True
         # Landmark notes are section-scoped; recomputing them here
         # would need the stem MIDI. As a light patch, filter the
         # parent's landmark_notes to those falling inside the child

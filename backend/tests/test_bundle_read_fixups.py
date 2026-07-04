@@ -359,6 +359,189 @@ def test_relabel_abstains_stage_b_when_debug_features_missing():
     assert sections[1]["type"] == "chorus"
 
 
+def test_apply_bundle_read_fixups_preserves_bridge_on_non_split_section():
+    """Plan E: an untouched BRIDGE-labelled section must survive the
+    read-path relabel even when a *neighbouring* section gets split.
+
+    Setup: two sections, both {C,G,Am,F} shared progression.
+      * Section 0 (0-40s): a real chorus, chord-density high enough
+        that Fix 4's Jaccard boundary detector splits it (the
+        `test_fix4_subdivision_relabels_subsections_from_fresh_h2`
+        test above pins the same trigger).
+      * Section 1 (40-80s): persisted as BRIDGE / DEVELOPMENT.
+        Not split. Under the pre-Plan-E behaviour the relabel that
+        fires after Fix 4 flips section 1's BRIDGE to CHORUS
+        because a fresh H2 over the enlarged section list sees
+        ANCHOR everywhere. Under Plan E, only sub-sections carry
+        ``_from_split``; section 1 is untouched, so its persisted
+        BRIDGE label survives.
+
+    Also asserts ``_from_split`` doesn't leak to the API bundle —
+    it's an internal tag stripped at the end of
+    ``apply_bundle_read_fixups``.
+    """
+    # Section 1 is < max_bridge_s (30.0) so Fix B doesn't flag it and
+    # Fix C leaves it untouched. Section 1's chord content is a
+    # single sustained symbol so Fix 4's Jaccard boundary detector
+    # sees zero vocab shift and can't produce a split candidate.
+    # Both guarantees keep the section un-tagged, isolating Plan E's
+    # preserve-vs-overwrite gate as the sole variable under test.
+    result = {
+        "sections": [
+            _section(0.0, 40.0, type_="chorus", role="ANCHOR"),
+            # Persisted as BRIDGE — this is the label under test.
+            _section(40.0, 65.0, type_="bridge", role="UNIQUE"),
+        ],
+        "chords": [
+            # Section 0: same disjoint-vocab shape as the Fix 4
+            # trigger test above — distinct chords in the first
+            # half, {C,G,Am,F} repetitions in the second half.
+            _chord(0.0, 2.5, "Bb"),
+            _chord(2.5, 5.0, "D#"),
+            _chord(5.0, 7.5, "F#"),
+            _chord(7.5, 10.0, "G#"),
+            _chord(10.0, 12.5, "Ab"),
+            _chord(12.5, 15.0, "Db"),
+            _chord(15.0, 17.5, "Eb"),
+            _chord(17.5, 20.0, "B"),
+            _chord(20.0, 22.5, "C"),
+            _chord(22.5, 25.0, "G"),
+            _chord(25.0, 27.5, "Am"),
+            _chord(27.5, 30.0, "F"),
+            _chord(30.0, 32.5, "C"),
+            _chord(32.5, 35.0, "G"),
+            _chord(35.0, 37.5, "Am"),
+            _chord(37.5, 40.0, "F"),
+            # Section 1: single sustained C — no vocab shift possible.
+            _chord(40.0, 65.0, "C"),
+        ],
+        "beats_s": [i * 0.5 for i in range(130)],
+    }
+
+    apply_bundle_read_fixups(result)
+
+    sections = result["sections"]
+    # Fix 4 must have subdivided section 0 (pins the split trigger).
+    n_from_section_0 = sum(
+        1 for s in sections if float(s["start_time"]) < 40.0
+    )
+    assert n_from_section_0 >= 2, (
+        f"Fix 4 should have split section 0; got {n_from_section_0} "
+        f"section(s) covering [0, 40)."
+    )
+
+    # Section 1 is untouched: still starts at 40.0.
+    section_1 = next(
+        (s for s in sections if abs(float(s["start_time"]) - 40.0) < 0.001),
+        None,
+    )
+    assert section_1 is not None, "expected the [40, 80) section intact"
+
+    # Plan E assertion: the untouched BRIDGE label survives.
+    assert section_1.get("type") == "bridge", (
+        f"non-split section should preserve write-time BRIDGE label; "
+        f"got type={section_1.get('type')!r}, role="
+        f"{section_1.get('structural_role')!r}"
+    )
+    assert section_1.get("structural_role") == "UNIQUE"
+
+    # Internal tag doesn't leak past the fixup boundary.
+    for s in sections:
+        assert "_from_split" not in s, (
+            f"_from_split tag should be stripped before returning; "
+            f"found on section start={s.get('start_time')}"
+        )
+
+
+def test_relabel_refines_untagged_chorus_via_stage_b_even_when_tags_present():
+    """Plan E asymmetry: an untagged CHORUS section is still eligible
+    for read-time Stage B refinement, even when other sections carry
+    ``_from_split``.
+
+    Setup: three sections.
+      * Section 0: tagged ``_from_split`` (a sub-section from an
+        upstream split), high vocals.
+      * Section 1: untagged, persisted CHORUS, vanishingly low
+        vocals → Stage B Pass 1 must flip to INSTRUMENTAL.
+      * Section 2: untagged, persisted BRIDGE — preserved (covered
+        by the neighboring-split test above; asserted here to
+        confirm the asymmetry rather than a blanket overwrite).
+
+    Pins the design point that Plan E's preservation gate is
+    ontology-aware rather than binary: BRIDGE is a write-time-only
+    signal (H2 must have said UNIQUE), CHORUS is a Stage A default
+    that read-time Stage B can refine given fresh evidence.
+    """
+    sections = [
+        {
+            "start_time": 0.0,
+            "end_time": 30.0,
+            "duration": 30.0,
+            "type": "chorus",
+            "structural_role": "ANCHOR",
+            "structural_confidence": 1.0,
+            "energy_mean": 0.5,
+            "_from_split": True,
+            "debug_features": [
+                _debug_row("vocals", lead=0.8, voiced=0.7, notes=40),
+                _debug_row("drums", notes=60, duration=30.0),
+                _debug_row("bass", notes=30, duration=30.0),
+                _debug_row("other", notes=20, duration=30.0),
+            ],
+        },
+        {
+            "start_time": 30.0,
+            "end_time": 60.0,
+            "duration": 30.0,
+            "type": "chorus",
+            "structural_role": "ANCHOR",
+            "structural_confidence": 1.0,
+            "energy_mean": 0.5,
+            # No _from_split — non-split original that Plan E leaves
+            # eligible for Stage B refinement because type == chorus.
+            "debug_features": [
+                _debug_row("vocals", lead=0.001, voiced=0.001, notes=0),
+                _debug_row("drums", notes=60, duration=30.0),
+                _debug_row("bass", notes=30, duration=30.0),
+                _debug_row("other", notes=20, duration=30.0),
+            ],
+        },
+        {
+            "start_time": 60.0,
+            "end_time": 85.0,
+            "duration": 25.0,
+            "type": "bridge",
+            "structural_role": "UNIQUE",
+            "structural_confidence": 1.0,
+            "energy_mean": 0.5,
+            # No _from_split, non-CHORUS type → preserved.
+            "debug_features": [
+                _debug_row("vocals", lead=0.5, voiced=0.5, notes=20),
+                _debug_row("drums", notes=60, duration=25.0),
+                _debug_row("bass", notes=30, duration=25.0),
+                _debug_row("other", notes=20, duration=25.0),
+            ],
+        },
+    ]
+    chords = (
+        _repeating_cgamf_chords(0.0, 30.0)
+        + _repeating_cgamf_chords(30.0, 60.0)
+        + [_chord(60.0, 85.0, "C")]
+    )
+
+    relabel_sections_from_h2(sections, chords)
+
+    assert sections[0]["type"] == "chorus", "tagged high-vocal chorus stays chorus"
+    assert sections[1]["type"] == "instrumental", (
+        f"untagged CHORUS with low vocals must still be refined by "
+        f"Stage B; got {sections[1]['type']!r}"
+    )
+    assert sections[2]["type"] == "bridge", (
+        f"untagged BRIDGE must be preserved (non-CHORUS write-time "
+        f"labels are write-time-only signals); got {sections[2]['type']!r}"
+    )
+
+
 def test_relabel_abstains_stage_b_when_stem_name_missing():
     """Malformed debug_features (row without ``stem_name``) → abstain.
 
