@@ -558,32 +558,14 @@ public final class ModeCoordinator: ObservableObject {
         return Self.pitchClasses(for: sym)
     }
 
-    /// Chord symbol → triad/tetrad pitch classes. Mirrors
-    /// launchpad.js's triad expansion. Empty for unparseable symbols.
+    /// Chord symbol → chord-tone pitch classes. Delegates to the
+    /// engine's shared voicing table (redesign Phase 4) so grid
+    /// highlights, Jam pads and Chord Pads all agree on chord
+    /// spelling. Richer than the old inline table for maj7/min7
+    /// (adds the 7th) and sus (4th instead of 3rd); identical for
+    /// maj/min/dom7/dim/aug/other. Empty for unparseable symbols.
     static func pitchClasses(for symbol: String) -> Set<Int> {
-        guard let parsed = ChordParser.parse(symbol) else { return [] }
-        var pcs: Set<Int> = [parsed.root.rawValue]
-        switch parsed.quality {
-        case .maj, .maj7, .sus:
-            pcs.insert((parsed.root.rawValue + 4) % 12)
-            pcs.insert((parsed.root.rawValue + 7) % 12)
-        case .min, .min7:
-            pcs.insert((parsed.root.rawValue + 3) % 12)
-            pcs.insert((parsed.root.rawValue + 7) % 12)
-        case .dom7:
-            pcs.insert((parsed.root.rawValue + 4) % 12)
-            pcs.insert((parsed.root.rawValue + 7) % 12)
-            pcs.insert((parsed.root.rawValue + 10) % 12)
-        case .dim:
-            pcs.insert((parsed.root.rawValue + 3) % 12)
-            pcs.insert((parsed.root.rawValue + 6) % 12)
-        case .aug:
-            pcs.insert((parsed.root.rawValue + 4) % 12)
-            pcs.insert((parsed.root.rawValue + 8) % 12)
-        case .other:
-            break
-        }
-        return pcs
+        ChordVoicing.pitchClassSet(symbol: symbol)
     }
 
     // MARK: - Local samples (P3 mic pipeline)

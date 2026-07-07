@@ -25,6 +25,8 @@ public enum ScaleType: Sendable, Equatable {
     case lydian
     case mixolydian
     case locrian
+    case harmonicMinor  // Aeolian with a raised 7th (major V)
+    case melodicMinor   // ascending form: raised 6th + 7th
 }
 
 /// Semitone intervals for each mode from the root. Anyma's backend
@@ -38,16 +40,20 @@ public enum ScaleIntervals {
     public static let lydian: [Int]      = [0, 2, 4, 6, 7, 9, 11]
     public static let mixolydian: [Int]  = [0, 2, 4, 5, 7, 9, 10]
     public static let locrian: [Int]     = [0, 1, 3, 5, 6, 8, 10]
+    public static let harmonicMinor: [Int] = [0, 2, 3, 5, 7, 8, 11]
+    public static let melodicMinor: [Int]  = [0, 2, 3, 5, 7, 9, 11]
 
     public static func intervals(for type: ScaleType) -> [Int] {
         switch type {
-        case .major:      return major
-        case .minor:      return minor
-        case .dorian:     return dorian
-        case .phrygian:   return phrygian
-        case .lydian:     return lydian
-        case .mixolydian: return mixolydian
-        case .locrian:    return locrian
+        case .major:         return major
+        case .minor:         return minor
+        case .dorian:        return dorian
+        case .phrygian:      return phrygian
+        case .lydian:        return lydian
+        case .mixolydian:    return mixolydian
+        case .locrian:       return locrian
+        case .harmonicMinor: return harmonicMinor
+        case .melodicMinor:  return melodicMinor
         }
     }
 }
@@ -74,19 +80,34 @@ public struct MusicalKey: Sendable, Equatable {
         // sharp/flat but not whitespace.
         let parts = raw.split(separator: " ", omittingEmptySubsequences: true)
         guard parts.count >= 2 else { return nil }
-        let scaleWord = parts.last!.lowercased()
+
+        // Two-word scale names first ("D harmonic minor"), then the
+        // single-word modes.
+        var scaleWordCount = 1
         let scale: ScaleType
-        switch scaleWord {
-        case "major", "maj", "ionian":  scale = .major
-        case "minor", "min", "aeolian": scale = .minor
-        case "dorian":                  scale = .dorian
-        case "phrygian":                scale = .phrygian
-        case "lydian":                  scale = .lydian
-        case "mixolydian":              scale = .mixolydian
-        case "locrian":                 scale = .locrian
-        default: return nil
+        let lastTwo = parts.count >= 3
+            ? parts.suffix(2).joined(separator: " ").lowercased()
+            : ""
+        switch lastTwo {
+        case "harmonic minor":
+            scale = .harmonicMinor
+            scaleWordCount = 2
+        case "melodic minor":
+            scale = .melodicMinor
+            scaleWordCount = 2
+        default:
+            switch parts.last!.lowercased() {
+            case "major", "maj", "ionian":  scale = .major
+            case "minor", "min", "aeolian": scale = .minor
+            case "dorian":                  scale = .dorian
+            case "phrygian":                scale = .phrygian
+            case "lydian":                  scale = .lydian
+            case "mixolydian":              scale = .mixolydian
+            case "locrian":                 scale = .locrian
+            default: return nil
+            }
         }
-        let rootName = parts.dropLast().joined(separator: " ")
+        let rootName = parts.dropLast(scaleWordCount).joined(separator: " ")
         guard let parsed = ChordParser.parse(rootName) else { return nil }
         return MusicalKey(root: parsed.root, scale: scale)
     }
