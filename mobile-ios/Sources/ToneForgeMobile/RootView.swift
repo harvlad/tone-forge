@@ -55,6 +55,10 @@ public struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.2),
                    value: appState.underpowerBannerVisible)
+        // Design mockups are dark-only; forcing the scheme keeps the
+        // grid canvas, cards and system chrome coherent regardless of
+        // the device setting.
+        .preferredColorScheme(.dark)
     }
 }
 

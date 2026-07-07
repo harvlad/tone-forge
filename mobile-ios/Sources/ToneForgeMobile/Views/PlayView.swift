@@ -120,6 +120,7 @@ private struct PlayBody: View {
         }
         .padding(.top, 8)
         .padding(.bottom, 40)
+        .background(TFTheme.background.ignoresSafeArea())
         .sheet(isPresented: $showMixer) { MixerView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showBrowse) { BrowsePacksSheet() }
