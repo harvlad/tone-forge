@@ -1,0 +1,97 @@
+{
+  "manifestVersion": 1,
+  "packId": "lo-fi-hiphop",
+  "name": "Lo-Fi Hip Hop",
+  "family": "mixed",
+  "paletteHint": "amber",
+  "pads": [
+    {
+      "padIdx": 0,
+      "name": "Kick",
+      "family": "percussion",
+      "filename": "00_kick.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 1,
+      "name": "Snare",
+      "family": "percussion",
+      "filename": "01_snare.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 2,
+      "name": "Closed Hat",
+      "family": "percussion",
+      "filename": "02_hat_closed.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 3,
+      "name": "Rhodes Stab",
+      "family": "stabs",
+      "filename": "03_rhodes_stab.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 4,
+      "name": "Tape Bass",
+      "family": "bass",
+      "filename": "04_tape_bass.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 5,
+      "name": "Vinyl Crackle",
+      "family": "textures",
+      "filename": "05_vinyl_crackle.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 6,
+      "name": "Wobble",
+      "family": "textures",
+      "filename": "06_wobble.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 7,
+      "name": "Ride Tick",
+      "family": "percussion",
+      "filename": "07_ride_tick.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    }
+  ]
+}

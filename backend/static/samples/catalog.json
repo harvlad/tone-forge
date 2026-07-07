@@ -1,0 +1,34 @@
+{
+  "packs": [
+    {
+      "packId": "shoegaze-textures",
+      "name": "Shoegaze Textures",
+      "family": "pads",
+      "paletteHint": "purple",
+      "tags": [
+        "ambient",
+        "dreampop",
+        "reverb"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "description": "Detuned pads, shimmer, noise washes for ambient contribution layers.",
+      "padCount": 8
+    },
+    {
+      "packId": "lo-fi-hiphop",
+      "name": "Lo-Fi Hip Hop",
+      "family": "mixed",
+      "paletteHint": "amber",
+      "tags": [
+        "lofi",
+        "hiphop",
+        "chill"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "description": "Dusty drums, tape bass, Rhodes stabs, vinyl atmosphere.",
+      "padCount": 8
+    }
+  ]
+}

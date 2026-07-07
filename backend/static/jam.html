@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=43" />
+<link rel="stylesheet" href="/static/jam.css?v=57" />
 </head>
 <body>
 <header class="jam-header">
@@ -405,6 +405,16 @@
         </label>
         <div class="settings-hint">The helper checks once a day in the background. Turn off to update only when you click Check for Updates… in the Connect menu.</div>
       </div>
+      <div class="settings-row">
+        <div class="settings-label">Launchpad Pro MK3</div>
+        <label>
+          <input type="checkbox" id="setting-launchpad-enabled" />
+          Enable Launchpad
+        </label>
+        <div id="setting-launchpad-status" class="settings-hint settings-hint--inline launchpad-status--idle">Not connected</div>
+        <div class="settings-hint">Requires Chrome or Edge (Web MIDI + SysEx). You will be asked for permission.</div>
+        <button type="button" id="setting-launchpad-open-tab" class="linklike">Open Launchpad tab →</button>
+      </div>
     </div>
 
     <div id="perform-grid" class="perform-grid">
@@ -621,6 +631,18 @@
 
       <!-- CENTER SLOT — section markers + chord timeline -->
       <div id="slot-center" class="stage-col stage-center">
+        <!-- Tab strip: switches the center column between the chord
+             ribbon / guidance / riff / stems stack and the dedicated
+             Launchpad view. Persisted via state.settings.launchpadCenterTab. -->
+        <div id="center-tabs" class="center-tabs" role="tablist">
+          <button class="center-tab is-active" role="tab" data-tab="chord" aria-selected="true" type="button">Chord</button>
+          <button class="center-tab" role="tab" data-tab="launchpad" aria-selected="false" type="button">
+            Launchpad
+            <span class="center-tab-warn-dot" id="center-tab-launchpad-warn" hidden title="Launchpad enabled but not detected"></span>
+          </button>
+        </div>
+
+        <div id="chord-stack" class="chord-stack">
         <div class="section-bar" id="section-bar">
           <!-- Section pills injected by JS -->
         </div>
@@ -765,17 +787,226 @@
           </label>
         </div>
         <div id="loop-status" class="loop-status">Loop: off</div>
+        </div><!-- /#chord-stack -->
 
-        <!-- Stems mixer: relocated from a dedicated right column to
-             live underneath the LEAD PART / RIFF block so the chord
-             ribbon + NOW PLAYING card can occupy the full width of
-             this column. The .stage-col.stage-right classes are kept
-             so the tighter-row stem styling continues to apply. -->
-        <div id="slot-right" class="stage-col stage-right">
-          <div class="stage-col-label">Stems</div>
+        <!-- Stems mixer: sibling of #chord-stack and #launchpad-panel
+             so it stays visible regardless of which center tab is
+             active — the mix is a live-playback concern and the user
+             needs it in both the chord view and the Launchpad view.
+             Wrapped in a <details> so the whole rack collapses to a
+             single-line header when the user wants max room for the
+             pad grid. Open state persists via state.settings.stemsOpen. -->
+        <details id="slot-right" class="stage-col stage-right">
+          <summary class="stage-col-label">Stems</summary>
           <div class="stem-rack" id="stem-rack">
             <!-- Per-stem rows injected by JS -->
           </div>
+        </details>
+
+        <!-- Dedicated Launchpad view. Wired up by _initLaunchpadPanel
+             in jam.js. The mirror grid is a live DOM copy of the 8×8
+             hardware pads (bottom-left = pad 11); clicking any pad
+             fires the same downstream synth path as a physical press,
+             so the panel is fully usable without hardware attached. -->
+        <div id="launchpad-panel" class="launchpad-panel" hidden>
+          <div class="lp-status-row">
+            <span id="lp-panel-status" class="lp-status-pill launchpad-status--idle">Searching for controller…</span>
+            <label class="lp-status-enable" hidden>
+              <input type="checkbox" id="lp-panel-enabled" />
+              Enable Launchpad
+            </label>
+          </div>
+
+          <div class="lp-split">
+            <div class="lp-legend-wrap">
+              <span class="lp-section-label">Legend</span>
+              <div id="lp-legend" class="lp-legend"></div>
+            </div>
+            <div class="lp-grid-wrap">
+              <span class="lp-section-label">Pads</span>
+              <div id="lp-countdown" class="lp-countdown" hidden>
+                <div class="lp-countdown-track">
+                  <div id="lp-countdown-fill" class="lp-countdown-fill"></div>
+                </div>
+                <div class="lp-countdown-label">
+                  <span id="lp-countdown-next" class="lp-countdown-next">—</span>
+                  <span id="lp-countdown-time" class="lp-countdown-time">0.0s</span>
+                </div>
+              </div>
+              <div id="lp-grid" class="lp-grid" role="grid" aria-label="Launchpad mirror"></div>
+            </div>
+            <div class="lp-settings-column">
+              <div id="lp-preset-row" class="lp-preset-row">
+                <span class="lp-section-label">Play style</span>
+                <label><input type="radio" name="lp-panel-preset" value="learn-song" /> Learn Song</label>
+                <label><input type="radio" name="lp-panel-preset" value="perform-song" /> Perform Song</label>
+                <label><input type="radio" name="lp-panel-preset" value="learn-harmony" /> Learn Harmony</label>
+                <label><input type="radio" name="lp-panel-preset" value="jam-in-key" /> Jam In Key</label>
+                <label><input type="radio" name="lp-panel-preset" value="melody-practice" /> Melody Practice</label>
+                <label><input type="radio" name="lp-panel-preset" value="play-bassline" /> Play Bassline</label>
+                <span class="lp-preset-group-label">Contribute (from this song)</span>
+                <label><input type="radio" name="lp-panel-preset" value="contribute-vocal" /> Vocal Chops</label>
+                <label><input type="radio" name="lp-panel-preset" value="contribute-drums" /> Drum Chops</label>
+                <label><input type="radio" name="lp-panel-preset" value="contribute-bass" /> Bass Chops</label>
+                <label><input type="radio" name="lp-panel-preset" value="contribute-harmonic" /> Harmonic Chops</label>
+                <label><input type="radio" name="lp-panel-preset" value="contribute-sections" /> Sections</label>
+                <p id="lp-preset-caption" class="lp-preset-caption">Follow the song with visual guidance and verification.</p>
+                <p id="lp-preset-hint" class="lp-preset-hint" hidden></p>
+              </div>
+
+              <details class="lp-advanced">
+                <summary class="lp-advanced-summary">Advanced controls</summary>
+                <div class="lp-advanced-body">
+                  <div class="lp-mode-row">
+                    <span class="lp-section-label">Mode</span>
+                    <label><input type="radio" name="lp-panel-mode" value="song-verify" /> Song — verify</label>
+                    <label><input type="radio" name="lp-panel-mode" value="song-display" /> Song — display only</label>
+                    <label><input type="radio" name="lp-panel-mode" value="theory" /> Theory</label>
+                    <label><input type="radio" name="lp-panel-mode" value="instrument-synth" /> Instrument</label>
+                    <label><input type="radio" name="lp-panel-mode" value="free-play" /> Free play</label>
+                    <label><input type="radio" name="lp-panel-mode" value="display" /> Display</label>
+                  </div>
+
+                  <div id="lp-layout-row" class="lp-mode-row" hidden>
+                    <span class="lp-section-label">Song layout</span>
+                    <label><input type="radio" name="lp-panel-layout" value="theory" /> Theory (circle of fifths)</label>
+                    <label><input type="radio" name="lp-panel-layout" value="song" /> Song (encounter order)</label>
+                    <label><input type="radio" name="lp-panel-layout" value="pitch" /> Pitch (piano-like)</label>
+                  </div>
+
+                  <div class="lp-mode-row">
+                    <span class="lp-section-label">Assist level</span>
+                    <label><input type="radio" name="lp-panel-assist" value="1" /> 1 · Training</label>
+                    <label><input type="radio" name="lp-panel-assist" value="2" /> 2 · Guided</label>
+                    <label><input type="radio" name="lp-panel-assist" value="3" /> 3 · Performance</label>
+                    <label><input type="radio" name="lp-panel-assist" value="4" /> 4 · Blind</label>
+                  </div>
+
+                  <div id="lp-instrument-row" class="lp-mode-row" hidden>
+                    <span class="lp-section-label">Instrument</span>
+                    <label><input type="radio" name="lp-panel-submode" value="synth" /> Synth</label>
+                    <label><input type="radio" name="lp-panel-submode" value="bass" /> Bass</label>
+                    <label><input type="radio" name="lp-panel-submode" value="melody" /> Melody</label>
+                    <label><input type="radio" name="lp-panel-submode" value="drum" /> Drum</label>
+                    <label><input type="radio" name="lp-panel-submode" value="free-play" /> Free play</label>
+                  </div>
+
+                  <div class="lp-mode-row">
+                    <span class="lp-section-label">Anticipation</span>
+                    <label>
+                      <input type="range" id="lp-panel-anticipation" min="0" max="8" step="1" style="width:120px;vertical-align:middle" />
+                      <span id="lp-panel-anticipation-readout">2</span> beat(s) lead
+                    </label>
+                  </div>
+
+                  <div id="lp-contribute-row" class="lp-mode-row" hidden>
+                    <span class="lp-section-label">Contribute</span>
+                    <label>
+                      <input type="checkbox" id="lp-panel-contribute-loop" />
+                      Loop pads (tap to start, tap again to stop)
+                    </label>
+                  </div>
+
+                  <div id="lp-openjam-options" class="lp-openjam-options" hidden>
+                    <span class="lp-section-label">Open-jam options</span>
+                    <label>
+                      Out-of-key pads:
+                      <select id="lp-panel-oob">
+                        <option value="dim">Dim</option>
+                        <option value="off">Off</option>
+                      </select>
+                    </label>
+                    <label>
+                      Manual key:
+                      <select id="lp-panel-manual-root">
+                        <option value="0">C</option>
+                        <option value="1">C#/Db</option>
+                        <option value="2">D</option>
+                        <option value="3">D#/Eb</option>
+                        <option value="4">E</option>
+                        <option value="5">F</option>
+                        <option value="6">F#/Gb</option>
+                        <option value="7">G</option>
+                        <option value="8">G#/Ab</option>
+                        <option value="9">A</option>
+                        <option value="10">A#/Bb</option>
+                        <option value="11">B</option>
+                      </select>
+                      <select id="lp-panel-manual-scale">
+                        <option value="Major">Major</option>
+                        <option value="Minor">Minor</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              </details>
+
+            </div>
+          </div>
+
+          <details class="lp-voice">
+            <summary class="lp-voice-summary">Voice tweaks</summary>
+            <div class="lp-voice-body">
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Master</span>
+                <input type="range" id="lp-slider-master" min="0" max="1" step="0.01" />
+                <span class="lp-tweak-readout" id="lp-readout-master">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Live play</span>
+                <input type="range" id="lp-slider-voice" min="0" max="1" step="0.01" />
+                <span class="lp-tweak-readout" id="lp-readout-voice">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Sample hits</span>
+                <input type="range" id="lp-slider-chop" min="0" max="1" step="0.01" />
+                <span class="lp-tweak-readout" id="lp-readout-chop">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Reverb wet</span>
+                <input type="range" id="lp-slider-wet" min="0" max="1" step="0.01" />
+                <span class="lp-tweak-readout" id="lp-readout-wet">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Reverb dry</span>
+                <input type="range" id="lp-slider-dry" min="0" max="1" step="0.01" />
+                <span class="lp-tweak-readout" id="lp-readout-dry">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Reverb length (s)</span>
+                <input type="range" id="lp-slider-seconds" min="0.5" max="4" step="0.1" />
+                <span class="lp-tweak-readout" id="lp-readout-seconds">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Reverb decay</span>
+                <input type="range" id="lp-slider-decay" min="0.5" max="3.5" step="0.1" />
+                <span class="lp-tweak-readout" id="lp-readout-decay">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Brightness</span>
+                <input type="range" id="lp-slider-brightness" min="0.5" max="2" step="0.05" />
+                <span class="lp-tweak-readout" id="lp-readout-brightness">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Strum (ms)</span>
+                <input type="range" id="lp-slider-strum" min="0" max="60" step="1" />
+                <span class="lp-tweak-readout" id="lp-readout-strum">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Attack (ms)</span>
+                <input type="range" id="lp-slider-attack" min="1" max="40" step="1" />
+                <span class="lp-tweak-readout" id="lp-readout-attack">—</span>
+              </label>
+              <label class="lp-tweak-row">
+                <span class="lp-tweak-label">Release (s)</span>
+                <input type="range" id="lp-slider-release" min="0.6" max="4" step="0.1" />
+                <span class="lp-tweak-readout" id="lp-readout-release">—</span>
+              </label>
+              <div class="lp-voice-actions">
+                <button type="button" id="lp-voice-reset" class="ghost">Reset voice</button>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
     </div>
@@ -860,6 +1091,7 @@
   </div>
 </main>
 
-<script src="/static/jam.js?v=74"></script>
+<script src="/static/launchpad.js?v=21"></script>
+<script src="/static/jam.js?v=119"></script>
 </body>
 </html>

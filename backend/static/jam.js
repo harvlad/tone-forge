@@ -203,6 +203,200 @@
     settings: {
       listenEnabled: false,
       feedbackView: 'cents', // 'cents' | 'rolling' | 'full'
+      // Launchpad Pro MK3 companion. When enabled, jam.js hands chord /
+      // key events to window.Launchpad which drives RGB pads over Web
+      // MIDI + SysEx. Mode picks which grid gets painted and, for
+      // song-verify, whether pad presses count as playing.
+      launchpadEnabled: false,
+      // Top-level mode taxonomy. The Launchpad is a first-class musical
+      // surface, not just a guitar mirror. Modes:
+      //   'song-verify'      — song chord grid; presses count as playing
+      //   'song-display'     — song chord grid; passive follow-along
+      //   'theory'           — full 8×8 degree-color painter (I/IV/V/vi/vii°)
+      //   'instrument-synth' — chord tones under fingers, next-chord anticipates
+      //   'instrument-bass'  — roots + fifths across bottom rows
+      //   'instrument-drum'  — pad-per-drum sampler grid (stub)
+      //   'instrument-melody'— landmark scale notes over full range
+      //   'free-play'        — raw scale grid, no highlighting
+      //   'display'          — passive lightshow, no input
+      // Play-style preset picks the whole configuration at once. See
+      // _LAUNCHPAD_PRESETS in this file for the mapping to underlying
+      // mode/layout/assist/etc. Users can drop into Advanced Controls to
+      // override individual fields; the preset key persists but stops
+      // matching the current combination the moment a manual edit lands.
+      launchpadPreset: 'learn-song',
+      launchpadMode: 'song-verify',
+      // Chord-tile spatial layout for song modes:
+      //   'theory' — original functional grid (rows = circle-of-fifths, cols = quality)
+      //   'song'   — encounter-order (pad 11 = first chord met, wraps left→right, bottom→up)
+      // Ignored by non-song modes.
+      launchpadLayout: 'theory',
+      // Assist level acts as a paint filter orthogonal to mode:
+      //   1 — Training Wheels: paint everything (current chord + next + degree colors + labels)
+      //   2 — Guided:          paint current + next only
+      //   3 — Performance:     paint current only, no anticipation
+      //   4 — Blind:           paint nothing (dark grid; user must know it)
+      launchpadAssistLevel: 2,
+      // Instrument submode picker (used when launchpadMode starts with 'instrument-').
+      // Duplicates the tail of the mode string for convenience so the panel UI
+      // can render a submode selector without parsing the mode enum.
+      launchpadInstrumentSubmode: 'synth', // 'synth' | 'bass' | 'drum' | 'melody' | 'free-play'
+      // Anticipation window, in beats. When > 0 the next-chord pad starts
+      // pulsing this many beats before the transition, ramping brightness
+      // and pulse rate as the transition approaches. 0 disables anticipation
+      // (next chord only visible at the moment of change). Range 0..8.
+      launchpadAnticipationBeats: 2,
+      // Whether the Theory-Mode painter emphasises the currently-active
+      // functional degree by desaturating the others. Off = flat degree colors.
+      launchpadTheoryHighlight: true,
+      launchpadOutOfKey: 'dim',     // 'dim' | 'off'
+      launchpadManualRoot: 0,        // pitch class 0..11 (used only if songKey null)
+      launchpadManualScale: 'Major',
+      // Center-column tab pick when the perform view is visible.
+      // 'chord'     — chord ribbon + guidance + riff lane + stems mixer
+      // 'launchpad' — dedicated Launchpad panel (on-screen 8×8 mirror
+      //               + legend + voice-tweak sliders + mode selector)
+      launchpadCenterTab: 'chord',
+      // Contribute-family fields. Only read when launchpadPreset starts
+      // with 'contribute-'. All other presets leave these at these
+      // defaults and the contribute-sample path stays dormant.
+      // See _LAUNCHPAD_PRESETS for per-preset values.
+      launchpadContribution: null,       // 'vocal-chop' | 'drum-chop' | 'bass-chop' | 'harmonic-chop' | 'section-clip' | null
+      launchpadSourceStem: null,         // 'vocals' | 'drums' | 'bass' | 'other' | 'mix' | null
+      launchpadSliceMode: 'off',         // 'off' | 'phrase' | 'onset' | 'beat' | 'chord' | 'section'
+      launchpadHarmonicLock: 'off',      // 'off' | 'auto'
+      launchpadQuantize: 'off',          // 'off' | 'beat' | 'half-bar' | 'bar' | 'phrase'
+      launchpadSectionFilter: 'off',     // 'off' | 'chorus' | 'verse' | 'breakdown' | 'auto'
+      launchpadDensityHint: null,        // 'sparse' | 'balanced' | 'rich' | null
+      // Pad-synth voice + reverb parameters. Master gain lifted from
+      // the original 0.28 to 0.7 after real-world testing showed the
+      // synth was inaudible under the stems mix; sliders in the Voice
+      // tweaks panel let users override.
+      launchpadMasterGain: 0.7,     // 0..1  master fader (overall Launchpad out)
+      // Sub-bus faders so users can balance live-play voices against
+      // sample-chop presses independently. Sample chops carry higher
+      // inherent RMS than a synthesised sine voice, so we default the
+      // chop bus lower than the voice bus to give roughly matched
+      // perceptual loudness out of the box.
+      launchpadVoiceGain: 0.9,      // 0..1  live-play synth voices (bass, chords)
+      launchpadChopGain: 0.55,      // 0..1  contribute-mode sample chops
+      launchpadReverbWet: 0.55,     // 0..1  wet mix into master
+      launchpadReverbDry: 0.75,     // 0..1  dry mix into master
+      launchpadReverbSeconds: 2.0,  // 0.5..4.0  IR length in seconds
+      launchpadReverbDecay: 2.2,    // 0.5..3.5  IR decay-envelope exponent
+      launchpadBrightness: 1.0,     // 0.5..2.0  multiplier on filter cutoff sweep
+      launchpadStrumMs: 15,         // 0..60     ms between chord voices
+      launchpadAttackMs: 6,         // 1..40     ms attack ramp per voice
+      launchpadReleaseSec: 2.5,     // 0.6..4.0  s decay tail per voice
+      // Contribute-Sample: when true, a pad tap starts an infinite
+      // loop of that chop's slice; tapping the same pad again stops
+      // the loop. Other pads can loop simultaneously. Hold still
+      // mutes. Off by default so the mode still feels like a
+      // finger-drumming pad grid unless the user asks for clip-
+      // launcher behaviour.
+      launchpadContributeLoop: false,
+    },
+    // Rolling record of recent Launchpad pad presses, keyed by chord
+    // symbol. Fed by the onPadPress callback in initSettingsUI, drained
+    // by _verifyChordTile in song-verify mode. Kept intentionally small —
+    // entries older than 2 s get trimmed on write. `synthGain` is a
+    // Web Audio GainNode that owns the pad synth's master fader — lazy-
+    // created on the first pad press so tone-forge doesn't pay for an
+    // AudioContext until the user actually enables Launchpad play-through.
+    launchpad: {
+      lastPresses: [],
+      synthGain: null,
+      synthCtx: null,
+      userChosePreset: false,
+      // Live octave transpose applied to every _launchpadPlayVoice press.
+      // Driven by the hardware Up/Down arrow CCs (91/92) when the current
+      // mode isn't contribute-sample. Clamped to ±3 so notes stay in the
+      // audible + MIDI-legal range. Not persisted — resets on reload so
+      // the user always starts at the natural voicing register.
+      octaveOffset: 0,
+      // Contribute-mode chop cache. Owned by _loadContributeChops. `chops`
+      // is the array returned by /api/song/{id}/chops. `stemBuffer` is the
+      // decoded AudioBuffer for the source stem (or full mix), reused for
+      // every pad press so we never reallocate per hit. `loadPromise` is
+      // set while a fetch is in flight so concurrent preset switches
+      // coalesce. `loadKey` is `${analysisId}|${stem}|${sliceMode}` — a
+      // second request that matches the cached key is a no-op.
+      contribute: {
+        chops: [],
+        stemBuffer: null,
+        sourceStem: null,
+        sliceMode: null,
+        loadPromise: null,
+        loadKey: null,
+        playingSources: [],
+        // Retrigger + hold-to-mute bookkeeping.
+        //   activeByPad : `${presetKey}:${padIdx}` → { src, g, padKey }
+        //                 for the currently-scheduled voice on that
+        //                 pad, scoped to the preset that triggered it.
+        //                 Compound key so a chop press on drums page
+        //                 pad 51 doesn't stop a chop press on harmonic
+        //                 page pad 55 (same grid row, different preset
+        //                 → both should keep playing for the
+        //                 multi-channel workflow). Panic button
+        //                 iterates all entries; per-preset stop logic
+        //                 filters by the presetKey prefix.
+        //   holdTimers  : padIdx → setTimeout id. Started on press,
+        //                 cleared on release. If it fires, we treat
+        //                 the press as a long-hold and mute the pad.
+        //   disabledPads: Set of padIdx currently muted. A press on a
+        //                 muted pad un-mutes it AND plays (single tap
+        //                 to recover from an accidental mute).
+        activeByPad: new Map(),
+        holdTimers: new Map(),
+        disabledPads: new Set(),
+        // Per-row loop clips launched from the right-side scene buttons
+        // (CC 19..79 → rows 1..7; CC 89 → stop-all). Each entry:
+        //   { src: AudioBufferSourceNode, g: GainNode, chop, row, presetKey }
+        // Keyed by the compound string `${presetKey}:${row}` so loops
+        // launched from different Contribute presets survive preset
+        // switches. Row 1 in the drum preset lives at 'contribute-drums:1'
+        // while row 1 in the harmonic preset lives at 'contribute-harmonic:1'
+        // — both can play at the same time, giving the user a real
+        // multi-channel workflow: build a drum loop on drums preset,
+        // switch to harmonic and layer a chord loop over it, switch to
+        // bass and layer a bass loop under it. Each src holds its own
+        // buffer reference so the audio keeps playing even after the
+        // triggering preset is no longer the active one.
+        rowLoops: new Map(),
+      },
+    },
+    // Surface-agnostic input sink. Any connected performance surface
+    // (mic-chord detector, Launchpad, MIDI keyboard, guitar-MIDI) feeds
+    // its "the user just played this" events into `events` via
+    // `_dispatchSurfaceEvent`. Verifiers such as `_verifyChordTile` read
+    // from this ring so the same chord-recall logic works no matter
+    // where the input came from.
+    //
+    // Event shape:
+    //   {
+    //     surface: 'launchpad' | 'mic' | 'midi-keyboard' | 'guitar-midi',
+    //     kind:    'chord-press' | 'note-on' | 'beat-hit',
+    //     // chord-press:
+    //     symbol?, canonicalKey?, family?,
+    //     // note-on:
+    //     midi?, pitchClass?, velocity?,
+    //     // origin metadata (optional):
+    //     padIdx?, deviceLabel?,
+    //     t_perf: performance.now() when dispatched,
+    //   }
+    //
+    // `surfaces` reflects which surfaces are currently registered so the
+    // UI can render "listening on: mic + launchpad" and so verifiers can
+    // choose between multi-source fusion strategies. Each surface's
+    // enable/disable path is responsible for keeping its flag in sync.
+    inputSurface: {
+      events: [],
+      surfaces: {
+        launchpad: false,
+        mic: false,
+        midiKeyboard: false,
+        guitarMidi: false,
+      },
     },
     // Live guitar monitor — the play-along loop's input path.
     // Routes the connected audio interface directly to ctx.destination
@@ -1765,6 +1959,41 @@
     state.sections = [];
     state.chords = [];
     state.rawChords = { fixed: [], snapped: null };
+    // Reset Launchpad grid + verify-mode press ring buffer for the next jam.
+    try { window.Launchpad && window.Launchpad.onSongUnloaded(); } catch (_) {}
+    state.launchpad.lastPresses = [];
+    // Drop the Contribute chop cache — new song means new chops. Any
+    // in-flight fetch will finish and be discarded because loadKey
+    // won't match after this reset. Playing sources are left to
+    // finish naturally; the AudioBuffer they hold is refcounted by
+    // Web Audio.
+    state.launchpad.contribute.chops = [];
+    state.launchpad.contribute.stemBuffer = null;
+    state.launchpad.contribute.sourceStem = null;
+    state.launchpad.contribute.sliceMode = null;
+    state.launchpad.contribute.loadPromise = null;
+    state.launchpad.contribute.loadKey = null;
+    state.launchpad.contribute.playingSources = [];
+    // Cancel any pending hold-timers + drop mute state — new song
+    // means a fresh chop palette anyway.
+    for (const tid of state.launchpad.contribute.holdTimers.values()) {
+      try { clearTimeout(tid); } catch (_) {}
+    }
+    state.launchpad.contribute.holdTimers.clear();
+    state.launchpad.contribute.disabledPads.clear();
+    state.launchpad.contribute.activeByPad.clear();
+    // Kill any looping row clips + blank their scene-launch LEDs.
+    // Uses a stop-node walk instead of _launchpadStopRowLoop so this
+    // path doesn't depend on that helper existing yet (it's defined
+    // further down and only referenced from _launchpadHandleCc).
+    for (const rec of state.launchpad.contribute.rowLoops.values()) {
+      try { rec.src.stop(); } catch (_) {}
+      try { rec.src.disconnect(); } catch (_) {}
+      try { rec.g.disconnect(); } catch (_) {}
+    }
+    state.launchpad.contribute.rowLoops.clear();
+    try { window.Launchpad && window.Launchpad.blankAllSceneLaunch && window.Launchpad.blankAllSceneLaunch(); } catch (_) {}
+    try { window.Launchpad && window.Launchpad.setChops && window.Launchpad.setChops([]); } catch (_) {}
     // Empty the ribbon DOM so stale pills from the prior song don't
     // bleed into the next one before buildChordRibbon repopulates.
     const _ribbonEl = document.getElementById('chord-ribbon');
@@ -2194,6 +2423,7 @@
 
     // Parse the key string into a pitch-class set for intonation scoring.
     state.songKey = parseDetectedKey(key);
+    try { window.Launchpad && window.Launchpad.onSongKey(state.songKey); } catch (_) {}
     applyFeedbackView();
     // Refresh the perform-view "Audio in" row label.
     try { refreshAudioInName(); } catch (_) {}
@@ -4020,6 +4250,13 @@
     // Position at t=0 immediately so the first chord is centred under
     // the playhead before the user hits Play.
     updateChordPlayhead(0);
+    // Push the chord list to the Launchpad module so it can (re)assign
+    // pads and paint the chord-tile grid.
+    try { window.Launchpad && window.Launchpad.onChordsLoaded(state.chords); } catch (_) {}
+    // Auto-suggest a preset based on the new chord data (bass-driven
+    // songs quietly switch to Play Bassline; otherwise refresh the
+    // "try X" hint if the user has already committed to a preset).
+    try { _onLaunchpadChordsChanged(); } catch (_) {}
   }
 
   // Per-RAF playhead update. Binary-search state.chords by startSec to
@@ -4108,7 +4345,17 @@
       // active chord index advanced. Idempotent if the view mode
       // hides both lanes.
       _onActiveChordChanged(highlightIdx);
+      try {
+        window.Launchpad && window.Launchpad.onActiveChordChanged(highlightIdx, state.chords);
+      } catch (_) {}
     }
+
+    // Beat-tick pump for Launchpad anticipation. Fires at most once
+    // per beat regardless of RAF cadence.
+    _launchpadBeatTick(t, highlightIdx);
+
+    // Countdown bar on the Launchpad panel — smooth every-RAF update.
+    _renderLaunchpadCountdown(t, highlightIdx);
 
     // Countdown updates every RAF tick (string-compare gates the
     // actual DOM write so churn is bounded to ~10Hz user-visible
@@ -4797,6 +5044,8 @@
     // stems sample-aligned. seekAll() also routes through this, so a
     // seek-while-playing produces a clean stop+restart on the helper.
     try { pushTransportToConnect(); } catch (_) {}
+    // Mirror the play edge onto the Launchpad's Play button LED.
+    try { window.Launchpad && window.Launchpad.setTransportPlaying(true); } catch (_) {}
   }
 
   function stopSources() {
@@ -4821,6 +5070,7 @@
     // stems. Position is captured into state.playOffset above so the
     // helper has the right resume point on the next play.
     try { pushTransportToConnect(); } catch (_) {}
+    try { window.Launchpad && window.Launchpad.setTransportPlaying(false); } catch (_) {}
   }
 
   function stopAllStems() {
@@ -4828,6 +5078,7 @@
     stopClickScheduler();
     state.playOffset = 0;
     state.isPlaying = false;
+    try { window.Launchpad && window.Launchpad.setTransportPlaying(false); } catch (_) {}
   }
 
   function seekAll(sec) {
@@ -5369,6 +5620,112 @@
       if (['cents', 'rolling', 'full'].includes(parsed.feedbackView)) {
         state.settings.feedbackView = parsed.feedbackView;
       }
+      if (typeof parsed.launchpadEnabled === 'boolean') {
+        state.settings.launchpadEnabled = parsed.launchpadEnabled;
+      }
+      // Legacy 'open-jam' migrates to the new 'instrument-synth' mode; the
+      // instrument submode selector then decides the actual layout/palette.
+      const _LP_VALID_MODES = new Set([
+        'song-verify', 'song-display',
+        'theory',
+        'instrument-synth', 'instrument-bass', 'instrument-drum', 'instrument-melody',
+        'free-play', 'display',
+        'open-jam', // legacy, migrated below
+      ]);
+      if (_LP_VALID_MODES.has(parsed.launchpadMode)) {
+        state.settings.launchpadMode =
+          parsed.launchpadMode === 'open-jam' ? 'instrument-synth' : parsed.launchpadMode;
+      }
+      if (parsed.launchpadLayout === 'theory' || parsed.launchpadLayout === 'song' || parsed.launchpadLayout === 'pitch') {
+        state.settings.launchpadLayout = parsed.launchpadLayout;
+      }
+      if (typeof parsed.launchpadPreset === 'string'
+          && ['learn-song','perform-song','learn-harmony','jam-in-key','melody-practice','play-bassline',
+              'contribute-vocal','contribute-drums','contribute-bass','contribute-harmonic','contribute-sections'].includes(parsed.launchpadPreset)) {
+        state.settings.launchpadPreset = parsed.launchpadPreset;
+      }
+      // Contribute-family fields. Silently pass through — validators
+      // stay lenient because the downstream slicer/trigger path treats
+      // unknown values as "off" anyway.
+      if (typeof parsed.launchpadContribution === 'string' || parsed.launchpadContribution === null) {
+        state.settings.launchpadContribution = parsed.launchpadContribution;
+      }
+      if (typeof parsed.launchpadSourceStem === 'string' || parsed.launchpadSourceStem === null) {
+        state.settings.launchpadSourceStem = parsed.launchpadSourceStem;
+      }
+      if (typeof parsed.launchpadSliceMode === 'string') {
+        state.settings.launchpadSliceMode = parsed.launchpadSliceMode;
+      }
+      if (parsed.launchpadHarmonicLock === 'off' || parsed.launchpadHarmonicLock === 'auto') {
+        state.settings.launchpadHarmonicLock = parsed.launchpadHarmonicLock;
+      }
+      if (typeof parsed.launchpadQuantize === 'string') {
+        state.settings.launchpadQuantize = parsed.launchpadQuantize;
+      }
+      if (typeof parsed.launchpadSectionFilter === 'string') {
+        state.settings.launchpadSectionFilter = parsed.launchpadSectionFilter;
+      }
+      if (typeof parsed.launchpadDensityHint === 'string' || parsed.launchpadDensityHint === null) {
+        state.settings.launchpadDensityHint = parsed.launchpadDensityHint;
+      }
+      if (typeof parsed.launchpadAssistLevel === 'number'
+          && parsed.launchpadAssistLevel >= 1 && parsed.launchpadAssistLevel <= 4) {
+        state.settings.launchpadAssistLevel = parsed.launchpadAssistLevel | 0;
+      }
+      const _LP_VALID_SUBMODES = new Set(['synth', 'bass', 'drum', 'melody', 'free-play']);
+      if (_LP_VALID_SUBMODES.has(parsed.launchpadInstrumentSubmode)) {
+        state.settings.launchpadInstrumentSubmode = parsed.launchpadInstrumentSubmode;
+      }
+      if (typeof parsed.launchpadAnticipationBeats === 'number'
+          && parsed.launchpadAnticipationBeats >= 0
+          && parsed.launchpadAnticipationBeats <= 8) {
+        state.settings.launchpadAnticipationBeats = parsed.launchpadAnticipationBeats;
+      }
+      if (typeof parsed.launchpadTheoryHighlight === 'boolean') {
+        state.settings.launchpadTheoryHighlight = parsed.launchpadTheoryHighlight;
+      }
+      if (parsed.launchpadOutOfKey === 'dim' || parsed.launchpadOutOfKey === 'off') {
+        state.settings.launchpadOutOfKey = parsed.launchpadOutOfKey;
+      }
+      if (typeof parsed.launchpadManualRoot === 'number'
+          && parsed.launchpadManualRoot >= 0 && parsed.launchpadManualRoot <= 11) {
+        state.settings.launchpadManualRoot = parsed.launchpadManualRoot | 0;
+      }
+      if (parsed.launchpadManualScale === 'Major' || parsed.launchpadManualScale === 'Minor') {
+        state.settings.launchpadManualScale = parsed.launchpadManualScale;
+      }
+      if (parsed.launchpadCenterTab === 'chord' || parsed.launchpadCenterTab === 'launchpad') {
+        state.settings.launchpadCenterTab = parsed.launchpadCenterTab;
+      }
+      const _clampNum = (v, lo, hi) => (typeof v === 'number' && isFinite(v))
+        ? Math.max(lo, Math.min(hi, v))
+        : null;
+      const _lpNum = (key, lo, hi) => {
+        const v = _clampNum(parsed[key], lo, hi);
+        if (v !== null) state.settings[key] = v;
+      };
+      _lpNum('launchpadMasterGain', 0, 1);
+      // One-shot migration: the original default was 0.28 which real-world
+      // testing showed to be inaudible under the stems mix. Users who
+      // never touched the slider stayed on 0.28 forever; bump them to
+      // the new default so they hear the pads on first play. Anyone who
+      // deliberately lowered it below 0.28 is preserved.
+      if (state.settings.launchpadMasterGain === 0.28) {
+        state.settings.launchpadMasterGain = 0.7;
+      }
+      _lpNum('launchpadVoiceGain', 0, 1);
+      _lpNum('launchpadChopGain', 0, 1);
+      _lpNum('launchpadReverbWet', 0, 1);
+      _lpNum('launchpadReverbDry', 0, 1);
+      _lpNum('launchpadReverbSeconds', 0.5, 4.0);
+      _lpNum('launchpadReverbDecay', 0.5, 3.5);
+      _lpNum('launchpadBrightness', 0.5, 2.0);
+      _lpNum('launchpadStrumMs', 0, 60);
+      _lpNum('launchpadAttackMs', 1, 40);
+      _lpNum('launchpadReleaseSec', 0.6, 4.0);
+      if (typeof parsed.launchpadContributeLoop === 'boolean') {
+        state.settings.launchpadContributeLoop = parsed.launchpadContributeLoop;
+      }
     } catch (e) {
       console.warn('Failed to load jam settings:', e);
     }
@@ -5533,6 +5890,8 @@
       // spot a default-mic fallback without opening DevTools.
       const statusLabel = finalLabel || acquiredVia;
       $('into-status').textContent = `Listening — ${statusLabel}`;
+      // Mic surface is now active in the shared InputSurface registry.
+      _setSurfaceActive('mic', true);
       pitchTick();
     } catch (err) {
       $('into-status').textContent = 'Mic permission denied or unavailable';
@@ -5542,6 +5901,8 @@
   }
 
   function stopListening() {
+    // Mic surface goes inactive in the shared InputSurface registry.
+    _setSurfaceActive('mic', false);
     if (state.listen.rafHandle) {
       cancelAnimationFrame(state.listen.rafHandle);
       state.listen.rafHandle = null;
@@ -6138,6 +6499,2642 @@
           // Roll back so the UI matches server-side truth.
           autoUpdateCb.checked = !desired;
         }
+      });
+    }
+
+    // ---- Launchpad Pro MK3 wiring --------------------------------------
+    _initLaunchpadUI();
+    _initLaunchpadPanel();
+  }
+
+  // Match a raw MIDI device name to a known controller family and return
+  // { emoji, prettyName, fullSupport } so the status pill can render a
+  // friendly capability-aware string. `fullSupport: true` means every
+  // Launchpad mode is available; `false` implies only Open Jam works
+  // (the minimum subset for a generic pad grid).
+  function _detectControllerFamily(deviceName) {
+    const name = (deviceName || '').toLowerCase();
+    if (name.includes('launchpad pro') && name.includes('mk3')) {
+      return { emoji: '🎛', prettyName: 'Launchpad Pro MK3', fullSupport: true };
+    }
+    if (name.includes('launchpad pro')) {
+      return { emoji: '🎛', prettyName: 'Launchpad Pro', fullSupport: true };
+    }
+    if (name.includes('launchpad')) {
+      return { emoji: '🎛', prettyName: 'Launchpad', fullSupport: false };
+    }
+    if (name.includes('push 3')) {
+      return { emoji: '🎹', prettyName: 'Push 3', fullSupport: false };
+    }
+    if (name.includes('push 2')) {
+      return { emoji: '🎹', prettyName: 'Push 2', fullSupport: false };
+    }
+    if (name.includes('push')) {
+      return { emoji: '🎹', prettyName: 'Push', fullSupport: false };
+    }
+    if (name) {
+      return { emoji: '🎛', prettyName: deviceName, fullSupport: false };
+    }
+    return { emoji: '🎛', prettyName: 'Controller', fullSupport: true };
+  }
+
+  // Set the Launchpad status pill text + colour class in one place so
+  // every status update goes through the same styling logic. Updates
+  // both the settings-popover pill and the dedicated-panel pill.
+  function _renderLaunchpadStatus(status) {
+    const els = [
+      document.getElementById('setting-launchpad-status'),
+      document.getElementById('lp-panel-status'),
+    ].filter(Boolean);
+    if (!els.length) return;
+    const _paint = (text, cls) => {
+      for (const el of els) {
+        el.classList.remove('launchpad-status--idle', 'launchpad-status--ok', 'launchpad-status--error');
+        el.textContent = text;
+        el.classList.add(cls);
+      }
+    };
+    if (!status || !status.supported) {
+      _paint('Web MIDI not supported (use Chrome or Edge)', 'launchpad-status--error');
+    } else if (status.error === 'permission_denied') {
+      _paint('Permission denied — click again to retry', 'launchpad-status--error');
+    } else if (status.error === 'device_not_connected') {
+      _paint('🔌 No controller detected — plug in a Launchpad or Push', 'launchpad-status--error');
+    } else if (status.error === 'disconnected' || status.error === 'send_failed') {
+      _paint('🔌 Controller disconnected', 'launchpad-status--error');
+    } else if (status.connected) {
+      const fam = _detectControllerFamily(status.deviceName);
+      const tail = fam.fullSupport ? 'connected' : 'detected — Open Jam mode available';
+      _paint(`${fam.emoji} ${fam.prettyName} ${tail}`, 'launchpad-status--ok');
+      // Fresh connection or reconnect — paint the octave arrows so the
+      // user sees the pad-synth register controls without having to
+      // touch a pad first. Deferred a beat so the LP has finished its
+      // own initial-mode paint (which lands on the pad grid, not the
+      // side column, so the two don't fight).
+      setTimeout(() => { try { _launchpadPaintOctaveArrows(); } catch (_) {} }, 120);
+    } else {
+      _paint('Searching for controller…', 'launchpad-status--idle');
+    }
+    // Panel device-name field (legacy — kept for the settings popover
+    // which still surfaces the raw device string).
+    const devEl = document.getElementById('lp-panel-device');
+    if (devEl) {
+      devEl.textContent = (status && status.deviceName) ? status.deviceName : '—';
+    }
+    // Warn dot on the Launchpad tab: shown when the user has enabled the
+    // Launchpad but the device isn't currently connected.
+    const warn = document.getElementById('center-tab-launchpad-warn');
+    if (warn) {
+      const enabled = !!state.settings.launchpadEnabled;
+      const connected = !!(status && status.connected);
+      warn.hidden = !(enabled && !connected && status && status.supported);
+    }
+    // Keep the shared InputSurface registry in sync: the Launchpad
+    // surface is "active" only when it's actually connected and the
+    // user has enabled it. Verifiers can then query
+    // `state.inputSurface.surfaces.launchpad` for gating.
+    _setSurfaceActive('launchpad',
+      !!(status && status.connected && state.settings.launchpadEnabled));
+  }
+
+  // Surface-agnostic input dispatcher. Any registered input surface
+  // (Launchpad pad press, mic-detected chord, MIDI keyboard note-on,
+  // guitar-MIDI event) calls this helper with a normalised event
+  // descriptor. Events are stored in `state.inputSurface.events`
+  // (rolling 2 s window) so verifiers stay input-agnostic.
+  //
+  // Callers should NOT stamp `t_perf` themselves — this helper does it,
+  // so all events across surfaces share the same clock.
+  function _dispatchSurfaceEvent(evt) {
+    if (!evt || !evt.surface || !evt.kind) return;
+    const buf = state.inputSurface.events;
+    const now = performance.now();
+    const cutoff = now - 2000;
+    while (buf.length && buf[0].t_perf < cutoff) buf.shift();
+    buf.push({ ...evt, t_perf: now });
+  }
+
+  // Mark a surface as active/inactive in the shared registry. Called
+  // from surface enable/disable code paths so UI + verifiers can see
+  // which inputs are currently listening.
+  function _setSurfaceActive(name, active) {
+    if (!state.inputSurface.surfaces.hasOwnProperty(name)) return;
+    state.inputSurface.surfaces[name] = !!active;
+  }
+
+  // Feed pad presses into both the legacy Launchpad ring buffer AND the
+  // shared InputSurface sink, then trigger the pad synth so the user
+  // actually hears their playing. Shared by hardware presses and
+  // on-screen mirror clicks.
+  //
+  // The legacy `state.launchpad.lastPresses` buffer is kept for now
+  // because _launchpadPlayPress + a few debug hooks still read it, but
+  // new verifier code should read from `state.inputSurface.events`
+  // via _dispatchSurfaceEvent so it's source-agnostic.
+  function _launchpadPushPress(evt) {
+    if (!evt || !evt.meaning) return;
+    // Contribute mode presses carry a chop object instead of a chord
+    // or note. Route them to the chop scheduler and skip the chord
+    // verify ring buffer + pad synth entirely — the audible feedback
+    // is the chopped sample itself, not the pad synth.
+    if (evt.meaning.kind === 'chop') {
+      _dispatchSurfaceEvent({
+        surface: 'launchpad',
+        kind: 'sample-trigger',
+        chopIdx: evt.meaning.chopIdx,
+        padIdx: evt.padIdx,
+      });
+      try { _launchpadTriggerChop(evt); } catch (e) {
+        console.warn('[launchpad] chop trigger failed:', e);
+      }
+      return;
+    }
+    const now = performance.now();
+    const buf = state.launchpad.lastPresses;
+    const cutoff = now - 2000;
+    while (buf.length && buf[0].t_perf < cutoff) buf.shift();
+    const isChord = evt.meaning.kind === 'chord';
+    buf.push({
+      symbol: isChord ? evt.meaning.symbol : null,
+      canonicalKey: isChord ? evt.meaning.canonicalKey : null,
+      pitchClass: !isChord ? evt.meaning.pitchClass : null,
+      midi: !isChord ? evt.meaning.midi : null,
+      padIdx: evt.padIdx,
+      t_perf: now,
+    });
+    // Also push into the shared surface sink.
+    _dispatchSurfaceEvent({
+      surface: 'launchpad',
+      kind: isChord ? 'chord-press' : 'note-on',
+      symbol: isChord ? evt.meaning.symbol : undefined,
+      canonicalKey: isChord ? evt.meaning.canonicalKey : undefined,
+      family: isChord ? evt.meaning.family : undefined,
+      pitchClass: !isChord ? evt.meaning.pitchClass : undefined,
+      midi: !isChord ? evt.meaning.midi : undefined,
+      padIdx: evt.padIdx,
+    });
+    try { _launchpadPlayPress(evt); } catch (e) {
+      console.warn('[launchpad] synth failed:', e);
+    }
+  }
+
+  // Beat-tick pump. Fires window.Launchpad.onBeatTick at most once per
+  // musical beat with { beatIdx, beatsUntilNextChord, nextSymbol } so
+  // the launchpad module can drive anticipation ramps. Cheap: no-ops
+  // when Launchpad isn't enabled or tempo is unknown.
+  //
+  // The "next chord" is defined as the first upcoming chord in
+  // state.chords whose symbol differs from the currently-active one, so
+  // held chords don't trigger anticipation for themselves.
+  let _lastBeatIdxSent = -1;
+  function _launchpadBeatTick(t, highlightIdx) {
+    if (!window.Launchpad || !state.settings.launchpadEnabled) return;
+    if (state.settings.launchpadAnticipationBeats <= 0) return;
+    const bpm = (typeof state.tempo_bpm === 'number' && state.tempo_bpm >= 40 && state.tempo_bpm <= 240)
+      ? state.tempo_bpm
+      : (typeof state.tempo === 'number' && state.tempo >= 40 && state.tempo <= 240)
+        ? state.tempo : null;
+    if (!bpm) return;
+    const beatDur = 60 / bpm;
+    const beatIdx = Math.floor(t / beatDur);
+    if (beatIdx === _lastBeatIdxSent) return;
+    _lastBeatIdxSent = beatIdx;
+    let nextSym = null;
+    let beatsUntilNext = null;
+    const chords = state.chords;
+    if (Array.isArray(chords) && highlightIdx >= 0 && chords[highlightIdx]) {
+      const activeSym = chords[highlightIdx].symbol;
+      for (let i = highlightIdx + 1; i < chords.length; i++) {
+        const c = chords[i];
+        if (!c || !c.symbol || c.symbol === activeSym) continue;
+        nextSym = c.symbol;
+        beatsUntilNext = Math.max(0, (c.startSec - t) / beatDur);
+        break;
+      }
+    }
+    try {
+      window.Launchpad.onBeatTick({
+        beatIdx,
+        beatsUntilNextChord: beatsUntilNext,
+        nextSymbol: nextSym,
+      });
+    } catch (e) {
+      console.warn('[launchpad] onBeatTick threw:', e);
+    }
+  }
+
+  // Countdown bar on the Launchpad panel. Fills from 0% to 100% as we
+  // approach the next distinct-symbol chord change, then drops to 0
+  // at the moment of change. Uses a lookahead window derived from the
+  // active chord's own duration (capped at 8s) so short chords still
+  // render a useful ramp and long chords don't sit at 100% forever.
+  let _lpCountdownLastNext = '';
+  let _lpCountdownLastPct = -1;
+  let _lpCountdownLastTime = '';
+  let _lpCountdownImminent = false;
+  function _renderLaunchpadCountdown(t, activeIdx) {
+    const wrap = document.getElementById('lp-countdown');
+    const lp = window.Launchpad;
+    const clearHw = () => {
+      if (lp && typeof lp.setCountdownProgress === 'function'
+          && state.settings.launchpadEnabled) {
+        try { lp.setCountdownProgress(null, false); } catch (_) {}
+      }
+    };
+    if (!wrap) { clearHw(); return; }
+    const chords = state.chords;
+    if (!Array.isArray(chords) || activeIdx < 0 || activeIdx >= chords.length) {
+      if (!wrap.hidden) wrap.hidden = true;
+      clearHw();
+      return;
+    }
+    const cur = chords[activeIdx];
+    if (!cur) { if (!wrap.hidden) wrap.hidden = true; clearHw(); return; }
+    // Find the first upcoming chord whose symbol differs from the
+    // currently active one, matching the anticipation logic.
+    let nextSym = null;
+    let nextStart = null;
+    for (let i = activeIdx + 1; i < chords.length; i++) {
+      const c = chords[i];
+      if (!c || !c.symbol || c.symbol === cur.symbol) continue;
+      nextSym = c.symbol;
+      nextStart = c.startSec;
+      break;
+    }
+    if (nextSym === null || nextStart === null) {
+      if (!wrap.hidden) wrap.hidden = true;
+      clearHw();
+      return;
+    }
+    if (wrap.hidden) wrap.hidden = false;
+    const remaining = Math.max(0, nextStart - t);
+    // Lookahead window: the shorter of the current chord's duration
+    // and 8 seconds. Keeps short chords legible and caps long ones.
+    // NB: local must not be named `window` — that shadows the global
+    // for the whole function via TDZ and blows up line 6506.
+    const curDur = Math.max(0.25, (cur.endSec || nextStart) - (cur.startSec || t));
+    const lookahead = Math.min(8, Math.max(0.5, curDur));
+    const progress = Math.max(0, Math.min(1, 1 - (remaining / lookahead)));
+    const pct = Math.round(progress * 100);
+    if (pct !== _lpCountdownLastPct) {
+      const fill = document.getElementById('lp-countdown-fill');
+      if (fill) fill.style.width = pct + '%';
+      _lpCountdownLastPct = pct;
+    }
+    if (nextSym !== _lpCountdownLastNext) {
+      const el = document.getElementById('lp-countdown-next');
+      if (el) el.textContent = 'Next: ' + nextSym;
+      _lpCountdownLastNext = nextSym;
+    }
+    const timeText = remaining.toFixed(1) + 's';
+    if (timeText !== _lpCountdownLastTime) {
+      const el = document.getElementById('lp-countdown-time');
+      if (el) el.textContent = timeText;
+      _lpCountdownLastTime = timeText;
+    }
+    const imminent = remaining <= 0.6;
+    if (imminent !== _lpCountdownImminent) {
+      wrap.classList.toggle('lp-countdown--imminent', imminent);
+      _lpCountdownImminent = imminent;
+    }
+    // Mirror to the hardware top-row bar. No-ops when Launchpad is
+    // disabled or not connected.
+    if (lp && typeof lp.setCountdownProgress === 'function'
+        && state.settings.launchpadEnabled) {
+      try { lp.setCountdownProgress(progress, imminent); } catch (_) {}
+    }
+  }
+
+  // Launchpad Pro MK3 sends CC messages for every round button around
+  // the pad grid in Programmer Mode. We wire the Play button to the
+  // jam transport so the user can start/stop from the device. The MK3's
+  // dedicated ▶ button (bottom-right, marked "Play") fires CC 20 on
+  // press. The Stop button ("Stop / Clear") on the same row fires
+  // CC 19 (release). If your unit reports different values, adjust
+  // LP_CC_PLAY / LP_CC_STOP below — check DevTools console: each CC
+  // received is logged when it's not one of the known transport codes.
+  const LP_CC_PLAY = 20;
+  const LP_CC_STOP = 19;
+  // Right-side scene launch buttons (top-to-bottom: CC 89, 79, ..., 19).
+  // In Contribute-Sample mode these become per-row loop launchers:
+  //   CC 19..79 → toggle row 1..7 loop clip
+  //   CC 89     → stop all row loops (row 8's grid pads are the
+  //               anticipation strip, so its scene button is a hotkey)
+  // Outside Contribute mode these still fire; we only claim them when
+  // the current mode is contribute-sample so other modes keep their
+  // native button behavior.
+  const LP_CC_SCENE_TO_ROW = { 19: 1, 29: 2, 39: 3, 49: 4, 59: 5, 69: 6, 79: 7 };
+  const LP_CC_SCENE_STOP_ALL = 89;
+  // Top row of round buttons (in Programmer Mode) fires CCs 91..98
+  // left→right. Bind the first five to the five Contribute presets
+  // so the user can switch chop sources without touching the
+  // browser UI. Pressing one is equivalent to clicking that
+  // preset's radio in the panel — mode flips to contribute-sample,
+  // the target stem is loaded, and the grid re-lights (all pads
+  // start muted per the off-by-default policy).
+  const LP_CC_PRESET_MAP = {
+    91: 'contribute-vocal',
+    92: 'contribute-drums',
+    93: 'contribute-bass',
+    94: 'contribute-harmonic',
+    95: 'contribute-sections',
+  };
+  // Switch to a Contribute preset triggered by a hardware button.
+  // Marks the choice as user-initiated (so auto-suggest won't
+  // override it) and keeps the panel radios in sync.
+  function _launchpadPresetFromHardware(presetKey) {
+    if (typeof _applyLaunchpadPreset !== 'function') return;
+    state.launchpad.userChosePreset = true;
+    _applyLaunchpadPreset(presetKey);
+    try {
+      for (const r of document.querySelectorAll('input[name="lp-panel-preset"]')) {
+        r.checked = (r.value === presetKey);
+      }
+    } catch (_) {}
+    try {
+      if (typeof _updateLaunchpadPresetHint === 'function') {
+        _updateLaunchpadPresetHint();
+      }
+    } catch (_) {}
+  }
+  // Clamp for the live octave transpose. ±3 keeps every voicing inside
+  // MIDI 0..127 given the ~C3–C5 base register _launchpadChordVoicing
+  // produces.
+  const LP_OCTAVE_MIN = -3;
+  const LP_OCTAVE_MAX = 3;
+  // Launchpad ▲/▼ left-column CCs (see _launchpadHandleCc for the full
+  // left-column CC map). Reused by the LED painter below so hardware
+  // labels and lights stay coherent.
+  const LP_CC_OCT_UP = 80;
+  const LP_CC_OCT_DOWN = 70;
+  // Paint the two octave arrows to reflect the current offset. Called
+  // on every octave shift, on mode change into a non-contribute mode,
+  // and when the device connects. In contribute-sample mode the arrows
+  // are blanked so the Contribute painter can own that column.
+  function _launchpadPaintOctaveArrows() {
+    try {
+      if (!window.Launchpad || !window.Launchpad.isConnected()) return;
+      const contribute = state.settings.launchpadMode === 'contribute-sample';
+      if (contribute) {
+        window.Launchpad.blankButton(LP_CC_OCT_UP);
+        window.Launchpad.blankButton(LP_CC_OCT_DOWN);
+        return;
+      }
+      const off = state.launchpad.octaveOffset || 0;
+      // Colours are in the 0..127 SysEx range. Idle both arrows glow a
+      // dim cool white; whichever direction the user has shifted lights
+      // brighter cyan; at the ±3 limit that arrow flips to red so the
+      // user immediately sees they can't push further.
+      const IDLE = [12, 14, 24];
+      const ACTIVE = [0, 90, 100];
+      const LIMIT = [110, 20, 20];
+      let upColor = IDLE, downColor = IDLE;
+      if (off > 0) upColor = ACTIVE;
+      if (off < 0) downColor = ACTIVE;
+      if (off >= LP_OCTAVE_MAX) upColor = LIMIT;
+      if (off <= LP_OCTAVE_MIN) downColor = LIMIT;
+      window.Launchpad.paintButton(LP_CC_OCT_UP, upColor[0], upColor[1], upColor[2]);
+      window.Launchpad.paintButton(LP_CC_OCT_DOWN, downColor[0], downColor[1], downColor[2]);
+    } catch (_) {}
+  }
+  function _launchpadShiftOctave(delta) {
+    const cur = state.launchpad.octaveOffset || 0;
+    const next = Math.max(LP_OCTAVE_MIN, Math.min(LP_OCTAVE_MAX, cur + delta));
+    console.log('[launchpad] octave shift', { delta, from: cur, to: next, mode: state.settings.launchpadMode });
+    // Always repaint even when clamped — a bounce paints briefly on
+    // the LIMIT color to signal "no further this way", which is
+    // clearer than a silent no-op.
+    state.launchpad.octaveOffset = next;
+    try {
+      const pill = document.getElementById('lp-panel-status');
+      if (pill) {
+        const sign = next > 0 ? '+' : '';
+        pill.dataset.octave = `${sign}${next}`;
+      }
+    } catch (_) {}
+    _launchpadPaintOctaveArrows();
+  }
+  function _launchpadHandleCc(msg) {
+    if (!msg || typeof msg.cc !== 'number') return;
+    const { cc, value } = msg;
+    // Value 0 is the release message; only act on press.
+    if (value === 0) return;
+    // Top-row preset switcher — ONLY active while the user is
+    // already in contribute-sample mode. Outside Contribute, the
+    // top-left ▲/▼ arrows get repurposed as an octave shifter for
+    // the pad synth so learn/open-jam/song modes can move the
+    // voicing register on the fly. CCs 93..98 fall through to
+    // no-op in non-Contribute modes rather than surprise-switching
+    // preset (which used to yank the user out of Learn if they
+    // brushed a top button).
+    //
+    // Device mapping (LP Pro MK3, Programmer Mode). The left column
+    // of round buttons descends CC 80, 70, 60, 50, 40, 30, 20, 10 —
+    // we use the top two as an octave shifter for the pad synth:
+    //   CC 80 = ▲ (octave up)
+    //   CC 70 = ▼ (octave down)
+    // (Value on press is 127, which is easy to mistake for a CC.)
+    if (state.settings.launchpadMode === 'contribute-sample') {
+      if (LP_CC_PRESET_MAP[cc]) {
+        _launchpadPresetFromHardware(LP_CC_PRESET_MAP[cc]);
+        return;
+      }
+    } else {
+      if (cc === 80) { _launchpadShiftOctave(+1); return; }
+      if (cc === 70) { _launchpadShiftOctave(-1); return; }
+    }
+    // Contribute mode: right-side column drives the row-loop clip
+    // launchers. Take the CC before the play/stop transport handling
+    // below because CC 19 doubles as our row-1 loop launcher.
+    if (state.settings.launchpadMode === 'contribute-sample') {
+      const row = LP_CC_SCENE_TO_ROW[cc];
+      if (row !== undefined) {
+        // Per-row scene button: if anything is playing on this row
+        // (either the row loop clip OR one-shot pad presses), STOP
+        // it. Only launch the row loop when the row is silent.
+        // Rationale: the user's mental model is "the side button
+        // controls that row's audio" — one button, one meaning
+        // depending on state, and it always kills the current sound
+        // first press so runaway pad stacks can be silenced.
+        const contrib = state.launchpad.contribute;
+        // Compound-keyed rowLoops: check ONLY the current preset's
+        // entry so switching preset then pressing row-N stops what
+        // *this* preset put on the row, never a different preset's
+        // loop. Cross-preset stop lives on CC 89 (the panic button).
+        const rowKey = _launchpadRowLoopKey(row);
+        const hasLoop = contrib && contrib.rowLoops && rowKey && contrib.rowLoops.has(rowKey);
+        const gridRow = _launchpadGridRowForChopRow(row);
+        // Only count pad voices that were triggered by the *current*
+        // preset — a harmonic-preset voice on this row must not
+        // trigger a scene-stop when we're on drums preset.
+        let hasPadVoice = false;
+        if (contrib && contrib.activeByPad) {
+          const currentPreset = state.settings && state.settings.launchpadPreset;
+          const prefix = currentPreset ? `${currentPreset}:` : null;
+          if (prefix) {
+            for (const key of contrib.activeByPad.keys()) {
+              if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
+              const p = Number(key.slice(prefix.length));
+              if (Number.isFinite(p) && _launchpadPadRow(p) === gridRow) {
+                hasPadVoice = true;
+                break;
+              }
+            }
+          }
+        }
+        if (hasLoop || hasPadVoice) {
+          if (hasLoop) _launchpadStopRowLoop(row);
+          if (hasPadVoice) _launchpadStopChopsInRow(gridRow);
+        } else {
+          _launchpadStartRowLoop(row);
+        }
+        return;
+      }
+      if (cc === LP_CC_SCENE_STOP_ALL) {
+        // Panic button: stop every row loop AND every ringing chop
+        // voice. The user was piling up presses and asking for a
+        // hard silence — this is that.
+        _launchpadStopAllRowLoops();
+        _launchpadStopAllChopVoices();
+        return;
+      }
+    }
+    if (cc === LP_CC_PLAY) {
+      // Toggle play/pause via the same code path as the on-screen
+      // rehearsal button.
+      try {
+        if (typeof _rehearsalPlayPause === 'function') {
+          _rehearsalPlayPause();
+        } else if (state.isPlaying) {
+          pauseAll();
+        } else {
+          playAll();
+        }
+      } catch (e) {
+        console.warn('[launchpad] play toggle failed:', e);
+      }
+      return;
+    }
+    if (cc === LP_CC_STOP) {
+      try {
+        if (state.isPlaying) pauseAll();
+      } catch (e) {
+        console.warn('[launchpad] stop failed:', e);
+      }
+      return;
+    }
+    // Log unknown CCs at debug so the user can identify their unit's
+    // button map if the defaults above turn out to be wrong.
+    // (Guarded so it doesn't spam the console in normal operation.)
+    if (typeof console !== 'undefined' && console.debug) {
+      console.debug('[launchpad] cc', cc, value);
+    }
+  }
+
+  // Trimmed launchpad wiring living in the settings popover: enable
+  // checkbox, status pill, and the "Open Launchpad tab →" jumpoff.
+  // Everything else (mode / open-jam / manual key / mirror / legend /
+  // voice tweaks) is wired up in _initLaunchpadPanel.
+  function _initLaunchpadUI() {
+    const enableCb = document.getElementById('setting-launchpad-enabled');
+    const openTabBtn = document.getElementById('setting-launchpad-open-tab');
+    if (!enableCb || !window.Launchpad) return;
+
+    // Reflect persisted settings into the UI.
+    enableCb.checked = !!state.settings.launchpadEnabled;
+
+    // Disable the enable checkbox if Web MIDI isn't available at all.
+    if (!window.Launchpad.isSupported()) {
+      enableCb.checked = false;
+      enableCb.disabled = true;
+      _renderLaunchpadStatus({ supported: false });
+    }
+
+    // init() is idempotent — safe to call unconditionally. The panel's
+    // init call adds onGridChange / onModeChange / onLegendInfo callbacks
+    // on top of these.
+    window.Launchpad.init({
+      onStatusChange: _renderLaunchpadStatus,
+      onPadPress: _launchpadPushPress,
+      onPadRelease: _launchpadReleaseChop,
+      onCcMessage: _launchpadHandleCc,
+    }).then(() => {
+      // Apply mode-specific settings + mode itself before enable(), so
+      // when we do bind the ports the first paint uses the correct grid.
+      try {
+        window.Launchpad.setOpenJamOutOfKey(state.settings.launchpadOutOfKey);
+        window.Launchpad.setOpenJamRoot(
+          state.settings.launchpadManualRoot,
+          state.settings.launchpadManualScale,
+        );
+        // Push the new axis/assist settings before setMode so the first
+        // paint reflects the persisted user preferences.
+        if (typeof window.Launchpad.setLayout === 'function') {
+          window.Launchpad.setLayout(state.settings.launchpadLayout);
+        }
+        if (typeof window.Launchpad.setAssistLevel === 'function') {
+          window.Launchpad.setAssistLevel(state.settings.launchpadAssistLevel);
+        }
+        if (typeof window.Launchpad.setAnticipationBeats === 'function') {
+          window.Launchpad.setAnticipationBeats(state.settings.launchpadAnticipationBeats);
+        }
+        if (typeof window.Launchpad.setInstrumentSubmode === 'function') {
+          window.Launchpad.setInstrumentSubmode(state.settings.launchpadInstrumentSubmode);
+        }
+        window.Launchpad.setMode(state.settings.launchpadEnabled
+          ? state.settings.launchpadMode : 'off');
+        // If the songKey has already been detected before this init ran
+        // (unlikely — settings init happens on DOMContentLoaded — but
+        // cheap), replay it so the module sees it.
+        if (state.songKey) window.Launchpad.onSongKey(state.songKey);
+      } catch (_) {}
+      if (state.settings.launchpadEnabled) {
+        window.Launchpad.enable().catch(() => {});
+      } else {
+        _renderLaunchpadStatus(window.Launchpad.getStatus());
+      }
+    });
+
+    enableCb.addEventListener('change', async () => {
+      state.settings.launchpadEnabled = enableCb.checked;
+      saveSettings();
+      _syncLaunchpadPanelEnable();
+      if (enableCb.checked) {
+        // The checkbox click IS a user gesture, so this is the right
+        // moment to lazily bootstrap the pad-synth AudioContext. Doing
+        // it here means pad presses (which arrive over MIDI, not from a
+        // user gesture) can play immediately without hitting the
+        // browser's autoplay-suspend.
+        try { _ensureLaunchpadSynth(); } catch (_) {}
+        try {
+          window.Launchpad.setMode(state.settings.launchpadMode);
+          const status = await window.Launchpad.enable();
+          // If enable failed (permission denied etc.), roll back the
+          // checkbox so the UI matches reality.
+          if (!status || !status.connected) {
+            if (status && status.error === 'permission_denied') {
+              enableCb.checked = false;
+              state.settings.launchpadEnabled = false;
+              saveSettings();
+              _syncLaunchpadPanelEnable();
+            }
+          }
+        } catch (_) {
+          enableCb.checked = false;
+          state.settings.launchpadEnabled = false;
+          saveSettings();
+          _syncLaunchpadPanelEnable();
+        }
+      } else {
+        try { window.Launchpad.disable(); } catch (_) {}
+      }
+    });
+
+    if (openTabBtn) {
+      openTabBtn.addEventListener('click', () => {
+        _selectCenterTab('launchpad');
+        // Close the popover so the newly-selected tab is visible.
+        const pop = document.getElementById('settings-popover');
+        if (pop) pop.hidden = true;
+      });
+    }
+  }
+
+  // Keep the panel's enable checkbox in sync with the popover checkbox
+  // and vice-versa. Called from either checkbox's change handler.
+  function _syncLaunchpadPanelEnable() {
+    const p = document.getElementById('lp-panel-enabled');
+    const s = document.getElementById('setting-launchpad-enabled');
+    const on = !!state.settings.launchpadEnabled;
+    if (p) p.checked = on;
+    if (s) s.checked = on;
+  }
+
+  // Switch the center-column tab and persist the choice.
+  function _selectCenterTab(name) {
+    if (name !== 'chord' && name !== 'launchpad') name = 'chord';
+    const tabs = document.querySelectorAll('#center-tabs .center-tab');
+    for (const t of tabs) {
+      const active = t.dataset.tab === name;
+      t.classList.toggle('is-active', active);
+      t.setAttribute('aria-selected', active ? 'true' : 'false');
+    }
+    const stack = document.getElementById('chord-stack');
+    const panel = document.getElementById('launchpad-panel');
+    if (stack) stack.hidden = (name !== 'chord');
+    if (panel) panel.hidden = (name !== 'launchpad');
+    // Launchpad-mode: the left slot (instrument / tone-match / audio-in)
+    // is meaningless when the pads are the instrument, so hide it and let
+    // the center column reclaim the width. Signal via a class on <main>
+    // so CSS can also adjust the grid template.
+    const main = document.querySelector('main');
+    if (main) main.classList.toggle('lp-tab-active', name === 'launchpad');
+    const slotLeft = document.getElementById('slot-left');
+    if (slotLeft) slotLeft.hidden = (name === 'launchpad');
+    if (state.settings.launchpadCenterTab !== name) {
+      state.settings.launchpadCenterTab = name;
+      saveSettings();
+    }
+  }
+
+  // Wire the dedicated Launchpad panel: tab strip, mode radios,
+  // open-jam options, manual key selects, mirror grid, legend, and the
+  // voice-tweak sliders. Registers the mirror/legend callbacks on the
+  // Launchpad module (idempotent init) so hardware paints and mode
+  // changes propagate to the DOM.
+  function _initLaunchpadPanel() {
+    // ---- tab strip ----
+    const tabs = document.querySelectorAll('#center-tabs .center-tab');
+    for (const t of tabs) {
+      t.addEventListener('click', () => {
+        if (t.hasAttribute('disabled')) return;
+        _selectCenterTab(t.dataset.tab || 'chord');
+      });
+    }
+    if (window.Launchpad && !window.Launchpad.isSupported()) {
+      const lpTab = document.querySelector('#center-tabs .center-tab[data-tab="launchpad"]');
+      if (lpTab) {
+        lpTab.setAttribute('disabled', 'disabled');
+        lpTab.title = 'Web MIDI not supported (use Chrome or Edge)';
+      }
+    }
+    _selectCenterTab(state.settings.launchpadCenterTab || 'chord');
+
+    // ---- panel enable checkbox (mirror of the popover checkbox) ----
+    const panelEnable = document.getElementById('lp-panel-enabled');
+    if (panelEnable) {
+      panelEnable.checked = !!state.settings.launchpadEnabled;
+      panelEnable.addEventListener('change', () => {
+        const s = document.getElementById('setting-launchpad-enabled');
+        if (s) {
+          s.checked = panelEnable.checked;
+          s.dispatchEvent(new Event('change'));
+        }
+      });
+    }
+
+    // ---- preset radios (top-level "play style" selector) ----
+    // Presets bundle mode/layout/assist/submode/anticipation/oob into a
+    // single opinionated choice. Selecting a preset overwrites the
+    // underlying state.settings.launchpad* fields via _applyLaunchpadPreset
+    // and re-syncs the advanced-control radios below.
+    const presetRadios = document.querySelectorAll('input[name="lp-panel-preset"]');
+    const presetCap = document.getElementById('lp-preset-caption');
+    const _initialPreset = state.settings.launchpadPreset || 'learn-song';
+    for (const r of presetRadios) r.checked = (r.value === _initialPreset);
+    const _initialPresetDef = _LAUNCHPAD_PRESETS[_initialPreset];
+    if (presetCap && _initialPresetDef) presetCap.textContent = _initialPresetDef.caption;
+    for (const r of presetRadios) {
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        // A user-initiated preset change locks in their intent for the
+        // rest of the session, so auto-suggestion won't override them
+        // when the next song loads.
+        state.launchpad.userChosePreset = true;
+        _applyLaunchpadPreset(r.value);
+        _updateLaunchpadPresetHint();
+      });
+    }
+
+    // ---- mode radios ----
+    const modeRadios = document.querySelectorAll('input[name="lp-panel-mode"]');
+    const openJamBlock = document.getElementById('lp-openjam-options');
+    const layoutRow = document.getElementById('lp-layout-row');
+    const instrumentRow = document.getElementById('lp-instrument-row');
+    // The 'Instrument' mode radio has value 'instrument-synth' as a
+    // placeholder — the true submode is read from launchpadInstrumentSubmode.
+    // On load, sync the visible radio to whichever instrument-* mode is
+    // persisted so the group's checked state matches reality.
+    const _isInstrumentMode = (m) => typeof m === 'string' && m.startsWith('instrument-');
+    const _isSongMode = (m) => m === 'song-verify' || m === 'song-display';
+    const _isContributeMode = (m) => m === 'contribute-sample';
+    const _showsOpenJamOptions = (m) => _isInstrumentMode(m) || m === 'free-play' || m === 'open-jam';
+    const contributeRow = document.getElementById('lp-contribute-row');
+    const _syncModeVisibility = (mode) => {
+      if (openJamBlock) openJamBlock.hidden = !_showsOpenJamOptions(mode);
+      if (layoutRow) layoutRow.hidden = !_isSongMode(mode);
+      if (instrumentRow) instrumentRow.hidden = !_isInstrumentMode(mode);
+      if (contributeRow) contributeRow.hidden = !_isContributeMode(mode);
+    };
+    for (const r of modeRadios) {
+      // Radio group has one 'instrument-synth' entry that represents
+      // the whole instrument family. Consider it checked for any
+      // instrument-* persisted mode.
+      const matchesInstrument = r.value === 'instrument-synth'
+        && _isInstrumentMode(state.settings.launchpadMode);
+      r.checked = matchesInstrument || (r.value === state.settings.launchpadMode);
+    }
+    _syncModeVisibility(state.settings.launchpadMode);
+    for (const r of modeRadios) {
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        // For the 'instrument-synth' proxy radio, resolve to the
+        // persisted submode so switching modes doesn't clobber the
+        // user's submode selection.
+        let nextMode = r.value;
+        if (nextMode === 'instrument-synth') {
+          const sub = state.settings.launchpadInstrumentSubmode || 'synth';
+          nextMode = 'instrument-' + sub;
+        }
+        state.settings.launchpadMode = nextMode;
+        saveSettings();
+        _syncModeVisibility(nextMode);
+        try {
+          window.Launchpad.setMode(state.settings.launchpadEnabled ? nextMode : 'off');
+        } catch (_) {}
+      });
+    }
+
+    // ---- layout radios (visible for song modes) ----
+    const layoutRadios = document.querySelectorAll('input[name="lp-panel-layout"]');
+    for (const r of layoutRadios) r.checked = (r.value === state.settings.launchpadLayout);
+    for (const r of layoutRadios) {
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        state.settings.launchpadLayout = r.value;
+        saveSettings();
+        try { window.Launchpad.setLayout(r.value); } catch (_) {}
+      });
+    }
+
+    // ---- assist-level radios ----
+    const assistRadios = document.querySelectorAll('input[name="lp-panel-assist"]');
+    for (const r of assistRadios) {
+      r.checked = (parseInt(r.value, 10) === state.settings.launchpadAssistLevel);
+    }
+    for (const r of assistRadios) {
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        const lvl = Math.max(1, Math.min(4, parseInt(r.value, 10) || 2));
+        state.settings.launchpadAssistLevel = lvl;
+        saveSettings();
+        try { window.Launchpad.setAssistLevel(lvl); } catch (_) {}
+      });
+    }
+
+    // ---- instrument submode radios (visible for instrument-* modes) ----
+    const submodeRadios = document.querySelectorAll('input[name="lp-panel-submode"]');
+    for (const r of submodeRadios) {
+      r.checked = (r.value === state.settings.launchpadInstrumentSubmode);
+    }
+    for (const r of submodeRadios) {
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        state.settings.launchpadInstrumentSubmode = r.value;
+        // Keep the top-level mode in sync so the persisted launchpadMode
+        // resolves to instrument-<sub>. Only rewrite when currently in
+        // an instrument-* mode to avoid stomping other modes.
+        if (_isInstrumentMode(state.settings.launchpadMode)) {
+          state.settings.launchpadMode = 'instrument-' + r.value;
+        }
+        saveSettings();
+        try { window.Launchpad.setInstrumentSubmode(r.value); } catch (_) {}
+      });
+    }
+
+    // ---- anticipation slider ----
+    const antSlider = document.getElementById('lp-panel-anticipation');
+    const antReadout = document.getElementById('lp-panel-anticipation-readout');
+    if (antSlider) {
+      antSlider.value = String(state.settings.launchpadAnticipationBeats);
+      if (antReadout) antReadout.textContent = antSlider.value;
+      antSlider.addEventListener('input', () => {
+        const beats = Math.max(0, Math.min(8, parseInt(antSlider.value, 10) || 0));
+        state.settings.launchpadAnticipationBeats = beats;
+        if (antReadout) antReadout.textContent = String(beats);
+        try { window.Launchpad.setAnticipationBeats(beats); } catch (_) {}
+        saveSettings();
+      });
+    }
+
+    // ---- contribute options ----
+    const contribLoop = document.getElementById('lp-panel-contribute-loop');
+    if (contribLoop) {
+      contribLoop.checked = !!state.settings.launchpadContributeLoop;
+      contribLoop.addEventListener('change', () => {
+        state.settings.launchpadContributeLoop = !!contribLoop.checked;
+        saveSettings();
+        // Turning loop mode OFF stops all currently-looping pads so
+        // the user isn't left with samples droning after they
+        // un-check the box.
+        if (!contribLoop.checked) _launchpadStopAllLoopingChops();
+      });
+    }
+
+    // ---- open-jam options ----
+    const oobSel = document.getElementById('lp-panel-oob');
+    const rootSel = document.getElementById('lp-panel-manual-root');
+    const scaleSel = document.getElementById('lp-panel-manual-scale');
+    if (oobSel) oobSel.value = state.settings.launchpadOutOfKey;
+    if (rootSel) rootSel.value = String(state.settings.launchpadManualRoot);
+    if (scaleSel) scaleSel.value = state.settings.launchpadManualScale;
+    if (oobSel) {
+      oobSel.addEventListener('change', () => {
+        state.settings.launchpadOutOfKey = oobSel.value;
+        saveSettings();
+        try { window.Launchpad.setOpenJamOutOfKey(oobSel.value); } catch (_) {}
+      });
+    }
+    const _pushManualKey = () => {
+      const rootPc = rootSel ? parseInt(rootSel.value, 10) : state.settings.launchpadManualRoot;
+      const scale = scaleSel ? scaleSel.value : state.settings.launchpadManualScale;
+      state.settings.launchpadManualRoot = Number.isFinite(rootPc) ? rootPc : 0;
+      state.settings.launchpadManualScale = (scale === 'Minor') ? 'Minor' : 'Major';
+      saveSettings();
+      try {
+        window.Launchpad.setOpenJamRoot(
+          state.settings.launchpadManualRoot,
+          state.settings.launchpadManualScale,
+        );
+      } catch (_) {}
+    };
+    if (rootSel) rootSel.addEventListener('change', _pushManualKey);
+    if (scaleSel) scaleSel.addEventListener('change', _pushManualKey);
+
+    // ---- on-screen mirror grid ----
+    _buildLaunchpadMirror();
+
+    // ---- voice tweak sliders ----
+    _initLaunchpadVoiceSliders();
+
+    // ---- register mirror + mode + legend callbacks (idempotent) ----
+    if (window.Launchpad) {
+      window.Launchpad.init({
+        onGridChange: _renderLaunchpadMirror,
+        onModeChange: (_m) => {
+          try { _renderLaunchpadLegend(window.Launchpad.getLegendInfo()); } catch (_) {}
+          // Mode change may toggle whether the octave arrows are active
+          // (they're blanked while Contribute owns the left column).
+          // Small defer so it lands after the mode's own initial paint.
+          setTimeout(() => { try { _launchpadPaintOctaveArrows(); } catch (_) {} }, 60);
+        },
+        onLegendInfo: _renderLaunchpadLegend,
+      });
+      // Paint initial legend + mirror from the module's current state.
+      try { _renderLaunchpadLegend(window.Launchpad.getLegendInfo()); } catch (_) {}
+      try { _renderLaunchpadMirror(window.Launchpad.getGridColors()); } catch (_) {}
+    }
+  }
+
+  // Build the 8×8 mirror pad buttons once. Rows rendered top-down so
+  // top-left corresponds to pad 88 and bottom-left to pad 11, matching
+  // the physical device orientation.
+  function _buildLaunchpadMirror() {
+    const grid = document.getElementById('lp-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    for (let row = 8; row >= 1; row--) {
+      for (let col = 1; col <= 8; col++) {
+        const padIdx = row * 10 + col;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'lp-pad';
+        btn.dataset.padIdx = String(padIdx);
+        btn.setAttribute('aria-label', `Pad ${padIdx}`);
+        // Track whether this pointer has already dispatched a press so
+        // pointerup / pointerleave / pointercancel can safely dispatch
+        // exactly one release, mirroring hardware Note On → Note Off.
+        let _padPointerDown = false;
+        const _releaseIfDown = () => {
+          if (!_padPointerDown) return;
+          _padPointerDown = false;
+          try {
+            window.Launchpad && window.Launchpad.releasePadFromScreen(padIdx);
+          } catch (e) {
+            console.warn('[launchpad] on-screen release failed:', e);
+          }
+        };
+        btn.addEventListener('pointerdown', (ev) => {
+          try {
+            // First interaction IS a user gesture — bootstrap the synth here so
+            // subsequent hardware presses can play immediately.
+            _ensureLaunchpadSynth();
+          } catch (_) {}
+          _padPointerDown = true;
+          try { btn.setPointerCapture && btn.setPointerCapture(ev.pointerId); } catch (_) {}
+          try {
+            window.Launchpad && window.Launchpad.pressPadFromScreen(padIdx);
+          } catch (e) {
+            console.warn('[launchpad] on-screen press failed:', e);
+          }
+        });
+        btn.addEventListener('pointerup', _releaseIfDown);
+        btn.addEventListener('pointercancel', _releaseIfDown);
+        btn.addEventListener('pointerleave', _releaseIfDown);
+        btn.addEventListener('mouseenter', () => {
+          try {
+            const m = window.Launchpad && window.Launchpad.getPadMeaning(padIdx);
+            btn.title = _formatPadMeaningTitle(m);
+          } catch (_) {}
+        });
+        grid.appendChild(btn);
+      }
+    }
+  }
+
+  function _formatPadMeaningTitle(m) {
+    if (!m) return '';
+    if (m.kind === 'chord') {
+      const parts = [m.symbol];
+      if (m.degreeLabel) parts.push(m.degreeLabel);
+      if (m.family) parts.push(m.family);
+      return parts.filter(Boolean).join(' — ');
+    }
+    if (m.kind === 'note') {
+      const parts = [];
+      if (m.noteName) parts.push(m.noteName);
+      if (m.degreeLabel) parts.push(m.degreeLabel);
+      return parts.join(' — ');
+    }
+    return '';
+  }
+
+  // Paint the mirror from a grid-color snapshot produced by launchpad.js.
+  // Indexed by padIdx 11..88; entries look like { r, g, b, kind }.
+  function _renderLaunchpadMirror(colors) {
+    if (!Array.isArray(colors)) return;
+    const grid = document.getElementById('lp-grid');
+    if (!grid) return;
+    // Only apply the "you-are-here" contrast (dim static / boost active)
+    // when the current paint actually has an active pad. In modes like
+    // Jam In Key or Melody Practice there is no single sounding pad, so
+    // every pad should stay at full brightness.
+    const hasActive = colors.some((c) => c && c.kind === 'active');
+    grid.classList.toggle('lp-grid--has-active', hasActive);
+    const pads = grid.querySelectorAll('.lp-pad');
+    for (const btn of pads) {
+      const padIdx = parseInt(btn.dataset.padIdx, 10);
+      const c = colors[padIdx];
+      if (!c) {
+        btn.style.background = '#1b1e25';
+        btn.style.color = 'transparent';
+        btn.classList.remove('lp-pad--pulse', 'lp-pad--active', 'lp-pad--static');
+        continue;
+      }
+      // Launchpad module reports colors on the hardware SysEx 0..127
+      // scale. CSS rgb() expects 0..255, so map each channel through
+      // 2× with a 255 clamp.
+      const rr = Math.min(255, (c.r | 0) * 2);
+      const gg = Math.min(255, (c.g | 0) * 2);
+      const bb = Math.min(255, (c.b | 0) * 2);
+      const css = `rgb(${rr}, ${gg}, ${bb})`;
+      btn.style.background = css;
+      btn.style.color = css; // drives currentColor for the active glow
+      btn.classList.toggle('lp-pad--pulse', c.kind === 'pulse');
+      btn.classList.toggle('lp-pad--active', c.kind === 'active');
+      btn.classList.toggle('lp-pad--static', c.kind === 'static');
+      btn.classList.toggle('lp-pad--disabled', c.kind === 'disabled');
+    }
+  }
+
+  // Paint the legend from a descriptor produced by launchpad.js. The
+  // module returns `{ kind, chips: [{ name, rgb }], caption }`.
+  function _renderLaunchpadLegend(info) {
+    const el = document.getElementById('lp-legend');
+    if (!el) return;
+    el.innerHTML = '';
+    if (!info) {
+      el.textContent = 'Enable the Launchpad to see the legend.';
+      return;
+    }
+    const chips = Array.isArray(info.chips) ? info.chips : [];
+    for (const c of chips) {
+      const row = document.createElement('div');
+      row.className = 'lp-legend-item';
+      const sw = document.createElement('span');
+      sw.className = 'lp-legend-swatch';
+      if (Array.isArray(c.rgb) && c.rgb.length >= 3) {
+        // Same 0..127 → 0..255 remap as the mirror above, so legend
+        // swatches match the pad brightness.
+        const lr = Math.min(255, (c.rgb[0] | 0) * 2);
+        const lg = Math.min(255, (c.rgb[1] | 0) * 2);
+        const lb = Math.min(255, (c.rgb[2] | 0) * 2);
+        sw.style.background = `rgb(${lr}, ${lg}, ${lb})`;
+      }
+      const label = document.createElement('span');
+      label.textContent = c.name || '';
+      row.appendChild(sw);
+      row.appendChild(label);
+      el.appendChild(row);
+    }
+    if (info.caption) {
+      const cap = document.createElement('div');
+      cap.className = 'lp-legend-caption';
+      cap.textContent = info.caption;
+      el.appendChild(cap);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Play-style presets
+  // ------------------------------------------------------------------
+  // The user picks an intention ("Learn Song", "Perform Song", …) and
+  // the preset writes to every underlying setting at once. Advanced
+  // Controls remain accessible for power users but the default UX is a
+  // single radio group. Order = display order in the panel.
+  const _LAUNCHPAD_PRESETS = Object.freeze({
+    'learn-song': Object.freeze({
+      label: 'Learn Song',
+      caption: 'Follow the song with visual guidance and verification.',
+      mode: 'song-verify',
+      layout: 'song',
+      assist: 2,
+      submode: 'synth',
+      anticipation: 4,
+      outOfKey: 'off',
+    }),
+    'perform-song': Object.freeze({
+      label: 'Perform Song',
+      caption: "Minimal assistance. Play it like you're on stage.",
+      mode: 'song-verify',
+      layout: 'song',
+      assist: 3,
+      submode: 'synth',
+      anticipation: 0,
+      outOfKey: 'off',
+    }),
+    'learn-harmony': Object.freeze({
+      label: 'Learn Harmony',
+      caption: 'See how the song works under the hood.',
+      mode: 'song-display',
+      layout: 'theory',
+      assist: 2,
+      submode: 'synth',
+      anticipation: 4,
+      outOfKey: 'off',
+    }),
+    'jam-in-key': Object.freeze({
+      label: 'Jam In Key',
+      caption: 'Explore safely with no wrong notes.',
+      mode: 'instrument-synth',
+      layout: 'song',
+      assist: 3,
+      submode: 'synth',
+      anticipation: 2,
+      outOfKey: 'dim',
+    }),
+    'melody-practice': Object.freeze({
+      label: 'Melody Practice',
+      caption: 'Practice melodies and lead lines.',
+      mode: 'instrument-melody',
+      layout: 'pitch',
+      assist: 2,
+      submode: 'melody',
+      anticipation: 4,
+      outOfKey: 'dim',
+    }),
+    'play-bassline': Object.freeze({
+      label: 'Play Bassline',
+      caption: 'Follow the bass with a piano-like pitch grid.',
+      mode: 'instrument-bass',
+      layout: 'pitch',
+      assist: 2,
+      submode: 'bass',
+      anticipation: 4,
+      outOfKey: 'dim',
+    }),
+
+    // --- Contribute family ------------------------------------------
+    // These presets don't teach you the song and they don't replace an
+    // instrument. They put fresh material *on top of* the song, sourced
+    // from the song itself: stem chops sliced at musically meaningful
+    // boundaries (phrase, beat, chord, section). Downstream mode
+    // handling (mode: 'contribute-sample') is not yet wired in the
+    // Launchpad module — for now these fall back to instrument-synth
+    // so selecting the preset doesn't crash. See the Contribute plan
+    // in the repo docs for the slicer + trigger path that lands next.
+    //
+    // Extra fields (contribution, sourceStem, sliceMode, harmonicLock,
+    // quantize, sectionFilter) are stored on state.settings but only
+    // read once the contribute-sample mode ships. Existing presets
+    // above ignore them entirely.
+    'contribute-vocal': Object.freeze({
+      label: 'Contribute — Vocal Chops',
+      caption: 'Chop the vocal stem into pads. Land phrases on demand.',
+      mode: 'instrument-synth',
+      layout: 'pitch',
+      assist: 3,
+      submode: 'synth',
+      anticipation: 0,
+      outOfKey: 'off',
+      contribution: 'vocal-chop',
+      sourceStem: 'vocals',       // slice source
+      sliceMode: 'phrase',        // one pad per vocal phrase / lyric line
+      harmonicLock: 'off',        // opt-in later: repitch chop to fit chord
+      // Beat-quantized (was 'bar'): a full-bar delay felt like a
+      // dropped tap on rhythmic vocal phrasing, and the underlying
+      // GRACE window (80ms past-beat = play-now) already covers
+      // "played the beat a hair late" without users noticing.
+      quantize: 'beat',
+      sectionFilter: 'off',       // available everywhere
+      densityHint: 'sparse',
+    }),
+    'contribute-drums': Object.freeze({
+      label: 'Contribute — Drum Chops',
+      caption: 'Mixed drum grid: bar loops (bottom row), half-bar (middle), one-shots (top).',
+      mode: 'instrument-synth',
+      layout: 'pitch',
+      assist: 3,
+      submode: 'drum',
+      anticipation: 0,
+      outOfKey: 'off',
+      contribution: 'drum-chop',
+      sourceStem: 'drums',
+      // 'drum-bundle' asks the backend for a mixed 3-row layout:
+      //   row 5 (bottom) → bar-length loops (downbeat-to-downbeat)
+      //   row 6 (middle) → half-bar loops
+      //   row 7 (top)    → individual onset one-shots
+      // The user can pick which duration they want per pad instead of
+      // getting locked into single-hit onsets that program half-time
+      // rhythms when played back-to-back.
+      sliceMode: 'drum-bundle',
+      harmonicLock: 'off',        // percussion is pitch-agnostic
+      quantize: 'beat',           // percussion snaps to the beat
+      sectionFilter: 'off',
+      densityHint: 'balanced',
+    }),
+    'contribute-bass': Object.freeze({
+      label: 'Contribute — Bass Chops',
+      caption: 'One bass hit per chord change. Reinforce the low end.',
+      mode: 'instrument-synth',
+      layout: 'pitch',
+      assist: 3,
+      submode: 'bass',
+      anticipation: 0,
+      outOfKey: 'off',
+      contribution: 'bass-chop',
+      sourceStem: 'bass',
+      sliceMode: 'chord',         // one pad per chord region
+      harmonicLock: 'auto',       // pick the slice whose root matches current chord
+      quantize: 'bar',
+      sectionFilter: 'off',
+      densityHint: 'balanced',
+    }),
+    'contribute-harmonic': Object.freeze({
+      label: 'Contribute — Harmonic Chops',
+      caption: "Slices from the 'other' stem, matched to the current chord.",
+      mode: 'instrument-synth',
+      layout: 'pitch',
+      assist: 3,
+      submode: 'synth',
+      anticipation: 0,
+      outOfKey: 'off',
+      contribution: 'harmonic-chop',
+      sourceStem: 'other',        // guitars / keys / pads left over after v/b/d
+      sliceMode: 'chord',
+      harmonicLock: 'auto',
+      quantize: 'bar',
+      sectionFilter: 'off',
+      densityHint: 'balanced',
+    }),
+    'contribute-sections': Object.freeze({
+      label: 'Contribute — Sections',
+      caption: 'Whole sections of the mix on pads. Great for callbacks and transitions.',
+      mode: 'instrument-synth',
+      layout: 'pitch',
+      assist: 3,
+      submode: 'synth',
+      anticipation: 0,
+      outOfKey: 'off',
+      contribution: 'section-clip',
+      sourceStem: 'mix',          // full mix, not a stem
+      sliceMode: 'section',       // one pad per detected section (intro/verse/chorus/…)
+      harmonicLock: 'off',
+      quantize: 'phrase',         // impacts land on phrase / section boundaries
+      sectionFilter: 'off',
+      densityHint: 'sparse',
+    }),
+  });
+
+  // Classify a loaded song by looking at chord density + repetition.
+  // Returns the recommended preset key. Heuristic:
+  //   * <= 2 unique chord symbols and the track is > 60 s → the song
+  //     is really driven by bassline / melody over a static harmony,
+  //     so bass/melody presets fit better than chord-tracking.
+  //   * chord change slower than one change per ~12 s → same story.
+  //   * default → learn-song (the safe chord-tracking preset).
+  // The caller decides whether to auto-apply or just surface a hint.
+  function _classifyLaunchpadPreset() {
+    const chords = state.chords;
+    if (!Array.isArray(chords) || chords.length === 0) return 'learn-song';
+    const unique = new Set();
+    let totalDur = 0;
+    for (const c of chords) {
+      if (c && c.symbol) unique.add(c.symbol);
+      const dur = (c && c.endSec > c.startSec) ? (c.endSec - c.startSec) : 0;
+      totalDur += dur;
+    }
+    const avgChordSec = chords.length > 0 ? (totalDur / chords.length) : 0;
+    if (unique.size <= 2 && totalDur > 60) return 'play-bassline';
+    if (avgChordSec > 12) return 'play-bassline';
+    return 'learn-song';
+  }
+
+  // Show or hide the "Try X" hint underneath the preset caption based
+  // on whether the classifier agrees with the current preset. Silent
+  // no-op when the preset panel hasn't been built yet.
+  function _updateLaunchpadPresetHint() {
+    const hint = document.getElementById('lp-preset-hint');
+    if (!hint) return;
+    if (!Array.isArray(state.chords) || state.chords.length === 0) {
+      hint.hidden = true;
+      hint.textContent = '';
+      return;
+    }
+    const suggested = _classifyLaunchpadPreset();
+    const current = state.settings.launchpadPreset || 'learn-song';
+    if (suggested === current) {
+      hint.hidden = true;
+      hint.textContent = '';
+      return;
+    }
+    const def = _LAUNCHPAD_PRESETS[suggested];
+    if (!def) return;
+    const reason = (suggested === 'play-bassline')
+      ? 'This track looks bass/melody-driven'
+      : 'This track looks chord-driven';
+    hint.textContent = `${reason} — try ${def.label}.`;
+    hint.hidden = false;
+  }
+
+  // Called after state.chords is repopulated (song load / seek to new
+  // song). If the user hasn't manually picked a preset this session,
+  // silently apply the classifier's suggestion. Otherwise just refresh
+  // the hint so they can see the recommendation without being overridden.
+  function _onLaunchpadChordsChanged() {
+    if (!Array.isArray(state.chords) || state.chords.length === 0) {
+      _updateLaunchpadPresetHint();
+      return;
+    }
+    if (!state.launchpad.userChosePreset) {
+      const suggested = _classifyLaunchpadPreset();
+      const current = state.settings.launchpadPreset || 'learn-song';
+      if (suggested !== current) {
+        _applyLaunchpadPreset(suggested);
+        // Reflect the new preset in the radio group.
+        for (const r of document.querySelectorAll('input[name="lp-panel-preset"]')) {
+          r.checked = (r.value === suggested);
+        }
+      }
+    }
+    // If the currently-active preset is Contribute AND the chop
+    // cache is empty (first song load, or a different song than
+    // what's cached), warm the chop loader now that chords + song
+    // analysis are on hand.
+    const active = _LAUNCHPAD_PRESETS[state.settings.launchpadPreset || ''];
+    if (active && active.contribution && state.analysisId) {
+      const contrib = state.launchpad.contribute;
+      const wantKey = `${state.analysisId}|${active.sourceStem}|${active.sliceMode}`;
+      if (contrib.loadKey !== wantKey) {
+        _loadContributeChops(active.sourceStem, active.sliceMode).catch(() => {});
+      }
+    }
+    _updateLaunchpadPresetHint();
+  }
+
+  // Apply every underlying setting from a preset in one shot, push the
+  // resulting values to the Launchpad module, and refresh the advanced
+  // controls so their radio/slider state stays truthful. Silent no-op
+  // if the preset key is unknown.
+  function _applyLaunchpadPreset(key) {
+    const preset = _LAUNCHPAD_PRESETS[key];
+    if (!preset) return;
+    // Contribute presets override the pad-grid mode with the
+    // sample-chop layout. Everything else keeps the preset's
+    // declared mode.
+    const isContribute = !!preset.contribution;
+    const effectiveMode = isContribute ? 'contribute-sample' : preset.mode;
+    state.settings.launchpadPreset = key;
+    state.settings.launchpadMode = effectiveMode;
+    state.settings.launchpadLayout = preset.layout;
+    state.settings.launchpadAssistLevel = preset.assist;
+    state.settings.launchpadInstrumentSubmode = preset.submode;
+    state.settings.launchpadAnticipationBeats = preset.anticipation;
+    state.settings.launchpadOutOfKey = preset.outOfKey;
+    // Contribute-family fields. Non-Contribute presets omit these, in
+    // which case reset to the dormant defaults so switching from a
+    // contribute preset back to (e.g.) learn-song fully clears the
+    // slicer state.
+    state.settings.launchpadContribution   = preset.contribution   ?? null;
+    state.settings.launchpadSourceStem     = preset.sourceStem     ?? null;
+    state.settings.launchpadSliceMode      = preset.sliceMode      ?? 'off';
+    state.settings.launchpadHarmonicLock   = preset.harmonicLock   ?? 'off';
+    state.settings.launchpadQuantize       = preset.quantize       ?? 'off';
+    state.settings.launchpadSectionFilter  = preset.sectionFilter  ?? 'off';
+    state.settings.launchpadDensityHint    = preset.densityHint    ?? null;
+    saveSettings();
+    const enabled = !!state.settings.launchpadEnabled;
+    try { window.Launchpad.setMode(enabled ? effectiveMode : 'off'); } catch (_) {}
+    try { window.Launchpad.setLayout(preset.layout); } catch (_) {}
+    try { window.Launchpad.setAssistLevel(preset.assist); } catch (_) {}
+    try { window.Launchpad.setInstrumentSubmode(preset.submode); } catch (_) {}
+    try { window.Launchpad.setAnticipationBeats(preset.anticipation); } catch (_) {}
+    try { window.Launchpad.setOpenJamOutOfKey(preset.outOfKey); } catch (_) {}
+    // Contribute presets kick off a chop load. Non-Contribute
+    // presets clear any stale chop grid on the device (so switching
+    // from Contribute → learn-song doesn't leave grey pads lit).
+    if (isContribute && state.analysisId) {
+      // Fire-and-forget; _loadContributeChops calls Launchpad.setChops
+      // on success, and errors are logged inside the loader.
+      _loadContributeChops(preset.sourceStem, preset.sliceMode).catch(() => {});
+    } else {
+      try { window.Launchpad.setChops && window.Launchpad.setChops([]); } catch (_) {}
+    }
+    _syncLaunchpadAdvancedControls();
+    const cap = document.getElementById('lp-preset-caption');
+    if (cap) cap.textContent = preset.caption;
+    // Repaint the top-row preset LEDs so the hardware surfaces which
+    // preset is now active. Column with active preset burns bright;
+    // the others glow a dim version of their color chip so the user
+    // can find them in the dark.
+    try { _launchpadPaintPresetTopRow(); } catch (_) {}
+  }
+
+  // Color chips for the top-row preset picker. Kept as 0..127 RGB so
+  // they feed straight into Launchpad.setTopRowRgb. Selected preset
+  // uses the full color; unselected slots use ~30% of it. Colors were
+  // chosen so each preset is easy to identify at a glance in a dark
+  // room — vocals green, drums red, bass magenta, harmonic cyan,
+  // sections gold. Matches the CSS chip palette in jam.css.
+  const _LP_PRESET_TOPROW_RGB = [
+    { key: 'contribute-vocal',    rgb: [0, 127, 40] },
+    { key: 'contribute-drums',    rgb: [127, 30, 30] },
+    { key: 'contribute-bass',     rgb: [100, 30, 127] },
+    { key: 'contribute-harmonic', rgb: [0, 90, 127] },
+    { key: 'contribute-sections', rgb: [127, 90, 0] },
+  ];
+
+  // Paint the top row of round buttons so the active preset is
+  // clearly lit (bright) and the four idle preset buttons still show
+  // their color at low brightness. Columns 5..7 blank so unmapped
+  // buttons don't leave stale colors.
+  function _launchpadPaintPresetTopRow() {
+    const lp = window.Launchpad;
+    if (!lp || !lp.setTopRowRgb) return;
+    const active = state.settings.launchpadPreset;
+    for (let col = 0; col < _LP_PRESET_TOPROW_RGB.length; col++) {
+      const slot = _LP_PRESET_TOPROW_RGB[col];
+      const [r, g, b] = slot.rgb;
+      const isActive = (slot.key === active);
+      const scale = isActive ? 1 : 0.22;
+      try {
+        lp.setTopRowRgb(col, (r * scale) | 0, (g * scale) | 0, (b * scale) | 0);
+      } catch (_) {}
+    }
+    // Blank slots 5..7 (no preset assigned there) so a stray color
+    // from a previous session's setup can't linger.
+    for (let col = _LP_PRESET_TOPROW_RGB.length; col < 8; col++) {
+      try { lp.setTopRowRgb(col, 0, 0, 0); } catch (_) {}
+    }
+  }
+
+  // Reflect state.settings.launchpad* into every advanced-control radio
+  // + slider so a preset change (or a direct-manipulation change to
+  // one of the advanced controls, or a reload) leaves the UI honest.
+  function _syncLaunchpadAdvancedControls() {
+    const mode = state.settings.launchpadMode;
+    const isInstrumentMode = typeof mode === 'string' && mode.startsWith('instrument-');
+    for (const r of document.querySelectorAll('input[name="lp-panel-mode"]')) {
+      const matchesInstrument = r.value === 'instrument-synth' && isInstrumentMode;
+      r.checked = matchesInstrument || (r.value === mode);
+    }
+    for (const r of document.querySelectorAll('input[name="lp-panel-layout"]')) {
+      r.checked = (r.value === state.settings.launchpadLayout);
+    }
+    for (const r of document.querySelectorAll('input[name="lp-panel-assist"]')) {
+      r.checked = (parseInt(r.value, 10) === state.settings.launchpadAssistLevel);
+    }
+    for (const r of document.querySelectorAll('input[name="lp-panel-submode"]')) {
+      r.checked = (r.value === state.settings.launchpadInstrumentSubmode);
+    }
+    const antSlider = document.getElementById('lp-panel-anticipation');
+    const antReadout = document.getElementById('lp-panel-anticipation-readout');
+    if (antSlider) {
+      antSlider.value = String(state.settings.launchpadAnticipationBeats);
+      if (antReadout) antReadout.textContent = antSlider.value;
+    }
+    const oobSel = document.getElementById('lp-panel-oob');
+    if (oobSel) oobSel.value = state.settings.launchpadOutOfKey;
+    const openJamBlock = document.getElementById('lp-openjam-options');
+    const layoutRow = document.getElementById('lp-layout-row');
+    const instrumentRow = document.getElementById('lp-instrument-row');
+    const isSongMode = mode === 'song-verify' || mode === 'song-display';
+    const showsOpenJamOptions = isInstrumentMode || mode === 'free-play' || mode === 'open-jam';
+    if (openJamBlock) openJamBlock.hidden = !showsOpenJamOptions;
+    if (layoutRow) layoutRow.hidden = !isSongMode;
+    if (instrumentRow) instrumentRow.hidden = !isInstrumentMode;
+  }
+
+  // Default voice params matching the currently-landed synth constants.
+  // Master gain kept in sync with state.settings default (see notes there).
+  const _LAUNCHPAD_VOICE_DEFAULTS = Object.freeze({
+    launchpadMasterGain: 0.7,
+    launchpadVoiceGain: 0.9,
+    launchpadChopGain: 0.55,
+    launchpadReverbWet: 0.55,
+    launchpadReverbDry: 0.75,
+    launchpadReverbSeconds: 2.0,
+    launchpadReverbDecay: 2.2,
+    launchpadBrightness: 1.0,
+    launchpadStrumMs: 15,
+    launchpadAttackMs: 6,
+    launchpadReleaseSec: 2.5,
+  });
+
+  const _LP_SLIDER_MAP = [
+    ['master',     'launchpadMasterGain',    (v) => v.toFixed(2)],
+    ['voice',      'launchpadVoiceGain',     (v) => v.toFixed(2)],
+    ['chop',       'launchpadChopGain',      (v) => v.toFixed(2)],
+    ['wet',        'launchpadReverbWet',     (v) => v.toFixed(2)],
+    ['dry',        'launchpadReverbDry',     (v) => v.toFixed(2)],
+    ['seconds',    'launchpadReverbSeconds', (v) => v.toFixed(1) + 's'],
+    ['decay',      'launchpadReverbDecay',   (v) => v.toFixed(1)],
+    ['brightness', 'launchpadBrightness',    (v) => v.toFixed(2) + '×'],
+    ['strum',      'launchpadStrumMs',       (v) => (v|0) + 'ms'],
+    ['attack',     'launchpadAttackMs',      (v) => (v|0) + 'ms'],
+    ['release',    'launchpadReleaseSec',    (v) => v.toFixed(1) + 's'],
+  ];
+
+  function _initLaunchpadVoiceSliders() {
+    let saveTimer = null;
+    const debounceSave = () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { saveTimer = null; saveSettings(); }, 200);
+    };
+    const _paintSlider = (slug, key, fmt) => {
+      const slider = document.getElementById(`lp-slider-${slug}`);
+      const readout = document.getElementById(`lp-readout-${slug}`);
+      if (!slider) return;
+      slider.value = String(state.settings[key]);
+      if (readout) readout.textContent = fmt(state.settings[key]);
+    };
+    for (const [slug, key, fmt] of _LP_SLIDER_MAP) {
+      _paintSlider(slug, key, fmt);
+      const slider = document.getElementById(`lp-slider-${slug}`);
+      if (!slider) continue;
+      slider.addEventListener('input', () => {
+        const v = parseFloat(slider.value);
+        if (!isFinite(v)) return;
+        state.settings[key] = v;
+        const readout = document.getElementById(`lp-readout-${slug}`);
+        if (readout) readout.textContent = fmt(v);
+        _applyLaunchpadVoiceSettings();
+        debounceSave();
+      });
+    }
+    const resetBtn = document.getElementById('lp-voice-reset');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        for (const [, key] of _LP_SLIDER_MAP) {
+          state.settings[key] = _LAUNCHPAD_VOICE_DEFAULTS[key];
+        }
+        for (const [slug, key, fmt] of _LP_SLIDER_MAP) _paintSlider(slug, key, fmt);
+        _applyLaunchpadVoiceSettings();
+        saveSettings();
+      });
+    }
+  }
+
+  // Push slider values into the live synth graph. Reverb IR is only
+  // rebuilt when seconds or decay actually change (tracked via
+  // state.launchpad.lastIrKey) so scrubbing other sliders stays cheap.
+  function _applyLaunchpadVoiceSettings() {
+    const ctx = state.launchpad.synthCtx;
+    if (!ctx) return;
+    const s = state.settings;
+    const now = ctx.currentTime;
+    const _at = (node, v) => {
+      if (node && node.gain) node.gain.setTargetAtTime(v, now, 0.02);
+    };
+    _at(state.launchpad.synthGain, s.launchpadMasterGain);
+    _at(state.launchpad.voiceBus, s.launchpadVoiceGain);
+    _at(state.launchpad.chopBus, s.launchpadChopGain);
+    _at(state.launchpad.synthDry, s.launchpadReverbDry);
+    _at(state.launchpad.synthWet, s.launchpadReverbWet);
+    const irKey = `${s.launchpadReverbSeconds.toFixed(2)}:${s.launchpadReverbDecay.toFixed(2)}`;
+    if (state.launchpad.lastIrKey !== irKey && state.launchpad.synthConvolver) {
+      try {
+        state.launchpad.synthConvolver.buffer = _buildReverbImpulse(
+          ctx, s.launchpadReverbSeconds, s.launchpadReverbDecay,
+        );
+        state.launchpad.lastIrKey = irKey;
+      } catch (_) {}
+    }
+  }
+
+  // ---- Launchpad pad synth ---------------------------------------------
+  //
+  // A minimal Web Audio synth so pad presses actually make sound. Two
+  // voice types:
+  //   - Single note (open-jam mode)  — one triangle-wave voice at the
+  //                                    pad's MIDI pitch.
+  //   - Chord (song modes)           — root/3rd/5th (plus 7th if present)
+  //                                    played simultaneously in a
+  //                                    middle-register voicing so the
+  //                                    listener recognises the chord.
+  //
+  // Reuses state.ctx when a song has been loaded (so pad audio comes out
+  // of the same device the song plays through). Otherwise creates its
+  // own AudioContext on the Enable Launchpad click (a user gesture) so
+  // subsequent MIDI-triggered plays don't hit the browser's autoplay
+  // suspend.
+
+  // Build a stereo impulse response for the shared reverb bus by
+  // exponentially decaying white noise. No external asset needed.
+  function _buildReverbImpulse(ctx, seconds, decay) {
+    const rate = ctx.sampleRate;
+    const len = Math.max(1, Math.floor(seconds * rate));
+    const buf = ctx.createBuffer(2, len, rate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        const t = i / len;
+        // Two-tap noise + exponential envelope. `decay` shapes the tail.
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
+      }
+    }
+    return buf;
+  }
+
+  function _ensureLaunchpadSynth() {
+    if (state.launchpad.synthGain) {
+      // Resume if the context was suspended (Safari tab-switch, etc.).
+      const c = state.launchpad.synthCtx;
+      if (c && c.state === 'suspended') { try { c.resume(); } catch (_) {} }
+      return state.launchpad.synthBus || state.launchpad.synthGain;
+    }
+    let ctx = state.ctx;
+    if (!ctx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      ctx = new Ctx({ latencyHint: 'interactive' });
+    }
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+
+    const s = state.settings;
+
+    // Master fader for the whole pad synth.
+    const master = ctx.createGain();
+    master.gain.value = s.launchpadMasterGain;
+    master.connect(ctx.destination);
+
+    // Shared bus feeding both a dry path and a wet (reverb) path. The
+    // two sub-buses below (voiceBus, chopBus) sum into this bus so the
+    // reverb send stays common — you don't usually want the reverb
+    // tail to sound different for a bass note than for a chopped
+    // vocal phrase, and sharing one convolver keeps CPU flat.
+    const bus = ctx.createGain();
+    bus.gain.value = 1.0;
+
+    // Sub-bus: live-play synth voices (bass, chord strums). The
+    // caller wires oscillator + envelope voices to
+    // ``state.launchpad.voiceBus`` so this slider governs their
+    // level independently of chop-sample level.
+    const voiceBus = ctx.createGain();
+    voiceBus.gain.value = s.launchpadVoiceGain;
+    voiceBus.connect(bus);
+
+    // Sub-bus: contribute-mode sample chops. Chop playback nodes wire
+    // to ``state.launchpad.chopBus`` — this slider governs their
+    // level independently of live-play voices. Real-stem chops
+    // often sit ~6 dB louder than the synth voices, so users pull
+    // this down while pushing the voice slider up.
+    const chopBus = ctx.createGain();
+    chopBus.gain.value = s.launchpadChopGain;
+    chopBus.connect(bus);
+
+    const dry = ctx.createGain();
+    dry.gain.value = s.launchpadReverbDry;
+    const wet = ctx.createGain();
+    wet.gain.value = s.launchpadReverbWet;
+
+    const convolver = ctx.createConvolver();
+    try {
+      convolver.buffer = _buildReverbImpulse(
+        ctx, s.launchpadReverbSeconds, s.launchpadReverbDecay,
+      );
+      state.launchpad.lastIrKey =
+        `${s.launchpadReverbSeconds.toFixed(2)}:${s.launchpadReverbDecay.toFixed(2)}`;
+    } catch (_) {}
+
+    // A little low-shelf lift in the wet path so the reverb tail feels
+    // warm rather than sibilant.
+    const wetTone = ctx.createBiquadFilter();
+    wetTone.type = 'lowpass';
+    wetTone.frequency.value = 4200;
+    wetTone.Q.value = 0.3;
+
+    bus.connect(dry).connect(master);
+    bus.connect(convolver).connect(wetTone).connect(wet).connect(master);
+
+    state.launchpad.synthCtx = ctx;
+    state.launchpad.synthGain = master;
+    state.launchpad.synthBus = bus;
+    state.launchpad.voiceBus = voiceBus;
+    state.launchpad.chopBus = chopBus;
+    state.launchpad.synthDry = dry;
+    state.launchpad.synthWet = wet;
+    state.launchpad.synthConvolver = convolver;
+
+    // Push any persisted slider tweaks into the freshly-built graph. This
+    // is idempotent — the same values were used above, but calling
+    // through keeps the code path unified so future slider changes flow
+    // through the same setTargetAtTime ramps.
+    try { _applyLaunchpadVoiceSettings(); } catch (_) {}
+    // Callers of _ensureLaunchpadSynth() historically got the shared
+    // bus; keep that contract so any code that connected to the
+    // return value (rather than reading state.launchpad.synthBus)
+    // still lands in the reverb path. Chop / voice call sites read
+    // the sub-buses off state.launchpad directly.
+    return bus;
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Contribute-mode chop loading. Split into two concerns:
+  //   1. Resolve the AudioBuffer for a source stem name ('vocals',
+  //      'drums', 'bass', 'other', 'mix'). Fast path: reuse a stem
+  //      already decoded into state.stems. Slow path: hit the URL
+  //      returned by the chops endpoint and decode.
+  //   2. Fetch chop metadata from /api/song/{id}/chops and pair it
+  //      with the resolved buffer. Concurrent callers coalesce via
+  //      state.launchpad.contribute.loadPromise; a repeat call whose
+  //      (analysisId, stem, sliceMode) triple matches loadKey is a
+  //      no-op returning the cached result.
+  //
+  // On success, calls window.Launchpad.setChops(chops) so the pad
+  // grid repaints with the chop palette. All errors are caught and
+  // logged; a failure clears loadPromise so a retry is possible on
+  // the next preset switch.
+  // ────────────────────────────────────────────────────────────────
+
+  // Map a preset's `sourceStem` value to the role name used in the
+  // ROLE_TO_LEGACY_KEYS table. Returns null for 'mix' — the caller
+  // must always fetch the full mix via the URL from the endpoint.
+  function _launchpadContributeRoleFor(sourceStem) {
+    if (!sourceStem || sourceStem === 'mix') return null;
+    // The preset stem names ('vocals','drums','bass','other') already
+    // match the role vocabulary used by state.stems (role='vocals'
+    // etc), so no translation needed here beyond 'other' → best
+    // match among the guitar/harmonic roles.
+    if (sourceStem === 'other') return null; // fall through to URL fetch
+    return sourceStem;
+  }
+
+  // Find a decoded AudioBuffer already sitting in state.stems that
+  // matches `role`. Prefer the exact role match; fall back to any
+  // stem whose legacy key hints line up (via legacyKeysForStem).
+  // Returns null when no match has a decoded buffer yet.
+  function _launchpadFindDecodedStem(role) {
+    if (!role || !state.stems) return null;
+    for (const stem of state.stems.values()) {
+      if (!stem || !stem.buffer) continue;
+      if (stem.role === role) return stem.buffer;
+    }
+    return null;
+  }
+
+  // Fetch + decode an audio URL into an AudioBuffer.
+  async function _launchpadFetchAudioBuffer(url) {
+    if (!url) throw new Error('no url');
+    const ctx = state.ctx;
+    if (!ctx) throw new Error('AudioContext not ready');
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} for chop stem ${url}`);
+    const ab = await resp.arrayBuffer();
+    return await ctx.decodeAudioData(ab);
+  }
+
+  // Public entry point. Kick off (or reuse) a chop load for the
+  // current song + (sourceStem, sliceMode) pair. Returns the promise
+  // that resolves once chops + stemBuffer are ready. Callers can
+  // await it, or fire-and-forget if they just want to warm the cache.
+  function _loadContributeChops(sourceStem, sliceMode) {
+    const analysisId = state.analysisId;
+    if (!analysisId) return Promise.reject(new Error('no analysisId'));
+    if (!sourceStem || !sliceMode) return Promise.reject(new Error('missing sourceStem/sliceMode'));
+    const contrib = state.launchpad.contribute;
+    const key = `${analysisId}|${sourceStem}|${sliceMode}`;
+    // Fast path: already loaded with the same key.
+    if (contrib.loadKey === key && contrib.stemBuffer && contrib.chops.length) {
+      try { window.Launchpad && window.Launchpad.setChops(contrib.chops); } catch (_) {}
+      return Promise.resolve({ chops: contrib.chops, stemBuffer: contrib.stemBuffer });
+    }
+    // Coalesce: a fetch is in flight for the exact same key.
+    if (contrib.loadPromise && contrib.loadKey === key) {
+      return contrib.loadPromise;
+    }
+    // Different key or no in-flight request: start a new one. Wipe the
+    // stale chops + buffer from the previous preset FIRST so any
+    // failure (missing stem, 404, decode error) leaves the pad grid
+    // empty rather than silently retaining the last successful load
+    // — which showed up as "harmonic preset plays drum samples"
+    // whenever the harmonic stem was missing.
+    contrib.loadKey = key;
+    contrib.chops = [];
+    contrib.stemBuffer = null;
+    contrib.sourceStem = null;
+    contrib.sliceMode = null;
+    // Preset switch: previous preset's row loops keep playing. Their
+    // AudioBufferSourceNodes hold their own reference to the previous
+    // stemBuffer, so dropping contrib.stemBuffer here does not silence
+    // them — this is the multi-channel workflow (drum loop + harmonic
+    // loop + bass loop stacking together). To stop across presets the
+    // user hits the panic scene button (CC 89).
+    try { window.Launchpad && window.Launchpad.setChops && window.Launchpad.setChops([]); } catch (_) {}
+    const url = `/api/song/${encodeURIComponent(analysisId)}/chops`
+              + `?stem=${encodeURIComponent(sourceStem)}`
+              + `&sliceMode=${encodeURIComponent(sliceMode)}`;
+    const p = (async () => {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
+      const data = await resp.json();
+      const chops = Array.isArray(data.chops) ? data.chops : [];
+      // Resolve buffer. Try the decoded-stem cache first; if that
+      // misses (or sourceStem is 'mix'/'other'), hit the URL returned
+      // by the endpoint.
+      let buffer = _launchpadFindDecodedStem(_launchpadContributeRoleFor(sourceStem));
+      if (!buffer) {
+        const stemUrl = data.stemUrl;
+        if (!stemUrl) throw new Error('server returned no stemUrl and no decoded stem in cache');
+        buffer = await _launchpadFetchAudioBuffer(stemUrl);
+      }
+      // Guard: caller may have switched presets or unloaded the song
+      // mid-fetch; only commit if our key is still current.
+      if (contrib.loadKey !== key) {
+        return { chops, stemBuffer: buffer, superseded: true };
+      }
+      contrib.chops = chops;
+      contrib.stemBuffer = buffer;
+      contrib.sourceStem = sourceStem;
+      contrib.sliceMode = sliceMode;
+      try { window.Launchpad && window.Launchpad.setChops(chops); } catch (_) {}
+      // Off-by-default: every chop pad starts muted so a freshly-
+      // loaded preset presents a quiet grid. The user unlocks a pad
+      // by pressing it (the trigger handler auto-unmutes on press —
+      // see _launchpadTriggerChop). Prevents the "wall of noise on
+      // load" surprise and matches DAW clip-launcher UX where new
+      // clips arrive stopped.
+      contrib.disabledPads.clear();
+      try {
+        if (window.Launchpad && window.Launchpad.disableAllChops) {
+          const pads = window.Launchpad.disableAllChops() || [];
+          for (const p of pads) contrib.disabledPads.add(p);
+        }
+      } catch (_) {}
+      // Chops loaded — paint the scene-launch column so the user can
+      // see which rows have a loop available. Rows 1..7 are the chop
+      // rows; row 8's button is the stop-all hotkey (dim red so it
+      // reads as "danger action" without being distracting).
+      _launchpadPaintSceneLaunchRest();
+      // Empty successful response: the endpoint had no slice data
+      // (e.g. sliceMode='chord' on a song whose analysis produced no
+      // chord regions for this stem). Tell the user why the grid is
+      // blank so they don't sit tapping silent pads.
+      if (!chops.length) {
+        try {
+          const cap = document.getElementById('lp-preset-caption');
+          if (cap) {
+            cap.textContent = `No ${sourceStem} slices found for '${sliceMode}' mode on this song.`;
+          }
+        } catch (_) {}
+      } else {
+        // Explain the off-by-default state so the user doesn't think
+        // the grid is broken when the pads look dark. First tap on
+        // a pad activates + plays it; row-scoped scene buttons on
+        // the right column start / stop looped clips.
+        try {
+          const cap = document.getElementById('lp-preset-caption');
+          if (cap) {
+            cap.textContent =
+              `${chops.length} ${sourceStem} slices ready. `
+              + `Tap any pad to play. Right-column buttons launch / stop row loops.`;
+          }
+        } catch (_) {}
+      }
+      return { chops, stemBuffer: buffer };
+    })().catch((err) => {
+      console.warn('[launchpad] contribute chop load failed:', err);
+      // Only clear loadKey / surface a caption if the failure was for
+      // the current key; a newer request may already have taken over.
+      if (contrib.loadKey === key) {
+        contrib.loadKey = null;
+        // Tell the user why the grid is empty. A 404 on a stem-specific
+        // /chops call means this song has no stem of that role (e.g.
+        // no bass stem produced by the separator), so the pad grid
+        // will now be blank rather than silently reusing the previous
+        // preset's chops.
+        try {
+          const cap = document.getElementById('lp-preset-caption');
+          if (cap) {
+            const stemLabel = String(sourceStem || 'sample');
+            const isMissing = /HTTP 404/.test(String(err && err.message || ''));
+            cap.textContent = isMissing
+              ? `No ${stemLabel} stem available for this song.`
+              : `Couldn't load ${stemLabel} samples — see console.`;
+          }
+        } catch (_) {}
+      }
+      throw err;
+    }).finally(() => {
+      if (contrib.loadPromise === p) contrib.loadPromise = null;
+    });
+    contrib.loadPromise = p;
+    return p;
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Contribute-mode chop playback. Two layers:
+  //   * _launchpadTriggerChop(evt) — called from _launchpadPushPress
+  //     for any chop-kind press. Handles harmonic lock chop
+  //     substitution + quantized scheduling, then delegates to
+  //     _launchpadPlayChopBuffer for the actual buffer scheduling.
+  //   * _launchpadPlayChopBuffer(chop, atTime) — schedules a
+  //     BufferSource on the pad synth's audio bus so the chop
+  //     inherits reverb and master gain. Tracks the source on
+  //     state.launchpad.contribute.playingSources so preset
+  //     changes / song unload can stop it if needed.
+  // ────────────────────────────────────────────────────────────────
+
+  // Duration (ms) a Contribute pad must be held before it counts as
+  // a mute gesture rather than a tap. Long enough that ordinary
+  // rhythmic playing never triggers it, short enough that a
+  // deliberate press-and-hold is unambiguous.
+  const _LAUNCHPAD_HOLD_MUTE_MS = 350;
+
+  function _launchpadTriggerChop(evt) {
+    const contrib = state.launchpad.contribute;
+    if (!contrib || !contrib.stemBuffer) return;
+    const chops = contrib.chops || [];
+    if (!chops.length) return;
+    const chop = evt && evt.meaning ? evt.meaning.chop : null;
+    if (!chop) return;
+    const padIdx = evt.padIdx;
+    const loopMode = !!state.settings.launchpadContributeLoop;
+    // If this pad is currently muted, treat the press as un-muting +
+    // playing. This mirrors normal DAW clip behaviour and avoids the
+    // two-tap dance ("tap to un-mute, tap to play").
+    if (contrib.disabledPads.has(padIdx)) {
+      contrib.disabledPads.delete(padIdx);
+      try { window.Launchpad.setChopDisabled(padIdx, false); } catch (_) {}
+    }
+    // In loop mode, a second tap on a pad whose loop is already
+    // running acts as a STOP (clip-launcher toggle) rather than a
+    // retrigger. Detect this before killing the existing voice.
+    // Look up under the compound key so we only self-toggle within
+    // the current preset — other presets' pad voices on this padIdx
+    // are ignored here.
+    if (loopMode) {
+      const existing = contrib.activeByPad.get(_launchpadPadKey(padIdx));
+      if (existing && existing.loop) {
+        _launchpadStopChopOnPad(padIdx);
+        // Still cancel any pending hold-mute timer from this press.
+        const prevTid = contrib.holdTimers.get(padIdx);
+        if (prevTid) { try { clearTimeout(prevTid); } catch (_) {} }
+        contrib.holdTimers.delete(padIdx);
+        return;
+      }
+    }
+    // One-voice-per-row policy: kill every currently-ringing voice
+    // in this pad's row before scheduling the new one, so hammering
+    // different pads in a row can't stack into a wall of overlapping
+    // samples. This is a superset of the same-pad retrigger stop.
+    const rowForPress = _launchpadPadRow(padIdx);
+    if (rowForPress >= 1 && rowForPress <= 7) {
+      _launchpadStopChopsInRow(rowForPress);
+    } else {
+      _launchpadStopChopOnPad(padIdx);
+    }
+    // Also stop the row loop clip on this row (in the current preset):
+    // pressing a chop pad should replace the row's audio rather than
+    // pile on top of a running loop.
+    const rowKeyForPress = _launchpadRowLoopKey(rowForPress);
+    if (rowKeyForPress
+        && state.launchpad.contribute.rowLoops
+        && state.launchpad.contribute.rowLoops.has(rowKeyForPress)) {
+      _launchpadStopRowLoop(rowForPress);
+    }
+    const chosen = _launchpadSelectChopForHarmonicLock(chop, chops);
+    const ctx = state.launchpad.synthCtx || state.ctx;
+    if (!ctx) return;
+    const when = _launchpadNextQuantizedTime(ctx.currentTime);
+    _launchpadPlayChopBuffer(chosen, when, padIdx, loopMode);
+    // (Hold-to-mute timer intentionally removed: with off-by-default
+    // pads + row-scoped scene-button stops, hold-to-mute was firing
+    // on any non-instant tap and re-muting the pad the user just
+    // activated — the pad went dark right after they pressed it,
+    // making the whole grid feel unresponsive. The user now
+    // silences audio via the right-side scene buttons.)
+  }
+
+  // Called from the shared onPadRelease callback (hardware Note Off
+  // or on-screen mouseup). Cancels a pending hold-mute timer if the
+  // user released the pad quickly — meaning it was a tap, not a hold.
+  function _launchpadReleaseChop(evt) {
+    if (!evt || !evt.meaning || evt.meaning.kind !== 'chop') return;
+    const contrib = state.launchpad.contribute;
+    if (!contrib) return;
+    const tid = contrib.holdTimers.get(evt.padIdx);
+    if (tid) {
+      try { clearTimeout(tid); } catch (_) {}
+      contrib.holdTimers.delete(evt.padIdx);
+    }
+  }
+
+  // Compose the compound key for an activeByPad entry in the
+  // resolved preset (defaults to the current preset). Returns null
+  // when there's no preset context — callers treat that as a signal
+  // to skip.
+  function _launchpadPadKey(padIdx, presetKey) {
+    const p = presetKey || (state.settings && state.settings.launchpadPreset);
+    if (!p) return null;
+    if (typeof padIdx !== 'number') return null;
+    return `${p}:${padIdx}`;
+  }
+
+  // Low-level primitive: stop the voice tracked under a specific
+  // compound activeByPad key. All the higher-level stop helpers
+  // funnel through this so the fade + delete logic stays in one
+  // place.
+  function _launchpadStopChopByKey(padKey) {
+    const contrib = state.launchpad.contribute;
+    if (!contrib || !padKey) return;
+    const rec = contrib.activeByPad.get(padKey);
+    if (!rec) return;
+    const ctx = state.launchpad.synthCtx || state.ctx;
+    const now = ctx ? ctx.currentTime : 0;
+    // Fast fade to avoid a click on abrupt stop.
+    try {
+      rec.g.gain.cancelScheduledValues(now);
+      rec.g.gain.setValueAtTime(rec.g.gain.value, now);
+      rec.g.gain.linearRampToValueAtTime(0, now + 0.015);
+    } catch (_) {}
+    try { rec.src.stop(now + 0.02); } catch (_) {}
+    contrib.activeByPad.delete(padKey);
+  }
+
+  // Immediately stop and detach any voice tracked as the active
+  // sample on this pad IN THE RESOLVED PRESET (defaults to current).
+  // No-op if the pad has no active voice for that preset — a voice
+  // triggered by a *different* preset on the same padIdx keeps
+  // playing.
+  function _launchpadStopChopOnPad(padIdx, presetKey) {
+    _launchpadStopChopByKey(_launchpadPadKey(padIdx, presetKey));
+  }
+
+  // Derive the grid-row (1..8) from a padIdx (11..88). Row 8 is the
+  // anticipation strip (no chops); rows 1..7 hold chop pads.
+  function _launchpadPadRow(padIdx) {
+    if (typeof padIdx !== 'number') return -1;
+    return Math.floor(padIdx / 10);
+  }
+
+  // Map a chop-row (1..7 in row-loop terms, bottom-up) back to the
+  // grid-row (1..7 in padIdx terms). They're the same: chop row 1 =
+  // bottom pad row = padIdx tens digit 1, chop row 7 = top chop pad
+  // row = padIdx tens digit 7.
+  function _launchpadGridRowForChopRow(chopRow) { return chopRow; }
+
+  // Stop every currently-active pad voice whose pad sits in a given
+  // grid row **within the current preset**. Used to enforce the
+  // one-voice-per-row rule on chop presses (so hammering different
+  // pads in a row doesn't stack) and by the right-column scene-launch
+  // stop actions. Voices triggered by other presets on the same row
+  // are left alone so the multi-channel workflow survives preset
+  // switches.
+  function _launchpadStopChopsInRow(gridRow) {
+    const contrib = state.launchpad.contribute;
+    if (!contrib || !contrib.activeByPad || !contrib.activeByPad.size) return;
+    const currentPreset = state.settings && state.settings.launchpadPreset;
+    if (!currentPreset) return;
+    const prefix = `${currentPreset}:`;
+    const stopKeys = [];
+    for (const key of contrib.activeByPad.keys()) {
+      if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
+      const padIdx = Number(key.slice(prefix.length));
+      if (Number.isFinite(padIdx) && _launchpadPadRow(padIdx) === gridRow) {
+        stopKeys.push(key);
+      }
+    }
+    for (const key of stopKeys) _launchpadStopChopByKey(key);
+  }
+
+  // Stop every currently-active pad voice on any row, across every
+  // preset. Called by the top scene-launch "stop all" button so a
+  // wall of overlapping chop presses (potentially from multiple
+  // presets stacked over each other) can be silenced with one press.
+  function _launchpadStopAllChopVoices() {
+    const contrib = state.launchpad.contribute;
+    if (!contrib || !contrib.activeByPad || !contrib.activeByPad.size) return;
+    const keys = Array.from(contrib.activeByPad.keys());
+    for (const key of keys) _launchpadStopChopByKey(key);
+  }
+
+  // Harmonic-lock chop selection. When 'auto', substitute the
+  // pressed chop with a same-column chop whose root pitch class
+  // matches the current chord's root. This is what makes bass /
+  // harmonic contribute presets sound coherent as the song moves
+  // through chord changes: the user picks a slot (roughly = timbre /
+  // dynamic), the app picks the pitch.
+  //
+  // The pressed chop is used as a fallback whenever we can't find a
+  // matching root (no current chord, chop.root not set, no siblings
+  // in the pool). This keeps every press audible.
+  function _launchpadSelectChopForHarmonicLock(chop, chops) {
+    if (state.settings.launchpadHarmonicLock !== 'auto') return chop;
+    if (!Array.isArray(chops) || !chops.length) return chop;
+    // Look up the current chord from the ribbon highlight cursor.
+    // _chordLastActiveIdx is updated by the chord-ribbon painter on
+    // every playhead tick.
+    const idx = (typeof _chordLastActiveIdx === 'number') ? _chordLastActiveIdx : -1;
+    if (idx < 0) return chop;
+    const active = Array.isArray(state.chords) ? state.chords[idx] : null;
+    if (!active || !active.symbol) return chop;
+    const parsed = _parseChordSymbolLocal(active.symbol);
+    if (!parsed || parsed.rootPc == null) return chop;
+    const targetRoot = parsed.rootPc;
+    // Fast path: pressed chop already matches.
+    if (typeof chop.root === 'number' && chop.root === targetRoot) return chop;
+    // Search: pick the chop nearest (by chop index distance) to the
+    // pressed one whose root matches. Nearest-index means we tend to
+    // pick a sibling from the same section / row rather than jumping
+    // across the grid.
+    const pressedIdx = (typeof chop.idx === 'number') ? chop.idx : 0;
+    let bestChop = null;
+    let bestDist = Infinity;
+    for (const cand of chops) {
+      if (!cand || typeof cand.root !== 'number') continue;
+      if (cand.root !== targetRoot) continue;
+      const candIdx = (typeof cand.idx === 'number') ? cand.idx : 0;
+      const dist = Math.abs(candIdx - pressedIdx);
+      if (dist < bestDist) { bestDist = dist; bestChop = cand; }
+    }
+    return bestChop || chop;
+  }
+
+  // Quantizer. Given the current AudioContext time, return the
+  // AudioContext time at which the next musical boundary lands, per
+  // state.settings.launchpadQuantize:
+  //   'off'    → play immediately
+  //   'beat'   → next beat in state.beatTimes
+  //   'bar'    → every fourth beat (we don't track meter separately
+  //              on the client; 4/4 is the safe default for most
+  //              pop / rock catalogues)
+  //   'phrase' → next section boundary in state.sections
+  //
+  // If the song isn't currently playing (playhead paused) we can't
+  // reason about beat-relative timing, so we play immediately —
+  // that's the standby-rehearsal feel.
+  //
+  // Song-time → audio-clock conversion mirrors the click scheduler:
+  //   audio_when = playClockAnchor + (song_t - playOffset) / rate
+  function _launchpadNextQuantizedTime(ctxNow) {
+    const mode = state.settings.launchpadQuantize;
+    if (!mode || mode === 'off') return ctxNow;
+    if (!state.isPlaying) return ctxNow;
+    const beats = state.beatTimes;
+    const songT = currentPlayTime();
+    const rate = _rehearsalRate() || 1.0;
+    const toAudio = (songT_) => state.playClockAnchor + (songT_ - state.playOffset) / rate;
+    // GRACE window: if we JUST passed a boundary (within GRACE ms),
+    // play immediately — perceptually this reads as on-beat and avoids
+    // stacking a nearly-full-beat delay when the user's tap lands a
+    // hair late. Only if we're beyond the grace window do we snap
+    // forward to the next boundary.
+    const GRACE = 0.08;
+    const EPS = 0.005;
+    let lastBoundary = null;
+    let targetSongT = null;
+    if (mode === 'beat' && Array.isArray(beats) && beats.length) {
+      for (let i = 0; i < beats.length; i++) {
+        if (beats[i] <= songT + EPS) { lastBoundary = beats[i]; }
+        else { targetSongT = beats[i]; break; }
+      }
+    } else if (mode === 'bar' && Array.isArray(beats) && beats.length) {
+      for (let i = 0; i < beats.length; i += 4) {
+        if (beats[i] <= songT + EPS) { lastBoundary = beats[i]; }
+        else { targetSongT = beats[i]; break; }
+      }
+    } else if (mode === 'phrase') {
+      const sections = state.sections || [];
+      for (const s of sections) {
+        const st = (typeof s.startSec === 'number') ? s.startSec : null;
+        if (st == null) continue;
+        if (st <= songT + EPS) { lastBoundary = st; }
+        else { targetSongT = st; break; }
+      }
+    }
+    // Inside GRACE window past the last boundary → play now.
+    if (lastBoundary != null && (songT - lastBoundary) <= GRACE) {
+      return ctxNow;
+    }
+    if (targetSongT == null) return ctxNow;
+    const when = toAudio(targetSongT);
+    return (when > ctxNow) ? when : ctxNow;
+  }
+
+  // Play a chop through the pad-synth output bus. Reusing the bus
+  // lets the reverb + master gain sliders apply to samples too, so
+  // the audible feel of the whole Launchpad output stays coherent.
+  function _launchpadPlayChopBuffer(chop, when, padIdx, loop) {
+    if (!chop) return;
+    const ctx = state.launchpad.synthCtx || state.ctx;
+    if (!ctx) return;
+    const contrib = state.launchpad.contribute;
+    const buffer = contrib && contrib.stemBuffer;
+    if (!buffer) return;
+    // Lazy-build the pad synth graph if the user has never triggered
+    // a synth voice yet — we want to hit the shared reverb + gain
+    // path. Chop samples target the dedicated ``chopBus`` sub-bus so
+    // the sample-hit volume slider governs them independently of
+    // live-play voice level. Old graphs (pre-sub-bus migration) don't
+    // carry a chopBus, so fall through to the shared synthBus and
+    // finally the destination.
+    if (!state.launchpad.chopBus) {
+      try { _ensureLaunchpadSynth(); } catch (_) {}
+    }
+    let outNode = state.launchpad.chopBus
+      || state.launchpad.synthBus
+      || state.launchpad.synthGain;
+    // Final fallback: connect straight to destination so the user
+    // still hears something even if the synth graph failed to build.
+    if (!outNode) outNode = ctx.destination;
+    const startSec = Math.max(0, Number(chop.startSec) || 0);
+    const rawDur = Number(chop.durationSec);
+    const bufDur = buffer.duration;
+    // Clamp duration so we don't overrun the buffer (guards against
+    // slightly-out-of-range end times from the analyzer).
+    const dur = (rawDur > 0 && startSec + rawDur <= bufDur + 0.05)
+      ? rawDur
+      : Math.max(0.05, bufDur - startSec);
+    if (dur <= 0) return;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    // Small per-voice envelope avoids clicks at the chop start / end.
+    const g = ctx.createGain();
+    const t0 = Math.max(when, ctx.currentTime);
+    const attack = 0.005;
+    const release = 0.02;
+    if (loop) {
+      // Loop mode — Web Audio's AudioBufferSourceNode.loop plays from
+      // start(offset) to loopEnd, then jumps back to loopStart forever
+      // (no stop scheduled). We hold gain at 1 and rely on external
+      // _launchpadStopChopOnPad for a click-free stop.
+      src.loop = true;
+      src.loopStart = startSec;
+      src.loopEnd = startSec + dur;
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(1, t0 + attack);
+      try { src.start(t0, startSec); } catch (_) {}
+    } else {
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(1, t0 + attack);
+      g.gain.setValueAtTime(1, t0 + Math.max(attack + 0.001, dur - release));
+      g.gain.linearRampToValueAtTime(0, t0 + dur);
+      try { src.start(t0, startSec, dur); } catch (_) {}
+      try { src.stop(t0 + dur + 0.05); } catch (_) {}
+    }
+    src.connect(g).connect(outNode);
+    // Track for later cleanup on song unload / preset switch. Drop
+    // the reference on ended so long-lived tabs don't accumulate.
+    // Also record as the active voice for this pad IN THIS PRESET
+    // so a repeat tap can kill it (retrigger, or toggle-stop in loop
+    // mode). presetKey is captured at trigger-time so voices survive
+    // preset switches.
+    const presetKey = state.settings.launchpadPreset || null;
+    const padKey = _launchpadPadKey(padIdx, presetKey);
+    const rec = { src, g, endsAt: loop ? Infinity : (t0 + dur), padIdx, loop: !!loop, presetKey, padKey };
+    contrib.playingSources.push(rec);
+    if (padKey) {
+      contrib.activeByPad.set(padKey, rec);
+    }
+    src.onended = () => {
+      try { src.disconnect(); } catch (_) {}
+      try { g.disconnect(); } catch (_) {}
+      const idx = contrib.playingSources.indexOf(rec);
+      if (idx >= 0) contrib.playingSources.splice(idx, 1);
+      if (padKey && contrib.activeByPad.get(padKey) === rec) {
+        contrib.activeByPad.delete(padKey);
+      }
+    };
+  }
+
+  // Stop every currently-looping pad across all presets. Called when
+  // the user turns the loop-mode checkbox OFF so background drones
+  // don't linger.
+  function _launchpadStopAllLoopingChops() {
+    const contrib = state.launchpad.contribute;
+    if (!contrib || !contrib.activeByPad || !contrib.activeByPad.size) return;
+    const keysToStop = [];
+    for (const [key, rec] of contrib.activeByPad) {
+      if (rec && rec.loop) keysToStop.push(key);
+    }
+    for (const key of keysToStop) _launchpadStopChopByKey(key);
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Row-loop launchers (right-side scene buttons)
+  //
+  // In Contribute mode the eight right-side scene buttons act as
+  // clip launchers: rows 1..7 each toggle a longer loop clip pulled
+  // from that row's chops; row 8 is a "stop all" hotkey.
+  //
+  // The loop clip for a row = the LONGEST chop assigned to any pad
+  // in that row. In chord-slice mode this picks the longest chord
+  // region (usually a stable harmonic pocket that loops cleanly). In
+  // beat/onset modes it picks the widest window. Either way, using
+  // the longest chunk gives a more musical loop than a random slice.
+  //
+  // Loops play through the same pad synth bus as one-shot chops so
+  // reverb/master sliders + hold-to-mute still apply. Each loop keeps
+  // its own AudioBufferSourceNode with `src.loop = true` so we don't
+  // reschedule per bar — the browser handles the wraparound.
+  // ────────────────────────────────────────────────────────────────
+
+  // Row index → chop-index range in the ordered chops array. Rows are
+  // 1..7 (bottom to top on the device); row 7 is the top chop row
+  // (row 8 is the anticipation strip and has no chops).
+  function _launchpadChopRangeForRow(row) {
+    if (row < 1 || row > 7) return null;
+    const start = (7 - row) * 8;
+    return { start, end: start + 8 };
+  }
+
+  // Pick the loop clip for a row: the longest available chop in that
+  // row's chop range. Returns null when the row is empty (either the
+  // song had fewer chops than would fill this row, or all the row's
+  // chops have zero/negative duration).
+  function _launchpadPickRowLoopChop(row) {
+    const contrib = state.launchpad.contribute;
+    if (!contrib || !contrib.chops || !contrib.chops.length) return null;
+    const range = _launchpadChopRangeForRow(row);
+    if (!range) return null;
+    let best = null;
+    let bestDur = 0;
+    const chops = contrib.chops;
+    for (let i = range.start; i < range.end && i < chops.length; i++) {
+      const c = chops[i];
+      if (!c) continue;
+      const dur = (typeof c.durationSec === 'number' && c.durationSec > 0)
+        ? c.durationSec
+        : ((c.endSec != null && c.startSec != null) ? c.endSec - c.startSec : 0);
+      if (dur > bestDur) { best = c; bestDur = dur; }
+    }
+    return best;
+  }
+
+  // Scene-launch LED colors. Uses the chop palette family so the
+  // right-side column visually matches the grid: green for playable,
+  // brighter green for currently-playing, red for the stop-all row.
+  const _LP_SCENE_RGB_REST = [0, 32, 12];
+  const _LP_SCENE_RGB_PLAYING = [0, 127, 40];
+  const _LP_SCENE_RGB_STOP_REST = [32, 8, 8];
+
+  // Compose the compound key for a rowLoops entry in the CURRENT
+  // preset. Returns null when no preset is active — callers use that
+  // as a signal to skip the lookup (no preset ⇒ no row-loop scope).
+  function _launchpadRowLoopKey(row, presetKey) {
+    const key = presetKey || (state.settings && state.settings.launchpadPreset);
+    if (!key) return null;
+    if (typeof row !== 'number') return null;
+    return `${key}:${row}`;
+  }
+
+  // Paint every scene-launch button according to current state. Row
+  // 8 is always the stop-all button (dim red); rows 1..7 are dim
+  // green when a loop clip exists but isn't playing, bright green
+  // when playing (in THIS preset), and off when the row has no
+  // available chops. Loops running in other presets don't light this
+  // preset's LEDs — the LED reflects what happens if you press the
+  // scene button now, and the scene button always operates on the
+  // current preset.
+  function _launchpadPaintSceneLaunchRest() {
+    const lp = window.Launchpad;
+    if (!lp || !lp.setSceneLaunchRgb) return;
+    const contrib = state.launchpad.contribute;
+    const rowLoops = contrib && contrib.rowLoops;
+    for (let row = 1; row <= 7; row++) {
+      const chop = _launchpadPickRowLoopChop(row);
+      const rowKey = _launchpadRowLoopKey(row);
+      const playing = rowKey && rowLoops && rowLoops.has(rowKey);
+      let rgb;
+      if (playing) rgb = _LP_SCENE_RGB_PLAYING;
+      else if (chop) rgb = _LP_SCENE_RGB_REST;
+      else rgb = [0, 0, 0];
+      try { lp.setSceneLaunchRgb(row, rgb[0], rgb[1], rgb[2]); } catch (_) {}
+    }
+    try {
+      lp.setSceneLaunchRgb(8,
+        _LP_SCENE_RGB_STOP_REST[0],
+        _LP_SCENE_RGB_STOP_REST[1],
+        _LP_SCENE_RGB_STOP_REST[2]);
+    } catch (_) {}
+  }
+
+  // Start looping the picked clip for `row`. No-op if the row has no
+  // usable chop or if a loop is already running there.
+  function _launchpadStartRowLoop(row) {
+    const contrib = state.launchpad.contribute;
+    if (!contrib || !contrib.stemBuffer) return;
+    const rowKey = _launchpadRowLoopKey(row);
+    if (!rowKey) return;
+    if (contrib.rowLoops.has(rowKey)) return;
+    const chop = _launchpadPickRowLoopChop(row);
+    if (!chop) return;
+    const ctx = state.launchpad.synthCtx || state.ctx;
+    if (!ctx) return;
+    // Row-loop chops route through the chop sub-bus so the
+    // sample-hit fader also governs continuously-looping row chops,
+    // not just one-shots. Sub-bus lazy-init mirrors the one-shot
+    // path above.
+    if (!state.launchpad.chopBus) {
+      try { _ensureLaunchpadSynth(); } catch (_) {}
+    }
+    let outNode = state.launchpad.chopBus
+      || state.launchpad.synthBus
+      || state.launchpad.synthGain;
+    if (!outNode) outNode = ctx.destination;
+    const buffer = contrib.stemBuffer;
+    const startSec = Math.max(0, Number(chop.startSec) || 0);
+    const rawDur = Number(chop.durationSec);
+    const bufDur = buffer.duration;
+    const dur = (rawDur > 0 && startSec + rawDur <= bufDur + 0.05)
+      ? rawDur
+      : Math.max(0.05, bufDur - startSec);
+    if (dur <= 0.05) return;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    src.loopStart = startSec;
+    src.loopEnd = startSec + dur;
+    const g = ctx.createGain();
+    const t0 = ctx.currentTime;
+    // Short ramp-in so the loop start doesn't click when the phrase
+    // begins mid-transient.
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(1, t0 + 0.02);
+    src.connect(g).connect(outNode);
+    try { src.start(t0, startSec); } catch (_) { return; }
+    // presetKey travels with the rec so cross-preset stop-all can
+    // route the LED repaint back to the correct scene column even
+    // when the preset that owns the rec is not currently selected.
+    const presetKey = state.settings.launchpadPreset || null;
+    const rec = { src, g, chop, row, presetKey };
+    contrib.rowLoops.set(rowKey, rec);
+    _launchpadPaintSceneLaunchRest();
+  }
+
+  // Stop a specific row's loop with a short fade so the wraparound
+  // point doesn't click. No-op if the row isn't looping in the
+  // resolved preset (defaults to the current preset).
+  function _launchpadStopRowLoop(row, presetKey) {
+    const contrib = state.launchpad.contribute;
+    if (!contrib) return;
+    const rowKey = _launchpadRowLoopKey(row, presetKey);
+    if (!rowKey) return;
+    const rec = contrib.rowLoops.get(rowKey);
+    if (!rec) return;
+    const ctx = state.launchpad.synthCtx || state.ctx;
+    const now = ctx ? ctx.currentTime : 0;
+    try {
+      rec.g.gain.cancelScheduledValues(now);
+      rec.g.gain.setValueAtTime(rec.g.gain.value, now);
+      rec.g.gain.linearRampToValueAtTime(0, now + 0.03);
+    } catch (_) {}
+    try { rec.src.stop(now + 0.05); } catch (_) {}
+    try { rec.src.disconnect(); } catch (_) {}
+    // g is disconnected in src.onended via GC, but be explicit so
+    // the reverb tail doesn't hold a reference.
+    try {
+      setTimeout(() => { try { rec.g.disconnect(); } catch (_) {} }, 200);
+    } catch (_) {}
+    contrib.rowLoops.delete(rowKey);
+    _launchpadPaintSceneLaunchRest();
+  }
+
+  function _launchpadToggleRowLoop(row) {
+    const contrib = state.launchpad.contribute;
+    if (!contrib) return;
+    const rowKey = _launchpadRowLoopKey(row);
+    if (rowKey && contrib.rowLoops.has(rowKey)) _launchpadStopRowLoop(row);
+    else _launchpadStartRowLoop(row);
+  }
+
+  // Stop EVERY row loop across all presets. Called from the panic
+  // scene button (CC 89) and on song unload. Iterates keys as
+  // "${presetKey}:${row}" and routes each stop back through the
+  // preset-aware _launchpadStopRowLoop.
+  function _launchpadStopAllRowLoops() {
+    const contrib = state.launchpad.contribute;
+    if (!contrib || !contrib.rowLoops || !contrib.rowLoops.size) return;
+    const entries = Array.from(contrib.rowLoops.entries());
+    for (const [key, rec] of entries) {
+      // Legacy shape (row as number key) still supported for safety
+      // when the map was populated by an older code path in-flight.
+      if (typeof key === 'number') {
+        _launchpadStopRowLoop(key, rec && rec.presetKey);
+        continue;
+      }
+      const colonIdx = String(key).indexOf(':');
+      if (colonIdx < 0) {
+        contrib.rowLoops.delete(key);
+        continue;
+      }
+      const presetKey = String(key).slice(0, colonIdx);
+      const row = Number(String(key).slice(colonIdx + 1));
+      if (!Number.isFinite(row)) {
+        contrib.rowLoops.delete(key);
+        continue;
+      }
+      _launchpadStopRowLoop(row, presetKey);
+    }
+  }
+
+  function _launchpadMidiToHz(midi) {
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  // Play one "plucked-string-ish" voice: two detuned oscillators (saw +
+  // triangle) fed through a lowpass filter whose cutoff sweeps from
+  // bright → warm to imitate the initial pick attack decaying into a
+  // rounder body. Optional `pan` in [-1, 1] spreads chord voices.
+  function _launchpadPlayVoice(ctx, out, midi, velocity, releaseSec, pan) {
+    const t = ctx.currentTime;
+    // Live octave transpose from the hardware Up/Down arrows. Clamp
+    // to legal MIDI so a stacked chord voicing near the edges of the
+    // register can't push a note out of range. Applied here (not at
+    // the caller) so every voice — song verify, open-jam, on-screen
+    // click — picks it up automatically.
+    const octShift = 12 * (state.launchpad.octaveOffset || 0);
+    const shiftedMidi = Math.max(0, Math.min(127, midi + octShift));
+    const f = _launchpadMidiToHz(shiftedMidi);
+    const s = state.settings;
+    // Caller-supplied release wins; otherwise the slider default.
+    const rel = (typeof releaseSec === 'number' && releaseSec > 0)
+      ? releaseSec
+      : s.launchpadReleaseSec;
+    // Attack in seconds; sliders expose it in ms.
+    const attack = Math.max(0.001, s.launchpadAttackMs / 1000);
+    const brightness = s.launchpadBrightness;
+
+    // Voice sub-graph: (oscA + oscB) → filter → env → (panner) → out
+    const oscA = ctx.createOscillator();
+    const oscB = ctx.createOscillator();
+    oscA.type = 'sawtooth';
+    oscB.type = 'triangle';
+    oscA.frequency.value = f;
+    oscB.frequency.value = f;
+    // Small detune so the pair sounds slightly chorused, like a real
+    // string's inharmonic partials.
+    oscA.detune.value = -6;
+    oscB.detune.value = +6;
+
+    const mix = ctx.createGain();
+    mix.gain.value = 0.55; // saw is loud on its own
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.Q.value = 4.5;
+    // Cutoff sweep: bright attack (~5x fundamental, clamped) → warm body.
+    // Brightness slider scales both endpoints so the whole voice reads
+    // brighter or darker without changing the attack curve.
+    const startCut = Math.min(12000, Math.max(600, f * 5 * brightness));
+    const endCut = Math.min(4000, Math.max(300, f * 1.8 * brightness));
+    filt.frequency.setValueAtTime(startCut, t);
+    filt.frequency.exponentialRampToValueAtTime(endCut, t + Math.min(0.6, rel * 0.5));
+
+    const env = ctx.createGain();
+    const peak = Math.max(0.05, Math.min(1, velocity / 127)) * 0.85;
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(peak, t + attack);
+    // Two-stage decay: quick drop from the pluck, then long tail.
+    env.gain.exponentialRampToValueAtTime(peak * 0.45, t + Math.max(attack + 0.05, 0.25));
+    env.gain.exponentialRampToValueAtTime(0.0001, t + rel);
+
+    oscA.connect(mix);
+    oscB.connect(mix);
+    mix.connect(filt).connect(env);
+
+    let tail = env;
+    if (typeof pan === 'number' && ctx.createStereoPanner) {
+      const p = ctx.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, pan));
+      env.connect(p);
+      tail = p;
+    }
+    tail.connect(out);
+
+    oscA.start(t); oscB.start(t);
+    oscA.stop(t + rel + 0.08);
+    oscB.stop(t + rel + 0.08);
+  }
+
+  // Map a chord symbol → array of MIDI note numbers for a voicing that
+  // sits roughly in the guitar-chord register (C3–C5). Reuses jam.js's
+  // own _chordSymbolToPitchClasses so voicing consistency lives in one
+  // place.
+  function _launchpadChordVoicing(symbol) {
+    const pcs = _chordSymbolToPitchClasses(symbol || '');
+    if (!pcs || !pcs.size) return [];
+    // Prefer a stack rooted around C3 (48). For each pitch class, find
+    // the nearest MIDI >= 48 that has that pc, then sort ascending and
+    // dedupe.
+    const base = 48;
+    const notes = [];
+    for (const pc of pcs) {
+      let m = base + ((pc - (base % 12) + 12) % 12);
+      // Avoid clustering all notes on one octave — spread by preferring
+      // the natural chord stacking order.
+      notes.push(m);
+    }
+    notes.sort((a, b) => a - b);
+    // Push very-low notes up an octave so nothing sits below E2.
+    return notes.map(m => (m < 40 ? m + 12 : m));
+  }
+
+  function _launchpadPlayPress(evt) {
+    // Ensure the graph is built so the sub-buses exist; discard the
+    // returned shared bus and route voices to the voiceBus sub-bus
+    // instead so the live-play fader governs their level
+    // independently of chop-sample level. Older graphs (loaded from
+    // a prior session before the sub-bus split) may not have a
+    // voiceBus yet — fall through to synthBus in that case so
+    // playback still works during the transition.
+    _ensureLaunchpadSynth();
+    const out = state.launchpad.voiceBus
+      || state.launchpad.synthBus
+      || state.launchpad.synthGain;
+    if (!out) return;
+    const ctx = state.launchpad.synthCtx || state.ctx;
+    if (!ctx) return;
+    const velocity = (evt && typeof evt.velocity === 'number') ? evt.velocity : 100;
+    const meaning = evt && evt.meaning;
+    if (!meaning) return;
+    if (meaning.kind === 'note' && typeof meaning.midi === 'number') {
+      // Pass the caller-side release as null so the voice uses the
+      // slider-driven default.
+      _launchpadPlayVoice(ctx, out, meaning.midi, velocity, null, 0);
+      return;
+    }
+    if (meaning.kind === 'chord' && meaning.symbol) {
+      const voicing = _launchpadChordVoicing(meaning.symbol);
+      if (!voicing.length) return;
+      // Slightly quieter per voice so the sum doesn't clip through the
+      // reverb bus.
+      const perVoiceVel = Math.max(20, velocity * 0.6);
+      const n = voicing.length;
+      // Schedule a light strum: each voice fires launchpadStrumMs after
+      // the last, panned across the stereo field so chords bloom.
+      const strumStep = Math.max(0, state.settings.launchpadStrumMs) / 1000;
+      const t0 = ctx.currentTime;
+      voicing.forEach((midi, i) => {
+        const pan = n > 1 ? ((i / (n - 1)) - 0.5) * 0.6 : 0;
+        // Wrap in an intermediate gain that opens at the strum offset
+        // so we can stagger start times without retro-scheduling.
+        const delayGate = ctx.createGain();
+        delayGate.gain.setValueAtTime(0, t0);
+        delayGate.gain.setValueAtTime(1, t0 + i * strumStep);
+        delayGate.connect(out);
+        _launchpadPlayVoice(ctx, delayGate, midi, perVoiceVel, null, pan);
       });
     }
   }
@@ -9815,6 +12812,38 @@
     const windowDurSongSec = Math.max(0.001, item.endSec - item.startSec);
     const windowRealMs = (windowDurSongSec / rate) * 1000;
     const startPerf = nowPerf - windowRealMs - 200;
+
+    // Launchpad "song-verify" mode replaces the mic-based recall check
+    // with a pad-press check: if the user pressed the right pad within
+    // the tile's time window, that's a pass. Wrong-pad presses in the
+    // same window fail with a distinct `wrongPad` marker so the caller
+    // can render a different visual. No press → fall through to mic.
+    if (state.settings.launchpadEnabled
+        && state.settings.launchpadMode === 'song-verify'
+        && window.Launchpad && window.Launchpad._canonicalChordKey) {
+      // Read from the shared InputSurface ring so any surface that
+      // dispatches chord-press events (currently just Launchpad, but
+      // MIDI keyboard / mic-chord detection will follow) can drive
+      // song-verify without further changes here.
+      const buf = state.inputSurface.events || [];
+      const wantKey = _canonicalChordKeyForItem(item);
+      let hitPress = false;
+      let wrongPress = false;
+      for (let i = buf.length - 1; i >= 0; i--) {
+        const p = buf[i];
+        if (p.t_perf < startPerf) break;
+        if (p.t_perf > nowPerf + 5) continue;
+        if (p.kind !== 'chord-press') continue;
+        if (!p.canonicalKey) continue;
+        if (wantKey && p.canonicalKey === wantKey) { hitPress = true; break; }
+        wrongPress = true;
+      }
+      if (hitPress) return { pass: true, recall: 1, missingClasses: [] };
+      if (wrongPress) return { pass: false, recall: 0, missingClasses: [], wrongPad: true };
+      // else fall through to the mic path so the tile still scores if
+      // the player hits the chord via a connected mic instead.
+    }
+
     const seen = new Set();
     const hist = state.listen.history || [];
     for (let i = hist.length - 1; i >= 0; i--) {
@@ -9837,6 +12866,32 @@
       recall,
       missingClasses: missing,
     };
+  }
+
+  // Derive the canonical chord key a rehearsal item is asking for. Uses
+  // item.symbol when present (rehearsal tiles built by section) and
+  // falls back to reconstructing a symbol from item.pcSet (warmup tiles
+  // which only carry a pitch-class set).
+  function _canonicalChordKeyForItem(item) {
+    if (item && typeof item.symbol === 'string' && item.symbol
+        && window.Launchpad && window.Launchpad._canonicalChordKey) {
+      return window.Launchpad._canonicalChordKey(item.symbol);
+    }
+    // Fall back: try to match the item's pcSet against known song chords
+    // so we can borrow their canonical key. Cheap since state.chords is
+    // small and this only runs when Launchpad verify is active.
+    if (item && item.pcSet && item.pcSet.size && Array.isArray(state.chords)) {
+      for (const c of state.chords) {
+        const pcs = _chordSymbolToPitchClasses(c.symbol || '');
+        if (!pcs || pcs.size !== item.pcSet.size) continue;
+        let same = true;
+        for (const pc of item.pcSet) if (!pcs.has(pc)) { same = false; break; }
+        if (same && window.Launchpad._canonicalChordKey) {
+          return window.Launchpad._canonicalChordKey(c.symbol);
+        }
+      }
+    }
+    return null;
   }
 
   function _verifyNoteTile(item) {
@@ -10334,6 +13389,20 @@
     if (state.rehearsal._goalTimer) {
       try { clearInterval(state.rehearsal._goalTimer); } catch (_) {}
       state.rehearsal._goalTimer = null;
+    }
+    // Rehearsal auto-sets state.loop to the active section (~15-20s) so
+    // playback wraps for practice. If the user leaves rehearsal for the
+    // perform view without turning that off, tickClock (jam.js:4990)
+    // will keep wrapping to the section start — showing as "playback
+    // loops back to the start after 16s". Clear the loop + its UI.
+    if (state.loop) {
+      state.loop = null;
+      const ls = document.getElementById('loop-status');
+      if (ls) ls.textContent = 'Loop: off';
+      const loopBtn = document.getElementById('t-loop');
+      if (loopBtn) loopBtn.textContent = 'Loop: off';
+      document.querySelectorAll('#section-bar .section-pill.active')
+        .forEach(el => el.classList.remove('active'));
     }
   }
 

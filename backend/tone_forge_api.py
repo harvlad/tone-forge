@@ -26,10 +26,12 @@ import logging
 import shutil
 import subprocess
 import tempfile
+import threading
 import uuid
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from typing import Any, Optional
 
 import numpy as np
@@ -236,6 +238,23 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 _HISTORY_FILE = Path(__file__).parent / "data" / "history.json"
 
+# Serializes read-modify-write cycles on history.json. The legacy request
+# handlers predate this lock; only the mutation paths touched by deep
+# delete / retention take it. A full locking audit is out of scope.
+_HISTORY_LOCK = threading.Lock()
+
+# Directories we're allowed to serve files from AND delete files under.
+# Shared by /api/admin/serve-file and the deep-delete path so both sides
+# of the lifecycle agree on what "ours" means.
+_ALLOWED_FILE_PREFIXES = [
+    "/tmp/",
+    "/private/tmp/",  # macOS /tmp symlink target
+    "/var/folders/",  # macOS temp
+    "/private/var/folders/",  # macOS /var symlink target
+    str(Path.home() / ".cache"),
+    str(Path.home() / ".toneforge"),  # ToneForge cache dir
+]
+
 
 def _load_history() -> list[dict]:
     """Load history from JSON file."""
@@ -262,15 +281,20 @@ def _add_to_history(entry: dict, full_result: dict = None) -> dict:
         entry: Metadata about the analysis (name, detected_type, etc.)
         full_result: The complete analysis result for reloading later
     """
-    history = _load_history()
     entry["id"] = str(uuid.uuid4())[:8]
     entry["timestamp"] = datetime.now().isoformat()
     if full_result:
         entry["result"] = full_result
-    history.insert(0, entry)  # Most recent first
-    # Keep only last 100 entries
-    history = history[:100]
-    _save_history(history)
+    with _HISTORY_LOCK:
+        history = _load_history()
+        history.insert(0, entry)  # Most recent first
+        # Keep only last 100 entries; anything falling off the cap gets
+        # its server-side audio purged too (retention invariant).
+        dropped = history[100:]
+        history = history[:100]
+        _save_history(history)
+    for old in dropped:
+        _deep_delete_entry(old)
     return entry
 
 
@@ -282,11 +306,185 @@ def _get_history_item(entry_id: str) -> dict | None:
             return entry
     return None
 
+
+def _update_history_item(entry_id: str, entry: dict) -> None:
+    """Persist a mutated history entry back to disk.
+
+    Used by paths that lazily rewrite entries (e.g. after uploading
+    stems to R2 the first time a bundle is fetched). Silently no-ops if
+    the ID isn't in history — callers already fetched-then-mutated so a
+    concurrent delete is not our problem to reconcile here.
+    """
+    history = _load_history()
+    for i, existing in enumerate(history):
+        if existing.get("id") == entry_id:
+            history[i] = entry
+            _save_history(history)
+            return
+
+
+# -----------------------------------------------------------------------------
+# Deep delete + retention
+#
+# History entries reference server-side audio in three places: local stem
+# files under temp dirs (result.stems_paths), R2 objects under
+# bundles/{id}/, and layer JSON under data/layers/{id}/. Deleting an
+# entry must remove all three — the compliance contract is that uploaded
+# audio and everything derived from it is gone within the retention
+# window (7 days) or immediately on user request.
+# -----------------------------------------------------------------------------
+
+_LOCAL_SERVE_WRAPPERS = (
+    "http://127.0.0.1:7777/api/serve-file",
+    "http://localhost:7777/api/serve-file",
+)
+
+
+def _local_stem_paths(result: dict) -> set[Path]:
+    """Extract local filesystem paths from a result's stems_paths values.
+
+    Values can be raw paths, ``/api/admin/serve-file?path=...`` wrappers,
+    or local-engine ``http://127.0.0.1:7777/api/serve-file?path=...``
+    URLs. Remote http(s) URLs (R2) are skipped — those are handled by
+    ``r2_storage.delete_analysis_objects``.
+    """
+    paths: set[Path] = set()
+    stems = (result or {}).get("stems_paths") or (result or {}).get("stems") or {}
+    if not isinstance(stems, dict):
+        return paths
+    for value in stems.values():
+        if not isinstance(value, str) or not value:
+            continue
+        candidate: str | None = None
+        if value.startswith("/api/admin/serve-file") or value.startswith(_LOCAL_SERVE_WRAPPERS):
+            query = parse_qs(urlparse(value).query)
+            wrapped = query.get("path", [None])[0]
+            if wrapped:
+                candidate = wrapped
+        elif value.startswith(("http://", "https://")):
+            continue  # remote (R2) — not a local file
+        else:
+            candidate = value
+        if candidate:
+            paths.add(Path(candidate))
+    return paths
+
+
+def _safe_delete_path(path: Path) -> None:
+    """Delete a stem file, but only under directories we own.
+
+    Reuses the serve-file allowlist so delete can never reach wider than
+    serve. If the file's parent is a ``toneforge_stems_*`` scratch dir,
+    remove the whole dir — stems always live in a per-analysis mkdtemp
+    and leaving siblings behind would defeat the purge.
+    """
+    try:
+        path_str = str(path)
+        resolved_str = str(path.resolve())
+    except OSError:
+        return
+    if not any(
+        path_str.startswith(prefix) or resolved_str.startswith(prefix)
+        for prefix in _ALLOWED_FILE_PREFIXES
+    ):
+        logger.warning("deep-delete skipped path outside allowlist: %s", path_str)
+        return
+    parent = path.parent
+    if parent.name.startswith("toneforge_stems_"):
+        shutil.rmtree(parent, ignore_errors=True)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _deep_delete_entry(entry: dict) -> None:
+    """Best-effort removal of everything an analysis left on the server.
+
+    Never raises — deletion runs after the history write has already
+    committed, and a failure here must not resurrect the entry or fail
+    the request.
+    """
+    try:
+        entry_id = entry.get("id") or ""
+        for path in _local_stem_paths(entry.get("result") or {}):
+            _safe_delete_path(path)
+        try:
+            from tone_forge import r2_storage
+
+            r2_storage.delete_analysis_objects(entry_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("R2 delete failed for %s: %s", entry_id, exc)
+        if entry_id and "/" not in entry_id and "\\" not in entry_id and ".." not in entry_id:
+            shutil.rmtree(_LAYERS_ROOT / entry_id, ignore_errors=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("deep delete failed for entry %s", entry.get("id"))
+
+
+_RETENTION_DAYS = float(os.environ.get("TONEFORGE_RETENTION_DAYS", "7"))
+_RETENTION_INTERVAL_SEC = 6 * 3600
+
+
+def _purge_expired_history(now: datetime | None = None) -> int:
+    """Drop + deep-delete history entries older than the retention window.
+
+    Timestamps are naive-local isoformat strings (see _add_to_history).
+    Entries with missing/unparseable timestamps are treated as expired —
+    we can't prove they're inside the window, and the compliance default
+    is to delete.
+    """
+    now = now or datetime.now()
+    cutoff = now - timedelta(days=_RETENTION_DAYS)
+    with _HISTORY_LOCK:
+        history = _load_history()
+        kept: list[dict] = []
+        expired: list[dict] = []
+        for entry in history:
+            try:
+                stamp = datetime.fromisoformat(entry.get("timestamp") or "")
+                fresh = stamp >= cutoff
+            except (ValueError, TypeError):
+                logger.warning(
+                    "history entry %s has unparseable timestamp %r — purging",
+                    entry.get("id"), entry.get("timestamp"),
+                )
+                fresh = False
+            (kept if fresh else expired).append(entry)
+        if expired:
+            _save_history(kept)
+    for entry in expired:
+        _deep_delete_entry(entry)
+    if expired:
+        logger.info("retention purge removed %d expired analyses", len(expired))
+    return len(expired)
+
+
+async def _retention_loop() -> None:
+    """Purge at boot, then every _RETENTION_INTERVAL_SEC."""
+    while True:
+        try:
+            await asyncio.to_thread(_purge_expired_history)
+        except Exception:  # noqa: BLE001
+            logger.exception("retention purge failed")
+        await asyncio.sleep(_RETENTION_INTERVAL_SEC)
+
+
 # Supported platforms
 SUPPORTED_PLATFORMS = ["helix", "pedals", "synth"]
 
 
 app = FastAPI(title="Tone Forge", version="0.5.0")
+
+
+@app.on_event("startup")
+async def _start_retention() -> None:
+    """Kick off the 7-day retention purge loop.
+
+    Disabled via TONEFORGE_DISABLE_RETENTION (pytest sets it; also handy
+    for local dev when you want analyses to stick around).
+    """
+    if os.environ.get("TONEFORGE_DISABLE_RETENTION"):
+        return
+    asyncio.create_task(_retention_loop())
+
 
 _STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
@@ -1517,6 +1715,127 @@ async def health() -> dict:
     return {"status": "ok", "version": app.version}
 
 
+# ---------------------------------------------------------------------
+# Sample packs (ToneForge Mobile Phase 3)
+# ---------------------------------------------------------------------
+#
+# Curated sample pack catalog. Each pack lives under
+# ``static/samples/{packId}/`` and carries:
+#
+#   manifest.json      # SamplePack Codable — matches Sources/ToneForgeEngine/SamplePack.swift
+#   pads/*.m4a         # AAC in an M4A container, 44.1kHz mono
+#
+# A top-level ``static/samples/catalog.json`` lists the packs available
+# in this deployment. Adding a new pack = drop the dir + append an
+# entry to catalog.json. No code changes needed.
+#
+# The mobile ``PackClient`` calls:
+#   GET /api/sample-packs                                # catalog list
+#   GET /api/sample-packs/{packId}                       # manifest
+#   GET /api/sample-packs/{packId}/pads/{filename}       # audio bytes
+#
+# Path traversal is defended against by:
+#   1) Route params being URL segments (FastAPI blocks '/' in path).
+#   2) Explicit `..` rejection.
+#   3) `resolve()` + prefix check against the samples root.
+
+_SAMPLES_ROOT = Path(__file__).resolve().parent / "static" / "samples"
+
+
+def _resolve_pack_dir(pack_id: str) -> Path:
+    """Return the resolved pack directory, or raise 404/400."""
+    if not pack_id or ".." in pack_id or "/" in pack_id or "\\" in pack_id:
+        raise HTTPException(status_code=400, detail="Invalid pack id")
+    pack_dir = (_SAMPLES_ROOT / pack_id).resolve()
+    try:
+        pack_dir.relative_to(_SAMPLES_ROOT.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid pack id")
+    if not pack_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Pack '{pack_id}' not found")
+    return pack_dir
+
+
+@app.get("/api/sample-packs")
+async def list_sample_packs() -> JSONResponse:
+    """List curated sample packs available on this backend.
+
+    Response shape:
+        {
+          "packs": [
+            {"packId": "shoegaze-textures", "name": "Shoegaze Textures",
+             "family": "pads", "paletteHint": "purple",
+             "tags": ["ambient", ...], "padCount": 8,
+             "sizeBytes": null, "coverUrl": null,
+             "description": "..."},
+            ...
+          ]
+        }
+
+    Backed by ``static/samples/catalog.json``. Missing catalog =
+    empty list (not an error) so a fresh backend without any curated
+    packs is a valid state.
+    """
+    catalog_path = _SAMPLES_ROOT / "catalog.json"
+    if not catalog_path.is_file():
+        return JSONResponse({"packs": []})
+    try:
+        data = json.loads(catalog_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Malformed catalog: {exc}"
+        ) from exc
+    packs = data.get("packs", []) if isinstance(data, dict) else []
+    return JSONResponse({"packs": packs})
+
+
+@app.get("/api/sample-packs/{pack_id}")
+async def get_sample_pack_manifest(pack_id: str) -> JSONResponse:
+    """Return the ``manifest.json`` for one pack. Shape is the exact
+    ``SamplePack`` Codable expected by the iOS ``SampleBank``.
+    """
+    pack_dir = _resolve_pack_dir(pack_id)
+    manifest_path = pack_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise HTTPException(
+            status_code=404, detail=f"Pack '{pack_id}' has no manifest"
+        )
+    try:
+        data = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Malformed manifest for '{pack_id}': {exc}",
+        ) from exc
+    return JSONResponse(data)
+
+
+@app.get("/api/sample-packs/{pack_id}/pads/{filename}")
+async def get_sample_pack_pad(pack_id: str, filename: str):
+    """Serve one pad audio file from a curated pack. Filenames are
+    validated against directory-traversal characters; the resolved
+    path must stay under the pack's ``pads/`` subdir.
+    """
+    if not filename or ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    pack_dir = _resolve_pack_dir(pack_id)
+    file_path = (pack_dir / "pads" / filename).resolve()
+    try:
+        file_path.relative_to(pack_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Pad file not found")
+    ext = file_path.suffix.lower()
+    media_type = {
+        ".m4a": "audio/mp4",
+        ".mp4": "audio/mp4",
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+    }.get(ext, "application/octet-stream")
+    return FileResponse(path=str(file_path), media_type=media_type)
+
+
 @app.get("/studio")
 async def admin_page():
     """Serve the admin UI."""
@@ -1532,25 +1851,14 @@ async def admin_serve_file(
 
     Security: Only serves files from allowed directories (temp dirs, demucs output).
     """
-    from pathlib import Path
-    import os
-
     file_path = Path(path)
 
-    # Security: only allow serving from specific directories
-    allowed_prefixes = [
-        "/tmp/",
-        "/private/tmp/",  # macOS /tmp symlink target
-        "/var/folders/",  # macOS temp
-        "/private/var/folders/",  # macOS /var symlink target
-        str(Path.home() / ".cache"),
-        str(Path.home() / ".toneforge"),  # ToneForge cache dir
-    ]
-
+    # Security: only allow serving from specific directories (shared with
+    # the deep-delete path — see _ALLOWED_FILE_PREFIXES).
     # Check both resolved and original path (symlinks can cause issues)
     path_str = str(file_path.resolve())
     path_str_orig = str(file_path)
-    if not any(path_str.startswith(prefix) or path_str_orig.startswith(prefix) for prefix in allowed_prefixes):
+    if not any(path_str.startswith(prefix) or path_str_orig.startswith(prefix) for prefix in _ALLOWED_FILE_PREFIXES):
         logger.warning(f"Serve-file blocked: {path_str} (orig: {path_str_orig})")
         raise HTTPException(status_code=403, detail="Access denied: file not in allowed directory")
 
@@ -2612,17 +2920,29 @@ async def get_debug_sessions() -> JSONResponse:
 
 @app.delete("/api/history")
 async def clear_history() -> JSONResponse:
-    """Clear all history."""
-    _save_history([])
+    """Clear all history, purging server-side audio for every entry."""
+    with _HISTORY_LOCK:
+        history = _load_history()
+        _save_history([])
+    for entry in history:
+        await asyncio.to_thread(_deep_delete_entry, entry)
     return JSONResponse({"status": "cleared"})
 
 
 @app.delete("/api/history/{entry_id}")
 async def delete_history_entry(entry_id: str) -> JSONResponse:
-    """Delete a specific history entry."""
-    history = _load_history()
-    history = [e for e in history if e.get("id") != entry_id]
-    _save_history(history)
+    """Delete a history entry and purge its stems, R2 objects, and layers.
+
+    The history write commits first; file/object deletion is best-effort
+    afterwards so a partial failure can't resurrect the entry.
+    """
+    with _HISTORY_LOCK:
+        history = _load_history()
+        target = next((e for e in history if e.get("id") == entry_id), None)
+        history = [e for e in history if e.get("id") != entry_id]
+        _save_history(history)
+    if target:
+        await asyncio.to_thread(_deep_delete_entry, target)
     return JSONResponse({"status": "deleted"})
 
 
@@ -2730,6 +3050,855 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
     )
 
     return JSONResponse(_convert_numpy_types(payload))
+
+
+# ---------------------------------------------------------------------------
+# Contribute Mode — chop-slice metadata
+# ---------------------------------------------------------------------------
+#
+# The Jam UI's Launchpad Contribute presets treat the loaded song as a
+# sample source: each pad on the 8×8 grid becomes a chopped slice of
+# one of the stems, sliced at a musically meaningful boundary. This
+# endpoint returns the slice metadata (offsets, kind labels, root pcs).
+# The client already has the stem audio buffer decoded — it uses the
+# offsets returned here to schedule ``AudioBufferSourceNode`` playback
+# on pad-press. See ``tone_forge.contribute_chops`` for the slicer.
+#
+# Endpoint accepts ``stem`` and ``sliceMode`` as query params so the
+# same route serves all 5 Contribute presets. Response is cached only
+# in-memory (per FastAPI process) via LRU on ``build_chops`` — cheap
+# to recompute from the persisted analysis dict.
+
+@app.get("/api/song/{entry_id}/chops")
+async def get_song_chops(
+    entry_id: str,
+    stem: str = Query("mix", description="Source stem: vocals|drums|bass|other|mix"),
+    sliceMode: str = Query("beat", description="Slice mode: phrase|onset|beat|chord|section|drum-bundle"),
+) -> JSONResponse:
+    """Return chop-slice metadata for one (stem, sliceMode) combination.
+
+    Response shape:
+        {
+          "analysisId": "<id>",
+          "stem": "drums",
+          "sliceMode": "onset",
+          "stemUrl": "/api/admin/serve-file?path=/tmp/toneforge_stems_.../drums.wav",
+          "chops": [
+            {"idx": 0, "startSec": 0.42, "endSec": 0.78, "durationSec": 0.36,
+             "kind": "kick", "root": null, "sectionLabel": null,
+             "chordSymbol": null, "colorHint": "red"},
+            ...
+          ]
+        }
+    """
+    from tone_forge.contribute_chops import build_chops
+
+    entry = _get_history_item(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Song not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail="Song has no analysis result")
+
+    # Resolve the WAV path for the requested stem. 'mix' uses the
+    # original audio; the others use the Demucs stem output. Missing
+    # stems (e.g. requesting 'vocals' on an instrumental track) return
+    # a 404 rather than falling back silently — the client should
+    # surface "this stem isn't available for this song".
+    def _stem_url_from_raw(raw_val: str | None) -> str | None:
+        # Values in stems_paths / source_url may already be fully-formed URLs
+        # (e.g. http://127.0.0.1:7777/api/serve-file?path=/tmp/…) written by
+        # the analyzer's remote-stems handoff, OR raw filesystem paths from
+        # the local separator. Pass URLs through untouched; only wrap paths.
+        if not isinstance(raw_val, str) or not raw_val:
+            return None
+        if raw_val.startswith(("http://", "https://", "/api/")):
+            return raw_val
+        return f"/api/admin/serve-file?path={raw_val}"
+
+    stem_wav_path: Path | None = None
+    stems_paths = result.get("stems_paths") or {}
+    if stem == "mix":
+        # Prefer a served/local audio path when we have one. For URL-based
+        # analyses (YouTube etc.) the analyzer only stores the page URL,
+        # not the downloaded audio, so `source_url` won't be a fetchable
+        # WAV. In that case fall back to an available stem so the
+        # Section preset still yields audible chops — the section time
+        # ranges are unchanged, they just play through a stem.
+        source_url = result.get("input_path") or result.get("audio_path") or result.get("mix_path")
+        if not source_url:
+            src = result.get("source_url")
+            if isinstance(src, str) and (src.startswith("/") or src.startswith("http://127.0.0.1") or src.startswith("/api/")):
+                source_url = src
+        if source_url:
+            if isinstance(source_url, str) and source_url.startswith("/") and not source_url.startswith("/api/"):
+                stem_wav_path = Path(source_url)
+            stem_url = _stem_url_from_raw(source_url)
+        else:
+            # Fall back to any available stem (prefer drums for section
+            # feel; then other/guitar; then whatever is left).
+            fallback_order = (
+                "drums", "guitar_center", "guitar_sides", "guitar",
+                "other", "piano", "keys", "bass", "vocals",
+            )
+            picked = None
+            for key in fallback_order:
+                if stems_paths.get(key):
+                    picked = (key, stems_paths[key])
+                    break
+            if not picked:
+                for k, v in stems_paths.items():
+                    if v:
+                        picked = (k, v); break
+            if not picked:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No playable audio available for this song (mix)",
+                )
+            fk, raw = picked
+            if isinstance(raw, str) and not raw.startswith(("http://", "https://", "/api/")):
+                stem_wav_path = Path(raw)
+            stem_url = _stem_url_from_raw(raw)
+    else:
+        raw = stems_paths.get(stem)
+        if not raw:
+            # 'other' is the demucs residual. Our corpus stores that
+            # residual under a mix of names depending on which
+            # separator variant produced it (raw demucs 4-stem uses
+            # 'other'; the 6-stem variant splits guitar into
+            # 'guitar_center' + 'guitar_sides'; older analyses used
+            # 'guitar' / 'piano' / 'keys'). Try the explicit aliases
+            # first, and if none of those match, take ANY stem key
+            # that isn't one of the canonical vocals/drums/bass so
+            # the harmonic preset still has material to slice.
+            if stem == "other":
+                aliases = (
+                    "guitar", "guitar_center", "guitar_sides", "guitars",
+                    "piano", "keys", "synth", "strings", "harmony",
+                )
+                for key in aliases:
+                    if stems_paths.get(key):
+                        raw = stems_paths[key]
+                        stem = key
+                        break
+                if not raw:
+                    reserved = {"vocals", "drums", "bass", "vocal", "drum"}
+                    for key, path in stems_paths.items():
+                        if key and path and key.lower() not in reserved:
+                            raw = path
+                            stem = key
+                            break
+        if not raw:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Stem '{stem}' not available for this song",
+            )
+        # Only treat `raw` as a local filesystem path if it's not already a URL
+        # (analyzer's remote-stems handoff writes http:// URLs into stems_paths).
+        if isinstance(raw, str) and not raw.startswith(("http://", "https://", "/api/")):
+            stem_wav_path = Path(raw)
+        else:
+            stem_wav_path = None
+        stem_url = _stem_url_from_raw(raw)
+
+    chops = build_chops(
+        stem=stem,
+        slice_mode=sliceMode,
+        analysis_result=result,
+        stem_wav_path=stem_wav_path,
+    )
+
+    return JSONResponse(_convert_numpy_types({
+        "analysisId": entry_id,
+        "stem": stem,
+        "sliceMode": sliceMode,
+        "stemUrl": stem_url,
+        "chops": chops,
+    }))
+
+
+# ---------------------------------------------------------------------------
+# Mobile bundle — /api/song/{id}/bundle
+# ---------------------------------------------------------------------------
+#
+# The tone-forge iOS spin-off ("touchscreen-as-Launchpad") consumes a
+# single manifest per song that it can persist to disk and play offline.
+# This endpoint is the shared boundary between the mobile client and the
+# backend — every downstream mobile decision keys off its shape.
+#
+# v1 (this route) returns a pass-through manifest: existing stem URLs,
+# trimmed analysis fields, and pre-computed chop lists for the presets
+# the app ships with. A follow-up patch will:
+#   1. Re-encode stems to AAC-LC 256 kbps via ffmpeg
+#   2. Upload to R2 (Cloudflare object storage, zero egress fees)
+#   3. Return signed R2 URLs instead of 127.0.0.1 URLs
+# The client-facing shape is designed to survive that change: `stems[]`
+# entries carry a `codec` field so the client can distinguish "wav via
+# dev proxy" from "m4a via R2" without a bundle-version bump.
+#
+# Shape (bundleVersion = 1):
+#   {
+#     "bundleVersion": 1,
+#     "analysisId": "<id>",
+#     "meta": {
+#       "title": "...", "artist": "...", "sourceUrl": "...",
+#       "durationSec": 245.6, "tempoBpm": 92, "detectedKey": "Dm"
+#     },
+#     "timeline": {
+#       "chords": [{"start": …, "end": …, "symbol": "…"}, …],
+#       "sections": [{"start": …, "end": …, "label": "…"}, …],
+#       "beats": [1.02, 1.65, …],
+#       "downbeats": [1.02, 3.5, …]
+#     },
+#     "stems": [
+#       {"role": "drums", "url": "…", "codec": "wav", "sampleRateHz": 44100},
+#       …
+#     ],
+#     "presets": {
+#       "harmonic": {"stem": "other", "sliceMode": "chord", "chops": […]},
+#       "sections": {"stem": "mix",   "sliceMode": "section", "chops": […]}
+#     }
+#   }
+#
+# Preset list is intentionally minimal for v1 (the two Launchpad presets
+# that the mobile UI ships with). Adding a preset is a two-line change
+# in `_MOBILE_BUNDLE_PRESETS` below.
+
+_MOBILE_BUNDLE_PRESETS = (
+    # (preset key, stem preference order, sliceMode). The stem is
+    # resolved per-song against the roles actually present in
+    # `stems_paths` (see _resolve_preset_stem) because the mobile
+    # client slices chops out of its locally-downloaded stem files —
+    # a preset naming a stem the song didn't ship (e.g. "other" on a
+    # guitar_center/guitar_sides separation, or "mix" which is never
+    # a stem) yields a pack that can never load audio. Chop windows
+    # are pure timeline data (build_chops uses `stem` as metadata
+    # for chord/section modes), so any shipped stem is a valid
+    # slice source.
+    (
+        "harmonic",
+        ("other", "guitar_center", "guitar", "synth", "keys",
+         "piano", "strings", "vocals", "bass"),
+        "chord",
+    ),
+    (
+        "sections",
+        ("mix", "vocals", "other", "guitar_center", "guitar",
+         "synth", "keys", "bass", "drums"),
+        "section",
+    ),
+)
+
+
+def _resolve_preset_stem(preferences, stems_paths) -> Optional[str]:
+    """First preferred stem role that actually shipped for this song,
+    or None when nothing usable exists (preset is then omitted from
+    the bundle rather than emitted unplayable)."""
+    for role in preferences:
+        if stems_paths.get(role):
+            return role
+    return None
+
+
+def _resolve_local_stem_paths(result: dict) -> dict:
+    """Best-effort map of stem role → local ``Path`` for stems that
+    currently live on disk. Used by the Song-DNA extractors, which
+    need real audio to run librosa on.
+
+    Remote (R2, http) stems are omitted because pulling them down
+    inside a request path would blow the bundle latency budget. The
+    extractors handle missing stems by returning empty pad lists, so
+    Song-DNA degrades to "transitions only" for R2-hosted songs
+    rather than blocking the response.
+    """
+    from pathlib import Path as _Path
+    stems_paths = result.get("stems_paths") or {}
+    out: dict[str, _Path] = {}
+    for role, raw in stems_paths.items():
+        if not isinstance(raw, str) or not raw:
+            continue
+        if raw.startswith(("http://", "https://")):
+            # Unwrap local_engine's serve-file wrapper so we can hit
+            # the actual file on disk.
+            local_engine_prefixes = (
+                "http://127.0.0.1:7777/api/serve-file?path=",
+                "http://localhost:7777/api/serve-file?path=",
+            )
+            unwrapped = None
+            for prefix in local_engine_prefixes:
+                if raw.startswith(prefix):
+                    unwrapped = raw[len(prefix):]
+                    break
+            if unwrapped is None:
+                continue  # true remote — skip
+            candidate = _Path(unwrapped)
+        elif raw.startswith("/api/admin/serve-file?path="):
+            candidate = _Path(raw[len("/api/admin/serve-file?path="):])
+        else:
+            candidate = _Path(raw)
+        if candidate.exists():
+            out[role] = candidate
+
+    # Also try to expose the source mix so transitions can be
+    # gradient-ranked. Same unwrapping rules.
+    for key in ("input_path", "audio_path", "mix_path", "wav_path"):
+        raw = result.get(key)
+        if not isinstance(raw, str) or not raw:
+            continue
+        if raw.startswith("/api/admin/serve-file?path="):
+            candidate = _Path(raw[len("/api/admin/serve-file?path="):])
+        elif not raw.startswith(("http://", "https://")):
+            candidate = _Path(raw)
+        else:
+            continue
+        if candidate.exists():
+            out.setdefault("mix", candidate)
+            break
+
+    return out
+
+
+def _codec_from_stem_url(url: str | None) -> str:
+    """Infer the codec from the stem URL's file extension.
+
+    Sniffing rather than storing the codec separately keeps the
+    persisted history schema unchanged — the URL already encodes the
+    format via its extension (e.g. ``.m4a`` after AAC re-encode,
+    ``.wav`` before). Unknown extensions fall back to ``"wav"`` which
+    is what the analysis pipeline emits natively.
+    """
+    if not isinstance(url, str) or not url:
+        return "wav"
+    # Trim query string first (presigned URLs carry ?X-Amz-Signature=…).
+    path = url.split("?", 1)[0]
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    if ext in ("m4a", "mp4", "aac"):
+        return "m4a"
+    if ext == "wav":
+        return "wav"
+    if ext == "mp3":
+        return "mp3"
+    if ext == "flac":
+        return "flac"
+    if ext == "ogg":
+        return "ogg"
+    return "wav"
+
+
+def _mobile_stem_records(result: dict) -> list[dict]:
+    """Flatten `stems_paths` into an ordered `stems[]` array for the
+    mobile bundle. ``codec`` is sniffed from each URL extension so the
+    same code path handles both the pre-R2 WAV pass-through and the
+    post-R2 M4A upload without any schema change.
+    """
+    stems_paths = result.get("stems_paths") or {}
+    sample_rate = int(result.get("sample_rate") or 44100)
+    out: list[dict] = []
+    # Emit in a stable order so the client can rely on iteration for
+    # deterministic UI layout. Roles present in the song appear first
+    # in this order; unknown keys tail-append alphabetically.
+    role_order = [
+        "vocals", "drums", "bass",
+        "guitar_center", "guitar_sides", "guitar",
+        "piano", "keys", "synth", "strings", "harmony", "other",
+    ]
+    seen = set()
+    for role in role_order:
+        raw = stems_paths.get(role)
+        if not raw:
+            continue
+        seen.add(role)
+        url = _stem_url_from_raw(raw) if raw else None
+        out.append({
+            "role": role,
+            "url": url,
+            "codec": _codec_from_stem_url(url),
+            "sampleRateHz": sample_rate,
+        })
+    for role in sorted(stems_paths.keys()):
+        if role in seen:
+            continue
+        raw = stems_paths[role]
+        if not raw:
+            continue
+        url = _stem_url_from_raw(raw)
+        out.append({
+            "role": role,
+            "url": url,
+            "codec": _codec_from_stem_url(url),
+            "sampleRateHz": sample_rate,
+        })
+    return out
+
+
+def _stem_url_from_raw(raw_val):
+    """Module-level twin of the local helper in `get_song_chops`.
+    Pass-through when `raw_val` is already a remote URL; unwrap the
+    local_engine serve-file wrappers so mobile clients see a URL they
+    can actually reach through the main backend.
+
+    History entries written by the local engine store stem URLs like
+    ``http://127.0.0.1:7777/api/serve-file?path=/var/folders/...``.
+    On the Mac browser 127.0.0.1 == this machine, but on a phone
+    hitting the main backend over LAN/USB, 127.0.0.1 is the phone
+    itself. Strip the local_engine wrapper and re-serve through the
+    main backend's ``/api/admin/serve-file`` endpoint (which already
+    allows the same temp dirs — see admin_serve_file).
+    """
+    if not isinstance(raw_val, str) or not raw_val:
+        return None
+    local_engine_prefixes = (
+        "http://127.0.0.1:7777/api/serve-file?path=",
+        "http://localhost:7777/api/serve-file?path=",
+    )
+    for prefix in local_engine_prefixes:
+        if raw_val.startswith(prefix):
+            local_path = raw_val[len(prefix):]
+            return f"/api/admin/serve-file?path={local_path}"
+    if raw_val.startswith(("http://", "https://", "/api/")):
+        return raw_val
+    return f"/api/admin/serve-file?path={raw_val}"
+
+
+def _maybe_upload_stems_to_r2(entry_id: str, entry: dict) -> bool:
+    """Best-effort: upload any still-local stem paths to R2 and rewrite
+    the history entry's ``stems_paths`` in place with the public URLs.
+
+    Returns ``True`` iff at least one URL was rewritten (i.e. the caller
+    should persist the mutated entry). Returns ``False`` — cleanly — if
+    R2 isn't configured, boto3 isn't installed, or every stem is either
+    already remote or missing on disk.
+
+    When ``ffmpeg`` is on PATH the WAV is transcoded to AAC-LC M4A
+    before the upload. That's a ~4x download-size win on cellular
+    (see tone_forge.audio_transcode for the rationale). If ffmpeg
+    isn't available we upload the WAV as-is; the mobile client accepts
+    either (see ``codec`` field in the bundle stem records).
+
+    This runs synchronously inside the bundle request. The first fetch
+    for a song takes an upload hit (~a few seconds per stem on gigabit),
+    every subsequent fetch is a HEAD + presign at most. The deterministic
+    key layout (see r2_storage.stem_key) makes retries free.
+    """
+    try:
+        from tone_forge import r2_storage
+    except Exception:
+        return False
+    if not r2_storage.is_configured():
+        return False
+
+    try:
+        from tone_forge import audio_transcode
+    except Exception:
+        audio_transcode = None  # type: ignore[assignment]
+
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        return False
+    stems_paths = result.get("stems_paths")
+    if not isinstance(stems_paths, dict) or not stems_paths:
+        return False
+
+    mutated = False
+    for role, raw in list(stems_paths.items()):
+        if not isinstance(raw, str) or not raw:
+            continue
+        # Already remote — nothing to do.
+        if raw.startswith(("http://", "https://")):
+            continue
+        # Local path (or /api/... wrapped path — strip the wrapper).
+        local_path = raw
+        if raw.startswith("/api/admin/serve-file?path="):
+            local_path = raw[len("/api/admin/serve-file?path=") :]
+        # Prefer AAC when ffmpeg is available. Silent fall-back to WAV
+        # keeps CI + laptop-with-no-ffmpeg dev working.
+        upload_path = local_path
+        if audio_transcode and local_path.lower().endswith(".wav"):
+            m4a = audio_transcode.transcode_to_m4a(local_path)
+            if m4a is not None:
+                upload_path = str(m4a)
+        url = r2_storage.upload_stem(upload_path, entry_id, role)
+        if url:
+            stems_paths[role] = url
+            mutated = True
+    return mutated
+
+
+@app.get("/api/song/{entry_id}/bundle")
+async def get_song_bundle(entry_id: str) -> JSONResponse:
+    """Return the mobile-app bundle manifest for a persisted analysis.
+
+    See the module comment above `_MOBILE_BUNDLE_PRESETS` for the wire
+    shape and the multi-phase rollout plan (v1 pass-through → v2 R2 +
+    AAC).
+    """
+    from tone_forge.contribute_chops import build_chops
+
+    entry = _get_history_item(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Song not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="History entry has no analysis result",
+        )
+
+    # Lazily push stems to R2 so the mobile app gets real internet URLs
+    # instead of 127.0.0.1 paths. Best-effort — falls back to the local
+    # serve-file wrapper if R2 isn't configured or the upload flaked.
+    if _maybe_upload_stems_to_r2(entry_id, entry):
+        _update_history_item(entry_id, entry)
+
+    # ----- Meta ------------------------------------------------------
+    meta = {
+        "title": entry.get("name") or result.get("filename") or "Untitled",
+        "artist": entry.get("artist") or result.get("artist") or "",
+        "sourceUrl": entry.get("source_url") or result.get("source_url") or "",
+        "durationSec": float(result.get("duration_sec") or 0.0),
+        "tempoBpm": float(result.get("tempo_bpm") or 0.0) or None,
+        "detectedKey": result.get("detected_key") or None,
+    }
+
+    # ----- Timeline --------------------------------------------------
+    # Trim to the fields the mobile client actually reads. Anything
+    # bigger (energy_curve, midi_stems, quality_report, tone match)
+    # is left out to keep bundles small — they're not consumed by the
+    # Launchpad experience.
+    def _norm_chords(items):
+        if not isinstance(items, list):
+            return []
+        out = []
+        for c in items:
+            if not isinstance(c, dict):
+                continue
+            start = c.get("start")
+            if start is None:
+                start = c.get("start_s")
+            if start is None:
+                start = c.get("start_time")
+            end = c.get("end")
+            if end is None:
+                end = c.get("end_s")
+            if end is None:
+                end = c.get("end_time")
+            sym = c.get("symbol") or c.get("chord") or c.get("label")
+            if start is None or end is None or not sym:
+                continue
+            out.append({
+                "start": float(start),
+                "end": float(end),
+                "symbol": str(sym),
+            })
+        return out
+
+    def _norm_sections(items):
+        if not isinstance(items, list):
+            return []
+        out = []
+        for s in items:
+            if not isinstance(s, dict):
+                continue
+            start = s.get("start") if s.get("start") is not None else s.get("start_time")
+            end = s.get("end") if s.get("end") is not None else s.get("end_time")
+            label = s.get("label") or s.get("name")
+            if start is None or end is None:
+                continue
+            out.append({
+                "start": float(start),
+                "end": float(end),
+                "label": str(label) if label else None,
+            })
+        return out
+
+    def _norm_time_array(items):
+        if not isinstance(items, list):
+            return []
+        try:
+            return [float(x) for x in items if x is not None]
+        except (TypeError, ValueError):
+            return []
+
+    timeline = {
+        "chords": _norm_chords(result.get("chords") or []),
+        "sections": _norm_sections(result.get("sections") or []),
+        "beats": _norm_time_array(result.get("beats_s") or []),
+        "downbeats": _norm_time_array(result.get("downbeats_s") or []),
+    }
+
+    # ----- Stems -----------------------------------------------------
+    stems = _mobile_stem_records(result)
+
+    # ----- Presets (pre-computed chop lists) -------------------------
+    presets: dict = {}
+    stems_paths = result.get("stems_paths") or {}
+    for key, stem_prefs, slice_mode in _MOBILE_BUNDLE_PRESETS:
+        stem = _resolve_preset_stem(stem_prefs, stems_paths)
+        if stem is None:
+            # No shipped stem can source this preset — omit it rather
+            # than emit a pack the client can never load audio for.
+            print(f"[bundle] preset '{key}' skipped: no usable stem "
+                  f"among {sorted(stems_paths.keys())}")
+            continue
+        try:
+            # Reuse the same helper the JS Launchpad UI uses so the
+            # mobile client sees an identical shape. build_chops is
+            # LRU-cached inside contribute_chops so a repeated call
+            # here is cheap.
+            chops = build_chops(
+                stem=stem,
+                slice_mode=slice_mode,
+                analysis_result=result,
+                stem_wav_path=None,
+            )
+        except Exception as exc:
+            # Never let one preset failure sink the whole bundle. Log,
+            # skip, and let the client fall back to on-demand fetch
+            # from /api/song/{id}/chops if it really needs that mode.
+            print(f"[bundle] preset '{key}' failed: {exc}")
+            continue
+        presets[key] = {
+            "stem": stem,
+            "sliceMode": slice_mode,
+            "chops": chops,
+        }
+
+    # ----- Song DNA (Phase 5) ----------------------------------------
+    # Optional field: the four Song-DNA sample packs (guitar stabs,
+    # FX tails, ambient textures, transitions). Extractors that need
+    # a local stem WAV fall through to empty pad lists when the song
+    # is R2-hosted; transitions still populate from timing data.
+    song_dna: dict = {}
+    try:
+        from tone_forge.sample_extractor import build_song_dna
+        song_dna = build_song_dna(
+            analysis_result=result,
+            stem_wav_paths=_resolve_local_stem_paths(result),
+        )
+    except Exception as exc:
+        # Never let DNA extraction sink the whole bundle — the mobile
+        # app treats an absent `songDna` field as "no DNA packs" and
+        # renders the curated packs only.
+        print(f"[bundle] songDna extraction failed: {exc}")
+        song_dna = {}
+
+    payload = {
+        "bundleVersion": 2,
+        "analysisId": entry_id,
+        "meta": meta,
+        "timeline": timeline,
+        "stems": stems,
+        "presets": presets,
+        "songDna": song_dna,
+    }
+    return JSONResponse(_convert_numpy_types(payload))
+
+
+@app.get("/api/song/{entry_id}/song-dna")
+async def get_song_dna(entry_id: str) -> JSONResponse:
+    """Return just the Song-DNA packs for a persisted analysis.
+
+    Useful for clients that want to refresh the DNA packs after a
+    stem separator re-run without pulling the whole bundle. Response
+    shape mirrors the ``songDna`` field of the bundle endpoint.
+
+    Response:
+        {
+          "analysisId": "<id>",
+          "packs": {
+            "guitar_stab":     {"name": ..., "kind": ..., "colorHint": ..., "pads": [...]},
+            "fx_tail":         {...},
+            "ambient_texture": {...},
+            "transition":      {...}
+          }
+        }
+    """
+    from tone_forge.sample_extractor import build_song_dna
+
+    entry = _get_history_item(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Song not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="History entry has no analysis result",
+        )
+
+    packs = build_song_dna(
+        analysis_result=result,
+        stem_wav_paths=_resolve_local_stem_paths(result),
+    )
+    return JSONResponse(_convert_numpy_types({
+        "analysisId": entry_id,
+        "packs": packs,
+    }))
+
+
+# -----------------------------------------------------------------------------
+# Layer sync — shareable event-stream recordings from mobile "Join Songs".
+#
+# The mobile app records LayerTimeline JSON files locally (see
+# ToneForgeEngine/LayerTimeline.swift). These routes let a user push a
+# layer to the backend so it can be shared or replayed on another
+# device. Storage is intentionally file-based: one JSON per layer under
+# `backend/data/layers/{analysisId}/{layerId}.json`. No audio is stored
+# — the timeline is the whole document.
+#
+# Schema constraints (must stay in sync with LayerTimeline.swift):
+#   - timelineVersion (int)  required
+#   - layerId (str)          required; used as filename + must equal
+#                            the URL segment to avoid split-brain writes
+#   - analysisId (str)       required; must equal the URL segment
+#   - name (str)             required
+#   - createdAtEpoch (float) required
+#   - durationSec (float)    required
+#   - events (list)          required (may be empty)
+#   - activePackId (str|None) optional
+# -----------------------------------------------------------------------------
+
+_LAYERS_ROOT = Path(__file__).parent / "data" / "layers"
+
+_LAYER_REQUIRED_KEYS = {
+    "timelineVersion",
+    "layerId",
+    "analysisId",
+    "name",
+    "createdAtEpoch",
+    "durationSec",
+    "events",
+}
+
+
+def _layers_dir(analysis_id: str) -> Path:
+    """Directory holding every layer JSON for one song.
+
+    Analysis IDs are 8-hex UUID fragments produced by ``_add_to_history``
+    so they're safe to use as a path segment. We still guard against
+    traversal by disallowing separators + parent refs.
+    """
+    if not analysis_id or "/" in analysis_id or "\\" in analysis_id or ".." in analysis_id:
+        raise HTTPException(status_code=400, detail="Invalid analysisId")
+    return _LAYERS_ROOT / analysis_id
+
+
+def _layer_path(analysis_id: str, layer_id: str) -> Path:
+    if not layer_id or "/" in layer_id or "\\" in layer_id or ".." in layer_id:
+        raise HTTPException(status_code=400, detail="Invalid layerId")
+    return _layers_dir(analysis_id) / f"{layer_id}.json"
+
+
+def _validate_layer_body(body: dict, expected_analysis_id: str) -> dict:
+    """Reject malformed layers before touching the filesystem.
+
+    Returns the same dict on success so the caller can chain. Raises
+    HTTPException with a specific reason on failure so the mobile UI
+    can surface it verbatim.
+    """
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Layer body must be a JSON object")
+    missing = _LAYER_REQUIRED_KEYS - set(body.keys())
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Layer missing required fields: {sorted(missing)}",
+        )
+    if body.get("analysisId") != expected_analysis_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Layer analysisId does not match URL",
+        )
+    if not isinstance(body.get("events"), list):
+        raise HTTPException(status_code=400, detail="Layer events must be a list")
+    return body
+
+
+@app.post("/api/song/{entry_id}/layers")
+async def post_song_layer(entry_id: str, request: Request) -> JSONResponse:
+    """Persist a LayerTimeline JSON from the mobile app.
+
+    Accepts the full timeline (schema per LayerTimeline.swift) and
+    writes it atomically to
+    ``backend/data/layers/{entry_id}/{layerId}.json``. Idempotent:
+    re-uploading the same layerId overwrites the file (used by the
+    mobile client to push edits like renames).
+
+    Returns ``{layerId, analysisId, url}`` where url is the canonical
+    GET path.
+    """
+    entry = _get_history_item(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Song not found")
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+    body = _validate_layer_body(body, expected_analysis_id=entry_id)
+    layer_id = str(body["layerId"])
+    dest = _layer_path(entry_id, layer_id)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # Write via tmp+rename so a crash mid-write can't leave a partial file.
+    tmp = dest.with_suffix(".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(body, f, indent=2)
+    tmp.replace(dest)
+    return JSONResponse({
+        "layerId": layer_id,
+        "analysisId": entry_id,
+        "url": f"/api/song/{entry_id}/layers/{layer_id}",
+    })
+
+
+@app.get("/api/song/{entry_id}/layers")
+async def get_song_layers(entry_id: str) -> JSONResponse:
+    """List every layer stored for a song (metadata only, no events).
+
+    Sorted newest-first by ``createdAtEpoch``. Corrupt files are
+    skipped silently so one bad file doesn't hide the rest.
+    """
+    entry = _get_history_item(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Song not found")
+    dir_ = _layers_dir(entry_id)
+    if not dir_.exists():
+        return JSONResponse({"analysisId": entry_id, "layers": []})
+    summaries: list[dict] = []
+    for path in dir_.glob("*.json"):
+        try:
+            with open(path) as f:
+                body = json.load(f)
+        except Exception:
+            continue
+        summaries.append({
+            "layerId": body.get("layerId"),
+            "name": body.get("name"),
+            "createdAtEpoch": body.get("createdAtEpoch"),
+            "durationSec": body.get("durationSec"),
+            "eventCount": len(body.get("events") or []),
+            "activePackId": body.get("activePackId"),
+        })
+    summaries.sort(
+        key=lambda s: s.get("createdAtEpoch") or 0.0,
+        reverse=True,
+    )
+    return JSONResponse({"analysisId": entry_id, "layers": summaries})
+
+
+@app.get("/api/song/{entry_id}/layers/{layer_id}")
+async def get_song_layer(entry_id: str, layer_id: str) -> JSONResponse:
+    """Return the full LayerTimeline JSON for one layer."""
+    entry = _get_history_item(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Song not found")
+    path = _layer_path(entry_id, layer_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Layer not found")
+    try:
+        with open(path) as f:
+            body = json.load(f)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Layer file unreadable: {exc}")
+    return JSONResponse(body)
 
 
 def _decode_midi_stems_for_payload(midi_stems: dict) -> dict:

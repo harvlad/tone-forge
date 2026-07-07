@@ -860,6 +860,12 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
 .settings-hint { font-size: 11px; color: var(--text-dim); margin-top: 2px; padding-left: 22px; }
 .settings-hint--inline { padding-left: 0; margin: 0 0 6px; }
 #setting-device-reset { font-size: 12px; padding: 4px 10px; }
+.launchpad-status--idle { color: var(--text-dim); }
+.launchpad-status--ok { color: #6ce07a; }
+.launchpad-status--error { color: #e07a6c; }
+.launchpad-openjam { margin-top: 6px; padding-left: 22px; }
+.launchpad-openjam label { display: block; font-size: 12px; padding: 3px 0; }
+.launchpad-openjam select { font-size: 12px; margin-left: 4px; }
 
 /* ----------------------------------------------- Intonation panel */
 .intonation-panel {
@@ -1100,6 +1106,15 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   margin-bottom: 24px;
   align-items: start;
 }
+/* Launchpad tab: sidebar is meaningless (pads are the instrument),
+   so collapse the first column and let the center reclaim the width.
+   NB: `.stage-col { display: flex }` below has higher specificity than
+   the UA's built-in `[hidden] { display: none }` rule, so we have to
+   re-assert the hidden semantics explicitly. */
+main.lp-tab-active .perform-grid {
+  grid-template-columns: 1fr;
+}
+.stage-col[hidden] { display: none !important; }
 .stage-col {
   background: var(--panel);
   border-radius: 16px;
@@ -1119,6 +1134,33 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
   color: var(--text-dim);
   font-weight: 600;
 }
+
+/* #slot-right is a <details> so the whole stem rack can collapse to
+   the label row. Disclosure marker is a rotating caret before the
+   label text (native ▶/▼ marker is hidden for a cleaner look). */
+#slot-right > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#slot-right > summary::-webkit-details-marker { display: none; }
+#slot-right > summary::before {
+  content: '▾';
+  display: inline-block;
+  color: var(--text-dim);
+  transition: transform 120ms ease;
+  font-size: 10px;
+}
+#slot-right:not([open]) > summary::before { transform: rotate(-90deg); }
+#slot-right:not([open]) { gap: 0; }
+/* Belt-and-braces: `.stage-col { display: flex }` on <details> means
+   the browser's native "hide non-summary children when not [open]"
+   still works, but some layout combinations were rendering the rack
+   even while collapsed. Explicitly hide the rack when closed. */
+#slot-right:not([open]) > .stem-rack { display: none; }
 
 /* left col: instrument selector */
 .perform-instrument-selector {
@@ -3845,3 +3887,458 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   margin-top: 18px;
   justify-content: center;
 }
+
+/* ==========================================================
+   Launchpad center-column view (tab strip + dedicated panel)
+   ==========================================================
+   The tab strip swaps #chord-stack (chord ribbon + guidance +
+   riff + stems) for #launchpad-panel (status + mode + mirror
+   grid + legend + voice tweaks). Persisted via
+   state.settings.launchpadCenterTab.
+*/
+.center-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border, #2b2f38);
+}
+.center-tab {
+  background: transparent;
+  border: 0;
+  color: var(--text-dim, #8a8f99);
+  font: inherit;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.center-tab:hover { color: var(--text, #e6e8ec); }
+.center-tab.is-active {
+  color: var(--text, #e6e8ec);
+  border-bottom-color: var(--accent, #6ce07a);
+}
+.center-tab[disabled] { opacity: 0.5; cursor: not-allowed; }
+.center-tab-warn-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e07a6c;
+  box-shadow: 0 0 4px #e07a6c;
+}
+.chord-stack[hidden], .launchpad-panel[hidden] { display: none !important; }
+
+/* Panel body */
+.launchpad-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0;
+}
+.lp-section-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim, #8a8f99);
+  margin-bottom: 4px;
+}
+.lp-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.lp-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #1c1f26;
+  font-size: 13px;
+  font-weight: 500;
+}
+.lp-status-device { color: var(--text-dim, #8a8f99); font-size: 12px; }
+.lp-status-enable { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.lp-status-enable[hidden] { display: none !important; }
+
+/* Preset ("Play style") selector: five opinionated radios stacked
+   vertically inside the settings column, with a short caption below
+   that swaps in on selection. */
+.lp-preset-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px 12px;
+  background: #16181e;
+  border-radius: 8px;
+}
+/* Chunky button-style radios. The native radio is hidden and the
+   entire label becomes the clickable button — round accent dot on
+   the left, label text on the right, glowing border/background when
+   selected. The per-preset accent color is set via CSS custom
+   properties on each label (--preset-color / --preset-color-soft) so
+   the shared button rules stay DRY. Matches the Launchpad top-row
+   preset LEDs painted from jam.js. */
+.lp-preset-row label {
+  --preset-color: #8a8f99;
+  --preset-color-soft: rgba(138, 143, 153, 0.14);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  min-height: 34px;
+  background: #1c1f27;
+  border: 1px solid #2b2f38;
+  border-radius: 999px;
+  color: #d8dbe1;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 60ms ease;
+}
+.lp-preset-row label:hover {
+  background: #20242d;
+  border-color: #3a3f4a;
+}
+.lp-preset-row label:active {
+  transform: translateY(1px);
+}
+/* Hide the native radio; the label itself is the clickable target. */
+.lp-preset-row label input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+/* Accent dot rendered via ::before so we don't need to touch the
+   markup. Empty circle by default; filled bright when selected. */
+.lp-preset-row label::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--preset-color);
+  background: transparent;
+  box-shadow: none;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+/* Selected: full accent color, subtle glow, filled dot, soft tint
+   background so the button visibly stands out from its siblings. */
+.lp-preset-row label:has(input:checked) {
+  background: var(--preset-color-soft);
+  border-color: var(--preset-color);
+  color: #ffffff;
+}
+.lp-preset-row label:has(input:checked)::before {
+  background: var(--preset-color);
+  box-shadow: 0 0 0 3px var(--preset-color-soft),
+              0 0 10px 0 var(--preset-color);
+}
+/* Per-preset accent colors — matches the Launchpad hardware LEDs
+   painted from _launchpadPaintPresetTopRow (jam.js). */
+.lp-preset-row label:has(input[value="learn-song"])       { --preset-color: #64b5f6; --preset-color-soft: rgba(100, 181, 246, 0.14); }
+.lp-preset-row label:has(input[value="perform-song"])     { --preset-color: #4fc3f7; --preset-color-soft: rgba( 79, 195, 247, 0.14); }
+.lp-preset-row label:has(input[value="learn-harmony"])    { --preset-color: #ba68c8; --preset-color-soft: rgba(186, 104, 200, 0.14); }
+.lp-preset-row label:has(input[value="jam-in-key"])       { --preset-color: #ff8a65; --preset-color-soft: rgba(255, 138, 101, 0.14); }
+.lp-preset-row label:has(input[value="melody-practice"])  { --preset-color: #ffd54f; --preset-color-soft: rgba(255, 213,  79, 0.14); }
+.lp-preset-row label:has(input[value="play-bassline"])    { --preset-color: #a1887f; --preset-color-soft: rgba(161, 136, 127, 0.14); }
+.lp-preset-row label:has(input[value="contribute-vocal"])    { --preset-color: #66bb6a; --preset-color-soft: rgba(102, 187, 106, 0.16); }
+.lp-preset-row label:has(input[value="contribute-drums"])    { --preset-color: #ef5350; --preset-color-soft: rgba(239,  83,  80, 0.16); }
+.lp-preset-row label:has(input[value="contribute-bass"])     { --preset-color: #ab47bc; --preset-color-soft: rgba(171,  71, 188, 0.16); }
+.lp-preset-row label:has(input[value="contribute-harmonic"]) { --preset-color: #26c6da; --preset-color-soft: rgba( 38, 198, 218, 0.16); }
+.lp-preset-row label:has(input[value="contribute-sections"]) { --preset-color: #ffb74d; --preset-color-soft: rgba(255, 183,  77, 0.16); }
+/* Sub-header inside the preset row splitting the play-along presets
+   from the Contribute family. Visually a thin caption above a divider
+   line to signal "different mental model below". */
+.lp-preset-group-label {
+  margin-top: 6px;
+  padding-top: 8px;
+  width: 100%;
+  border-top: 1px solid #23262e;
+  color: var(--text-dim, #8a8f99);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.lp-preset-caption {
+  margin: 4px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid #23262e;
+  width: 100%;
+  color: var(--text-dim, #8a8f99);
+  font-size: 12px;
+  line-height: 1.4;
+}
+/* Suggestion shown when the classifier thinks a different preset
+   would fit the loaded song better than the currently-selected one. */
+.lp-preset-hint {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  width: 100%;
+  background: rgba(255, 183, 77, 0.08);
+  border-left: 2px solid #ffb74d;
+  border-radius: 4px;
+  color: #ffcc80;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Advanced-controls disclosure wraps the underlying mode/layout/assist/
+   instrument/anticipation/openjam controls so they're hidden by default
+   but still reachable for power users. */
+.lp-advanced {
+  border-top: 1px solid var(--border, #2b2f38);
+  padding-top: 8px;
+}
+.lp-advanced-summary {
+  cursor: pointer;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-dim, #8a8f99);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.lp-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.lp-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.lp-mode-row label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.lp-openjam-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #16181e;
+  border-radius: 8px;
+}
+.lp-openjam-options label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+
+/* Three-column split: legend (auto-width) | mirror (fills the free
+   space) | settings (fixed narrow on the right). Legend on the left
+   lets it flow vertically without stealing the grid's headroom, and
+   the mirror stays the visual anchor in the middle. */
+.lp-split {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 260px;
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .lp-split { grid-template-columns: 1fr; }
+}
+
+/* Right-side settings stack — mode / layout / assist / instrument /
+   anticipation / open-jam options / legend, top-to-bottom. */
+.lp-settings-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.lp-settings-column .lp-mode-row,
+.lp-settings-column .lp-openjam-options {
+  padding: 6px 10px;
+  background: #16181e;
+  border-radius: 8px;
+}
+.lp-settings-column .lp-mode-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.lp-settings-column .lp-mode-row .lp-section-label {
+  margin-bottom: 0;
+}
+.lp-settings-column .lp-legend-wrap {
+  padding: 6px 10px;
+  background: #16181e;
+  border-radius: 8px;
+}
+
+/* On-screen 8×8 mirror. Rendered so bottom-left = pad 11 to
+   match the physical device orientation. The grid fills the free
+   column of .lp-split (settings sit at a fixed 260px on the right)
+   so the mirror scales up as the viewport grows. */
+.lp-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  /* Cap by both dimensions so the grid never overflows the viewport
+     vertically. `min()` picks whichever is smaller: full column width,
+     or the available vertical space (viewport minus header + tabs +
+     status/legend rows above + transport controls below). The cap
+     lives on the wrapper (not .lp-grid) so the "PADS" label and
+     countdown bar share the same centered width as the grid itself. */
+  width: min(100%, calc(100vh - 190px));
+  margin: 0 auto;
+}
+.lp-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 4px;
+  aspect-ratio: 1 / 1;
+  padding: 6px;
+  background: #0e1015;
+  border-radius: 10px;
+  width: 100%;
+}
+.lp-pad {
+  border: 0;
+  border-radius: 4px;
+  background: #1b1e25;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 60ms ease-out, box-shadow 60ms ease-out;
+  position: relative;
+}
+.lp-pad:hover { transform: scale(1.05); }
+.lp-pad:active { transform: scale(0.95); }
+.lp-pad:focus-visible { outline: 2px solid var(--accent, #6ce07a); outline-offset: 2px; }
+.lp-pad--pulse {
+  /* Upcoming-chord pads pulse and stay dimmer than active pads so
+     the currently-sounding tones remain the visual anchor. */
+  animation: lp-pulse 0.85s ease-in-out infinite;
+}
+/* Static (all playable pads that aren't currently sounding) get
+   knocked back so the active pad reads as "you are here" at a glance.
+   Only applied in modes with a single sounding pad (song-verify /
+   song-display); jam/instrument modes leave every pad bright because
+   the user is free-picking, not tracking a "now" position. */
+.lp-grid--has-active .lp-pad--static { filter: brightness(0.28); }
+/* Disabled / empty pad: knocked way back visually so it clearly
+   reads as "unusable" next to bright, tap-able chop pads. Uses
+   both a low opacity and a dark overlay so the residual tint
+   from the recorded RGB doesn't compete with active neighbours. */
+.lp-pad--disabled {
+  filter: brightness(0.35) saturate(0.4);
+  opacity: 0.45;
+}
+/* Active pad: brightened + white ring + strong glow so the user's
+   current position pops against the dimmed backdrop. */
+.lp-pad--active {
+  filter: brightness(1.5) saturate(1.15);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.9),
+    0 0 18px 4px currentColor;
+  z-index: 1;
+}
+@keyframes lp-pulse {
+  0%, 100% { filter: brightness(0.55); }
+  50%     { filter: brightness(0.15); }
+}
+
+/* Legend */
+.lp-legend { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.lp-legend-item { display: flex; align-items: center; gap: 8px; }
+.lp-legend-swatch {
+  width: 14px; height: 14px; border-radius: 3px; flex: 0 0 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.lp-legend-caption {
+  margin-top: 6px;
+  color: var(--text-dim, #8a8f99);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Horizontal variant: chips flow left-to-right in a wrap row above
+   the pad grid; caption drops to its own line below. */
+.lp-legend-wrap--horizontal {
+  padding: 6px 10px;
+  background: #16181e;
+  border-radius: 8px;
+}
+.lp-legend--horizontal {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+}
+.lp-legend--horizontal .lp-legend-caption {
+  flex-basis: 100%;
+  margin-top: 2px;
+}
+
+/* Countdown bar: sits above the pad grid, communicates time until the
+   next distinct chord change. Fill shrinks smoothly from 100% to 0. */
+.lp-countdown {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+  background: #16181e;
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+.lp-countdown-track {
+  position: relative;
+  height: 8px;
+  background: #0d0f13;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.lp-countdown-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 0%;
+  background: linear-gradient(90deg, #4dd0e1 0%, #ffb74d 65%, #ff5252 100%);
+  transition: width 80ms linear;
+  border-radius: 4px;
+}
+.lp-countdown-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--text-dim, #8a8f99);
+}
+.lp-countdown-next {
+  color: var(--text, #e6e8ec);
+  font-weight: 600;
+}
+.lp-countdown-time {
+  font-variant-numeric: tabular-nums;
+}
+.lp-countdown.lp-countdown--imminent .lp-countdown-fill {
+  animation: lp-countdown-pulse 0.4s ease-in-out infinite alternate;
+}
+@keyframes lp-countdown-pulse {
+  0% { filter: brightness(0.9); }
+  100% { filter: brightness(1.35); }
+}
+
+/* Voice tweaks (collapsible) */
+.lp-voice { border-top: 1px solid var(--border, #2b2f38); padding-top: 8px; }
+.lp-voice-summary { cursor: pointer; padding: 4px 0; font-size: 13px; }
+.lp-voice-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.lp-tweak-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 60px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.lp-tweak-label { color: var(--text-dim, #8a8f99); }
+.lp-tweak-readout { text-align: right; font-variant-numeric: tabular-nums; color: var(--text, #e6e8ec); }
+.lp-tweak-row input[type="range"] { width: 100%; }
+.lp-voice-actions { display: flex; justify-content: flex-end; padding-top: 6px; }

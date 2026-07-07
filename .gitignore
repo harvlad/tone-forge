@@ -59,6 +59,9 @@ backend/uploads/
 *.wav
 *.mp3
 *.flac
+# mobile-ios golden/input test fixtures are tracked despite the
+# repo-wide *.wav rule above.
+!mobile-ios/Tests/ToneForgeMobileTests/Fixtures/*.wav
 
 # ToneForge runtime artifacts
 backend/benchmark_results/
@@ -66,6 +69,8 @@ backend/profile_results/
 backend/preset_catalog_output/
 backend/data/tone_log.jsonl
 backend/data/history.json
+# layer uploads posted by the mobile app at runtime
+backend/data/layers/
 
 # bench/ harness outputs (M1)
 backend/bench/runs/

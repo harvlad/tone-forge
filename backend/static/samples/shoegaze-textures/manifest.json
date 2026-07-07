@@ -1,0 +1,97 @@
+{
+  "manifestVersion": 1,
+  "packId": "shoegaze-textures",
+  "name": "Shoegaze Textures",
+  "family": "pads",
+  "paletteHint": "purple",
+  "pads": [
+    {
+      "padIdx": 0,
+      "name": "Shimmer",
+      "family": "pads",
+      "filename": "00_shimmer.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 1,
+      "name": "Warm Drone",
+      "family": "pads",
+      "filename": "01_warm_drone.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 2,
+      "name": "String Pad",
+      "family": "pads",
+      "filename": "02_string_pad.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 3,
+      "name": "Noise Wash",
+      "family": "textures",
+      "filename": "03_noise_wash.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 4,
+      "name": "Reverse Swell",
+      "family": "textures",
+      "filename": "04_reverse_swell.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 5,
+      "name": "Bell",
+      "family": "stabs",
+      "filename": "05_bell.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 6,
+      "name": "Dark Chord",
+      "family": "stabs",
+      "filename": "06_dark_chord.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 7,
+      "name": "Riser",
+      "family": "textures",
+      "filename": "07_riser.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    }
+  ]
+}
