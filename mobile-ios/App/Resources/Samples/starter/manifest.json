@@ -1,0 +1,185 @@
+{
+  "manifestVersion": 1,
+  "packId": "starter",
+  "name": "Starter",
+  "family": "mixed",
+  "paletteHint": "purple",
+  "pads": [
+    {
+      "padIdx": 0,
+      "name": "Shimmer Pad",
+      "family": "pads",
+      "colorHint": "purple",
+      "filename": "00_shimmer_pad.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/4"
+    },
+    {
+      "padIdx": 1,
+      "name": "Warm Pad",
+      "family": "pads",
+      "colorHint": "purple",
+      "filename": "01_warm_pad.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/4"
+    },
+    {
+      "padIdx": 2,
+      "name": "String Pad",
+      "family": "pads",
+      "colorHint": "purple",
+      "filename": "02_string_pad.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/4"
+    },
+    {
+      "padIdx": 3,
+      "name": "Choir Pad",
+      "family": "pads",
+      "colorHint": "purple",
+      "filename": "03_choir_pad.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/4"
+    },
+    {
+      "padIdx": 4,
+      "name": "Kick",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "04_kick.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 5,
+      "name": "Snare",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "05_snare.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 6,
+      "name": "Hat Closed",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "06_hat_closed.m4a",
+      "chokeGroup": 1,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 7,
+      "name": "Tom",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "07_tom.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 8,
+      "name": "Drone",
+      "family": "textures",
+      "colorHint": "teal",
+      "filename": "08_drone.m4a",
+      "chokeGroup": null,
+      "loopPointSec": 0.0,
+      "gainDb": -3,
+      "defaultQuantize": "1 bar"
+    },
+    {
+      "padIdx": 9,
+      "name": "Wash",
+      "family": "textures",
+      "colorHint": "teal",
+      "filename": "09_wash.m4a",
+      "chokeGroup": null,
+      "loopPointSec": 0.0,
+      "gainDb": -3,
+      "defaultQuantize": "1 bar"
+    },
+    {
+      "padIdx": 10,
+      "name": "Piano Stab",
+      "family": "stabs",
+      "colorHint": "pink",
+      "filename": "10_piano_stab.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/4"
+    },
+    {
+      "padIdx": 11,
+      "name": "Guitar Stab",
+      "family": "stabs",
+      "colorHint": "pink",
+      "filename": "11_guitar_stab.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/4"
+    },
+    {
+      "padIdx": 12,
+      "name": "Sub Kick",
+      "family": "bass",
+      "colorHint": "blue",
+      "filename": "12_sub_kick.m4a",
+      "chokeGroup": 2,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/4"
+    },
+    {
+      "padIdx": 13,
+      "name": "Bass Hit",
+      "family": "bass",
+      "colorHint": "blue",
+      "filename": "13_bass_hit.m4a",
+      "chokeGroup": 2,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/4"
+    },
+    {
+      "padIdx": 14,
+      "name": "Riser",
+      "family": "fx",
+      "colorHint": "yellow",
+      "filename": "14_riser.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": -3,
+      "defaultQuantize": "1 bar"
+    },
+    {
+      "padIdx": 15,
+      "name": "Impact",
+      "family": "fx",
+      "colorHint": "yellow",
+      "filename": "15_impact.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1 bar"
+    }
+  ]
+}

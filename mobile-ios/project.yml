@@ -1,0 +1,120 @@
+# XcodeGen spec for the ToneForge Mobile iOS app.
+#
+# The Swift package (Package.swift) at the repo root contains all the
+# real code (ToneForgeEngine + ToneForgeMobile libraries + tests). This
+# spec generates a minimal iOS app target that links the ToneForgeMobile
+# library as a Swift Package dependency and provides the @main entry
+# point + Info.plist + asset catalog.
+#
+# Usage:
+#   brew install xcodegen
+#   xcodegen generate            # produces ToneForgeMobile.xcodeproj
+#   xcodebuild -project ToneForgeMobile.xcodeproj \
+#              -scheme ToneForgeMobileApp \
+#              -destination 'platform=iOS Simulator,name=iPhone 15' \
+#              build
+
+name: ToneForgeMobile
+options:
+  deploymentTarget:
+    iOS: "17.0"
+  bundleIdPrefix: com.toneforge
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+# Consume the SwiftPM package that lives alongside this file.
+packages:
+  ToneForgeMobilePackage:
+    path: .
+
+# Explicit scheme so `xcodebuild test -scheme ToneForgeMobileApp`
+# runs the SwiftPM unit-test bundles plus the UI-test bundle on a
+# simulator (the package's auto-generated schemes aren't
+# test-configured when opened through this project).
+schemes:
+  ToneForgeMobileApp:
+    build:
+      targets:
+        ToneForgeMobileApp: all
+    test:
+      targets:
+        - package: ToneForgeMobilePackage/ToneForgeEngineTests
+        - package: ToneForgeMobilePackage/ToneForgeMobileTests
+        - ToneForgeMobileUITests
+
+targets:
+  ToneForgeMobileApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes:
+          - "Resources/Samples"
+      # The bundled sample packs must be added as folder references
+      # (type: folder) so `Bundle.main.url(forResource: "Samples", …)`
+      # resolves to a real directory inside the .app — otherwise
+      # SampleBank.defaultBank can't find it and starter-pack triggers
+      # go silent.
+      - path: App/Resources/Samples
+        type: folder
+        buildPhase: resources
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: ToneForge
+        # Modern launch screen (empty = plain system background).
+        # Without a UILaunchScreen/UILaunchStoryboardName key iOS runs
+        # the app letterboxed at legacy iPhone SE dimensions and
+        # scales it — the "compressed layout" bug.
+        UILaunchScreen: {}
+        # Let the ModeGridView Canvas repaint at 120 Hz on ProMotion
+        # displays (otherwise CADisplayLink-driven SwiftUI updates cap
+        # at 60 Hz on iPhone).
+        CADisableMinimumFrameDurationOnPhone: true
+        # Music-library import: only unprotected, downloaded tracks
+        # the user owns are analysable (DRM items are filtered out).
+        NSAppleMusicUsageDescription: >-
+          ToneForge lists your music library so you can analyse songs
+          you own for practice. DRM-protected tracks are never uploaded.
+        # P3 mic-as-pad-source pipeline: recordings become playable
+        # pads. They are stored on-device only and never uploaded
+        # (PadSampleMetadata.neverUpload, ComplianceTests).
+        NSMicrophoneUsageDescription: >-
+          ToneForge records short samples from the microphone so you
+          can play them on the pads. Recordings stay on this device
+          and are never uploaded.
+    dependencies:
+      - package: ToneForgeMobilePackage
+        product: ToneForgeMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harvlad.toneforge.mobile
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.10"
+        TARGETED_DEVICE_FAMILY: "1,2"   # iPhone + iPad
+        ENABLE_PREVIEWS: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        # Personal Team ID for on-device builds. If someone else clones
+        # this repo they'll need to swap in their own team + a unique
+        # bundle identifier.
+        DEVELOPMENT_TEAM: H887LZYZ3M
+
+  # XCUITest bundle exercising the attestation gate through the app's
+  # -uitest-* launch-argument contract (UITestSupport.swift).
+  ToneForgeMobileUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: ToneForgeMobileApp
+    settings:
+      base:
+        TEST_TARGET_NAME: ToneForgeMobileApp
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.10"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: H887LZYZ3M
