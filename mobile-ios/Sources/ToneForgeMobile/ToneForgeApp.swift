@@ -1995,9 +1995,14 @@ public final class AppState: ObservableObject {
     /// references (`packIdOverride ?? activePackId` per event — the
     /// same rule replay uses), so multi-pack takes export all their
     /// hits. The current song's stem URLs ride along so DNA-pack
-    /// chops (stem-slice pads) render too. Packs that can't be
-    /// resolved anymore (deleted cache, another song's DNA pack,
-    /// device-local samples) degrade to skipped events, mirroring
+    /// chops (stem-slice pads) render too, and device-local pads
+    /// (mic/vocoded recordings) resolve via the current mode's grid
+    /// assignments — the same table live replay consults, so the
+    /// export matches what replay plays today. (Including them in a
+    /// local m4a doesn't touch `neverUpload`, which guards backend
+    /// uploads of the raw samples.) Packs that can't be resolved
+    /// anymore (deleted cache, another song's DNA pack, a cleared
+    /// local assignment) degrade to skipped events, mirroring
     /// replay's padNotFound behavior. On success returns the rendered
     /// file URL so callers can present a share sheet. On failure
     /// returns nil and stores the reason in `layerError`.
@@ -2014,7 +2019,21 @@ public final class AppState: ObservableObject {
             referencedPackIds.insert(base)
         }
         let packs = referencedPackIds.compactMap { resolvedPack(forPackId: $0) }
-        guard !packs.isEmpty else {
+
+        // Grid padIdx → WAV for local pads the take references.
+        var localPadFiles: [Int: URL] = [:]
+        if referencedPackIds.contains(SampleScheduler.localPackId) {
+            let assignments = padAssignmentStore
+                .assignments(for: modeCoordinator.appMode)
+            for (gridRaw, slot) in assignments {
+                guard case .localSample(let id) = slot.ref,
+                      let url = try? padSampleStore.wavURL(id: id)
+                else { continue }
+                localPadFiles[gridRaw] = url
+            }
+        }
+
+        guard !packs.isEmpty || !localPadFiles.isEmpty else {
             layerError = "None of this layer's sample packs are available"
             return nil
         }
@@ -2034,12 +2053,13 @@ public final class AppState: ObservableObject {
 
         let stemFiles = currentStemLocalURLs
         do {
-            let url = try await Task.detached(priority: .userInitiated) {
+            let url = try await Task.detached(priority: .userInitiated) { [localPadFiles] in
                 let renderer = LayerOfflineRenderer()
                 let result = try renderer.render(
                     timeline: timeline,
                     packs: packs,
                     stemFiles: stemFiles,
+                    localPadFiles: localPadFiles,
                     outputURL: outputURL
                 )
                 return result.url

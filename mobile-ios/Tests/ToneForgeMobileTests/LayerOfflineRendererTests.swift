@@ -440,6 +440,139 @@ final class LayerOfflineRendererTests: XCTestCase {
         XCTAssertEqual(peak, 0.891, accuracy: 0.02)
     }
 
+    // MARK: - Device-local (mic/vocoded) pads
+
+    /// A mic-shaped WAV: mono 48 kHz sine peaking at 0.4, like a
+    /// quiet PadSampleStore capture (payloads are mono 48 kHz).
+    private func writeLocalWav(to url: URL) throws {
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 48_000,
+            channels: 1,
+            interleaved: false
+        )!
+        let frames: AVAudioFrameCount = 4800 // 0.1 s
+        let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)!
+        buf.frameLength = frames
+        if let ch = buf.floatChannelData?[0] {
+            let twoPi = 2.0 * Double.pi
+            for i in 0..<Int(frames) {
+                ch[i] = Float(sin(twoPi * 440 * Double(i) / 48_000) * 0.4)
+            }
+        }
+        try writeWav(buf, to: url)
+    }
+
+    func testLocalPadRendersAlongsidePackEvents() throws {
+        // A take mixing a pack hit and a mic-pad hit (grid raw 65,
+        // packIdOverride "local") — both must render when the caller
+        // supplies the local WAV map.
+        let localWav = tmpDir.appendingPathComponent("mic.wav")
+        try writeLocalWav(to: localWav)
+        let packWav = tmpDir.appendingPathComponent("kick.wav")
+        try writeWav(sineBuffer(durationSec: 0.1), to: packWav)
+
+        let starter = ResolvedSamplePack(
+            pack: SamplePack(
+                packId: "starter",
+                name: "starter",
+                family: .percussion,
+                pads: [SamplePad(
+                    padIdx: 0, name: "kick",
+                    family: .percussion,
+                    filename: packWav.lastPathComponent
+                )]
+            ),
+            padFileURLs: [0: packWav]
+        )
+        let timeline = makeTimeline(
+            events: [
+                sampleOn(0, at: 0.0),
+                sampleOn(65, at: 0.25,
+                         packId: SampleScheduler.localPackId),
+            ],
+            durationSec: 0.6
+        )
+        let out = tmpDir.appendingPathComponent("local-mixed.m4a")
+        let result = try LayerOfflineRenderer().render(
+            timeline: timeline,
+            packs: [starter],
+            localPadFiles: [65: localWav],
+            outputURL: out,
+            tailSec: 0.1
+        )
+        XCTAssertEqual(result.renderedSampleEvents, 2)
+        XCTAssertEqual(result.unresolvedSampleEvents, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
+    }
+
+    func testLocalOnlyTakeRendersWithNoPacks() throws {
+        // Sketch takes played entirely on mic pads reference no
+        // resolvable pack — the local map alone must carry the render.
+        let localWav = tmpDir.appendingPathComponent("mic-only.wav")
+        try writeLocalWav(to: localWav)
+        let timeline = makeTimeline(
+            events: [sampleOn(65, at: 0.0,
+                              packId: SampleScheduler.localPackId)],
+            durationSec: 0.3
+        )
+        let out = tmpDir.appendingPathComponent("local-only.m4a")
+        let result = try LayerOfflineRenderer().render(
+            timeline: timeline,
+            packs: [],
+            localPadFiles: [65: localWav],
+            outputURL: out,
+            tailSec: 0.1
+        )
+        XCTAssertEqual(result.renderedSampleEvents, 1)
+        XCTAssertEqual(result.unresolvedSampleEvents, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
+    }
+
+    func testLocalPadMissingFromMapIsUnresolved() throws {
+        // Assignment cleared / sample deleted since the take — the
+        // event is skipped and surfaced, never a crash.
+        let timeline = makeTimeline(
+            events: [sampleOn(65, at: 0.0,
+                              packId: SampleScheduler.localPackId)],
+            durationSec: 0.3
+        )
+        let out = tmpDir.appendingPathComponent("local-missing.m4a")
+        let result = try LayerOfflineRenderer().render(
+            timeline: timeline,
+            packs: [],
+            localPadFiles: [:],
+            outputURL: out,
+            tailSec: 0.1
+        )
+        XCTAssertEqual(result.renderedSampleEvents, 0)
+        XCTAssertEqual(result.unresolvedSampleEvents, 1)
+    }
+
+    func testLoadBufferNormalizeFlagHitsLiveTarget() throws {
+        // normalize: true peak-normalizes a whole file to the
+        // scheduler's -1 dBFS target (0.891) — the loudness
+        // setLocalBuffer gives mic pads live. The fixture peaks at
+        // 0.4, so a no-op would fail this.
+        let localWav = tmpDir.appendingPathComponent("mic-norm.wav")
+        try writeLocalWav(to: localWav)
+        let target = AVAudioFormat(
+            standardFormatWithSampleRate: LayerOfflineRenderer.sampleRate,
+            channels: 2
+        )!
+        let buf = try LayerOfflineRenderer.loadBuffer(
+            at: localWav, normalize: true, into: target
+        )
+        XCTAssertEqual(buf.format.channelCount, 2)
+        var peak: Float = 0
+        if let ch = buf.floatChannelData?[0] {
+            for i in 0..<Int(buf.frameLength) {
+                peak = max(peak, abs(ch[i]))
+            }
+        }
+        XCTAssertEqual(peak, 0.891, accuracy: 0.02)
+    }
+
     /// Write a PCM buffer to a wav file, scoping the writer so it's
     /// flushed and closed before the caller reads it back.
     private func writeWav(_ buf: AVAudioPCMBuffer, to url: URL) throws {

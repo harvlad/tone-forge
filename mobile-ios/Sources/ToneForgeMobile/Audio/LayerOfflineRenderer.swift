@@ -29,9 +29,13 @@
 // Song-derived (DNA) pads carry a `StemSlice` instead of a file; the
 // pack-based overloads slice the parent stem on the fly when the
 // caller supplies `stemFiles` (role → local URL), mirroring
-// `SampleScheduler.preloadPack`. Events whose pack can't be resolved
-// (deleted cache, another song's DNA pack, device-local samples) are
-// skipped and surfaced in `RenderResult.unresolvedSampleEvents`.
+// `SampleScheduler.preloadPack`. Device-local pads (mic/vocoded
+// recordings, packId `SampleScheduler.localPackId`) resolve through
+// `localPadFiles` (grid padIdx → WAV URL) and are peak-normalized to
+// the same -1 dBFS target `setLocalBuffer` applies live. Events
+// whose pack can't be resolved (deleted cache, another song's DNA
+// pack, an unassigned local pad) are skipped and surfaced in
+// `RenderResult.unresolvedSampleEvents`.
 //
 // Output format: 44.1 kHz stereo AAC, 192 kb/s. `AVAudioFile` writes
 // its buffers through Core Audio's AAC encoder transparently — the
@@ -414,10 +418,19 @@ public final class LayerOfflineRenderer: @unchecked Sendable {
     /// that's missing from the map or unreadable degrades to a silent
     /// pad — the event counts as unresolved, matching live replay's
     /// padNotFound — rather than aborting the whole export.
+    ///
+    /// Device-local pads — events recorded with packIdOverride
+    /// `SampleScheduler.localPackId` — load from `localPadFiles`
+    /// (grid padIdx → PadSampleStore WAV URL) and are peak-normalized
+    /// to match `setLocalBuffer`'s live loudness. A padIdx missing
+    /// from the map (assignment cleared, sample deleted) degrades to
+    /// an unresolved event, the same rule live replay applies when
+    /// the scheduler's local-buffer slot is empty.
     public func render(
         timeline: LayerTimeline,
         packs: [ResolvedSamplePack],
         stemFiles: [String: URL] = [:],
+        localPadFiles: [Int: URL] = [:],
         outputURL: URL,
         tailSec: Double = 3.0
     ) throws -> RenderResult {
@@ -466,6 +479,22 @@ public final class LayerOfflineRenderer: @unchecked Sendable {
             padsByPack[pack.pack.packId] = pads
         }
 
+        // Device-local pads. gainDb is 0 — local samples have no pack
+        // manifest; live playback applies none either. try? — a WAV
+        // that vanished since assignment degrades to an unresolved
+        // event, mirroring the missing-stem rule above.
+        if let wantedLocal = referenced[SampleScheduler.localPackId] {
+            var pads: [Int: RenderablePad] = [:]
+            for padIdx in wantedLocal {
+                guard let url = localPadFiles[padIdx],
+                      let buf = try? Self.loadBuffer(
+                          at: url, normalize: true, into: targetFormat)
+                else { continue }
+                pads[padIdx] = RenderablePad(buffer: buf, gainDb: 0)
+            }
+            padsByPack[SampleScheduler.localPackId] = pads
+        }
+
         return try render(
             timeline: timeline,
             padsByPack: padsByPack,
@@ -504,12 +533,16 @@ public final class LayerOfflineRenderer: @unchecked Sendable {
     ///
     /// Sliced buffers are peak-normalized to the same -1 dBFS target
     /// the live scheduler applies at preload, so a DNA chop exports
-    /// at the loudness the user heard when they recorded it. Whole
-    /// files skip normalization — curated pack one-shots ship
-    /// pre-mastered near target, so it would be a ~no-op there.
+    /// at the loudness the user heard when they recorded it; pass
+    /// `normalize: true` to apply the same target to a whole file
+    /// (device-local mic/vocoded WAVs, which `setLocalBuffer`
+    /// normalizes live). Otherwise whole files skip normalization —
+    /// curated pack one-shots ship pre-mastered near target, so it
+    /// would be a ~no-op there.
     static func loadBuffer(
         at url: URL,
         slice: StemSlice? = nil,
+        normalize: Bool = false,
         into targetFormat: AVAudioFormat
     ) throws -> AVAudioPCMBuffer {
         let file = try AVAudioFile(forReading: url)
@@ -572,7 +605,7 @@ public final class LayerOfflineRenderer: @unchecked Sendable {
             if let err = convError { throw err }
             outBuf = dstBuf
         }
-        if slice != nil { Self.normalizePeak(outBuf) }
+        if slice != nil || normalize { Self.normalizePeak(outBuf) }
         return outBuf
     }
 
