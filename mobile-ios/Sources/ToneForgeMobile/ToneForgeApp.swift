@@ -1994,12 +1994,13 @@ public final class AppState: ObservableObject {
     /// via `LayerOfflineRenderer`. Resolves EVERY pack the take
     /// references (`packIdOverride ?? activePackId` per event — the
     /// same rule replay uses), so multi-pack takes export all their
-    /// hits. Packs that can't be resolved anymore (deleted cache,
-    /// another song's DNA pack, device-local samples) degrade to
-    /// skipped events, mirroring replay's padNotFound behavior. On
-    /// success returns the rendered file URL so callers can present a
-    /// share sheet. On failure returns nil and stores the reason in
-    /// `layerError`.
+    /// hits. The current song's stem URLs ride along so DNA-pack
+    /// chops (stem-slice pads) render too. Packs that can't be
+    /// resolved anymore (deleted cache, another song's DNA pack,
+    /// device-local samples) degrade to skipped events, mirroring
+    /// replay's padNotFound behavior. On success returns the rendered
+    /// file URL so callers can present a share sheet. On failure
+    /// returns nil and stores the reason in `layerError`.
     public func exportLayerToM4A(layerId: String) async -> URL? {
         guard let timeline = savedLayers.first(where: { $0.layerId == layerId })
         else {
@@ -2031,12 +2032,14 @@ public final class AppState: ObservableObject {
         exportingLayerIds.insert(layerId)
         defer { exportingLayerIds.remove(layerId) }
 
+        let stemFiles = currentStemLocalURLs
         do {
             let url = try await Task.detached(priority: .userInitiated) {
                 let renderer = LayerOfflineRenderer()
                 let result = try renderer.render(
                     timeline: timeline,
                     packs: packs,
+                    stemFiles: stemFiles,
                     outputURL: outputURL
                 )
                 return result.url

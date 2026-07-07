@@ -26,9 +26,12 @@
 // `event.params.packIdOverride ?? timeline.activePackId` — the same
 // rule LayerPlayer uses for replay — so takes recorded across a
 // carousel swap export every hit, not just the fronted pack's.
-// Events whose pack can't be resolved (deleted cache, another song's
-// DNA pack, device-local samples) are skipped and surfaced in
-// `RenderResult.unresolvedSampleEvents`.
+// Song-derived (DNA) pads carry a `StemSlice` instead of a file; the
+// pack-based overloads slice the parent stem on the fly when the
+// caller supplies `stemFiles` (role → local URL), mirroring
+// `SampleScheduler.preloadPack`. Events whose pack can't be resolved
+// (deleted cache, another song's DNA pack, device-local samples) are
+// skipped and surfaced in `RenderResult.unresolvedSampleEvents`.
 //
 // Output format: 44.1 kHz stereo AAC, 192 kb/s. `AVAudioFile` writes
 // its buffers through Core Audio's AAC encoder transparently — the
@@ -404,12 +407,17 @@ public final class LayerOfflineRenderer: @unchecked Sendable {
     /// format, then delegate to the multi-pack buffer renderer. Only
     /// pads the timeline's sampleOn events actually reference are
     /// loaded, so a two-pack take costs two packs' worth of I/O only
-    /// in the worst case. Song-derived pads (backed by a stem slice
-    /// with `filename == nil`) are silently dropped — offline export
-    /// of stem-slice packs is a follow-up slice.
+    /// in the worst case.
+    ///
+    /// Song-derived pads (`filename == nil`, backed by a `StemSlice`)
+    /// slice their window out of `stemFiles[slice.stemRole]`. A stem
+    /// that's missing from the map or unreadable degrades to a silent
+    /// pad — the event counts as unresolved, matching live replay's
+    /// padNotFound — rather than aborting the whole export.
     public func render(
         timeline: LayerTimeline,
         packs: [ResolvedSamplePack],
+        stemFiles: [String: URL] = [:],
         outputURL: URL,
         tailSec: Double = 3.0
     ) throws -> RenderResult {
@@ -435,14 +443,24 @@ public final class LayerOfflineRenderer: @unchecked Sendable {
             guard let wanted = referenced[pack.pack.packId] else { continue }
             var pads: [Int: RenderablePad] = [:]
             for padDef in pack.pack.pads where wanted.contains(padDef.padIdx) {
-                guard let url = pack.padFileURLs[padDef.padIdx] else { continue }
-                do {
-                    let buf = try Self.loadBuffer(at: url, into: targetFormat)
+                if let url = pack.padFileURLs[padDef.padIdx] {
+                    do {
+                        let buf = try Self.loadBuffer(at: url, into: targetFormat)
+                        pads[padDef.padIdx] = RenderablePad(
+                            buffer: buf, gainDb: padDef.gainDb)
+                    } catch {
+                        throw RenderError.bufferLoadFailed(
+                            padIdx: padDef.padIdx, path: url.path)
+                    }
+                } else if let slice = padDef.stemSlice,
+                          let stemURL = stemFiles[slice.stemRole],
+                          let buf = try? Self.loadBuffer(
+                              at: stemURL, slice: slice, into: targetFormat) {
+                    // try? — an unreadable stem mirrors a missing one
+                    // (silent pad, event unresolved), the same
+                    // degradation SampleScheduler.preloadPack applies.
                     pads[padDef.padIdx] = RenderablePad(
                         buffer: buf, gainDb: padDef.gainDb)
-                } catch {
-                    throw RenderError.bufferLoadFailed(
-                        padIdx: padDef.padIdx, path: url.path)
                 }
             }
             padsByPack[pack.pack.packId] = pads
@@ -462,12 +480,14 @@ public final class LayerOfflineRenderer: @unchecked Sendable {
     public func render(
         timeline: LayerTimeline,
         pack: ResolvedSamplePack,
+        stemFiles: [String: URL] = [:],
         outputURL: URL,
         tailSec: Double = 3.0
     ) throws -> RenderResult {
         try render(
             timeline: timeline,
             packs: [pack],
+            stemFiles: stemFiles,
             outputURL: outputURL,
             tailSec: tailSec
         )
@@ -475,49 +495,115 @@ public final class LayerOfflineRenderer: @unchecked Sendable {
 
     // MARK: - Buffer loading
 
-    /// Load an audio file into an `AVAudioPCMBuffer` matching
-    /// `targetFormat`. Uses `AVAudioConverter` when the file's
-    /// processing format differs from the target so `AVAudioPlayerNode`
-    /// can consume it without a per-voice sample-rate step.
-    static func loadBuffer(at url: URL, into targetFormat: AVAudioFormat) throws -> AVAudioPCMBuffer {
+    /// Load an audio file — or, when `slice` is set, just its
+    /// `[startSec, endSec]` window — into an `AVAudioPCMBuffer`
+    /// matching `targetFormat`. Uses `AVAudioConverter` when the
+    /// file's processing format differs from the target so
+    /// `AVAudioPlayerNode` can consume it without a per-voice
+    /// sample-rate step.
+    ///
+    /// Sliced buffers are peak-normalized to the same -1 dBFS target
+    /// the live scheduler applies at preload, so a DNA chop exports
+    /// at the loudness the user heard when they recorded it. Whole
+    /// files skip normalization — curated pack one-shots ship
+    /// pre-mastered near target, so it would be a ~no-op there.
+    static func loadBuffer(
+        at url: URL,
+        slice: StemSlice? = nil,
+        into targetFormat: AVAudioFormat
+    ) throws -> AVAudioPCMBuffer {
         let file = try AVAudioFile(forReading: url)
         let srcFormat = file.processingFormat
-        guard let srcBuf = AVAudioPCMBuffer(
-            pcmFormat: srcFormat,
-            frameCapacity: AVAudioFrameCount(file.length)
-        ) else {
+
+        // Frame window. Same math as SampleScheduler.loadBuffer so a
+        // chop exports the exact audio it plays live.
+        let startFrame: AVAudioFramePosition
+        let frameCount: AVAudioFrameCount
+        if let slice {
+            let sr = srcFormat.sampleRate
+            startFrame = AVAudioFramePosition(max(0, slice.startSec) * sr)
+            let endFrame = AVAudioFramePosition(
+                max(slice.startSec, slice.endSec) * sr)
+            let requested = max(0, endFrame - startFrame)
+            let clipped = min(requested, max(0, file.length - startFrame))
+            frameCount = AVAudioFrameCount(clipped)
+        } else {
+            startFrame = 0
+            frameCount = AVAudioFrameCount(file.length)
+        }
+        guard frameCount > 0,
+              let srcBuf = AVAudioPCMBuffer(
+                  pcmFormat: srcFormat,
+                  frameCapacity: frameCount
+              )
+        else {
             throw RenderError.writeFailed("no source buffer")
         }
-        try file.read(into: srcBuf)
+        file.framePosition = startFrame
+        try file.read(into: srcBuf, frameCount: frameCount)
 
+        let outBuf: AVAudioPCMBuffer
         if srcFormat.isEqual(targetFormat) {
-            return srcBuf
-        }
-        guard let converter = AVAudioConverter(from: srcFormat, to: targetFormat) else {
-            throw RenderError.writeFailed("no converter")
-        }
-        let ratio = targetFormat.sampleRate / srcFormat.sampleRate
-        // +32 frames of slack for the converter's internal state.
-        let outCapacity = AVAudioFrameCount(Double(srcBuf.frameLength) * ratio) + 32
-        guard let dstBuf = AVAudioPCMBuffer(
-            pcmFormat: targetFormat,
-            frameCapacity: outCapacity
-        ) else {
-            throw RenderError.writeFailed("no dst buffer")
-        }
-        var provided = false
-        var convError: NSError?
-        _ = converter.convert(to: dstBuf, error: &convError) { _, outStatus in
-            if provided {
-                outStatus.pointee = .endOfStream
-                return nil
+            outBuf = srcBuf
+        } else {
+            guard let converter = AVAudioConverter(from: srcFormat, to: targetFormat) else {
+                throw RenderError.writeFailed("no converter")
             }
-            provided = true
-            outStatus.pointee = .haveData
-            return srcBuf
+            let ratio = targetFormat.sampleRate / srcFormat.sampleRate
+            // +32 frames of slack for the converter's internal state.
+            let outCapacity = AVAudioFrameCount(Double(srcBuf.frameLength) * ratio) + 32
+            guard let dstBuf = AVAudioPCMBuffer(
+                pcmFormat: targetFormat,
+                frameCapacity: outCapacity
+            ) else {
+                throw RenderError.writeFailed("no dst buffer")
+            }
+            var provided = false
+            var convError: NSError?
+            _ = converter.convert(to: dstBuf, error: &convError) { _, outStatus in
+                if provided {
+                    outStatus.pointee = .endOfStream
+                    return nil
+                }
+                provided = true
+                outStatus.pointee = .haveData
+                return srcBuf
+            }
+            if let err = convError { throw err }
+            outBuf = dstBuf
         }
-        if let err = convError { throw err }
-        return dstBuf
+        if slice != nil { Self.normalizePeak(outBuf) }
+        return outBuf
+    }
+
+    /// Live-parity loudness for stem slices. Value + algorithm match
+    /// `SampleScheduler.normalizeTargetPeak` / `normalizePeak` — keep
+    /// them in sync or exports will sit at a different level than
+    /// live playback.
+    private static let normalizeTargetPeak: Float = 0.891  // -1 dBFS
+
+    private static func normalizePeak(_ buf: AVAudioPCMBuffer) {
+        guard let channels = buf.floatChannelData else { return }
+        let frameCount = Int(buf.frameLength)
+        let channelCount = Int(buf.format.channelCount)
+        guard frameCount > 0, channelCount > 0 else { return }
+        var peak: Float = 0
+        for c in 0..<channelCount {
+            let ptr = channels[c]
+            for i in 0..<frameCount {
+                let v = abs(ptr[i])
+                if v > peak { peak = v }
+            }
+        }
+        guard peak > 1e-6 else { return }
+        let gain = normalizeTargetPeak / peak
+        guard abs(gain - 1.0) > 0.01 else { return }
+        for c in 0..<channelCount {
+            let ptr = channels[c]
+            for i in 0..<frameCount {
+                ptr[i] *= gain
+            }
+        }
     }
     #else
     // Non-Apple platform stub. Not expected in production paths but

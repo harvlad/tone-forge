@@ -336,6 +336,110 @@ final class LayerOfflineRendererTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
     }
 
+    // MARK: - Stem-slice (song-DNA) pads
+
+    /// A song-derived pack: no pad files, each pad a StemSlice window
+    /// into the parent stem.
+    private func dnaPack(
+        padIdx: Int, stemRole: String, startSec: Double, endSec: Double
+    ) -> ResolvedSamplePack {
+        ResolvedSamplePack(
+            pack: SamplePack(
+                packId: "song-derived:abc:\(stemRole)-chord",
+                name: "\(stemRole) — chord",
+                family: .vocals,
+                pads: [SamplePad(
+                    padIdx: padIdx, name: "chop",
+                    family: .vocals,
+                    stemSlice: StemSlice(
+                        stemRole: stemRole,
+                        startSec: startSec,
+                        endSec: endSec
+                    )
+                )]
+            ),
+            padFileURLs: [:]
+        )
+    }
+
+    func testStemSlicePadRendersOnlyItsWindow() throws {
+        // DNA pad slicing 0.25–0.75 s out of a 2 s stem. The render
+        // must schedule the 0.5 s window, not the whole stem.
+        let stemWav = tmpDir.appendingPathComponent("vocals.wav")
+        try writeWav(sineBuffer(durationSec: 2.0), to: stemWav)
+
+        let dna = dnaPack(
+            padIdx: 3, stemRole: "vocals", startSec: 0.25, endSec: 0.75
+        )
+        let timeline = makeTimeline(
+            events: [sampleOn(3, at: 0.0, packId: dna.pack.packId)],
+            durationSec: 0.1
+        )
+        let out = tmpDir.appendingPathComponent("dna-slice.m4a")
+        let result = try LayerOfflineRenderer().render(
+            timeline: timeline,
+            packs: [dna],
+            stemFiles: ["vocals": stemWav],
+            outputURL: out,
+            tailSec: 0.0
+        )
+        XCTAssertEqual(result.renderedSampleEvents, 1)
+        XCTAssertEqual(result.unresolvedSampleEvents, 0)
+        // Bounded by the slice window — a whole-stem load would push
+        // this to ~2 s.
+        XCTAssertEqual(result.durationSec, 0.5, accuracy: 0.05)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
+    }
+
+    func testStemSlicePadWithMissingStemIsUnresolved() throws {
+        // No stemFiles entry for the pad's role — the event is
+        // skipped and surfaced, never a crash or a borrowed buffer.
+        let dna = dnaPack(
+            padIdx: 3, stemRole: "vocals", startSec: 0.25, endSec: 0.75
+        )
+        let timeline = makeTimeline(
+            events: [sampleOn(3, at: 0.0, packId: dna.pack.packId)],
+            durationSec: 0.1
+        )
+        let out = tmpDir.appendingPathComponent("dna-missing-stem.m4a")
+        let result = try LayerOfflineRenderer().render(
+            timeline: timeline,
+            packs: [dna],
+            stemFiles: [:],
+            outputURL: out,
+            tailSec: 0.0
+        )
+        XCTAssertEqual(result.renderedSampleEvents, 0)
+        XCTAssertEqual(result.unresolvedSampleEvents, 1)
+    }
+
+    func testLoadBufferSliceIsNormalizedToLiveTarget() throws {
+        // Sliced loads peak-normalize to the scheduler's -1 dBFS
+        // target (0.891) so exported chops sit at live loudness. The
+        // fixture sine peaks at 0.4, so a no-op would fail this.
+        let stemWav = tmpDir.appendingPathComponent("stem.wav")
+        try writeWav(sineBuffer(durationSec: 2.0), to: stemWav)
+        let target = AVAudioFormat(
+            standardFormatWithSampleRate: LayerOfflineRenderer.sampleRate,
+            channels: 2
+        )!
+        let slice = StemSlice(
+            stemRole: "vocals", startSec: 0.25, endSec: 0.75
+        )
+        let buf = try LayerOfflineRenderer.loadBuffer(
+            at: stemWav, slice: slice, into: target
+        )
+        // Window length: 0.5 s at 44.1 kHz.
+        XCTAssertEqual(Double(buf.frameLength), 0.5 * 44_100, accuracy: 4)
+        var peak: Float = 0
+        if let ch = buf.floatChannelData?[0] {
+            for i in 0..<Int(buf.frameLength) {
+                peak = max(peak, abs(ch[i]))
+            }
+        }
+        XCTAssertEqual(peak, 0.891, accuracy: 0.02)
+    }
+
     /// Write a PCM buffer to a wav file, scoping the writer so it's
     /// flushed and closed before the caller reads it back.
     private func writeWav(_ buf: AVAudioPCMBuffer, to url: URL) throws {
