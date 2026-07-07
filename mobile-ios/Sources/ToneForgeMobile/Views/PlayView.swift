@@ -62,6 +62,7 @@ private struct PlayBody: View {
                 WaveformScrubber(
                     songSeconds: appState.songSeconds,
                     durationSec: appState.currentBundle?.meta.durationSec ?? 0,
+                    peaks: appState.waveformPeaks,
                     onSeek: { s in appState.seek(to: s) }
                 )
                 .frame(height: 48)

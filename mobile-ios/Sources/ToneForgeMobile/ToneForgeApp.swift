@@ -383,6 +383,12 @@ public final class AppState: ObservableObject {
     /// Rebuilt every time `activate(bundle:)` runs.
     private var currentStemLocalURLs: [String: URL] = [:]
 
+    /// Normalized waveform peaks for the scrubber (0..1, ~600 bins),
+    /// extracted from the downloaded stems off-main. Nil until the
+    /// current song's extraction lands (the scrubber falls back to a
+    /// plain progress bar) and cleared on eject.
+    @Published public private(set) var waveformPeaks: [Float]?
+
     /// Best downloaded stem for the vocoder's M3 (stem) carrier:
     /// prefers voice-like roles (they loop into the most musical
     /// carriers), else the first stem alphabetically. Nil without a
@@ -976,6 +982,7 @@ public final class AppState: ObservableObject {
     private func downloadAndLoad(bundle: SongBundle) async {
         isDownloading = true
         downloadProgress.removeAll()
+        waveformPeaks = nil
         var localURLs: [String: URL] = [:]
 
         do {
@@ -1001,10 +1008,40 @@ public final class AppState: ObservableObject {
             currentStemLocalURLs = localURLs
             songDnaPacks = SongDnaPack.synthesize(from: bundle)
                 .filter { localURLs[$0.stem] != nil }
+            updateWaveformPeaks(
+                analysisId: bundle.analysisId,
+                stemURLs: localURLs.values.sorted { $0.path < $1.path }
+            )
         } catch {
             loadingError = error.localizedDescription
         }
         isDownloading = false
+    }
+
+    /// Compute (or load cached) scrubber peaks for the song's local
+    /// stems, off-main. Result is dropped if the user ejected/loaded
+    /// another song while extraction ran.
+    private func updateWaveformPeaks(analysisId: String, stemURLs: [URL]) {
+        waveformPeaks = nil
+        guard !stemURLs.isEmpty else { return }
+        Task { [weak self] in
+            let peaks = await Task.detached(priority: .utility) { () -> [Float] in
+                let cache = WaveformCache()
+                if let cached = cache.load(analysisId: analysisId),
+                   !cached.isEmpty {
+                    return cached
+                }
+                let extracted = WaveformPeakExtractor.extractPeaks(
+                    stemURLs: stemURLs
+                )
+                cache.save(extracted, analysisId: analysisId)
+                return extracted
+            }.value
+            guard let self, self.currentBundle?.analysisId == analysisId else {
+                return
+            }
+            self.waveformPeaks = peaks
+        }
     }
 
     /// Convenience: hand a Song DNA pack straight to the scheduler,
@@ -1057,6 +1094,7 @@ public final class AppState: ObservableObject {
         chordPhase = 0
         songSeconds = 0
         currentStemLocalURLs = [:]
+        waveformPeaks = nil
         unloadSongDnaPacks()
         songDnaPacks = []
         savedLayers = []
