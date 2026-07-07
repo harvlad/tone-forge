@@ -175,6 +175,10 @@ public final class AppState: ObservableObject {
     /// Master output gain, applied to the engine's main mixer. Governs
     /// the entire song mix (stems + pad synth). 0..1 linear.
     @Published public private(set) var masterGain: Double = 0.85
+    /// A/B practice loop (redesign Phase 5). When set, the 30 Hz
+    /// tick wraps the transport back to the region start as the
+    /// playhead crosses its end. Cleared on song load and eject.
+    @Published public private(set) var loopRegion: LoopRegion?
 
     // MARK: - Chord runtime
 
@@ -950,6 +954,7 @@ public final class AppState: ObservableObject {
         chordPhase = 0
         audioEngine.seek(to: 0)
         songSeconds = 0
+        loopRegion = nil
 
         // Clear per-bundle Song DNA state; rebuilt once stems land.
         // Unload the previous song's DNA pack buffers first — those
@@ -1093,6 +1098,7 @@ public final class AppState: ObservableObject {
         nextChord = nil
         chordPhase = 0
         songSeconds = 0
+        loopRegion = nil
         currentStemLocalURLs = [:]
         waveformPeaks = nil
         unloadSongDnaPacks()
@@ -1412,6 +1418,14 @@ public final class AppState: ObservableObject {
         if isPlaying { pause() } else { play() }
     }
 
+    /// Set (or clear, with nil) the A/B practice loop. The region
+    /// takes effect on the next tick — no seek happens here, so
+    /// callers that want playback inside the loop (Learn's Start
+    /// Section) pair this with `seekAndPlay(to:)`.
+    public func setLoop(_ region: LoopRegion?) {
+        loopRegion = region
+    }
+
     /// Set the engine's master output gain. Clamped to 0..1.
     public func setMasterGain(_ gain: Double) {
         let g = max(0, min(1, gain))
@@ -1458,8 +1472,23 @@ public final class AppState: ObservableObject {
 
     private func tick() {
         songSeconds = audioEngine.clock.nowSongSeconds
+        // A/B loop wrap (redesign Phase 5): tick-driven (≤33 ms
+        // jitter, fine for practice). Wrapping through the regular
+        // seek path re-anchors stems/layers/chords together; a
+        // scrub far past the region does not snap back (see
+        // LoopRegion.wrapTarget).
+        if isPlaying, let target = loopRegion?.wrapTarget(now: songSeconds) {
+            seek(to: target)
+            if let handler = onLoopWrap {
+                handler()
+            }
+        }
         refreshChordFrame()
     }
+
+    /// Invoked after each A/B loop wrap. Learn mode hooks this to
+    /// score the just-finished practice pass (Phase 8).
+    public var onLoopWrap: (() -> Void)?
 
     private func refreshChordFrame() {
         let previousSymbol = currentChord?.symbol
