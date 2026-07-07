@@ -42,6 +42,7 @@ private struct PlayBody: View {
     @State private var showMixer: Bool = false
     @State private var showSettings: Bool = false
     @State private var showBrowse: Bool = false
+    @State private var showHelp: Bool = false
 
     var body: some View {
         let hasSong = appState.currentBundle != nil
@@ -53,6 +54,7 @@ private struct PlayBody: View {
                 durationSec: appState.currentBundle?.meta.durationSec,
                 keyLabel: appState.currentBundle?.meta.detectedKey,
                 tempoBpm: appState.currentBundle?.meta.tempoBpm,
+                analysisId: appState.currentBundle?.analysisId,
                 onEject: hasSong ? { appState.ejectSong() } : nil
             )
 
@@ -63,6 +65,16 @@ private struct PlayBody: View {
                     onSeek: { s in appState.seek(to: s) }
                 )
                 .frame(height: 48)
+            }
+
+            ModeTabsRow(surface: surfaceBinding)
+
+            if hasSong {
+                CategoryCards { _ in
+                    // Family pre-filter wires up in Phase 10; for now
+                    // every card opens the pack browser.
+                    showBrowse = true
+                }
             }
 
             HStack(spacing: 8) {
@@ -117,6 +129,10 @@ private struct PlayBody: View {
             LayerFader(dbValue: $sampleSettings.layerFaderDb)
 
             transportRow
+
+            masterVolumeRow
+
+            howItWorksFooter
         }
         .padding(.top, 8)
         .padding(.bottom, 40)
@@ -124,6 +140,62 @@ private struct PlayBody: View {
         .sheet(isPresented: $showMixer) { MixerView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showBrowse) { BrowsePacksSheet() }
+        .sheet(isPresented: $showHelp) { HelpSheet() }
+    }
+
+    // MARK: - Surface switcher (D-018)
+
+    /// Persisted PlaySurface selection. Only `.contribute` is live
+    /// today, so nothing beyond persistence hangs off this yet —
+    /// Jam/Learn/Chord Pads surfaces branch on it as their phases
+    /// land.
+    private var surfaceBinding: Binding<PlaySurface> {
+        Binding(
+            get: {
+                PlaySurface(rawValue: sampleSettings.playSurfaceRaw)
+                    ?? .contribute
+            },
+            set: { sampleSettings.playSurfaceRaw = $0.rawValue }
+        )
+    }
+
+    // MARK: - Master volume
+
+    private var masterVolumeRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "speaker.fill")
+                .font(.caption)
+                .foregroundStyle(TFTheme.textSecondary)
+            Slider(value: masterGainBinding, in: 0...1)
+            Image(systemName: "speaker.wave.3.fill")
+                .font(.caption)
+                .foregroundStyle(TFTheme.textSecondary)
+        }
+        .padding(.horizontal, 20)
+        .accessibilityLabel("Master volume")
+    }
+
+    private var masterGainBinding: Binding<Double> {
+        Binding(
+            get: { appState.masterGain },
+            set: { appState.setMasterGain($0) }
+        )
+    }
+
+    // MARK: - How-it-works footer
+
+    private var howItWorksFooter: some View {
+        Button {
+            showHelp = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "questionmark.circle")
+                Text("How does contributing work?")
+            }
+            .font(.caption)
+            .foregroundStyle(TFTheme.textSecondary)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Stop-all

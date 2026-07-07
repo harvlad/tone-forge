@@ -85,6 +85,13 @@ public final class ImportCoordinator: ObservableObject {
     /// Fired when the analysis loaded into AppState successfully —
     /// the Library view uses it to flip to the Play tab.
     public var onLoaded: (() -> Void)?
+    /// Album-art JPEG captured by the picker *before* `start` (the
+    /// analysisId doesn't exist yet at pick time). Saved to
+    /// ArtworkStore keyed by historyId when the import completes;
+    /// cleared on dismiss/cancel so a stale image can't attach to a
+    /// different song. Survives `retry()` on purpose — the retried
+    /// source is the same track.
+    public var pendingArtworkData: Data?
 
     private let analyzeClient: any AnalyzeStreaming
     private weak var appState: AppState?
@@ -132,6 +139,7 @@ public final class ImportCoordinator: ObservableObject {
 
     public func attestationCancelled() {
         pendingSource = nil
+        pendingArtworkData = nil
         phase = .idle
     }
 
@@ -146,6 +154,7 @@ public final class ImportCoordinator: ObservableObject {
         worker?.cancel()
         worker = nil
         pendingSource = nil
+        pendingArtworkData = nil
         phase = .idle
     }
 
@@ -203,6 +212,10 @@ public final class ImportCoordinator: ObservableObject {
             if let loadError = appState.loadingError {
                 phase = .failed(loadError)
             } else {
+                if let art = pendingArtworkData {
+                    _ = try? ArtworkStore().save(art, analysisId: historyId)
+                    pendingArtworkData = nil
+                }
                 phase = .done(historyId: historyId)
                 onLoaded?()
             }

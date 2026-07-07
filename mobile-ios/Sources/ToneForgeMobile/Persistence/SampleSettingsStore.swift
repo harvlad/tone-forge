@@ -108,11 +108,20 @@ public final class SampleSettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// Persisted PlaySurface raw value (`PlaySurface(rawValue:)`), so
+    /// the Play tab reopens on the surface the user last used (D-018
+    /// surface switcher). Unknown values fall back to `"contribute"`
+    /// at the view layer when decoding.
+    @Published public var playSurfaceRaw: String {
+        didSet { save() }
+    }
+
     /// Built-in defaults, shared by init and the tests.
     nonisolated public static let defaultVoiceGain: Double = 0.9
     nonisolated public static let defaultChopGain: Double = 0.55
     nonisolated public static let defaultVocoderGain: Double = 0.4
     nonisolated public static let defaultAppModeRaw: String = "sample"
+    nonisolated public static let defaultPlaySurfaceRaw: String = "contribute"
 
     // MARK: - Init
 
@@ -137,6 +146,7 @@ public final class SampleSettingsStore: ObservableObject {
         self.chopGainLinear = loaded.chopGainLinear
         self.vocoderGainLinear = loaded.vocoderGainLinear
         self.appModeRaw = loaded.appModeRaw
+        self.playSurfaceRaw = loaded.playSurfaceRaw
     }
 
     // MARK: - Pad-effect override convenience
@@ -241,6 +251,9 @@ public final class SampleSettingsStore: ObservableObject {
         /// back to 0.4 / "sample".
         var vocoderGainLinear: Double
         var appModeRaw: String
+        /// Play-tab surface (D-018). Absent in blobs written before
+        /// the redesign; decoder falls back to "contribute".
+        var playSurfaceRaw: String
 
         static let defaults = Persisted(
             storeVersion: 1,
@@ -254,7 +267,8 @@ public final class SampleSettingsStore: ObservableObject {
             voiceGainLinear: SampleSettingsStore.defaultVoiceGain,
             chopGainLinear: SampleSettingsStore.defaultChopGain,
             vocoderGainLinear: SampleSettingsStore.defaultVocoderGain,
-            appModeRaw: SampleSettingsStore.defaultAppModeRaw
+            appModeRaw: SampleSettingsStore.defaultAppModeRaw,
+            playSurfaceRaw: SampleSettingsStore.defaultPlaySurfaceRaw
         )
 
         // Custom decoding so pre-6d blobs that lack the newer keys
@@ -263,7 +277,7 @@ public final class SampleSettingsStore: ObservableObject {
             case storeVersion, currentPackId, quantizeMode, holdMode,
                  beatBarMode, sectionGatesBySong, layerFaderDb,
                  padEffectsByKey, voiceGainLinear, chopGainLinear,
-                 vocoderGainLinear, appModeRaw
+                 vocoderGainLinear, appModeRaw, playSurfaceRaw
         }
 
         init(
@@ -278,7 +292,8 @@ public final class SampleSettingsStore: ObservableObject {
             voiceGainLinear: Double,
             chopGainLinear: Double,
             vocoderGainLinear: Double,
-            appModeRaw: String
+            appModeRaw: String,
+            playSurfaceRaw: String
         ) {
             self.storeVersion = storeVersion
             self.currentPackId = currentPackId
@@ -292,6 +307,7 @@ public final class SampleSettingsStore: ObservableObject {
             self.chopGainLinear = chopGainLinear
             self.vocoderGainLinear = vocoderGainLinear
             self.appModeRaw = appModeRaw
+            self.playSurfaceRaw = playSurfaceRaw
         }
 
         init(from decoder: Decoder) throws {
@@ -318,6 +334,9 @@ public final class SampleSettingsStore: ObservableObject {
             self.appModeRaw = try c.decodeIfPresent(
                 String.self, forKey: .appModeRaw
             ) ?? SampleSettingsStore.defaultAppModeRaw
+            self.playSurfaceRaw = try c.decodeIfPresent(
+                String.self, forKey: .playSurfaceRaw
+            ) ?? SampleSettingsStore.defaultPlaySurfaceRaw
         }
     }
 
@@ -347,7 +366,8 @@ public final class SampleSettingsStore: ObservableObject {
             voiceGainLinear: max(0, min(1, voiceGainLinear)),
             chopGainLinear: max(0, min(1, chopGainLinear)),
             vocoderGainLinear: max(0, min(1, vocoderGainLinear)),
-            appModeRaw: appModeRaw
+            appModeRaw: appModeRaw,
+            playSurfaceRaw: playSurfaceRaw
         )
         if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: Self.defaultsKey)

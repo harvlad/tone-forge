@@ -6,10 +6,10 @@
 //   - Long-press: toggle the section in the per-song allowlist (the
 //                 "Play only in" gate consumed by SampleScheduler).
 //
-// A chip's colour reflects three states:
-//   .accent tint    → currently-active section (contains songSeconds)
-//   .primary tint   → allowed by the section gate
-//   .secondary tint → gated off (taps produce silence in Samples)
+// A chip's colour reflects three states (TFTheme tokens):
+//   chipActiveFill  → currently-active section (contains songSeconds)
+//   chipFill        → allowed by the section gate
+//   near-invisible  → gated off (taps produce silence in Samples)
 
 import SwiftUI
 import ToneForgeEngine
@@ -32,7 +32,7 @@ struct SectionChips: View {
                 if sections.isEmpty {
                     Text("No sections yet")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(TFTheme.textSecondary)
                         .padding(.horizontal, 8)
                 }
             }
@@ -50,18 +50,26 @@ struct SectionChips: View {
         }()
 
         let bg: Color = isActive
-            ? Color.accentColor.opacity(0.30)
-            : (allowed ? Color.gray.opacity(0.20) : Color.gray.opacity(0.08))
-        let fg: Color = allowed ? .primary : .secondary
+            ? TFTheme.chipActiveFill
+            : (allowed ? TFTheme.chipFill : Color.white.opacity(0.03))
+        let fg: Color = allowed
+            ? TFTheme.textPrimary
+            : TFTheme.textSecondary.opacity(0.6)
 
         VStack(spacing: 2) {
             Text(label).font(.caption.weight(.medium))
-            Text(fmt(s.start)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            Text(fmt(s.start))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(TFTheme.textSecondary)
         }
         .foregroundStyle(fg)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 8).fill(bg))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(TFTheme.stroke, lineWidth: 1)
+        )
         .contentShape(Rectangle())
         .onTapGesture { onSeek(s.start) }
         .onLongPressGesture { onGateToggle(label) }

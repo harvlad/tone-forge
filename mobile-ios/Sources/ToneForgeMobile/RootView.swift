@@ -17,6 +17,9 @@
 
 import SwiftUI
 import ToneForgeEngine
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public struct RootView: View {
     @EnvironmentObject private var appState: AppState
@@ -245,7 +248,14 @@ struct LibraryView: View {
     @ViewBuilder
     private var musicPickerSheet: some View {
         #if os(iOS)
-        MusicLibraryPickerView(source: MPMediaLibrarySource()) { track in
+        let source = MPMediaLibrarySource()
+        MusicLibraryPickerView(source: source) { track in
+            // Capture album art now — the ArtworkStore key
+            // (historyId) only exists once analysis completes, so the
+            // coordinator holds the JPEG until then.
+            importer.pendingArtworkData = source
+                .artwork(forTrackId: track.id, size: CGSize(width: 600, height: 600))?
+                .jpegData(compressionQuality: 0.85)
             importer.start(source: .mediaItem(track), appState: appState)
         }
         #else
