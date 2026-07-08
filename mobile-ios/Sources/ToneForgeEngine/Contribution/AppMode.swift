@@ -6,10 +6,10 @@
 // grid context degrades to SketchSettingsStore's synthetic tempo
 // grid; no separate mode needed).
 //
-// Only `.sample` and `.hybrid` are implemented in v2; the other five
-// appear in the mode menu as disabled "Coming soon" entries so the
-// information architecture is visible from day one and session JSON
-// (P6) can already carry their raw values.
+// `.sample`, `.hybrid`, and `.jamInKey` are implemented; the other
+// four appear in the mode menu as disabled "Coming soon" entries so
+// the information architecture is visible from day one and session
+// JSON (P6) can already carry their raw values.
 
 import Foundation
 
@@ -26,7 +26,8 @@ public enum AppMode: String, CaseIterable, Codable, Sendable {
     case performSong
     /// FUTURE: harmony-line practice against the stem.
     case learnHarmony
-    /// FUTURE: free jam constrained to the song's key.
+    /// Free jam constrained to the song's key: full 8×8 OpenJamGrid
+    /// note surface (redesign Phase 7).
     case jamInKey
     /// FUTURE: melody transcription/echo mode.
     case melody
@@ -34,7 +35,7 @@ public enum AppMode: String, CaseIterable, Codable, Sendable {
     /// Whether the mode is playable in this build. Drives the
     /// "Coming soon" disable state in the mode menu.
     public var isImplemented: Bool {
-        self == .sample || self == .hybrid
+        self == .sample || self == .hybrid || self == .jamInKey
     }
 
     /// Menu label.

@@ -13,6 +13,9 @@
 //   hybrid  — rows 5–8 samples (as above); rows 1–4 synth notes from
 //             layout.meaning(.note(midi:)); chord tones (bright pads)
 //             flagged so the synth can accent them.
+//   jamInKey — every pad is a PadSynth note (full OpenJamGrid surface):
+//             padDown → padSynthNote(midi:velocity:); padUp → .none
+//             (PadSynth voices auto-release via their envelope).
 //   others  — unimplemented in this build: everything resolves .none.
 //
 //   midiNote events (future keyboard adapter) map straight to synth
@@ -29,6 +32,9 @@ public enum AudioAction: Sendable, Equatable {
     case releaseSample(padIdx: Int)
     case synthNoteOn(midi: Int, velocity: Double, isChordTone: Bool)
     case synthNoteOff(midi: Int)
+    /// Fire a one-shot PadSynth voice (jamInKey pads). velocity is
+    /// 0…1; the voice releases itself — no matching note-off action.
+    case padSynthNote(midi: Int, velocity: Double)
     case none
 }
 
@@ -76,6 +82,11 @@ public struct ModeRouter {
                     )
                 }
                 return .triggerSample(padIdx: pad.rawValue)
+            case .jamInKey:
+                guard case .note(let midi, _, _) = layout.meaning(at: pad),
+                      (0...127).contains(midi)
+                else { return .none }
+                return .padSynthNote(midi: midi, velocity: event.velocity)
             default:
                 return .none
             }
@@ -94,6 +105,9 @@ public struct ModeRouter {
                     return .synthNoteOff(midi: midi)
                 }
                 return .releaseSample(padIdx: pad.rawValue)
+            case .jamInKey:
+                // PadSynth voices auto-release; nothing to do on up.
+                return .none
             default:
                 return .none
             }

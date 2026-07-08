@@ -239,6 +239,11 @@ public struct SessionBounceRenderer {
                 noteEvents.append(NoteEvent(
                     frame: frame, order: noteEvents.count, isOn: false,
                     midi: midi, velocity: 0))
+            case .padSynthNote:
+                // Jam in Key notes voice on the mobile PadSynth,
+                // which has no offline render path yet — jam grid
+                // presses don't land in bounces (Phase 7 v1).
+                skipped += 1
             case .none:
                 skipped += 1
             }

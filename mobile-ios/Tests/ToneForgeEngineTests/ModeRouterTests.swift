@@ -203,7 +203,45 @@ final class ModeRouterTests: XCTestCase {
     func testImplementedModeSet() {
         XCTAssertEqual(
             AppMode.allCases.filter(\.isImplemented),
-            [.sample, .hybrid]
+            [.sample, .hybrid, .jamInKey]
         )
+    }
+
+    // MARK: - Jam in Key mode
+
+    private func jamLayout(octaveShift: Int = 0) -> JamInKeyLayout {
+        JamInKeyLayout(
+            key: MusicalKey.parse("D minor"),
+            octaveShift: octaveShift
+        )
+    }
+
+    func testJamPadDownPlaysPadSynth() {
+        // Pad 11 in OpenJamGrid = E2 = MIDI 40.
+        let action = ModeRouter.resolve(
+            event(.padDown(row: 1, col: 1), velocity: 0.8),
+            mode: .jamInKey,
+            layout: jamLayout()
+        )
+        XCTAssertEqual(action, .padSynthNote(midi: 40, velocity: 0.8))
+    }
+
+    func testJamOctaveShiftMovesMidi() {
+        let action = ModeRouter.resolve(
+            event(.padDown(row: 1, col: 1)),
+            mode: .jamInKey,
+            layout: jamLayout(octaveShift: 1)
+        )
+        XCTAssertEqual(action, .padSynthNote(midi: 52, velocity: 1.0))
+    }
+
+    func testJamPadUpResolvesNone() {
+        // PadSynth voices auto-release; there is nothing to stop.
+        let action = ModeRouter.resolve(
+            event(.padUp(row: 1, col: 1)),
+            mode: .jamInKey,
+            layout: jamLayout()
+        )
+        XCTAssertEqual(action, .none)
     }
 }

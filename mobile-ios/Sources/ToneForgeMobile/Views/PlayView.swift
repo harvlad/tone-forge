@@ -70,70 +70,23 @@ private struct PlayBody: View {
 
             ModeTabsRow(surface: surfaceBinding)
 
-            if hasSong {
-                CategoryCards { _ in
-                    // Family pre-filter wires up in Phase 10; for now
-                    // every card opens the pack browser.
-                    showBrowse = true
-                }
-            }
-
-            HStack(spacing: 8) {
-                modeMenu
-                PackPicker(
-                    pages: appState.carouselPages,
-                    activePackId: appState.activeSamplePack?.pack.packId,
-                    onSelect: { appState.activateCarouselPage(packId: $0) },
-                    onOpen: { showBrowse = true }
+            if currentSurface == .jam {
+                JamView(
+                    coordinator: coordinator,
+                    jamSettings: appState.jamSettings,
+                    controller: appState.jamController
                 )
-                stopAllButton
+            } else {
+                contributeContent(hasSong: hasSong)
             }
-            .padding(.horizontal, 12)
-
-            if hasSong {
-                SectionChips(
-                    sections: appState.currentBundle?.timeline.sections ?? [],
-                    nowSongSeconds: appState.songSeconds,
-                    allowedLabels: appState.sampleSettings.sectionGates(
-                        for: appState.currentBundle?.analysisId ?? ""
-                    ),
-                    onSeek: { t in appState.seekAndPlay(to: t) },
-                    onGateToggle: { label in toggleGate(label: label) }
-                )
-                .frame(height: 44)
-            }
-
-            // Both contexts: layers with a song, sketches without.
-            RecordToggle()
-
-            ModeGridView(coordinator: coordinator)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            QuantizeControls(
-                quantize: quantizeBinding,
-                hold: $sampleSettings.holdMode,
-                beatBar: $sampleSettings.beatBarMode
-            )
-
-            if !hasSong {
-                // Song-less synthetic grid (D-016): tempo/meter/click
-                // for the quantize clock.
-                TempoStrip(
-                    bpm: $sketchSettings.tempoBpm,
-                    timeSigNumerator: $sketchSettings.timeSigNumerator,
-                    metronomeEnabled: $sketchSettings.metronomeEnabled,
-                    countInEnabled: $sketchSettings.countInEnabled,
-                    positionLabel: sketchPositionLabel
-                )
-            }
-
-            LayerFader(dbValue: $sampleSettings.layerFaderDb)
 
             transportRow
 
             masterVolumeRow
 
-            howItWorksFooter
+            if currentSurface == .contribute {
+                howItWorksFooter
+            }
         }
         .padding(.top, 8)
         .padding(.bottom, 40)
@@ -142,22 +95,111 @@ private struct PlayBody: View {
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showBrowse) { BrowsePacksSheet() }
         .sheet(isPresented: $showHelp) { HelpSheet() }
+        .onAppear { applySurface(currentSurface) }
+    }
+
+    // MARK: - Contribute surface content
+
+    @ViewBuilder
+    private func contributeContent(hasSong: Bool) -> some View {
+        if hasSong {
+            CategoryCards { _ in
+                // Family pre-filter wires up in Phase 10; for now
+                // every card opens the pack browser.
+                showBrowse = true
+            }
+        }
+
+        HStack(spacing: 8) {
+            modeMenu
+            PackPicker(
+                pages: appState.carouselPages,
+                activePackId: appState.activeSamplePack?.pack.packId,
+                onSelect: { appState.activateCarouselPage(packId: $0) },
+                onOpen: { showBrowse = true }
+            )
+            stopAllButton
+        }
+        .padding(.horizontal, 12)
+
+        if hasSong {
+            SectionChips(
+                sections: appState.currentBundle?.timeline.sections ?? [],
+                nowSongSeconds: appState.songSeconds,
+                allowedLabels: appState.sampleSettings.sectionGates(
+                    for: appState.currentBundle?.analysisId ?? ""
+                ),
+                onSeek: { t in appState.seekAndPlay(to: t) },
+                onGateToggle: { label in toggleGate(label: label) }
+            )
+            .frame(height: 44)
+        }
+
+        // Both contexts: layers with a song, sketches without.
+        RecordToggle()
+
+        ModeGridView(coordinator: coordinator)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        QuantizeControls(
+            quantize: quantizeBinding,
+            hold: $sampleSettings.holdMode,
+            beatBar: $sampleSettings.beatBarMode
+        )
+
+        if !hasSong {
+            // Song-less synthetic grid (D-016): tempo/meter/click
+            // for the quantize clock.
+            TempoStrip(
+                bpm: $sketchSettings.tempoBpm,
+                timeSigNumerator: $sketchSettings.timeSigNumerator,
+                metronomeEnabled: $sketchSettings.metronomeEnabled,
+                countInEnabled: $sketchSettings.countInEnabled,
+                positionLabel: sketchPositionLabel
+            )
+        }
+
+        LayerFader(dbValue: $sampleSettings.layerFaderDb)
     }
 
     // MARK: - Surface switcher (D-018)
 
-    /// Persisted PlaySurface selection. Only `.contribute` is live
-    /// today, so nothing beyond persistence hangs off this yet —
-    /// Jam/Learn/Chord Pads surfaces branch on it as their phases
-    /// land.
+    /// The persisted PlaySurface selection, coerced to an implemented
+    /// surface (raw values from newer builds fall back to Contribute).
+    private var currentSurface: PlaySurface {
+        let s = PlaySurface(rawValue: sampleSettings.playSurfaceRaw)
+            ?? .contribute
+        return s.isImplemented ? s : .contribute
+    }
+
     private var surfaceBinding: Binding<PlaySurface> {
         Binding(
-            get: {
-                PlaySurface(rawValue: sampleSettings.playSurfaceRaw)
-                    ?? .contribute
-            },
-            set: { sampleSettings.playSurfaceRaw = $0.rawValue }
+            get: { currentSurface },
+            set: { s in
+                sampleSettings.playSurfaceRaw = s.rawValue
+                applySurface(s)
+            }
         )
+    }
+
+    /// Map a surface onto the engine AppMode. Jam drives the grid via
+    /// .jamInKey; Contribute restores the last sample/hybrid mode the
+    /// user was in. setMode no-ops when the mode is already active,
+    /// so calling this from onAppear is idempotent.
+    private func applySurface(_ s: PlaySurface) {
+        switch s {
+        case .jam:
+            coordinator.setMode(.jamInKey)
+        case .contribute:
+            if let last = AppMode(rawValue: sampleSettings.lastContributeModeRaw),
+               last == .sample || last == .hybrid {
+                coordinator.setMode(last)
+            } else {
+                coordinator.setMode(.sample)
+            }
+        case .learn, .chordPads:
+            break // surfaces land in Phases 8 / 12
+        }
     }
 
     // MARK: - Master volume

@@ -271,8 +271,20 @@ public final class AppState: ObservableObject {
 
     /// Song-less click track (Sketch plan Phase 2). Runs only when no
     /// bundle is loaded, the toggle is on, and the transport plays —
-    /// `syncMetronome` owns that decision.
+    /// `syncMetronome` owns that decision. Jam in Key (Phase 7) is
+    /// the exception: it runs the metronome from `jamSettings` even
+    /// with a song loaded.
     public lazy var metronome: Metronome = Metronome(engine: audioEngine)
+
+    // MARK: - Jam in Key (redesign Phase 7)
+
+    /// Persisted Jam in Key settings (key override, scale variant,
+    /// preset, octave, strum, quantize, jam metronome).
+    public let jamSettings = JamSettingsStore()
+
+    /// UI state + degree-pad actions for the Jam surface.
+    public lazy var jamController: JamInKeyController =
+        JamInKeyController(app: self)
 
     /// The pack currently loaded into the scheduler. Nil until either
     /// the bundled StarterPack loads or a song-derived pack activates.
@@ -1353,9 +1365,39 @@ public final class AppState: ObservableObject {
     /// transport playing. Parameters override the corresponding
     /// sketchSettings read for callers inside @Published sinks (which
     /// fire on willSet, before the store's property updates).
-    private func syncMetronome(
+    ///
+    /// Jam in Key is the exception (redesign Phase 7): it drives the
+    /// metronome from `jamSettings` — its own accent/sound/subdivide
+    /// and enable toggle — and also runs with a song loaded (at the
+    /// song's tempo). Internal (not private) so ModeCoordinator and
+    /// JamInKeyController can re-sync on mode/settings changes.
+    func syncMetronome(
         bpm: Double? = nil, timeSig: Int? = nil, enabled: Bool? = nil
     ) {
+        if modeCoordinator.appMode == .jamInKey {
+            // Guard the sound assignment — its didSet rebuilds the
+            // click buffers, which we don't want on every sync.
+            if metronome.sound != jamSettings.metronomeSound {
+                metronome.sound = jamSettings.metronomeSound
+            }
+            metronome.update(grid: MetronomeGrid(
+                bpm: currentBundle?.meta.tempoBpm
+                    ?? (bpm ?? sketchSettings.tempoBpm),
+                beatsPerBar: timeSig ?? sketchSettings.timeSigNumerator,
+                accent: jamSettings.metronomeAccent,
+                subdivide: jamSettings.metronomeSubdivide
+            ))
+            if jamSettings.metronomeEnabled && isPlaying {
+                metronome.start()
+            } else {
+                metronome.stop()
+            }
+            return
+        }
+        // Leaving jam mode restores the historic sketch click.
+        if metronome.sound != .sine {
+            metronome.sound = .sine
+        }
         metronome.update(grid: MetronomeGrid(
             bpm: bpm ?? sketchSettings.tempoBpm,
             beatsPerBar: timeSig ?? sketchSettings.timeSigNumerator

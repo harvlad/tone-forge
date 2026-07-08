@@ -116,12 +116,21 @@ public final class SampleSettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// Last contribute-family AppMode raw value ("sample"/"hybrid").
+    /// `appModeRaw` alone is not enough once Jam in Key also writes
+    /// it — this remembers which contribute grid to restore when the
+    /// user switches back to the Contribute surface.
+    @Published public var lastContributeModeRaw: String {
+        didSet { save() }
+    }
+
     /// Built-in defaults, shared by init and the tests.
     nonisolated public static let defaultVoiceGain: Double = 0.9
     nonisolated public static let defaultChopGain: Double = 0.55
     nonisolated public static let defaultVocoderGain: Double = 0.4
     nonisolated public static let defaultAppModeRaw: String = "sample"
     nonisolated public static let defaultPlaySurfaceRaw: String = "contribute"
+    nonisolated public static let defaultLastContributeModeRaw: String = "sample"
 
     // MARK: - Init
 
@@ -147,6 +156,7 @@ public final class SampleSettingsStore: ObservableObject {
         self.vocoderGainLinear = loaded.vocoderGainLinear
         self.appModeRaw = loaded.appModeRaw
         self.playSurfaceRaw = loaded.playSurfaceRaw
+        self.lastContributeModeRaw = loaded.lastContributeModeRaw
     }
 
     // MARK: - Pad-effect override convenience
@@ -254,6 +264,9 @@ public final class SampleSettingsStore: ObservableObject {
         /// Play-tab surface (D-018). Absent in blobs written before
         /// the redesign; decoder falls back to "contribute".
         var playSurfaceRaw: String
+        /// Last contribute-family mode (redesign Phase 7). Absent in
+        /// earlier blobs; decoder falls back to "sample".
+        var lastContributeModeRaw: String
 
         static let defaults = Persisted(
             storeVersion: 1,
@@ -268,7 +281,8 @@ public final class SampleSettingsStore: ObservableObject {
             chopGainLinear: SampleSettingsStore.defaultChopGain,
             vocoderGainLinear: SampleSettingsStore.defaultVocoderGain,
             appModeRaw: SampleSettingsStore.defaultAppModeRaw,
-            playSurfaceRaw: SampleSettingsStore.defaultPlaySurfaceRaw
+            playSurfaceRaw: SampleSettingsStore.defaultPlaySurfaceRaw,
+            lastContributeModeRaw: SampleSettingsStore.defaultLastContributeModeRaw
         )
 
         // Custom decoding so pre-6d blobs that lack the newer keys
@@ -277,7 +291,8 @@ public final class SampleSettingsStore: ObservableObject {
             case storeVersion, currentPackId, quantizeMode, holdMode,
                  beatBarMode, sectionGatesBySong, layerFaderDb,
                  padEffectsByKey, voiceGainLinear, chopGainLinear,
-                 vocoderGainLinear, appModeRaw, playSurfaceRaw
+                 vocoderGainLinear, appModeRaw, playSurfaceRaw,
+                 lastContributeModeRaw
         }
 
         init(
@@ -293,7 +308,8 @@ public final class SampleSettingsStore: ObservableObject {
             chopGainLinear: Double,
             vocoderGainLinear: Double,
             appModeRaw: String,
-            playSurfaceRaw: String
+            playSurfaceRaw: String,
+            lastContributeModeRaw: String
         ) {
             self.storeVersion = storeVersion
             self.currentPackId = currentPackId
@@ -308,6 +324,7 @@ public final class SampleSettingsStore: ObservableObject {
             self.vocoderGainLinear = vocoderGainLinear
             self.appModeRaw = appModeRaw
             self.playSurfaceRaw = playSurfaceRaw
+            self.lastContributeModeRaw = lastContributeModeRaw
         }
 
         init(from decoder: Decoder) throws {
@@ -337,6 +354,9 @@ public final class SampleSettingsStore: ObservableObject {
             self.playSurfaceRaw = try c.decodeIfPresent(
                 String.self, forKey: .playSurfaceRaw
             ) ?? SampleSettingsStore.defaultPlaySurfaceRaw
+            self.lastContributeModeRaw = try c.decodeIfPresent(
+                String.self, forKey: .lastContributeModeRaw
+            ) ?? SampleSettingsStore.defaultLastContributeModeRaw
         }
     }
 
@@ -367,7 +387,8 @@ public final class SampleSettingsStore: ObservableObject {
             chopGainLinear: max(0, min(1, chopGainLinear)),
             vocoderGainLinear: max(0, min(1, vocoderGainLinear)),
             appModeRaw: appModeRaw,
-            playSurfaceRaw: playSurfaceRaw
+            playSurfaceRaw: playSurfaceRaw,
+            lastContributeModeRaw: lastContributeModeRaw
         )
         if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: Self.defaultsKey)

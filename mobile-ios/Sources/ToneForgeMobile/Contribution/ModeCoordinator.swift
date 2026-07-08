@@ -167,6 +167,12 @@ public final class ModeCoordinator: ObservableObject {
         guard mode.isImplemented, mode != appMode else { return }
         appMode = mode
         app.sampleSettings.appModeRaw = mode.rawValue
+        // Remember the last contribute-family mode separately so the
+        // Contribute surface tab restores sample/hybrid after a visit
+        // to Jam in Key (which also writes appModeRaw).
+        if mode == .sample || mode == .hybrid {
+            app.sampleSettings.lastContributeModeRaw = mode.rawValue
+        }
         app.wavetableSynthNode.allNotesOff()
         // Local assignments are per-mode but scheduler buffers are
         // keyed by grid pad alone — swap them with the mode. Same
@@ -174,6 +180,9 @@ public final class ModeCoordinator: ObservableObject {
         syncLocalBuffers()
         syncTransforms()
         rebuildLayout()
+        // Jam in Key runs the metronome from JamSettingsStore; other
+        // modes use the song/sketch settings. Re-sync on every switch.
+        app.syncMetronome()
     }
 
     // MARK: - Touch input (on-screen grid adapter)
@@ -263,6 +272,13 @@ public final class ModeCoordinator: ObservableObject {
 
         case .synthNoteOff(let midi):
             app.wavetableSynthNode.noteOff(midi: midi)
+
+        case .padSynthNote(let midi, let velocity):
+            // Jam in Key pads voice through the PadSynth (same sound
+            // as the degree/chord pads). Router velocity is 0…1;
+            // PadSynth expects MIDI-style 0…127.
+            let vel = Float(max(0, min(1, velocity)) * 127)
+            app.padSynth.triggerNote(midi: midi, velocity: vel)
 
         case .none:
             break
@@ -384,10 +400,10 @@ public final class ModeCoordinator: ObservableObject {
         syncTransforms()
     }
 
-    /// Chord advanced (hybrid brightens the sounding chord's tones).
-    /// Cheap no-op in sample mode.
+    /// Chord advanced (hybrid + jam brighten the sounding chord's
+    /// tones). Cheap no-op in sample mode.
     public func chordChanged() {
-        guard appMode == .hybrid else { return }
+        guard appMode == .hybrid || appMode == .jamInKey else { return }
         rebuildLayout()
     }
 
@@ -401,6 +417,16 @@ public final class ModeCoordinator: ObservableObject {
                 keyLabel: app.currentBundle?.meta.detectedKey,
                 chordPitchClasses: currentChordPitchClasses(),
                 sampleContent: content
+            )
+        case .jamInKey:
+            layout = JamInKeyLayout(
+                key: app.jamSettings.effectiveKey(
+                    detectedKey: app.currentBundle?.meta.detectedKey,
+                    analysisId: app.currentBundle?.analysisId
+                ),
+                chordPitchClasses: app.jamSettings.highlightCurrentChord
+                    ? currentChordPitchClasses() : [],
+                octaveShift: app.jamSettings.octaveShift
             )
         default:
             layout = EmptyLayout()
@@ -1107,9 +1133,11 @@ public final class ModeCoordinator: ObservableObject {
     ///   - bound pack pad        → effects editor
     ///   - empty sample slot     → source sheet (record/assign)
     ///   - hybrid note rows      → nothing
+    ///   - jam in key            → nothing (the whole grid is notes)
     func padSheetTarget(row: Int, col: Int) -> PadSheetTarget? {
         let grid = PadIndex.at(row: row, col: col)
         guard grid.isValid, appMode.isImplemented else { return nil }
+        if appMode == .jamInKey { return nil }
         if case .localSample(let id)? =
             app.padAssignmentStore.slot(mode: appMode, padIdx: grid.rawValue)?.ref,
            let meta = app.padSampleStore.metadata(id: id) {
