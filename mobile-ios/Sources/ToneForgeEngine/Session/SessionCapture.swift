@@ -77,6 +77,10 @@ public struct SessionCapture: Sendable, Equatable {
     public var events: [ContributionEvent]
     /// Pad → sample snapshot at arm time.
     public var padMapping: [PadAddress: PadSampleReference]
+    /// Layer A/B slot label (D-022 Phase 7). "A" or "B" for takes
+    /// assigned to a slot; nil for older takes captured before this
+    /// field existed. decodeIfPresent + encodeIfPresent for back-compat.
+    public var slotLabel: String?
 
     public init(
         schemaVersion: Int = 1,
@@ -86,7 +90,8 @@ public struct SessionCapture: Sendable, Equatable {
         capturedAt: Date,
         tempoBpm: Double?,
         events: [ContributionEvent],
-        padMapping: [PadAddress: PadSampleReference]
+        padMapping: [PadAddress: PadSampleReference],
+        slotLabel: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.sessionId = sessionId
@@ -96,6 +101,7 @@ public struct SessionCapture: Sendable, Equatable {
         self.tempoBpm = tempoBpm
         self.events = events
         self.padMapping = padMapping
+        self.slotLabel = slotLabel
     }
 
     /// Song-seconds of the last captured event (0 for an empty take).
@@ -110,7 +116,7 @@ public struct SessionCapture: Sendable, Equatable {
 extension SessionCapture: Codable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, sessionId, songBackendId, appMode
-        case capturedAtEpoch, tempoBpm, events, padMapping
+        case capturedAtEpoch, tempoBpm, events, padMapping, slotLabel
     }
 
     /// One padMapping pair on the wire.
@@ -135,6 +141,7 @@ extension SessionCapture: Codable {
         var mapping: [PadAddress: PadSampleReference] = [:]
         for entry in entries { mapping[entry.address] = entry.ref }
         self.padMapping = mapping
+        self.slotLabel = try c.decodeIfPresent(String.self, forKey: .slotLabel)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -154,5 +161,6 @@ extension SessionCapture: Codable {
                     < ($1.address.mode.rawValue, $1.address.pad.rawValue)
             }
         try c.encode(entries, forKey: .padMapping)
+        try c.encodeIfPresent(slotLabel, forKey: .slotLabel)
     }
 }

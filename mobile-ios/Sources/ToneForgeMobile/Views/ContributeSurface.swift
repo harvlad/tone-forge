@@ -72,6 +72,8 @@ struct ContributeSurface: View {
                     onSeek: { t in appState.seekAndPlay(to: t) },
                     onGateToggle: { label in toggleGate(label: label) }
                 )
+                LayerSlotToggle()
+                    .padding(.trailing, 8)
                 RecordToggle()
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.trailing, 12)
@@ -90,6 +92,7 @@ struct ContributeSurface: View {
                 beatBar: $sampleSettings.beatBarMode
             )
             if !hasSong {
+                LayerSlotToggle()
                 RecordToggle()
                     .fixedSize(horizontal: true, vertical: false)
             }

@@ -168,4 +168,45 @@ final class SessionCaptureCodableTests: XCTestCase {
         ]
         XCTAssertEqual(makeSession(events: events).durationSec, 3.5)
     }
+
+    // MARK: - slotLabel (D-022 Phase 7)
+
+    func testSlotLabelDecodesNilFromOldSession() throws {
+        // V1 sessions captured before Phase 7 have no slotLabel key.
+        let payload = """
+            {"appMode":"sample","capturedAtEpoch":0,"events":[],
+             "schemaVersion":1,
+             "sessionId":"11111111-2222-3333-4444-555555555555"}
+            """
+        let session = try JSONDecoder().decode(
+            SessionCapture.self, from: Data(payload.utf8))
+        XCTAssertNil(session.slotLabel)
+    }
+
+    func testSlotLabelRoundTrips() throws {
+        var session = makeSession()
+        session.slotLabel = "A"
+        let data = try JSONEncoder().encode(session)
+        let decoded = try JSONDecoder().decode(
+            SessionCapture.self, from: data)
+        XCTAssertEqual(decoded.slotLabel, "A")
+    }
+
+    func testSlotLabelOmittedWhenNil() throws {
+        let session = makeSession()
+        XCTAssertNil(session.slotLabel)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = String(decoding: try encoder.encode(session), as: UTF8.self)
+        XCTAssertFalse(json.contains("slotLabel"))
+    }
+
+    func testSlotLabelIncludedWhenSet() throws {
+        var session = makeSession()
+        session.slotLabel = "B"
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = String(decoding: try encoder.encode(session), as: UTF8.self)
+        XCTAssertTrue(json.contains("\"slotLabel\":\"B\""))
+    }
 }

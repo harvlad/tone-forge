@@ -473,6 +473,28 @@ public final class AppState: ObservableObject {
     /// spinner + disables the row's Bounce action while present.
     @Published public private(set) var bouncingSessionIds: Set<UUID> = []
 
+    // MARK: - Layer A/B slots (D-022 Phase 7)
+
+    /// Per-slot session players. Both pump the bus with `isReplay = true`
+    /// when their slots have takes assigned. Created lazily on first use.
+    public lazy var slotPlayers: [RecordingSlot: SessionPlayer] = [
+        .a: SessionPlayer(
+            bus: contributionBus,
+            clockNow: { [weak self] in self?.audioEngine.clock.nowSongSeconds ?? 0 }
+        ),
+        .b: SessionPlayer(
+            bus: contributionBus,
+            clockNow: { [weak self] in self?.audioEngine.clock.nowSongSeconds ?? 0 }
+        )
+    ]
+    /// Current layer slots for the active song (or sketch). Published so
+    /// ContributeSurface can show which slot is active and which have takes.
+    @Published public private(set) var layerSlots: LayerSlots = LayerSlots()
+    /// Per-song slot state (keyed by analysisId; sketch uses sentinel).
+    private var slotStates: [String: LayerSlots] = [:]
+    /// Sentinel analysisId for sketch (no song) slot state.
+    public static let sketchSlotId = "__sketch__"
+
     /// Stem role → local file URL for the currently activated bundle.
     /// Song-derived packs need this to slice their stems on activate.
     /// Rebuilt every time `activate(bundle:)` runs.
@@ -578,6 +600,9 @@ public final class AppState: ObservableObject {
         // autosave into the store; the shelf lists saved sessions.
         _ = sessionRecorder
         savedSessions = sessionStore.list()
+        // D-022 Phase 7: rehydrate sketch layer slots (no song loaded
+        // at boot, so use the sketch sentinel).
+        rehydrateLayerSlots(analysisId: Self.sketchSlotId)
         // Scan disk for downloaded curated packs so they appear in the
         // Browse sheet even before the catalog loads (offline boot).
         refreshCachedPackIds()
@@ -1116,6 +1141,9 @@ public final class AppState: ObservableObject {
         uploadingLayerIds = []
         layerPlayer.clear()
 
+        // D-022 Phase 7: rehydrate layer A/B slots for this song.
+        rehydrateLayerSlots(analysisId: bundle.analysisId)
+
         await downloadAndLoad(bundle: bundle)
     }
 
@@ -1243,6 +1271,8 @@ public final class AppState: ObservableObject {
         uploadedLayerIds = []
         uploadingLayerIds = []
         layerPlayer.clear()
+        // D-022 Phase 7: clear layer A/B slots on eject.
+        clearLayerSlots()
         downloadProgress.removeAll()
         loadingError = nil
         // No song → sketch context (synthetic tempo grid, D-016) +
@@ -1461,6 +1491,15 @@ public final class AppState: ObservableObject {
         if replayingSessionId != nil {
             sessionPlayer.start()
         }
+        // Layer A/B slot players (D-022 Phase 7): both start together
+        // so recorded layers on both slots play back simultaneously.
+        // Skip if a legacy session replay is active — the user is
+        // explicitly replaying a specific session from the shelf.
+        if replayingSessionId == nil {
+            for (slot, player) in slotPlayers where layerSlots.hasTake(slot) {
+                player.start()
+            }
+        }
         // User has taken explicit ownership of the transport — from
         // here on, toggling a layer off should NOT auto-pause.
         transportStartedByLayer = false
@@ -1478,6 +1517,10 @@ public final class AppState: ObservableObject {
         stopTicking()
         layerPlayer.stop()
         sessionPlayer.stop()
+        // Layer A/B slot players (D-022 Phase 7): both stop together.
+        for player in slotPlayers.values {
+            player.stop()
+        }
         transportStartedByLayer = false
         syncMetronome()
         syncIdleTimer()
@@ -1547,6 +1590,10 @@ public final class AppState: ObservableObject {
         refreshChordFrame()
         layerPlayer.seek(to: seconds)
         sessionPlayer.seek(to: seconds)
+        // Layer A/B slot players (D-022 Phase 7).
+        for player in slotPlayers.values {
+            player.seek(to: seconds)
+        }
     }
 
     /// Move to `seconds` and force playback ON. Used by section-chip
@@ -1567,6 +1614,10 @@ public final class AppState: ObservableObject {
         refreshChordFrame()
         layerPlayer.seek(to: seconds)
         sessionPlayer.seek(to: seconds)
+        // Layer A/B slot players (D-022 Phase 7).
+        for player in slotPlayers.values {
+            player.seek(to: seconds)
+        }
         if isPlaying {
             // Already playing — restart stems at the new position so
             // audio matches the clock's new anchor.
@@ -1753,9 +1804,35 @@ public final class AppState: ObservableObject {
     /// Stop the recorder. The take is already on disk — stop() fires
     /// one final autosave through `sessionStore` — so this just
     /// refreshes the shelf. Silent no-op if nothing was captured.
+    ///
+    /// D-022 Phase 7: stamps the active slot label on the capture,
+    /// re-saves, assigns it to layerSlots, and loads the slot player
+    /// so the take immediately participates in playback.
     public func stopAndSaveSessionRecording() {
-        _ = sessionRecorder.stop()
+        guard var session = sessionRecorder.stop() else {
+            // Nothing captured; still need to sync state.
+            syncIdleTimer()
+            if currentBundle == nil {
+                pause()
+                seek(to: 0)
+            }
+            return
+        }
+        // Stamp the active slot label and re-save (overwriting the
+        // onAutosave write that just happened).
+        let activeSlot = layerSlots.active
+        session.slotLabel = activeSlot.rawValue
+        try? sessionStore.save(session)
         savedSessions = sessionStore.list()
+
+        // Assign to the active slot and persist the slot state.
+        let slotKey = currentBundle?.analysisId ?? Self.sketchSlotId
+        layerSlots.assign(sessionId: session.sessionId, to: activeSlot)
+        slotStates[slotKey] = layerSlots
+
+        // Load the slot player so the new take replays immediately.
+        loadSlotPlayer(slot: activeSlot, session: session)
+
         // Sketch context: stopping the take also parks the transport.
         // There's no song underneath to keep listening to — the
         // metronome would just click on forever.
@@ -1779,6 +1856,103 @@ public final class AppState: ObservableObject {
             seek(to: 0)
         }
         syncIdleTimer()
+    }
+
+    // MARK: - Layer A/B slots (D-022 Phase 7)
+
+    /// Toggle the active recording slot (A ↔ B). No-op while recording.
+    /// Returns the newly active slot.
+    @discardableResult
+    public func toggleActiveSlot() -> RecordingSlot {
+        guard sessionRecorder.state == .idle else { return layerSlots.active }
+        let newSlot = layerSlots.toggleActive()
+        let slotKey = currentBundle?.analysisId ?? Self.sketchSlotId
+        slotStates[slotKey] = layerSlots
+        return newSlot
+    }
+
+    /// Load a session into the specified slot player. The player pumps
+    /// events through the bus with `isReplay = true`.
+    ///
+    /// Unlike the legacy sessionPlayer (toggled from the sessions list),
+    /// slot replay does NOT apply a pad-mapping overlay — the live grid
+    /// stays as the user configured it, and slot events route through
+    /// the session's captured padMapping. This allows both slots to
+    /// replay simultaneously without conflicting overlays.
+    private func loadSlotPlayer(slot: RecordingSlot, session: SessionCapture) {
+        guard let player = slotPlayers[slot] else { return }
+        // Ensure referenced packs are resident (same pattern as
+        // toggleSessionReplay).
+        for ref in session.padMapping.values {
+            if case .packPad(let packId, _) = ref {
+                ensurePackLoaded(packId: packId)
+            }
+        }
+        player.load(session)
+        player.seek(to: audioEngine.clock.nowSongSeconds)
+    }
+
+    /// Rehydrate layer slots for a song (or sketch). Finds the most
+    /// recent take per slot label and loads both slot players.
+    private func rehydrateLayerSlots(analysisId: String) {
+        // Restore or create slot state for this song.
+        let key = analysisId
+        if let existing = slotStates[key] {
+            layerSlots = existing
+        } else {
+            layerSlots = LayerSlots()
+        }
+
+        // Find the latest take per slot label for this song.
+        // For sketch (sentinel key), sessions have songBackendId == nil.
+        let isSketch = analysisId == Self.sketchSlotId
+        let relevant = savedSessions.filter {
+            isSketch ? $0.songBackendId == nil : $0.songBackendId == analysisId
+        }
+        var latestA: SessionCapture?
+        var latestB: SessionCapture?
+        for session in relevant {
+            switch session.slotLabel {
+            case "A":
+                if latestA == nil || session.capturedAt > latestA!.capturedAt {
+                    latestA = session
+                }
+            case "B":
+                if latestB == nil || session.capturedAt > latestB!.capturedAt {
+                    latestB = session
+                }
+            default:
+                break
+            }
+        }
+
+        // Assign and load.
+        if let a = latestA {
+            layerSlots.assign(sessionId: a.sessionId, to: .a)
+            loadSlotPlayer(slot: .a, session: a)
+        } else {
+            layerSlots.clear(slot: .a)
+            slotPlayers[.a]?.clear()
+        }
+        if let b = latestB {
+            layerSlots.assign(sessionId: b.sessionId, to: .b)
+            loadSlotPlayer(slot: .b, session: b)
+        } else {
+            layerSlots.clear(slot: .b)
+            slotPlayers[.b]?.clear()
+        }
+
+        slotStates[key] = layerSlots
+    }
+
+    /// Clear layer slots (e.g., on song eject).
+    private func clearLayerSlots() {
+        for player in slotPlayers.values {
+            player.stop()
+            player.clear()
+        }
+        layerSlots = LayerSlots()
+        modeCoordinator.clearReplayOverlay()
     }
 
     // MARK: - Session replay (P6, D-015)
