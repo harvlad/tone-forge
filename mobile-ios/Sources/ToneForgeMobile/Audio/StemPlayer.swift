@@ -45,6 +45,14 @@ public final class StemPlayer: ObservableObject {
     @Published public private(set) var stems: [StemState] = []
     @Published public private(set) var isLoaded: Bool = false
 
+    /// Test/preview seam: seed mixer UI state without touching the
+    /// audio graph (snapshot tests render channel strips with no
+    /// engine and no local stem files).
+    func seedStemStatesForSnapshot(_ states: [StemState]) {
+        stems = states
+        isLoaded = !states.isEmpty
+    }
+
     // MARK: - Private
 
     #if canImport(AVFoundation)
