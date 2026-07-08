@@ -413,3 +413,74 @@ touch→attack path for zero benefit in v1).
 header, transport, and master fader. One surface enum, one setMode
 seam, one synth voice keeps that shape honest — every new surface is
 a view plus a controller, not a new audio path.
+
+## D-020: Approved deviations from the design mockups (compact shell)
+
+**Date:** 2026-07-08
+**Decision:** the shipped Play tab intentionally deviates from the
+design mockups in five places, all traded for vertical space on
+phone-sized screens so the pad grid stays large and reachable. These
+were reviewed against real device/simulator screenshots and approved
+("i agree with the trade offs so we find a common ground that
+respects the ux"):
+
+1. **Compact Now Playing shell** — Key and BPM fold into the song
+   meta line instead of dedicated chips under a large album-art
+   block; artwork appears as a small thumbnail.
+2. **Category cards are a slim chip row** — the "What do you want to
+   add?" full-height cards from the mockup become one horizontal
+   chip row that opens Browse Packs with the family pre-filtered.
+3. **Merged transport/volume row** — transport controls and the
+   master volume share a single row rather than stacked sections.
+4. **Quantize as inline chips** — the grouped quantize card from the
+   mockup renders as a chip strip (sharing its row with the sketch
+   Record pill when no song is loaded).
+5. **No pencil "Edit" next to the pack name** — the pack selector row
+   carries the stop-all button and the 4x4/8x8 grid toggle instead;
+   pad editing lives on long-press (PadEffectsEditor / PadSourceSheet).
+
+**Alternatives:** pixel-faithful mockup layout (costs roughly a full
+grid row of height on an iPhone 15/16 Pro and pushes the layer fader
+below the fold); collapsible sections (more chrome and state for no
+new capability).
+**Why:** the mockups were drawn desktop-width. On device the pad grid
+is the product; every deviation buys grid size or keeps a control on
+screen that the mockup pushed below the fold, while preserving the
+mockup's information hierarchy (song header, surface tabs, grid,
+quantize, fader).
+
+## D-021: Offline-first Library from the on-device cache; R2 on legal hold
+
+**Date:** 2026-07-08
+**Decision:** previously downloaded songs must load with the backend
+unreachable (the dev backend is a LAN-only mDNS host, so leaving the
+house used to brick the Library). Two client-side changes, zero new
+network paths:
+
+- `AppState.loadBundle` falls back to the bundle.json persisted by
+  `BundleStore.saveBundle` (Application Support) when the manifest
+  fetch fails; cached stems (Caches) then load from disk without any
+  network. Missing stems still surface a download error.
+- When `GET /api/history` fails, LibraryView shows a **Downloaded**
+  section built from `BundleStore.listLocalBundles()`; tapping a row
+  activates the cached bundle directly (`loadCachedBundle`), never
+  touching the manifest endpoint.
+
+Cloud stem hosting via R2 (D-002/D-007) is **not** part of this fix
+and stays unconfigured: uploading user-imported audio to third-party
+storage may not be in line with the current legal policy, so the R2
+env vars remain unset (the D-007 code path is dormant — `is_configured()`
+false means every bundle carries local serve-file URLs and nothing has
+ever been uploaded). Revisit R2 only after a legal review; the
+offline story does not depend on it.
+
+**Alternatives:** wiring up R2 so bundles carry world-reachable stem
+URLs (solves fresh downloads off-LAN but not the manifest/history
+fetches, and blocked by the legal question); exposing the backend
+over a tunnel/VPN (infrastructure, not an app fix; still a single
+point of failure on the road).
+**Why:** everything needed to replay a downloaded song is already on
+the device — the only thing missing was the app trusting its own
+cache. Offline-first from local storage is also the strongest
+position for the legal policy: user audio never leaves the user's
+machines.

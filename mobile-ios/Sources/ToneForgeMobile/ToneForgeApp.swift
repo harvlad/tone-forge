@@ -972,7 +972,10 @@ public final class AppState: ObservableObject {
     // MARK: - Bundle loading
 
     /// Fetch the bundle from the backend and activate it (download
-    /// stems + wire the stem player + reset transport).
+    /// stems + wire the stem player + reset transport). If the backend
+    /// is unreachable (e.g. off the home LAN — the dev backend is an
+    /// mDNS host) falls back to the bundle.json persisted by a previous
+    /// load, so already-downloaded songs keep working offline (D-021).
     public func loadBundle(analysisId: String) async {
         loadingError = nil
         do {
@@ -983,8 +986,22 @@ public final class AppState: ObservableObject {
             try? bundleStore.saveBundle(bundle)
             await activate(bundle: bundle)
         } catch {
-            loadingError = error.localizedDescription
+            if let cached = try? bundleStore.loadBundle(analysisId: analysisId) {
+                await activate(bundle: cached)
+            } else {
+                loadingError = error.localizedDescription
+            }
         }
+    }
+
+    /// Activate a locally persisted bundle without touching the
+    /// network manifest — the Library's Downloaded section uses this
+    /// when the backend history endpoint is unreachable. Cached stems
+    /// load straight from disk; stems missing from the cache still
+    /// surface a download error.
+    public func loadCachedBundle(_ bundle: SongBundle) async {
+        loadingError = nil
+        await activate(bundle: bundle)
     }
 
     /// Activate an already-loaded bundle (from disk cache or network).

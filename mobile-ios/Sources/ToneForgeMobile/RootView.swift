@@ -68,12 +68,18 @@ public struct RootView: View {
 // MARK: - Library
 
 /// Recent-analyses list backed by GET /api/history. Tapping a row
-/// downloads the bundle + stems and switches to the Play tab.
+/// downloads the bundle + stems and switches to the Play tab. When
+/// the backend is unreachable (off the home LAN) a Downloaded section
+/// lists the locally persisted bundles instead, activated straight
+/// from the on-device cache (D-021).
 struct LibraryView: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var query: String = ""
     @State private var entries: [HistoryEntry] = []
+    /// Locally cached bundles, shown only when the history fetch
+    /// fails — online they already appear in Recent.
+    @State private var localBundles: [SongBundle] = []
     @State private var isLoading: Bool = false
     @State private var fetchError: String?
     /// Live-search debounce token — bumped on every keystroke; only
@@ -122,11 +128,19 @@ struct LibraryView: View {
                             Text("Loading history…").foregroundStyle(.secondary)
                         }
                     }
-                } else {
+                } else if localBundles.isEmpty {
                     Section {
                         Text("No history yet — analyze a song from the backend and it will show up here.")
                             .foregroundStyle(.secondary)
                             .font(.callout)
+                    }
+                }
+
+                if !localBundles.isEmpty {
+                    Section("Downloaded") {
+                        ForEach(localBundles, id: \.analysisId) { bundle in
+                            localBundleRow(bundle)
+                        }
                     }
                 }
 
@@ -370,6 +384,35 @@ struct LibraryView: View {
         .disabled(appState.isDownloading)
     }
 
+    /// Row for a locally persisted bundle (offline fallback). Activates
+    /// straight from the cache — no manifest fetch — so it works with
+    /// the backend unreachable.
+    private func localBundleRow(_ bundle: SongBundle) -> some View {
+        Button {
+            Task {
+                await appState.loadCachedBundle(bundle)
+                if appState.loadingError == nil { onActivate() }
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(bundle.meta.title.isEmpty ? "Untitled" : bundle.meta.title)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+                HStack(spacing: 8) {
+                    if !bundle.meta.artist.isEmpty {
+                        Text(bundle.meta.artist).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(formatDuration(bundle.meta.durationSec))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(appState.isDownloading)
+    }
+
     private func stemProgressRow(role: String, progress: BundleStore.StemProgress) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -427,8 +470,12 @@ struct LibraryView: View {
                 query: q.isEmpty ? nil : q,
                 limit: 50
             )
+            localBundles = []
         } catch {
             fetchError = error.localizedDescription
+            // Backend unreachable — surface the on-device cache so
+            // previously downloaded songs stay playable offline.
+            localBundles = (try? appState.bundleStore.listLocalBundles()) ?? []
         }
     }
 }
