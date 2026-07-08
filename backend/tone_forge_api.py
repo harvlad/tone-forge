@@ -3632,10 +3632,12 @@ async def get_song_bundle(entry_id: str) -> JSONResponse:
             label = s.get("label") or s.get("name") or s.get("type")
             if start is None or end is None:
                 continue
+            # Capitalize the label (type values are lowercase like "verse")
+            label_str = str(label).capitalize() if label else "Section"
             out.append({
                 "start": float(start),
                 "end": float(end),
-                "label": str(label) if label else None,
+                "label": label_str,
             })
         return out
 
