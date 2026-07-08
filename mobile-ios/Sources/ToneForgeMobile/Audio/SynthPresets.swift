@@ -12,16 +12,38 @@
 
 import Foundation
 
+/// Category for grouping presets in the picker (D-022 Phase 8).
+public enum SynthPresetCategory: String, CaseIterable, Sendable {
+    case pads
+    case leads
+    case bass
+
+    public var displayName: String {
+        switch self {
+        case .pads:  return "Pads"
+        case .leads: return "Leads"
+        case .bass:  return "Bass"
+        }
+    }
+}
+
 /// One selectable synth sound. Identified by a stable string id so
 /// settings stores can persist the selection across catalog reorders.
 public struct SynthPreset: Identifiable, Sendable, Equatable {
     public let id: String
     public let name: String
+    public let category: SynthPresetCategory
     public let params: PadSynthParams
 
-    public init(id: String, name: String, params: PadSynthParams) {
+    public init(
+        id: String,
+        name: String,
+        category: SynthPresetCategory,
+        params: PadSynthParams
+    ) {
         self.id = id
         self.name = name
+        self.category = category
         self.params = params
     }
 }
@@ -32,6 +54,7 @@ public enum SynthPresetCatalog {
     public static let dreamyLead = SynthPreset(
         id: "dreamyLead",
         name: "Dreamy Lead",
+        category: .leads,
         params: PadSynthParams()
     )
 
@@ -39,6 +62,7 @@ public enum SynthPresetCatalog {
     public static let warmPad = SynthPreset(
         id: "warmPad",
         name: "Warm Pad",
+        category: .pads,
         params: PadSynthParams(
             brightness: 0.6,
             strumMs: 25,
@@ -53,6 +77,7 @@ public enum SynthPresetCatalog {
     public static let pluck = SynthPreset(
         id: "pluck",
         name: "Pluck",
+        category: .leads,
         params: PadSynthParams(
             brightness: 1.4,
             strumMs: 8,
@@ -67,6 +92,7 @@ public enum SynthPresetCatalog {
     public static let crystalBell = SynthPreset(
         id: "crystalBell",
         name: "Crystal Bell",
+        category: .pads,
         params: PadSynthParams(
             brightness: 2.2,
             strumMs: 12,
@@ -81,6 +107,7 @@ public enum SynthPresetCatalog {
     public static let deepBass = SynthPreset(
         id: "deepBass",
         name: "Deep Bass",
+        category: .bass,
         params: PadSynthParams(
             brightness: 0.45,
             strumMs: 0,
@@ -97,6 +124,11 @@ public enum SynthPresetCatalog {
     ]
 
     public static let defaultPreset = dreamyLead
+
+    /// Presets grouped by category.
+    public static func presets(for category: SynthPresetCategory) -> [SynthPreset] {
+        all.filter { $0.category == category }
+    }
 
     /// Lookup by persisted id; nil for unknown ids (callers fall back
     /// to ``defaultPreset``).

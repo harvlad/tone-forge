@@ -31,6 +31,8 @@ struct ContributeSurface: View {
     /// Sample mode's escape hatch to the advanced 8×8 quadrant grid
     /// (local assignments outside the pack quadrant live there).
     @State private var showAdvancedGrid = false
+    /// Instrument settings sheet (D-022 Phase 8).
+    @State private var showInstrumentSheet = false
 
     var body: some View {
         let hasSong = appState.currentBundle != nil
@@ -46,6 +48,9 @@ struct ContributeSurface: View {
         // fits a phone screen without scrolling.
         HStack(spacing: 8) {
             contributeModeSegment(title: "Instrument", mode: .hybrid)
+            if coordinator.appMode == .hybrid {
+                instrumentSettingsButton
+            }
             contributeModeSegment(title: "Samples", mode: .sample)
             PackPicker(
                 pages: appState.carouselPages,
@@ -59,6 +64,9 @@ struct ContributeSurface: View {
             }
         }
         .padding(.horizontal, 12)
+        .sheet(isPresented: $showInstrumentSheet) {
+            InstrumentPickerSheet()
+        }
 
         if hasSong {
             // Sections + record pill share one row (layers context).
@@ -140,6 +148,19 @@ struct ContributeSurface: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title) mode")
+    }
+
+    /// Gear button to open the Instrument settings sheet (D-022 Phase 8).
+    private var instrumentSettingsButton: some View {
+        Button {
+            showInstrumentSheet = true
+        } label: {
+            Image(systemName: "gearshape.fill")
+                .font(.caption)
+                .foregroundStyle(TFTheme.textSecondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Instrument settings")
     }
 
     /// Grid-icon toggle between the named 4×4 and the advanced 8×8

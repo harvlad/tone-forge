@@ -67,7 +67,9 @@ final class MixerSnapshotTests: XCTestCase {
         return MixerBody(
             stemPlayer: appState.stemPlayer,
             sampleSettings: appState.sampleSettings,
-            renderForSnapshot: true
+            fxSettingsStore: appState.fxSettingsStore,
+            renderForSnapshot: true,
+            initialSegment: .levels
         )
         .frame(maxHeight: .infinity, alignment: .top)
         .background(TFTheme.background)

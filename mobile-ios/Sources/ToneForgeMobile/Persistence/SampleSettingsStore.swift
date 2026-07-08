@@ -125,6 +125,23 @@ public final class SampleSettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// Instrument mode (hybrid) synth preset id. Unknown ids fall back
+    /// to the default preset at apply time.
+    @Published public var instrumentPresetId: String {
+        didSet { save() }
+    }
+
+    /// Instrument mode octave shift. Clamped to -3...+3.
+    @Published public var instrumentOctaveShift: Int {
+        didSet { save() }
+    }
+
+    /// Instrument mode brightness override. When != 1.0 this is applied
+    /// on top of the preset brightness. Range 0.5...2.0.
+    @Published public var instrumentBrightness: Double {
+        didSet { save() }
+    }
+
     /// Built-in defaults, shared by init and the tests.
     nonisolated public static let defaultVoiceGain: Double = 0.9
     nonisolated public static let defaultChopGain: Double = 0.55
@@ -132,6 +149,9 @@ public final class SampleSettingsStore: ObservableObject {
     nonisolated public static let defaultAppModeRaw: String = "sample"
     nonisolated public static let defaultAppTabRaw: String = "contribute"
     nonisolated public static let defaultLastContributeModeRaw: String = "sample"
+    nonisolated public static let defaultInstrumentPresetId: String = "dreamyLead"
+    nonisolated public static let defaultInstrumentOctaveShift: Int = 0
+    nonisolated public static let defaultInstrumentBrightness: Double = 1.0
 
     // MARK: - Init
 
@@ -158,6 +178,9 @@ public final class SampleSettingsStore: ObservableObject {
         self.appModeRaw = loaded.appModeRaw
         self.appTabRaw = loaded.appTabRaw
         self.lastContributeModeRaw = loaded.lastContributeModeRaw
+        self.instrumentPresetId = loaded.instrumentPresetId
+        self.instrumentOctaveShift = max(-3, min(3, loaded.instrumentOctaveShift))
+        self.instrumentBrightness = max(0.5, min(2.0, loaded.instrumentBrightness))
     }
 
     // MARK: - Pad-effect override convenience
@@ -270,6 +293,12 @@ public final class SampleSettingsStore: ObservableObject {
         /// Last contribute-family mode (redesign Phase 7). Absent in
         /// earlier blobs; decoder falls back to "sample".
         var lastContributeModeRaw: String
+        /// Instrument mode synth preset id (D-022 Phase 8).
+        var instrumentPresetId: String
+        /// Instrument mode octave shift -3...+3 (D-022 Phase 8).
+        var instrumentOctaveShift: Int
+        /// Instrument mode brightness 0.5...2.0 (D-022 Phase 8).
+        var instrumentBrightness: Double
 
         static let defaults = Persisted(
             storeVersion: 1,
@@ -285,7 +314,10 @@ public final class SampleSettingsStore: ObservableObject {
             vocoderGainLinear: SampleSettingsStore.defaultVocoderGain,
             appModeRaw: SampleSettingsStore.defaultAppModeRaw,
             appTabRaw: SampleSettingsStore.defaultAppTabRaw,
-            lastContributeModeRaw: SampleSettingsStore.defaultLastContributeModeRaw
+            lastContributeModeRaw: SampleSettingsStore.defaultLastContributeModeRaw,
+            instrumentPresetId: SampleSettingsStore.defaultInstrumentPresetId,
+            instrumentOctaveShift: SampleSettingsStore.defaultInstrumentOctaveShift,
+            instrumentBrightness: SampleSettingsStore.defaultInstrumentBrightness
         )
 
         // Custom decoding so pre-6d blobs that lack the newer keys
@@ -295,7 +327,8 @@ public final class SampleSettingsStore: ObservableObject {
                  beatBarMode, sectionGatesBySong, layerFaderDb,
                  padEffectsByKey, voiceGainLinear, chopGainLinear,
                  vocoderGainLinear, appModeRaw, appTabRaw,
-                 lastContributeModeRaw
+                 lastContributeModeRaw, instrumentPresetId,
+                 instrumentOctaveShift, instrumentBrightness
         }
 
         /// Decode-only key from the D-019 blob shape. Kept out of
@@ -318,7 +351,10 @@ public final class SampleSettingsStore: ObservableObject {
             vocoderGainLinear: Double,
             appModeRaw: String,
             appTabRaw: String,
-            lastContributeModeRaw: String
+            lastContributeModeRaw: String,
+            instrumentPresetId: String,
+            instrumentOctaveShift: Int,
+            instrumentBrightness: Double
         ) {
             self.storeVersion = storeVersion
             self.currentPackId = currentPackId
@@ -334,6 +370,9 @@ public final class SampleSettingsStore: ObservableObject {
             self.appModeRaw = appModeRaw
             self.appTabRaw = appTabRaw
             self.lastContributeModeRaw = lastContributeModeRaw
+            self.instrumentPresetId = instrumentPresetId
+            self.instrumentOctaveShift = instrumentOctaveShift
+            self.instrumentBrightness = instrumentBrightness
         }
 
         init(from decoder: Decoder) throws {
@@ -376,6 +415,15 @@ public final class SampleSettingsStore: ObservableObject {
             self.lastContributeModeRaw = try c.decodeIfPresent(
                 String.self, forKey: .lastContributeModeRaw
             ) ?? SampleSettingsStore.defaultLastContributeModeRaw
+            self.instrumentPresetId = try c.decodeIfPresent(
+                String.self, forKey: .instrumentPresetId
+            ) ?? SampleSettingsStore.defaultInstrumentPresetId
+            self.instrumentOctaveShift = try c.decodeIfPresent(
+                Int.self, forKey: .instrumentOctaveShift
+            ) ?? SampleSettingsStore.defaultInstrumentOctaveShift
+            self.instrumentBrightness = try c.decodeIfPresent(
+                Double.self, forKey: .instrumentBrightness
+            ) ?? SampleSettingsStore.defaultInstrumentBrightness
         }
     }
 
@@ -407,7 +455,10 @@ public final class SampleSettingsStore: ObservableObject {
             vocoderGainLinear: max(0, min(1, vocoderGainLinear)),
             appModeRaw: appModeRaw,
             appTabRaw: appTabRaw,
-            lastContributeModeRaw: lastContributeModeRaw
+            lastContributeModeRaw: lastContributeModeRaw,
+            instrumentPresetId: instrumentPresetId,
+            instrumentOctaveShift: max(-3, min(3, instrumentOctaveShift)),
+            instrumentBrightness: max(0.5, min(2.0, instrumentBrightness))
         )
         if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: Self.defaultsKey)

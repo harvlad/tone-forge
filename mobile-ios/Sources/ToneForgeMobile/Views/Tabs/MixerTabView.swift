@@ -17,7 +17,8 @@ struct MixerTabView: View {
         TabScaffold {
             MixerBody(
                 stemPlayer: appState.stemPlayer,
-                sampleSettings: appState.sampleSettings
+                sampleSettings: appState.sampleSettings,
+                fxSettingsStore: appState.fxSettingsStore
             )
         }
     }

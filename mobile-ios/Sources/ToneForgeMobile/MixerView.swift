@@ -10,11 +10,23 @@
 // SampleSettingsStore / AppState and is mutated via their published
 // APIs — this view is a thin observer.
 //
+// D-022 Phase 8: segmented [Levels | FX] control. The FX segment
+// hosts FXPanelBody inline so the master FX panel is accessible
+// from the Mixer tab without a separate sheet.
+//
 // Presented as a sheet from the Play tab so it can pop up over the
 // pad grid without stealing screen real estate.
 
 import SwiftUI
 import ToneForgeEngine
+
+/// Mixer segment picker (D-022 Phase 8).
+enum MixerSegment: String, CaseIterable, Identifiable {
+    case levels = "Levels"
+    case fx = "FX"
+
+    var id: String { rawValue }
+}
 
 struct MixerView: View {
     @EnvironmentObject private var appState: AppState
@@ -27,7 +39,8 @@ struct MixerView: View {
             // ObservableObjects).
             MixerBody(
                 stemPlayer: appState.stemPlayer,
-                sampleSettings: appState.sampleSettings
+                sampleSettings: appState.sampleSettings,
+                fxSettingsStore: appState.fxSettingsStore
             )
             .background(TFTheme.background.ignoresSafeArea())
             .navigationTitle("Mixer")
@@ -50,21 +63,77 @@ struct MixerView: View {
 struct MixerBody: View {
     @ObservedObject var stemPlayer: StemPlayer
     @ObservedObject var sampleSettings: SampleSettingsStore
+    @ObservedObject var fxSettingsStore: FXSettingsStore
     @EnvironmentObject private var appState: AppState
     /// Snapshot hook: ImageRenderer also leaves ScrollView content
     /// blank, so MixerSnapshotTests renders the rows without the
     /// scroller. Production call sites leave this false.
     var renderForSnapshot = false
+    /// D-022 Phase 8: initial segment selection (snapshot override).
+    private let initialSegment: MixerSegment
+    /// D-022 Phase 8: segment selection.
+    @State private var segment: MixerSegment
+
+    init(
+        stemPlayer: StemPlayer,
+        sampleSettings: SampleSettingsStore,
+        fxSettingsStore: FXSettingsStore,
+        renderForSnapshot: Bool = false,
+        initialSegment: MixerSegment = .levels
+    ) {
+        self.stemPlayer = stemPlayer
+        self.sampleSettings = sampleSettings
+        self.fxSettingsStore = fxSettingsStore
+        self.renderForSnapshot = renderForSnapshot
+        self.initialSegment = initialSegment
+        _segment = State(initialValue: initialSegment)
+    }
 
     var body: some View {
-        if renderForSnapshot {
-            rows
-        } else {
-            ScrollView { rows }
+        VStack(spacing: 0) {
+            segmentPicker
+            if renderForSnapshot {
+                segmentContent
+            } else {
+                ScrollView { segmentContent }
+            }
         }
     }
 
-    private var rows: some View {
+    // MARK: - Segment picker
+
+    private var segmentPicker: some View {
+        HStack(spacing: 8) {
+            ForEach(MixerSegment.allCases) { seg in
+                Button {
+                    segment = seg
+                } label: {
+                    Text(seg.rawValue)
+                        .font(TFTheme.chipFont)
+                        .tfChip(active: segment == seg)
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Segment content
+
+    @ViewBuilder
+    private var segmentContent: some View {
+        switch segment {
+        case .levels:
+            levelsRows
+        case .fx:
+            FXPanelBody(store: fxSettingsStore)
+                .padding(.horizontal, 16)
+        }
+    }
+
+    private var levelsRows: some View {
         VStack(spacing: 8) {
             ForEach(stemPlayer.stems) { stem in
                 stemRow(stem)

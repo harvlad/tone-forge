@@ -34,11 +34,21 @@
 import SwiftUI
 import ToneForgeEngine
 
+/// Packs browser segment picker (D-022 Phase 8).
+enum PacksBrowserSegment: String, CaseIterable, Identifiable {
+    case packs = "Packs"
+    case mySamples = "My Samples"
+
+    var id: String { rawValue }
+}
+
 struct PacksBrowserView: View {
     @EnvironmentObject private var appState: AppState
 
     @StateObject private var previewPlayer = PackPreviewPlayer()
     @State private var filter: PackFilter
+    /// D-022 Phase 8: segment selection.
+    @State private var segment: PacksBrowserSegment = .packs
 
     private let initialFamily: SampleFamily?
     /// Fired after a pack activates (sheet hosts dismiss; the Library
@@ -55,6 +65,52 @@ struct PacksBrowserView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            segmentPicker
+            segmentContent
+        }
+        .task {
+            // Auto-refresh on first appear so the Curated section
+            // isn't empty. Subsequent opens are cheap: catalog is
+            // small (~200 bytes/pack) and cache-friendly.
+            await appState.refreshCuratedCatalog()
+        }
+        .onDisappear { previewPlayer.stop() }
+    }
+
+    // MARK: - Segment picker
+
+    private var segmentPicker: some View {
+        HStack(spacing: 8) {
+            ForEach(PacksBrowserSegment.allCases) { seg in
+                Button {
+                    segment = seg
+                } label: {
+                    Text(seg.rawValue)
+                        .font(TFTheme.chipFont)
+                        .tfChip(active: segment == seg)
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Segment content
+
+    @ViewBuilder
+    private var segmentContent: some View {
+        switch segment {
+        case .packs:
+            packsContent
+        case .mySamples:
+            MySamplesContent()
+        }
+    }
+
+    private var packsContent: some View {
+        VStack(spacing: 0) {
             filterChipBar
             List {
                 songDnaSection
@@ -65,13 +121,6 @@ struct PacksBrowserView: View {
             .listStyle(.insetGrouped)
             #endif
         }
-        .task {
-            // Auto-refresh on first appear so the Curated section
-            // isn't empty. Subsequent opens are cheap: catalog is
-            // small (~200 bytes/pack) and cache-friendly.
-            await appState.refreshCuratedCatalog()
-        }
-        .onDisappear { previewPlayer.stop() }
     }
 
     // MARK: - Filter model
@@ -432,4 +481,136 @@ struct PacksBrowserView: View {
             // problem, not a user problem.
         }
     }
+}
+
+// MARK: - My Samples segment
+
+/// Inline samples browser for the Packs tab My Samples segment (D-022
+/// Phase 8). Mirrors SamplesBrowserView from StorageBrowsers but
+/// embedded without a NavigationLink wrapper.
+private struct MySamplesContent: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var showDeleteAllConfirm = false
+
+    private var store: PadSampleStore { appState.padSampleStore }
+
+    var body: some View {
+        List {
+            if store.samples.isEmpty {
+                Section {
+                    Text("No samples yet. Capture one with the mic or vocoder on the Contribute tab.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section {
+                    ForEach(store.samples, id: \.id) { meta in
+                        sampleRow(meta)
+                            .swipeActions(edge: .trailing) {
+                                Button("Delete", role: .destructive) {
+                                    appState.modeCoordinator.deleteLocalSample(id: meta.id)
+                                }
+                            }
+                    }
+                } footer: {
+                    Text("\(store.samples.count) sample\(store.samples.count == 1 ? "" : "s") · \(byteString(store.totalBytes()))")
+                }
+
+                Section {
+                    Button("Delete all samples", role: .destructive) {
+                        showDeleteAllConfirm = true
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+            }
+        }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        #endif
+        .confirmationDialog(
+            "Delete all samples?",
+            isPresented: $showDeleteAllConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete all", role: .destructive) {
+                store.samples.forEach {
+                    appState.modeCoordinator.deleteLocalSample(id: $0.id)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This deletes all locally recorded samples. Any pads using them will be unassigned.")
+        }
+    }
+
+    private func sampleRow(_ meta: PadSampleMetadata) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: sourceIcon(meta.source))
+                .foregroundStyle(tint(meta.colorHint))
+                .frame(width: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(classLabel(meta.effectiveClass))
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(sampleSubtitle(meta))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func sampleSubtitle(_ meta: PadSampleMetadata) -> String {
+        [
+            sourceLabel(meta.source),
+            String(format: "%.1f s", meta.durationSec),
+            meta.createdAt.formatted(date: .abbreviated, time: .shortened),
+        ].joined(separator: " · ")
+    }
+
+    private func sourceIcon(_ source: PadSampleMetadata.Source) -> String {
+        switch source {
+        case .mic:      return "mic.fill"
+        case .vocoded:  return "waveform"
+        case .songChop: return "music.note"
+        }
+    }
+
+    private func sourceLabel(_ source: PadSampleMetadata.Source) -> String {
+        switch source {
+        case .mic:      return "Mic"
+        case .vocoded:  return "Vocoder"
+        case .songChop: return "Song chop"
+        }
+    }
+
+    private func classLabel(_ sampleClass: SampleClass) -> String {
+        switch sampleClass {
+        case .vocalChop:     return "Vocal chop"
+        case .percussion:    return "Percussion"
+        case .sustainedNote: return "Sustained note"
+        case .texture:       return "Texture"
+        case .phrase:        return "Phrase"
+        case .speechWord:    return "Speech"
+        case .unknown:       return "Sample"
+        }
+    }
+
+    /// Grid tint hex (0xRRGGBB) → Color.
+    private func tint(_ hex: UInt32) -> Color {
+        Color(
+            red: Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255
+        )
+    }
+}
+
+/// Human-readable byte string (KB/MB).
+private func byteString(_ bytes: Int64) -> String {
+    if bytes < 1024 { return "\(bytes) B" }
+    if bytes < 1_048_576 { return String(format: "%.1f KB", Double(bytes) / 1024) }
+    return String(format: "%.1f MB", Double(bytes) / 1_048_576)
 }
