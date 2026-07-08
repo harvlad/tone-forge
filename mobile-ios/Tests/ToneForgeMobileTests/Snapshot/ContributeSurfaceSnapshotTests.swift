@@ -1,10 +1,8 @@
 // ContributeSurfaceSnapshotTests.swift
 //
-// Golden-PNG snapshots of the Play (Contribute) screen after the
-// Phase 9 restyle — the named 4×4 sample grid, the
-// [Instrument | Samples] switch, pack picker row, quantize chips,
-// and layer fader. Contribute is the persisted default surface, so
-// a plain PlayView over a fresh AppState renders it.
+// Golden-PNG snapshots of the Contribute tab (D-022) — the named
+// 4×4 sample grid, the [Instrument | Samples] switch, pack picker
+// row, quantize chips, and layer fader.
 //
 // Same harness as JamScreenSnapshotTests: deterministic fixture
 // bundle, no audio boot, no network; goldens recorded via the
@@ -45,18 +43,15 @@ final class ContributeSurfaceSnapshotTests: XCTestCase {
 
     // MARK: - Fixture
 
-    /// PlayView over an AppState with a song loaded but no audio /
-    /// network activity. The surface is pinned explicitly (NOT left
-    /// to the default): SampleSettingsStore persists to the shared
-    /// simulator Documents, so a suite that runs earlier (ChordPads)
-    /// would otherwise leak its persisted surface into this fixture.
-    /// Sample mode is the default contribute mode, so the named 4×4
-    /// grid renders (empty "+" tiles — no pack activated).
+    /// ContributeTabView over an AppState with a song loaded but no
+    /// audio / network activity. Each tab view has fixed content
+    /// (D-022), so no persisted surface needs pinning. Sample mode is
+    /// the default contribute mode, so the named 4×4 grid renders
+    /// (empty "+" tiles — no pack activated).
     private func makeContributeScreen() -> some View {
         let appState = AppState()
         appState.currentBundle = Self.fixtureBundle
-        appState.sampleSettings.playSurfaceRaw = PlaySurface.contribute.rawValue
-        return PlayView().environmentObject(appState)
+        return ContributeTabView().environmentObject(appState)
     }
 
     private static let fixtureBundle = SongBundle(

@@ -1,6 +1,6 @@
 // JamScreenSnapshotTests.swift
 //
-// Golden-PNG snapshots of the Play (JAM) screen at the two reference
+// Golden-PNG snapshots of the Jam tab (D-022) at the two reference
 // devices from the plan:
 //
 //   iPad Pro 12.9"   1024×1366 pt
@@ -47,17 +47,14 @@ final class JamScreenSnapshotTests: XCTestCase {
 
     // MARK: - Fixture
 
-    /// PlayView over an AppState with a song loaded but no audio /
+    /// JamTabView over an AppState with a song loaded but no audio /
     /// network activity. `currentBundle` is assigned directly (not via
-    /// `activate`) so nothing downloads. The surface is pinned
-    /// explicitly — SampleSettingsStore persists to the simulator's
-    /// shared Documents, so relying on the default would inherit
-    /// whatever surface another suite persisted last.
+    /// `activate`) so nothing downloads. Each tab view has fixed
+    /// content (D-022), so no persisted surface needs pinning.
     private func makePlayScreen() -> some View {
         let appState = AppState()
         appState.currentBundle = Self.fixtureBundle
-        appState.sampleSettings.playSurfaceRaw = PlaySurface.jam.rawValue
-        return PlayView().environmentObject(appState)
+        return JamTabView().environmentObject(appState)
     }
 
     /// Deterministic bundle exercising the header (title/key/tempo),

@@ -22,6 +22,9 @@ struct NowPlayingHeader: View {
     /// When non-nil, shows an eject button on the trailing edge —
     /// unloads the song and returns Play to the sketch surface (D-016).
     var onEject: (() -> Void)? = nil
+    /// When non-nil, shows a gear on the trailing edge that opens the
+    /// Settings sheet (D-022: settings live in the header, not a tab).
+    var onSettings: (() -> Void)? = nil
 
     var body: some View {
         // Compact two-line card: real devices give the Play tab far
@@ -53,6 +56,15 @@ struct NowPlayingHeader: View {
                         .foregroundStyle(TFTheme.textSecondary)
                 }
                 .accessibilityLabel("Eject song")
+            }
+
+            if let onSettings {
+                Button(action: onSettings) {
+                    Image(systemName: "gearshape")
+                        .font(.title3)
+                        .foregroundStyle(TFTheme.textSecondary)
+                }
+                .accessibilityLabel("Settings")
             }
         }
         .padding(10)

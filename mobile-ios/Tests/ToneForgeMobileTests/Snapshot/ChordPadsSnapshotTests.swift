@@ -1,9 +1,11 @@
 // ChordPadsSnapshotTests.swift
 //
-// Golden-PNG snapshots of the Play (Chord Pads) screen (Phase 12) —
-// the current-chord strip, the [Momentary | Latch] + octave controls,
+// Golden-PNG snapshots of the Chord Pads surface (Phase 12) — the
+// current-chord strip, the [Momentary | Latch] + octave controls,
 // and the 4×4 diatonic chord grid for the D-minor fixture
-// (Dm/Gm/Bb/C timeline per the mockup).
+// (Dm/Gm/Bb/C timeline per the mockup). Rendered directly: the
+// standalone surface has no tab of its own under D-022 (it folds
+// into Jam as a pad-mode toggle in Phase 5).
 //
 // Same harness as the other snapshot suites: deterministic fixture
 // bundle, no audio boot, no network; goldens recorded via the
@@ -44,13 +46,18 @@ final class ChordPadsSnapshotTests: XCTestCase {
 
     // MARK: - Fixture
 
-    /// PlayView over an AppState with the D-minor fixture loaded and
-    /// the Chord Pads surface persisted as the selection.
+    /// ChordPadsView over an AppState with the D-minor fixture
+    /// loaded. Rendered without tab chrome — the surface is reachable
+    /// only through Jam once the Phase 5 toggle lands.
     private func makeChordPadsScreen() -> some View {
         let appState = AppState()
         appState.currentBundle = Self.fixtureBundle
-        appState.sampleSettings.playSurfaceRaw = PlaySurface.chordPads.rawValue
-        return PlayView().environmentObject(appState)
+        return ChordPadsView(
+            controller: appState.chordPadController,
+            sampleSettings: appState.sampleSettings
+        )
+        .background(TFTheme.background.ignoresSafeArea())
+        .environmentObject(appState)
     }
 
     private static let fixtureBundle = SongBundle(

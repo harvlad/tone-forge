@@ -7,8 +7,8 @@
 //   - delete removes the file;
 //   - path separators in an analysisId are sanitized so the file
 //     always lands directly under the artwork root;
-//   - the new playSurfaceRaw settings field defaults, persists, and
-//     back-fills from pre-redesign blobs.
+//   - the appTabRaw settings field defaults, persists, and migrates
+//     from the legacy D-019 playSurfaceRaw blob key.
 
 import XCTest
 @testable import ToneForgeMobile
@@ -84,13 +84,13 @@ final class ArtworkStoreTests: XCTestCase {
     }
 }
 
-// MARK: - PlaySurface persistence
+// MARK: - AppTab persistence (D-022)
 
 @MainActor
-final class PlaySurfacePersistenceTests: XCTestCase {
+final class AppTabPersistenceTests: XCTestCase {
 
     private var defaults: UserDefaults!
-    private let suiteName = "toneforge.tests.playsurface"
+    private let suiteName = "toneforge.tests.apptab"
     private let blobKey = "toneforge.sampleSettings"
 
     override func setUp() {
@@ -107,21 +107,21 @@ final class PlaySurfacePersistenceTests: XCTestCase {
 
     func testFreshStoreDefaultsToContribute() {
         let store = SampleSettingsStore(defaults: defaults)
-        XCTAssertEqual(store.playSurfaceRaw, "contribute")
-        XCTAssertEqual(SampleSettingsStore.defaultPlaySurfaceRaw, "contribute")
+        XCTAssertEqual(store.appTabRaw, "contribute")
+        XCTAssertEqual(SampleSettingsStore.defaultAppTabRaw, "contribute")
     }
 
-    func testSurfacePersistsAcrossStoreInit() {
+    func testTabPersistsAcrossStoreInit() {
         let store1 = SampleSettingsStore(defaults: defaults)
-        store1.playSurfaceRaw = "jam"
+        store1.appTabRaw = "jam"
 
         let store2 = SampleSettingsStore(defaults: defaults)
-        XCTAssertEqual(store2.playSurfaceRaw, "jam")
+        XCTAssertEqual(store2.appTabRaw, "jam")
     }
 
     func testPreRedesignBlobDecodesWithContributeDefault() throws {
-        // Write a current-shape blob, then strip the new key to
-        // simulate a blob from before the redesign.
+        // Write a current-shape blob, then strip the tab key to
+        // simulate a blob from before D-019/D-022.
         let seed = SampleSettingsStore(defaults: defaults)
         seed.currentPackId = "legacy-pack"
 
@@ -129,13 +129,55 @@ final class PlaySurfacePersistenceTests: XCTestCase {
         var json = try XCTUnwrap(
             JSONSerialization.jsonObject(with: data) as? [String: Any]
         )
-        json.removeValue(forKey: "playSurfaceRaw")
+        json.removeValue(forKey: "appTabRaw")
         defaults.set(
             try JSONSerialization.data(withJSONObject: json), forKey: blobKey
         )
 
         let store = SampleSettingsStore(defaults: defaults)
-        XCTAssertEqual(store.playSurfaceRaw, "contribute")
+        XCTAssertEqual(store.appTabRaw, "contribute")
         XCTAssertEqual(store.currentPackId, "legacy-pack")
+    }
+
+    func testLegacyPlaySurfaceKeyMigrates() throws {
+        // Simulate a D-019 blob: no appTabRaw, legacy playSurfaceRaw
+        // set to the retired chordPads surface — it folds into Jam.
+        let seed = SampleSettingsStore(defaults: defaults)
+        seed.currentPackId = "legacy-pack"
+
+        let data = try XCTUnwrap(defaults.data(forKey: blobKey))
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        json.removeValue(forKey: "appTabRaw")
+        json["playSurfaceRaw"] = "chordPads"
+        defaults.set(
+            try JSONSerialization.data(withJSONObject: json), forKey: blobKey
+        )
+
+        let store = SampleSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.appTabRaw, "jam")
+
+        // The next save() re-writes the blob with appTabRaw only.
+        store.currentPackId = "resaved-pack"
+        let resaved = try XCTUnwrap(defaults.data(forKey: blobKey))
+        let resavedJson = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: resaved) as? [String: Any]
+        )
+        XCTAssertEqual(resavedJson["appTabRaw"] as? String, "jam")
+        XCTAssertNil(resavedJson["playSurfaceRaw"])
+    }
+
+    func testLegacySurfaceValuesPassThrough() {
+        XCTAssertEqual(AppTab.migratedRaw(fromLegacyPlaySurface: "learn"), "learn")
+        XCTAssertEqual(AppTab.migratedRaw(fromLegacyPlaySurface: "jam"), "jam")
+        XCTAssertEqual(
+            AppTab.migratedRaw(fromLegacyPlaySurface: "contribute"), "contribute"
+        )
+        XCTAssertEqual(AppTab.migratedRaw(fromLegacyPlaySurface: "chordPads"), "jam")
+        XCTAssertEqual(AppTab.migratedRaw(fromLegacyPlaySurface: nil), "contribute")
+        XCTAssertEqual(
+            AppTab.migratedRaw(fromLegacyPlaySurface: "bogus"), "contribute"
+        )
     }
 }

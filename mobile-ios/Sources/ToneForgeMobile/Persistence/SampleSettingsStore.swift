@@ -108,11 +108,12 @@ public final class SampleSettingsStore: ObservableObject {
         didSet { save() }
     }
 
-    /// Persisted PlaySurface raw value (`PlaySurface(rawValue:)`), so
-    /// the Play tab reopens on the surface the user last used (D-019
-    /// surface switcher). Unknown values fall back to `"contribute"`
-    /// at the view layer when decoding.
-    @Published public var playSurfaceRaw: String {
+    /// Persisted AppTab raw value (`AppTab(rawValue:)`), so the app
+    /// reopens on the tab the user last used (D-022 five-tab shell).
+    /// Unknown values fall back to `"contribute"` at the view layer
+    /// when decoding. Migrated once from the legacy D-019
+    /// `playSurfaceRaw` blob key (chordPads → jam).
+    @Published public var appTabRaw: String {
         didSet { save() }
     }
 
@@ -129,7 +130,7 @@ public final class SampleSettingsStore: ObservableObject {
     nonisolated public static let defaultChopGain: Double = 0.55
     nonisolated public static let defaultVocoderGain: Double = 0.4
     nonisolated public static let defaultAppModeRaw: String = "sample"
-    nonisolated public static let defaultPlaySurfaceRaw: String = "contribute"
+    nonisolated public static let defaultAppTabRaw: String = "contribute"
     nonisolated public static let defaultLastContributeModeRaw: String = "sample"
 
     // MARK: - Init
@@ -155,7 +156,7 @@ public final class SampleSettingsStore: ObservableObject {
         self.chopGainLinear = loaded.chopGainLinear
         self.vocoderGainLinear = loaded.vocoderGainLinear
         self.appModeRaw = loaded.appModeRaw
-        self.playSurfaceRaw = loaded.playSurfaceRaw
+        self.appTabRaw = loaded.appTabRaw
         self.lastContributeModeRaw = loaded.lastContributeModeRaw
     }
 
@@ -261,9 +262,11 @@ public final class SampleSettingsStore: ObservableObject {
         /// back to 0.4 / "sample".
         var vocoderGainLinear: Double
         var appModeRaw: String
-        /// Play-tab surface (D-019). Absent in blobs written before
-        /// the redesign; decoder falls back to "contribute".
-        var playSurfaceRaw: String
+        /// Top-level tab (D-022). Absent in blobs written before the
+        /// five-tab shell; decoder migrates the legacy D-019
+        /// `playSurfaceRaw` key (chordPads → jam) and otherwise falls
+        /// back to "contribute". Encoder writes only this key.
+        var appTabRaw: String
         /// Last contribute-family mode (redesign Phase 7). Absent in
         /// earlier blobs; decoder falls back to "sample".
         var lastContributeModeRaw: String
@@ -281,7 +284,7 @@ public final class SampleSettingsStore: ObservableObject {
             chopGainLinear: SampleSettingsStore.defaultChopGain,
             vocoderGainLinear: SampleSettingsStore.defaultVocoderGain,
             appModeRaw: SampleSettingsStore.defaultAppModeRaw,
-            playSurfaceRaw: SampleSettingsStore.defaultPlaySurfaceRaw,
+            appTabRaw: SampleSettingsStore.defaultAppTabRaw,
             lastContributeModeRaw: SampleSettingsStore.defaultLastContributeModeRaw
         )
 
@@ -291,8 +294,14 @@ public final class SampleSettingsStore: ObservableObject {
             case storeVersion, currentPackId, quantizeMode, holdMode,
                  beatBarMode, sectionGatesBySong, layerFaderDb,
                  padEffectsByKey, voiceGainLinear, chopGainLinear,
-                 vocoderGainLinear, appModeRaw, playSurfaceRaw,
+                 vocoderGainLinear, appModeRaw, appTabRaw,
                  lastContributeModeRaw
+        }
+
+        /// Decode-only key from the D-019 blob shape. Kept out of
+        /// CodingKeys so the synthesized encoder never re-writes it.
+        private enum LegacyCodingKeys: String, CodingKey {
+            case playSurfaceRaw
         }
 
         init(
@@ -308,7 +317,7 @@ public final class SampleSettingsStore: ObservableObject {
             chopGainLinear: Double,
             vocoderGainLinear: Double,
             appModeRaw: String,
-            playSurfaceRaw: String,
+            appTabRaw: String,
             lastContributeModeRaw: String
         ) {
             self.storeVersion = storeVersion
@@ -323,7 +332,7 @@ public final class SampleSettingsStore: ObservableObject {
             self.chopGainLinear = chopGainLinear
             self.vocoderGainLinear = vocoderGainLinear
             self.appModeRaw = appModeRaw
-            self.playSurfaceRaw = playSurfaceRaw
+            self.appTabRaw = appTabRaw
             self.lastContributeModeRaw = lastContributeModeRaw
         }
 
@@ -351,9 +360,19 @@ public final class SampleSettingsStore: ObservableObject {
             self.appModeRaw = try c.decodeIfPresent(
                 String.self, forKey: .appModeRaw
             ) ?? SampleSettingsStore.defaultAppModeRaw
-            self.playSurfaceRaw = try c.decodeIfPresent(
-                String.self, forKey: .playSurfaceRaw
-            ) ?? SampleSettingsStore.defaultPlaySurfaceRaw
+            if let tab = try c.decodeIfPresent(String.self, forKey: .appTabRaw) {
+                self.appTabRaw = tab
+            } else {
+                // One-time D-019 → D-022 migration: read the legacy
+                // surface key (chordPads folds into jam); the next
+                // save() re-writes the blob with appTabRaw only.
+                let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
+                self.appTabRaw = AppTab.migratedRaw(
+                    fromLegacyPlaySurface: try legacy.decodeIfPresent(
+                        String.self, forKey: .playSurfaceRaw
+                    )
+                )
+            }
             self.lastContributeModeRaw = try c.decodeIfPresent(
                 String.self, forKey: .lastContributeModeRaw
             ) ?? SampleSettingsStore.defaultLastContributeModeRaw
@@ -387,7 +406,7 @@ public final class SampleSettingsStore: ObservableObject {
             chopGainLinear: max(0, min(1, chopGainLinear)),
             vocoderGainLinear: max(0, min(1, vocoderGainLinear)),
             appModeRaw: appModeRaw,
-            playSurfaceRaw: playSurfaceRaw,
+            appTabRaw: appTabRaw,
             lastContributeModeRaw: lastContributeModeRaw
         )
         if let data = try? JSONEncoder().encode(payload) {

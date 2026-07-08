@@ -1,19 +1,18 @@
 // RootView.swift
 //
-// Top-level TabView. Three tabs — the contribution restructure folded
-// the old Sketch tab into Play (D-016: sketch is just the Play
-// surface with no song loaded), and the old Search tab was dropped:
-// it queried the exact same GET /api/history?q= endpoint as Library,
-// whose search field now live-searches with the same debounce.
+// Top-level TabView — the D-022 five-tab shell ("Every mode. No
+// scrolling."). Each former Play-tab surface is a first-class tab:
 //
-//   Library — recent analyses + downloads + search (entry point for
-//             songs)
-//   Play    — the contribution instrument (NowPlaying + AppMode +
-//             8×8 ModeGridView + transport)
-//   Profile — backend URL, audio params, saved layers
+//   Learn      — guided practice for the loaded song
+//   Jam        — jam-in-key pads (Chord Pads folds in as a toggle)
+//   Contribute — the 8×8 sample/hybrid grid (sketch when no song)
+//   Mixer      — per-stem levels (FX segment lands in Phase 8)
+//   Library    — recent analyses + downloads + search
 //
-// Loading a song from Library flips selection to Play so the user
-// lands on the surface where they actually play/contribute.
+// Selection lives on AppState.selectedTab (persisted via
+// SampleSettingsStore.appTabRaw); the tab→engine-mode policy runs in
+// AppState.applySelectedTab, never here. Loading a song from Library
+// deep-links back to the last performance tab.
 
 import SwiftUI
 import ToneForgeEngine
@@ -23,23 +22,47 @@ import UIKit
 
 public struct RootView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var selection: Int = 0
 
     public init() {}
 
     public var body: some View {
-        TabView(selection: $selection) {
-            LibraryView(onActivate: { selection = 1 })
-                .tabItem { Label("Library", systemImage: "music.note.list") }
-                .tag(0)
+        TabView(selection: $appState.selectedTab) {
+            LearnTabView()
+                .tabItem {
+                    Label(AppTab.learn.title,
+                          systemImage: AppTab.learn.systemImage)
+                }
+                .tag(AppTab.learn)
 
-            PlayView()
-                .tabItem { Label("Play", systemImage: "play.circle.fill") }
-                .tag(1)
+            JamTabView()
+                .tabItem {
+                    Label(AppTab.jam.title,
+                          systemImage: AppTab.jam.systemImage)
+                }
+                .tag(AppTab.jam)
 
-            ProfileView()
-                .tabItem { Label("Profile", systemImage: "person.circle") }
-                .tag(2)
+            ContributeTabView()
+                .tabItem {
+                    Label(AppTab.contribute.title,
+                          systemImage: AppTab.contribute.systemImage)
+                }
+                .tag(AppTab.contribute)
+
+            MixerTabView()
+                .tabItem {
+                    Label(AppTab.mixer.title,
+                          systemImage: AppTab.mixer.systemImage)
+                }
+                .tag(AppTab.mixer)
+
+            // LibraryView hosts its own NavigationStack (searchable +
+            // toolbar), so it skips TabScaffold.
+            LibraryView(onActivate: { appState.showPerformanceTab() })
+                .tabItem {
+                    Label(AppTab.library.title,
+                          systemImage: AppTab.library.systemImage)
+                }
+                .tag(AppTab.library)
         }
         // P7: Launchpad underpower warning floats over every tab —
         // the performer needs to see it wherever they are.
@@ -68,7 +91,8 @@ public struct RootView: View {
 // MARK: - Library
 
 /// Recent-analyses list backed by GET /api/history. Tapping a row
-/// downloads the bundle + stems and switches to the Play tab. When
+/// downloads the bundle + stems and deep-links back to the last
+/// performance tab. When
 /// the backend is unreachable (off the home LAN) a Downloaded section
 /// lists the locally persisted bundles instead, activated straight
 /// from the on-device cache (D-021).
@@ -100,8 +124,8 @@ struct LibraryView: View {
     @State private var showMusicPicker = false
     @State private var showFilePicker = false
 
-    /// Called once a bundle activates so the parent can flip tabs to
-    /// Play.
+    /// Called once a bundle activates so the parent can flip to a
+    /// performance tab.
     let onActivate: () -> Void
 
     private var client: HistoryClient { HistoryClient() }

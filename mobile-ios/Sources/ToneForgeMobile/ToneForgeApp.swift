@@ -180,6 +180,48 @@ public final class AppState: ObservableObject {
     /// playhead crosses its end. Cleared on song load and eject.
     @Published public private(set) var loopRegion: LoopRegion?
 
+    // MARK: - Tab shell (D-022)
+
+    /// The selected top-level tab. Restored in `bootAudio` (after
+    /// `modeCoordinator.start()`) so the didSet apply-path runs
+    /// against a live coordinator; snapshot tests never boot, so
+    /// constructing an AppState stays side-effect free.
+    @Published public var selectedTab: AppTab = .contribute {
+        didSet {
+            if selectedTab.isPerformance { lastPerformanceTab = selectedTab }
+            sampleSettings.appTabRaw = selectedTab.rawValue
+            applySelectedTab()
+        }
+    }
+
+    /// Last performance tab the user was on — the deep-link target
+    /// when the Library activates a song while Mixer or Library is
+    /// selected.
+    public private(set) var lastPerformanceTab: AppTab = .contribute
+
+    /// Jump to a performance tab (Library song activation). Keeps the
+    /// current tab when it already hosts a playing surface.
+    public func showPerformanceTab() {
+        if !selectedTab.isPerformance {
+            selectedTab = lastPerformanceTab
+        }
+    }
+
+    /// Tab → engine-mode policy (see TabModePolicy). Leaving Learn
+    /// mid-practice ends the pass (clears the A/B loop, persists the
+    /// streak) so the loop doesn't keep wrapping under another tab.
+    private func applySelectedTab() {
+        if selectedTab != .learn, learnController.phase == .practicing {
+            learnController.stopPractice()
+        }
+        if let mode = TabModePolicy.mode(
+            for: selectedTab,
+            lastContributeModeRaw: sampleSettings.lastContributeModeRaw
+        ) {
+            modeCoordinator.setMode(mode)
+        }
+    }
+
     // MARK: - Chord runtime
 
     @Published public private(set) var currentChord: ChordEvent?
@@ -524,6 +566,10 @@ public final class AppState: ObservableObject {
         // grid context — the pack loaded above is already active, so
         // the first layout is complete.
         modeCoordinator.start()
+        // Restore the last tab (D-022). Assignment (not an init
+        // default) so the didSet apply-path pins the engine mode for
+        // the restored tab now that the coordinator is live.
+        selectedTab = AppTab(rawValue: sampleSettings.appTabRaw) ?? .contribute
         wireLaunchpad()
     }
 
