@@ -70,9 +70,15 @@ public enum HistoryClientError: LocalizedError, Sendable {
 public struct HistoryClient: Sendable {
 
     private let session: URLSession
+    /// Per-request timeout. The default URLRequest timeout is 60s,
+    /// which leaves the Library spinner hanging for a minute when the
+    /// backend host is unreachable (e.g. the debug mDNS URL off-LAN).
+    /// Short and injectable so tests can tighten it further.
+    private let timeout: TimeInterval
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = .shared, timeout: TimeInterval = 5) {
         self.session = session
+        self.timeout = timeout
     }
 
     /// Fetch up to `limit` most-recent entries. `query` narrows by
@@ -96,7 +102,9 @@ public struct HistoryClient: Sendable {
             throw HistoryClientError.invalidURL
         }
 
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw HistoryClientError.httpStatus(http.statusCode)
         }
@@ -122,6 +130,7 @@ public struct HistoryClient: Sendable {
     private func send(url: URL) async throws {
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
+        request.timeoutInterval = timeout
         let (_, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw HistoryClientError.httpStatus(http.statusCode)

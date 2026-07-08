@@ -29,7 +29,15 @@ public enum BundleLoaderError: Error, LocalizedError {
 }
 
 public struct BundleLoader {
-    public init() {}
+    /// Per-request timeout. Default URLRequest timeout is 60s, which
+    /// hangs song activation for a minute when the backend host is
+    /// unreachable; keep it short so the caller's cache fallback
+    /// (AppState.loadBundle) kicks in quickly.
+    private let timeout: TimeInterval
+
+    public init(timeout: TimeInterval = 5) {
+        self.timeout = timeout
+    }
 
     /// Fetch a bundle from a running tone-forge backend.
     ///
@@ -47,6 +55,7 @@ public struct BundleLoader {
         }
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.timeoutInterval = timeout
         let (data, response) = try await URLSession.shared.data(for: req)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw BundleLoaderError.badResponse(http.statusCode)

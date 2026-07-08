@@ -77,8 +77,11 @@ struct LibraryView: View {
 
     @State private var query: String = ""
     @State private var entries: [HistoryEntry] = []
-    /// Locally cached bundles, shown only when the history fetch
-    /// fails — online they already appear in Recent.
+    /// Locally cached bundles. Populated eagerly at the top of
+    /// reload() so downloaded songs are tappable even while the
+    /// history fetch is still in flight; after a successful fetch the
+    /// list is trimmed to bundles the server no longer lists (online,
+    /// the rest already appear in Recent).
     @State private var localBundles: [SongBundle] = []
     @State private var isLoading: Bool = false
     @State private var fetchError: String?
@@ -463,6 +466,12 @@ struct LibraryView: View {
         isLoading = true
         fetchError = nil
         defer { isLoading = false }
+        // Surface the on-device cache immediately — before the network
+        // round-trip — so downloaded songs are tappable even while the
+        // history fetch is in flight (or hanging against an
+        // unreachable debug host, see D-021).
+        let cached = (try? appState.bundleStore.listLocalBundles()) ?? []
+        localBundles = cached
         do {
             let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
             entries = try await client.fetch(
@@ -470,12 +479,13 @@ struct LibraryView: View {
                 query: q.isEmpty ? nil : q,
                 limit: 50
             )
-            localBundles = []
+            // Online: history rows cover the same songs, so only keep
+            // cached bundles the server no longer lists.
+            let listed = Set(entries.map(\.id))
+            localBundles = cached.filter { !listed.contains($0.analysisId) }
         } catch {
             fetchError = error.localizedDescription
-            // Backend unreachable — surface the on-device cache so
-            // previously downloaded songs stay playable offline.
-            localBundles = (try? appState.bundleStore.listLocalBundles()) ?? []
+            localBundles = cached
         }
     }
 }
