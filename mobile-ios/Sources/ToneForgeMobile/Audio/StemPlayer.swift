@@ -97,7 +97,23 @@ public final class StemPlayer: ObservableObject {
         engine.engine.attach(mixer)
         engine.engine.attach(pitch)
         engine.engine.connect(mixer, to: pitch, format: nil)
-        engine.engine.connect(pitch, to: engine.engine.mainMixerNode, format: nil)
+
+        // Connect timePitch to mainMixer AND fxSendMixer (if available)
+        // using the multi-connection-point pattern to avoid the
+        // sequential-connect trap (D-022 master FX topology).
+        if let fxSend = engine.fxSendMixerInput {
+            engine.engine.connect(
+                pitch,
+                to: [
+                    AVAudioConnectionPoint(node: engine.engine.mainMixerNode, bus: 0),
+                    AVAudioConnectionPoint(node: fxSend, bus: 0)
+                ],
+                fromBus: 0,
+                format: nil
+            )
+        } else {
+            engine.engine.connect(pitch, to: engine.engine.mainMixerNode, format: nil)
+        }
         pitch.rate = playbackRate
         pitch.bypass = playbackRate == 1.0
         self.stemMixer = mixer

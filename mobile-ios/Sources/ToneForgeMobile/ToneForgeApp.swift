@@ -345,6 +345,11 @@ public final class AppState: ObservableObject {
     /// Persisted Learn settings (practice playback rate, D-022).
     public let learnSettings = LearnSettingsStore()
 
+    // MARK: - Master FX (D-022 Phase 6)
+
+    /// Persisted master FX settings (EQ, comp, reverb, delay).
+    public let fxSettingsStore = FXSettingsStore()
+
     /// Per-song learn progress on disk
     /// (`Documents/learnProgress/{analysisId}.json`).
     public let learnProgressStore: LearnProgressStore
@@ -850,6 +855,14 @@ public final class AppState: ObservableObject {
         sampleSettings.$vocoderGainLinear
             .sink { [weak self] gain in
                 self?.audioEngine.setVocoderGain(Float(max(0, min(1, gain))))
+            }
+            .store(in: &settingsCancellables)
+
+        // Master FX settings → AudioEngine (D-022). Fires with the
+        // persisted value on subscribe, so boot applies stored FX.
+        fxSettingsStore.$settings
+            .sink { [weak self] settings in
+                self?.audioEngine.setFXSettings(settings)
             }
             .store(in: &settingsCancellables)
     }

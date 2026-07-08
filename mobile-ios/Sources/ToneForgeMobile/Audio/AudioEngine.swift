@@ -1,12 +1,13 @@
 // AudioEngine.swift
 //
 // Top-level audio engine wrapper. Owns the shared AVAudioEngine, the
-// TransportClock, the contribution bus topology, and the ONE shared
-// reverb every contribution source rides (DECISIONS.md D-013). All
-// audio-graph plumbing (attach + connect) lives here; downstream
+// TransportClock, the contribution bus topology, the ONE shared reverb
+// every contribution source rides (DECISIONS.md D-013), and the D-022
+// master FX chain (EQ + compressor inline, reverb + delay send/return).
+// All audio-graph plumbing (attach + connect) lives here; downstream
 // nodes only know about their own AVAudioNode instances.
 //
-// Graph topology (D-013):
+// Graph topology (D-013 + D-022 master FX):
 //
 //   PadSynth.voiceMixer ──┐
 //   WavetableSynthNode ───┼→ voiceBus (0.9 = voiceGainLinear)
@@ -15,15 +16,18 @@
 //   VocoderMonitor (P5) ──────────→ vocoderBus (0.4 = vocoderGainLinear)
 //                                     │
 //   voiceBus + chopBus + vocoderBus → sharedBus (volume = layerFaderDb)
-//   sharedBus → dryMixer(dryGain) ─────────────→ mainMixer → output
+//   sharedBus → dryMixer(dryGain) ─────────────────────→ mainMixer
 //   sharedBus → sharedReverb(wet 100) → wetMixer(wetGain) ─┘
-//   StemPlayer.mixer ─────────────────────────→ mainMixer (bypasses
-//                                                sharedBus, as v1 —
-//                                                muting "Your Layer"
-//                                                keeps the song audible)
+//   sharedBus → fxSendMixer ────────────────────────────────┐
+//   StemPlayer.timePitch → mainMixer                        │
+//   StemPlayer.timePitch → fxSendMixer ─────────────────────┤
+//                                                           ↓
+//   fxSendMixer → masterReverb → masterDelay → fxReturnMixer → mainMixer
+//
+//   mainMixer → masterEQ(3-band) → masterComp(DynamicsProcessor) → outputNode
 //
 // Every explicit connect uses ``canonicalFormat`` (48 kHz stereo,
-// D-017). The mainMixer → output hop is the one place the engine may
+// D-017). The masterComp → output hop is the one place the engine may
 // SRC (hardware boundary — unavoidable). Stems are the documented
 // exception (D-014): they stay at source rate and get converted by
 // the engine at their mainMixer edge.
@@ -31,12 +35,18 @@
 // `buildContributionGraph()` is called from bootAudio BEFORE
 // `engine.start()` — attaching + connecting on a running engine trips
 // AVAudioEngine's graph validator when an intermediate node's
-// upstream isn't populated yet.
+// upstream isn't populated yet. `buildMasterFXGraph()` is called after
+// contribution graph, inserting the master EQ/comp chain between
+// mainMixer and outputNode.
+//
+// Known v1 limitation: bounce path excludes master FX (records pre-FX).
 
 import Foundation
 #if canImport(AVFoundation)
 import AVFoundation
+import AudioToolbox
 #endif
+import ToneForgeEngine
 
 /// Owns the AVAudioEngine plus the clock and subsystems that all use
 /// it. Kept as a reference type because AVAudioEngine is class-based
@@ -75,6 +85,9 @@ public final class AudioEngine: ObservableObject {
     /// Current shared-reverb settings. Mutate via ``setReverbParams``.
     @Published public private(set) var reverbParams = ReverbParams()
 
+    /// Current master FX settings (D-022). Mutate via ``setFXSettings``.
+    @Published public private(set) var fxSettings = FXSettings.neutral
+
     #if canImport(AVFoundation)
     /// The shared AVAudioEngine. Exposed so downstream subsystems
     /// (StemPlayer, PadSynth) can attach their own nodes.
@@ -102,6 +115,14 @@ public final class AudioEngine: ObservableObject {
     private var sharedReverb: AVAudioUnitReverb?
     private var wetMixer: AVAudioMixerNode?
 
+    // Master FX chain nodes (D-022). Built by `buildMasterFXGraph()`.
+    private var fxSendMixer: AVAudioMixerNode?
+    private var masterReverb: AVAudioUnitReverb?
+    private var masterDelay: AVAudioUnitDelay?
+    private var fxReturnMixer: AVAudioMixerNode?
+    private var masterEQ: AVAudioUnitEQ?
+    private var masterComp: AVAudioUnitEffect?
+
     /// Destination for synth-voice sources (PadSynth, WavetableSynthNode,
     /// MicMonitor). Builds the graph on first access so ordering
     /// against bootAudio is forgiving.
@@ -124,9 +145,16 @@ public final class AudioEngine: ObservableObject {
         return vocoderBus!
     }
 
+    /// Master FX send mixer — StemPlayer connects its timePitch here
+    /// (in addition to mainMixer) so stems participate in the master
+    /// reverb/delay send. Returns nil if master FX graph not built.
+    public var fxSendMixerInput: AVAudioNode? {
+        return fxSendMixer
+    }
+
     /// Build the contribution bus topology on the idle engine.
     /// Idempotent — safe to call from accessors and bootAudio in any
-    /// order.
+    /// order. Also builds the master FX send/return chain (D-022).
     public func buildContributionGraph() {
         guard sharedBus == nil else { return }
 
@@ -138,13 +166,30 @@ public final class AudioEngine: ObservableObject {
         let verb = AVAudioUnitReverb()
         let wet = AVAudioMixerNode()
 
+        // Master FX send/return chain (D-022)
+        let fxSend = AVAudioMixerNode()
+        let mVerb = AVAudioUnitReverb()
+        let mDelay = AVAudioUnitDelay()
+        let fxReturn = AVAudioMixerNode()
+
         verb.wetDryMix = 100 // full wet on the wet branch; balance via wetMixer
         verb.loadFactoryPreset(Self.presetForSeconds(reverbParams.seconds))
 
-        for node in [voice, chop, vocoder, shared, dry, wet] {
+        // Master reverb: 100% wet (dry path is parallel); size via preset
+        mVerb.wetDryMix = 100
+        mVerb.loadFactoryPreset(.largeHall)
+
+        // Master delay: defaults (overwritten by setFXSettings)
+        mDelay.delayTime = 0.25
+        mDelay.feedback = 30
+        mDelay.wetDryMix = 50
+
+        for node in [voice, chop, vocoder, shared, dry, wet, fxSend, fxReturn] {
             engine.attach(node)
         }
         engine.attach(verb)
+        engine.attach(mVerb)
+        engine.attach(mDelay)
 
         let format = canonicalFormat
         // AVAudioMixerNode auto-picks a free input bus per connect, so
@@ -153,7 +198,7 @@ public final class AudioEngine: ObservableObject {
         engine.connect(voice, to: shared, format: format)
         engine.connect(chop, to: shared, format: format)
         engine.connect(vocoder, to: shared, format: format)
-        // Fan sharedBus OUT to both the dry and reverb branches in a
+        // Fan sharedBus OUT to dry, reverb, AND fxSend branches in a
         // single connect() call. Two sequential connects would silently
         // drop the first edge — AVAudioEngine's connect() replaces any
         // existing connection on the source's output bus 0 (see the
@@ -162,7 +207,8 @@ public final class AudioEngine: ObservableObject {
             shared,
             to: [
                 AVAudioConnectionPoint(node: dry, bus: 0),
-                AVAudioConnectionPoint(node: verb, bus: 0)
+                AVAudioConnectionPoint(node: verb, bus: 0),
+                AVAudioConnectionPoint(node: fxSend, bus: 0)
             ],
             fromBus: 0,
             format: format
@@ -170,6 +216,12 @@ public final class AudioEngine: ObservableObject {
         engine.connect(verb, to: wet, format: format)
         engine.connect(dry, to: engine.mainMixerNode, format: format)
         engine.connect(wet, to: engine.mainMixerNode, format: format)
+
+        // Master FX send chain: fxSend → mVerb → mDelay → fxReturn → mainMixer
+        engine.connect(fxSend, to: mVerb, format: format)
+        engine.connect(mVerb, to: mDelay, format: format)
+        engine.connect(mDelay, to: fxReturn, format: format)
+        engine.connect(fxReturn, to: engine.mainMixerNode, format: format)
 
         // Loudness-neutral defaults (overwritten by the persisted
         // values when wireSampleSettings' sinks fire on subscribe).
@@ -180,6 +232,10 @@ public final class AudioEngine: ObservableObject {
         dry.outputVolume = reverbParams.dryGain
         wet.outputVolume = reverbParams.wetGain
 
+        // Doubling guard: FX return silent until reverb or delay enabled.
+        // setFXSettings() will turn this up when FX are active.
+        fxReturn.outputVolume = 0
+
         self.voiceBus = voice
         self.chopBus = chop
         self.vocoderBus = vocoder
@@ -187,6 +243,68 @@ public final class AudioEngine: ObservableObject {
         self.dryMixer = dry
         self.sharedReverb = verb
         self.wetMixer = wet
+        self.fxSendMixer = fxSend
+        self.masterReverb = mVerb
+        self.masterDelay = mDelay
+        self.fxReturnMixer = fxReturn
+    }
+
+    /// Build the master FX insert chain on the idle engine: mainMixer →
+    /// masterEQ → masterComp → outputNode. Called once from start(),
+    /// after buildContributionGraph(). Idempotent.
+    public func buildMasterFXGraph() {
+        guard masterEQ == nil else { return }
+
+        // 3-band parametric EQ
+        let eq = AVAudioUnitEQ(numberOfBands: 3)
+        eq.bypass = false
+
+        // Band 0: low shelf
+        eq.bands[0].filterType = .lowShelf
+        eq.bands[0].frequency = 200
+        eq.bands[0].gain = 0
+        eq.bands[0].bypass = false
+
+        // Band 1: mid peak
+        eq.bands[1].filterType = .parametric
+        eq.bands[1].frequency = 1000
+        eq.bands[1].bandwidth = 1.0
+        eq.bands[1].gain = 0
+        eq.bands[1].bypass = false
+
+        // Band 2: high shelf
+        eq.bands[2].filterType = .highShelf
+        eq.bands[2].frequency = 6000
+        eq.bands[2].gain = 0
+        eq.bands[2].bypass = false
+
+        // Dynamics compressor via kAudioUnitSubType_DynamicsProcessor
+        let compDesc = AudioComponentDescription(
+            componentType: kAudioUnitType_Effect,
+            componentSubType: kAudioUnitSubType_DynamicsProcessor,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        let comp = AVAudioUnitEffect(audioComponentDescription: compDesc)
+
+        engine.attach(eq)
+        engine.attach(comp)
+
+        // Disconnect mainMixer from outputNode (the implicit connection).
+        // Then wire: mainMixer → eq → comp → outputNode.
+        engine.disconnectNodeOutput(engine.mainMixerNode)
+
+        let format = canonicalFormat
+        engine.connect(engine.mainMixerNode, to: eq, format: format)
+        engine.connect(eq, to: comp, format: format)
+        engine.connect(comp, to: engine.outputNode, format: format)
+
+        // Set initial compressor params (bypassed — amountDb 0 = infinite headroom)
+        setCompressorParams(FXCompParams.neutral)
+
+        self.masterEQ = eq
+        self.masterComp = comp
     }
     #endif
 
@@ -203,18 +321,19 @@ public final class AudioEngine: ObservableObject {
 
     // MARK: - Lifecycle
 
-    /// Boot the engine. Activates the session, wires the main mixer to
-    /// output, starts observing interruptions, and starts the engine.
-    /// Safe to call multiple times.
+    /// Boot the engine. Activates the session, builds the contribution
+    /// and master FX graphs, and starts the engine. Safe to call
+    /// multiple times.
     public func start() {
         session.activate()
         session.preferLowLatency()
 
         #if canImport(AVFoundation)
         if !engine.isRunning {
-            // Touch the main mixer so it stays connected to output even
-            // when no upstream nodes are attached yet.
-            _ = engine.mainMixerNode
+            // Build graphs BEFORE engine.start() — attaching on a
+            // running engine trips the graph validator.
+            buildContributionGraph()
+            buildMasterFXGraph()
 
             do {
                 try engine.start()
@@ -354,6 +473,103 @@ public final class AudioEngine: ObservableObject {
         case ..<3.6:  return .largeHall
         default:      return .cathedral
         }
+    }
+    #endif
+
+    // MARK: - Master FX (D-022)
+
+    /// Replace the master FX settings and push them into the graph.
+    /// Pushes params only — never mutates graph topology.
+    public func setFXSettings(_ settings: FXSettings) {
+        let s = settings.clamped()
+        fxSettings = s
+        #if canImport(AVFoundation)
+        setEQParams(s.eq)
+        setCompressorParams(s.comp)
+        setMasterReverbParams(s.reverb)
+        setMasterDelayParams(s.delay)
+
+        // Doubling guard: return volume = 0 when both FX are off.
+        let wetActive = !s.reverb.isNeutral || !s.delay.isNeutral
+        fxReturnMixer?.outputVolume = wetActive ? Self.linearFromDb(Float(s.fxReturnDb)) : 0
+        #endif
+    }
+
+    #if canImport(AVFoundation)
+    /// Push EQ band params to the masterEQ unit.
+    private func setEQParams(_ params: FXEQParams) {
+        guard let eq = masterEQ else { return }
+        let p = params.clamped()
+
+        eq.bands[0].frequency = Float(p.lowFreq)
+        eq.bands[0].gain = Float(p.lowGainDb)
+
+        eq.bands[1].frequency = Float(p.midFreq)
+        eq.bands[1].gain = Float(p.midGainDb)
+
+        eq.bands[2].frequency = Float(p.highFreq)
+        eq.bands[2].gain = Float(p.highGainDb)
+    }
+
+    /// Push compressor params to the masterComp AudioUnit. Uses
+    /// AudioUnitSetParameter because AVAudioUnitEffect has no typed
+    /// accessors for the dynamics processor.
+    private func setCompressorParams(_ params: FXCompParams) {
+        guard let comp = masterComp else { return }
+        let p = params.clamped()
+
+        // Get the underlying AudioUnit
+        let au = comp.audioUnit
+
+        // DynamicsProcessor params (see AudioUnitParameters.h):
+        // kDynamicsProcessorParam_Threshold = 0
+        // kDynamicsProcessorParam_HeadRoom = 1
+        // kDynamicsProcessorParam_ExpansionRatio = 2
+        // kDynamicsProcessorParam_AttackTime = 4
+        // kDynamicsProcessorParam_ReleaseTime = 5
+        // kDynamicsProcessorParam_OverallGain = 6
+        AudioUnitSetParameter(au, 0, kAudioUnitScope_Global, 0, Float(p.thresholdDb), 0)
+        AudioUnitSetParameter(au, 1, kAudioUnitScope_Global, 0, Float(p.amountDb), 0)
+        AudioUnitSetParameter(au, 4, kAudioUnitScope_Global, 0, Float(p.attackMs / 1000), 0) // seconds
+        AudioUnitSetParameter(au, 5, kAudioUnitScope_Global, 0, Float(p.releaseMs / 1000), 0) // seconds
+        AudioUnitSetParameter(au, 6, kAudioUnitScope_Global, 0, Float(p.makeupDb), 0)
+    }
+
+    /// Push reverb params to the masterReverb unit.
+    private func setMasterReverbParams(_ params: FXReverbParams) {
+        guard let verb = masterReverb else { return }
+        let p = params.clamped()
+
+        verb.loadFactoryPreset(Self.presetForSeconds(p.sizeSeconds))
+        // mix = 0..100; at mix=0 the verb passes dry signal, so we
+        // actually want it fully wet when active (fxReturnMixer controls
+        // final blend). But user expects the mix slider to control audibility:
+        // map mix to the return level OR keep wetDryMix = 100 and use fxSendMixer gain.
+        // For simplicity: wetDryMix = 100, let fxReturn control the amount.
+        verb.wetDryMix = 100
+
+        // Control audibility via fxSendMixer gain (proportional to mix)
+        fxSendMixer?.outputVolume = Float(max(p.mix, fxSettings.delay.mix) / 100)
+    }
+
+    /// Push delay params to the masterDelay unit.
+    private func setMasterDelayParams(_ params: FXDelayParams) {
+        guard let delay = masterDelay else { return }
+        let p = params.clamped()
+
+        delay.delayTime = p.timeSec
+        delay.feedback = Float(p.feedback)
+        // Delay wetDryMix controls relative blend; since reverb is 100% wet,
+        // we set delay to blend within the wet chain.
+        delay.wetDryMix = Float(p.mix)
+
+        // Update fxSendMixer gain (max of reverb and delay mix)
+        fxSendMixer?.outputVolume = Float(max(fxSettings.reverb.mix, p.mix) / 100)
+    }
+
+    /// dB to linear conversion (0 dB = 1.0).
+    private static func linearFromDb(_ db: Float) -> Float {
+        pow(10, db / 20)
     }
     #endif
 

@@ -103,22 +103,23 @@ final class AudioEngineTopologyTests: XCTestCase {
         XCTAssertEqual(vocoder.outputFormat(forBus: 0).sampleRate, 48_000)
     }
 
-    func testSharedBusFansOutToDryAndReverbBranches() throws {
+    func testSharedBusFansOutToDryReverbAndFXSend() throws {
         let voice = engine.voiceBusInput
         let shared = try XCTUnwrap(try destinations(of: voice).first?.node)
 
         let branches = try destinations(of: shared)
         XCTAssertEqual(
-            branches.count, 2,
-            "sharedBus must feed BOTH dry and reverb branches — a dropped edge means the sequential-connect trap regressed"
+            branches.count, 3,
+            "sharedBus must feed dry, reverb, AND fxSend — a dropped edge means the sequential-connect trap regressed"
         )
         let hasReverb = branches.contains { $0.node is AVAudioUnitReverb }
-        let hasDryMixer = branches.contains { $0.node is AVAudioMixerNode }
+        // Two mixers expected: dryMixer and fxSendMixer
+        let mixerCount = branches.filter { $0.node is AVAudioMixerNode }.count
         XCTAssertTrue(hasReverb, "one fan-out edge must enter the shared reverb")
-        XCTAssertTrue(hasDryMixer, "one fan-out edge must enter the dry mixer")
+        XCTAssertEqual(mixerCount, 2, "two fan-out edges must enter mixers (dry + fxSend)")
     }
 
-    func testBothBranchesTerminateAtMainMixer() throws {
+    func testAllBranchesTerminateAtMainMixer() throws {
         let voice = engine.voiceBusInput
         let shared = try XCTUnwrap(try destinations(of: voice).first?.node)
         let branches = try destinations(of: shared)
@@ -126,9 +127,9 @@ final class AudioEngineTopologyTests: XCTestCase {
         for point in branches {
             let node = try XCTUnwrap(point.node)
             var current = node
-            // Walk at most 3 hops (dry→main, or verb→wet→main).
+            // Walk at most 5 hops (dry→main, verb→wet→main, fxSend→mVerb→mDelay→fxReturn→main).
             var reachedMain = false
-            for _ in 0..<3 {
+            for _ in 0..<5 {
                 if current === engine.engine.mainMixerNode { reachedMain = true; break }
                 guard let next = try destinations(of: current).first?.node else { break }
                 current = next
