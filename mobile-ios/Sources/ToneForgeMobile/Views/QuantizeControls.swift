@@ -55,15 +55,14 @@ struct QuantizeControls: View {
         HStack(spacing: 4) {
             Text(tag)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TFTheme.textSecondary)
             Text(value)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.primary)
+                .font(TFTheme.chipFont)
+                .foregroundStyle(TFTheme.textPrimary)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(
-            Capsule().fill(Color.gray.opacity(0.20))
-        )
+        .background(Capsule().fill(TFTheme.chipFill))
+        .overlay(Capsule().stroke(TFTheme.stroke, lineWidth: 1))
     }
 }

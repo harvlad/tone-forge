@@ -80,7 +80,12 @@ private struct PlayBody: View {
             case .learn:
                 LearnView(controller: appState.learnController)
             default:
-                contributeContent(hasSong: hasSong)
+                ContributeSurface(
+                    coordinator: coordinator,
+                    sampleSettings: sampleSettings,
+                    sketchSettings: sketchSettings,
+                    onOpenBrowse: { showBrowse = true }
+                )
             }
 
             transportRow
@@ -99,70 +104,6 @@ private struct PlayBody: View {
         .sheet(isPresented: $showBrowse) { BrowsePacksSheet() }
         .sheet(isPresented: $showHelp) { HelpSheet() }
         .onAppear { applySurface(currentSurface) }
-    }
-
-    // MARK: - Contribute surface content
-
-    @ViewBuilder
-    private func contributeContent(hasSong: Bool) -> some View {
-        if hasSong {
-            CategoryCards { _ in
-                // Family pre-filter wires up in Phase 10; for now
-                // every card opens the pack browser.
-                showBrowse = true
-            }
-        }
-
-        HStack(spacing: 8) {
-            modeMenu
-            PackPicker(
-                pages: appState.carouselPages,
-                activePackId: appState.activeSamplePack?.pack.packId,
-                onSelect: { appState.activateCarouselPage(packId: $0) },
-                onOpen: { showBrowse = true }
-            )
-            stopAllButton
-        }
-        .padding(.horizontal, 12)
-
-        if hasSong {
-            SectionChips(
-                sections: appState.currentBundle?.timeline.sections ?? [],
-                nowSongSeconds: appState.songSeconds,
-                allowedLabels: appState.sampleSettings.sectionGates(
-                    for: appState.currentBundle?.analysisId ?? ""
-                ),
-                onSeek: { t in appState.seekAndPlay(to: t) },
-                onGateToggle: { label in toggleGate(label: label) }
-            )
-            .frame(height: 44)
-        }
-
-        // Both contexts: layers with a song, sketches without.
-        RecordToggle()
-
-        ModeGridView(coordinator: coordinator)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-        QuantizeControls(
-            quantize: quantizeBinding,
-            hold: $sampleSettings.holdMode,
-            beatBar: $sampleSettings.beatBarMode
-        )
-
-        if !hasSong {
-            // Song-less synthetic grid (D-016): tempo/meter/click
-            // for the quantize clock.
-            TempoStrip(
-                bpm: $sketchSettings.tempoBpm,
-                timeSigNumerator: $sketchSettings.timeSigNumerator,
-                metronomeEnabled: $sketchSettings.metronomeEnabled,
-                countInEnabled: $sketchSettings.countInEnabled,
-                positionLabel: sketchPositionLabel
-            )
-        }
-
-        LayerFader(dbValue: $sampleSettings.layerFaderDb)
     }
 
     // MARK: - Surface switcher (D-018)
@@ -253,99 +194,6 @@ private struct PlayBody: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Stop-all
-
-    /// Panic button: fades out every ringing sample voice across all
-    /// packs. Lit while any *looping* voice rings (`ringingPadKeys`
-    /// tracks loops only — one-shot tails decay on their own); dimmed
-    /// + disabled otherwise, so it doubles as an "anything still
-    /// looping?" indicator.
-    private var stopAllButton: some View {
-        let hasRinging = !appState.ringingPadKeys.isEmpty
-        return Button {
-            appState.stopAllSamplePads()
-        } label: {
-            Image(systemName: "stop.circle.fill")
-                .font(.title2)
-                .foregroundStyle(hasRinging ? Color.accentColor : .secondary)
-                .opacity(hasRinging ? 1 : 0.35)
-        }
-        .disabled(!hasRinging)
-        .accessibilityLabel("Stop all pads")
-    }
-
-    // MARK: - Mode menu
-
-    /// AppMode selector. Unimplemented modes are visible but disabled
-    /// so the seven-mode roadmap is discoverable.
-    private var modeMenu: some View {
-        Menu {
-            ForEach(AppMode.allCases, id: \.rawValue) { mode in
-                Button {
-                    coordinator.setMode(mode)
-                } label: {
-                    if mode == coordinator.appMode {
-                        Label(mode.displayName, systemImage: "checkmark")
-                    } else if mode.isImplemented {
-                        Text(mode.displayName)
-                    } else {
-                        Text("\(mode.displayName) — Coming soon")
-                    }
-                }
-                .disabled(!mode.isImplemented)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(coordinator.appMode.displayName)
-                    .font(.subheadline.weight(.semibold))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(.thinMaterial, in: Capsule())
-        }
-        .accessibilityLabel("Mode: \(coordinator.appMode.displayName)")
-    }
-
-    // MARK: - Quantize source switch (D-016)
-
-    /// Bundle loaded → song quantize setting; no bundle → the sketch
-    /// (synthetic-grid) quantize setting. The stores' own sinks push
-    /// the change into the scheduler for whichever context is live.
-    private var quantizeBinding: Binding<QuantizeMode> {
-        Binding(
-            get: {
-                appState.currentBundle != nil
-                    ? sampleSettings.quantizeMode
-                    : sketchSettings.quantizeMode
-            },
-            set: { newValue in
-                if appState.currentBundle != nil {
-                    sampleSettings.quantizeMode = newValue
-                } else {
-                    sketchSettings.quantizeMode = newValue
-                }
-            }
-        )
-    }
-
-    // MARK: - Sketch position readout
-
-    /// "bar.beat" (1-based) for the TempoStrip while the sketch
-    /// transport is running; "Count-in" through the negative lead
-    /// bar; nil (hidden) when the transport is parked at 0.
-    private var sketchPositionLabel: String? {
-        let s = appState.songSeconds
-        if s < 0 { return "Count-in" }
-        guard appState.isPlaying || s > 0 else { return nil }
-        let beatDur = 60.0 / sketchSettings.tempoBpm
-        let beats = Int(s / beatDur)
-        let bar = beats / sketchSettings.timeSigNumerator + 1
-        let beat = beats % sketchSettings.timeSigNumerator + 1
-        return "\(bar).\(beat)"
-    }
-
     // MARK: - Transport
 
     private var transportRow: some View {
@@ -379,35 +227,5 @@ private struct PlayBody: View {
             }
         }
         .padding(.horizontal, 20)
-    }
-
-    // MARK: - Gate toggle
-
-    /// Long-press on a section chip toggles it into/out of the
-    /// per-song allowlist. `nil` allowed → all allowed; adding first
-    /// label switches to explicit allowlist mode.
-    private func toggleGate(label: String) {
-        guard let bundle = appState.currentBundle else { return }
-        var current = appState.sampleSettings.sectionGates(for: bundle.analysisId)
-            ?? Set(uniqueSectionLabels())
-        if current.contains(label) {
-            current.remove(label)
-        } else {
-            current.insert(label)
-        }
-        // If the resulting set equals all labels, treat as "allow all"
-        // and clear the entry to keep persistence compact.
-        let all = Set(uniqueSectionLabels())
-        if current == all {
-            appState.setSectionGates(nil)
-        } else {
-            appState.setSectionGates(current)
-        }
-    }
-
-    private func uniqueSectionLabels() -> [String] {
-        SectionResolver.uniqueLabels(in:
-            appState.currentBundle?.timeline.sections ?? []
-        )
     }
 }

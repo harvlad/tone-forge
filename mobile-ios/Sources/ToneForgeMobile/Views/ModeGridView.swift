@@ -19,9 +19,6 @@
 
 import SwiftUI
 import ToneForgeEngine
-#if canImport(UIKit)
-import UIKit
-#endif
 
 struct ModeGridView: View {
     @ObservedObject var coordinator: ModeCoordinator
@@ -38,7 +35,7 @@ struct ModeGridView: View {
         // ImageRenderer snapshots showing the real grid instead of a
         // "can't flatten UIViewRepresentable" placeholder.
         ZStack {
-            TouchGridOverlay(
+            PadTouchOverlay(
                 onPadDown: { row, col in
                     coordinator.touchPadDown(row: row, col: col)
                 },
@@ -206,128 +203,3 @@ private struct GridCanvas: View {
     }
 }
 
-// MARK: - Multi-touch input overlay
-
-#if canImport(UIKit)
-
-/// UIKit multi-touch overlay — SwiftUI gestures are single-touch, and
-/// a pad surface must track several fingers with per-touch pad
-/// migration (slide off one pad onto another).
-private struct TouchGridOverlay: UIViewRepresentable {
-    let onPadDown: (Int, Int) -> Void
-    let onPadUp: (Int, Int) -> Void
-    let onLongPress: (Int, Int) -> Void
-
-    func makeUIView(context: Context) -> TouchGridUIView {
-        let view = TouchGridUIView()
-        view.onPadDown = onPadDown
-        view.onPadUp = onPadUp
-        view.onLongPress = onLongPress
-        return view
-    }
-
-    func updateUIView(_ uiView: TouchGridUIView, context: Context) {
-        uiView.onPadDown = onPadDown
-        uiView.onPadUp = onPadUp
-        uiView.onLongPress = onLongPress
-    }
-}
-
-final class TouchGridUIView: UIView {
-    var onPadDown: ((Int, Int) -> Void)?
-    var onPadUp: ((Int, Int) -> Void)?
-    var onLongPress: ((Int, Int) -> Void)?
-
-    /// Live touches → PadIndex rawValue currently held by that touch.
-    private var touchPads: [UITouch: Int] = [:]
-    /// Long-press timers per touch (cancelled on move/lift).
-    private var longPressTimers: [UITouch: Timer] = [:]
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isMultipleTouchEnabled = true
-        backgroundColor = .clear
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
-    }
-
-    /// Point → (row, col) in PadIndex convention (row 1 = bottom).
-    private func pad(at point: CGPoint) -> (row: Int, col: Int) {
-        let cw = bounds.width / 8
-        let ch = bounds.height / 8
-        let col = min(max(Int(point.x / cw) + 1, 1), 8)
-        let row = min(max(8 - Int(point.y / ch), 1), 8)
-        return (row, col)
-    }
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for touch in touches {
-            let (row, col) = pad(at: touch.location(in: self))
-            touchPads[touch] = row * 10 + col
-            onPadDown?(row, col)
-
-            let timer = Timer.scheduledTimer(
-                withTimeInterval: 0.5, repeats: false
-            ) { [weak self] _ in
-                guard let self, self.touchPads[touch] != nil else { return }
-                // Release the pad BEFORE presenting the sheet so no
-                // voice rings under the editor.
-                self.touchPads.removeValue(forKey: touch)
-                self.longPressTimers.removeValue(forKey: touch)
-                self.onPadUp?(row, col)
-                self.onLongPress?(row, col)
-            }
-            longPressTimers[touch] = timer
-        }
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for touch in touches {
-            guard let previous = touchPads[touch] else { continue }
-            let (row, col) = pad(at: touch.location(in: self))
-            let raw = row * 10 + col
-            guard raw != previous else { continue }
-            // Slid onto a different pad: release the old, press the
-            // new, and cancel the long-press (it's a slide, not a
-            // hold).
-            longPressTimers.removeValue(forKey: touch)?.invalidate()
-            touchPads[touch] = raw
-            onPadUp?(previous / 10, previous % 10)
-            onPadDown?(row, col)
-        }
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        endTouches(touches)
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        endTouches(touches)
-    }
-
-    private func endTouches(_ touches: Set<UITouch>) {
-        for touch in touches {
-            longPressTimers.removeValue(forKey: touch)?.invalidate()
-            guard let raw = touchPads.removeValue(forKey: touch) else {
-                continue
-            }
-            onPadUp?(raw / 10, raw % 10)
-        }
-    }
-}
-
-#else
-
-/// Non-UIKit hosts (macOS SwiftPM test build) compile the grid as a
-/// paint-only surface — the overlay is never exercised there.
-private struct TouchGridOverlay: View {
-    let onPadDown: (Int, Int) -> Void
-    let onPadUp: (Int, Int) -> Void
-    let onLongPress: (Int, Int) -> Void
-
-    var body: some View { Color.clear }
-}
-
-#endif
