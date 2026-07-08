@@ -10,8 +10,19 @@
         "dreampop",
         "reverb"
       ],
+      "genres": [
+        "shoegaze",
+        "dream pop",
+        "ambient"
+      ],
+      "moods": [
+        "dreamy",
+        "hazy",
+        "warm"
+      ],
       "sizeBytes": null,
       "coverUrl": null,
+      "previewUrl": null,
       "description": "Detuned pads, shimmer, noise washes for ambient contribution layers.",
       "padCount": 8
     },
@@ -25,8 +36,18 @@
         "hiphop",
         "chill"
       ],
+      "genres": [
+        "lo-fi",
+        "hip hop"
+      ],
+      "moods": [
+        "chill",
+        "dusty",
+        "nostalgic"
+      ],
       "sizeBytes": null,
       "coverUrl": null,
+      "previewUrl": null,
       "description": "Dusty drums, tape bass, Rhodes stabs, vinyl atmosphere.",
       "padCount": 8
     }

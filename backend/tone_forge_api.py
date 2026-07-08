@@ -1836,6 +1836,34 @@ async def get_sample_pack_pad(pack_id: str, filename: str):
     return FileResponse(path=str(file_path), media_type=media_type)
 
 
+@app.get("/api/sample-packs/{pack_id}/cover")
+async def get_sample_pack_cover(pack_id: str):
+    """Serve a pack's cover art (``cover.jpg`` in the pack dir).
+
+    404 when the pack has no cover — the client falls back to a
+    family-tinted placeholder, so a missing cover is a valid state.
+    """
+    pack_dir = _resolve_pack_dir(pack_id)
+    cover_path = pack_dir / "cover.jpg"
+    if not cover_path.is_file():
+        raise HTTPException(status_code=404, detail="Pack has no cover")
+    return FileResponse(path=str(cover_path), media_type="image/jpeg")
+
+
+@app.get("/api/sample-packs/{pack_id}/preview")
+async def get_sample_pack_preview(pack_id: str):
+    """Serve a pack's audio preview (``preview.m4a`` in the pack dir).
+
+    404 when the pack has no preview — the client hides the preview
+    button when the catalog entry declares no previewUrl.
+    """
+    pack_dir = _resolve_pack_dir(pack_id)
+    preview_path = pack_dir / "preview.m4a"
+    if not preview_path.is_file():
+        raise HTTPException(status_code=404, detail="Pack has no preview")
+    return FileResponse(path=str(preview_path), media_type="audio/mp4")
+
+
 @app.get("/studio")
 async def admin_page():
     """Serve the admin UI."""

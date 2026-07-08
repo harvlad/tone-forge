@@ -1,7 +1,8 @@
 // BrowsePacksSheet.swift
 //
-// The "Browse Packs" sheet reached from the Play tab's `PackPicker`.
-// Sections are ordered by proximity to the current musical moment:
+// The "Browse Packs" sheet reached from the Play tab's `PackPicker`
+// and the "What do you want to add?" category cards. Sections are
+// ordered by proximity to the current musical moment:
 //
 //   1. Song DNA  — virtual packs synthesised from `SongBundle.presets`
 //                  (populated by `AppState.songDnaPacks`). Empty when
@@ -15,6 +16,13 @@
 //                  `AppState.curatedDownloads`) and activates once
 //                  fully cached. Cached packs re-activate instantly.
 //
+// Phase 10 additions: a filter chip bar (All / For You / family /
+// genres / moods) that narrows the Curated section, cover art via
+// AsyncImage with a family-tint fallback, the pack tagline, and a
+// preview button (single AVPlayer via PackPreviewPlayer) for packs
+// that declare a previewUrl. `initialFamily` seeds the filter when
+// the sheet is opened from a CategoryCards card.
+//
 // The active pack is marked with a check. Tapping a row activates
 // the pack + dismisses the sheet; the Play tab sees the change via
 // `AppState.activeSamplePack` (ModeCoordinator rebinds the grid).
@@ -26,16 +34,30 @@ struct BrowsePacksSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
+    @StateObject private var previewPlayer = PackPreviewPlayer()
+    @State private var filter: PackFilter
+
+    private let initialFamily: SampleFamily?
+
+    init(initialFamily: SampleFamily? = nil) {
+        self.initialFamily = initialFamily
+        _filter = State(initialValue:
+            initialFamily.map { .family($0) } ?? .all)
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                songDnaSection
-                bundledSection
-                curatedSection
+            VStack(spacing: 0) {
+                filterChipBar
+                List {
+                    songDnaSection
+                    bundledSection
+                    curatedSection
+                }
+                #if os(iOS)
+                .listStyle(.insetGrouped)
+                #endif
             }
-            #if os(iOS)
-            .listStyle(.insetGrouped)
-            #endif
             .navigationTitle("Browse Packs")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -51,6 +73,82 @@ struct BrowsePacksSheet: View {
                 // small (~200 bytes/pack) and cache-friendly.
                 await appState.refreshCuratedCatalog()
             }
+            .onDisappear { previewPlayer.stop() }
+        }
+    }
+
+    // MARK: - Filter model
+
+    /// Curated-section filter. Facets are derived from the catalog
+    /// itself, so new genres/moods in catalog.json grow chips with no
+    /// client change.
+    enum PackFilter: Hashable {
+        case all
+        /// Song-DNA family heuristic: packs whose family matches a
+        /// family present in the current song's DNA packs.
+        case forYou
+        case family(SampleFamily)
+        case genre(String)
+        case mood(String)
+    }
+
+    private var availableFilters: [PackFilter] {
+        var filters: [PackFilter] = [.all]
+        if !appState.songDnaPacks.isEmpty { filters.append(.forYou) }
+        if let family = initialFamily { filters.append(.family(family)) }
+        let catalog = appState.curatedCatalog
+        let genres = Set(catalog.flatMap(\.genres)).sorted()
+        let moods = Set(catalog.flatMap(\.moods)).sorted()
+        filters.append(contentsOf: genres.map(PackFilter.genre))
+        filters.append(contentsOf: moods.map(PackFilter.mood))
+        return filters
+    }
+
+    private func label(for filter: PackFilter) -> String {
+        switch filter {
+        case .all: return "All"
+        case .forYou: return "For You"
+        case .family(let f): return CategoryCards.title(for: f)
+        case .genre(let g): return g.capitalized
+        case .mood(let m): return m.capitalized
+        }
+    }
+
+    private func matches(_ entry: SamplePackCatalogEntry) -> Bool {
+        switch filter {
+        case .all:
+            return true
+        case .forYou:
+            let dnaFamilies = Set(
+                appState.songDnaPacks.map { $0.pack.pack.family }
+            )
+            // No song DNA yet → nothing to personalise on; show all.
+            return dnaFamilies.isEmpty || dnaFamilies.contains(entry.family)
+        case .family(let family):
+            return entry.family == family
+        case .genre(let genre):
+            return entry.genres.contains(genre)
+        case .mood(let mood):
+            return entry.moods.contains(mood)
+        }
+    }
+
+    private var filterChipBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(availableFilters, id: \.self) { f in
+                    Button {
+                        filter = f
+                    } label: {
+                        Text(label(for: f))
+                            .font(TFTheme.chipFont)
+                            .tfChip(active: filter == f)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
     }
 
@@ -114,6 +212,7 @@ struct BrowsePacksSheet: View {
 
     @ViewBuilder
     private var curatedSection: some View {
+        let filtered = appState.curatedCatalog.filter(matches)
         Section {
             if let error = appState.curatedError {
                 HStack(alignment: .top, spacing: 8) {
@@ -133,8 +232,12 @@ struct BrowsePacksSheet: View {
                 Text("Loading catalog…")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            } else if filtered.isEmpty {
+                Text("No packs match this filter.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             } else {
-                ForEach(appState.curatedCatalog) { entry in
+                ForEach(filtered) { entry in
                     curatedRow(entry: entry)
                 }
             }
@@ -156,12 +259,19 @@ struct BrowsePacksSheet: View {
             handleCuratedTap(entry: entry, isCached: isCached)
         } label: {
             HStack(spacing: 12) {
+                coverThumb(entry: entry)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.name)
                         .font(.body)
                         .foregroundStyle(.primary)
+                    if let tagline = entry.description, !tagline.isEmpty {
+                        Text(tagline)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                     Text(curatedSubtitle(entry: entry, progress: progress, isCached: isCached))
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                     if let p = progress, !p.isComplete, p.padsTotal > 0 {
                         ProgressView(
@@ -173,12 +283,65 @@ struct BrowsePacksSheet: View {
                     }
                 }
                 Spacer()
+                if let previewURL = resolvedURL(entry.previewUrl) {
+                    previewButton(packId: entry.packId, url: previewURL)
+                }
                 curatedAccessory(progress: progress, isCached: isCached, isActive: isActive)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(progress.map { !$0.isComplete } ?? false)
+    }
+
+    /// Cover art thumbnail — AsyncImage over the catalog coverUrl with
+    /// a family-tinted placeholder for packs without art (or while
+    /// loading / on failure).
+    @ViewBuilder
+    private func coverThumb(entry: SamplePackCatalogEntry) -> some View {
+        let fallback = RoundedRectangle(cornerRadius: 8)
+            .fill(TFTheme.familyTint(entry.family).opacity(0.25))
+            .overlay(
+                Image(systemName: CategoryCards.icon(for: entry.family))
+                    .font(.body)
+                    .foregroundStyle(TFTheme.familyTint(entry.family))
+            )
+        Group {
+            if let url = resolvedURL(entry.coverUrl) {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        fallback
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                fallback
+            }
+        }
+        .frame(width: 44, height: 44)
+    }
+
+    private func previewButton(packId: String, url: URL) -> some View {
+        let isPlaying = previewPlayer.playingPackId == packId
+        return Button {
+            previewPlayer.toggle(packId: packId, url: url)
+        } label: {
+            Image(systemName: isPlaying
+                ? "stop.circle.fill" : "play.circle")
+                .font(.title3)
+                .foregroundStyle(isPlaying ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isPlaying ? "Stop preview" : "Play preview")
+    }
+
+    /// Catalog URLs may be relative ("/api/sample-packs/x/cover") or
+    /// absolute; resolve against the configured backend.
+    private func resolvedURL(_ raw: String?) -> URL? {
+        guard let raw, !raw.isEmpty else { return nil }
+        return URL(string: raw, relativeTo: appState.backendBaseURL)
     }
 
     @ViewBuilder
@@ -211,7 +374,9 @@ struct BrowsePacksSheet: View {
             return "Downloading… \(p.padsCompleted)/\(p.padsTotal) pads"
         }
         var parts: [String] = ["\(entry.padCount) pad\(entry.padCount == 1 ? "" : "s")"]
-        if !entry.tags.isEmpty {
+        if !entry.genres.isEmpty {
+            parts.append(entry.genres.prefix(2).joined(separator: " · "))
+        } else if !entry.tags.isEmpty {
             parts.append(entry.tags.prefix(3).joined(separator: " · "))
         }
         if isCached { parts.append("offline") }
@@ -219,6 +384,7 @@ struct BrowsePacksSheet: View {
     }
 
     private func handleCuratedTap(entry: SamplePackCatalogEntry, isCached: Bool) {
+        previewPlayer.stop()
         if isCached {
             appState.activateCuratedPack(packId: entry.packId)
             dismiss()

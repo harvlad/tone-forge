@@ -43,6 +43,9 @@ private struct PlayBody: View {
     @State private var showSettings: Bool = false
     @State private var showBrowse: Bool = false
     @State private var showHelp: Bool = false
+    /// Family pre-filter for the pack browser (set by CategoryCards,
+    /// nil for the plain PackPicker "open browser" path).
+    @State private var browseFamily: SampleFamily?
 
     var body: some View {
         let hasSong = appState.currentBundle != nil
@@ -84,7 +87,10 @@ private struct PlayBody: View {
                     coordinator: coordinator,
                     sampleSettings: sampleSettings,
                     sketchSettings: sketchSettings,
-                    onOpenBrowse: { showBrowse = true }
+                    onOpenBrowse: { family in
+                        browseFamily = family
+                        showBrowse = true
+                    }
                 )
             }
 
@@ -101,7 +107,9 @@ private struct PlayBody: View {
         .background(TFTheme.background.ignoresSafeArea())
         .sheet(isPresented: $showMixer) { MixerView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
-        .sheet(isPresented: $showBrowse) { BrowsePacksSheet() }
+        .sheet(isPresented: $showBrowse) {
+            BrowsePacksSheet(initialFamily: browseFamily)
+        }
         .sheet(isPresented: $showHelp) { HelpSheet() }
         .onAppear { applySurface(currentSurface) }
     }

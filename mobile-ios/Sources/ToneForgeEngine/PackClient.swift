@@ -40,11 +40,19 @@ public struct SamplePackCatalogEntry: Codable, Sendable, Equatable, Identifiable
     public let family: SampleFamily
     public let paletteHint: String?
     public let tags: [String]
+    /// Browse-filter facets (Phase 10). Older catalogs omit them —
+    /// they decode to empty and the pack simply matches no
+    /// genre/mood chips.
+    public let genres: [String]
+    public let moods: [String]
     /// Approximate download size in bytes. Nil if the server hasn't
     /// pre-computed it — the client will emit progress in "pads
     /// completed" units in that case.
     public let sizeBytes: Int64?
     public let coverUrl: String?
+    /// Relative or absolute URL of a short audio preview. Nil = no
+    /// preview available (the UI hides the preview button).
+    public let previewUrl: String?
     public let description: String?
     public let padCount: Int
 
@@ -54,8 +62,11 @@ public struct SamplePackCatalogEntry: Codable, Sendable, Equatable, Identifiable
         family: SampleFamily,
         paletteHint: String? = nil,
         tags: [String] = [],
+        genres: [String] = [],
+        moods: [String] = [],
         sizeBytes: Int64? = nil,
         coverUrl: String? = nil,
+        previewUrl: String? = nil,
         description: String? = nil,
         padCount: Int
     ) {
@@ -64,17 +75,21 @@ public struct SamplePackCatalogEntry: Codable, Sendable, Equatable, Identifiable
         self.family = family
         self.paletteHint = paletteHint
         self.tags = tags
+        self.genres = genres
+        self.moods = moods
         self.sizeBytes = sizeBytes
         self.coverUrl = coverUrl
+        self.previewUrl = previewUrl
         self.description = description
         self.padCount = padCount
     }
 
     // Defensive decoder: the backend catalog omits some fields as
-    // `null`, and older catalogs may lack `tags`/`padCount` entirely.
+    // `null`, and older catalogs may lack `tags`/`padCount`/`genres`/
+    // `moods`/`previewUrl` entirely.
     private enum CodingKeys: String, CodingKey {
-        case packId, name, family, paletteHint, tags, sizeBytes,
-             coverUrl, description, padCount
+        case packId, name, family, paletteHint, tags, genres, moods,
+             sizeBytes, coverUrl, previewUrl, description, padCount
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,8 +99,11 @@ public struct SamplePackCatalogEntry: Codable, Sendable, Equatable, Identifiable
         self.family = try c.decodeIfPresent(SampleFamily.self, forKey: .family) ?? .mixed
         self.paletteHint = try c.decodeIfPresent(String.self, forKey: .paletteHint)
         self.tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        self.genres = try c.decodeIfPresent([String].self, forKey: .genres) ?? []
+        self.moods = try c.decodeIfPresent([String].self, forKey: .moods) ?? []
         self.sizeBytes = try c.decodeIfPresent(Int64.self, forKey: .sizeBytes)
         self.coverUrl = try c.decodeIfPresent(String.self, forKey: .coverUrl)
+        self.previewUrl = try c.decodeIfPresent(String.self, forKey: .previewUrl)
         self.description = try c.decodeIfPresent(String.self, forKey: .description)
         self.padCount = try c.decodeIfPresent(Int.self, forKey: .padCount) ?? 0
     }

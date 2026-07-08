@@ -22,7 +22,9 @@ struct ContributeSurface: View {
     @ObservedObject var coordinator: ModeCoordinator
     @ObservedObject var sampleSettings: SampleSettingsStore
     @ObservedObject var sketchSettings: SketchSettingsStore
-    let onOpenBrowse: () -> Void
+    /// Open the pack browser, optionally pre-filtered to a family
+    /// (from a CategoryCards card).
+    let onOpenBrowse: (SampleFamily?) -> Void
     @EnvironmentObject private var appState: AppState
 
     /// Sample mode's escape hatch to the advanced 8×8 quadrant grid
@@ -33,10 +35,8 @@ struct ContributeSurface: View {
         let hasSong = appState.currentBundle != nil
 
         if hasSong {
-            CategoryCards { _ in
-                // Family pre-filter wires up in Phase 10; for now
-                // every card opens the pack browser.
-                onOpenBrowse()
+            CategoryCards { family in
+                onOpenBrowse(family)
             }
         }
 
@@ -47,7 +47,7 @@ struct ContributeSurface: View {
                 pages: appState.carouselPages,
                 activePackId: appState.activeSamplePack?.pack.packId,
                 onSelect: { appState.activateCarouselPage(packId: $0) },
-                onOpen: onOpenBrowse
+                onOpen: { onOpenBrowse(nil) }
             )
             stopAllButton
         }

@@ -105,6 +105,60 @@ final class PackClientTests: XCTestCase {
         XCTAssertNil(out[0].description)
     }
 
+    func testFetchCatalogDecodesPhase10Fields() async throws {
+        // A "new" catalog carrying the Phase 10 browse facets.
+        let json = """
+        { "packs": [ {
+            "packId": "rich",
+            "name": "Rich Pack",
+            "family": "pads",
+            "tags": ["ambient"],
+            "genres": ["shoegaze", "dream pop"],
+            "moods": ["dreamy"],
+            "coverUrl": "/api/sample-packs/rich/cover",
+            "previewUrl": "/api/sample-packs/rich/preview",
+            "padCount": 8
+        } ] }
+        """
+        PackMockURLProtocol.stubPath(
+            "/api/sample-packs", status: 200, body: Data(json.utf8)
+        )
+        let client = PackClient(session: session)
+        let out = try await client.fetchCatalog(
+            baseURL: URL(string: "https://example.com")!
+        )
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].genres, ["shoegaze", "dream pop"])
+        XCTAssertEqual(out[0].moods, ["dreamy"])
+        XCTAssertEqual(out[0].previewUrl, "/api/sample-packs/rich/preview")
+        XCTAssertEqual(out[0].coverUrl, "/api/sample-packs/rich/cover")
+    }
+
+    func testFetchCatalogOldCatalogDefaultsPhase10Fields() async throws {
+        // A pre-Phase-10 catalog (no genres/moods/previewUrl) must
+        // still decode; the new fields default to empty/nil.
+        let json = """
+        { "packs": [ {
+            "packId": "legacy",
+            "name": "Legacy Pack",
+            "family": "percussion",
+            "tags": ["oldschool"],
+            "padCount": 8
+        } ] }
+        """
+        PackMockURLProtocol.stubPath(
+            "/api/sample-packs", status: 200, body: Data(json.utf8)
+        )
+        let client = PackClient(session: session)
+        let out = try await client.fetchCatalog(
+            baseURL: URL(string: "https://example.com")!
+        )
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].genres, [])
+        XCTAssertEqual(out[0].moods, [])
+        XCTAssertNil(out[0].previewUrl)
+    }
+
     func testFetchCatalogSurfacesHttpErrorStatus() async {
         PackMockURLProtocol.stubPath("/api/sample-packs", status: 500, body: Data())
         let client = PackClient(session: session)
