@@ -148,6 +148,12 @@ public final class JamSettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// Chord follow mode: highlight the current chord pad, pulse the
+    /// next chord, show a countdown strip, and animate Launchpad row 1.
+    @Published public var followEnabled: Bool {
+        didSet { save() }
+    }
+
     /// Built-in defaults, shared by init and the tests.
     nonisolated public static let defaultSoundPresetId = "dreamyLead"
     /// keyOverrideBySong key used when no song is loaded.
@@ -176,6 +182,7 @@ public final class JamSettingsStore: ObservableObject {
         self.metronomeSubdivide = loaded.metronomeSubdivide
         self.padMode = loaded.padMode
         self.holdEnabled = loaded.holdEnabled
+        self.followEnabled = loaded.followEnabled
     }
 
     // MARK: - Key resolution
@@ -224,6 +231,7 @@ public final class JamSettingsStore: ObservableObject {
         var metronomeSubdivide: Bool
         var padMode: JamPadMode
         var holdEnabled: Bool
+        var followEnabled: Bool
 
         static let defaults = Persisted(
             storeVersion: 1,
@@ -239,14 +247,16 @@ public final class JamSettingsStore: ObservableObject {
             metronomeSound: .sine,
             metronomeSubdivide: false,
             padMode: .pads,
-            holdEnabled: false
+            holdEnabled: false,
+            followEnabled: false
         )
 
         private enum CodingKeys: String, CodingKey {
             case storeVersion, scaleVariant, highlightCurrentChord,
                  soundPresetId, octaveShift, strumEnabled, quantizeMode,
                  keyOverrideBySong, metronomeEnabled, metronomeAccent,
-                 metronomeSound, metronomeSubdivide, padMode, holdEnabled
+                 metronomeSound, metronomeSubdivide, padMode, holdEnabled,
+                 followEnabled
         }
 
         init(
@@ -263,7 +273,8 @@ public final class JamSettingsStore: ObservableObject {
             metronomeSound: MetronomeSound,
             metronomeSubdivide: Bool,
             padMode: JamPadMode,
-            holdEnabled: Bool
+            holdEnabled: Bool,
+            followEnabled: Bool
         ) {
             self.storeVersion = storeVersion
             self.scaleVariant = scaleVariant
@@ -279,6 +290,7 @@ public final class JamSettingsStore: ObservableObject {
             self.metronomeSubdivide = metronomeSubdivide
             self.padMode = padMode
             self.holdEnabled = holdEnabled
+            self.followEnabled = followEnabled
         }
 
         // decodeIfPresent everywhere except storeVersion so fields
@@ -328,6 +340,9 @@ public final class JamSettingsStore: ObservableObject {
             self.holdEnabled = try c.decodeIfPresent(
                 Bool.self, forKey: .holdEnabled
             ) ?? d.holdEnabled
+            self.followEnabled = try c.decodeIfPresent(
+                Bool.self, forKey: .followEnabled
+            ) ?? d.followEnabled
         }
     }
 
@@ -351,7 +366,8 @@ public final class JamSettingsStore: ObservableObject {
             metronomeSound: metronomeSound,
             metronomeSubdivide: metronomeSubdivide,
             padMode: padMode,
-            holdEnabled: holdEnabled
+            holdEnabled: holdEnabled,
+            followEnabled: followEnabled
         )
         if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: Self.defaultsKey)

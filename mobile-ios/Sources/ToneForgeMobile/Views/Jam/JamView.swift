@@ -47,6 +47,11 @@ struct JamView: View {
                 showChordSheet = true
             }
 
+            // Chord follow countdown strip (shown when follow mode is on)
+            if jamSettings.followEnabled {
+                ChordFollowStrip()
+            }
+
             padGrid
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -209,7 +214,12 @@ struct JamView: View {
                 holdEnabled: jamSettings.holdEnabled
             )
         case .chords:
-            ChordPadGridView(controller: chordPadController)
+            ChordPadGridView(
+                controller: chordPadController,
+                currentChordSymbol: appState.currentChord?.symbol,
+                nextChordSymbol: appState.nextChord?.symbol,
+                followEnabled: jamSettings.followEnabled
+            )
         }
     }
 
@@ -220,6 +230,7 @@ struct JamView: View {
             quantizeChip
             metronomeChip
             loopSectionChip
+            followChip
             Spacer()
             octaveStepper
             Button {
@@ -308,6 +319,29 @@ struct JamView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(
                 active ? "Stop looping section" : "Loop current section"
+            )
+        }
+    }
+
+    /// Follow toggle: highlights current/next chord pads and shows
+    /// countdown strip. Only shown when a song with chords is loaded.
+    @ViewBuilder
+    private var followChip: some View {
+        if appState.currentBundle?.timeline.chords.isEmpty == false {
+            Button {
+                jamSettings.followEnabled.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "eye")
+                        .font(.caption)
+                    Text("Follow")
+                        .font(TFTheme.chipFont)
+                }
+                .tfChip(active: jamSettings.followEnabled)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                jamSettings.followEnabled ? "Follow mode on" : "Follow mode off"
             )
         }
     }

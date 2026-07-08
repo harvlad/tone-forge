@@ -637,6 +637,19 @@ public final class AppState: ObservableObject {
                 transport?.setLights(Self.launchpadFrame(from: visuals))
             }
             .store(in: &launchpadCancellables)
+
+        // Chord follow countdown on Launchpad row 1 (top row). Updates
+        // at 10 Hz when follow mode is enabled and transport is running.
+        Timer.publish(every: 0.1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self, weak transport] _ in
+                guard let self = self,
+                      self.jamSettings.followEnabled,
+                      self.isPlaying else { return }
+                let frame = Self.chordFollowRowFrame(appState: self)
+                transport?.setLights(frame)
+            }
+            .store(in: &launchpadCancellables)
         // Connection flaps feed the idle-timer predicate (P7): a
         // performer jamming from the hardware grid must not have
         // auto-lock kill the session mid-set.
@@ -700,6 +713,30 @@ public final class AppState: ObservableObject {
         let g = UInt32(Double((hint >> 8) & 0xFF) * 0.4)
         let b = UInt32(Double(hint & 0xFF) * 0.4)
         return (r << 16) | (g << 8) | b
+    }
+
+    /// Chord follow countdown row: lights up pads 0-7 on top row (row 0)
+    /// based on countdown progress. Progress 0→1 lights pads left→right.
+    static func chordFollowRowFrame(
+        appState: AppState
+    ) -> [LaunchpadPad: LaunchpadLight] {
+        guard let progress = ChordFollowStrip.countdownProgress(appState: appState) else {
+            return [:]
+        }
+        let litCount = ChordFollowStrip.launchpadLitCount(progress: progress)
+        // Accent color: teal-ish (matches app accent)
+        let accentHint: UInt32 = 0x00BFFF
+        var frame: [LaunchpadPad: LaunchpadLight] = [:]
+        for col in 0..<8 {
+            let pad = LaunchpadPad(row: 0, col: col)
+            if col < litCount {
+                frame[pad] = .solid(colorHint: accentHint)
+            } else {
+                // Dim the remaining pads
+                frame[pad] = .solid(colorHint: Self.dimmed(accentHint))
+            }
+        }
+        return frame
     }
 
     /// Per-pad effects resolution for the scheduler. (This used to
