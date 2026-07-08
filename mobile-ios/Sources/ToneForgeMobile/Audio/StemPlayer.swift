@@ -45,6 +45,10 @@ public final class StemPlayer: ObservableObject {
     @Published public private(set) var stems: [StemState] = []
     @Published public private(set) var isLoaded: Bool = false
 
+    /// Combined "Song" gain for all stems together. Linear 0..1.
+    /// Controls the stemMixer output volume so Your Layer is unaffected.
+    @Published public private(set) var songGain: Float = 1.0
+
     /// Test/preview seam: seed mixer UI state without touching the
     /// audio graph (snapshot tests render channel strips with no
     /// engine and no local stem files).
@@ -262,6 +266,15 @@ public final class StemPlayer: ObservableObject {
             stems[idx].isSoloed.toggle()
         }
         applyGains()
+    }
+
+    /// Set the combined "Song" gain for all stems (0..1 linear).
+    /// Controls the stemMixer output so Your Layer is unaffected.
+    public func setSongGain(_ gain: Float) {
+        songGain = max(0, min(1, gain))
+        #if canImport(AVFoundation)
+        stemMixer?.outputVolume = songGain
+        #endif
     }
 
     // MARK: - Private helpers

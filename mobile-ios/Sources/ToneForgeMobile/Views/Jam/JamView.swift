@@ -270,6 +270,7 @@ struct JamView: View {
                 .font(TFTheme.chipFont)
             }
             .tfChip(active: jamSettings.quantizeMode != .off)
+            .fixedSize()
         }
         .accessibilityLabel(
             "Quantize: \(jamSettings.quantizeMode.rawValue)"
@@ -315,6 +316,7 @@ struct JamView: View {
                         .font(TFTheme.chipFont)
                 }
                 .tfChip(active: active)
+                .fixedSize()
             }
             .buttonStyle(.plain)
             .accessibilityLabel(
@@ -338,6 +340,7 @@ struct JamView: View {
                         .font(TFTheme.chipFont)
                 }
                 .tfChip(active: jamSettings.followEnabled)
+                .fixedSize()
             }
             .buttonStyle(.plain)
             .accessibilityLabel(

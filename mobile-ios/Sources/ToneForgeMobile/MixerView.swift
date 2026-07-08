@@ -103,21 +103,35 @@ struct MixerBody: View {
     // MARK: - Segment picker
 
     private var segmentPicker: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             ForEach(MixerSegment.allCases) { seg in
                 Button {
                     segment = seg
                 } label: {
                     Text(seg.rawValue)
-                        .font(TFTheme.chipFont)
-                        .tfChip(active: segment == seg)
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            segment == seg
+                                ? TFTheme.chipActiveFill
+                                : TFTheme.chipFill,
+                            in: Capsule()
+                        )
+                        .overlay(
+                            Capsule().stroke(
+                                segment == seg ? .clear : TFTheme.stroke,
+                                lineWidth: 1
+                            )
+                        )
+                        .foregroundStyle(TFTheme.textPrimary)
                 }
                 .buttonStyle(.plain)
             }
             Spacer()
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Segment content
@@ -135,6 +149,11 @@ struct MixerBody: View {
 
     private var levelsRows: some View {
         VStack(spacing: 8) {
+            // Song (all stems) group fader — shown when stems are loaded
+            if !stemPlayer.stems.isEmpty {
+                songRow
+            }
+
             ForEach(stemPlayer.stems) { stem in
                 stemRow(stem)
             }
@@ -192,6 +211,32 @@ struct MixerBody: View {
             ) {
                 appState.stemPlayer.toggleMute(role: stem.role)
             }
+        }
+    }
+
+    // MARK: - Song row
+
+    /// Combined fader for all stems. Allows ducking the song while
+    /// playing over it without affecting Your Layer.
+    private var songRow: some View {
+        channelRow(
+            icon: "music.note.list",
+            tint: .cyan,
+            name: "Song",
+            value: Binding(
+                get: { Double(stemPlayer.songGain) },
+                set: { stemPlayer.setSongGain(Float($0)) }
+            ),
+            range: 0...1,
+            readout: MixerReadout.dbString(gainLinear: Double(stemPlayer.songGain)),
+            dimmed: false
+        ) {
+            // No S/M for the song group — hidden placeholders keep the
+            // slider column aligned with the stem rows.
+            soloMuteButton(label: "S", active: false, activeTint: .yellow,
+                           accessibility: "") {}.hidden()
+            soloMuteButton(label: "M", active: false, activeTint: .red,
+                           accessibility: "") {}.hidden()
         }
     }
 

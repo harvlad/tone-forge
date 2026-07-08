@@ -15,14 +15,17 @@ struct LayerSlotToggle: View {
         Button {
             appState.toggleActiveSlot()
         } label: {
-            HStack(spacing: 6) {
-                // Active slot label
+            HStack(spacing: 4) {
+                // Slot label with clear "Layer" prefix
+                Text("Layer")
+                    .font(.caption2)
+                    .foregroundStyle(TFTheme.textSecondary)
                 Text(appState.layerSlots.active.rawValue)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(isRecording ? .secondary : .primary)
 
                 // Content dots showing which slots have takes
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     slotDot(slot: .a)
                     slotDot(slot: .b)
                 }

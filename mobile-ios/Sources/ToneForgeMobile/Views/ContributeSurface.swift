@@ -37,12 +37,6 @@ struct ContributeSurface: View {
     var body: some View {
         let hasSong = appState.currentBundle != nil
 
-        if hasSong {
-            CategoryCards { family in
-                onOpenBrowse(family)
-            }
-        }
-
         // Single control row (was three): mode segments + pack strip
         // + stop-all + the sample-mode grid toggle. Merged so the tab
         // fits a phone screen without scrolling.
