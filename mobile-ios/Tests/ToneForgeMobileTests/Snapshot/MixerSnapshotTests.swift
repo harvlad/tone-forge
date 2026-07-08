@@ -1,8 +1,17 @@
 // MixerSnapshotTests.swift
 //
-// Golden-PNG snapshots of the restyled Mixer sheet (Phase 11) —
-// horizontal channel strips with vertical faders, dB readouts, S/M
-// buttons, plus the Your Layer and Master strips.
+// Golden-PNG snapshots of the Mixer sheet (mockup-driven rows
+// restyle) — vertical channel rows with tinted role icons, S/M
+// buttons, horizontal sliders, and dB readouts, plus the Your Layer
+// and Master rows.
+//
+// Renders MixerBody directly (renderForSnapshot: true), NOT
+// MixerView: ImageRenderer can't flatten NavigationStack (UIKit-
+// backed — full-frame "prohibited" placeholder) and leaves ScrollView
+// content blank, so the fixture bypasses both. (The Sliders inside
+// the rows are UISlider-backed and still render as small placeholders
+// — the card layout, icons, buttons, and readouts are what these
+// goldens pin.)
 //
 // Same harness as the other snapshot suites: deterministic seeded
 // state (StemPlayer.seedStemStatesForSnapshot — no audio graph, no
@@ -43,9 +52,10 @@ final class MixerSnapshotTests: XCTestCase {
 
     // MARK: - Fixture
 
-    /// MixerView over an AppState whose StemPlayer is seeded with a
-    /// representative mix: unity drums, soloed bass, muted half-gain
-    /// vocals, and a zero-gain (−∞ dB) other stem.
+    /// MixerBody (see header — no NavigationStack) over an AppState
+    /// whose StemPlayer is seeded with a representative mix: unity
+    /// drums, soloed bass, muted half-gain vocals, and a zero-gain
+    /// (−∞ dB) other stem.
     private func makeMixer() -> some View {
         let appState = AppState()
         appState.stemPlayer.seedStemStatesForSnapshot([
@@ -54,6 +64,13 @@ final class MixerSnapshotTests: XCTestCase {
             .init(role: "vocals", gain: 0.5, isMuted: true, isSoloed: false),
             .init(role: "other", gain: 0.0, isMuted: false, isSoloed: false),
         ])
-        return MixerView().environmentObject(appState)
+        return MixerBody(
+            stemPlayer: appState.stemPlayer,
+            sampleSettings: appState.sampleSettings,
+            renderForSnapshot: true
+        )
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(TFTheme.background)
+        .environmentObject(appState)
     }
 }

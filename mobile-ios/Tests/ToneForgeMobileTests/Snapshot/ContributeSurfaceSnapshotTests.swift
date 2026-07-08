@@ -46,12 +46,16 @@ final class ContributeSurfaceSnapshotTests: XCTestCase {
     // MARK: - Fixture
 
     /// PlayView over an AppState with a song loaded but no audio /
-    /// network activity. Contribute is the default surface; sample
-    /// mode is the default contribute mode, so the named 4×4 grid
-    /// renders (empty "+" tiles — no pack activated).
+    /// network activity. The surface is pinned explicitly (NOT left
+    /// to the default): SampleSettingsStore persists to the shared
+    /// simulator Documents, so a suite that runs earlier (ChordPads)
+    /// would otherwise leak its persisted surface into this fixture.
+    /// Sample mode is the default contribute mode, so the named 4×4
+    /// grid renders (empty "+" tiles — no pack activated).
     private func makeContributeScreen() -> some View {
         let appState = AppState()
         appState.currentBundle = Self.fixtureBundle
+        appState.sampleSettings.playSurfaceRaw = PlaySurface.contribute.rawValue
         return PlayView().environmentObject(appState)
     }
 

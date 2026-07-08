@@ -167,10 +167,29 @@ private struct GridCanvas: View {
         }
 
         if let label = visual.label, !label.isEmpty {
-            let text = Text(label)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.white.opacity(0.9))
-            context.draw(text, in: rect.insetBy(dx: 3, dy: 3))
+            // Single line, bottom-aligned, manually ellipsized:
+            // Canvas text wraps mid-word when drawn into a rect
+            // ("Shim/mer…") and a centered label collides with the
+            // top-right badge, so measure-and-trim instead.
+            let inset = rect.insetBy(dx: 3, dy: 3)
+            let styled: (String) -> Text = { s in
+                Text(s)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.white.opacity(0.9))
+            }
+            let unconstrained = CGSize(width: 1000, height: 100)
+            var display = label
+            var resolved = context.resolve(styled(display))
+            while resolved.measure(in: unconstrained).width > inset.width,
+                  display.count > 1 {
+                display = String(display.dropLast())
+                resolved = context.resolve(styled(display + "…"))
+            }
+            context.draw(
+                resolved,
+                at: CGPoint(x: inset.minX, y: inset.maxY),
+                anchor: .bottomLeading
+            )
         }
 
         if let badge = visual.badge {

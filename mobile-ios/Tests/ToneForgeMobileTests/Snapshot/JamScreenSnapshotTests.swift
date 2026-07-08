@@ -49,10 +49,14 @@ final class JamScreenSnapshotTests: XCTestCase {
 
     /// PlayView over an AppState with a song loaded but no audio /
     /// network activity. `currentBundle` is assigned directly (not via
-    /// `activate`) so nothing downloads.
+    /// `activate`) so nothing downloads. The surface is pinned
+    /// explicitly — SampleSettingsStore persists to the simulator's
+    /// shared Documents, so relying on the default would inherit
+    /// whatever surface another suite persisted last.
     private func makePlayScreen() -> some View {
         let appState = AppState()
         appState.currentBundle = Self.fixtureBundle
+        appState.sampleSettings.playSurfaceRaw = PlaySurface.jam.rawValue
         return PlayView().environmentObject(appState)
     }
 

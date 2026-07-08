@@ -1,11 +1,14 @@
 // MixerView.swift
 //
-// Per-stem mixer, restyled per the mockup (Phase 11): horizontal
-// channel strips — one per stem (drums / bass / vocals / other) with
-// a role icon, vertical fader, dB readout, and S/M buttons — plus a
-// Your Layer strip (layerFaderDb) and a Master strip. State lives on
-// ``StemPlayer`` / SampleSettingsStore / AppState and is mutated via
-// their published APIs — this view is a thin observer.
+// Per-stem mixer, matching the mockup: a vertical list of channel
+// ROWS — one per stem (drums / bass / vocals / other) with a tinted
+// role icon, name, S/M buttons, a horizontal slider, and a dB
+// readout — plus a Your Layer row (layerFaderDb) and a Master row.
+// (The first cut used horizontal strips with vertical faders; the
+// mockup is rows, and rows also sidestep the fader-vs-scroll gesture
+// fight entirely.) State lives on ``StemPlayer`` /
+// SampleSettingsStore / AppState and is mutated via their published
+// APIs — this view is a thin observer.
 //
 // Presented as a sheet from the Play tab so it can pop up over the
 // pad grid without stealing screen real estate.
@@ -41,156 +44,178 @@ struct MixerView: View {
     }
 }
 
-private struct MixerBody: View {
+/// Internal (not private) so MixerSnapshotTests can render the body
+/// directly — ImageRenderer can't flatten NavigationStack (UIKit-
+/// backed) and would produce a full-frame placeholder otherwise.
+struct MixerBody: View {
     @ObservedObject var stemPlayer: StemPlayer
     @ObservedObject var sampleSettings: SampleSettingsStore
     @EnvironmentObject private var appState: AppState
-
-    private let faderHeight: CGFloat = 170
-    private let stripWidth: CGFloat = 78
+    /// Snapshot hook: ImageRenderer also leaves ScrollView content
+    /// blank, so MixerSnapshotTests renders the rows without the
+    /// scroller. Production call sites leave this false.
+    var renderForSnapshot = false
 
     var body: some View {
-        VStack(spacing: 16) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 10) {
-                    ForEach(stemPlayer.stems) { stem in
-                        stemStrip(stem)
-                    }
-                    yourLayerStrip
-                    masterStrip
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
+        if renderForSnapshot {
+            rows
+        } else {
+            ScrollView { rows }
+        }
+    }
+
+    private var rows: some View {
+        VStack(spacing: 8) {
+            ForEach(stemPlayer.stems) { stem in
+                stemRow(stem)
             }
 
             if stemPlayer.stems.isEmpty {
                 Text("No stems loaded. Pick a song from the Library tab.")
                     .font(.callout)
                     .foregroundStyle(TFTheme.textSecondary)
-                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
                     .multilineTextAlignment(.center)
             }
+
+            yourLayerRow
+            masterRow
 
             if let pack = appState.activeSamplePack {
                 Text("Pack: \(pack.pack.name)")
                     .font(.caption)
                     .foregroundStyle(TFTheme.textSecondary)
+                    .padding(.top, 4)
             }
-
-            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
     }
 
-    // MARK: - Stem strips
+    // MARK: - Stem rows
 
-    private func stemStrip(_ stem: StemPlayer.StemState) -> some View {
-        channelStrip(
+    private func stemRow(_ stem: StemPlayer.StemState) -> some View {
+        channelRow(
             icon: Self.icon(forRole: stem.role),
+            tint: Self.tint(forRole: stem.role),
             name: stem.role.capitalized,
-            fader: VerticalFader(
-                value: Binding(
-                    get: { Double(stem.gain) },
-                    set: { appState.stemPlayer.setGain(role: stem.role, gain: Float($0)) }
-                ),
-                range: 0...1
+            value: Binding(
+                get: { Double(stem.gain) },
+                set: { appState.stemPlayer.setGain(role: stem.role, gain: Float($0)) }
             ),
+            range: 0...1,
             readout: MixerReadout.dbString(gainLinear: Double(stem.gain)),
             dimmed: stem.isMuted
         ) {
-            HStack(spacing: 6) {
-                soloMuteButton(
-                    label: "S",
-                    active: stem.isSoloed,
-                    activeTint: .yellow,
-                    accessibility: "Solo \(stem.role)"
-                ) {
-                    appState.stemPlayer.toggleSolo(role: stem.role)
-                }
-                soloMuteButton(
-                    label: "M",
-                    active: stem.isMuted,
-                    activeTint: .red,
-                    accessibility: "Mute \(stem.role)"
-                ) {
-                    appState.stemPlayer.toggleMute(role: stem.role)
-                }
+            soloMuteButton(
+                label: "S",
+                active: stem.isSoloed,
+                activeTint: .yellow,
+                accessibility: "Solo \(stem.role)"
+            ) {
+                appState.stemPlayer.toggleSolo(role: stem.role)
+            }
+            soloMuteButton(
+                label: "M",
+                active: stem.isMuted,
+                activeTint: .red,
+                accessibility: "Mute \(stem.role)"
+            ) {
+                appState.stemPlayer.toggleMute(role: stem.role)
             }
         }
     }
 
-    // MARK: - Your Layer strip
+    // MARK: - Your Layer row
 
     /// Drives the layer bus's outputVolume via SampleSettingsStore →
     /// AppState Combine sink. Both Samples-panel triggers and
     /// Instrument-panel pad synth output fold into this fader; pulling
     /// to -60 dB effectively mutes the layer while leaving the stems
     /// untouched.
-    private var yourLayerStrip: some View {
-        channelStrip(
+    private var yourLayerRow: some View {
+        channelRow(
             icon: "person.wave.2.fill",
+            tint: Color.accentColor,
             name: "Your Layer",
-            fader: VerticalFader(
-                value: $sampleSettings.layerFaderDb,
-                range: -60...6
-            ),
+            value: $sampleSettings.layerFaderDb,
+            range: -60...6,
             readout: String(format: "%+.0f dB", sampleSettings.layerFaderDb),
             dimmed: false
         ) {
-            // No S/M — spacer keeps fader heights aligned.
-            Color.clear.frame(height: 26)
+            // No S/M for the layer — hidden placeholders keep the
+            // slider column aligned with the stem rows.
+            soloMuteButton(label: "S", active: false, activeTint: .yellow,
+                           accessibility: "") {}.hidden()
+            soloMuteButton(label: "M", active: false, activeTint: .red,
+                           accessibility: "") {}.hidden()
         }
     }
 
-    // MARK: - Master strip
+    // MARK: - Master row
 
-    private var masterStrip: some View {
-        channelStrip(
+    private var masterRow: some View {
+        channelRow(
             icon: "speaker.wave.2.fill",
+            tint: TFTheme.textPrimary,
             name: "Master",
-            fader: VerticalFader(
-                value: Binding(
-                    get: { appState.masterGain },
-                    set: { appState.setMasterGain($0) }
-                ),
-                range: 0...1
+            value: Binding(
+                get: { appState.masterGain },
+                set: { appState.setMasterGain($0) }
             ),
+            range: 0...1,
             readout: MixerReadout.dbString(gainLinear: appState.masterGain),
             dimmed: false
         ) {
-            Color.clear.frame(height: 26)
+            soloMuteButton(label: "S", active: false, activeTint: .yellow,
+                           accessibility: "") {}.hidden()
+            soloMuteButton(label: "M", active: false, activeTint: .red,
+                           accessibility: "") {}.hidden()
         }
     }
 
-    // MARK: - Strip scaffold
+    // MARK: - Row scaffold
 
-    private func channelStrip<Fader: View, Buttons: View>(
+    private func channelRow<Buttons: View>(
         icon: String,
+        tint: Color,
         name: String,
-        fader: Fader,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
         readout: String,
         dimmed: Bool,
         @ViewBuilder buttons: () -> Buttons
     ) -> some View {
-        VStack(spacing: 8) {
+        HStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.body)
-                .foregroundStyle(dimmed ? TFTheme.textSecondary : TFTheme.textPrimary)
+                .font(.caption)
+                .foregroundStyle(dimmed ? TFTheme.textSecondary : tint)
+                .frame(width: 30, height: 30)
+                .overlay(Circle().stroke(
+                    (dimmed ? TFTheme.textSecondary : tint).opacity(0.5),
+                    lineWidth: 1
+                ))
+
             Text(name)
                 .font(TFTheme.chipFont)
-                .foregroundStyle(TFTheme.textSecondary)
+                .foregroundStyle(dimmed ? TFTheme.textSecondary : TFTheme.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            fader
-                .frame(height: faderHeight)
+                .frame(width: 62, alignment: .leading)
+
+            buttons()
+
+            Slider(value: value, in: range)
                 .opacity(dimmed ? 0.45 : 1)
+                .accessibilityLabel("\(name) level")
+
             Text(readout)
                 .font(TFTheme.readout)
                 .foregroundStyle(dimmed ? TFTheme.textSecondary : TFTheme.textPrimary)
-            buttons()
+                .frame(width: 56, alignment: .trailing)
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 6)
-        .frame(width: stripWidth)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .tfCard()
     }
 
@@ -226,6 +251,17 @@ private struct MixerBody: View {
         case "vocals": return "music.mic"
         case "other":  return "guitars.fill"
         default:        return "waveform"
+        }
+    }
+
+    /// Per-channel icon tint from the mockup's colored channel dots.
+    static func tint(forRole role: String) -> Color {
+        switch role.lowercased() {
+        case "drums":  return .orange
+        case "bass":   return .blue
+        case "vocals": return .purple
+        case "other":  return .green
+        default:        return .gray
         }
     }
 }

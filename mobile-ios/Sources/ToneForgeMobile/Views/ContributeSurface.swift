@@ -6,11 +6,12 @@
 //   - CategoryCards family chips (song loaded)
 //   - one control row: [Instrument | Samples] switch → setMode(
 //     .hybrid / .sample) + pack strip + stop-all + 8×8 toggle
-//   - sections + record pill row (song) / record pill (sketch)
+//   - sections + record pill row (song loaded)
 //   - the pad surface: named 4×4 SamplePadGrid4x4 in sample mode
 //     (with a grid-icon toggle back to the advanced 8×8), the 8×8
 //     hybrid grid in instrument mode
-//   - quantize chips, sketch tempo strip (no song), layer fader
+//   - quantize chips (+ record pill in the sketch context), sketch
+//     tempo strip (no song), layer fader
 //
 // Pure composition — all audio still flows grid → bus → ModeRouter →
 // ModeCoordinator; this view owns no engine logic.
@@ -76,19 +77,23 @@ struct ContributeSurface: View {
                     .padding(.trailing, 12)
             }
             .frame(height: 44)
-        } else {
-            // Sketch context: record pill on its own row.
-            RecordToggle()
-                .padding(.horizontal, 12)
         }
 
         padSurface
 
-        QuantizeControls(
-            quantize: quantizeBinding,
-            hold: $sampleSettings.holdMode,
-            beatBar: $sampleSettings.beatBarMode
-        )
+        // Quantize chips; in the sketch context the record pill
+        // shares this row (no sections row to live on).
+        HStack(spacing: 8) {
+            QuantizeControls(
+                quantize: quantizeBinding,
+                hold: $sampleSettings.holdMode,
+                beatBar: $sampleSettings.beatBarMode
+            )
+            if !hasSong {
+                RecordToggle()
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
         .padding(.horizontal, 12)
 
         if !hasSong {
@@ -101,6 +106,7 @@ struct ContributeSurface: View {
                 countInEnabled: $sketchSettings.countInEnabled,
                 positionLabel: sketchPositionLabel
             )
+            .padding(.horizontal, 12)
         }
 
         LayerFader(dbValue: $sampleSettings.layerFaderDb)
