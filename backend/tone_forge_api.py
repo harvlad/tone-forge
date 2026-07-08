@@ -3629,7 +3629,7 @@ async def get_song_bundle(entry_id: str) -> JSONResponse:
                 continue
             start = s.get("start") if s.get("start") is not None else s.get("start_time")
             end = s.get("end") if s.get("end") is not None else s.get("end_time")
-            label = s.get("label") or s.get("name")
+            label = s.get("label") or s.get("name") or s.get("type")
             if start is None or end is None:
                 continue
             out.append({
