@@ -1,9 +1,14 @@
 // LearnView.swift
 //
-// The LEARN surface (redesign Phase 8, first mockup): song progress
-// bar, stats row (Sections Learned / Accuracy / Longest Streak), the
-// Next Up card, and the section list with learned badges. While a
-// practice pass is running the surface swaps to PracticeOverlay.
+// The LEARN tab (D-022 redesign): one scroll-free screen. Section
+// chips (tap = seek), the NOW / NEXT chord cards with guitar
+// fretboards, a progress ring beside the mastery stats, the
+// Loop / Practice / Sections controls, and the Tempo / Speed /
+// TimeSig stat chips. Speed drives the real playback rate from
+// Phase 3 (AppState.setPlaybackRate); the full song structure —
+// scrubber, repetition map, section list — lives in
+// SectionOverviewSheet. While a practice pass runs the surface
+// swaps to PracticeOverlay.
 //
 // Learn has no grid — practice pads voice chords directly on the
 // PadSynth through LearnSessionController (D-019 bus bypass).
@@ -21,7 +26,7 @@ struct LearnView: View {
     @ObservedObject var controller: LearnSessionController
     @EnvironmentObject private var appState: AppState
 
-    @State private var detailItem: LearnSectionSheetItem?
+    @State private var showOverview = false
 
     var body: some View {
         Group {
@@ -33,169 +38,245 @@ struct LearnView: View {
                 overview
             }
         }
-        .sheet(item: $detailItem) { item in
-            SectionDetailSheet(
-                section: item.section, controller: controller)
+        .sheet(isPresented: $showOverview) {
+            SectionOverviewSheet(controller: controller)
         }
+    }
+
+    // MARK: - Derived
+
+    private var sections: [SectionEvent] {
+        appState.currentBundle?.timeline.sections ?? []
+    }
+
+    private var currentSection: SectionEvent? {
+        let t = appState.songSeconds
+        return sections.first { $0.start <= t && t < $0.end }
+    }
+
+    private var songKey: MusicalKey? {
+        MusicalKey.parse(appState.currentBundle?.meta.detectedKey)
+    }
+
+    /// First chord that starts after the current one (or after the
+    /// playhead when nothing is sounding).
+    private var nextChordSymbol: String? {
+        let chords = appState.currentBundle?.timeline.chords ?? []
+        let after = appState.currentChord?.start ?? appState.songSeconds
+        return chords.first { $0.start > after + 0.01 }?.symbol
+    }
+
+    /// The section Practice starts: the one under the playhead,
+    /// falling back to the first unlearned one.
+    private var practiceTarget: SectionEvent? {
+        currentSection ?? controller.nextUpSection
+    }
+
+    private var isLoopingCurrentSection: Bool {
+        guard let s = currentSection else { return false }
+        return appState.loopRegion?.startSec == s.start
+            && appState.loopRegion?.endSec == s.end
     }
 
     // MARK: - Song-less placeholder
 
     private var placeholder: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Image(systemName: "graduationcap")
                 .font(.largeTitle)
                 .foregroundStyle(TFTheme.textSecondary)
             Text("Load a song to learn it")
                 .font(.subheadline)
                 .foregroundStyle(TFTheme.textSecondary)
+            Button {
+                appState.selectedTab = .library
+            } label: {
+                Text("Open Library")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor, in: Capsule())
+                    .foregroundStyle(.black)
+            }
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Overview
+    // MARK: - Overview (one screen, no scrolling)
 
     private var overview: some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                progressHeader
-                statsRow
-                if let next = controller.nextUpSection {
-                    NextUpCard(
-                        section: next,
-                        controller: controller,
-                        onOpenDetail: {
-                            detailItem = LearnSectionSheetItem(section: next)
-                        }
-                    )
-                } else if controller.totalSections > 0 {
-                    allLearnedCard
-                }
-                sectionList
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    private var progressHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Song Progress")
-                    .font(.caption)
-                    .foregroundStyle(TFTheme.textSecondary)
-                Spacer()
-                Text("\(Int((controller.percentComplete * 100).rounded()))%")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(TFTheme.textPrimary)
-            }
-            ProgressView(value: controller.percentComplete)
-                .tint(Color.accentColor)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .tfCard()
-        .padding(.horizontal, 12)
-    }
-
-    private var statsRow: some View {
-        HStack(spacing: 8) {
-            statCard(
-                title: "Sections Learned",
-                value: "\(controller.learnedCount)/\(controller.totalSections)"
+        VStack(spacing: 10) {
+            SectionChips(
+                sections: sections,
+                nowSongSeconds: appState.songSeconds,
+                allowedLabels: nil,
+                onSeek: { appState.seek(to: $0) },
+                onGateToggle: { _ in }
             )
-            statCard(
-                title: "Accuracy",
-                value: "\(Int((controller.overallAccuracy * 100).rounded()))%"
-            )
-            statCard(
-                title: "Longest Streak",
-                value: "\(controller.longestStreak)"
-            )
-        }
-        .padding(.horizontal, 12)
-    }
 
-    private func statCard(title: String, value: String) -> some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(TFTheme.textPrimary)
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(TFTheme.textSecondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .tfCard()
-    }
-
-    private var allLearnedCard: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.seal.fill")
-                .foregroundStyle(Color.accentColor)
-            Text("All sections learned — nice work!")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(TFTheme.textPrimary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
-        .tfCard()
-        .padding(.horizontal, 12)
-    }
-
-    // MARK: - Section list
-
-    private var sectionList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Sections")
-                .font(.caption)
-                .foregroundStyle(TFTheme.textSecondary)
+            chordCards
                 .padding(.horizontal, 12)
-            ForEach(
-                Array(controller.uniqueSections.enumerated()),
-                id: \.offset
-            ) { _, section in
-                sectionRow(section)
-            }
+
+            masteryRow
+                .padding(.horizontal, 12)
+
+            controlsRow
+                .padding(.horizontal, 12)
+
+            statChips
+                .padding(.horizontal, 12)
+
+            Spacer(minLength: 0)
         }
     }
 
-    private func sectionRow(_ section: SectionEvent) -> some View {
-        let learned = controller.isLearned(section)
-        let best = controller.progress?
-            .progress(for: LearnSessionController.sectionKey(for: section))
-            .bestAccuracy ?? 0
-        return Button {
-            detailItem = LearnSectionSheetItem(section: section)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: learned
-                    ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(
-                        learned ? Color.accentColor : TFTheme.textSecondary)
-                Text((section.label ?? "Section").capitalized)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(TFTheme.textPrimary)
-                Spacer()
-                if best > 0 {
-                    Text("Best \(Int((best * 100).rounded()))%")
-                        .font(.caption)
-                        .foregroundStyle(TFTheme.textSecondary)
-                }
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(TFTheme.textSecondary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .tfCard()
-            .padding(.horizontal, 12)
+    private var chordCards: some View {
+        HStack(spacing: 10) {
+            ChordCard(
+                role: "NOW",
+                symbol: appState.currentChord?.symbol,
+                key: songKey,
+                emphasized: true
+            )
+            ChordCard(
+                role: "NEXT",
+                symbol: nextChordSymbol,
+                key: songKey
+            )
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(
-            "\((section.label ?? "Section").capitalized), "
-                + (learned ? "learned" : "not learned yet")
-        )
+    }
+
+    private var masteryRow: some View {
+        HStack(spacing: 14) {
+            ProgressRing(
+                value: controller.percentComplete,
+                centerText:
+                    "\(Int((controller.percentComplete * 100).rounded()))%",
+                caption: "learned"
+            )
+            VStack(alignment: .leading, spacing: 6) {
+                masteryLine(
+                    icon: "checkmark.circle",
+                    text: "\(controller.learnedCount)/\(controller.totalSections) sections"
+                )
+                masteryLine(
+                    icon: "target",
+                    text: "\(Int((controller.overallAccuracy * 100).rounded()))% accuracy"
+                )
+                masteryLine(
+                    icon: "flame",
+                    text: "Best streak \(controller.longestStreak)"
+                )
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tfCard()
+    }
+
+    private func masteryLine(icon: String, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(Color.accentColor)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(TFTheme.textPrimary)
+        }
+    }
+
+    // MARK: - Controls
+
+    private var controlsRow: some View {
+        HStack(spacing: 8) {
+            Button {
+                toggleLoop()
+            } label: {
+                Label("Loop", systemImage: "repeat")
+                    .tfChip(active: isLoopingCurrentSection)
+            }
+            .buttonStyle(.plain)
+            .disabled(currentSection == nil)
+            .accessibilityLabel(
+                isLoopingCurrentSection
+                    ? "Stop looping this section" : "Loop this section")
+
+            Button {
+                if let target = practiceTarget {
+                    controller.startSection(target)
+                }
+            } label: {
+                Label("Practice", systemImage: "play.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(
+                        Color.accentColor, in: RoundedRectangle(cornerRadius: 10))
+                    .foregroundStyle(.black)
+            }
+            .buttonStyle(.plain)
+            .disabled(practiceTarget == nil)
+            .accessibilityLabel("Start practicing")
+
+            Button {
+                showOverview = true
+            } label: {
+                Label("Sections", systemImage: "list.bullet")
+                    .tfChip(active: false)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Show song structure")
+        }
+    }
+
+    private func toggleLoop() {
+        guard let s = currentSection else { return }
+        if isLoopingCurrentSection {
+            appState.setLoop(nil)
+        } else {
+            appState.setLoop(LoopRegion(startSec: s.start, endSec: s.end))
+        }
+    }
+
+    // MARK: - Stat chips
+
+    private var statChips: some View {
+        HStack(spacing: 8) {
+            if let bpm = appState.currentBundle?.meta.tempoBpm {
+                Text("\(Int(bpm.rounded())) BPM").tfChip(active: false)
+            }
+
+            Button {
+                cycleSpeed()
+            } label: {
+                Text(speedLabel).tfChip(active: appState.playbackRate != 1.0)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Practice speed \(speedLabel)")
+
+            if let numerator = TimeSigEstimator.numerator(
+                beats: appState.currentBundle?.timeline.beats ?? [],
+                downbeats: appState.currentBundle?.timeline.downbeats ?? []
+            ) {
+                Text("\(numerator)/4").tfChip(active: false)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var speedLabel: String {
+        String(format: "%.2gx", appState.playbackRate)
+    }
+
+    /// 1.0x → 0.75x → 0.5x → 1.0x.
+    private func cycleSpeed() {
+        let steps: [Double] = [1.0, 0.75, 0.5]
+        let current = steps.firstIndex {
+            abs($0 - appState.playbackRate) < 0.01
+        } ?? 0
+        appState.setPlaybackRate(steps[(current + 1) % steps.count])
     }
 }
