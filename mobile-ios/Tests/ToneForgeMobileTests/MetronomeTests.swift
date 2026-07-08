@@ -117,4 +117,111 @@ final class MetronomeTests: XCTestCase {
         XCTAssertEqual(clicks[2].isAccent, true)
         XCTAssertEqual(clicks[2].songTime, 0.0, accuracy: 1e-12)
     }
+
+    // MARK: - Accent patterns (redesign Phase 6)
+
+    func testAccentOneAndThree() {
+        let grid = MetronomeGrid(bpm: 120, beatsPerBar: 4, accent: .oneAndThree)
+        XCTAssertTrue(grid.isAccent(beatIndex: 0))
+        XCTAssertFalse(grid.isAccent(beatIndex: 1))
+        XCTAssertTrue(grid.isAccent(beatIndex: 2))
+        XCTAssertFalse(grid.isAccent(beatIndex: 3))
+        XCTAssertTrue(grid.isAccent(beatIndex: 4))
+        // Negative (count-in) beats use floored modulo: -4 is beat 1
+        // of a bar, -2 is beat 3.
+        XCTAssertTrue(grid.isAccent(beatIndex: -4))
+        XCTAssertFalse(grid.isAccent(beatIndex: -3))
+        XCTAssertTrue(grid.isAccent(beatIndex: -2))
+        XCTAssertFalse(grid.isAccent(beatIndex: -1))
+    }
+
+    func testAccentEveryBeatAndNone() {
+        let every = MetronomeGrid(bpm: 120, beatsPerBar: 4, accent: .everyBeat)
+        let none = MetronomeGrid(bpm: 120, beatsPerBar: 4, accent: .none)
+        for beat in [-4, -1, 0, 1, 3, 7] {
+            XCTAssertTrue(every.isAccent(beatIndex: beat))
+            XCTAssertFalse(none.isAccent(beatIndex: beat))
+        }
+    }
+
+    func testGridEqualityIncludesAccentAndSubdivide() {
+        // update(grid:) re-anchors on inequality — accent/subdivide
+        // changes must count as a grid change.
+        let base = MetronomeGrid(bpm: 120, beatsPerBar: 4)
+        XCTAssertNotEqual(base, MetronomeGrid(bpm: 120, beatsPerBar: 4, accent: .everyBeat))
+        XCTAssertNotEqual(base, MetronomeGrid(bpm: 120, beatsPerBar: 4, subdivide: true))
+        XCTAssertEqual(base, MetronomeGrid(bpm: 120, beatsPerBar: 4, accent: .downbeat, subdivide: false))
+    }
+
+    // MARK: - Subdivision click indices (redesign Phase 6)
+
+    func testClickIndexMatchesBeatIndexWithoutSubdivide() {
+        let grid = MetronomeGrid(bpm: 120, beatsPerBar: 4)
+        for t in [-0.75, 0.0, 0.499, 0.5, 0.501, 3.2] {
+            XCTAssertEqual(grid.clickIndex(onOrAfter: t), grid.beatIndex(onOrAfter: t))
+        }
+        XCTAssertEqual(
+            grid.clicks(fromClickIndex: 0, before: 1.2),
+            grid.clicks(fromBeatIndex: 0, before: 1.2)
+        )
+    }
+
+    func testSubdivideDoublesClicks() {
+        let grid = MetronomeGrid(bpm: 120, beatsPerBar: 4, subdivide: true) // 0.25 s/click
+        XCTAssertEqual(grid.secondsPerClick, 0.25, accuracy: 1e-12)
+        let clicks = grid.clicks(fromClickIndex: 0, before: 1.0)
+        XCTAssertEqual(clicks.map(\.songTime), [0.0, 0.25, 0.5, 0.75])
+        XCTAssertEqual(clicks.map(\.isSubdivision), [false, true, false, true])
+        XCTAssertEqual(clicks.map(\.beatIndex), [0, 0, 1, 1])
+        // Half-beat clicks are never accented.
+        XCTAssertEqual(clicks.map(\.isAccent), [true, false, false, false])
+    }
+
+    func testSubdivideAcrossZeroBoundary() {
+        // Negative click indices (count-in) map to the right beat via
+        // floored division: click -3 is the half-beat of beat -2.
+        let grid = MetronomeGrid(bpm: 120, beatsPerBar: 4, subdivide: true)
+        let clicks = grid.clicks(fromClickIndex: -3, before: 0.6)
+        XCTAssertEqual(clicks.map(\.beatIndex), [-2, -1, -1, 0, 0, 1])
+        XCTAssertEqual(
+            clicks.map(\.isSubdivision),
+            [true, false, true, false, true, false]
+        )
+        XCTAssertEqual(clicks[3].isAccent, true)
+        XCTAssertEqual(clicks[3].songTime, 0.0, accuracy: 1e-12)
+        XCTAssertEqual(clicks[0].songTime, -0.75, accuracy: 1e-12)
+    }
+
+    func testSubdivideRollingWindowNeverDropsHalfBeats() {
+        // The window-boundary case: a refill window that ends between
+        // a beat and its half-beat must not lose the half-beat on the
+        // next pass. Walking click indices makes the union of windows
+        // every click exactly once.
+        let grid = MetronomeGrid(bpm: 137, beatsPerBar: 4, subdivide: true)
+        var next = grid.clickIndex(onOrAfter: 0)
+        var times: [Double] = []
+        var subs = 0
+        var now = 0.0
+        for _ in 0..<50 {
+            let window = grid.clicks(fromClickIndex: next, before: now + 1.2)
+            times.append(contentsOf: window.map(\.songTime))
+            subs += window.filter(\.isSubdivision).count
+            next += window.count
+            now += 0.1 // refill cadence
+        }
+        XCTAssertFalse(times.isEmpty)
+        for (i, t) in times.enumerated() {
+            XCTAssertEqual(t, Double(i) * grid.secondsPerClick, accuracy: 1e-9)
+        }
+        // Half the clicks are subdivisions.
+        XCTAssertEqual(subs, times.count / 2)
+    }
+
+    func testClickIndexOnOrAfterWithSubdivide() {
+        let grid = MetronomeGrid(bpm: 120, beatsPerBar: 4, subdivide: true) // 0.25 s/click
+        XCTAssertEqual(grid.clickIndex(onOrAfter: 0.0), 0)
+        XCTAssertEqual(grid.clickIndex(onOrAfter: 0.25), 1)
+        XCTAssertEqual(grid.clickIndex(onOrAfter: 0.26), 2)
+        XCTAssertEqual(grid.clickIndex(onOrAfter: -0.30), -1)
+    }
 }

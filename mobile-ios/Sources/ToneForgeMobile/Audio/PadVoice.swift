@@ -38,14 +38,17 @@ struct PadVoice {
 
     // MARK: - Oscillators
 
-    /// Phase 0..1 for the sawtooth oscillator (detuned -6 cents).
+    /// Phase 0..1 for the sawtooth oscillator (detuned -detuneCents).
     var phaseSaw: Double = 0
-    /// Phase 0..1 for the triangle oscillator (detuned +6 cents).
+    /// Phase 0..1 for the triangle oscillator (detuned +detuneCents).
     var phaseTri: Double = 0
     /// Per-sample phase increment for the sawtooth (Hz / sampleRate).
     var incSaw: Double = 0
     /// Per-sample phase increment for the triangle.
     var incTri: Double = 0
+    /// Saw/triangle balance 0…1 captured at trigger time (0.5 =
+    /// historic equal mix).
+    var sawMix: Double = 0.5
 
     // MARK: - Filter (biquad LP, Direct Form II Transposed)
 

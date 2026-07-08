@@ -150,10 +150,17 @@ public final class PadSynth: ObservableObject {
 
     /// Trigger a strummed chord — MIDI note list in ascending order.
     /// Voices are spread across the stereo field and staggered by
-    /// ``params.strumMs`` so the chord blooms rather than punches.
-    public func triggerChord(midis: [Int], velocity: Float = 100) {
+    /// ``params.strumMs`` (or `strumMsOverride` when the caller wants
+    /// a one-off feel, e.g. Jam strum-off) so the chord blooms rather
+    /// than punches.
+    public func triggerChord(
+        midis: [Int],
+        velocity: Float = 100,
+        strumMsOverride: Double? = nil
+    ) {
         guard !midis.isEmpty else { return }
-        let strumSamples = Int(max(0, params.strumMs) / 1000.0 * sampleRate)
+        let strumMs = strumMsOverride ?? params.strumMs
+        let strumSamples = Int(max(0, strumMs) / 1000.0 * sampleRate)
         let n = midis.count
         // Reduce per-voice velocity so the chord doesn't clip.
         let perVoiceVel = max(20, velocity * 0.6)
@@ -275,8 +282,9 @@ private final class VoicePool: @unchecked Sendable {
         if idx < 0 { idx = 0 }
 
         let midiHz = 440.0 * pow(2.0, (Double(trigger.midi) - 69.0) / 12.0)
-        let detuneSaw = pow(2.0, -6.0 / 1200.0)  // -6 cents
-        let detuneTri = pow(2.0, +6.0 / 1200.0)  // +6 cents
+        let cents = trigger.params.detuneCents
+        let detuneSaw = pow(2.0, -cents / 1200.0)
+        let detuneTri = pow(2.0, +cents / 1200.0)
         let brightness = trigger.params.brightness
         let attackSec = max(0.001, trigger.params.attackMs / 1000.0)
         let releaseSec = max(0.05, trigger.params.releaseSec)
@@ -288,6 +296,7 @@ private final class VoicePool: @unchecked Sendable {
         v.phaseTri = 0
         v.incSaw = midiHz * detuneSaw / sampleRate
         v.incTri = midiHz * detuneTri / sampleRate
+        v.sawMix = max(0, min(1, trigger.params.sawMix))
 
         v.startCut = min(12000, max(600, midiHz * 5.0 * brightness))
         v.endCut   = min(4000,  max(300, midiHz * 1.8 * brightness))
@@ -377,7 +386,9 @@ private final class VoicePool: @unchecked Sendable {
 
             let saw = Double(2.0 * v.phaseSaw - 1.0)
             let tri = 1.0 - 4.0 * abs(v.phaseTri - 0.5)
-            let mixOut = (saw + tri) * 0.55
+            // At sawMix 0.5 this is exactly the historic
+            // (saw + tri) * 0.55.
+            let mixOut = (saw * v.sawMix + tri * (1.0 - v.sawMix)) * 1.1
 
             // Biquad LP (DF-II transposed)
             let inp = mixOut

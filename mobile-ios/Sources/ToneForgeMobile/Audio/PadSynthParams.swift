@@ -37,6 +37,16 @@ public struct PadSynthParams: Sendable, Equatable {
     /// sweep duration inside the voice.
     public var releaseSec: Double = 2.5
 
+    /// Saw/triangle oscillator balance, 0…1. 0 = triangle only,
+    /// 1 = saw only. 0.5 reproduces the original equal mix exactly
+    /// (render normalizes so 0.5 is byte-identical to the historic
+    /// `(saw + tri) * 0.55`).
+    public var sawMix: Double = 0.5
+
+    /// Oscillator detune spread in cents: saw at −detuneCents,
+    /// triangle at +detuneCents. 6 = the historic hard-coded spread.
+    public var detuneCents: Double = 6.0
+
     public init() {}
 
     public init(
@@ -44,12 +54,16 @@ public struct PadSynthParams: Sendable, Equatable {
         brightness: Double = 1.0,
         strumMs: Double = 15,
         attackMs: Double = 6,
-        releaseSec: Double = 2.5
+        releaseSec: Double = 2.5,
+        sawMix: Double = 0.5,
+        detuneCents: Double = 6.0
     ) {
         self.masterGain = masterGain
         self.brightness = brightness
         self.strumMs = strumMs
         self.attackMs = attackMs
         self.releaseSec = releaseSec
+        self.sawMix = sawMix
+        self.detuneCents = detuneCents
     }
 }
