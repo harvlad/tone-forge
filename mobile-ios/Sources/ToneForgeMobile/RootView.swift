@@ -90,15 +90,19 @@ public struct RootView: View {
 
 // MARK: - Library
 
-/// Recent-analyses list backed by GET /api/history. Tapping a row
-/// downloads the bundle + stems and deep-links back to the last
-/// performance tab. When
-/// the backend is unreachable (off the home LAN) a Downloaded section
-/// lists the locally persisted bundles instead, activated straight
-/// from the on-device cache (D-021).
+/// The Library tab (D-022): segmented Songs | Packs | Recordings.
+///
+/// Songs is the recent-analyses list backed by GET /api/history —
+/// tapping a row downloads the bundle + stems and deep-links back to
+/// the last performance tab. When the backend is unreachable (off the
+/// home LAN) a Downloaded section lists the locally persisted bundles
+/// instead, activated straight from the on-device cache (D-021).
+/// Packs re-hosts PacksBrowserView (shared with BrowsePacksSheet);
+/// Recordings lists saved layers + sketches (ex-ProfileView).
 struct LibraryView: View {
     @EnvironmentObject private var appState: AppState
 
+    @State private var segment: LibrarySegment = .songs
     @State private var query: String = ""
     @State private var entries: [HistoryEntry] = []
     /// Locally cached bundles. Populated eagerly at the top of
@@ -114,7 +118,6 @@ struct LibraryView: View {
     /// from the removed Search tab).
     @State private var searchToken: UUID = UUID()
     @State private var quickLoadId: String = ""
-    @State private var backendText: String = ""
 
     // Import flow (Music library / Files → attestation → analyze).
     // The analyze transport is stubbed under `-uitest-stub-import`.
@@ -132,9 +135,79 @@ struct LibraryView: View {
 
     var body: some View {
         NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Library section", selection: $segment) {
+                    ForEach(LibrarySegment.allCases) { seg in
+                        Text(seg.title).tag(seg)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+
+                switch segment {
+                case .songs:
+                    songsList
+                case .packs:
+                    PacksBrowserView()
+                case .recordings:
+                    RecordingsListView()
+                }
+            }
+            .navigationTitle("Library")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    importMenu
+                }
+            }
+            .task {
+                if entries.isEmpty { await reload() }
+            }
+            .onAppear {
+                importer.onLoaded = {
+                    importer.dismiss()
+                    onActivate()
+                }
+            }
+            .sheet(isPresented: $showMusicPicker) {
+                musicPickerSheet
+            }
+            #if os(iOS)
+            .sheet(isPresented: $showFilePicker) {
+                DocumentPickerView { url in
+                    importer.start(source: .fileURL(url), appState: appState)
+                }
+            }
+            #endif
+            .sheet(
+                isPresented: Binding(
+                    get: { importer.phase == .awaitingAttestation },
+                    set: { if !$0 { importer.attestationCancelled() } }
+                )
+            ) {
+                AttestationSheet(
+                    store: importer.attestation,
+                    onAccept: { importer.attestationAccepted() },
+                    onCancel: { importer.attestationCancelled() }
+                )
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { importer.isImporting },
+                    set: { if !$0 { importer.dismiss() } }
+                )
+            ) {
+                AnalyzingView(importer: importer)
+            }
+        }
+    }
+
+    // MARK: - Songs segment
+
+    private var songsList: some View {
             List {
                 uitestStubImportSection
-                backendSection
+                quickLoadSection
                 if !entries.isEmpty {
                     Section("Recent") {
                         ForEach(entries) { entry in
@@ -194,7 +267,7 @@ struct LibraryView: View {
                         LabeledContent("Title", value: bundle.meta.title)
                         LabeledContent("Duration", value: String(format: "%.1fs", bundle.meta.durationSec))
                         LabeledContent("Stems", value: String(bundle.stems.count))
-                        Button("Open in Play") { onActivate() }
+                        Button("Open") { onActivate() }
                     }
                 }
             }
@@ -215,55 +288,6 @@ struct LibraryView: View {
                 }
             }
             .refreshable { await reload() }
-            .navigationTitle("Library")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    importMenu
-                }
-            }
-            .task {
-                if entries.isEmpty { await reload() }
-            }
-            .onAppear {
-                if backendText.isEmpty {
-                    backendText = appState.backendBaseURL.absoluteString
-                }
-                importer.onLoaded = {
-                    importer.dismiss()
-                    onActivate()
-                }
-            }
-            .sheet(isPresented: $showMusicPicker) {
-                musicPickerSheet
-            }
-            #if os(iOS)
-            .sheet(isPresented: $showFilePicker) {
-                DocumentPickerView { url in
-                    importer.start(source: .fileURL(url), appState: appState)
-                }
-            }
-            #endif
-            .sheet(
-                isPresented: Binding(
-                    get: { importer.phase == .awaitingAttestation },
-                    set: { if !$0 { importer.attestationCancelled() } }
-                )
-            ) {
-                AttestationSheet(
-                    store: importer.attestation,
-                    onAccept: { importer.attestationAccepted() },
-                    onCancel: { importer.attestationCancelled() }
-                )
-            }
-            .sheet(
-                isPresented: Binding(
-                    get: { importer.isImporting },
-                    set: { if !$0 { importer.dismiss() } }
-                )
-            ) {
-                AnalyzingView(importer: importer)
-            }
-        }
     }
 
     // MARK: - Import entry points
@@ -322,40 +346,15 @@ struct LibraryView: View {
         }
     }
 
-    // MARK: - Backend URL editing
-
-    private var backendURLChanged: Bool {
-        !backendText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func commitBackendURL() {
-        let trimmed = backendText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let url = URL(string: trimmed) else { return }
-        appState.backendBaseURL = url
-        Task { await reload() }
-    }
-
     // MARK: - Sections / rows
 
-    /// DEBUG-only: staging-URL override + raw analysisId quick-load.
-    /// Release builds use `AppConfig.defaultBackendURL` with no editor.
+    /// DEBUG-only: raw analysisId quick-load. The staging-URL editor
+    /// moved to the Settings sheet (D-022); release builds use
+    /// `AppConfig.defaultBackendURL` with no editor.
     @ViewBuilder
-    private var backendSection: some View {
+    private var quickLoadSection: some View {
         #if DEBUG
         Section("Backend (debug)") {
-            HStack {
-                TextField("Base URL", text: $backendText)
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-                    .submitLabel(.done)
-                    #endif
-                    .onSubmit { commitBackendURL() }
-                Button("Set") { commitBackendURL() }
-                    .buttonStyle(.borderless)
-                    .disabled(!backendURLChanged)
-            }
             HStack {
                 TextField("Quick-load analysisId", text: $quickLoadId)
                     .autocorrectionDisabled()

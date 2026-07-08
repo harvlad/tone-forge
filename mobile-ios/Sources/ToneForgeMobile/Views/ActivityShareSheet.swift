@@ -4,8 +4,8 @@
 // Identifiable URL box for `.sheet(item:)`. `ShareLink` covers URLs
 // known at construction time; our offline renders (m4a layer export,
 // session bounce) return their URL asynchronously, so those flows
-// need the imperative controller. Shared by ProfileView and the
-// storage browsers (P7).
+// need the imperative controller. Shared by RecordingsListView and
+// the storage browsers (P7).
 
 import SwiftUI
 

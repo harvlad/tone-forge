@@ -1,15 +1,12 @@
-// ProfileView.swift
+// RecordingsListView.swift
 //
-// Home for user-level configuration + saved layers. Absorbs the
-// backend-URL editor that used to live in the Library tab (moved so
-// Library can stay focused on song discovery). Wraps the existing
-// `SettingsView` for the pad-synth params so we don't duplicate any
-// slider logic. Two layer sections: "Song Layers" lists every saved
+// The Library tab's Recordings segment (D-022) — saved layers for
+// the loaded song plus song-less sketches. Extracted from the
+// deleted ProfileView. Two sections: "Song Layers" lists every saved
 // LayerTimeline for the current song (`AppState.savedLayers`);
 // "Sketches" lists song-less takes under the `__sketch__` sentinel
-// (`AppState.savedSketchLayers`) — post-D-016 there is no Sketch
-// tab; a sketch is a take recorded on the Play tab with no song
-// loaded. Both share the row UI
+// (`AppState.savedSketchLayers`) — a sketch is a take recorded on
+// the Contribute tab with no song loaded. Both share the row UI
 // (play toggle, rename, share, delete); upload + m4a export are
 // song-only.
 
@@ -19,79 +16,28 @@ import ToneForgeEngine
 import UIKit
 #endif
 
-struct ProfileView: View {
+struct RecordingsListView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var backendText: String = ""
-    @State private var showAudioSettings: Bool = false
+
     @State private var renamingLayerId: String? = nil
     @State private var renameText: String = ""
     /// Wraps the URL of the just-rendered m4a so `.sheet(item:)` can
     /// present a UIActivityViewController with the exported file.
     @State private var m4aShareItem: ShareFileItem? = nil
 
-    /// "ToneForge Mobile 1.0 (42)" from the app bundle; the version
-    /// keys are absent under SwiftPM test hosts, hence the fallback.
-    static var buildLabel: String {
-        let info = Bundle.main.infoDictionary
-        guard let version = info?["CFBundleShortVersionString"] as? String
-        else { return "ToneForge Mobile (dev)" }
-        let build = info?["CFBundleVersion"] as? String
-        return "ToneForge Mobile \(version)"
-            + (build.map { " (\($0))" } ?? "")
-    }
-
     var body: some View {
-        NavigationStack {
-            Form {
-                #if DEBUG
-                Section("Backend (debug)") {
-                    HStack {
-                        TextField("Base URL", text: $backendText)
-                            .autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.URL)
-                            .submitLabel(.done)
-                            #endif
-                            .onSubmit { commit() }
-                        Button("Set") { commit() }
-                            .buttonStyle(.borderless)
-                            .disabled(!hasChange)
-                    }
-                }
-                #endif
-
-                Section("Audio") {
-                    Button("Pad synth settings…") {
-                        showAudioSettings = true
-                    }
-                }
-
-                layersSection
-                sketchLayersSection
-
-                Section("About") {
-                    LabeledContent("Build") {
-                        Text(Self.buildLabel)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .navigationTitle("Profile")
-            .sheet(isPresented: $showAudioSettings) {
-                SettingsView()
-            }
-            #if canImport(UIKit)
-            .sheet(item: $m4aShareItem) { item in
-                ActivityShareSheet(activityItems: [item.url])
-            }
-            #endif
-            .onAppear {
-                if backendText.isEmpty {
-                    backendText = appState.backendBaseURL.absoluteString
-                }
-            }
+        List {
+            layersSection
+            sketchLayersSection
         }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        #endif
+        #if canImport(UIKit)
+        .sheet(item: $m4aShareItem) { item in
+            ActivityShareSheet(activityItems: [item.url])
+        }
+        #endif
     }
 
     // MARK: - Layers section
@@ -104,7 +50,7 @@ struct ProfileView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if appState.savedLayers.isEmpty {
-                Text("No layers yet. Hit Record on the Play tab to capture a performance.")
+                Text("No layers yet. Hit Record on the Contribute tab to capture a performance.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
@@ -121,14 +67,14 @@ struct ProfileView: View {
         }
     }
 
-    /// Song-less takes recorded on the Play tab with no song loaded
-    /// (sentinel `__sketch__`). Always visible — sketches aren't tied
-    /// to whatever bundle happens to be active.
+    /// Song-less takes recorded on the Contribute tab with no song
+    /// loaded (sentinel `__sketch__`). Always visible — sketches
+    /// aren't tied to whatever bundle happens to be active.
     @ViewBuilder
     private var sketchLayersSection: some View {
         Section {
             if appState.savedSketchLayers.isEmpty {
-                Text("No sketches yet. Eject the song on the Play tab and hit Record to capture one.")
+                Text("No sketches yet. Eject the song and hit Record on the Contribute tab to capture one.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
@@ -140,7 +86,7 @@ struct ProfileView: View {
             Text("Sketches")
         } footer: {
             if !appState.savedSketchLayers.isEmpty {
-                Text("Takes recorded on the Play tab with no song loaded. They replay over the metronome grid; playing one while a song is loaded silences the song's stems.")
+                Text("Takes recorded on the Contribute tab with no song loaded. They replay over the metronome grid; playing one while a song is loaded silences the song's stems.")
             }
         }
     }
@@ -320,18 +266,5 @@ struct ProfileView: View {
         }
         renamingLayerId = nil
         renameText = ""
-    }
-
-    // MARK: - Backend URL
-
-    private var hasChange: Bool {
-        !backendText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func commit() {
-        let trimmed = backendText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = URL(string: trimmed) {
-            appState.backendBaseURL = url
-        }
     }
 }

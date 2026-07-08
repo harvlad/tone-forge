@@ -31,6 +31,18 @@ struct SettingsView: View {
     @State private var isDeletingAll = false
     @State private var deleteAllError: String?
 
+    /// "ToneForge Mobile 1.0 (42)" from the app bundle; the version
+    /// keys are absent under SwiftPM test hosts, hence the fallback.
+    /// (Moved from the deleted ProfileView, D-022.)
+    static var buildLabel: String {
+        let info = Bundle.main.infoDictionary
+        guard let version = info?["CFBundleShortVersionString"] as? String
+        else { return "ToneForge Mobile (dev)" }
+        let build = info?["CFBundleVersion"] as? String
+        return "ToneForge Mobile \(version)"
+            + (build.map { " (\($0))" } ?? "")
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -118,6 +130,13 @@ struct SettingsView: View {
                 Section("Help") {
                     Button("How Tone Forge works") { showHelp = true }
                         .accessibilityIdentifier("settings-help-button")
+                }
+
+                Section("About") {
+                    LabeledContent("Build") {
+                        Text(Self.buildLabel)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 legalSection
