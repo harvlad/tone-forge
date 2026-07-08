@@ -5,7 +5,7 @@
 // the effective key, the 7 degree pads (note + roman numeral), the
 // currently sounding chord and its two suggested follow-ups.
 //
-// Degree pads bypass the ContributionEventBus in v1 (D-018 — same
+// Degree pads bypass the ContributionEventBus in v1 (D-019 — same
 // precedent as the sketch metronome preview path): they voice
 // directly on the PadSynth. The 8×8 grid presses still go through
 // the bus so session capture/replay keeps working.

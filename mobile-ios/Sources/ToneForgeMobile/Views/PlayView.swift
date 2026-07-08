@@ -119,7 +119,7 @@ private struct PlayBody: View {
         .onAppear { applySurface(currentSurface) }
     }
 
-    // MARK: - Surface switcher (D-018)
+    // MARK: - Surface switcher (D-019)
 
     /// The persisted PlaySurface selection, coerced to an implemented
     /// surface (raw values from newer builds fall back to Contribute).
@@ -164,7 +164,7 @@ private struct PlayBody: View {
                 coordinator.setMode(.sample)
             }
         case .chordPads:
-            // Chord pads voice directly on the PadSynth (D-018) with
+            // Chord pads voice directly on the PadSynth (D-019) with
             // no grid surface — park the engine on the same
             // empty-layout mode Learn uses (pad events resolve .none,
             // Launchpad goes dark).

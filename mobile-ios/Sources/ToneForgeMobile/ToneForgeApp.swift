@@ -299,7 +299,7 @@ public final class AppState: ObservableObject {
     // MARK: - Chord Pads (redesign Phase 12)
 
     /// Grid content + trigger seam for the Chord Pads surface
-    /// (voices directly on the PadSynth, bus bypass per D-018).
+    /// (voices directly on the PadSynth, bus bypass per D-019).
     public lazy var chordPadController: ChordPadController =
         ChordPadController(app: self)
 

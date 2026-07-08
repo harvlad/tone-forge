@@ -5,7 +5,7 @@
 // applies `wrapTarget(now:)` from its 30 Hz UI tick, wrapping via
 // the regular seek path so stems/metronome/chords all re-anchor
 // together. Tick-driven looping means up to ~33 ms of wrap jitter,
-// which is fine for practice loops (documented in D-018).
+// which is fine for practice loops (documented in D-019).
 
 import Foundation
 

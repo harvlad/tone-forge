@@ -109,7 +109,7 @@ public final class SampleSettingsStore: ObservableObject {
     }
 
     /// Persisted PlaySurface raw value (`PlaySurface(rawValue:)`), so
-    /// the Play tab reopens on the surface the user last used (D-018
+    /// the Play tab reopens on the surface the user last used (D-019
     /// surface switcher). Unknown values fall back to `"contribute"`
     /// at the view layer when decoding.
     @Published public var playSurfaceRaw: String {
@@ -261,7 +261,7 @@ public final class SampleSettingsStore: ObservableObject {
         /// back to 0.4 / "sample".
         var vocoderGainLinear: Double
         var appModeRaw: String
-        /// Play-tab surface (D-018). Absent in blobs written before
+        /// Play-tab surface (D-019). Absent in blobs written before
         /// the redesign; decoder falls back to "contribute".
         var playSurfaceRaw: String
         /// Last contribute-family mode (redesign Phase 7). Absent in

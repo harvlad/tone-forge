@@ -1,6 +1,6 @@
 // ModeTabsRow.swift
 //
-// Top-level surface switcher for the Play tab (D-018 — a partial,
+// Top-level surface switcher for the Play tab (D-019 — a partial,
 // deliberate reversal of D-016's "no mode tabs"): the redesign brings
 // back a segmented row [Learn | Jam | Contribute | grid-icon] that
 // selects which *surface* the tab shows. PlaySurface is a UI concept;

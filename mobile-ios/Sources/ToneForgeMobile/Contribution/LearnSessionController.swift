@@ -7,7 +7,7 @@
 //                   seekAndPlay from its start; presses buffer from
 //                   here on.
 //   recordPress   — voice the chord on PadSynth (bus bypass, same
-//                   D-018 precedent as the jam degree pads), buffer
+//                   D-019 precedent as the jam degree pads), buffer
 //                   a LearnPress, flash hit/miss, fold the streak.
 //   passCompleted — called from AppState's loop-wrap hook when the
 //                   playhead wraps: score the pass (LearnScorer),

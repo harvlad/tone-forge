@@ -9,12 +9,12 @@
 // Bbmaj7 / C7 in D minor). Everything derives from DiatonicChords,
 // so scale variants (harmonic minor's major V etc.) flow through.
 //
-// Chord pads bypass the ContributionEventBus (D-018 — same precedent
+// Chord pads bypass the ContributionEventBus (D-019 — same precedent
 // as the Jam degree pads): they voice directly on the PadSynth.
 //
 // Latch semantics v1: a latched pad stays lit and rings the synth's
 // full releaseSec tail; per-bar retriggering while latched is out of
-// scope (documented in D-018). Momentary pads trigger on press with
+// scope (documented in D-019). Momentary pads trigger on press with
 // the synth's default short strum and auto-release.
 
 import Foundation

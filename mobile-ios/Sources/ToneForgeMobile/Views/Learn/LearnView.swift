@@ -6,7 +6,7 @@
 // practice pass is running the surface swaps to PracticeOverlay.
 //
 // Learn has no grid — practice pads voice chords directly on the
-// PadSynth through LearnSessionController (D-018 bus bypass).
+// PadSynth through LearnSessionController (D-019 bus bypass).
 
 import SwiftUI
 import ToneForgeEngine

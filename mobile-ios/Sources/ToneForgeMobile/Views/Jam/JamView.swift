@@ -6,7 +6,7 @@
 // (quantize / metronome / section loop / octave / settings).
 //
 // Degree pads voice directly on the PadSynth via JamInKeyController
-// (D-018 bus bypass); 8×8 grid presses flow through the normal
+// (D-019 bus bypass); 8×8 grid presses flow through the normal
 // ContributionEventBus so capture/replay keeps working.
 //
 // A "Hold" chip is deliberately absent: PadSynth voices auto-release

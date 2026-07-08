@@ -12,7 +12,7 @@
 //   - layer fader
 //
 // All audio flows through ChordPadController → PadSynth (bus bypass
-// per D-018); this view is pure paint.
+// per D-019); this view is pure paint.
 
 import SwiftUI
 import ToneForgeEngine

@@ -365,3 +365,51 @@ vocal/percussion routing hint).
 boundary — a transparent heuristic with a user override beats an
 opaque model of unknown provenance, and the protocol seam makes the
 upgrade purely additive.
+
+## D-019: Play-tab surface switcher + PadSynth-voiced surfaces
+
+**Date:** 2026-07-08
+**Decision:** the design-mockup redesign reintroduces a top-level
+surface switcher on the Play tab — a partial, deliberate reversal of
+D-016's "no mode tabs". `PlaySurface` (`learn | jam | contribute |
+chordPads`, persisted in `SampleSettingsStore.playSurfaceRaw`) is a
+*UI* concept; engine behavior still flows through one
+`ModeCoordinator.setMode` call per selection (Learn → `.learnSong`,
+Jam → `.jamInKey`, Contribute → last of `.sample`/`.hybrid`,
+Chord Pads → `.learnSong` — the same empty-layout parking mode Learn
+uses, so 8×8/Launchpad pad events resolve `.none`). Unknown persisted
+raw values from newer builds coerce to `.contribute`.
+
+Constituent decisions:
+- **PadSynth is the voice for Jam degree pads, Learn practice pads,
+  and Chord Pads.** These pads bypass the ContributionEventBus in v1
+  (same precedent as the pre-existing synth preview path) — they are
+  performance/practice surfaces, not recorded contributions. 8×8
+  grid presses still flow through the bus, so D-015's "bus is the
+  single input path for *recording*" invariant holds.
+- **Section/A-B looping is tick-driven**: `AppState.tick()` (30 Hz)
+  wraps via the existing `seek(to:)` when `LoopRegion.wrapTarget`
+  fires (≤ 33 ms jitter — fine for practice; sample-accurate looping
+  is a possible later upgrade). Wrap-only-from-inside semantics mean
+  scrubbing past the loop end never snaps back.
+- **Chord Pads latch v1 = no retrigger**: a latched pad plays its
+  full release tail and stays lit; a second press unlatches without
+  retriggering. Per-bar retrigger of latched chords is out of scope.
+- **Waveform peaks are extracted client-side** from downloaded stems
+  (`WaveformPeakExtractor`, cached per analysisId) — the backend
+  bundle manifest has no peaks field for local-fallback bundles and
+  stems are guaranteed local after download.
+- **Search tab stays deferred** (it was deliberately removed as a
+  Library duplicate — see RootView). If it returns: extract a shared
+  `SongSearchList` used by Library and a new SearchView, then add
+  the tab back to RootView. Implement only on explicit request.
+
+**Alternatives:** separate tabs per surface (duplicated chrome and
+transport, violates D-016's one-surface lesson); routing degree/chord
+pads through the ContributionEventBus (forces pad-reference semantics
+onto notes that are never recorded, and adds bus latency to the
+touch→attack path for zero benefit in v1).
+**Why:** the mockups show four sibling surfaces sharing one song
+header, transport, and master fader. One surface enum, one setMode
+seam, one synth voice keeps that shape honest — every new surface is
+a view plus a controller, not a new audio path.
