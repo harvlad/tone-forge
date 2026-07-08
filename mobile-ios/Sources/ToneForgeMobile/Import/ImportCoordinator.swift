@@ -17,6 +17,9 @@
 import Foundation
 import Combine
 import ToneForgeEngine
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 
 /// Minimal transport seam over AnalyzeClient for test stubbing.
 public protocol AnalyzeStreaming: Sendable {
@@ -174,7 +177,7 @@ public final class ImportCoordinator: ObservableObject {
         defer { try? FileManager.default.removeItem(at: tempWAV) }
 
         do {
-            let staged = try stageInput(source)
+            let staged = try await stageInput(source)
             defer { staged.cleanup() }
 
             #if canImport(AVFoundation)
@@ -231,7 +234,7 @@ public final class ImportCoordinator: ObservableObject {
     /// outlives the picker's grant; media items are read in place.
     private func stageInput(
         _ source: ImportSource
-    ) throws -> (url: URL, cleanup: () -> Void) {
+    ) async throws -> (url: URL, cleanup: () -> Void) {
         switch source {
         case .mediaItem(let track):
             guard track.isAnalysable, let assetURL = track.assetURL else {
@@ -239,6 +242,20 @@ public final class ImportCoordinator: ObservableObject {
                     reason: track.unavailabilityReason ?? "unavailable"
                 )
             }
+            #if canImport(AVFoundation)
+            // MPMediaItem.hasProtectedAsset is unreliable: it reports
+            // false for downloaded Apple Music tracks even though the
+            // file is FairPlay-protected, and AVAudioFile then fails
+            // with an opaque CoreAudio 'wht?' error. Ask the asset
+            // itself so those tracks get the proper DRM message.
+            let isProtected = (try? await AVURLAsset(url: assetURL)
+                .load(.hasProtectedContent)) ?? false
+            if isProtected {
+                throw ImportError.trackNotAnalysable(
+                    reason: "streaming (DRM) — not analysable"
+                )
+            }
+            #endif
             return (assetURL, {})
 
         case .fileURL(let url):

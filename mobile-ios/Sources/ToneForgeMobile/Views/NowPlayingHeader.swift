@@ -24,36 +24,24 @@ struct NowPlayingHeader: View {
     var onEject: (() -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 12) {
-            ArtworkView(analysisId: analysisId, title: title, size: 56)
+        // Compact two-line card: real devices give the Play tab far
+        // less height than the safe-area-less snapshot renders, so
+        // Key/BPM fold into the metadata line instead of a chip row.
+        HStack(spacing: 10) {
+            ArtworkView(
+                analysisId: analysisId, title: title, artist: artist, size: 40
+            )
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(TFTheme.textPrimary)
                     .lineLimit(1)
 
-                HStack(spacing: 8) {
-                    if let artist = artist, !artist.isEmpty {
-                        Text(artist).lineLimit(1)
-                    }
-                    if let dur = durationSec, dur > 0 {
-                        Text(formatDuration(dur))
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(TFTheme.textSecondary)
-
-                if hasChips {
-                    HStack(spacing: 6) {
-                        if let key = keyLabel, !key.isEmpty {
-                            Text("Key: \(key)").tfChip()
-                        }
-                        if let bpm = tempoBpm, bpm > 0 {
-                            Text(String(format: "%.0f BPM", bpm)).tfChip()
-                        }
-                    }
-                }
+                Text(metaLine)
+                    .font(.caption)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .lineLimit(1)
             }
 
             Spacer()
@@ -67,13 +55,21 @@ struct NowPlayingHeader: View {
                 .accessibilityLabel("Eject song")
             }
         }
-        .padding(12)
+        .padding(10)
         .tfCard()
         .padding(.horizontal, 12)
     }
 
-    private var hasChips: Bool {
-        (keyLabel?.isEmpty == false) || (tempoBpm ?? 0) > 0
+    /// "Artist · 3:42 · Key: Dm · 120 BPM" — whichever parts exist.
+    private var metaLine: String {
+        var parts: [String] = []
+        if let artist, !artist.isEmpty { parts.append(artist) }
+        if let dur = durationSec, dur > 0 { parts.append(formatDuration(dur)) }
+        if let key = keyLabel, !key.isEmpty { parts.append("Key: \(key)") }
+        if let bpm = tempoBpm, bpm > 0 {
+            parts.append(String(format: "%.0f BPM", bpm))
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func formatDuration(_ s: Double) -> String {
@@ -87,12 +83,15 @@ struct NowPlayingHeader: View {
 /// Album-art tile. Loads the stored JPEG off-main once per song
 /// (`.task(id:)`) and caches it in @State — PlayView's body
 /// re-evaluates at the 30 Hz transport tick, so reading disk in
-/// `body` is off the table. Fallback is a gradient hashed from the
-/// song identity, so every art-less song still gets a stable,
-/// distinctive tile.
+/// `body` is off the table. Songs with nothing stored (Files-app
+/// imports, history entries) fall back to a remote iTunes Search
+/// lookup, cached into the ArtworkStore on success. Until/unless art
+/// arrives, a gradient hashed from the song identity gives every
+/// art-less song a stable, distinctive tile.
 struct ArtworkView: View {
     let analysisId: String?
     let title: String
+    var artist: String? = nil
     var size: CGFloat = 56
 
     @State private var loaded: Image?
@@ -124,7 +123,18 @@ struct ArtworkView: View {
             }.value
             if let data, let ui = UIImage(data: data) {
                 loaded = Image(uiImage: ui)
+                return
             }
+            // Nothing stored — try a remote lookup and cache the hit
+            // so the next appearance is a plain disk read.
+            guard
+                let remote = await RemoteArtworkFetcher.fetchArtworkData(
+                    artist: artist, title: title
+                ),
+                let ui = UIImage(data: remote)
+            else { return }
+            try? ArtworkStore().save(remote, analysisId: analysisId)
+            loaded = Image(uiImage: ui)
             #endif
         }
     }

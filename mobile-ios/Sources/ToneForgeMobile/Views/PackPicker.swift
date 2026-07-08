@@ -59,15 +59,20 @@ struct PackPicker: View {
         // sees movement, which killed the swipe).
         .onTapGesture { onOpen() }
         .gesture(
-            DragGesture(minimumDistance: 15)
+            DragGesture(minimumDistance: 8)
                 .onEnded { value in
-                    // Horizontal intent only — let vertical scrolls
-                    // (if the strip ever lands in one) pass through.
-                    guard abs(value.translation.width)
-                        > abs(value.translation.height) else { return }
-                    if value.translation.width < 0, idx + 1 < pages.count {
+                    // Flick-friendly: judge the velocity-projected end
+                    // point, not the settled translation, so a quick
+                    // short flick changes pack — a slow 8 pt wobble
+                    // still won't. Horizontal intent only, so vertical
+                    // scrolls (if the strip ever lands in one) pass
+                    // through.
+                    let dx = value.predictedEndTranslation.width
+                    let dy = value.predictedEndTranslation.height
+                    guard abs(dx) > abs(dy), abs(dx) > 20 else { return }
+                    if dx < 0, idx + 1 < pages.count {
                         onSelect(pages[idx + 1].id)
-                    } else if value.translation.width > 0, idx > 0 {
+                    } else if dx > 0, idx > 0 {
                         onSelect(pages[idx - 1].id)
                     }
                 }

@@ -1,10 +1,11 @@
 // CategoryCards.swift
 //
-// "What do you want to add?" — the horizontal card strip from the
-// Now Playing mockup. One card per SampleFamily (minus .mixed, which
-// is a pack-level catch-all, not something a user reaches for).
-// Tapping a card opens Browse Packs; the family pre-filter hook wires
-// up in Phase 10 when the sheet grows filter chips.
+// Family browse shortcuts — a compact horizontal chip row (one chip
+// per SampleFamily, minus .mixed which is a pack-level catch-all).
+// Started life as the mockup's 64pt "What do you want to add?" card
+// strip; compacted to ~32pt icon+name chips so the Play tab fits a
+// phone screen without scrolling. Tapping a chip opens Browse Packs
+// pre-filtered to that family.
 
 import SwiftUI
 import ToneForgeEngine
@@ -16,46 +17,36 @@ struct CategoryCards: View {
         SampleFamily.allCases.filter { $0 != .mixed }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("What do you want to add?")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(TFTheme.textPrimary)
-                .padding(.horizontal, 12)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Self.families, id: \.rawValue) { family in
-                        card(family)
-                    }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(Self.families, id: \.rawValue) { family in
+                    chip(family)
                 }
-                .padding(.horizontal, 12)
             }
+            .padding(.horizontal, 12)
         }
     }
 
-    private func card(_ family: SampleFamily) -> some View {
+    private func chip(_ family: SampleFamily) -> some View {
         Button {
             onSelect(family)
         } label: {
-            VStack(spacing: 6) {
+            HStack(spacing: 5) {
                 Image(systemName: Self.icon(for: family))
-                    .font(.title3)
+                    .font(.caption)
                     .foregroundStyle(TFTheme.familyTint(family))
                 Text(Self.title(for: family))
                     .font(TFTheme.chipFont)
                     .foregroundStyle(TFTheme.textPrimary)
             }
-            .frame(width: 88, height: 64)
-            .background(
-                TFTheme.surfaceElevated,
-                in: RoundedRectangle(cornerRadius: 12)
-            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(TFTheme.surfaceElevated))
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        TFTheme.familyTint(family).opacity(0.35),
-                        lineWidth: 1
-                    )
+                Capsule().stroke(
+                    TFTheme.familyTint(family).opacity(0.35),
+                    lineWidth: 1
+                )
             )
         }
         .buttonStyle(.plain)

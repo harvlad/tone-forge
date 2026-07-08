@@ -50,7 +50,9 @@ struct SamplePadGrid4x4: View {
             tiles
                 .allowsHitTesting(false)
         }
-        .aspectRatio(1, contentMode: .fit)
+        // Flexible height (no square constraint): the grid absorbs
+        // whatever the Play stack has left, so the tab always fits
+        // on-screen — squarish on phones, shorter when space is tight.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(item: $sheetTarget) { target in
             switch target {

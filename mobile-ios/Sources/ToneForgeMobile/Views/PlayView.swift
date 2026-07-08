@@ -50,7 +50,7 @@ private struct PlayBody: View {
     var body: some View {
         let hasSong = appState.currentBundle != nil
 
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             NowPlayingHeader(
                 title: appState.currentBundle?.meta.title ?? "No song loaded",
                 artist: appState.currentBundle?.meta.artist,
@@ -68,7 +68,7 @@ private struct PlayBody: View {
                     peaks: appState.waveformPeaks,
                     onSeek: { s in appState.seek(to: s) }
                 )
-                .frame(height: 48)
+                .frame(height: 36)
             }
 
             ModeTabsRow(surface: surfaceBinding)
@@ -101,14 +101,13 @@ private struct PlayBody: View {
 
             transportRow
 
-            masterVolumeRow
-
             if currentSurface == .contribute {
                 howItWorksFooter
             }
         }
-        .padding(.top, 8)
-        .padding(.bottom, 40)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(TFTheme.background.ignoresSafeArea())
         .sheet(isPresented: $showMixer) { MixerView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
@@ -174,20 +173,6 @@ private struct PlayBody: View {
 
     // MARK: - Master volume
 
-    private var masterVolumeRow: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "speaker.fill")
-                .font(.caption)
-                .foregroundStyle(TFTheme.textSecondary)
-            Slider(value: masterGainBinding, in: 0...1)
-            Image(systemName: "speaker.wave.3.fill")
-                .font(.caption)
-                .foregroundStyle(TFTheme.textSecondary)
-        }
-        .padding(.horizontal, 20)
-        .accessibilityLabel("Master volume")
-    }
-
     private var masterGainBinding: Binding<Double> {
         Binding(
             get: { appState.masterGain },
@@ -213,36 +198,42 @@ private struct PlayBody: View {
 
     // MARK: - Transport
 
+    /// Single control row: transport + master volume + mixer/settings.
+    /// Was two rows; merged to buy back vertical space on phones.
     private var transportRow: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 14) {
             Button {
                 appState.seek(to: max(0, appState.songSeconds - 5))
             } label: {
-                Image(systemName: "gobackward.5").font(.title2)
+                Image(systemName: "gobackward.5").font(.title3)
             }
             Button {
                 appState.togglePlayPause()
             } label: {
                 Image(systemName: appState.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 44))
+                    .font(.system(size: 38))
             }
             Button {
                 appState.seek(to: appState.songSeconds + 5)
             } label: {
-                Image(systemName: "goforward.5").font(.title2)
+                Image(systemName: "goforward.5").font(.title3)
             }
-            Spacer()
+            Image(systemName: "speaker.fill")
+                .font(.caption2)
+                .foregroundStyle(TFTheme.textSecondary)
+            Slider(value: masterGainBinding, in: 0...1)
+                .accessibilityLabel("Master volume")
             Button {
                 showMixer = true
             } label: {
-                Image(systemName: "slider.horizontal.3").font(.title2)
+                Image(systemName: "slider.horizontal.3").font(.title3)
             }
             Button {
                 showSettings = true
             } label: {
-                Image(systemName: "gearshape").font(.title2)
+                Image(systemName: "gearshape").font(.title3)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 16)
     }
 }

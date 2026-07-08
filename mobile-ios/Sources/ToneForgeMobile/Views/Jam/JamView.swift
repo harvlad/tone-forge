@@ -27,7 +27,7 @@ struct JamView: View {
     @State private var showChordSheet = false
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             keyHeader
 
             DegreePadRow(controller: controller)

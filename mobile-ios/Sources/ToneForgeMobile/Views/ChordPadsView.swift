@@ -153,7 +153,8 @@ struct ChordPadsView: View {
             tiles
                 .allowsHitTesting(false)
         }
-        .aspectRatio(1, contentMode: .fit)
+        // Flexible height (no square constraint) so the surface fits
+        // any phone screen; see SamplePadGrid4x4 for the rationale.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

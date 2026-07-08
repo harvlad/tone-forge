@@ -3,14 +3,14 @@
 // The Contribute surface of the Play tab (redesign Phase 9),
 // extracted from PlayView. Composition per the mockup:
 //
-//   - CategoryCards ("What do you want to add?", song loaded)
-//   - [Instrument | Samples] segmented switch → setMode(.hybrid /
-//     .sample), plus the pack selector row and stop-all
+//   - CategoryCards family chips (song loaded)
+//   - one control row: [Instrument | Samples] switch → setMode(
+//     .hybrid / .sample) + pack strip + stop-all + 8×8 toggle
+//   - sections + record pill row (song) / record pill (sketch)
 //   - the pad surface: named 4×4 SamplePadGrid4x4 in sample mode
 //     (with a grid-icon toggle back to the advanced 8×8), the 8×8
 //     hybrid grid in instrument mode
-//   - quantize chips, section gate chips, record toggle, sketch
-//     tempo strip (no song), layer fader
+//   - quantize chips, sketch tempo strip (no song), layer fader
 //
 // Pure composition — all audio still flows grid → bus → ModeRouter →
 // ModeCoordinator; this view owns no engine logic.
@@ -40,9 +40,12 @@ struct ContributeSurface: View {
             }
         }
 
-        instrumentSamplesRow
-
+        // Single control row (was three): mode segments + pack strip
+        // + stop-all + the sample-mode grid toggle. Merged so the tab
+        // fits a phone screen without scrolling.
         HStack(spacing: 8) {
+            contributeModeSegment(title: "Instrument", mode: .hybrid)
+            contributeModeSegment(title: "Samples", mode: .sample)
             PackPicker(
                 pages: appState.carouselPages,
                 activePackId: appState.activeSamplePack?.pack.packId,
@@ -50,24 +53,34 @@ struct ContributeSurface: View {
                 onOpen: { onOpenBrowse(nil) }
             )
             stopAllButton
+            if coordinator.appMode == .sample {
+                advancedGridToggle
+            }
         }
         .padding(.horizontal, 12)
 
         if hasSong {
-            SectionChips(
-                sections: appState.currentBundle?.timeline.sections ?? [],
-                nowSongSeconds: appState.songSeconds,
-                allowedLabels: sampleSettings.sectionGates(
-                    for: appState.currentBundle?.analysisId ?? ""
-                ),
-                onSeek: { t in appState.seekAndPlay(to: t) },
-                onGateToggle: { label in toggleGate(label: label) }
-            )
+            // Sections + record pill share one row (layers context).
+            HStack(spacing: 0) {
+                SectionChips(
+                    sections: appState.currentBundle?.timeline.sections ?? [],
+                    nowSongSeconds: appState.songSeconds,
+                    allowedLabels: sampleSettings.sectionGates(
+                        for: appState.currentBundle?.analysisId ?? ""
+                    ),
+                    onSeek: { t in appState.seekAndPlay(to: t) },
+                    onGateToggle: { label in toggleGate(label: label) }
+                )
+                RecordToggle()
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.trailing, 12)
+            }
             .frame(height: 44)
+        } else {
+            // Sketch context: record pill on its own row.
+            RecordToggle()
+                .padding(.horizontal, 12)
         }
-
-        // Both contexts: layers with a song, sketches without.
-        RecordToggle()
 
         padSurface
 
@@ -107,20 +120,6 @@ struct ContributeSurface: View {
     }
 
     // MARK: - Instrument | Samples switch
-
-    private var instrumentSamplesRow: some View {
-        HStack(spacing: 8) {
-            contributeModeSegment(
-                title: "Instrument", mode: .hybrid)
-            contributeModeSegment(
-                title: "Samples", mode: .sample)
-            Spacer()
-            if coordinator.appMode == .sample {
-                advancedGridToggle
-            }
-        }
-        .padding(.horizontal, 12)
-    }
 
     private func contributeModeSegment(title: String, mode: AppMode) -> some View {
         Button {
