@@ -484,3 +484,89 @@ the device — the only thing missing was the app trusting its own
 cache. Offline-first from local storage is also the strongest
 position for the legal policy: user audio never leaves the user's
 machines.
+
+## D-022: "Every mode. No scrolling." UI restructure
+
+**Date:** 2026-07-08
+**Decision:** the mockup-driven 10-phase restructure replaces the
+D-019 Play-surface switcher with a 5-tab shell (Learn | Jam |
+Contribute | Mixer | Library) and eliminates scrolling on every tab.
+D-019 is superseded. The Chord Pads standalone surface folds into Jam
+as a pads|chords toggle. ProfileView is absorbed into Library as a
+Settings sheet.
+
+**Architecture decisions:**
+
+1. **AppTab enum replaces PlaySurface**: `AppTab` (learn | jam |
+   contribute | mixer | library) persisted as
+   `SampleSettingsStore.appTabRaw` with one-time migration from legacy
+   `playSurfaceRaw` (chordPads → jam).
+
+2. **TabModePolicy centralizes tab→mode mapping**: pure
+   `TabModePolicy.mode(for:lastContributeModeRaw:)` — learn→`.learnSong`,
+   jam→`.jamInKey`, contribute→last of sample/hybrid; mixer/library never
+   call `setMode`. Leaving Learn calls `stopPractice()` and restores
+   playback rate 1.0.
+
+3. **TabScaffold** provides the shared tab chrome: compact song header +
+   content + transport row. NO NavigationStack, NO ScrollView (the
+   no-scrolling contract).
+
+4. **TransportRow** hosts play/pause, prev/next (`SkipStyle`
+   seconds5|section), position readout.
+
+5. **JamPadMode** (pads | chords) on JamSettingsStore; engine mode stays
+   `.jamInKey` for both.
+
+6. **WaveformScrubber** leaves tab bodies and survives only inside
+   SectionOverviewSheet. Section chips = seek. Transport prev/next =
+   section skips (±5 s fallback when no sections).
+
+7. **selectedTab on AppState**: `@Published selectedTab: AppTab`; Library
+   song activation deep-links to the last performance tab.
+
+8. **Playback speed** = real `TransportClock` rate + one shared
+   `AVAudioUnitTimePitch` on the stem submix. `setPlaybackRate` clamped
+   0.5–1.0; no-op while recording; leaving Learn restores 1.0.
+   `LearnSettingsStore` persists `practiceRateX`.
+
+9. **Full FX panel** (EQ / Comp / Reverb / Delay): `FXSettings` value
+   type with `schemaVersion` 1; `FXSettingsStore` persists settings;
+   master insert chain is `mainMixer → masterEQ → masterComp → outputNode`;
+   wet send/return is `[stemMixer, sharedBus] → fxSendMixer → fxReverb →
+   fxDelay → fxReturnMixer → mainMixer`. `FXPresetCatalog` provides
+   Clean / Shoegaze Hall / Slapback / Tape Echo / Glue Comp / Lo-Fi
+   presets.
+
+10. **Layer A/B slots**: `RecordingSlot` (a | b) + `LayerSlots` value type.
+    `SessionCapture` gains `slotLabel: String?` ("A"/"B", decodeIfPresent
+    for back-compat). `stopAndSaveSessionRecording()` stamps `slotLabel`
+    and assigns to slot; both slot players replay simultaneously via the
+    bus with `isReplay = true`. Re-record replaces the slot pointer (old
+    file stays on the shelf). DEVIATION: slots are SessionCaptures, NOT
+    LayerTimeline (frozen read-only per D-015).
+
+11. **Mixer segments** (Levels | FX): `MixerSegment` enum; segment picker
+    in MixerBody; FX segment hosts FXPanelBody inline.
+
+12. **InstrumentPickerSheet**: `SynthPresetCategory` (pads | leads | bass);
+    `instrumentPresetId`, `instrumentOctaveShift`, `instrumentBrightness`
+    on SampleSettingsStore; sheet presents preset picker + octave stepper
+    + brightness slider.
+
+13. **PacksBrowserView segments** (Packs | My Samples): segment picker;
+    My Samples segment mirrors SamplesBrowserView inline.
+
+**Deleted views:** PlayView.swift, ModeTabsRow.swift, ProfileView.swift,
+ChordPadsView.swift (standalone surface — chord grid content reused
+inside JamView).
+
+**Alternatives:** keep 4-tab PlaySurface switcher (D-019) and add modes
+as sub-surfaces (would have required scrolling on some tabs to fit all
+controls); separate LayerTimeline for A/B (complex schema evolution vs.
+the simple SessionCapture extension).
+
+**Why:** the mockups show five first-class tabs, zero scrolling on every
+screen, and focused sheets for Samples/Instruments/FX/Settings. One grid
+surface per tab, one tab chrome, one transport row keeps the code simple
+while matching the mockups precisely.
