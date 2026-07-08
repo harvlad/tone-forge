@@ -1,11 +1,10 @@
 // ChordPadsSnapshotTests.swift
 //
-// Golden-PNG snapshots of the Chord Pads surface (Phase 12) — the
-// current-chord strip, the [Momentary | Latch] + octave controls,
-// and the 4×4 diatonic chord grid for the D-minor fixture
-// (Dm/Gm/Bb/C timeline per the mockup). Rendered directly: the
-// standalone surface has no tab of its own under D-022 (it folds
-// into Jam as a pad-mode toggle in Phase 5).
+// Golden-PNG snapshots of the Jam tab in chords pad mode (D-022
+// Phase 5 — the former standalone Chord Pads surface, folded into
+// Jam behind the [Pads | Chords] toggle): the [Momentary | Latch]
+// chips and the 4×4 diatonic chord grid for the D-minor fixture
+// (Dm/Gm/Bb/C timeline per the mockup).
 //
 // Same harness as the other snapshot suites: deterministic fixture
 // bundle, no audio boot, no network; goldens recorded via the
@@ -46,18 +45,16 @@ final class ChordPadsSnapshotTests: XCTestCase {
 
     // MARK: - Fixture
 
-    /// ChordPadsView over an AppState with the D-minor fixture
-    /// loaded. Rendered without tab chrome — the surface is reachable
-    /// only through Jam once the Phase 5 toggle lands.
+    /// JamTabView over an AppState with the D-minor fixture loaded
+    /// and the persisted pad mode pinned to `.chords` — the exact
+    /// surface a user sees after tapping the Chords toggle. Pinning
+    /// also stops a leaked blob from flipping the mode (D-012 trap).
     private func makeChordPadsScreen() -> some View {
         let appState = AppState()
         appState.currentBundle = Self.fixtureBundle
-        return ChordPadsView(
-            controller: appState.chordPadController,
-            sampleSettings: appState.sampleSettings
-        )
-        .background(TFTheme.background.ignoresSafeArea())
-        .environmentObject(appState)
+        appState.jamSettings.padMode = .chords
+        appState.jamSettings.holdEnabled = false
+        return JamTabView().environmentObject(appState)
     }
 
     private static let fixtureBundle = SongBundle(

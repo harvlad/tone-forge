@@ -43,6 +43,8 @@ final class JamSettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.metronomeAccent, .downbeat)
         XCTAssertEqual(store.metronomeSound, .sine)
         XCTAssertFalse(store.metronomeSubdivide)
+        XCTAssertEqual(store.padMode, .pads)
+        XCTAssertFalse(store.holdEnabled)
     }
 
     // MARK: - Round trip
@@ -60,6 +62,8 @@ final class JamSettingsStoreTests: XCTestCase {
         a.metronomeAccent = .everyBeat
         a.metronomeSound = .woodBlock
         a.metronomeSubdivide = true
+        a.padMode = .chords
+        a.holdEnabled = true
 
         let b = JamSettingsStore(defaults: defaults)
         XCTAssertEqual(b.scaleVariant, .harmonic)
@@ -73,6 +77,8 @@ final class JamSettingsStoreTests: XCTestCase {
         XCTAssertEqual(b.metronomeAccent, .everyBeat)
         XCTAssertEqual(b.metronomeSound, .woodBlock)
         XCTAssertTrue(b.metronomeSubdivide)
+        XCTAssertEqual(b.padMode, .chords)
+        XCTAssertTrue(b.holdEnabled)
     }
 
     func testCorruptBlobFallsBackToDefaults() {

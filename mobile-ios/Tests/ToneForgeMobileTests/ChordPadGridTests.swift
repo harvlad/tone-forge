@@ -80,15 +80,15 @@ final class ChordPadGridTests: XCTestCase {
 
     func testCellIndexMapsOverlayToDisplayOrder() {
         // Overlay row 1 = bottom → display row-major from top-left.
-        XCTAssertEqual(ChordPadsView.cellIndex(row: 4, col: 1), 0)
-        XCTAssertEqual(ChordPadsView.cellIndex(row: 4, col: 4), 3)
-        XCTAssertEqual(ChordPadsView.cellIndex(row: 1, col: 1), 12)
-        XCTAssertEqual(ChordPadsView.cellIndex(row: 1, col: 4), 15)
+        XCTAssertEqual(ChordPadGridView.cellIndex(row: 4, col: 1), 0)
+        XCTAssertEqual(ChordPadGridView.cellIndex(row: 4, col: 4), 3)
+        XCTAssertEqual(ChordPadGridView.cellIndex(row: 1, col: 1), 12)
+        XCTAssertEqual(ChordPadGridView.cellIndex(row: 1, col: 4), 15)
         // Full coverage of 0…15, each exactly once.
         var seen = Set<Int>()
         for row in 1...4 {
             for col in 1...4 {
-                seen.insert(ChordPadsView.cellIndex(row: row, col: col))
+                seen.insert(ChordPadGridView.cellIndex(row: row, col: col))
             }
         }
         XCTAssertEqual(seen, Set(0..<16))

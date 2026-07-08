@@ -14,7 +14,8 @@ struct JamTabView: View {
             JamView(
                 coordinator: appState.modeCoordinator,
                 jamSettings: appState.jamSettings,
-                controller: appState.jamController
+                controller: appState.jamController,
+                chordPadController: appState.chordPadController
             )
         }
     }

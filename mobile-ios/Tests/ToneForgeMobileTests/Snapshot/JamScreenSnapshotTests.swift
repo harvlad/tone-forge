@@ -49,11 +49,14 @@ final class JamScreenSnapshotTests: XCTestCase {
 
     /// JamTabView over an AppState with a song loaded but no audio /
     /// network activity. `currentBundle` is assigned directly (not via
-    /// `activate`) so nothing downloads. Each tab view has fixed
-    /// content (D-022), so no persisted surface needs pinning.
+    /// `activate`) so nothing downloads. The persisted pad mode is
+    /// pinned to `.pads` (and Hold off) so a leaked blob from another
+    /// suite or a previous run can't flip the surface (D-012 trap).
     private func makePlayScreen() -> some View {
         let appState = AppState()
         appState.currentBundle = Self.fixtureBundle
+        appState.jamSettings.padMode = .pads
+        appState.jamSettings.holdEnabled = false
         return JamTabView().environmentObject(appState)
     }
 

@@ -17,6 +17,12 @@
 //                            ("D minor" — MusicalKey.parse format)
 //   - metronome…:            jam-surface metronome (independent of
 //                            the sketch metronome settings)
+//   - padMode:               pads (12-pad note grid) | chords (4×4
+//                            chord grid) — the Phase 5 toggle that
+//                            folds the Chord Pads surface into Jam
+//   - holdEnabled:           pads mode: suppress touch pad-up so
+//                            pads stay lit (visual/LED hold; jam
+//                            pad-up routes no audio anyway)
 
 import Foundation
 import ToneForgeEngine
@@ -48,6 +54,21 @@ public enum JamScaleVariant: String, CaseIterable, Codable, Sendable {
         case .natural:  return .minor
         case .harmonic: return .harmonicMinor
         case .melodic:  return .melodicMinor
+        }
+    }
+}
+
+/// Which pad surface the Jam tab shows (D-022 Phase 5): the 12-pad
+/// in-key note grid or the 4×4 diatonic chord grid (the former
+/// standalone Chord Pads surface).
+public enum JamPadMode: String, CaseIterable, Codable, Sendable {
+    case pads
+    case chords
+
+    public var displayName: String {
+        switch self {
+        case .pads:   return "Pads"
+        case .chords: return "Chords"
         }
     }
 }
@@ -116,6 +137,17 @@ public final class JamSettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// Which pad surface the Jam tab shows (pads | chords).
+    @Published public var padMode: JamPadMode {
+        didSet { save() }
+    }
+
+    /// Pads mode hold: keep touched pads down (suppress pad-up) until
+    /// the chip is toggled off.
+    @Published public var holdEnabled: Bool {
+        didSet { save() }
+    }
+
     /// Built-in defaults, shared by init and the tests.
     nonisolated public static let defaultSoundPresetId = "dreamyLead"
     /// keyOverrideBySong key used when no song is loaded.
@@ -142,6 +174,8 @@ public final class JamSettingsStore: ObservableObject {
         self.metronomeAccent = loaded.metronomeAccent
         self.metronomeSound = loaded.metronomeSound
         self.metronomeSubdivide = loaded.metronomeSubdivide
+        self.padMode = loaded.padMode
+        self.holdEnabled = loaded.holdEnabled
     }
 
     // MARK: - Key resolution
@@ -188,6 +222,8 @@ public final class JamSettingsStore: ObservableObject {
         var metronomeAccent: MetronomeAccent
         var metronomeSound: MetronomeSound
         var metronomeSubdivide: Bool
+        var padMode: JamPadMode
+        var holdEnabled: Bool
 
         static let defaults = Persisted(
             storeVersion: 1,
@@ -201,14 +237,16 @@ public final class JamSettingsStore: ObservableObject {
             metronomeEnabled: false,
             metronomeAccent: .downbeat,
             metronomeSound: .sine,
-            metronomeSubdivide: false
+            metronomeSubdivide: false,
+            padMode: .pads,
+            holdEnabled: false
         )
 
         private enum CodingKeys: String, CodingKey {
             case storeVersion, scaleVariant, highlightCurrentChord,
                  soundPresetId, octaveShift, strumEnabled, quantizeMode,
                  keyOverrideBySong, metronomeEnabled, metronomeAccent,
-                 metronomeSound, metronomeSubdivide
+                 metronomeSound, metronomeSubdivide, padMode, holdEnabled
         }
 
         init(
@@ -223,7 +261,9 @@ public final class JamSettingsStore: ObservableObject {
             metronomeEnabled: Bool,
             metronomeAccent: MetronomeAccent,
             metronomeSound: MetronomeSound,
-            metronomeSubdivide: Bool
+            metronomeSubdivide: Bool,
+            padMode: JamPadMode,
+            holdEnabled: Bool
         ) {
             self.storeVersion = storeVersion
             self.scaleVariant = scaleVariant
@@ -237,6 +277,8 @@ public final class JamSettingsStore: ObservableObject {
             self.metronomeAccent = metronomeAccent
             self.metronomeSound = metronomeSound
             self.metronomeSubdivide = metronomeSubdivide
+            self.padMode = padMode
+            self.holdEnabled = holdEnabled
         }
 
         // decodeIfPresent everywhere except storeVersion so fields
@@ -280,6 +322,12 @@ public final class JamSettingsStore: ObservableObject {
             self.metronomeSubdivide = try c.decodeIfPresent(
                 Bool.self, forKey: .metronomeSubdivide
             ) ?? d.metronomeSubdivide
+            self.padMode = ((try? c.decodeIfPresent(
+                JamPadMode.self, forKey: .padMode
+            )) ?? nil) ?? d.padMode
+            self.holdEnabled = try c.decodeIfPresent(
+                Bool.self, forKey: .holdEnabled
+            ) ?? d.holdEnabled
         }
     }
 
@@ -301,7 +349,9 @@ public final class JamSettingsStore: ObservableObject {
             metronomeEnabled: metronomeEnabled,
             metronomeAccent: metronomeAccent,
             metronomeSound: metronomeSound,
-            metronomeSubdivide: metronomeSubdivide
+            metronomeSubdivide: metronomeSubdivide,
+            padMode: padMode,
+            holdEnabled: holdEnabled
         )
         if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: Self.defaultsKey)

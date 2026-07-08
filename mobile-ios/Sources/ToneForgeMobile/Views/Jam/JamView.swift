@@ -1,16 +1,22 @@
 // JamView.swift
 //
-// The JAM IN KEY surface (redesign Phase 7, second mockup): key +
-// scale header, 7 diatonic degree pads, current-chord panel with two
-// suggested follow-ups, the full-note 8×8 grid, and a controls row
-// (quantize / metronome / section loop / octave / settings).
+// The JAM IN KEY surface (D-022 Phase 5 mockup): key + scale header,
+// a [Pads | Chords] pad-mode toggle, 7 diatonic degree pads (pads
+// mode), current-chord panel with two suggested follow-ups, the big
+// pad grid — 12 in-key performance pads OR the 4×4 diatonic chord
+// grid (the former standalone Chord Pads surface, folded in here) —
+// and a controls row (quantize / metronome / section loop / octave /
+// settings).
 //
-// Degree pads voice directly on the PadSynth via JamInKeyController
-// (D-019 bus bypass); 8×8 grid presses flow through the normal
-// ContributionEventBus so capture/replay keeps working.
+// Degree pads and chord pads voice directly on the PadSynth (D-019
+// bus bypass); 12-pad presses flow through the normal
+// ContributionEventBus via JamPadGrid12Mapping so capture/replay and
+// Launchpad mirroring keep working.
 //
-// A "Hold" chip is deliberately absent: PadSynth voices auto-release
-// on their envelope, so there is nothing to latch in v1.
+// The Hold chip (pads mode) is visual: it keeps pads pressed on
+// screen and on the Launchpad by swallowing touch pad-ups. Jam-mode
+// pad-up routes no audio (PadSynth voices auto-release), so there is
+// no voice to latch or cut.
 
 import SwiftUI
 import ToneForgeEngine
@@ -19,6 +25,7 @@ struct JamView: View {
     @ObservedObject var coordinator: ModeCoordinator
     @ObservedObject var jamSettings: JamSettingsStore
     @ObservedObject var controller: JamInKeyController
+    @ObservedObject var chordPadController: ChordPadController
     @EnvironmentObject private var appState: AppState
 
     @State private var showKeySheet = false
@@ -30,13 +37,18 @@ struct JamView: View {
         VStack(spacing: 8) {
             keyHeader
 
-            DegreePadRow(controller: controller)
+            padModeRow
+
+            if jamSettings.padMode == .pads {
+                DegreePadRow(controller: controller)
+            }
 
             CurrentChordPanel(controller: controller) {
                 showChordSheet = true
             }
 
-            ModeGridView(coordinator: coordinator)
+            padGrid
+                .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             controlsRow
@@ -113,6 +125,91 @@ struct JamView: View {
         switch controller.effectiveKey?.scale {
         case .minor, .harmonicMinor, .melodicMinor: return true
         default: return false
+        }
+    }
+
+    // MARK: - Pad mode row
+
+    /// [Pads | Chords] surface toggle, plus the per-mode trigger
+    /// control: Hold (pads) or Momentary/Latch (chords).
+    private var padModeRow: some View {
+        HStack(spacing: 8) {
+            ForEach(JamPadMode.allCases, id: \.rawValue) { mode in
+                Button {
+                    setPadMode(mode)
+                } label: {
+                    Text(mode.displayName)
+                        .tfChip(active: jamSettings.padMode == mode)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(mode.displayName) pad surface")
+            }
+
+            Spacer()
+
+            switch jamSettings.padMode {
+            case .pads:
+                holdChip
+            case .chords:
+                triggerModeChip(title: "Momentary", mode: .momentary)
+                triggerModeChip(title: "Latch", mode: .latch)
+            }
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private func setPadMode(_ mode: JamPadMode) {
+        guard jamSettings.padMode != mode else { return }
+        jamSettings.padMode = mode
+        if mode == .pads {
+            // Latched chord visuals make no sense off-surface.
+            chordPadController.clearLatches()
+        }
+    }
+
+    private var holdChip: some View {
+        Button {
+            jamSettings.holdEnabled.toggle()
+        } label: {
+            Text("Hold")
+                .tfChip(active: jamSettings.holdEnabled)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            jamSettings.holdEnabled ? "Hold on" : "Hold off"
+        )
+    }
+
+    private func triggerModeChip(
+        title: String, mode: ChordPadController.TriggerMode
+    ) -> some View {
+        Button {
+            chordPadController.triggerMode = mode
+            if mode == .momentary {
+                // Latched visuals make no sense in momentary mode.
+                chordPadController.clearLatches()
+            }
+        } label: {
+            Text(title)
+                .tfChip(active: chordPadController.triggerMode == mode)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title) trigger mode")
+    }
+
+    // MARK: - Pad grid
+
+    @ViewBuilder
+    private var padGrid: some View {
+        switch jamSettings.padMode {
+        case .pads:
+            JamPadGrid12(
+                coordinator: coordinator,
+                key: controller.effectiveKey,
+                holdEnabled: jamSettings.holdEnabled
+            )
+        case .chords:
+            ChordPadGridView(controller: chordPadController)
         }
     }
 
@@ -215,31 +312,49 @@ struct JamView: View {
         }
     }
 
+    /// The chord grid keeps its own octave shift (ChordPadController,
+    /// unpersisted), the note pads use the persisted jam shift —
+    /// matching the two former surfaces.
+    private var currentOctaveShift: Int {
+        jamSettings.padMode == .chords
+            ? chordPadController.octaveShift
+            : jamSettings.octaveShift
+    }
+
+    private func setOctaveShift(_ shift: Int) {
+        switch jamSettings.padMode {
+        case .pads:
+            controller.setOctaveShift(shift)
+        case .chords:
+            chordPadController.setOctaveShift(shift)
+        }
+    }
+
     private var octaveStepper: some View {
         HStack(spacing: 6) {
             Button {
-                controller.setOctaveShift(jamSettings.octaveShift - 1)
+                setOctaveShift(currentOctaveShift - 1)
             } label: {
                 Image(systemName: "minus")
                     .font(.caption.weight(.bold))
                     .frame(width: 22, height: 22)
             }
-            .disabled(jamSettings.octaveShift <= -3)
-            Text("Oct \(jamSettings.octaveShift >= 0 ? "+" : "")\(jamSettings.octaveShift)")
+            .disabled(currentOctaveShift <= -3)
+            Text("Oct \(currentOctaveShift >= 0 ? "+" : "")\(currentOctaveShift)")
                 .font(TFTheme.chipFont)
                 .foregroundStyle(TFTheme.textPrimary)
                 .frame(minWidth: 48)
             Button {
-                controller.setOctaveShift(jamSettings.octaveShift + 1)
+                setOctaveShift(currentOctaveShift + 1)
             } label: {
                 Image(systemName: "plus")
                     .font(.caption.weight(.bold))
                     .frame(width: 22, height: 22)
             }
-            .disabled(jamSettings.octaveShift >= 3)
+            .disabled(currentOctaveShift >= 3)
         }
         .foregroundStyle(TFTheme.textSecondary)
-        .accessibilityLabel("Octave shift \(jamSettings.octaveShift)")
+        .accessibilityLabel("Octave shift \(currentOctaveShift)")
     }
 }
 
