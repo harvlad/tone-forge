@@ -296,6 +296,13 @@ public final class AppState: ObservableObject {
     public lazy var learnController: LearnSessionController =
         LearnSessionController(app: self)
 
+    // MARK: - Chord Pads (redesign Phase 12)
+
+    /// Grid content + trigger seam for the Chord Pads surface
+    /// (voices directly on the PadSynth, bus bypass per D-018).
+    public lazy var chordPadController: ChordPadController =
+        ChordPadController(app: self)
+
     /// The pack currently loaded into the scheduler. Nil until either
     /// the bundled StarterPack loads or a song-derived pack activates.
     @Published public private(set) var activeSamplePack: ResolvedSamplePack?

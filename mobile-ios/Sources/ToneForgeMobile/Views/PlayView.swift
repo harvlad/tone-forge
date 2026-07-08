@@ -82,6 +82,11 @@ private struct PlayBody: View {
                 )
             case .learn:
                 LearnView(controller: appState.learnController)
+            case .chordPads:
+                ChordPadsView(
+                    controller: appState.chordPadController,
+                    sampleSettings: sampleSettings
+                )
             default:
                 ContributeSurface(
                     coordinator: coordinator,
@@ -159,7 +164,11 @@ private struct PlayBody: View {
                 coordinator.setMode(.sample)
             }
         case .chordPads:
-            break // surface lands in Phase 12
+            // Chord pads voice directly on the PadSynth (D-018) with
+            // no grid surface — park the engine on the same
+            // empty-layout mode Learn uses (pad events resolve .none,
+            // Launchpad goes dark).
+            coordinator.setMode(.learnSong)
         }
     }
 
