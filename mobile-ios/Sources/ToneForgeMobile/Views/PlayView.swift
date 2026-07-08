@@ -70,13 +70,16 @@ private struct PlayBody: View {
 
             ModeTabsRow(surface: surfaceBinding)
 
-            if currentSurface == .jam {
+            switch currentSurface {
+            case .jam:
                 JamView(
                     coordinator: coordinator,
                     jamSettings: appState.jamSettings,
                     controller: appState.jamController
                 )
-            } else {
+            case .learn:
+                LearnView(controller: appState.learnController)
+            default:
                 contributeContent(hasSong: hasSong)
             }
 
@@ -187,7 +190,16 @@ private struct PlayBody: View {
     /// user was in. setMode no-ops when the mode is already active,
     /// so calling this from onAppear is idempotent.
     private func applySurface(_ s: PlaySurface) {
+        // Leaving Learn mid-practice ends the pass (clears the A/B
+        // loop, persists the streak) so the loop doesn't keep
+        // wrapping under another surface.
+        if s != .learn,
+           appState.learnController.phase == .practicing {
+            appState.learnController.stopPractice()
+        }
         switch s {
+        case .learn:
+            coordinator.setMode(.learnSong)
         case .jam:
             coordinator.setMode(.jamInKey)
         case .contribute:
@@ -197,8 +209,8 @@ private struct PlayBody: View {
             } else {
                 coordinator.setMode(.sample)
             }
-        case .learn, .chordPads:
-            break // surfaces land in Phases 8 / 12
+        case .chordPads:
+            break // surface lands in Phase 12
         }
     }
 

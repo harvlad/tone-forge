@@ -286,6 +286,16 @@ public final class AppState: ObservableObject {
     public lazy var jamController: JamInKeyController =
         JamInKeyController(app: self)
 
+    // MARK: - Learn (redesign Phase 8)
+
+    /// Per-song learn progress on disk
+    /// (`Documents/learnProgress/{analysisId}.json`).
+    public let learnProgressStore: LearnProgressStore
+
+    /// Practice-session lifecycle + progress for the Learn surface.
+    public lazy var learnController: LearnSessionController =
+        LearnSessionController(app: self)
+
     /// The pack currently loaded into the scheduler. Nil until either
     /// the bundled StarterPack loads or a song-derived pack activates.
     @Published public private(set) var activeSamplePack: ResolvedSamplePack?
@@ -425,10 +435,25 @@ public final class AppState: ObservableObject {
     private var tickTimer: Timer?
     private var settingsCancellables: Set<AnyCancellable> = []
 
-    /// - Parameter sessionStoreRoot: base directory override for the
-    ///   session store (tests); nil = the app's Documents directory.
-    public init(sessionStoreRoot: URL? = nil) {
+    /// - Parameters:
+    ///   - sessionStoreRoot: base directory override for the session
+    ///     store (tests); nil = the app's Documents directory.
+    ///   - learnProgressRoot: same, for the learn-progress store.
+    public init(
+        sessionStoreRoot: URL? = nil,
+        learnProgressRoot: URL? = nil
+    ) {
         sessionStore = SessionStore(root: sessionStoreRoot)
+        learnProgressStore = LearnProgressStore(root: learnProgressRoot)
+        // Learn mode scores a practice pass every time the A/B loop
+        // wraps (redesign Phase 8). Wired here so the hook exists
+        // before the first tick; inert in every other mode.
+        onLoopWrap = { [weak self] in
+            guard let self,
+                  self.modeCoordinator.appMode == .learnSong
+            else { return }
+            self.learnController.passCompleted()
+        }
     }
 
     // MARK: - Bootstrap

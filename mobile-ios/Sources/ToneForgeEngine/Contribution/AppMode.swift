@@ -6,10 +6,11 @@
 // grid context degrades to SketchSettingsStore's synthetic tempo
 // grid; no separate mode needed).
 //
-// `.sample`, `.hybrid`, and `.jamInKey` are implemented; the other
-// four appear in the mode menu as disabled "Coming soon" entries so
-// the information architecture is visible from day one and session
-// JSON (P6) can already carry their raw values.
+// `.sample`, `.hybrid`, `.learnSong`, and `.jamInKey` are
+// implemented; the other three appear in the mode menu as disabled
+// "Coming soon" entries so the information architecture is visible
+// from day one and session JSON (P6) can already carry their raw
+// values.
 
 import Foundation
 
@@ -20,7 +21,10 @@ public enum AppMode: String, CaseIterable, Codable, Sendable {
     /// Rows 5–8 samples, rows 1–4 synth notes from the song's
     /// key/chord grid (chord tones bright).
     case hybrid
-    /// FUTURE: guided section-by-section song learning.
+    /// Guided section-by-section song learning (redesign Phase 8).
+    /// No grid surface — LearnView drives PadSynth directly; pad
+    /// events resolve `.none` in ModeRouter and the layout stays
+    /// EmptyLayout.
     case learnSong
     /// FUTURE: full-song performance with section gating.
     case performSong
@@ -35,7 +39,8 @@ public enum AppMode: String, CaseIterable, Codable, Sendable {
     /// Whether the mode is playable in this build. Drives the
     /// "Coming soon" disable state in the mode menu.
     public var isImplemented: Bool {
-        self == .sample || self == .hybrid || self == .jamInKey
+        self == .sample || self == .hybrid
+            || self == .learnSong || self == .jamInKey
     }
 
     /// Menu label.

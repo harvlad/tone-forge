@@ -8,9 +8,8 @@
 // surface maps to an AppMode (Learn → .learnSong, Jam → .jamInKey,
 // Contribute → last of .sample/.hybrid).
 //
-// Contribute and Jam are live — the other segments render dimmed +
-// disabled so the roadmap is discoverable, and each phase flips its
-// segment on as it lands (Learn in Phase 8, Chord Pads in Phase 12).
+// Learn, Jam, and Contribute are live — Chord Pads renders dimmed +
+// disabled so the roadmap is discoverable until Phase 12 flips it on.
 
 import SwiftUI
 
@@ -25,7 +24,7 @@ enum PlaySurface: String, CaseIterable {
 
     /// Flipped on per phase as each surface ships.
     var isImplemented: Bool {
-        self == .contribute || self == .jam
+        self == .learn || self == .jam || self == .contribute
     }
 
     var title: String {

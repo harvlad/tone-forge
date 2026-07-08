@@ -203,7 +203,28 @@ final class ModeRouterTests: XCTestCase {
     func testImplementedModeSet() {
         XCTAssertEqual(
             AppMode.allCases.filter(\.isImplemented),
-            [.sample, .hybrid, .jamInKey]
+            [.sample, .hybrid, .learnSong, .jamInKey]
+        )
+    }
+
+    /// Learn is implemented but grid-less: pad events stay inert
+    /// (LearnView drives PadSynth directly, bypassing the bus).
+    func testLearnSongPadEventsResolveNone() {
+        XCTAssertEqual(
+            ModeRouter.resolve(
+                event(.padDown(row: 1, col: 1)),
+                mode: .learnSong,
+                layout: EmptyLayout()
+            ),
+            .none
+        )
+        XCTAssertEqual(
+            ModeRouter.resolve(
+                event(.padUp(row: 1, col: 1)),
+                mode: .learnSong,
+                layout: EmptyLayout()
+            ),
+            .none
         )
     }
 
