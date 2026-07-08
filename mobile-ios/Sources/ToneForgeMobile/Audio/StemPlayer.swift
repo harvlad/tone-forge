@@ -67,7 +67,15 @@ public final class StemPlayer: ObservableObject {
 
     private var channels: [Channel] = []
     private var stemMixer: AVAudioMixerNode?
+    /// Shared practice-speed unit on the stem submix (D-022):
+    /// stemMixer → timePitch → mainMixer. Bypassed at rate 1.0 so
+    /// normal playback stays bit-transparent.
+    private var timePitch: AVAudioUnitTimePitch?
     #endif
+
+    /// Current practice rate; survives load/unload so a reload keeps
+    /// the user's speed. Clamping (0.5–1.0) lives in AppState.
+    private var playbackRate: Float = 1.0
 
     private weak var engine: AudioEngine?
 
@@ -85,9 +93,15 @@ public final class StemPlayer: ObservableObject {
         #if canImport(AVFoundation)
         guard let engine = engine else { return }
         let mixer = AVAudioMixerNode()
+        let pitch = AVAudioUnitTimePitch()
         engine.engine.attach(mixer)
-        engine.engine.connect(mixer, to: engine.engine.mainMixerNode, format: nil)
+        engine.engine.attach(pitch)
+        engine.engine.connect(mixer, to: pitch, format: nil)
+        engine.engine.connect(pitch, to: engine.engine.mainMixerNode, format: nil)
+        pitch.rate = playbackRate
+        pitch.bypass = playbackRate == 1.0
         self.stemMixer = mixer
+        self.timePitch = pitch
 
         var newChannels: [Channel] = []
         var newStates: [StemState] = []
@@ -130,14 +144,33 @@ public final class StemPlayer: ObservableObject {
         if let mixer = stemMixer {
             engine?.engine.detach(mixer)
         }
+        if let pitch = timePitch {
+            engine?.engine.detach(pitch)
+        }
         channels.removeAll()
         stemMixer = nil
+        timePitch = nil
         #endif
         stems.removeAll()
         isLoaded = false
     }
 
     // MARK: - Transport
+
+    /// Set the practice playback rate (D-022). The shared timePitch
+    /// unit stretches the stem submix; bypassed at 1.0 so normal
+    /// playback stays bit-transparent. Frame math elsewhere is
+    /// unchanged — song-position seconds map 1:1 to file frames
+    /// regardless of rate (playback just proceeds slower and the
+    /// TransportClock advances at the same reduced rate).
+    public func setPlaybackRate(_ rate: Double) {
+        playbackRate = Float(rate)
+        #if canImport(AVFoundation)
+        guard let pitch = timePitch else { return }
+        pitch.rate = playbackRate
+        pitch.bypass = playbackRate == 1.0
+        #endif
+    }
 
     /// Start (or resume) every stem so that song-time ``seconds`` is
     /// heard at the same host time the AudioEngine's clock reports.

@@ -179,6 +179,10 @@ public final class AppState: ObservableObject {
     /// tick wraps the transport back to the region start as the
     /// playhead crosses its end. Cleared on song load and eject.
     @Published public private(set) var loopRegion: LoopRegion?
+    /// Practice playback rate (D-022). 1.0 everywhere except the
+    /// Learn tab, where the persisted `learnSettings.practiceRateX`
+    /// applies. Real speed: TransportClock rate + stem timePitch.
+    @Published public private(set) var playbackRate: Double = 1.0
 
     // MARK: - Tab shell (D-022)
 
@@ -210,9 +214,17 @@ public final class AppState: ObservableObject {
     /// Tab → engine-mode policy (see TabModePolicy). Leaving Learn
     /// mid-practice ends the pass (clears the A/B loop, persists the
     /// streak) so the loop doesn't keep wrapping under another tab.
+    /// Practice speed (D-022) is Learn-scoped: entering Learn applies
+    /// the persisted rate, leaving restores 1.0 (quantize grids,
+    /// chord advancer and recordings all assume real-time elsewhere).
     private func applySelectedTab() {
         if selectedTab != .learn, learnController.phase == .practicing {
             learnController.stopPractice()
+        }
+        if selectedTab == .learn {
+            applyPlaybackRate(clampedPracticeRate(learnSettings.practiceRateX))
+        } else if playbackRate != 1.0 {
+            applyPlaybackRate(1.0)
         }
         if let mode = TabModePolicy.mode(
             for: selectedTab,
@@ -329,6 +341,9 @@ public final class AppState: ObservableObject {
         JamInKeyController(app: self)
 
     // MARK: - Learn (redesign Phase 8)
+
+    /// Persisted Learn settings (practice playback rate, D-022).
+    public let learnSettings = LearnSettingsStore()
 
     /// Per-song learn progress on disk
     /// (`Documents/learnProgress/{analysisId}.json`).
@@ -1563,6 +1578,35 @@ public final class AppState: ObservableObject {
         loopRegion = region
     }
 
+    /// Set the practice playback rate (D-022, Learn tab's Speed
+    /// control). Clamped to `LearnSettingsStore.rateRange` and
+    /// persisted. No-op while the session recorder is armed or
+    /// recording — captured timestamps are song-seconds against the
+    /// real-time grid and must not be produced at slowed rates.
+    public func setPlaybackRate(_ rate: Double) {
+        guard sessionRecorder.state == .idle else { return }
+        let r = clampedPracticeRate(rate)
+        learnSettings.practiceRateX = r
+        applyPlaybackRate(r)
+    }
+
+    private func clampedPracticeRate(_ rate: Double) -> Double {
+        min(
+            max(rate, LearnSettingsStore.rateRange.lowerBound),
+            LearnSettingsStore.rateRange.upperBound
+        )
+    }
+
+    /// Push `rate` to the clock + stem timePitch + published state
+    /// WITHOUT touching the persisted practice rate — tab switches
+    /// and recorder arming force 1.0 temporarily while the user's
+    /// chosen Learn speed survives for the next practice session.
+    private func applyPlaybackRate(_ rate: Double) {
+        playbackRate = rate
+        audioEngine.clock.setRate(rate)
+        stemPlayer.setPlaybackRate(rate)
+    }
+
     /// Set the engine's master output gain. Clamped to 0..1.
     public func setMasterGain(_ gain: Double) {
         let g = max(0, min(1, gain))
@@ -1655,6 +1699,12 @@ public final class AppState: ObservableObject {
     /// marker (the recorder is armed, not yet recording).
     public func armSessionRecording() {
         layerError = nil
+        // Recording at practice speed would capture timestamps
+        // skewed against the real-time grid — force 1.0 for the take
+        // (D-022; the persisted Learn rate is untouched).
+        if playbackRate != 1.0 {
+            applyPlaybackRate(1.0)
+        }
         if let bundle = currentBundle {
             sessionRecorder.arm(
                 songBackendId: bundle.analysisId,

@@ -203,6 +203,10 @@ public final class Metronome {
     /// clock + mach_absolute_time (same pair SampleScheduler uses).
     private let nowSongSeconds: () -> Double
     private let hostTimeNow: () -> UInt64
+    /// Transport rate source (D-022 practice speed) — at slowed
+    /// rates a click's song-time delta spans proportionally more
+    /// wall-clock, so its host time sits further out.
+    private let rateProvider: () -> Double
 
     private var grid = MetronomeGrid(bpm: 120, beatsPerBar: 4)
     private var attached = false
@@ -240,11 +244,15 @@ public final class Metronome {
     public init(
         engine: AudioEngine,
         nowSongSeconds: (() -> Double)? = nil,
-        hostTimeNow: (() -> UInt64)? = nil
+        hostTimeNow: (() -> UInt64)? = nil,
+        rateProvider: (() -> Double)? = nil
     ) {
         self.engine = engine
         self.nowSongSeconds = nowSongSeconds ?? { [clock = engine.clock] in
             clock.nowSongSeconds
+        }
+        self.rateProvider = rateProvider ?? { [clock = engine.clock] in
+            clock.rate
         }
         if let hostTimeNow {
             self.hostTimeNow = hostTimeNow
@@ -451,14 +459,19 @@ public final class Metronome {
 
         let hostNow = hostTimeNow()
         let ticksPerSecond = TransportClock.ticksPerSecond()
+        let rate = rateProvider()
         for click in grid.clicks(fromClickIndex: next, before: windowEnd) {
             let delaySec = click.songTime - nowSong
             // Same boundary math as SampleScheduler.audioTime: clicks
-            // effectively "now" play immediately (at: nil).
+            // effectively "now" play immediately (at: nil). The delay
+            // is scaled by the transport rate (D-022 practice speed);
+            // staleness keys off the unscaled song-time delta.
             var at: AVAudioTime? = nil
-            if delaySec > 0.001 {
-                let hostTime = hostNow &+ UInt64(delaySec * ticksPerSecond)
-                at = AVAudioTime(hostTime: hostTime)
+            if let ticks = TransportTimeMath.hostDelayTicks(
+                targetSong: click.songTime, nowSong: nowSong,
+                rate: rate, ticksPerSecond: ticksPerSecond
+            ) {
+                at = AVAudioTime(hostTime: hostNow &+ ticks)
             } else if delaySec < -0.05 {
                 next += 1
                 continue // stale — don't burst-fire missed clicks

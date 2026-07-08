@@ -644,11 +644,15 @@ public final class SampleScheduler: ObservableObject {
     ///
     /// Returns nil when the delay is negligible (< 1 ms), which cues
     /// the pool to schedule immediately with `at: nil`.
+    ///
+    /// Delay is scaled by the transport rate (D-022 practice speed):
+    /// at 0.5x a 1-beat song-time delta spans twice the wall-clock.
     private func audioTime(forSongSeconds target: Double, nowSong: Double) -> AVAudioTime? {
-        let delaySec = target - nowSong
-        if delaySec <= 0.001 { return nil }
-        let ticksPerSecond = TransportClock.ticksPerSecond()
-        let delayTicks = UInt64(delaySec * ticksPerSecond)
+        let rate = engine?.clock.rate ?? 1.0
+        guard let delayTicks = TransportTimeMath.hostDelayTicks(
+            targetSong: target, nowSong: nowSong,
+            rate: rate, ticksPerSecond: TransportClock.ticksPerSecond()
+        ) else { return nil }
         let hostTime = mach_absolute_time() &+ delayTicks
         return AVAudioTime(hostTime: hostTime)
     }

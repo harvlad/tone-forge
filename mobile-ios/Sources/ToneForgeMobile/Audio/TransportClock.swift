@@ -58,6 +58,9 @@ public final class TransportClock: @unchecked Sendable {
     /// Song seconds accumulated in previous segments (pauses + seeks
     /// snapshot into this before resetting the anchor).
     private var _accumulatedSongSeconds: Double = 0
+    /// Playback rate (D-022 practice speed): song-seconds advance at
+    /// `_rate` × wall-clock. 1.0 = normal.
+    private var _rate: Double = 1.0
 
     public init(
         hostTimeProvider: (@Sendable () -> UInt64)? = nil
@@ -87,6 +90,27 @@ public final class TransportClock: @unchecked Sendable {
     public var nowSongSeconds: Double {
         lock.lock(); defer { lock.unlock() }
         return _nowSongSecondsLocked()
+    }
+
+    /// Playback rate: song-seconds advance at `rate` × wall-clock
+    /// time. 1.0 = normal speed (D-022 practice speed).
+    public var rate: Double {
+        lock.lock(); defer { lock.unlock() }
+        return _rate
+    }
+
+    /// Change the playback rate without a position glitch: the
+    /// current position is snapshotted under the OLD rate, the anchor
+    /// resets, then the new rate applies — song time is continuous
+    /// across the change. Non-positive rates are ignored.
+    public func setRate(_ newRate: Double) {
+        lock.lock(); defer { lock.unlock() }
+        guard newRate > 0, newRate != _rate else { return }
+        _accumulatedSongSeconds = _nowSongSecondsLocked()
+        if _state == .playing {
+            _anchorHostTime = hostTimeProvider()
+        }
+        _rate = newRate
     }
 
     /// Start (or resume from pause) playback at the current position.
@@ -137,7 +161,8 @@ public final class TransportClock: @unchecked Sendable {
         case .playing:
             let now = hostTimeProvider()
             let elapsedTicks = Double(now &- _anchorHostTime)
-            return _accumulatedSongSeconds + elapsedTicks / ticksPerSecond
+            return _accumulatedSongSeconds
+                + (elapsedTicks / ticksPerSecond) * _rate
         }
     }
 
