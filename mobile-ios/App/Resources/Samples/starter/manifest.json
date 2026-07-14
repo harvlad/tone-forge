@@ -1,9 +1,11 @@
 {
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "packId": "starter",
   "name": "Starter",
   "family": "mixed",
   "paletteHint": "purple",
+  "license": "Proprietary — © ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+  "provenance": "ToneForge original starter content, produced in-house for this app. Contains no third-party sample-library recordings.",
   "pads": [
     {
       "padIdx": 0,
@@ -181,5 +183,646 @@
       "gainDb": 0,
       "defaultQuantize": "1 bar"
     }
-  ]
+  ],
+  "defaultSequence": {
+    "id": "14b92ac2-0fcc-5559-b433-71d7932a0c73",
+    "name": "Starter Groove",
+    "stepCount": 16,
+    "tracks": [
+      {
+        "id": "df379767-1de6-5d86-9fef-786aaafb1c54",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "starter",
+          "padIdx": 4
+        },
+        "steps": [
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Kick"
+      },
+      {
+        "id": "022f4f5e-ea3b-5a05-a999-4562d4ae5179",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "starter",
+          "padIdx": 5
+        },
+        "steps": [
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.95,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.95,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Snare"
+      },
+      {
+        "id": "3cf0d6bd-24a0-5c71-8d4b-3d53170aec7e",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "starter",
+          "padIdx": 6
+        },
+        "steps": [
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Hat Closed"
+      },
+      {
+        "id": "8071444d-bbbb-5d6e-ae42-c040ba2166bc",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "starter",
+          "padIdx": 7
+        },
+        "steps": [
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Tom"
+      },
+      {
+        "id": "9bc1db54-ba62-53be-bc3b-38c50ea6887f",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "starter",
+          "padIdx": 10
+        },
+        "steps": [
+          {
+            "velocity": 0.85,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Piano Stab"
+      },
+      {
+        "id": "917a05c7-4eae-5603-bbb1-0d796767b767",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "starter",
+          "padIdx": 11
+        },
+        "steps": [
+          {
+            "velocity": 0.85,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Guitar Stab"
+      },
+      {
+        "id": "91fc43cf-f1f3-5544-bfcf-e0dff527c228",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "starter",
+          "padIdx": 12
+        },
+        "steps": [
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Sub Kick"
+      },
+      {
+        "id": "96b31d77-7b9e-5114-a3e3-8a7cc1b2a920",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "starter",
+          "padIdx": 13
+        },
+        "steps": [
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Bass Hit"
+      }
+    ],
+    "swing": 0.0,
+    "isLooping": true
+  }
 }

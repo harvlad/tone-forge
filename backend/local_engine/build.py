@@ -77,6 +77,20 @@ def get_hidden_imports():
         "demucs.pretrained",
         "demucs.apply",
         "basic_pitch",
+        # Beat This! beat/downbeat tracker — imported lazily inside
+        # tone_forge.beat_tracking, so PyInstaller's static analysis
+        # misses it without this.
+        "beat_this",
+        "beat_this.inference",
+        # allin1 music-structure backend — lazily imported inside
+        # tone_forge.analysis.structure, so static analysis misses it.
+        "allin1",
+        "allin1.analyze",
+        "allin1.models",
+        "natten",
+        "hydra",
+        "omegaconf",
+        "huggingface_hub",
         # Numpy/Scipy
         "numpy",
         "scipy",
@@ -89,6 +103,9 @@ def get_hidden_imports():
         "tone_forge.midi_extractor",
         "tone_forge.auto_detect",
         "local_engine.server",
+        "local_engine.remote_worker",
+        "local_engine.analysis_worker",
+        "requests",
     ]
 
 
@@ -138,6 +155,7 @@ def build_macos():
     collect_data = [
         "--collect-data=demucs",
         "--collect-data=basic_pitch",
+        "--collect-data=allin1",
     ]
 
     # Use tray.py as entry point for menu bar app
@@ -178,6 +196,7 @@ def build_windows():
     collect_data = [
         "--collect-data=demucs",
         "--collect-data=basic_pitch",
+        "--collect-data=allin1",
     ]
 
     cmd = [
@@ -215,6 +234,7 @@ def build_linux():
     collect_data = [
         "--collect-data=demucs",
         "--collect-data=basic_pitch",
+        "--collect-data=allin1",
     ]
 
     cmd = [

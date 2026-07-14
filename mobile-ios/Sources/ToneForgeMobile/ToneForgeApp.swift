@@ -121,6 +121,10 @@ public struct ToneForgeScene: Scene {
         if UITestSupport.resetAttestationRequested {
             AttestationStore.resetPersisted()
         }
+        // Same for the persisted account (profile + Keychain token).
+        if UITestSupport.resetAccountRequested {
+            AccountStore.resetPersisted()
+        }
     }
 
     public var body: some Scene {
@@ -130,6 +134,11 @@ public struct ToneForgeScene: Scene {
                 .preferredColorScheme(.dark)
                 .task {
                     appState.bootAudio()
+                    // Validate the cached session against the backend
+                    // (definitive 401 signs out; offline keeps state).
+                    await appState.accountStore.restore(
+                        baseURL: appState.backendBaseURL
+                    )
                 }
                 .onChange(of: scenePhase) { _, phase in
                     appState.handleScenePhase(phase)
@@ -147,6 +156,13 @@ public final class AppState: ObservableObject {
 
     @Published public var currentBundle: SongBundle?
     @Published public var loadingError: String?
+    /// The analysis id whose bundle is loading right now (JSON fetch +
+    /// stem download), or nil. Set the instant a Library row is tapped
+    /// so the UI shows a spinner immediately — the cold-start stem
+    /// download emits no incremental bytes, so `downloadFraction` stays
+    /// nil until the first stem completes and this is the only signal
+    /// covering the gap.
+    @Published public private(set) var loadingBundleId: String?
     @Published public var backendBaseURL: URL = AppState.loadBackendBaseURL() {
         didSet { AppState.saveBackendBaseURL(backendBaseURL) }
     }
@@ -161,6 +177,13 @@ public final class AppState: ObservableObject {
             // LAN). Keeps public overrides. Ensures a device never
             // gets stranded on a dead dev host across rebuilds.
             if isDevHost(url) {
+                UserDefaults.standard.removeObject(forKey: backendURLDefaultsKey)
+                return AppConfig.defaultBackendURL
+            }
+            // ATS blocks plain-http URLSession requests on device, so a
+            // stored http:// override strands every Library/pack fetch
+            // with "requires the use of a secure connection". Purge it.
+            if url.scheme?.lowercased() != "https" {
                 UserDefaults.standard.removeObject(forKey: backendURLDefaultsKey)
                 return AppConfig.defaultBackendURL
             }
@@ -239,6 +262,18 @@ public final class AppState: ObservableObject {
         }
     }
 
+    /// Library song activation: open the tapped song in Learn. Does NOT
+    /// auto-play — the user starts the transport when ready. The tab
+    /// switch runs in an animation-disabled transaction so the Learn
+    /// surface doesn't scale/zoom in on entry.
+    public func openSong() {
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx) {
+            selectedTab = .learn
+        }
+    }
+
     /// Tab → engine-mode policy (see TabModePolicy). Leaving Learn
     /// mid-practice ends the pass (clears the A/B loop, persists the
     /// streak) so the loop doesn't keep wrapping under another tab.
@@ -272,6 +307,26 @@ public final class AppState: ObservableObject {
 
     @Published public private(set) var downloadProgress: [String: BundleStore.StemProgress] = [:]
     @Published public private(set) var isDownloading: Bool = false
+    /// Number of stems the current download expects to finish. Set from
+    /// `bundle.stems.count` before the download stream runs so the
+    /// fraction knows its denominator even before any stem reports.
+    @Published public private(set) var downloadExpectedStems: Int = 0
+
+    /// Aggregate stem-download progress (0..1) for the song currently
+    /// loading, or nil when nothing is downloading. Counts completed
+    /// stems against the total expected: the download API yields one
+    /// terminal `isComplete` event per stem (no incremental bytes), so a
+    /// byte-weighted average would read 100% from the very first reported
+    /// stem — and a stem stalled mid-transfer would never report, hiding
+    /// it entirely. Counting against `downloadExpectedStems` keeps a
+    /// stalled stem visible as < 100% instead of a fake full bar.
+    public var downloadFraction: Double? {
+        guard isDownloading else { return nil }
+        let expected = max(downloadExpectedStems, downloadProgress.count)
+        guard expected > 0 else { return nil }
+        let complete = downloadProgress.values.filter { $0.isComplete }.count
+        return min(1, Double(complete) / Double(expected))
+    }
 
     // MARK: - Owned subsystems
 
@@ -297,6 +352,11 @@ public final class AppState: ObservableObject {
     /// CoreMIDI client.
     @Published public private(set) var usbLaunchpad: USBLaunchpadTransport?
     private var launchpadCancellables: Set<AnyCancellable> = []
+
+    /// Generic MIDI note controller transport (keyboards / pad boxes).
+    /// Created alongside the Launchpad in `bootAudio`; notes publish on
+    /// the contribution bus and drive the wavetable synth via ModeRouter.
+    @Published public private(set) var midiKeyboard: MIDIKeyboardTransport?
 
     /// Mirror of `usbLaunchpad.underpowerSuspected` (P7 banner). The
     /// transport is optional and late-created, so views observe this
@@ -330,6 +390,11 @@ public final class AppState: ObservableObject {
     public let padAssignmentStore = PadAssignmentStore()
     /// Saved sequencer patterns, assignable to pads.
     public let sequencerPatternStore = SequencerPatternStore()
+    /// Beat Capture (D-024) correction log — device-local training data.
+    public let beatTrainingStore = BeatTrainingStore()
+    /// Pattern id the sequencer should seed itself from on next open
+    /// (set by Beat Capture "Open in Sequencer"; cleared once consumed).
+    @Published public var pendingSequencerPatternId: UUID?
     public lazy var micRecorder: MicRecorder =
         MicRecorder(session: audioEngine.session)
 
@@ -549,6 +614,10 @@ public final class AppState: ObservableObject {
         return currentStemLocalURLs.min { $0.key < $1.key }?.value
     }
 
+    /// Optional sign-in state (Sign in with Apple). Owns the session
+    /// token + profile; child views observe it directly.
+    public let accountStore: AccountStore
+
     private let loader = BundleLoader()
     private let chopsClient = ChopsClient()
     private let packClient = PackClient()
@@ -566,6 +635,10 @@ public final class AppState: ObservableObject {
     ) {
         sessionStore = SessionStore(root: sessionStoreRoot)
         learnProgressStore = LearnProgressStore(root: learnProgressRoot)
+        // Device identity + account: every Engine client stamps its
+        // requests from AuthContext, so seed it before any fetch.
+        AuthContext.shared.deviceId = DeviceIdentity.id()
+        accountStore = AccountStore(client: UITestSupport.makeAuthClient())
         // Learn mode scores a practice pass every time the A/B loop
         // wraps (redesign Phase 8). Wired here so the hook exists
         // before the first tick; inert in every other mode.
@@ -641,10 +714,18 @@ public final class AppState: ObservableObject {
         // grid context — the pack loaded above is already active, so
         // the first layout is complete.
         modeCoordinator.start()
+        // Beat Capture (D-024): pull a newer drum-classifier model in the
+        // background; the next capture uses it once cached.
+        modeCoordinator.refreshBeatModelInBackground()
         // Restore the last tab (D-022). Assignment (not an init
         // default) so the didSet apply-path pins the engine mode for
         // the restored tab now that the coordinator is live.
-        selectedTab = AppTab(rawValue: sampleSettings.appTabRaw) ?? .contribute
+        let restoredTab = AppTab(rawValue: sampleSettings.appTabRaw) ?? .contribute
+        // No song auto-reloads at launch, so a restored Learn/Jam would
+        // land on an empty surface. Fall back to Library so the user can
+        // pick a song first.
+        selectedTab = (restoredTab.requiresSong && currentBundle == nil)
+            ? .library : restoredTab
         wireLaunchpad()
 
         // Background-survivable analysis completion. Wires notification
@@ -673,16 +754,28 @@ public final class AppState: ObservableObject {
             }
             .store(in: &launchpadCancellables)
 
-        // Chord follow countdown on Launchpad row 1 (top row). Updates
-        // at 10 Hz when follow mode is enabled and transport is running.
+        // Chord anticipation on the Launchpad, 10 Hz while playing.
+        // Learn practice takes priority (countdown top row + section
+        // chord pads on the bottom row); otherwise jam chord-follow
+        // paints its countdown row. When a practice session ends, one
+        // full padVisuals repaint clears the practice rows.
         Timer.publish(every: 0.1, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self, weak transport] _ in
-                guard let self = self,
-                      self.jamSettings.followEnabled,
-                      self.isPlaying else { return }
-                let frame = Self.chordFollowRowFrame(appState: self)
-                transport?.setLights(frame)
+                guard let self = self else { return }
+                let practicing = self.learnController.phase == .practicing
+                if self.launchpadPracticeWasActive && !practicing {
+                    self.launchpadPracticeWasActive = false
+                    transport?.setLights(
+                        Self.launchpadFrame(from: self.modeCoordinator.padVisuals))
+                }
+                guard self.isPlaying else { return }
+                if practicing {
+                    self.launchpadPracticeWasActive = true
+                    transport?.setLights(Self.learnPracticeFrame(appState: self))
+                } else if self.jamSettings.followEnabled {
+                    transport?.setLights(Self.chordFollowRowFrame(appState: self))
+                }
             }
             .store(in: &launchpadCancellables)
         // Connection flaps feed the idle-timer predicate (P7): a
@@ -709,6 +802,38 @@ public final class AppState: ObservableObject {
             .store(in: &launchpadCancellables)
         #endif
         usbLaunchpad = transport
+        wireMIDIKeyboard()
+    }
+
+    /// Generic MIDI note controllers (keyboards / pad boxes). Separate
+    /// CoreMIDI client from the Launchpad so the two never contend for
+    /// the same input ports; the Launchpad's grid is excluded here to
+    /// avoid double-firing its pad notes.
+    private func wireMIDIKeyboard() {
+        let transport = MIDIKeyboardTransport(
+            midi: CoreMIDIInterface(),
+            nowProvider: { [clock = audioEngine.clock] in
+                (song: clock.nowSongSeconds, host: mach_absolute_time())
+            }
+        )
+        transport.onContribution = { [weak self] event in
+            self?.contributionBus.publish(event)
+        }
+        transport.noteRouting = Self.noteRouting(
+            padsToSamples: sampleSettings.midiPadsToSamples
+        )
+        midiKeyboard = transport
+    }
+
+    /// Persisted toggle → transport routing. `true` sends generic MIDI
+    /// pads to the active sample pack (note 36 = pad 0); `false` keeps
+    /// the wavetable-synth default.
+    private static func noteRouting(
+        padsToSamples: Bool
+    ) -> MIDIKeyboardTransport.NoteRouting {
+        padsToSamples
+            ? .samplePads(baseNote: MIDIKeyboardTransport.defaultPadBaseNote)
+            : .synth
     }
 
     /// Banner dismiss: clears the transport's flag (the mirror sink
@@ -772,6 +897,93 @@ public final class AppState: ObservableObject {
             }
         }
         return frame
+    }
+
+    /// True while the 10 Hz Launchpad tick is painting the Learn
+    /// practice frame — lets the tick repaint the normal padVisuals
+    /// frame exactly once when practice ends.
+    private var launchpadPracticeWasActive = false
+
+    /// Learn practice Launchpad frame (web launchpad-mode parity):
+    ///   - top row: countdown toward the next DISTINCT chord, pads
+    ///     fill left→right through a cyan→amber→red gradient and
+    ///     pulse in the last 600 ms
+    ///   - bottom row: the practiced section's chord progression,
+    ///     active chord solid bright, up-next chord pulsing amber,
+    ///     the rest dim
+    static func learnPracticeFrame(
+        appState: AppState
+    ) -> [LaunchpadPad: LaunchpadLight] {
+        var frame: [LaunchpadPad: LaunchpadLight] = [:]
+        let controller = appState.learnController
+        let prediction = controller.prediction()
+
+        // Top row countdown.
+        let accentHint: UInt32 = 0x00BFFF
+        if let prediction {
+            let lit = ChordFollowStrip.launchpadLitCount(
+                progress: prediction.progress)
+            for col in 0..<8 {
+                let pad = LaunchpadPad(row: 0, col: col)
+                if col < lit {
+                    let hint = Self.countdownGradientHint(
+                        Double(col) / 7.0)
+                    frame[pad] = prediction.imminent
+                        ? .pulse(colorHint: hint)
+                        : .solid(colorHint: hint)
+                } else {
+                    frame[pad] = .solid(colorHint: Self.dimmed(accentHint))
+                }
+            }
+        } else {
+            for col in 0..<8 {
+                frame[LaunchpadPad(row: 0, col: col)] =
+                    .solid(colorHint: Self.dimmed(accentHint))
+            }
+        }
+
+        // Bottom row: song chord vocabulary (first 8 distinct
+        // chords, same source as the on-screen practice grid).
+        if controller.activeSection != nil {
+            let chords = controller.songChords
+            let currentSymbol = appState.currentChord?.symbol
+            let nextHint: UInt32 = 0xFFB74D  // amber, matches UI
+            for col in 0..<8 {
+                let pad = LaunchpadPad(row: 7, col: col)
+                guard col < chords.count, col < 8 else {
+                    frame[pad] = .off
+                    continue
+                }
+                let symbol = chords[col]
+                if symbol == currentSymbol {
+                    frame[pad] = .solid(colorHint: accentHint)
+                } else if symbol == prediction?.nextSymbol {
+                    frame[pad] = .pulse(colorHint: nextHint)
+                } else {
+                    frame[pad] = .solid(colorHint: Self.dimmed(0xFFFFFF))
+                }
+            }
+        }
+        return frame
+    }
+
+    /// Piecewise cyan→amber→red gradient (web `_countdownGradient`):
+    /// t 0…0.65 cyan→amber, 0.65…1 amber→red.
+    static func countdownGradientHint(_ t: Double) -> UInt32 {
+        let clamped = min(1, max(0, t))
+        let (r, g, b): (Double, Double, Double)
+        if clamped < 0.65 {
+            let s = clamped / 0.65
+            r = 77 + (255 - 77) * s
+            g = 208 + (183 - 208) * s
+            b = 225 + (77 - 225) * s
+        } else {
+            let s = (clamped - 0.65) / 0.35
+            r = 255
+            g = 183 + (82 - 183) * s
+            b = 77 + (82 - 77) * s
+        }
+        return (UInt32(r) << 16) | (UInt32(g) << 8) | UInt32(b)
     }
 
     /// Per-pad effects resolution for the scheduler. (This used to
@@ -955,6 +1167,14 @@ public final class AppState: ObservableObject {
             }
             .store(in: &settingsCancellables)
 
+        // Generic MIDI pad routing → transport. Live edits flip the
+        // attached pad box between synth and sample-pack pads.
+        sampleSettings.$midiPadsToSamples
+            .sink { [weak self] on in
+                self?.midiKeyboard?.noteRouting = Self.noteRouting(padsToSamples: on)
+            }
+            .store(in: &settingsCancellables)
+
         // Master FX settings → AudioEngine (D-022). Fires with the
         // persisted value on subscribe, so boot applies stored FX.
         fxSettingsStore.$settings
@@ -989,20 +1209,32 @@ public final class AppState: ObservableObject {
         _ pack: ResolvedSamplePack,
         stemFiles: [String: URL]
     ) {
-        do {
-            try sampleScheduler.setActivePack(pack, stemFiles: stemFiles)
-            activeSamplePack = pack
-            sampleSettings.currentPackId = pack.pack.packId
-            // Remember packs chosen while song-less ("sketching",
-            // D-016) separately so sketch-layer metadata can name them.
-            if currentBundle == nil {
-                sketchSettings.lastSketchPackId = pack.pack.packId
-            }
-            // New pack → new sample-quadrant content + pad bindings.
-            modeCoordinator.refreshLayout()
-        } catch {
-            loadingError = "Sample pack: \(error.localizedDescription)"
+        // Front the pack + publish its metadata synchronously so the
+        // grid, carousel, and settings update this run loop. The WAV
+        // decode (up to 16 pads at max SRC quality, ~1–3 s cold) runs
+        // off-main via setActivePackAsync so switching into Contribute
+        // never stalls the main thread — the stall was surfacing as a
+        // frozen tab plus the iOS touch-and-hold loupe. First-visit taps
+        // during the short decode window fall back to padNotFound
+        // silence; revisits are already resident and trigger instantly.
+        activeSamplePack = pack
+        sampleSettings.currentPackId = pack.pack.packId
+        // Remember packs chosen while song-less ("sketching", D-016)
+        // separately so sketch-layer metadata can name them.
+        if currentBundle == nil {
+            sketchSettings.lastSketchPackId = pack.pack.packId
         }
+        // New pack → new sample-quadrant content + pad bindings. Labels
+        // come from the manifest, not the buffers, so this is safe to
+        // paint before the decode lands.
+        modeCoordinator.refreshLayout()
+        // Register the pack's shipped starter groove (if any) into the
+        // sequencer store so it shows up in the sequence picker.
+        // Idempotent by the pattern's deterministic id.
+        if let groove = pack.pack.defaultSequence {
+            sequencerPatternStore.save(groove)
+        }
+        Task { await sampleScheduler.setActivePackAsync(pack, stemFiles: stemFiles) }
     }
 
     // MARK: - Pack carousel (multi-pack)
@@ -1088,17 +1320,36 @@ public final class AppState: ObservableObject {
     /// padNotFound, matching the pre-multi-pack behavior.
     public func ensurePackLoaded(packId: String) {
         guard !sampleScheduler.isPackLoaded(packId: packId) else { return }
+        // Decode off-main (preloadPackAsync): this is called from the
+        // layout pass for pinned non-fronted pads, so a synchronous WAV
+        // decode here froze every Contribute tab switch.
         if let entry = songDnaPacks.first(where: { $0.pack.pack.packId == packId }) {
-            try? sampleScheduler.preloadPack(
-                entry.pack, stemFiles: currentStemLocalURLs
-            )
+            let pack = entry.pack
+            let stems = currentStemLocalURLs
+            Task { await sampleScheduler.preloadPackAsync(pack, stemFiles: stems) }
             return
         }
         guard let bank = sampleBank else { return }
         if let pack = (try? bank.loadBundled(packId: packId))
             ?? (try? bank.loadCached(packId: packId)) {
-            try? sampleScheduler.preloadPack(pack, stemFiles: [:])
+            Task { await sampleScheduler.preloadPackAsync(pack, stemFiles: [:]) }
         }
+    }
+
+    /// Awaited twin of `ensurePackLoaded`: returns only after the
+    /// pack's buffers are resident (or the pack is unresolvable).
+    /// Bounce needs this — the fire-and-forget preload leaves a
+    /// window where `baseBuffer` is still nil, so a bounce right
+    /// after pack activation rendered an empty pad map ("Session
+    /// has no renderable events"). `preloadPackAsync` re-checks
+    /// residency after its decode, so racing an in-flight
+    /// activation is safe (worst case one duplicate decode).
+    private func ensurePackLoadedAsync(packId: String) async {
+        guard !sampleScheduler.isPackLoaded(packId: packId),
+              let pack = resolvedPack(forPackId: packId) else { return }
+        let stems = songDnaPacks.contains { $0.pack.pack.packId == packId }
+            ? currentStemLocalURLs : [:]
+        await sampleScheduler.preloadPackAsync(pack, stemFiles: stems)
     }
 
     /// Resolve a bare packId to its `ResolvedSamplePack` using the
@@ -1159,18 +1410,27 @@ public final class AppState: ObservableObject {
     /// is unreachable (e.g. off the home LAN — the dev backend is an
     /// mDNS host) falls back to the bundle.json persisted by a previous
     /// load, so already-downloaded songs keep working offline (D-021).
-    public func loadBundle(analysisId: String) async {
+    /// `onReady` fires as soon as the song is activated (bundle set,
+    /// grid/transport wired) — BEFORE the multi-minute stem download —
+    /// so callers can switch to Learn immediately instead of waiting
+    /// out ~175MB of stems.
+    public func loadBundle(
+        analysisId: String,
+        onReady: (() -> Void)? = nil
+    ) async {
         loadingError = nil
+        loadingBundleId = analysisId
+        defer { loadingBundleId = nil }
         do {
             let bundle = try await loader.fetch(
                 from: backendBaseURL,
                 analysisId: analysisId
             )
             try? bundleStore.saveBundle(bundle)
-            await activate(bundle: bundle)
+            await activate(bundle: bundle, onReady: onReady)
         } catch {
             if let cached = try? bundleStore.loadBundle(analysisId: analysisId) {
-                await activate(bundle: cached)
+                await activate(bundle: cached, onReady: onReady)
             } else {
                 loadingError = error.localizedDescription
             }
@@ -1178,15 +1438,14 @@ public final class AppState: ObservableObject {
     }
 
     /// Open a background-finished analysis: load its bundle and flip to
-    /// a performance tab. Called by JobCompletionCenter when a job
-    /// completes out-of-band (poll/relaunch) or a completion
-    /// notification is tapped — the single entry point that turns a
-    /// finished history id into a playing song.
+    /// Learn. Called by JobCompletionCenter when a job completes
+    /// out-of-band (poll/relaunch) or a completion notification is
+    /// tapped — the single entry point that turns a finished history id
+    /// into a loaded song. Lands on Learn like a Library song tap.
     public func openFinishedSong(historyId: String) {
         Task { @MainActor in
-            await loadBundle(analysisId: historyId)
-            if loadingError == nil {
-                showPerformanceTab()
+            await loadBundle(analysisId: historyId) { [weak self] in
+                self?.openSong()
             }
         }
     }
@@ -1196,15 +1455,23 @@ public final class AppState: ObservableObject {
     /// when the backend history endpoint is unreachable. Cached stems
     /// load straight from disk; stems missing from the cache still
     /// surface a download error.
-    public func loadCachedBundle(_ bundle: SongBundle) async {
+    public func loadCachedBundle(
+        _ bundle: SongBundle,
+        onReady: (() -> Void)? = nil
+    ) async {
         loadingError = nil
-        await activate(bundle: bundle)
+        loadingBundleId = bundle.analysisId
+        defer { loadingBundleId = nil }
+        await activate(bundle: bundle, onReady: onReady)
     }
 
     /// Activate an already-loaded bundle (from disk cache or network).
     /// Wires the ChordAdvancer, kicks off stem download, and — when
     /// downloads complete — hands the local URLs to the StemPlayer.
-    public func activate(bundle: SongBundle) async {
+    public func activate(
+        bundle: SongBundle,
+        onReady: (() -> Void)? = nil
+    ) async {
         currentBundle = bundle
         advancer = ChordAdvancer(chords: bundle.timeline.chords)
         currentChord = nil
@@ -1242,13 +1509,22 @@ public final class AppState: ObservableObject {
         // D-022 Phase 7: rehydrate layer A/B slots for this song.
         rehydrateLayerSlots(analysisId: bundle.analysisId)
 
+        // Song is fully activated (grid, transport, chords wired) —
+        // let the caller navigate NOW, before the stem download.
+        onReady?()
+
         await downloadAndLoad(bundle: bundle)
     }
 
     private func downloadAndLoad(bundle: SongBundle) async {
         isDownloading = true
+        downloadExpectedStems = bundle.stems.count
         downloadProgress.removeAll()
         waveformPeaks = nil
+        defer {
+            isDownloading = false
+            downloadExpectedStems = 0
+        }
         var localURLs: [String: URL] = [:]
 
         do {
@@ -1261,7 +1537,14 @@ public final class AppState: ObservableObject {
             // Load stems into the player. Errors are non-fatal — a bad
             // stem shouldn't block the whole song.
             do {
-                try stemPlayer.load(bundle: bundle, localURLs: localURLs)
+                try await stemPlayer.load(bundle: bundle, localURLs: localURLs)
+                // If the user hit Practice/Play mid-download, the
+                // transport is running but StemPlayer.play() was a
+                // silent no-op on empty channels — start the freshly
+                // loaded stems at the current song position.
+                if isPlaying {
+                    stemPlayer.play(atSongSeconds: songSeconds)
+                }
             } catch {
                 loadingError = "Stem player: \(error.localizedDescription)"
             }
@@ -1281,7 +1564,6 @@ public final class AppState: ObservableObject {
         } catch {
             loadingError = error.localizedDescription
         }
-        isDownloading = false
     }
 
     /// Compute (or load cached) scrubber peaks for the song's local
@@ -1390,8 +1672,30 @@ public final class AppState: ObservableObject {
             let entries = try await packClient.fetchCatalog(baseURL: backendBaseURL)
             curatedCatalog = entries
             refreshCachedPackIds()
+            await refreshCachedManifests()
         } catch {
             curatedError = error.localizedDescription
+        }
+    }
+
+    /// Re-fetch the manifest for every cached pack so a backend schema
+    /// bump (e.g. v1→v2 adding `defaultSequence`) reaches installs that
+    /// already downloaded the pads — the pad-existence cache check never
+    /// re-fetches on its own. When a refreshed manifest carries a
+    /// starter groove, register it into the sequencer store (idempotent
+    /// by the pattern's deterministic id) so it appears in the picker.
+    /// Per-pack failures are ignored (offline keeps the cached copy).
+    private func refreshCachedManifests() async {
+        guard let bank = sampleBank else { return }
+        for packId in cachedPackIds {
+            guard let fresh = try? await packClient.refreshCachedManifest(
+                baseURL: backendBaseURL,
+                packId: packId,
+                cacheRoot: bank.cachedPacksRoot
+            ) else { continue }
+            if let groove = fresh.defaultSequence {
+                sequencerPatternStore.save(groove)
+            }
         }
     }
 
@@ -2178,7 +2482,7 @@ public final class AppState: ObservableObject {
             let raw = addr.pad.rawValue
             switch ref {
             case .packPad(let packId, let padIdx):
-                ensurePackLoaded(packId: packId)
+                await ensurePackLoadedAsync(packId: packId)
                 guard let base = sampleScheduler.baseBuffer(
                     packId: packId, padIdx: padIdx
                 ) else { continue }
@@ -2665,17 +2969,22 @@ extension AppState: SequencerPlayerDelegate {
         _ player: SequencerPlayer,
         playBundleChop presetKey: String,
         chopIndex: Int,
-        velocity: Float
+        velocity: Float,
+        pan: Float
     ) {
-        fireBundleChopOneShot(presetKey: presetKey, chopIndex: chopIndex, velocity: velocity)
+        fireBundleChopOneShot(
+            presetKey: presetKey, chopIndex: chopIndex,
+            velocity: velocity, pan: pan
+        )
     }
 
     public func sequencerPlayer(
         _ player: SequencerPlayer,
         playLocalSample id: UUID,
-        velocity: Float
+        velocity: Float,
+        pan: Float
     ) {
-        fireLocalSampleOneShot(id: id, velocity: velocity)
+        fireLocalSampleOneShot(id: id, velocity: velocity, pan: pan)
     }
 
     public func sequencerPlayer(
@@ -2683,21 +2992,35 @@ extension AppState: SequencerPlayerDelegate {
         playURL url: URL,
         startSec: Double?,
         endSec: Double?,
-        velocity: Float
+        velocity: Float,
+        pan: Float
     ) {
-        fireURLOneShot(url: url, startSec: startSec, endSec: endSec, velocity: velocity)
+        fireURLOneShot(
+            url: url, startSec: startSec, endSec: endSec,
+            velocity: velocity, pan: pan
+        )
     }
 
     public func sequencerPlayer(
         _ player: SequencerPlayer,
         playPackPad packId: String,
         padIdx: Int,
-        velocity: Float
+        velocity: Float,
+        pan: Float
     ) {
         ensurePackLoaded(packId: packId)
         // triggerRaw bypasses the contribution guard — this is a
         // sequencer-driven trigger, not a live user contribution.
-        _ = sampleScheduler.triggerRaw(padIdx: padIdx, packId: packId)
+        _ = sampleScheduler.triggerRaw(padIdx: padIdx, packId: packId, pan: pan)
+    }
+
+    public func sequencerPlayer(
+        _ player: SequencerPlayer,
+        playSynthChord symbol: String,
+        octaveShift: Int,
+        velocity: Float
+    ) {
+        triggerSynthChord(symbol: symbol, octaveShift: octaveShift, velocity: velocity)
     }
 }
 
@@ -2730,10 +3053,24 @@ extension AppState {
             fireURLOneShot(url: url, startSec: startSec, endSec: endSec, velocity: velocity)
         case .sequence:
             break
+        case .synthChord(let symbol, let octaveShift):
+            triggerSynthChord(symbol: symbol, octaveShift: octaveShift, velocity: velocity)
         }
     }
 
-    fileprivate func fireBundleChopOneShot(presetKey: String, chopIndex: Int, velocity: Float) {
+    /// Voice a chord symbol on the pad synth. `velocity` is 0–1
+    /// (sequencer/preview convention); scaled to MIDI 0–127.
+    fileprivate func triggerSynthChord(
+        symbol: String, octaveShift: Int = 0, velocity: Float
+    ) {
+        let midis = ChordVoicing.midiNotes(symbol: symbol, octaveShift: octaveShift)
+        guard !midis.isEmpty else { return }
+        padSynth.triggerChord(midis: midis, velocity: velocity * 127)
+    }
+
+    fileprivate func fireBundleChopOneShot(
+        presetKey: String, chopIndex: Int, velocity: Float, pan: Float = 0
+    ) {
         guard let bundle = currentBundle,
               let preset = bundle.presets[presetKey],
               preset.chops.indices.contains(chopIndex),
@@ -2745,27 +3082,35 @@ extension AppState {
             startSec: chop.startSec,
             endSec: chop.endSec,
             velocity: velocity,
+            pan: pan,
             cacheKey: "chop:\(bundle.analysisId):\(presetKey):\(chopIndex)"
         )
     }
 
-    fileprivate func fireLocalSampleOneShot(id: UUID, velocity: Float) {
+    fileprivate func fireLocalSampleOneShot(
+        id: UUID, velocity: Float, pan: Float = 0
+    ) {
         guard let url = try? padSampleStore.wavURL(id: id) else { return }
         sampleScheduler.triggerFileOneShot(
             url: url,
             startSec: nil,
             endSec: nil,
             velocity: velocity,
+            pan: pan,
             cacheKey: "local:\(id.uuidString)"
         )
     }
 
-    fileprivate func fireURLOneShot(url: URL, startSec: Double?, endSec: Double?, velocity: Float) {
+    fileprivate func fireURLOneShot(
+        url: URL, startSec: Double?, endSec: Double?,
+        velocity: Float, pan: Float = 0
+    ) {
         sampleScheduler.triggerFileOneShot(
             url: url,
             startSec: startSec,
             endSec: endSec,
             velocity: velocity,
+            pan: pan,
             cacheKey: "url:\(url.absoluteString):\(startSec ?? 0):\(endSec ?? 0)"
         )
     }

@@ -35,7 +35,10 @@
 import Foundation
 import ToneForgeEngine
 #if canImport(AVFoundation)
-import AVFoundation
+// @preconcurrency: AVFAudio types (AVAudioPCMBuffer) predate Sendable;
+// the converter input block below captures a buffer that is only read
+// synchronously — safe, but the SDK annotation can't express that.
+@preconcurrency import AVFoundation
 #endif
 
 @MainActor
@@ -98,7 +101,9 @@ public final class SampleScheduler: ObservableObject {
     /// `localBuffers`, a parallel path consulted BEFORE pack lookup —
     /// but it keys the voice pool + effects resolver so local voices
     /// are addressable like any other pad.
-    public static let localPackId = "local"
+    // nonisolated: immutable Sendable constant, read from off-main
+    // contexts (LayerOfflineRenderer's render path).
+    public nonisolated static let localPackId = "local"
 
     #if canImport(AVFoundation)
     /// Locally-recorded samples assigned to grid pads, keyed by grid
@@ -204,36 +209,78 @@ public final class SampleScheduler: ObservableObject {
         guard loadedPacks[packId] == nil else { return }
 
         #if canImport(AVFoundation)
-        // Every voice slot is connected at the canonical 48 kHz stereo
-        // format (see SampleVoicePool.attach). AVAudioPlayerNode
-        // requires the scheduled buffer's format to match that
-        // connection format exactly — otherwise scheduleBuffer throws
-        // NSException and SIGABRTs the app. Sample files ship in a mix
-        // of sample rates and channel counts (StarterPack is mono
-        // 44.1 kHz), so we convert everything at preload time via
-        // AVAudioConverter. Off the audio thread, once per pack load.
-        // This is the SINGLE resample point of the contribution path
-        // (D-017) — everything downstream runs at 48 k SRC-free.
-        let targetFormat = engine?.canonicalFormat
-
-        var loaded: [Int: AVAudioPCMBuffer] = [:]
-        for pad in pack.pack.pads {
-            if let url = pack.padFileURLs[pad.padIdx] {
-                if let buf = Self.loadBuffer(from: url, slice: nil, target: targetFormat) {
-                    loaded[pad.padIdx] = buf
-                }
-            } else if let slice = pad.stemSlice,
-                      let stemURL = stemFiles[slice.stemRole] {
-                if let buf = Self.loadBuffer(from: stemURL, slice: slice, target: targetFormat) {
-                    loaded[pad.padIdx] = buf
-                }
-            }
-        }
+        let loaded = Self.decodePackBuffers(
+            pack, stemFiles: stemFiles, target: engine?.canonicalFormat
+        )
         loadedPacks[packId] = LoadedPack(pack: pack, buffers: loaded)
         #else
         loadedPacks[packId] = LoadedPack(pack: pack)
         #endif
     }
+
+    /// Async twin of `preloadPack`: the WAV decode + resample (up to 16
+    /// pads at AVAudioQuality.max, ~1–3 s cold) runs on a detached task
+    /// so the main thread never stalls when a pack is first visited.
+    /// This is the path the UI takes (tab switch / carousel / pinned
+    /// pads); the sync `preloadPack` stays for the offline export + tests
+    /// where blocking is harmless. No-op if already resident, and
+    /// re-checks after the await in case a concurrent call won the race.
+    public func preloadPackAsync(
+        _ pack: ResolvedSamplePack,
+        stemFiles: [String: URL]
+    ) async {
+        let packId = pack.pack.packId
+        guard loadedPacks[packId] == nil else { return }
+
+        #if canImport(AVFoundation)
+        let target = engine?.canonicalFormat
+        let loaded = await Task.detached(priority: .userInitiated) {
+            Self.decodePackBuffers(pack, stemFiles: stemFiles, target: target)
+        }.value
+        guard loadedPacks[packId] == nil else { return }
+        loadedPacks[packId] = LoadedPack(pack: pack, buffers: loaded)
+        #else
+        loadedPacks[packId] = LoadedPack(pack: pack)
+        #endif
+    }
+
+    #if canImport(AVFoundation)
+    /// Decode + canonical-format-convert every pad buffer for `pack`.
+    /// Pure and `nonisolated` so it can run off the main actor (see
+    /// `preloadPackAsync`).
+    ///
+    /// Every voice slot is connected at the canonical 48 kHz stereo
+    /// format (see SampleVoicePool.attach). AVAudioPlayerNode requires
+    /// the scheduled buffer's format to match that connection format
+    /// exactly — otherwise scheduleBuffer throws NSException and SIGABRTs
+    /// the app. Sample files ship in a mix of sample rates / channel
+    /// counts (StarterPack is mono 44.1 kHz), so we convert everything
+    /// here via AVAudioConverter — the SINGLE resample point of the
+    /// contribution path (D-017); everything downstream runs at 48 k
+    /// SRC-free. File-backed pads read from `padFileURLs`; song-derived
+    /// pads slice the shared stem in `stemFiles`. Missing files are
+    /// skipped so a partially-cached pack still triggers what it can.
+    nonisolated static func decodePackBuffers(
+        _ pack: ResolvedSamplePack,
+        stemFiles: [String: URL],
+        target: AVAudioFormat?
+    ) -> [Int: AVAudioPCMBuffer] {
+        var loaded: [Int: AVAudioPCMBuffer] = [:]
+        for pad in pack.pack.pads {
+            if let url = pack.padFileURLs[pad.padIdx] {
+                if let buf = loadBuffer(from: url, slice: nil, target: target) {
+                    loaded[pad.padIdx] = buf
+                }
+            } else if let slice = pad.stemSlice,
+                      let stemURL = stemFiles[slice.stemRole] {
+                if let buf = loadBuffer(from: stemURL, slice: slice, target: target) {
+                    loaded[pad.padIdx] = buf
+                }
+            }
+        }
+        return loaded
+    }
+    #endif
 
     /// Make `pack` the UI-fronted pack, loading its buffers if this
     /// is the first visit. Deliberately does NOT stop ringing voices —
@@ -246,6 +293,20 @@ public final class SampleScheduler: ObservableObject {
     ) throws {
         try preloadPack(pack, stemFiles: stemFiles)
         activePackId = pack.pack.packId
+    }
+
+    /// Async twin of `setActivePack`: fronts the pack's id immediately
+    /// (so the grid + carousel update this run loop) then decodes its
+    /// buffers off-main via `preloadPackAsync`. First-visit taps in the
+    /// brief decode window degrade to padNotFound silence rather than
+    /// freezing the UI (the freeze that surfaced the iOS touch-and-hold
+    /// loupe on the Contribute tab).
+    public func setActivePackAsync(
+        _ pack: ResolvedSamplePack,
+        stemFiles: [String: URL]
+    ) async {
+        activePackId = pack.pack.packId
+        await preloadPackAsync(pack, stemFiles: stemFiles)
     }
 
     /// Whether `packId`'s buffers are resident.
@@ -280,6 +341,46 @@ public final class SampleScheduler: ObservableObject {
         let sr = buffer.format.sampleRate
         guard sr > 0 else { return nil }
         return Double(buffer.frameLength) / sr
+    }
+
+    /// Downsampled peak envelope + duration for the waveform trimmer.
+    /// Reads the same (transform-resolved) buffer `previewTrimmed`
+    /// plays, so the drawn waveform matches what auditions. Peaks are
+    /// normalized to 0–1 (ChopWaveformView's contract). nil when the
+    /// pad's buffer isn't resident.
+    public func padWaveform(
+        packId: String, padIdx: Int, binCount: Int = 100
+    ) -> (peaks: [Float], durationSec: Double)? {
+        guard binCount > 0,
+              let base = baseBuffer(packId: packId, padIdx: padIdx)
+        else { return nil }
+        let buffer = transformResolver?(base, packId, padIdx) ?? base
+        let frames = Int(buffer.frameLength)
+        let sr = buffer.format.sampleRate
+        guard frames > 0, sr > 0,
+              let channels = buffer.floatChannelData
+        else { return nil }
+
+        let channelCount = Int(buffer.format.channelCount)
+        let framesPerBin = max(1, frames / binCount)
+        var peaks = [Float](repeating: 0, count: binCount)
+        for bin in 0..<binCount {
+            let start = bin * framesPerBin
+            guard start < frames else { break }
+            let end = min(frames, start + framesPerBin)
+            var peak: Float = 0
+            for ch in 0..<channelCount {
+                let data = channels[ch]
+                for i in start..<end where abs(data[i]) > peak {
+                    peak = abs(data[i])
+                }
+            }
+            peaks[bin] = peak
+        }
+        if let maxPeak = peaks.max(), maxPeak > 0 {
+            for i in peaks.indices { peaks[i] /= maxPeak }
+        }
+        return (peaks, Double(frames) / sr)
     }
     #endif
 
@@ -552,7 +653,9 @@ public final class SampleScheduler: ObservableObject {
     /// replayed while another is being recorded doesn't double-record
     /// the same hits into the new take.
     @discardableResult
-    public func triggerRaw(padIdx: Int, packId: String? = nil) -> TriggerResult {
+    public func triggerRaw(
+        padIdx: Int, packId: String? = nil, pan: Float = 0
+    ) -> TriggerResult {
         #if canImport(AVFoundation)
         // Replayed local pads: best-effort — fires only while the
         // local sample is still assigned at this index.
@@ -567,6 +670,7 @@ public final class SampleScheduler: ObservableObject {
                 loop: loopResolver?(Self.localPackId, padIdx) ?? false,
                 chokeGroup: nil,
                 gainDb: 0,
+                pan: pan,
                 effects: effects
             )
             pool.trigger(req, buffer: buffer, at: nil)
@@ -592,6 +696,7 @@ public final class SampleScheduler: ObservableObject {
                 || (loopResolver?(pid, padIdx) ?? false),
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,
+            pan: pan,
             effects: effects
         )
         pool.trigger(req, buffer: buffer, at: nil)
@@ -661,6 +766,19 @@ public final class SampleScheduler: ObservableObject {
         }
     }
 
+    /// Unconditionally stop every active voice for a pad. Unlike
+    /// `release`, this ignores hold-mode + loop gating — used when a pad
+    /// is deleted/hidden so a looping (or toggle-latched) voice can't
+    /// keep ringing after the pad is gone from the grid.
+    public func stopVoices(padIdx: Int, packId: String) {
+        #if canImport(AVFoundation)
+        let key = SamplePadKey(packId: packId, padIdx: padIdx)
+        if pool.isActive(padKey: key) {
+            pool.release(padKey: key)
+        }
+        #endif
+    }
+
     // MARK: - Preview with trim bounds
 
     /// Preview a pad sample with trim bounds. Used by the waveform trimmer
@@ -720,6 +838,7 @@ public final class SampleScheduler: ObservableObject {
     ///     file. loadBuffer clamps `endSec` to the file length.
     ///   - gainDb: base voice gain.
     ///   - velocity: 0–1 step velocity, folded into gain (0 dB at 1.0).
+    ///   - pan: stereo pan (-1…+1) applied to the voice.
     ///   - cacheKey: stable identity so repeated triggers reuse the buffer.
     public func triggerFileOneShot(
         url: URL,
@@ -727,6 +846,7 @@ public final class SampleScheduler: ObservableObject {
         endSec: Double?,
         gainDb: Double = 0,
         velocity: Float = 1.0,
+        pan: Float = 0,
         cacheKey: String
     ) {
         let buffer: AVAudioPCMBuffer
@@ -758,6 +878,7 @@ public final class SampleScheduler: ObservableObject {
             loop: false,
             chokeGroup: nil,
             gainDb: gainDb + velDb,
+            pan: pan,
             effects: .neutral
         )
         pool.trigger(req, buffer: buffer, at: nil)
@@ -814,13 +935,13 @@ public final class SampleScheduler: ObservableObject {
     /// but sound quieter due to Fletcher-Munson. +2 dB gives the
     /// StarterPack more punch while leaving 1 dB inter-sample
     /// headroom before the mixer chain.
-    private static let normalizeTargetPeak: Float = 0.891  // -1 dBFS
+    private nonisolated static let normalizeTargetPeak: Float = 0.891  // -1 dBFS
 
     /// Normalize `buf` in-place so its peak sample sits at
     /// `normalizeTargetPeak`. Skipped for effectively-silent buffers.
     /// Handles planar-Float32 layout — the default for the canonical
     /// `standardFormat` the contribution graph speaks (D-017).
-    private static func normalizePeak(_ buf: AVAudioPCMBuffer) {
+    private nonisolated static func normalizePeak(_ buf: AVAudioPCMBuffer) {
         guard let channels = buf.floatChannelData else { return }
         let frameCount = Int(buf.frameLength)
         let channelCount = Int(buf.format.channelCount)
@@ -854,7 +975,7 @@ public final class SampleScheduler: ObservableObject {
     /// (see SampleVoicePool.attach). Returns nil on any I/O or format
     /// error — the caller handles missing buffers as a silent-pad case
     /// rather than a hard failure.
-    private static func loadBuffer(
+    private nonisolated static func loadBuffer(
         from url: URL,
         slice: StemSlice?,
         target: AVAudioFormat?
@@ -903,7 +1024,7 @@ public final class SampleScheduler: ObservableObject {
     /// of the contribution path (D-017), it runs off the audio
     /// thread, once per pack load / local assignment, so the CPU
     /// cost is irrelevant next to the fidelity win.
-    private static func convert(
+    private nonisolated static func convert(
         _ srcBuf: AVAudioPCMBuffer, to target: AVAudioFormat
     ) -> AVAudioPCMBuffer? {
         guard let converter = AVAudioConverter(from: srcBuf.format, to: target) else {

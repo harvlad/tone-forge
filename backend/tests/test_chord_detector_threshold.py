@@ -1482,7 +1482,7 @@ def test_substitute_power_chords_on_dyads_noop_when_ratio_zero():
         [fm], chroma, times,
         third_ratio_max=0.0, margin=0.05,
     )
-    assert out is [fm] or (len(out) == 1 and out[0] is fm)
+    assert len(out) == 1 and out[0] is fm
 
 
 def test_substitute_power_chords_on_dyads_noop_when_margin_zero():

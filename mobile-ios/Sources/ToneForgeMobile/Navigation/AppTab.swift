@@ -46,6 +46,17 @@ public enum AppTab: String, CaseIterable, Hashable {
         }
     }
 
+    /// Tabs that are meaningless without a loaded song: Learn needs a
+    /// song to practise, Jam's chord-follow needs the song's chords.
+    /// On cold launch (no song auto-reloads) we fall back to Library
+    /// instead of restoring straight into an empty Learn/Jam surface.
+    var requiresSong: Bool {
+        switch self {
+        case .learn, .jam:                  return true
+        case .contribute, .mixer, .library: return false
+        }
+    }
+
     /// One-time migration from the legacy D-019 PlaySurface raw value
     /// ("learn" / "jam" / "contribute" / "chordPads"). Chord Pads
     /// folded into Jam (D-022); unknowns fall back to Contribute.

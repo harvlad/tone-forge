@@ -38,6 +38,14 @@ server_thread = None
 server_running = False
 current_status = "Stopped"
 
+# Remote worker (cloud link) state. When ~/.toneforge/engine.json (or
+# TONEFORGE_BACKEND_URL / TONEFORGE_ENGINE_TOKEN) points at a hosted
+# backend like https://jamn.app, a background thread long-polls it for
+# analysis jobs and runs them on this machine's GPU.
+worker_thread = None
+worker_backend = ""
+worker_error = ""
+
 # Configuration
 HOST = "127.0.0.1"
 PORT = 7777
@@ -308,6 +316,56 @@ def stop_server():
     update_icon("orange")
 
 
+def start_remote_worker():
+    """Start the jamn.app cloud-link worker when configured.
+
+    Configuration comes from TONEFORGE_BACKEND_URL/TONEFORGE_ENGINE_TOKEN
+    or ~/.toneforge/engine.json (written by
+    ``python -m local_engine.remote_worker --save``). Silently does
+    nothing when no backend is configured — local-only use stays
+    unchanged.
+    """
+    global worker_thread, worker_backend, worker_error
+
+    if worker_thread is not None and worker_thread.is_alive():
+        return
+    try:
+        from local_engine.remote_worker import RemoteWorker, load_config
+        backend_url, engine_token = load_config()
+    except SystemExit:
+        return  # not configured — nothing to do
+    except Exception as e:  # noqa: BLE001
+        worker_error = str(e)
+        return
+
+    worker_backend = backend_url
+
+    def run():
+        global worker_error
+        try:
+            RemoteWorker(backend_url, engine_token).run_forever()
+        except SystemExit as e:
+            worker_error = str(e)
+            logger.error(f"cloud link stopped: {e}")
+        except Exception as e:  # noqa: BLE001
+            worker_error = str(e)
+            logger.exception("cloud link crashed")
+
+    worker_thread = threading.Thread(target=run, daemon=True, name="cloud-link")
+    worker_thread.start()
+    logger.info(f"cloud link polling {backend_url}")
+
+
+def _worker_state_label() -> str:
+    if worker_thread is not None and worker_thread.is_alive():
+        return f"connected to {worker_backend.replace('https://', '')}"
+    if worker_error:
+        return "error (see log)"
+    if worker_backend:
+        return "stopped"
+    return "not configured"
+
+
 def open_web_app():
     """Open the ToneForge web app in browser."""
     webbrowser.open(WEB_APP_URL)
@@ -377,6 +435,20 @@ def create_menu():
             None,
             enabled=False,
             visible=lambda item: server_running,
+        ),
+        pystray.Menu.SEPARATOR,
+        # Cloud link — jamn.app job worker. Label re-queried each menu
+        # draw; the connect item only shows when a backend is configured
+        # but the thread isn't running (crash or late config).
+        pystray.MenuItem(
+            lambda text: f"Cloud link: {_worker_state_label()}",
+            None,
+            enabled=False,
+        ),
+        pystray.MenuItem(
+            "Connect to jamn.app",
+            lambda: start_remote_worker(),
+            visible=lambda item: not (worker_thread is not None and worker_thread.is_alive()),
         ),
         pystray.Menu.SEPARATOR,
         # Connect (Swift audio bridge) — supervised as a child of the
@@ -512,6 +584,9 @@ def main():
 
     # Auto-start the server
     start_server()
+
+    # Auto-start the jamn.app cloud link when configured (no-op otherwise)
+    start_remote_worker()
 
     # Run the icon (blocks)
     _icon.run()

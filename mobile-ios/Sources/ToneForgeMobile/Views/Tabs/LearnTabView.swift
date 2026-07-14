@@ -10,8 +10,16 @@ struct LearnTabView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        TabScaffold {
-            LearnView(controller: appState.learnController)
+        // No song = full-bleed welcome screen: skip TabScaffold so
+        // there's no "No song loaded" header or transport chrome.
+        if appState.currentBundle == nil {
+            JamWelcomeView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(TFTheme.background.ignoresSafeArea())
+        } else {
+            TabScaffold {
+                LearnView(controller: appState.learnController)
+            }
         }
     }
 }

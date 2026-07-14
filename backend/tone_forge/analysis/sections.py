@@ -106,6 +106,14 @@ class ArrangementSection:
     # Empty default keeps legacy bundles round-tripping unchanged.
     duration_flag: str = ""
 
+    # Provenance of ``type``/boundaries. "allin1" when the All-In-One
+    # structure model supplied them (see ``analysis.structure`` and
+    # ``detect_sections_with_structure``) — downstream H2 relabel
+    # stages and read-path resegmentation (Fix C / Fix 4) treat those
+    # as authoritative and skip. Empty string = legacy heuristic
+    # path; all existing behavior unchanged.
+    label_source: str = ""
+
     # Per-section local BPM, derived from the beat grid inside the
     # section window (see ``_populate_section_bpm``). Authoritative
     # single source of truth for the JAM UI's per-section tempo chip
@@ -156,6 +164,7 @@ class ArrangementSection:
             "structural_role": self.structural_role,
             "structural_confidence": float(self.structural_confidence),
             "duration_flag": self.duration_flag,
+            "label_source": self.label_source,
             "bpm": float(self.bpm),
             # ``debug_features`` entries are already asdict()'d
             # SectionFeatures records — dict() copy so JSON encoders
@@ -306,6 +315,102 @@ class SectionDetector:
         # from ``beats_s`` in the browser. Falls back silently to the
         # global tempo when a section has < 2 beats inside its window
         # (very short sections, or beat tracker degraded).
+        _populate_section_bpm(sections, beats_s, fallback_bpm=tempo)
+
+        return ArrangementAnalysis(
+            sections=sections,
+            transitions=transitions,
+            duration=duration,
+            tempo_bpm=tempo,
+            energy_curve=energy_curve,
+            energy_curve_sr=1.0 / self.energy_resolution,
+        )
+
+    def detect_sections_with_structure(
+        self,
+        audio: np.ndarray,
+        sr: int = None,
+        segments: List[dict] = None,
+        tempo: float = None,
+        beats_s: Optional[np.ndarray] = None,
+    ) -> ArrangementAnalysis:
+        """Build an ArrangementAnalysis from external structure segments.
+
+        ``segments`` come from the All-In-One structure model
+        (``tone_forge.analysis.structure.analyze_structure``): dicts
+        with ``start``/``end`` seconds and a Harmonix-vocabulary
+        ``label``. This method replaces the RMS-novelty Stage 0
+        (boundaries) AND the energy-heuristic labels — measured on 24
+        SALAMI-IA tracks the model's boundaries score F@0.5 0.404 vs
+        0.060 for RMS novelty, labels 0.495 vs 0.232 — while still
+        computing the per-section energy/spectral features, transition
+        types, and per-section BPM downstream consumers rely on.
+
+        Labels here are authoritative: callers should skip the Stage A
+        H2 relabel and Fix C resegmentation for analyses produced this
+        way (the model was trained end-to-end on function labels; H2
+        is a heuristic recovery for when no such labels exist).
+        """
+        import librosa
+
+        sr = sr or self.sr
+        duration = len(audio) / sr
+
+        if not segments:
+            # No model output: fall back to the full detector.
+            return self.detect_sections(
+                audio, sr=sr, tempo=tempo, beats_s=beats_s
+            )
+
+        if tempo is None:
+            tempo, _ = librosa.beat.beat_track(y=audio, sr=sr)
+            if hasattr(tempo, "__iter__"):
+                tempo = float(tempo[0]) if len(tempo) > 0 else 120.0
+            tempo = float(tempo) if tempo > 0 else 120.0
+
+        energy_curve = self._compute_energy_curve(audio, sr)
+
+        # Segments -> boundary list (clipped, deduped, endpoint-closed).
+        # eps is a dedupe tolerance only — model segments as short as
+        # ~0.3s (the Harmonix "start" silence marker) keep their end
+        # boundary, which is a real structural event (music start)
+        # that SALAMI also annotates. An earlier 0.5s threshold here
+        # dropped that boundary on 9/24 eval tracks.
+        eps = 0.05
+        boundaries: List[float] = [0.0]
+        labels: List[str] = []
+        for seg in sorted(segments or [], key=lambda s: float(s["start"])):
+            start = max(0.0, min(float(seg["start"]), duration))
+            end = max(0.0, min(float(seg["end"]), duration))
+            if end - start < eps:
+                continue  # zero-length marker (e.g. trailing "end")
+            if start - boundaries[-1] > eps:
+                # Un-annotated gap keeps the previous label running.
+                boundaries.append(start)
+                labels.append(labels[-1] if labels else "intro")
+            if end - boundaries[-1] > eps:
+                boundaries.append(end)
+                labels.append(str(seg.get("label", "unknown")))
+        if duration - boundaries[-1] > eps:
+            boundaries.append(duration)
+            labels.append(labels[-1] if labels else "unknown")
+        else:
+            boundaries[-1] = duration
+
+        if len(boundaries) < 2:
+            # Degenerate input: fall back to the full detector.
+            return self.detect_sections(
+                audio, sr=sr, tempo=tempo, beats_s=beats_s
+            )
+
+        # Reuse the feature extractor for energy/spectral/density
+        # fields, then override the heuristic types with the model's.
+        sections = self._classify_sections(audio, sr, boundaries, energy_curve)
+        for section, label in zip(sections, labels):
+            section.type = _structure_label_to_type(label)
+            section.label_source = "allin1"
+
+        transitions = self._detect_transitions(sections, energy_curve)
         _populate_section_bpm(sections, beats_s, fallback_bpm=tempo)
 
         return ArrangementAnalysis(
@@ -773,6 +878,30 @@ class SectionDetector:
                 )
 
         return sections
+
+
+# Harmonix functional-label vocabulary (allin1 structure backend) ->
+# SectionType. "start"/"end" are silence/lead markers; map to
+# intro/outro so downstream role classification treats them sanely.
+_STRUCTURE_LABEL_MAP = {
+    "start": SectionType.INTRO,
+    "intro": SectionType.INTRO,
+    "end": SectionType.OUTRO,
+    "outro": SectionType.OUTRO,
+    "break": SectionType.BREAKDOWN,
+    "bridge": SectionType.BRIDGE,
+    "inst": SectionType.INSTRUMENTAL,
+    "solo": SectionType.INSTRUMENTAL,
+    "verse": SectionType.VERSE,
+    "chorus": SectionType.CHORUS,
+}
+
+
+def _structure_label_to_type(label: str) -> SectionType:
+    """Map a Harmonix structure label to a SectionType."""
+    return _STRUCTURE_LABEL_MAP.get(
+        str(label).strip().lower(), SectionType.UNKNOWN
+    )
 
 
 # Clamp window matches the frontend fallback bounds so a mis-scaled

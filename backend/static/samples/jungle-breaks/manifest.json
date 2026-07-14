@@ -1,0 +1,661 @@
+{
+  "manifestVersion": 2,
+  "packId": "jungle-breaks",
+  "name": "Jungle Breaks",
+  "family": "percussion",
+  "paletteHint": "lime",
+  "pads": [
+    {
+      "padIdx": 0,
+      "name": "Break Kick",
+      "family": "percussion",
+      "filename": "00_break_kick.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 1,
+      "name": "Break Snare",
+      "family": "percussion",
+      "filename": "01_break_snare.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 2,
+      "name": "Ghost Snare",
+      "family": "percussion",
+      "filename": "02_ghost_snare.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 3,
+      "name": "Ride",
+      "family": "percussion",
+      "filename": "03_ride.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 4,
+      "name": "Reese Bass",
+      "family": "bass",
+      "filename": "04_reese_bass.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 5,
+      "name": "Sub",
+      "family": "bass",
+      "filename": "05_sub.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 6,
+      "name": "Stab",
+      "family": "stabs",
+      "filename": "06_stab.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 7,
+      "name": "Air Horn",
+      "family": "fx",
+      "filename": "07_air_horn.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    }
+  ],
+  "defaultSequence": {
+    "id": "75e6a9e6-79f6-5148-9d4e-3e654afb92a7",
+    "name": "Jungle Breaks Groove",
+    "stepCount": 16,
+    "tracks": [
+      {
+        "id": "4acd6399-3678-51eb-b3a9-bd06d02d81e0",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "jungle-breaks",
+          "padIdx": 0
+        },
+        "steps": [
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Break Kick"
+      },
+      {
+        "id": "20fc5af8-726f-5de6-a606-27e9a83550e8",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "jungle-breaks",
+          "padIdx": 1
+        },
+        "steps": [
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.95,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.95,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Break Snare"
+      },
+      {
+        "id": "b08e8cc7-cc3d-5878-ac75-63cfd502fe57",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "jungle-breaks",
+          "padIdx": 2
+        },
+        "steps": [
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.5,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.5,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.5,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.5,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Ghost Snare"
+      },
+      {
+        "id": "792de141-a89d-5ed6-9b99-2af6bdba5cf9",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "jungle-breaks",
+          "padIdx": 3
+        },
+        "steps": [
+          {
+            "velocity": 0.6,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.6,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.6,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.6,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Ride"
+      },
+      {
+        "id": "33687a8b-e66e-592e-b65b-a18e0d57b3e6",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "jungle-breaks",
+          "padIdx": 4
+        },
+        "steps": [
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Reese Bass"
+      },
+      {
+        "id": "fdf00341-c8eb-5c6e-a5cf-fc7baefebd12",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "jungle-breaks",
+          "padIdx": 5
+        },
+        "steps": [
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Sub"
+      },
+      {
+        "id": "51b47f42-f97a-527f-b551-ad6aad2f4274",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "jungle-breaks",
+          "padIdx": 6
+        },
+        "steps": [
+          {
+            "velocity": 0.85,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Stab"
+      }
+    ],
+    "swing": 0.0,
+    "isLooping": true
+  },
+  "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+  "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+}

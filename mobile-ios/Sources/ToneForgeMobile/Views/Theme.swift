@@ -39,6 +39,16 @@ enum TFTheme {
     static let textPrimary = Color.white.opacity(0.92)
     static let textSecondary = Color.white.opacity(0.55)
 
+    /// Jam brand green (waveform logo, Open Library CTA). Bright
+    /// yellow-green at the top fading to a saturated green.
+    static let brandGreenLight = color(hex: 0xC6F24E)
+    static let brandGreenDark = color(hex: 0x36C81A)
+    static let brandGradient = LinearGradient(
+        colors: [brandGreenLight, brandGreenDark],
+        startPoint: .top,
+        endPoint: .bottom
+    )
+
     // MARK: - Family tints
 
     /// SwiftUI mirror of ModeCoordinator.familyColor (0xRRGGBB).

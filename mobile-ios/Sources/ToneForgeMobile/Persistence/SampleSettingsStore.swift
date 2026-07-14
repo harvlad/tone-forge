@@ -149,6 +149,13 @@ public final class SampleSettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// When true, an attached generic MIDI pad box (LPD8/MPD) fires the
+    /// active sample pack's pads instead of the wavetable synth. Drives
+    /// `MIDIKeyboardTransport.noteRouting`.
+    @Published public var midiPadsToSamples: Bool {
+        didSet { save() }
+    }
+
     /// Built-in defaults, shared by init and the tests.
     nonisolated public static let defaultVoiceGain: Double = 0.9
     nonisolated public static let defaultChopGain: Double = 0.55
@@ -159,6 +166,7 @@ public final class SampleSettingsStore: ObservableObject {
     nonisolated public static let defaultInstrumentPresetId: String = "dreamyLead"
     nonisolated public static let defaultInstrumentOctaveShift: Int = 0
     nonisolated public static let defaultInstrumentBrightness: Double = 1.0
+    nonisolated public static let defaultMidiPadsToSamples: Bool = false
 
     // MARK: - Init
 
@@ -189,6 +197,7 @@ public final class SampleSettingsStore: ObservableObject {
         self.instrumentOctaveShift = max(-3, min(3, loaded.instrumentOctaveShift))
         self.instrumentBrightness = max(0.5, min(2.0, loaded.instrumentBrightness))
         self.hiddenPadKeys = Set(loaded.hiddenPadKeys)
+        self.midiPadsToSamples = loaded.midiPadsToSamples
     }
 
     // MARK: - Pad-effect override convenience
@@ -331,6 +340,9 @@ public final class SampleSettingsStore: ObservableObject {
         var instrumentBrightness: Double
         /// Hidden pack pads, keyed by "packId#padIdx".
         var hiddenPadKeys: [String]
+        /// Route generic MIDI pads to sample pack pads. Absent in older
+        /// blobs; decoder falls back to false (synth routing).
+        var midiPadsToSamples: Bool
 
         static let defaults = Persisted(
             storeVersion: 1,
@@ -350,7 +362,8 @@ public final class SampleSettingsStore: ObservableObject {
             instrumentPresetId: SampleSettingsStore.defaultInstrumentPresetId,
             instrumentOctaveShift: SampleSettingsStore.defaultInstrumentOctaveShift,
             instrumentBrightness: SampleSettingsStore.defaultInstrumentBrightness,
-            hiddenPadKeys: []
+            hiddenPadKeys: [],
+            midiPadsToSamples: SampleSettingsStore.defaultMidiPadsToSamples
         )
 
         // Custom decoding so pre-6d blobs that lack the newer keys
@@ -362,7 +375,7 @@ public final class SampleSettingsStore: ObservableObject {
                  vocoderGainLinear, appModeRaw, appTabRaw,
                  lastContributeModeRaw, instrumentPresetId,
                  instrumentOctaveShift, instrumentBrightness,
-                 hiddenPadKeys
+                 hiddenPadKeys, midiPadsToSamples
         }
 
         /// Decode-only key from the D-019 blob shape. Kept out of
@@ -389,7 +402,8 @@ public final class SampleSettingsStore: ObservableObject {
             instrumentPresetId: String,
             instrumentOctaveShift: Int,
             instrumentBrightness: Double,
-            hiddenPadKeys: [String] = []
+            hiddenPadKeys: [String] = [],
+            midiPadsToSamples: Bool = SampleSettingsStore.defaultMidiPadsToSamples
         ) {
             self.storeVersion = storeVersion
             self.currentPackId = currentPackId
@@ -409,6 +423,7 @@ public final class SampleSettingsStore: ObservableObject {
             self.instrumentOctaveShift = instrumentOctaveShift
             self.instrumentBrightness = instrumentBrightness
             self.hiddenPadKeys = hiddenPadKeys
+            self.midiPadsToSamples = midiPadsToSamples
         }
 
         init(from decoder: Decoder) throws {
@@ -463,6 +478,9 @@ public final class SampleSettingsStore: ObservableObject {
             self.hiddenPadKeys = try c.decodeIfPresent(
                 [String].self, forKey: .hiddenPadKeys
             ) ?? []
+            self.midiPadsToSamples = try c.decodeIfPresent(
+                Bool.self, forKey: .midiPadsToSamples
+            ) ?? SampleSettingsStore.defaultMidiPadsToSamples
         }
     }
 
@@ -498,7 +516,8 @@ public final class SampleSettingsStore: ObservableObject {
             instrumentPresetId: instrumentPresetId,
             instrumentOctaveShift: max(-3, min(3, instrumentOctaveShift)),
             instrumentBrightness: max(0.5, min(2.0, instrumentBrightness)),
-            hiddenPadKeys: Array(hiddenPadKeys).sorted()
+            hiddenPadKeys: Array(hiddenPadKeys).sorted(),
+            midiPadsToSamples: midiPadsToSamples
         )
         if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: Self.defaultsKey)

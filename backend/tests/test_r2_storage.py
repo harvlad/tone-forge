@@ -215,6 +215,109 @@ class TestPublicUrl:
         fake_client.generate_presigned_url.assert_called_once()
 
 
+class TestKeyFromUrl:
+    def test_presigned_path_style(self, r2_env):
+        url = (
+            "https://acct_test.r2.cloudflarestorage.com/tf-test/"
+            "bundles/abc/stems/drums.m4a?X-Amz-Signature=deadbeef"
+            "&X-Amz-Expires=604800"
+        )
+        assert r2_storage.key_from_url(url) == "bundles/abc/stems/drums.m4a"
+
+    def test_presigned_virtual_hosted_style(self, r2_env):
+        url = (
+            "https://tf-test.acct_test.r2.cloudflarestorage.com/"
+            "bundles/abc/stems/bass.wav?X-Amz-Signature=deadbeef"
+        )
+        assert r2_storage.key_from_url(url) == "bundles/abc/stems/bass.wav"
+
+    def test_public_host_form(self, r2_env, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("R2_PUBLIC_HOST", "cdn.example.test")
+        url = "https://cdn.example.test/bundles/abc/stems/vocals.m4a"
+        assert r2_storage.key_from_url(url) == "bundles/abc/stems/vocals.m4a"
+
+    def test_other_bucket_rejected(self, r2_env):
+        url = (
+            "https://acct_test.r2.cloudflarestorage.com/someone-elses-bucket/"
+            "bundles/abc/stems/drums.m4a?X-Amz-Signature=x"
+        )
+        assert r2_storage.key_from_url(url) is None
+
+    def test_third_party_url_rejected(self, r2_env):
+        assert r2_storage.key_from_url("https://example.com/a.wav") is None
+
+    def test_non_https_rejected(self, r2_env):
+        assert (
+            r2_storage.key_from_url(
+                "http://127.0.0.1:7777/api/serve-file?path=/tmp/x.wav"
+            )
+            is None
+        )
+        assert r2_storage.key_from_url("/tmp/drums.wav") is None
+        assert r2_storage.key_from_url(None) is None
+        assert r2_storage.key_from_url("") is None
+
+    def test_url_encoded_key_decoded(self, r2_env):
+        url = (
+            "https://acct_test.r2.cloudflarestorage.com/tf-test/"
+            "bundles/abc/stems/guitar%20center.wav?X-Amz-Signature=x"
+        )
+        assert (
+            r2_storage.key_from_url(url)
+            == "bundles/abc/stems/guitar center.wav"
+        )
+
+
+class TestRefreshUrl:
+    _STALE = (
+        "https://acct_test.r2.cloudflarestorage.com/tf-test/"
+        "bundles/abc/stems/drums.m4a?X-Amz-Signature=stale"
+        "&X-Amz-Expires=604800"
+    )
+
+    def test_represigns_our_url(self, r2_env, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("R2_PUBLIC_HOST", raising=False)
+        fake_client = MagicMock()
+        fake_client.generate_presigned_url.return_value = (
+            "https://acct_test.r2.cloudflarestorage.com/tf-test/"
+            "bundles/abc/stems/drums.m4a?X-Amz-Signature=fresh"
+        )
+        with patch.object(r2_storage, "_client", return_value=fake_client):
+            fresh = r2_storage.refresh_url(self._STALE)
+        assert "X-Amz-Signature=fresh" in fresh
+        kwargs = fake_client.generate_presigned_url.call_args.kwargs
+        assert kwargs["Params"]["Key"] == "bundles/abc/stems/drums.m4a"
+        assert kwargs["ExpiresIn"] == r2_storage._READ_PRESIGN_TTL_SEC
+
+    def test_public_host_wins_over_presign(
+        self, r2_env, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Once the custom domain lands, refresh should upgrade old
+        # presigned URLs to permanent public ones — no client change.
+        monkeypatch.setenv("R2_PUBLIC_HOST", "cdn.example.test")
+        fresh = r2_storage.refresh_url(self._STALE)
+        assert fresh == (
+            "https://cdn.example.test/bundles/abc/stems/drums.m4a"
+        )
+
+    def test_foreign_url_passes_through(self, r2_env):
+        url = "https://example.com/song.wav"
+        assert r2_storage.refresh_url(url) == url
+
+    def test_unconfigured_passes_through(self, clear_r2_env):
+        # key_from_url can't even match without env; must not crash.
+        assert r2_storage.refresh_url(self._STALE) == self._STALE
+
+    def test_presign_failure_returns_original(
+        self, r2_env, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.delenv("R2_PUBLIC_HOST", raising=False)
+        fake_client = MagicMock()
+        fake_client.generate_presigned_url.side_effect = RuntimeError("boom")
+        with patch.object(r2_storage, "_client", return_value=fake_client):
+            assert r2_storage.refresh_url(self._STALE) == self._STALE
+
+
 @pytest.mark.skipif(
     os.environ.get("TONEFORGE_R2_INTEGRATION") != "1",
     reason="opt-in R2 integration test — set TONEFORGE_R2_INTEGRATION=1",

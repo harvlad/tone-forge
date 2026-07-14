@@ -10,6 +10,7 @@
 // gets Settings without owning a toolbar.
 
 import SwiftUI
+import ToneForgeEngine
 
 struct TabScaffold<Content: View, Accessory: View>: View {
     @EnvironmentObject private var appState: AppState
@@ -17,8 +18,6 @@ struct TabScaffold<Content: View, Accessory: View>: View {
     var showsTransport: Bool
     var accessory: () -> Accessory
     var content: () -> Content
-
-    @State private var showSettings = false
 
     init(
         showsTransport: Bool = true,
@@ -34,17 +33,23 @@ struct TabScaffold<Content: View, Accessory: View>: View {
         let hasSong = appState.currentBundle != nil
 
         VStack(spacing: 8) {
-            NowPlayingHeader(
-                title: appState.currentBundle?.meta.title ?? "No song loaded",
-                artist: appState.currentBundle?.meta.artist,
-                durationSec: appState.currentBundle?.meta.durationSec,
-                keyLabel: appState.currentBundle?.meta.detectedKey,
-                tempoBpm: appState.currentBundle?.meta.tempoBpm,
-                analysisId: appState.currentBundle?.analysisId,
-                onEject: hasSong ? { appState.ejectSong() } : nil,
-                onSettings: { showSettings = true },
-                accessory: accessory
-            )
+            // No song = no Now Playing header (D-022 update: the
+            // "No song loaded" placeholder is gone; Settings moved to
+            // the Library tab).
+            if hasSong {
+                NowPlayingHeader(
+                    title: appState.currentBundle?.meta.title ?? "",
+                    artist: appState.currentBundle?.meta.artist,
+                    durationSec: appState.currentBundle?.meta.durationSec,
+                    keyLabel: appState.currentBundle?.meta.detectedKey,
+                    tempoBpm: appState.currentBundle?.meta.tempoBpm,
+                    analysisId: appState.currentBundle?.analysisId,
+                    onEject: { appState.ejectSong() },
+                    creditLine: Self.creditLine(for: appState.currentBundle?.meta),
+                    creditURL: Self.creditURL(for: appState.currentBundle?.meta),
+                    accessory: accessory
+                )
+            }
 
             content()
 
@@ -56,7 +61,37 @@ struct TabScaffold<Content: View, Accessory: View>: View {
         .padding(.bottom, 8)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(TFTheme.background.ignoresSafeArea())
-        .sheet(isPresented: $showSettings) { SettingsView() }
+    }
+
+    // MARK: - Attribution (D-024)
+
+    /// Credit line shown only for licensed songs (curated CC tracks).
+    /// Verbatim attribution when the server supplied one; otherwise a
+    /// synthesized "Artist — Title (LICENSE)". Nil hides the line.
+    static func creditLine(for meta: BundleMeta?) -> String? {
+        guard let meta, let license = meta.license, !license.isEmpty else {
+            return nil
+        }
+        if let attribution = meta.attribution, !attribution.isEmpty {
+            return attribution
+        }
+        let artistPart = meta.artist.isEmpty ? "" : "\(meta.artist) — "
+        return "\(artistPart)\(meta.title) (\(license))"
+    }
+
+    /// Link target for the credit line: source page first, license
+    /// deed as fallback. Nil renders plain text.
+    static func creditURL(for meta: BundleMeta?) -> URL? {
+        guard let meta, let license = meta.license, !license.isEmpty else {
+            return nil
+        }
+        if !meta.sourceUrl.isEmpty, let url = URL(string: meta.sourceUrl) {
+            return url
+        }
+        if let licenseUrl = meta.licenseUrl, !licenseUrl.isEmpty {
+            return URL(string: licenseUrl)
+        }
+        return nil
     }
 }
 

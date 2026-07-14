@@ -67,6 +67,12 @@
   // -------------------------------------------------------- constants
   const LOCAL_ENGINE_URL = 'http://127.0.0.1:7777';
   const ENGINE_POLL_MS = 3000;
+  // True when the page is served from the same machine that runs the
+  // engine (dev). On a hosted origin (jamn.app) the engine is the
+  // desktop Studio worker that dials OUT to this backend — presence
+  // comes from the same-origin /api/engine/status, not a localhost
+  // /health probe (which HTTPS pages can't make anyway).
+  const IS_LOCAL_HOST = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
   // Dev/tester escape hatch. When the page is loaded with ?debug=1,
   // developer-only affordances turn on: today that's a small strip
@@ -1192,11 +1198,12 @@
   // renders, and the pre-Phase-6 behaviour (no install affordance,
   // status pill only) prevails.
   //
-  // GitHub Releases tag for the Connect.app DMG. Pinned to /latest so
-  // users always get the most recent build that build_release.sh
-  // produced; never hard-codes a version JAM might out-grow.
-  const CONNECT_INSTALL_URL =
-    'https://github.com/harvlad/tone-forge/releases/latest';
+  // Install link for the desktop helper. Points at the backend's
+  // presigned-R2 redirect for the ToneForge Studio DMG (the tray app
+  // that supervises the Connect helper) — relative so it works on
+  // jamn.app and local dev alike. Previously pointed at GitHub
+  // Releases, which 404s for the public.
+  const CONNECT_INSTALL_URL = '/api/downloads/studio-app';
 
   async function probeConnectInstalled() {
     const cb = state.connectBridge;
@@ -1753,6 +1760,179 @@
     enterBandRoom();
   });
 
+  // ---------------------------------------------------- file upload form
+  // Hosted path: POST the file to the backend, which queues an engine
+  // job; the desktop GPU worker claims it and progress arrives on the
+  // job SSE feed (followJob). Works identically in local dev.
+  $('upload-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (state.engineStatus !== 'on') return;
+    const errEl = $('intake-error');
+    const showErr = (msg) => {
+      if (errEl) { errEl.textContent = msg; errEl.hidden = false; }
+      else alert(msg);
+    };
+    const fileInput = $('upload-file');
+    const file = fileInput && fileInput.files && fileInput.files[0];
+    if (!file) { showErr('Choose an audio file first.'); return; }
+    const attest = $('upload-attest');
+    if (!attest || !attest.checked) {
+      showErr('Please confirm you own or control the rights to this audio.');
+      return;
+    }
+    if (errEl) errEl.hidden = true;
+    const btn = $('upload-submit');
+    if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      form.append('attested', 'true');
+      form.append('extract_midi', 'true');
+      const resp = await fetch('/api/analyze-upload', {
+        method: 'POST',
+        body: form,
+        // Stamp the analysis with this device so a later sign-in claims it.
+        headers: window.tfAccount ? window.tfAccount.deviceHeaders() : {},
+      });
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => '');
+        throw new Error(`HTTP ${resp.status}${txt ? ': ' + txt : ''}`);
+      }
+      const info = await resp.json();
+      state.sourceUrl = null;
+      state.userInstrument = $('intake-instrument').value;
+      resetTtfj();
+      markTtfj('submit', { upload: file.name });
+      state.pendingJobId = info.job_id;
+      enterBandRoom();
+      $('bandroom-title').textContent = file.name.replace(/\.[^.]+$/, '');
+      $('bandroom-status').textContent = info.engine_online
+        ? 'Queued for your GPU engine…'
+        : 'Waiting for your GPU engine to come online…';
+    } catch (err) {
+      console.error('[jam] upload failed:', err);
+      showErr('Upload failed: ' + (err.message || err));
+    } finally {
+      if (btn) {
+        btn.textContent = 'Start Jam';
+        btn.disabled = state.engineStatus !== 'on';
+      }
+    }
+  });
+
+  // ---------------------------------------------- demo tracks (D-024)
+  // Curated CC0/CC-BY catalog. The server carries the license metadata
+  // and queues a pre-attested engine job on import, so everything after
+  // the POST is identical to the file-upload path: pendingJobId →
+  // enterBandRoom → followJob → /jam/:id redirect (which then renders
+  // the credit line from the bundle's attribution sidecar).
+  (function wireCcTracks() {
+    const modal = $('cc-tracks-modal');
+    const openBtn = $('cc-tracks-open');
+    const closeBtn = $('cc-tracks-close');
+    const list = $('cc-tracks-list');
+    if (!modal || !openBtn || !list) return;
+
+    let loaded = false;
+
+    function hint(text) {
+      const p = document.createElement('p');
+      p.className = 'account-modal-hint';
+      p.textContent = text;
+      return p;
+    }
+
+    function renderTracks(tracks) {
+      list.innerHTML = '';
+      if (!tracks.length) {
+        list.appendChild(hint('No demo tracks available yet.'));
+        return;
+      }
+      for (const track of tracks) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'cc-track-row';
+        const main = document.createElement('div');
+        main.className = 'cc-track-main';
+        const titleEl = document.createElement('div');
+        titleEl.className = 'cc-track-title';
+        titleEl.textContent = track.title || track.id;
+        const sub = document.createElement('div');
+        sub.className = 'cc-track-sub';
+        sub.textContent = [track.artist, track.description].filter(Boolean).join(' · ');
+        main.appendChild(titleEl);
+        main.appendChild(sub);
+        const badge = document.createElement('span');
+        badge.className = 'cc-track-license';
+        badge.textContent = track.license || '';
+        row.appendChild(main);
+        row.appendChild(badge);
+        row.addEventListener('click', () => importTrack(track, row));
+        list.appendChild(row);
+      }
+    }
+
+    async function importTrack(track, row) {
+      row.disabled = true;
+      try {
+        const resp = await fetch(`/api/cc-tracks/${encodeURIComponent(track.id)}/import`, {
+          method: 'POST',
+          // Stamp the analysis with this device so a later sign-in claims it.
+          headers: window.tfAccount ? window.tfAccount.deviceHeaders() : {},
+        });
+        if (!resp.ok) {
+          const txt = await resp.text().catch(() => '');
+          throw new Error(`HTTP ${resp.status}${txt ? ': ' + txt : ''}`);
+        }
+        const info = await resp.json();
+        modal.style.display = 'none';
+        state.sourceUrl = null;
+        state.userInstrument = $('intake-instrument').value;
+        resetTtfj();
+        markTtfj('submit', { cc_track: track.id });
+        state.pendingJobId = info.job_id;
+        enterBandRoom();
+        $('bandroom-title').textContent = track.title || 'Demo track';
+        $('bandroom-status').textContent = info.engine_online
+          ? 'Queued for the analysis engine…'
+          : 'Waiting for the analysis engine to come online…';
+      } catch (err) {
+        console.error('[jam] demo-track import failed:', err);
+        row.disabled = false;
+        list.insertBefore(hint('Import failed — try again in a moment.'), list.firstChild);
+      }
+    }
+
+    openBtn.addEventListener('click', async () => {
+      modal.style.display = 'flex';
+      if (loaded) return;
+      try {
+        const resp = await fetch('/api/cc-tracks');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        loaded = true;
+        renderTracks(Array.isArray(data.tracks) ? data.tracks : []);
+      } catch (err) {
+        console.error('[jam] cc-tracks catalog failed:', err);
+        list.innerHTML = '';
+        list.appendChild(hint('Could not load demo tracks.'));
+      }
+    });
+    if (closeBtn) closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+    modal.addEventListener('click', (ev) => {
+      if (ev.target === modal) modal.style.display = 'none';
+    });
+  })();
+
+  // On the hosted origin the YouTube-URL path is unavailable (URL
+  // ingest is disabled in production and the deep pipeline there would
+  // target a server-local engine that doesn't exist) — upload is the
+  // way in, so hide the URL row entirely.
+  if (!IS_LOCAL_HOST) {
+    const _urlForm = $('intake-form');
+    if (_urlForm) _urlForm.style.display = 'none';
+  }
+
   // Reject URLs that yt-dlp can't extract from. Returns a user-facing
   // error string when the URL is invalid, or null when it's good.
   function invalidVideoUrl(url) {
@@ -1804,16 +1984,19 @@
 
     const startBtn = $('engine-start-btn');
     const stopBtn = $('engine-stop-btn');
+    const downloadLink = $('engine-download-link');
     if (status === 'off') {
       startBtn.style.display = '';
       startBtn.disabled = false;
       startBtn.textContent = 'Start engine';
       if (stopBtn) stopBtn.style.display = 'none';
+      if (downloadLink) downloadLink.style.display = '';
     } else if (status === 'starting') {
       startBtn.style.display = '';
       startBtn.disabled = true;
       startBtn.textContent = 'Starting…';
       if (stopBtn) stopBtn.style.display = 'none';
+      if (downloadLink) downloadLink.style.display = 'none';
     } else if (status === 'on') {
       startBtn.style.display = 'none';
       if (stopBtn) {
@@ -1821,17 +2004,51 @@
         stopBtn.disabled = false;
         stopBtn.textContent = 'Stop engine';
       }
+      if (downloadLink) downloadLink.style.display = 'none';
     } else {
       // 'unknown' or anything else — hide both, banner copy carries the state.
       startBtn.style.display = 'none';
       if (stopBtn) stopBtn.style.display = 'none';
+      if (downloadLink) downloadLink.style.display = '';
     }
 
-    // Gate the submit button: only enabled when the engine is reachable.
+    if (!IS_LOCAL_HOST) {
+      // Hosted page: the engine runs on the *user's* machine as the
+      // Studio worker — this server can't start or stop it. Keep only
+      // the download link (until the worker is online).
+      startBtn.style.display = 'none';
+      if (stopBtn) stopBtn.style.display = 'none';
+      if (downloadLink) downloadLink.style.display = status === 'on' ? 'none' : '';
+    }
+
+    // Gate the submit buttons: only enabled when the engine is reachable.
     $('intake-submit').disabled = status !== 'on';
+    const uploadBtn = $('upload-submit');
+    if (uploadBtn) uploadBtn.disabled = status !== 'on';
   }
 
   async function checkEngine() {
+    if (!IS_LOCAL_HOST) {
+      // Same-origin status endpoint. The remote worker's claim
+      // long-poll doubles as its heartbeat, so "online" means a worker
+      // asked for work within the last ~40s.
+      try {
+        const resp = await fetch('/api/engine/status', { cache: 'no-store' });
+        const info = resp.ok ? await resp.json() : { online: false };
+        if (info.online) {
+          if (state.engineStatus !== 'on') {
+            setEngineState('on', 'Local Engine Ready',
+              'Audio never leaves your machine.');
+          }
+          return true;
+        }
+      } catch (_err) { /* treat as offline */ }
+      if (state.engineStatus !== 'off') {
+        setEngineState('off', 'Local Engine offline',
+          'Start the engine app to analyze on your machine.');
+      }
+      return false;
+    }
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 1500);
@@ -1843,12 +2060,31 @@
       clearTimeout(t);
       if (resp.ok) {
         if (state.engineStatus !== 'on') {
-          setEngineState('on', 'Local engine ready', 'Stems will be separated on this machine.');
+          setEngineState('on', 'Local Engine Ready', 'Audio never leaves your machine.');
         }
         return true;
       }
       throw new Error(`HTTP ${resp.status}`);
     } catch (_err) {
+      // Direct localhost probe failed. Over HTTPS (e.g. jamn.app) this is
+      // expected: the browser blocks an http://127.0.0.1 fetch from an
+      // https page as mixed content, so /health can never succeed there.
+      // Fall back to the Connect bridge — if the Connect.app helper is
+      // paired on our WSS channel, the local engine is reachable through
+      // it (analysis submits go via the same-origin backend, not this
+      // localhost URL), so report ready. Open the bridge here so the
+      // signal is populated even without a prior push action.
+      ensureConnectBridge();
+      if (_isConnectPaired()) {
+        if (state.engineStatus !== 'on') {
+          setEngineState(
+            'on',
+            'Local engine ready',
+            'Connected through the Connect app on this machine.',
+          );
+        }
+        return true;
+      }
       // If we're mid-start, keep that messaging.
       if (state.engineStartInFlight) return false;
       if (state.engineStatus !== 'off') {
@@ -2100,7 +2336,59 @@
       el.querySelector('.slot-state').textContent = 'Waiting';
     });
     showView('bandroom');
-    startSseAnalysis();
+    if (state.pendingJobId) {
+      const jobId = state.pendingJobId;
+      state.pendingJobId = null;
+      followJob(jobId);
+    } else {
+      startSseAnalysis();
+    }
+  }
+
+  // ---------------------------------------------- engine job progress
+  // Upload analyses run as backend jobs executed by the desktop GPU
+  // worker. /api/job/{id}/events is a real (GET) SSE endpoint that
+  // replays the current snapshot on connect and streams every change —
+  // reconnects are free, so EventSource's auto-retry is enough.
+  function followJob(jobId) {
+    if (state.eventSource) {
+      try { state.eventSource.close(); } catch (_) {}
+    }
+    const es = new EventSource(`/api/job/${encodeURIComponent(jobId)}/events`);
+    state.eventSource = es;
+    es.onmessage = (ev) => {
+      let job = null;
+      try { job = JSON.parse(ev.data); } catch (_) { return; }
+      if (!job) return;
+      if (typeof job.percent === 'number') {
+        const pct = Math.min(100, Math.max(2, Math.round(job.percent)));
+        $('bandroom-bar').style.width = pct + '%';
+      }
+      if (job.message) $('bandroom-status').textContent = job.message;
+      if (job.status === 'done') {
+        es.close();
+        state.eventSource = null;
+        markTtfj('result_received');
+        if (job.history_id) {
+          // The deep-link loader rebuilds the full band room (stems,
+          // chords, sections) from the persisted history bundle.
+          window.location.href = `/jam/${job.history_id}`;
+        } else {
+          $('bandroom-status').textContent = 'Analysis finished but no result was saved.';
+        }
+      } else if (job.status === 'error') {
+        es.close();
+        state.eventSource = null;
+        $('bandroom-status').textContent = 'Error: ' + (job.error || 'analysis failed');
+      }
+    };
+    es.onerror = () => {
+      // EventSource retries on its own; only surface a hint so a dead
+      // server isn't a silent stall.
+      if (es.readyState === EventSource.CLOSED) {
+        $('bandroom-status').textContent = 'Lost connection to the server — retrying…';
+      }
+    };
   }
 
   // ---------------------------------------------- SSE analysis
@@ -2122,7 +2410,11 @@
 
     fetch('/api/analyze-url-stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: Object.assign(
+        { 'Content-Type': 'application/json' },
+        // Stamp the analysis with this device so a later sign-in claims it.
+        window.tfAccount ? window.tfAccount.deviceHeaders() : {}
+      ),
       body: JSON.stringify(body),
       signal: controller.signal,
     }).then(async (resp) => {
@@ -2420,6 +2712,37 @@
         npSource.hidden = true;
       }
     }
+    // Credit line (D-024) — shown only when the session carries a
+    // license (curated CC track or tagged CC upload). Text is the
+    // verbatim attribution when present, else a canonical
+    // "artist — title (license)" line. Links to the source page.
+    const npCredit = $('np-credit');
+    if (npCredit) {
+      const meta = result.attribution_meta
+        || (result.license ? {
+          title: result.name || title,
+          artist: result.artist || '',
+          license: result.license || '',
+          license_url: result.license_url || '',
+          source_url: result.source_url || '',
+          attribution: result.attribution || '',
+        } : null);
+      if (meta && meta.license) {
+        npCredit.textContent = meta.attribution
+          || `${meta.artist ? meta.artist + ' — ' : ''}${meta.title || title} (${meta.license})`;
+        const creditHref = meta.source_url || meta.license_url || '';
+        if (/^https?:\/\//i.test(creditHref)) {
+          npCredit.href = creditHref;
+        } else {
+          npCredit.removeAttribute('href');
+        }
+        npCredit.hidden = false;
+      } else {
+        npCredit.textContent = '';
+        npCredit.removeAttribute('href');
+        npCredit.hidden = true;
+      }
+    }
 
     // Parse the key string into a pitch-class set for intonation scoring.
     state.songKey = parseDetectedKey(key);
@@ -2503,6 +2826,12 @@
     const _snappedByStem = (result && result.chords_beat_snapped_by_stem) || {};
     state.rawChordsByStem = {};
     Object.keys(_fixedByStem).forEach((stemName) => {
+      // Non-harmonic lanes: old bundles carry chord ribbons fitted to
+      // the vocals (monophonic melody) and drums (unpitched) stems —
+      // they trace the tune / hallucinate rather than show harmony.
+      // The engine no longer emits them; hide them from old bundles
+      // too so the lane picker only offers truthful lanes.
+      if (stemName === 'vocals' || stemName === 'drums') return;
       state.rawChordsByStem[stemName] = {
         fixed: _fixedByStem[stemName] || [],
         snapped: _snappedByStem[stemName] || null,
@@ -3050,6 +3379,24 @@
   // separator (or pan-split) produced a sparse output for what
   // ought to be a richer source.
   const _LEAD_PICKER_MIN_DENSITY = 0.5;
+  // Melody/accompaniment role filter. The engine tags each note on
+  // polyphonic stems with role: 'melody' | 'harmony' (onset-cluster +
+  // register-gate split, see tone_forge/midi/melody_split.py) so the
+  // lead lane can show the tune instead of chord tones + arpeggio
+  // filler interleaved. Older bundles and monophonic stems carry no
+  // role — those pass through unchanged. If filtering would empty the
+  // lane entirely (all-harmony stem), fall back to the full list so
+  // the lane never goes blank on a valid stem.
+  function _melodyOnly(notes) {
+    if (!Array.isArray(notes) || notes.length === 0) return notes;
+    let tagged = false;
+    const melody = [];
+    for (const n of notes) {
+      if (n && n.role) tagged = true;
+      if (!n || !n.role || n.role === 'melody') melody.push(n);
+    }
+    return (tagged && melody.length > 0) ? melody : notes;
+  }
   function _pickLeadMidiNotes(r) {
     if (!r) return [];
     const stems = r.midi_stems;
@@ -3072,11 +3419,11 @@
         if (!stem) continue;
         let notes = null;
         if (Array.isArray(stem.notes) && stem.notes.length > 0) {
-          notes = stem.notes;
+          notes = _melodyOnly(stem.notes);
         } else if (stem.content && Array.isArray(stem.content.notes) && stem.content.notes.length > 0) {
           // Some per-stem extractor outputs nest notes inside ``content``
           // (PrettyMIDI dict shape from tone_forge_api.py:2055).
-          notes = stem.content.notes;
+          notes = _melodyOnly(stem.content.notes);
         }
         picked.push(`${key}=${stem.note_count ?? (notes ? notes.length : 0)}`);
         if (notes) {
@@ -5508,6 +5855,11 @@
       // renderToneCard can re-render the SUGGESTED chain after refresh.
       tone,
       preset_matches: presetMatches,
+      // Attribution (D-024) — sidecar from the history entry; drives
+      // the #np-credit line. Empty license = user-owned, credit hidden.
+      attribution_meta: bundle.legacy_attribution && typeof bundle.legacy_attribution === 'object'
+        ? bundle.legacy_attribution
+        : null,
     };
   }
 

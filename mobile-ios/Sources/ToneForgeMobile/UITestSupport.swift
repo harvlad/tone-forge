@@ -13,8 +13,17 @@
 //       baked WAV and a stubbed analyze transport — no network, no
 //       Music-library permission dialogs.
 //
-// Neither flag does anything unless explicitly passed at launch, and
-// the analyze stub is only reachable through them.
+//   -uitest-reset-account
+//       Clears the persisted account (profile + Keychain token)
+//       before the UI builds. Handled in ToneForgeScene.init.
+//
+//   -uitest-stub-account
+//       AccountSection swaps the real SIWA button for a plain button
+//       (same accessibility id) that drives AccountStore with a
+//       stubbed auth transport — no Apple ID prompt, no network.
+//
+// No flag does anything unless explicitly passed at launch, and the
+// stubs are only reachable through them.
 
 import Foundation
 import ToneForgeEngine
@@ -27,6 +36,20 @@ enum UITestSupport {
 
     static var stubImportEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains("-uitest-stub-import")
+    }
+
+    static var resetAccountRequested: Bool {
+        ProcessInfo.processInfo.arguments.contains("-uitest-reset-account")
+    }
+
+    static var stubAccountEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("-uitest-stub-account")
+    }
+
+    /// Transport for AccountStore: the real backend client normally,
+    /// the offline stub under UI test.
+    static func makeAuthClient() -> any AuthProviding {
+        stubAccountEnabled ? StubAuthClient() : BackendAuthClient()
     }
 
     /// Transport for LibraryView's ImportCoordinator: the real job
@@ -83,7 +106,8 @@ enum UITestSupport {
 /// dismiss) terminates the stream via task cancellation.
 struct StubJobClient: JobSubmitting {
     func submit(
-        baseURL: URL, wavFileURL: URL, filename: String
+        baseURL: URL, wavFileURL: URL, filename: String,
+        extraFields: [(name: String, value: String)]
     ) async throws -> String {
         "uitest-stub-job"
     }
@@ -95,5 +119,33 @@ struct StubJobClient: JobSubmitting {
             continuation.yield(.progress(message: "Analysing (stub)…", percent: 42))
             // Intentionally never finished — see doc comment.
         }
+    }
+}
+
+/// Auth transport for the account UI tests: instant sign-in as a
+/// fixed user, claim reports 2 synced analyses, logout succeeds.
+struct StubAuthClient: AuthProviding {
+    static let user = AuthUser(
+        id: "uitest-user", email: "uitest@example.com", displayName: "UI Test"
+    )
+
+    func signInWithApple(
+        baseURL: URL,
+        identityToken: String,
+        nonce: String?,
+        deviceId: String?,
+        fullName: String?
+    ) async throws -> AuthSession {
+        AuthSession(token: "uitest-token", user: Self.user)
+    }
+
+    func session(baseURL: URL, token: String) async throws -> AuthUser? {
+        token == "uitest-token" ? Self.user : nil
+    }
+
+    func logout(baseURL: URL, token: String) async throws {}
+
+    func claim(baseURL: URL, token: String, deviceId: String) async throws -> Int {
+        2
     }
 }

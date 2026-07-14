@@ -43,6 +43,14 @@ Thumbs.db
 htmlcov/
 .tox/
 .nox/
+*.xcresult/
+
+# Swift Package Manager / Xcode
+.build/
+.build-sim/
+.build-xcode/
+.swiftpm/
+DerivedData/
 
 # Logs
 *.log
@@ -102,3 +110,6 @@ dist/
 .env
 .env.local
 .env.*.local
+
+# Benchmark ground-truth datasets (large, licensed separately)
+backend/bench/data/

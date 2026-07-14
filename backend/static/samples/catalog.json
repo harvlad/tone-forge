@@ -24,7 +24,9 @@
       "coverUrl": null,
       "previewUrl": null,
       "description": "Detuned pads, shimmer, noise washes for ambient contribution layers.",
-      "padCount": 8
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
     },
     {
       "packId": "lo-fi-hiphop",
@@ -49,7 +51,279 @@
       "coverUrl": null,
       "previewUrl": null,
       "description": "Dusty drums, tape bass, Rhodes stabs, vinyl atmosphere.",
-      "padCount": 8
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "techno-warehouse",
+      "name": "Techno Warehouse",
+      "family": "percussion",
+      "paletteHint": "steel",
+      "tags": [
+        "techno",
+        "peaktime",
+        "industrial"
+      ],
+      "genres": [
+        "techno",
+        "industrial"
+      ],
+      "moods": [
+        "driving",
+        "dark",
+        "hypnotic"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Punchy peak-time techno drums, sub stabs and a warehouse riser.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "trap-808",
+      "name": "Trap 808",
+      "family": "mixed",
+      "paletteHint": "crimson",
+      "tags": [
+        "trap",
+        "808",
+        "hiphop"
+      ],
+      "genres": [
+        "trap",
+        "hip hop"
+      ],
+      "moods": [
+        "hard",
+        "moody",
+        "bouncy"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Booming 808s, snappy snares, hat rolls and a siren.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "house-classic",
+      "name": "Classic House",
+      "family": "mixed",
+      "paletteHint": "gold",
+      "tags": [
+        "house",
+        "classic",
+        "piano"
+      ],
+      "genres": [
+        "house",
+        "deep house"
+      ],
+      "moods": [
+        "uplifting",
+        "groovy",
+        "warm"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Four-on-the-floor kit, piano stabs, organ bass and a sweep.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "ambient-drift",
+      "name": "Ambient Drift",
+      "family": "textures",
+      "paletteHint": "teal",
+      "tags": [
+        "ambient",
+        "drone",
+        "cinematic"
+      ],
+      "genres": [
+        "ambient",
+        "drone"
+      ],
+      "moods": [
+        "calm",
+        "spacious",
+        "dreamy"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Slow pads, glass bells, wind noise and evolving drones.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "synthwave-neon",
+      "name": "Synthwave Neon",
+      "family": "pads",
+      "paletteHint": "magenta",
+      "tags": [
+        "synthwave",
+        "retro",
+        "80s"
+      ],
+      "genres": [
+        "synthwave",
+        "retrowave"
+      ],
+      "moods": [
+        "nostalgic",
+        "neon",
+        "driving"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Analog pads, gated snare, arp plucks and a laser zap.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "jungle-breaks",
+      "name": "Jungle Breaks",
+      "family": "percussion",
+      "paletteHint": "lime",
+      "tags": [
+        "jungle",
+        "dnb",
+        "breakbeat"
+      ],
+      "genres": [
+        "jungle",
+        "drum and bass"
+      ],
+      "moods": [
+        "frantic",
+        "rolling",
+        "raw"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Chopped break hits, Reese bass, sub and an air horn.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "dub-techno",
+      "name": "Dub Techno",
+      "family": "textures",
+      "paletteHint": "slate",
+      "tags": [
+        "dub",
+        "techno",
+        "chord"
+      ],
+      "genres": [
+        "dub techno",
+        "minimal"
+      ],
+      "moods": [
+        "deep",
+        "foggy",
+        "hypnotic"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Muffled kicks, dub chord stabs, hiss and a wide pad.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "future-bass",
+      "name": "Future Bass",
+      "family": "mixed",
+      "paletteHint": "violet",
+      "tags": [
+        "future",
+        "bass",
+        "edm"
+      ],
+      "genres": [
+        "future bass",
+        "edm"
+      ],
+      "moods": [
+        "euphoric",
+        "bright",
+        "energetic"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Supersaw stabs, punchy kit, vox chops and a big riser.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "cinematic-tension",
+      "name": "Cinematic Tension",
+      "family": "fx",
+      "paletteHint": "indigo",
+      "tags": [
+        "cinematic",
+        "trailer",
+        "score"
+      ],
+      "genres": [
+        "cinematic",
+        "score"
+      ],
+      "moods": [
+        "tense",
+        "epic",
+        "dark"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Braams, sub drops, pulses, impacts and whooshes for scoring.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+    },
+    {
+      "packId": "afrobeat-percussion",
+      "name": "Afrobeat Percussion",
+      "family": "percussion",
+      "paletteHint": "orange",
+      "tags": [
+        "afrobeat",
+        "percussion",
+        "world"
+      ],
+      "genres": [
+        "afrobeat",
+        "world"
+      ],
+      "moods": [
+        "lively",
+        "warm",
+        "organic"
+      ],
+      "sizeBytes": null,
+      "coverUrl": null,
+      "previewUrl": null,
+      "description": "Congas, shakers, bells, claves and a woody log drum.",
+      "padCount": 8,
+      "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+      "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
     }
   ]
 }

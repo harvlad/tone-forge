@@ -125,32 +125,47 @@ class CoreMLMIDIExtractor:
 
         return waveform, AUDIO_SAMPLE_RATE
 
-    def _run_inference_chunked(self, waveform: torch.Tensor) -> Tuple[np.ndarray, np.ndarray]:
-        """Run CoreML inference on audio chunks."""
-        CHUNK_SIZE = 43844  # Model's expected input size
-        OVERLAP = 30 * 256  # 30 frames overlap for continuity
-        HOP = CHUNK_SIZE - OVERLAP
+    # Chunking geometry, shared by inference and decode.
+    CHUNK_SIZE = 43844  # Model's expected input size
+    OVERLAP = 30 * 256  # 30 frames overlap for continuity
+    HOP = CHUNK_SIZE - OVERLAP
 
+    def _run_inference_chunked(
+        self, waveform: torch.Tensor
+    ) -> List[Tuple[np.ndarray, np.ndarray, float]]:
+        """Run CoreML inference on overlapping audio chunks.
+
+        Returns one ``(note_pred, onset_pred, offset_seconds)`` tuple
+        per chunk, where ``offset_seconds`` is the chunk's exact start
+        position in the source audio.
+
+        The previous implementation concatenated the full frame output
+        of every chunk into one timeline. Chunks advance by ``HOP``
+        samples but each emits frames covering ``CHUNK_SIZE`` samples,
+        so concatenation stretched all note times by
+        CHUNK_SIZE / HOP = 1.2124x and duplicated the overlap regions.
+        Measured on a 60s stem: last decoded onset landed at 72.5s and
+        strict onset F1 vs ground truth was 0.05. Decoding each chunk
+        against its true offset removes both the stretch and the
+        duplicates.
+        """
         audio = waveform.squeeze(0).cpu().numpy()  # (samples,)
         n_samples = len(audio)
 
-        all_notes = []
-        all_onsets = []
-
-        # Process in overlapping chunks
-        for start in range(0, n_samples, HOP):
-            end = start + CHUNK_SIZE
+        chunks: List[Tuple[np.ndarray, np.ndarray, float]] = []
+        for start in range(0, n_samples, self.HOP):
+            end = start + self.CHUNK_SIZE
 
             # Extract chunk, pad if needed
             if end <= n_samples:
                 chunk = audio[start:end]
             else:
                 # Pad last chunk
-                chunk = np.zeros(CHUNK_SIZE, dtype=np.float32)
+                chunk = np.zeros(self.CHUNK_SIZE, dtype=np.float32)
                 chunk[:n_samples - start] = audio[start:]
 
             # Reshape for CoreML: (1, samples, 1)
-            chunk = chunk.reshape(1, CHUNK_SIZE, 1).astype(np.float32)
+            chunk = chunk.reshape(1, self.CHUNK_SIZE, 1).astype(np.float32)
 
             # Run inference
             predictions = self.model.predict({"input_2": chunk})
@@ -158,28 +173,24 @@ class CoreMLMIDIExtractor:
             note_pred = predictions["Identity"]  # (1, frames, pitches)
             onset_pred = predictions["Identity_1"]
 
-            all_notes.append(note_pred)
-            all_onsets.append(onset_pred)
+            chunks.append((note_pred, onset_pred, start / AUDIO_SAMPLE_RATE))
 
-        # Concatenate chunks (handle overlap by taking max)
-        if len(all_notes) == 1:
-            return all_notes[0], all_onsets[0]
-
-        # Simple concatenation for now (overlap handling can be improved)
-        notes_concat = np.concatenate([n.squeeze(0) for n in all_notes], axis=0)
-        onsets_concat = np.concatenate([o.squeeze(0) for o in all_onsets], axis=0)
-
-        return notes_concat[np.newaxis, ...], onsets_concat[np.newaxis, ...]
+        return chunks
 
     def _decode_notes(
         self,
         note_pred: np.ndarray,
         onset_pred: np.ndarray,
-        onset_threshold: float = 0.5,
-        frame_threshold: float = 0.3,
-        min_note_len: int = 5,
+        onset_threshold: float = 0.3,
+        frame_threshold: float = 0.2,
+        min_note_len: int = 3,
+        time_offset_s: float = 0.0,
     ) -> List[ExtractedNote]:
-        """Decode neural network outputs to MIDI notes on GPU."""
+        """Decode neural network outputs to MIDI notes on GPU.
+
+        ``time_offset_s`` shifts all note times by the chunk's start
+        position in the source audio (chunked inference).
+        """
         # Note pred may have 264 values (3x88 pitches), onset has 88
         # Use onset shape for pitch dimension
         onsets_t = torch.from_numpy(onset_pred).squeeze().to(DEVICE)  # (time, 88)
@@ -226,6 +237,30 @@ class CoreMLMIDIExtractor:
                     note_start = frame_idx
                     note_confidence = notes_np[frame_idx, pitch_idx]
                     note_frames = 1
+                elif (
+                    is_onset and in_note and frame_idx > note_start
+                    and not onset_mask_np[frame_idx - 1, pitch_idx]
+                ):
+                    # Rising-edge re-onset while a note is active: the
+                    # instrument re-struck the same pitch. Close the
+                    # current note and start a new one, otherwise
+                    # repeated notes (arpeggios, 8th-note comping)
+                    # collapse into one long note and recall craters.
+                    # Rising-edge check keeps a single strike whose
+                    # onset activation spans several frames from
+                    # splitting repeatedly.
+                    if note_frames >= min_note_len:
+                        avg_confidence = note_confidence / note_frames
+                        notes.append(ExtractedNote(
+                            pitch=pitch,
+                            start_time=time_offset_s + note_start / ANNOTATIONS_FPS,
+                            end_time=time_offset_s + frame_idx / ANNOTATIONS_FPS,
+                            velocity=int(40 + avg_confidence * 80),
+                            confidence=avg_confidence,
+                        ))
+                    note_start = frame_idx
+                    note_confidence = notes_np[frame_idx, pitch_idx]
+                    note_frames = 1
                 elif is_note and in_note:
                     # Continue note
                     note_confidence += notes_np[frame_idx, pitch_idx]
@@ -236,8 +271,8 @@ class CoreMLMIDIExtractor:
                         avg_confidence = note_confidence / note_frames
                         notes.append(ExtractedNote(
                             pitch=pitch,
-                            start_time=note_start / ANNOTATIONS_FPS,
-                            end_time=frame_idx / ANNOTATIONS_FPS,
+                            start_time=time_offset_s + note_start / ANNOTATIONS_FPS,
+                            end_time=time_offset_s + frame_idx / ANNOTATIONS_FPS,
                             velocity=int(40 + avg_confidence * 80),
                             confidence=avg_confidence,
                         ))
@@ -248,8 +283,8 @@ class CoreMLMIDIExtractor:
                 avg_confidence = note_confidence / note_frames
                 notes.append(ExtractedNote(
                     pitch=pitch,
-                    start_time=note_start / ANNOTATIONS_FPS,
-                    end_time=n_frames / ANNOTATIONS_FPS,
+                    start_time=time_offset_s + note_start / ANNOTATIONS_FPS,
+                    end_time=time_offset_s + n_frames / ANNOTATIONS_FPS,
                     velocity=int(40 + avg_confidence * 80),
                     confidence=avg_confidence,
                 ))
@@ -262,12 +297,19 @@ class CoreMLMIDIExtractor:
     def extract(
         self,
         audio_path: str,
-        onset_threshold: float = 0.5,
-        frame_threshold: float = 0.3,
-        min_note_len: int = 5,
+        onset_threshold: float = 0.3,
+        frame_threshold: float = 0.2,
+        min_note_len: int = 3,
     ) -> Tuple[List[ExtractedNote], float]:
         """
         Extract MIDI notes from audio using GPU acceleration.
+
+        Defaults tuned on Slakh (BabySlakh) polyphonic "other" stems
+        against per-stem MIDI ground truth (mir_eval, onset 50ms /
+        pitch 50c): sweeping onset x frame x min_len showed the old
+        0.5/0.3/5 defaults left most notes undetected (onset F1 0.271 /
+        0.338 on Track00001/00003) while 0.3/0.2/3 scored 0.323 /
+        0.492 with full-note F1 also improving.
 
         Args:
             audio_path: Path to audio file
@@ -287,16 +329,58 @@ class CoreMLMIDIExtractor:
 
         # 2. Run chunked inference on GPU/ANE
         logger.info(f"Running CoreML inference on {int(duration / 2) + 1} chunks...")
-        note_pred, onset_pred = self._run_inference_chunked(waveform)
-        logger.info(f"Inference complete on GPU/ANE: {note_pred.shape}")
+        chunks = self._run_inference_chunked(waveform)
+        logger.info(f"Inference complete on GPU/ANE: {len(chunks)} chunks")
 
-        # 4. Decode notes
-        notes = self._decode_notes(
-            note_pred, onset_pred,
-            onset_threshold=onset_threshold,
-            frame_threshold=frame_threshold,
-            min_note_len=min_note_len,
-        )
+        # 3. Decode each chunk at its true audio offset, then keep each
+        # note only from the chunk that "owns" its onset. Chunks overlap
+        # by OVERLAP samples, so an onset near a boundary is decoded by
+        # two chunks; ownership windows split the timeline at the middle
+        # of each overlap region so exactly one copy survives.
+        half_overlap_s = (self.OVERLAP / 2) / AUDIO_SAMPLE_RATE
+        hop_s = self.HOP / AUDIO_SAMPLE_RATE
+        tagged: List[Tuple[int, ExtractedNote]] = []
+        for i, (note_pred, onset_pred, offset_s) in enumerate(chunks):
+            chunk_notes = self._decode_notes(
+                note_pred, onset_pred,
+                onset_threshold=onset_threshold,
+                frame_threshold=frame_threshold,
+                min_note_len=min_note_len,
+                time_offset_s=offset_s,
+            )
+            own_start = 0.0 if i == 0 else offset_s + half_overlap_s
+            own_end = (
+                float("inf") if i == len(chunks) - 1
+                else offset_s + hop_s + half_overlap_s
+            )
+            tagged.extend(
+                (i, n) for n in chunk_notes
+                if own_start <= n.start_time < own_end
+            )
+
+        # 4. Merge notes split across chunk boundaries: a sustained note
+        # decoded as (tail in chunk k) + (head in chunk k+1) shows up as
+        # two same-pitch notes with a tiny gap at the boundary. Only
+        # merge across DIFFERENT chunks — within one chunk a small gap
+        # between same-pitch notes is a real re-struck note (the decoder
+        # deliberately splits at re-onsets) and must survive.
+        tagged.sort(key=lambda t: (t[1].pitch, t[1].start_time))
+        merged: List[Tuple[int, ExtractedNote]] = []
+        for chunk_idx, n in tagged:
+            prev = merged[-1] if merged else None
+            if (
+                prev is not None
+                and prev[0] != chunk_idx
+                and prev[1].pitch == n.pitch
+                and n.start_time - prev[1].end_time <= 0.05
+            ):
+                prev[1].end_time = max(prev[1].end_time, n.end_time)
+                prev[1].confidence = max(prev[1].confidence, n.confidence)
+                prev[1].velocity = max(prev[1].velocity, n.velocity)
+            else:
+                merged.append((chunk_idx, n))
+        notes = [n for _, n in merged]
+        notes.sort(key=lambda n: (n.start_time, n.pitch))
         logger.info(f"Extracted {len(notes)} notes")
 
         return notes, duration
@@ -434,8 +518,8 @@ def _postprocess_notes(
 def extract_midi_coreml(
     audio_path: str,
     preset_name: str = "Extracted",
-    onset_threshold: float = 0.5,
-    frame_threshold: float = 0.3,
+    onset_threshold: float = 0.3,
+    frame_threshold: float = 0.2,
     stem_type: str = "other",
 ) -> dict:
     """

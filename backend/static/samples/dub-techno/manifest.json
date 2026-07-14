@@ -1,0 +1,503 @@
+{
+  "manifestVersion": 2,
+  "packId": "dub-techno",
+  "name": "Dub Techno",
+  "family": "textures",
+  "paletteHint": "slate",
+  "pads": [
+    {
+      "padIdx": 0,
+      "name": "Kick",
+      "family": "percussion",
+      "filename": "00_kick.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 1,
+      "name": "Rim",
+      "family": "percussion",
+      "filename": "01_rim.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 2,
+      "name": "Chord Stab",
+      "family": "stabs",
+      "filename": "02_chord_stab.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 3,
+      "name": "Dub Chord",
+      "family": "pads",
+      "filename": "03_dub_chord.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 4,
+      "name": "Sub Bass",
+      "family": "bass",
+      "filename": "04_sub_bass.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 5,
+      "name": "Hiss",
+      "family": "textures",
+      "filename": "05_hiss.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 6,
+      "name": "Delay Tick",
+      "family": "percussion",
+      "filename": "06_delay_tick.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 7,
+      "name": "Wide Pad",
+      "family": "pads",
+      "filename": "07_wide_pad.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    }
+  ],
+  "defaultSequence": {
+    "id": "ea486124-871f-5386-a488-6c4a621a681e",
+    "name": "Dub Techno Groove",
+    "stepCount": 16,
+    "tracks": [
+      {
+        "id": "2cbf5709-c1cf-5daf-9be2-606766b2f306",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "dub-techno",
+          "padIdx": 0
+        },
+        "steps": [
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Kick"
+      },
+      {
+        "id": "290f7957-7423-511d-a497-b67d0c8d5bc3",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "dub-techno",
+          "padIdx": 1
+        },
+        "steps": [
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Rim"
+      },
+      {
+        "id": "64e51f7f-e108-55a1-88c0-138007b6a516",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "dub-techno",
+          "padIdx": 2
+        },
+        "steps": [
+          {
+            "velocity": 0.85,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Chord Stab"
+      },
+      {
+        "id": "692e4792-bb08-5d42-a7c4-63e336d4df26",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "dub-techno",
+          "padIdx": 4
+        },
+        "steps": [
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Sub Bass"
+      },
+      {
+        "id": "f9576569-ea08-55c2-9fe2-d39ee509f8dd",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "dub-techno",
+          "padIdx": 6
+        },
+        "steps": [
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Delay Tick"
+      }
+    ],
+    "swing": 0.0,
+    "isLooping": true
+  },
+  "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+  "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+}

@@ -28,6 +28,8 @@ struct QuantizeControls: View {
                 } label: {
                     labelCapsule("Q", value: quantize.rawValue)
                 }
+                .accessibilityLabel("Quantize")
+                .accessibilityValue(quantize.rawValue)
 
                 // Simple toggle - tap cycles between Hold/Toggle
                 Button {
@@ -35,6 +37,8 @@ struct QuantizeControls: View {
                 } label: {
                     labelCapsule("H", value: hold == .hold ? "Hold" : "Toggle")
                 }
+                .accessibilityLabel("Pad hold mode")
+                .accessibilityValue(hold == .hold ? "Hold" : "Toggle")
 
                 // Simple toggle - tap cycles between Beat/Bar
                 Button {
@@ -42,6 +46,8 @@ struct QuantizeControls: View {
                 } label: {
                     labelCapsule("Grid", value: beatBar == .beat ? "Beat" : "Bar")
                 }
+                .accessibilityLabel("Quantize grid")
+                .accessibilityValue(beatBar == .beat ? "Beat" : "Bar")
             }
         }
         .font(.caption)

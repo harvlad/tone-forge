@@ -1,0 +1,582 @@
+{
+  "manifestVersion": 2,
+  "packId": "future-bass",
+  "name": "Future Bass",
+  "family": "mixed",
+  "paletteHint": "violet",
+  "pads": [
+    {
+      "padIdx": 0,
+      "name": "Kick",
+      "family": "percussion",
+      "filename": "00_kick.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 1,
+      "name": "Snare",
+      "family": "percussion",
+      "filename": "01_snare.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 2,
+      "name": "Hat",
+      "family": "percussion",
+      "filename": "02_hat.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 3,
+      "name": "Supersaw Stab",
+      "family": "stabs",
+      "filename": "03_supersaw_stab.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 4,
+      "name": "Bass",
+      "family": "bass",
+      "filename": "04_bass.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 5,
+      "name": "Vox Chop",
+      "family": "vocals",
+      "filename": "05_vox_chop.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 6,
+      "name": "Pluck",
+      "family": "stabs",
+      "filename": "06_pluck.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 7,
+      "name": "Riser",
+      "family": "fx",
+      "filename": "07_riser.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    }
+  ],
+  "defaultSequence": {
+    "id": "5f886073-c393-5b7c-9c26-5409498bb7e5",
+    "name": "Future Bass Groove",
+    "stepCount": 16,
+    "tracks": [
+      {
+        "id": "7fd4f2f0-5b71-51a8-bb23-c9981a3559ad",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "future-bass",
+          "padIdx": 0
+        },
+        "steps": [
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 1.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Kick"
+      },
+      {
+        "id": "4610e39b-07e7-548a-b3db-f34c67d8d2e2",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "future-bass",
+          "padIdx": 1
+        },
+        "steps": [
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.95,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.95,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Snare"
+      },
+      {
+        "id": "21b396ca-f99a-5be0-80a1-9f14f9e09240",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "future-bass",
+          "padIdx": 2
+        },
+        "steps": [
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Hat"
+      },
+      {
+        "id": "cf3a847a-346e-50b0-a180-379a9be46160",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "future-bass",
+          "padIdx": 3
+        },
+        "steps": [
+          {
+            "velocity": 0.85,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Supersaw Stab"
+      },
+      {
+        "id": "722ab63b-1f2a-586f-a972-d089bdf79419",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "future-bass",
+          "padIdx": 4
+        },
+        "steps": [
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Bass"
+      },
+      {
+        "id": "9cc8c5b0-bab4-54d1-8748-a3e1b7910459",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "future-bass",
+          "padIdx": 6
+        },
+        "steps": [
+          {
+            "velocity": 0.85,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Pluck"
+      }
+    ],
+    "swing": 0.0,
+    "isLooping": true
+  },
+  "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+  "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+}

@@ -43,6 +43,30 @@ final class BundleDecodeTests: XCTestCase {
         XCTAssertNil(bundle.meta.tempoBpm)
         XCTAssertTrue(bundle.stems.isEmpty)
         XCTAssertTrue(bundle.presets.isEmpty)
+        // Attribution keys (D-024) absent from old cached bundles —
+        // they must decode to nil, not throw.
+        XCTAssertNil(bundle.meta.license)
+        XCTAssertNil(bundle.meta.licenseUrl)
+        XCTAssertNil(bundle.meta.attribution)
+    }
+
+    func testMetaAttributionFieldsDecode() throws {
+        // Server emits the D-024 attribution keys on new bundles.
+        let json = """
+        {
+          "title": "Night Drive",
+          "artist": "Some Artist",
+          "sourceUrl": "https://example.org/night-drive",
+          "durationSec": 12.3,
+          "license": "CC-BY",
+          "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+          "attribution": "“Night Drive” by Some Artist (CC BY)"
+        }
+        """.data(using: .utf8)!
+        let meta = try JSONDecoder().decode(BundleMeta.self, from: json)
+        XCTAssertEqual(meta.license, "CC-BY")
+        XCTAssertEqual(meta.licenseUrl, "https://creativecommons.org/licenses/by/4.0/")
+        XCTAssertEqual(meta.attribution, "“Night Drive” by Some Artist (CC BY)")
     }
 
     func testBundleRoundTrips() throws {

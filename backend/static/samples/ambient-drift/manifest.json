@@ -1,0 +1,345 @@
+{
+  "manifestVersion": 2,
+  "packId": "ambient-drift",
+  "name": "Ambient Drift",
+  "family": "textures",
+  "paletteHint": "teal",
+  "pads": [
+    {
+      "padIdx": 0,
+      "name": "Air Pad",
+      "family": "pads",
+      "filename": "00_air_pad.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 1,
+      "name": "Deep Drone",
+      "family": "textures",
+      "filename": "01_deep_drone.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 2,
+      "name": "Glass Bell",
+      "family": "stabs",
+      "filename": "02_glass_bell.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 3,
+      "name": "Wind Wash",
+      "family": "textures",
+      "filename": "03_wind_wash.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 4,
+      "name": "Sub Swell",
+      "family": "bass",
+      "filename": "04_sub_swell.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 5,
+      "name": "Chime",
+      "family": "stabs",
+      "filename": "05_chime.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 6,
+      "name": "Grain Wash",
+      "family": "textures",
+      "filename": "06_grain_wash.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    },
+    {
+      "padIdx": 7,
+      "name": "Rise",
+      "family": "fx",
+      "filename": "07_rise.m4a",
+      "colorHint": null,
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": null
+    }
+  ],
+  "defaultSequence": {
+    "id": "8052e4ef-d86b-5294-9512-aac602ac7615",
+    "name": "Ambient Drift Groove",
+    "stepCount": 16,
+    "tracks": [
+      {
+        "id": "fb671d80-6ccb-5f7f-b371-328b51886b7c",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "ambient-drift",
+          "padIdx": 2
+        },
+        "steps": [
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.7,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Glass Bell"
+      },
+      {
+        "id": "e894cf5c-14dc-56db-a57d-56d26d8043af",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "ambient-drift",
+          "padIdx": 4
+        },
+        "steps": [
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.9,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Sub Swell"
+      },
+      {
+        "id": "ab1d8a47-0acd-5873-9979-0bd7b8a7078d",
+        "chopRef": {
+          "type": "packPad",
+          "packId": "ambient-drift",
+          "padIdx": 5
+        },
+        "steps": [
+          {
+            "velocity": 0.85,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          },
+          {
+            "velocity": 0.0,
+            "probability": 1.0
+          }
+        ],
+        "volume": 1.0,
+        "pan": 0.0,
+        "isMuted": false,
+        "isSoloed": false,
+        "name": "Chime"
+      }
+    ],
+    "swing": 0.0,
+    "isLooping": true
+  },
+  "license": "Proprietary \u2014 \u00a9 ToneForge. Licensed for playback and remixing within the ToneForge app only; not for standalone redistribution.",
+  "provenance": "Synthesized in-house by scripts/generate_sample_packs.py (pure DSP: sines, filtered noise, additive stacks). Contains no third-party recordings."
+}

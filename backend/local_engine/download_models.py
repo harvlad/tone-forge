@@ -91,6 +91,47 @@ def download_basic_pitch_model(force: bool = False):
         print(f"  [WARN] Basic Pitch setup issue: {e}")
         return True  # Non-critical
 
+def download_beat_this_model(force: bool = False):
+    """Download Beat This! beat/downbeat checkpoint (~78 MB)."""
+    print("\n=== Downloading Beat This! Beat Tracker ===\n")
+
+    try:
+        from beat_this.inference import Audio2Beats
+
+        # Instantiating triggers the checkpoint download to the
+        # beat_this cache dir; harmless no-op when already cached.
+        Audio2Beats(checkpoint_path="final0", device="cpu", dbn=False)
+        print("  [OK] Beat This! checkpoint ready")
+        return True
+    except ImportError:
+        print("  [SKIP] beat_this not installed "
+              "(librosa fallback will be used)")
+        return True
+    except Exception as e:
+        print(f"  [WARN] Beat This! setup issue: {e}")
+        return True  # Non-critical: tracker falls back to librosa
+
+
+def download_allin1_model(force: bool = False):
+    """Download All-In-One structure model checkpoints (~11 MB)."""
+    print("\n=== Downloading All-In-One Structure Model ===\n")
+    try:
+        from allin1.models import load_pretrained_model
+        # Loading triggers the Hugging Face checkpoint downloads
+        # (taejunkim/allinone, 8 fold checkpoints, ~11 MB total);
+        # harmless no-op when already cached.
+        load_pretrained_model(model_name="harmonix-all", device="cpu")
+        print("  [OK] All-In-One structure model ready")
+        return True
+    except ImportError:
+        print("  [SKIP] allin1 not installed "
+              "(RMS-novelty section fallback will be used)")
+        return True
+    except Exception as e:
+        print(f"  [WARN] All-In-One setup issue: {e}")
+        return True  # Non-critical: sections fall back to RMS novelty
+
+
 def show_cache_status():
     """Show what's currently cached."""
     print("\n=== Cache Status ===\n")
@@ -123,6 +164,8 @@ def main():
     # Download models
     demucs_ok = download_demucs_models(force)
     pitch_ok = download_basic_pitch_model(force)
+    download_beat_this_model(force)
+    download_allin1_model(force)
 
     # Show status
     show_cache_status()

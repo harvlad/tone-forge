@@ -56,6 +56,36 @@ final class AnalyzeClientTests: XCTestCase {
         XCTAssertTrue(body.starts(with: Data("--B\r\nContent-Disposition".utf8)))
     }
 
+    func testMultipartBodyFileMatchesInMemoryBody() throws {
+        // The streamed temp-file composer must be byte-identical to
+        // the in-memory encoder (same golden layout).
+        let payload = Data([0x00, 0xff, 0x0d, 0x0a, 0x80, 0x01, 0x02])
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("analyze-client-test-\(UUID().uuidString).wav")
+        try payload.write(to: sourceURL)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let fields = [(name: "source_kind", value: "upload")]
+        let bodyFile = try AnalyzeClient.writeMultipartBodyFile(
+            fileURL: sourceURL,
+            filename: "song.wav",
+            contentType: "audio/wav",
+            fields: fields,
+            boundary: "BOUNDARY"
+        )
+        defer { try? FileManager.default.removeItem(at: bodyFile) }
+
+        let streamed = try Data(contentsOf: bodyFile)
+        let inMemory = AnalyzeClient.multipartBody(
+            fileData: payload,
+            filename: "song.wav",
+            contentType: "audio/wav",
+            fields: fields,
+            boundary: "BOUNDARY"
+        )
+        XCTAssertEqual(streamed, inMemory)
+    }
+
     func testDefaultFieldsForceStemSeparation() {
         // The JAM needs stems: deep mode + fast_mode=false (jam.js parity).
         let fields = Dictionary(
@@ -65,6 +95,9 @@ final class AnalyzeClientTests: XCTestCase {
         XCTAssertEqual(fields["analysis_mode"], "deep")
         XCTAssertEqual(fields["extract_midi"], "true")
         XCTAssertEqual(fields["source_kind"], "upload")
+        // Uploads only happen after the attestation gate; the client
+        // must declare that so the server records it with the job.
+        XCTAssertEqual(fields["attested"], "true")
     }
 
     // MARK: - SSE parsing

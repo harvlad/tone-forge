@@ -33,6 +33,10 @@ struct ContributeSurface: View {
     @State private var showAdvancedGrid = false
     /// Toggle between Pads and Sequencer in sample mode.
     @State private var showSequencer = false
+    /// Arrange mode on the advanced 8×8 grid: drag pads to swap cells.
+    @State private var arranging = false
+    /// Beat Capture sheet (mic rhythm → drum pattern).
+    @State private var showBeatCapture = false
 
     var body: some View {
         let hasSong = appState.currentBundle != nil
@@ -40,10 +44,26 @@ struct ContributeSurface: View {
         // Control row: pad/sequencer + advanced-grid toggles.
         HStack(spacing: 8) {
             Spacer()
+            if showAdvancedGrid {
+                arrangeToggle
+            }
+            beatCaptureButton
             sequencerToggle
             advancedGridToggle
+            stopAllButton
         }
         .padding(.horizontal, 12)
+        .sheet(isPresented: $showBeatCapture) {
+            BeatCaptureSheet(
+                coordinator: coordinator,
+                onOpenInSequencer: { id in
+                    coordinator.setMode(.sample)
+                    appState.pendingSequencerPatternId = id
+                    showAdvancedGrid = false
+                    showSequencer = true
+                }
+            )
+        }
 
         if hasSong {
             // Sections + layer slot share one row (layers context).
@@ -108,18 +128,32 @@ struct ContributeSurface: View {
                 songBPM: bpm,
                 currentBeat: appState.songSeconds * bpm / 60,
                 isPlaying: appState.isPlaying,
-                analysisId: appState.currentBundle?.analysisId ?? ""
+                analysisId: appState.currentBundle?.analysisId ?? "",
+                initialPatternId: appState.pendingSequencerPatternId
             )
             .padding(.horizontal, 12)
         } else if showAdvancedGrid {
             // 8x8 advanced grid for power users
-            ModeGridView(coordinator: coordinator)
+            ModeGridView(coordinator: coordinator, arranging: arranging)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             // 4x4 grid for both Instrument and Sample modes
             SamplePadGrid4x4(coordinator: coordinator)
                 .padding(.horizontal, 12)
         }
+    }
+
+    /// Entry point for Beat Capture (D-024): mic rhythm → drum pattern.
+    private var beatCaptureButton: some View {
+        Button {
+            showBeatCapture = true
+        } label: {
+            Image(systemName: "figure.dance")
+                .font(TFTheme.chipFont)
+                .tfChip(active: false)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Beat Capture")
     }
 
     /// Toggle between Pads and Sequencer views in sample mode.
@@ -145,6 +179,8 @@ struct ContributeSurface: View {
         Button {
             showAdvancedGrid.toggle()
             if showAdvancedGrid { showSequencer = false }
+            // Arrange only lives on the 8×8; leaving it exits arrange.
+            if !showAdvancedGrid { arranging = false }
         } label: {
             Image(systemName: showAdvancedGrid
                 ? "square.grid.2x2" : "square.grid.4x3.fill")
@@ -157,13 +193,29 @@ struct ContributeSurface: View {
             : "Switch to advanced 8 by 8 grid")
     }
 
+    /// Arrange-mode toggle (advanced 8×8 only): drag pads to swap cells
+    /// instead of playing them.
+    private var arrangeToggle: some View {
+        Button {
+            arranging.toggle()
+        } label: {
+            Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                .font(TFTheme.chipFont)
+                .tfChip(active: arranging)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(arranging
+            ? "Exit arrange mode"
+            : "Arrange pads")
+    }
+
     // MARK: - Stop-all
 
     /// Panic button: fades out every ringing sample voice across all
     /// packs. Lit while any *looping* voice rings (`ringingPadKeys`
-    /// tracks loops only — one-shot tails decay on their own); dimmed
-    /// + disabled otherwise, so it doubles as an "anything still
-    /// looping?" indicator.
+    /// tracks loops only). Always tappable — one-shot tails aren't
+    /// tracked (their slots stay active after the buffer ends), so the
+    /// button must stay enabled to panic-stop them too.
     private var stopAllButton: some View {
         let hasRinging = !appState.ringingPadKeys.isEmpty
         return Button {
@@ -172,9 +224,8 @@ struct ContributeSurface: View {
             Image(systemName: "stop.circle.fill")
                 .font(.title2)
                 .foregroundStyle(hasRinging ? Color.accentColor : .secondary)
-                .opacity(hasRinging ? 1 : 0.35)
+                .opacity(hasRinging ? 1 : 0.55)
         }
-        .disabled(!hasRinging)
         .accessibilityLabel("Stop all pads")
     }
 

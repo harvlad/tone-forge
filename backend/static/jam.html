@@ -3,18 +3,142 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ToneForge Jam — Play inside the song</title>
-<link rel="stylesheet" href="/static/jam.css?v=57" />
+<title>JamN — Make music together</title>
+<link rel="stylesheet" href="/static/jam.css?v=68" />
 </head>
 <body>
 <header class="jam-header">
-  <a class="brand" href="/">ToneForge</a>
-  <nav>
+  <a class="brand" href="/">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="24" height="20" viewBox="0 0 24 20" fill="url(#brandGrad)">
+        <rect x="0"  y="7"  width="3" height="6"  rx="1.5"/>
+        <rect x="5"  y="3"  width="3" height="14" rx="1.5"/>
+        <rect x="10" y="0"  width="3" height="20" rx="1.5"/>
+        <rect x="15" y="4"  width="3" height="12" rx="1.5"/>
+        <rect x="20" y="7"  width="3" height="6"  rx="1.5"/>
+        <defs>
+          <linearGradient id="brandGrad" x1="0" y1="0" x2="24" y2="20" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#a855f7"/><stop offset="1" stop-color="#6366f1"/>
+          </linearGradient>
+        </defs>
+      </svg>
+    </span>
+    <span class="brand-text">
+      <span class="brand-name">JamN</span>
+      <span class="brand-domain">jamn.app</span>
+    </span>
+  </a>
+  <input type="checkbox" id="nav-toggle" class="nav-toggle" hidden />
+  <nav id="primary-nav">
     <a class="active" href="/jam">Jam</a>
     <a href="/studio">Studio</a>
-    <a href="/debug">Debug</a>
+    <a href="/debug">Community</a>
   </nav>
+  <div id="account-chip" class="account-chip"></div>
+  <label for="nav-toggle" class="nav-burger" aria-label="Menu" aria-controls="primary-nav">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>
+    </svg>
+  </label>
 </header>
+
+<!-- Sign-in modal (magic link). Optional — anonymous jamming keeps
+     working; signing in keeps analyses across devices. -->
+<div id="account-modal" class="account-modal" style="display:none">
+  <div class="account-modal-card">
+    <div id="account-modal-form">
+      <h3>Sign in</h3>
+      <p class="account-modal-hint">
+        We'll email you a sign-in link. No password needed. Signing in
+        keeps your analyses across devices.
+      </p>
+      <form id="account-email-form">
+        <input id="account-email-input" type="email" required
+               placeholder="you@example.com" autocomplete="email" />
+        <div id="account-email-error" class="account-error"></div>
+        <div class="account-modal-actions">
+          <button type="button" id="account-modal-cancel">Cancel</button>
+          <button type="submit" class="primary">Email me a link</button>
+        </div>
+      </form>
+    </div>
+    <div id="account-modal-sent" style="display:none">
+      <h3>Check your email</h3>
+      <p class="account-modal-hint">
+        We sent you a sign-in link. It expires in 15 minutes.
+      </p>
+      <div class="account-modal-actions">
+        <button type="button" onclick="document.getElementById('account-modal').style.display='none'">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+  .account-chip { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .jam-header nav { margin-left: 0; }
+  .account-email { font-size: 13px; color: #a1a1aa; max-width: 180px;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .account-btn { background: rgba(255,255,255,0.06); color: #e4e4e7;
+                 border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+                 padding: 6px 12px; font-size: 13px; cursor: pointer; }
+  .account-btn:hover { background: rgba(255,255,255,0.12); }
+  .account-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+                   z-index: 1000; display: flex; align-items: center;
+                   justify-content: center; }
+  .account-modal-card { background: #18181b; border: 1px solid rgba(255,255,255,0.1);
+                        border-radius: 14px; padding: 24px; width: min(92vw, 380px); }
+  .account-modal-card h3 { margin: 0 0 8px; }
+  .account-modal-hint { color: #a1a1aa; font-size: 14px; margin: 0 0 16px; }
+  .account-modal-card input[type=email] { width: 100%; box-sizing: border-box;
+                        background: #0f0f11; color: #e4e4e7; padding: 10px 12px;
+                        border: 1px solid rgba(255,255,255,0.15); border-radius: 8px;
+                        font-size: 15px; }
+  .account-error { color: #f87171; font-size: 13px; min-height: 18px; margin-top: 6px; }
+  .account-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+  .account-modal-actions button { background: rgba(255,255,255,0.06); color: #e4e4e7;
+                        border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+                        padding: 8px 14px; font-size: 14px; cursor: pointer; }
+  .account-modal-actions button.primary { background: linear-gradient(135deg, #a855f7, #6366f1);
+                        border: none; color: white; }
+</style>
+
+<!-- Demo-tracks picker (D-024). Curated CC0/CC-BY catalog from
+     GET /api/cc-tracks; tapping a row POSTs /api/cc-tracks/{id}/import
+     and hands the returned job_id to the existing engine-job flow.
+     Reuses the account-modal chrome so no new CSS system is needed. -->
+<div id="cc-tracks-modal" class="account-modal" style="display:none">
+  <div class="account-modal-card" role="dialog" aria-modal="true" aria-labelledby="cc-tracks-title">
+    <h3 id="cc-tracks-title">Demo tracks</h3>
+    <p class="account-modal-hint">
+      Creative-Commons songs you can jam with right away. Credit shown
+      with each track and on the session.
+    </p>
+    <div id="cc-tracks-list" class="cc-tracks-list">
+      <p class="account-modal-hint" id="cc-tracks-empty">Loading…</p>
+    </div>
+    <div class="account-modal-actions">
+      <button type="button" id="cc-tracks-close">Close</button>
+    </div>
+  </div>
+</div>
+<style>
+  .cc-tracks-cta { margin: 14px 0 0; text-align: center; }
+  .cc-tracks-list { max-height: 320px; overflow-y: auto; display: flex;
+                    flex-direction: column; gap: 8px; }
+  .cc-track-row { display: flex; align-items: center; gap: 12px;
+                  width: 100%; text-align: left; background: rgba(255,255,255,0.04);
+                  border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
+                  padding: 10px 12px; cursor: pointer; color: #e4e4e7; }
+  .cc-track-row:hover:not(:disabled) { background: rgba(255,255,255,0.09); }
+  .cc-track-row:disabled { opacity: 0.5; cursor: default; }
+  .cc-track-main { flex: 1; min-width: 0; }
+  .cc-track-title { font-size: 14px; font-weight: 600; }
+  .cc-track-sub { font-size: 12px; color: #a1a1aa; margin-top: 2px;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cc-track-license { font-size: 11px; font-weight: 600; color: #a1a1aa;
+                      border: 1px solid rgba(255,255,255,0.15);
+                      border-radius: 999px; padding: 2px 8px; flex-shrink: 0; }
+</style>
 
 <!-- ============================ ONBOARDING ============================ -->
 <!--
@@ -85,40 +209,97 @@
 <main id="jam-app">
   <!-- ============================== INTAKE ============================== -->
   <section id="view-intake" class="view active">
-    <h1 class="hero">Play inside the song.</h1>
-    <p class="sub">Paste a YouTube link. Pick the part you play. We'll handle the band.</p>
+    <div class="landing">
+      <h1 class="hero">Make music <span class="hero-accent">together.</span></h1>
+      <p class="sub">Upload a song.<br>Become part of it.</p>
 
-    <div id="engine-banner" class="engine-banner engine-banner--unknown">
-      <div class="engine-banner-dot"></div>
-      <div class="engine-banner-text">
-        <strong id="engine-banner-title">Checking local engine…</strong>
-        <span id="engine-banner-detail">Stem separation runs on your machine for speed and privacy.</span>
+      <div class="upload-card">
+        <div class="upload-card__glow" aria-hidden="true"></div>
+        <div class="upload-card__badge" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 16l-4-4-4 4"/><path d="M12 12v9"/>
+            <path d="M20.4 14.6A5 5 0 0 0 18 5.5a6.5 6.5 0 0 0-12.6 2A4.5 4.5 0 0 0 6 21h1"/>
+          </svg>
+        </div>
+        <h2 class="upload-card__title">Upload a song</h2>
+        <p class="upload-card__meta">MP3 &middot; WAV &middot; M4A</p>
+
+        <form id="upload-form" class="upload-form">
+          <label class="dropzone" for="upload-file">
+            <span class="dropzone__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+                <path d="M14 3v5h5"/>
+                <circle cx="10" cy="16.5" r="1.5"/>
+                <path d="M11.5 16.5V11l5-1v4.5"/>
+                <circle cx="15" cy="14.5" r="1.5"/>
+              </svg>
+            </span>
+            <span class="dropzone__cta">Choose File</span>
+            <span class="dropzone__hint">or drag &amp; drop</span>
+            <input
+              id="upload-file"
+              type="file"
+              accept=".wav,.mp3,.flac,.ogg,.m4a,.aiff,.aif,.webm,audio/*"
+              hidden />
+          </label>
+
+          <button type="submit" id="upload-submit" class="analyze-btn" disabled>Start Jam</button>
+
+          <!-- Integrated engine status pill. Every id preserved — jam.js drives
+               the dot colour and the title/detail copy from the engine probe. -->
+          <div id="engine-banner" class="engine-banner engine-banner--unknown">
+            <div class="engine-banner-dot"></div>
+            <div class="engine-banner-text">
+              <strong id="engine-banner-title">Connecting to Local Engine…</strong>
+              <span id="engine-banner-detail">Audio never leaves your machine.</span>
+            </div>
+            <button id="engine-start-btn" class="ghost" style="display:none;">Start engine</button>
+            <button id="engine-stop-btn" class="ghost" style="display:none;">Stop engine</button>
+            <a id="engine-download-link" href="/api/downloads/studio-app" class="ghost" style="display:none;" download>Download Mac app</a>
+          </div>
+        </form>
+
+        <label class="attest" id="upload-attest-row">
+          <input type="checkbox" id="upload-attest" />
+          <span>I own or control the rights to this audio and I'm uploading it for my own practice and analysis.</span>
+        </label>
+
+        <!-- Curated CC0/CC-BY demo tracks (D-024). Catalog comes from
+             GET /api/cc-tracks; a tap POSTs /api/cc-tracks/{id}/import,
+             which queues a pre-attested engine job — the button below
+             opens the picker modal, jam.js fills the list. -->
+        <p class="cc-tracks-cta">
+          <button type="button" id="cc-tracks-open" class="linklike">No song handy? Try a demo track</button>
+        </p>
       </div>
-      <button id="engine-start-btn" class="ghost" style="display:none;">Start engine</button>
-      <button id="engine-stop-btn" class="ghost" style="display:none;">Stop engine</button>
+
+      <div id="intake-error" class="intake-error" hidden></div>
+
+      <!--
+        Hidden link intake — kept in the DOM because jam.js reads
+        #intake-instrument at upload-submit and toggles #intake-submit.
+        Upload-only landing (URL ingest disabled in production).
+      -->
+      <form id="intake-form" class="intake" style="display:none;">
+        <input
+          id="intake-url"
+          type="url"
+          placeholder="Paste a link"
+          autocomplete="off"
+          required />
+        <select id="intake-instrument">
+          <option value="guitar" selected>I play guitar</option>
+          <option value="bass" disabled>I play bass (coming soon)</option>
+          <option value="keys" disabled>I play keys (coming soon)</option>
+        </select>
+        <button type="submit" id="intake-submit" disabled>Start jam</button>
+      </form>
+
+      <p class="hint" style="display:none;">
+        <button type="button" id="intake-change-device" class="linklike">Change audio interface</button>
+      </p>
     </div>
-
-    <form id="intake-form" class="intake">
-      <input
-        id="intake-url"
-        type="url"
-        placeholder="https://youtube.com/watch?v=…"
-        autocomplete="off"
-        required />
-      <select id="intake-instrument">
-        <option value="guitar" selected>I play guitar</option>
-        <option value="bass" disabled>I play bass (coming soon)</option>
-        <option value="keys" disabled>I play keys (coming soon)</option>
-      </select>
-      <button type="submit" id="intake-submit" disabled>Start jam</button>
-    </form>
-
-    <div id="intake-error" class="intake-error" hidden></div>
-
-    <p class="hint">First jam takes about a minute. Subsequent jams of the same song are instant.</p>
-    <p class="hint">
-      <button type="button" id="intake-change-device" class="linklike">Change audio interface</button>
-    </p>
   </section>
 
   <!-- ============================ BAND ROOM ============================= -->
@@ -361,6 +542,7 @@
         <div class="np-title" id="np-title">Untitled jam</div>
         <div class="np-meta" id="np-meta">— bpm · — key</div>
         <a class="np-source" id="np-source" href="#" target="_blank" rel="noopener noreferrer" hidden>Source ↗</a>
+        <a class="np-credit" id="np-credit" target="_blank" rel="noopener noreferrer" hidden></a>
       </div>
       <div class="ph-actions">
         <button id="header-connect-pill" class="connect-pill offline" type="button" aria-haspopup="true" aria-expanded="false">Connect: offline</button>
@@ -1091,7 +1273,8 @@
   </div>
 </main>
 
+<script src="/static/account.js?v=1"></script>
 <script src="/static/launchpad.js?v=21"></script>
-<script src="/static/jam.js?v=119"></script>
+<script src="/static/jam.js?v=123"></script>
 </body>
 </html>

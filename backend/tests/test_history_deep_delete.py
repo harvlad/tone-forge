@@ -60,11 +60,14 @@ def _seed_entry(storage, entry_id: str = ENTRY_ID) -> dict:
     sibling = stems_dir / "drums.wav"  # only referenced via raw_stem's dir rmtree
     sibling.write_bytes(b"RIFFfake")
 
-    served_stem = tmp / "served" / "bass.wav"
+    # Dir names carry a toneforge_ component: the allowlist requires the
+    # resolved path to include one (real stems always live in
+    # toneforge_* scratch dirs).
+    served_stem = tmp / "toneforge_served" / "bass.wav"
     served_stem.parent.mkdir()
     served_stem.write_bytes(b"RIFFfake")
 
-    engine_stem = tmp / "engine" / "other.wav"
+    engine_stem = tmp / "toneforge_engine" / "other.wav"
     engine_stem.parent.mkdir()
     engine_stem.write_bytes(b"RIFFfake")
 

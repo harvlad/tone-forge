@@ -113,6 +113,18 @@ public final class LearnSessionController: ObservableObject {
         uniqueSections.first { !isLearned($0) }
     }
 
+    /// Every distinct chord in the song, first-appearance order. The
+    /// practice grid shows all of them: bar-level progressions miss
+    /// passing chords (a D#sus2 between bars would be expected by the
+    /// scorer but absent from the pads), and a stable grid across
+    /// sections doubles as muscle-memory layout.
+    public var songChords: [String] {
+        var seen = Set<String>()
+        return (app.currentBundle?.timeline.chords ?? [])
+            .map(\.symbol)
+            .filter { seen.insert($0).inserted }
+    }
+
     /// Unique chord progression across the section's bars,
     /// consecutive repeats collapsed ("Dm Bb C F", not one per bar).
     public func progressionChords(for section: SectionEvent) -> [String] {
@@ -151,6 +163,59 @@ public final class LearnSessionController: ObservableObject {
     /// Best streak ever, including the session in flight.
     public var longestStreak: Int {
         max(progress?.longestStreak ?? 0, sessionLongestStreak)
+    }
+
+    // MARK: - Chord prediction (practice grid + Launchpad)
+
+    /// Web-jam-parity anticipation state: where we are between the
+    /// current chord and the next DISTINCT chord. Drives the on-screen
+    /// countdown bar, the blinking "up next" pad, and the Launchpad
+    /// mirror of both.
+    public struct ChordPrediction: Equatable, Sendable {
+        public let currentSymbol: String
+        public let nextSymbol: String
+        /// 0 = far away, 1 = at the chord change.
+        public let progress: Double
+        public let remainingSec: Double
+        /// Web parity: last 600 ms before the change flashes.
+        public var imminent: Bool { remainingSec <= 0.6 }
+    }
+
+    /// Prediction at `now`. Walks the timeline for the first chord
+    /// after `current` with a DIFFERENT symbol (repeated bars of the
+    /// same chord don't count as a change — same rule as the web
+    /// launchpad mode). The lookahead window auto-scales to the gap
+    /// (clamped 0.5–8 s) so short chords still get a readable ramp.
+    nonisolated public static func prediction(
+        chords: [ChordEvent], current: ChordEvent?, now: Double
+    ) -> ChordPrediction? {
+        guard let current else { return nil }
+        var next: ChordEvent?
+        for c in chords where c.start > current.start {
+            if c.symbol != current.symbol {
+                next = c
+                break
+            }
+        }
+        guard let next else { return nil }
+        let remaining = max(0, next.start - now)
+        let lookahead = min(8.0, max(0.5, next.start - current.start))
+        let progress = min(1.0, max(0.0, 1.0 - remaining / lookahead))
+        return ChordPrediction(
+            currentSymbol: current.symbol,
+            nextSymbol: next.symbol,
+            progress: progress,
+            remainingSec: remaining
+        )
+    }
+
+    /// Prediction against the live transport.
+    public func prediction(atTime: Double? = nil) -> ChordPrediction? {
+        Self.prediction(
+            chords: app.currentBundle?.timeline.chords ?? [],
+            current: app.currentChord,
+            now: atTime ?? app.songSeconds
+        )
     }
 
     // MARK: - Session lifecycle
@@ -222,8 +287,7 @@ public final class LearnSessionController: ObservableObject {
         resetPass()
     }
 
-    /// Leave practice: clear the loop (playback continues — the
-    /// transport stays under the user's control) and persist the
+    /// Leave practice: stop the song, clear the loop, and persist the
     /// session streak. The partial pass in flight is discarded.
     public func stopPractice() {
         if phase == .practicing, var record = progress {
@@ -235,6 +299,7 @@ public final class LearnSessionController: ObservableObject {
         resetPass()
         lastPassResult = nil
         app.setLoop(nil)
+        app.pause()
     }
 
     private func resetPass() {

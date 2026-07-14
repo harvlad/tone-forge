@@ -12,8 +12,11 @@ Target: 80% average F1 on benchmark samples.
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict
+from typing import TYPE_CHECKING, List, Tuple, Optional, Dict
 import numpy as np
+
+if TYPE_CHECKING:
+    from .gpu_extractor import MIDINote
 
 logger = logging.getLogger(__name__)
 

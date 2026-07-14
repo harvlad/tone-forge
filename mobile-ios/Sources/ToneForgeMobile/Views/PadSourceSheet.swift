@@ -73,31 +73,10 @@ private struct RecordOrAssignView: View {
     let onPreview: () -> Void
     let onDone: () -> Void
 
-    enum Phase: Equatable {
-        case idle
-        case recording
-        case vocoding
-        case saving
-        case saved(PadSampleMetadata)
-        case failed(String)
-    }
-
-    @State private var phase: Phase = .idle
-    @State private var vocoderMode: VocoderMode = .classic
-
     var body: some View {
         Form {
-            Section("Record") {
-                recordControls
-                if case .failed(let message) = phase {
-                    Text(message)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
-                if case .saved(let meta) = phase {
-                    savedSummary(meta)
-                }
-            }
+            PadRecorderSection(
+                target: target, title: "Record", onPreview: onPreview)
 
             if !appState.padSampleStore.samples.isEmpty {
                 Section("Assign existing sample") {
@@ -113,6 +92,46 @@ private struct RecordOrAssignView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Shared recorder section (empty pad + re-record on a local pad)
+
+/// The mic / vocoder capture machinery, factored out so both the
+/// empty-pad flow and the manage-local flow can offer a fresh take.
+/// Saving reassigns `target.gridRaw` in the store; PadTransformSection
+/// (keyed by gridRaw) keeps its effect chain across the swap.
+private struct PadRecorderSection: View {
+    @EnvironmentObject private var appState: AppState
+
+    let target: PadSourceTarget
+    let title: String
+    let onPreview: () -> Void
+
+    enum Phase: Equatable {
+        case idle
+        case recording
+        case vocoding
+        case saving
+        case saved(PadSampleMetadata)
+        case failed(String)
+    }
+
+    @State private var phase: Phase = .idle
+    @State private var vocoderMode: VocoderMode = .classic
+
+    var body: some View {
+        Section(title) {
+            recordControls
+            if case .failed(let message) = phase {
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+            if case .saved(let meta) = phase {
+                savedSummary(meta)
             }
         }
         .onDisappear {
@@ -381,6 +400,12 @@ private struct ManageLocalPadView: View {
                 LocalSampleRow(meta: currentMeta)
                 Button("Preview") { onPreview() }
             }
+
+            // Re-record a fresh take onto this pad. The take replaces the
+            // assigned sample; the effect chain below (keyed by gridRaw)
+            // carries over so you can record + tweak FX in one place.
+            PadRecorderSection(
+                target: target, title: "Re-record", onPreview: onPreview)
 
             Section {
                 Picker("Type", selection: $overrideClass) {

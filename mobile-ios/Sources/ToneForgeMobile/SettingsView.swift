@@ -327,17 +327,25 @@ private struct LevelsSection: View {
 
 // MARK: - Beat capture training data
 
-/// Beat Capture (D-024): shows the count of device-local classifier
-/// corrections and a share-sheet export of them as training CSV. Split
-/// out so the nested store is `@ObservedObject`-observed. Hidden until
-/// at least one correction exists.
+/// Beat Capture (D-024): the "Help improve drum detection" upload
+/// opt-in, plus (when non-empty) the queued-correction count and a
+/// share-sheet CSV export. Split out so the nested store is
+/// `@ObservedObject`-observed.
 private struct BeatTrainingSection: View {
     @ObservedObject var store: BeatTrainingStore
+    @AppStorage(BeatTrainingStore.shareOptInKey) private var shareOptIn = true
 
     var body: some View {
-        if !store.corrections.isEmpty {
-            Section("Beat capture") {
-                LabeledContent("Logged corrections") {
+        Section("Beat capture") {
+            Toggle("Help improve drum detection", isOn: $shareOptIn)
+                .accessibilityIdentifier("settings-beat-optin")
+            Text("Sends your drum-role corrections (analysis features "
+                 + "only, never audio) so detection improves over time.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !store.corrections.isEmpty {
+                LabeledContent("Queued corrections") {
                     Text("\(store.corrections.count)")
                         .foregroundStyle(.secondary)
                 }

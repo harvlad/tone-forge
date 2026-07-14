@@ -164,67 +164,33 @@ def detect_chords_with_key(
     pattern as the Phase-7 tempo/beats hoist). Direct chord_detector
     callers that don't need the key keep using ``detect_chords``.
 
-    Stage 1.4.1 — power-chord third-absence prior (chord-lane only).
-    The chord-lane stage opts into the persistence-gated power-chord
-    prior:
-
-      * ``power_chord_third_ratio=0.4``    — third must be at most
-        40% of the root+5th mass to flag third-absent
-      * ``power_chord_penalty=0.03``       — subtractive cosine
-        penalty on maj/min cells at that root
-      * ``power_chord_third_min_streak=2`` — 2 consecutive windows
-        (~1.0s at 0.5s windowing) before penalty fires
-      * ``power_chord_minor_key_only=False`` — mode gate lifted;
-        the spectral signature is genre-neutral so we do not need
-        a key-mode gate to prevent bench-corpus regressions
-        (bench uses the default DetectorConfig which has all
-        power-chord levers zero/False).
-
-    Bench-corpus detector remains bit-for-bit identical on default
-    config; only the chord-lane stage (this function) sees the
-    tuned power-chord prior.
+    Runs the default ``DetectorConfig`` — the same configuration the
+    bench corpus pins its regression floors against. The former
+    chord-lane stage tuning (self-loop bonus, power-chord priors) was
+    removed after ``scripts.analysis_eval`` ablation showed it costs
+    up to 35 WCSR points on ground-truth fixtures; see the inline
+    comment below for the measured table.
     """
     from tone_forge.analysis.detector_config import DetectorConfig
 
-    # Stage 1.4.x mode gate lifted — power-chord signature (root+5th
-    # mass, both 3rd bins low) is genre-neutral. The minor-key-only
-    # gate was originally added as a corpus-regression guard, not
-    # because the signal itself is mode-dependent. Bench corpus uses
-    # the default DetectorConfig (all power-chord levers zero/False),
-    # so lifting the gate here only affects the chord-lane stage.
+    # Hardening 2026-07 — chord-lane config reverted to the bench
+    # default. The previous stage tuning (self_loop_bonus=0.03 plus
+    # the power-chord emission/post-Viterbi levers) was measured
+    # against the ground-truth corpus via ``scripts.analysis_eval``
+    # ablation and LOSES badly on triad-relaxed WCSR:
     #
-    # Stage 1.5 — harmonic-rhythm stability. The Pub Feed WCSR sweep
-    # picked ``self_loop_bonus=0.01`` because that corpus is short and
-    # noise-dominated; on full songs with distorted-guitar chroma the
-    # decoder flips chord state every 1-2 windows (0.5-1s) which
-    # produces musically nonsensical chord streams (5x over-segmentation
-    # of a 1-chord-per-bar verse). Raising the self-loop bonus to 0.03
-    # in this stage biases the decoder toward stable holds without
-    # preventing real changes (emission-score deltas at genuine changes
-    # are ~0.05+ on clean beat-aligned chroma). Bench corpus uses the
-    # default self_loop_bonus=0.01, so this stays bench-bit-exact.
-    _stage_config = DetectorConfig(
-        self_loop_bonus=0.03,
-        power_chord_third_ratio=0.4,
-        power_chord_penalty=0.03,
-        # 2 windows (~1.0s at 0.5s windowing) matches a typical
-        # two-bar power-chord vamp; 3 was over-conservative and
-        # missed short chorus power-chord hits.
-        power_chord_third_min_streak=2,
-        power_chord_minor_key_only=False,
-        # Stage 1.4.2 — post-Viterbi substitution complementing the
-        # emission-side penalty above. Round-2 Fix 1 replaces the
-        # raw third-bin ratio (a magnitude test that broke on
-        # distorted rock because harmonic-distortion intermodulation
-        # inflates the 3rd bin above the 0.4 gate) with a
-        # spectral-shape ratio (``(root+5th) / (3rd+7th) >= 2.0``)
-        # that is invariant under overtone inflation because both
-        # numerator and denominator inflate together. The raw
-        # cosine margin still gates the substitution decision.
-        power_chord_post_viterbi_third_ratio=0.0,   # Fix 1: was 0.4
-        power_chord_post_viterbi_margin=0.07,
-        power_chord_shape_ratio_min=2.0,            # Fix 1: new gate
-    )
+    #   fixture             default   selfloop03   full stage cfg
+    #   lets_make_it_pain    0.9998     0.6470        0.6470
+    #   demolition_warning   0.9337     0.8527        0.8088
+    #
+    # The self-loop bonus made the decoder hold *wrong* chords
+    # through genuine changes (WCSR does not penalise same-label
+    # over-segmentation, so the "stability" rationale never showed
+    # up in scores — only the mislabels did). Quality flicker is
+    # already handled post-hoc by ``collapse_same_root_regions``.
+    # One config everywhere: production lane now scores exactly what
+    # the bench regression floors ratchet against.
+    _stage_config = DetectorConfig()
 
     key_out: Dict[str, Any] = {}
     raw = _internal.detect_chords_from_audio(

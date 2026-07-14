@@ -1,0 +1,79 @@
+Tone Forge — Third-Party Notices
+================================
+
+Tone Forge is proprietary software (see LICENSE). It depends on the
+following open-source components, which remain under their own
+licenses. Where a license requires attribution, this file provides it.
+
+Python backend (installed via pip; not vendored in this repository)
+-------------------------------------------------------------------
+
+  librosa                ISC License
+    https://github.com/librosa/librosa
+
+  soundfile              BSD 3-Clause License
+    https://github.com/bastibe/python-soundfile
+
+  NumPy                  BSD 3-Clause License
+    https://numpy.org
+
+  SciPy                  BSD 3-Clause License
+    https://scipy.org
+
+  FastAPI                MIT License
+    https://github.com/fastapi/fastapi
+
+  Starlette              BSD 3-Clause License
+    https://github.com/encode/starlette
+
+  Uvicorn                BSD 3-Clause License
+    https://github.com/encode/uvicorn
+
+  python-multipart       Apache License 2.0
+    https://github.com/Kludex/python-multipart
+
+  Demucs                 MIT License
+    https://github.com/adefossez/demucs
+    Pretrained Hybrid Transformer Demucs model weights are
+    distributed by the Demucs project under the MIT License.
+
+  PyTorch (torch)        BSD-style License
+    https://pytorch.org
+
+  torchaudio             BSD 2-Clause License
+    https://github.com/pytorch/audio
+
+  boto3 / botocore       Apache License 2.0
+    https://github.com/boto/boto3
+
+  httpx                  BSD 3-Clause License   (tests only)
+    https://github.com/encode/httpx
+
+  pytest                 MIT License            (tests only)
+    https://pytest.org
+
+  PyYAML                 MIT License            (dev only)
+    https://pyyaml.org
+
+  Playwright             Apache License 2.0     (dev/e2e only)
+    https://github.com/microsoft/playwright-python
+
+iOS app
+-------
+
+  The iOS app (mobile-ios/) has no third-party Swift package
+  dependencies; it uses only first-party code and Apple system
+  frameworks (AVFoundation, SwiftUI, CoreMIDI, etc.) under the
+  Apple SDK license.
+
+Audio content
+-------------
+
+  Bundled sample packs under backend/static/samples/ and
+  mobile-ios/App/Resources/Samples/ are first-party generated
+  content. User-imported audio is processed on-device/server at the
+  user's direction and is never redistributed; users are responsible
+  for holding rights to audio they import.
+
+Full license texts for the components above are distributed with the
+installed packages (pip show -f <package>) and at the URLs listed.

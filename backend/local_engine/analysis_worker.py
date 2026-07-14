@@ -18,12 +18,42 @@ from typing import Optional
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+
+def _to_jsonable(obj):
+    """Recursively convert numpy scalars/arrays to plain Python types.
+
+    Quality metrics come back as np.float32 / np.bool_, which the stdlib
+    json encoder (used by requests when the remote worker posts results)
+    rejects. Duck-typed so this module keeps its lazy numpy import.
+    """
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_jsonable(v) for v in obj]
+    if hasattr(obj, "tolist"):  # np.ndarray
+        return obj.tolist()
+    if hasattr(obj, "item"):  # numpy scalar
+        return obj.item()
+    return obj
+
 # Apply GPU acceleration patch BEFORE any other imports
 def _apply_gpu_patch():
     """Force basic_pitch to use ONNX with CoreML Execution Provider for GPU."""
     import platform
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         return
+
+    # coremltools (pulled in by basic_pitch) logs sklearn/torch version
+    # complaints on import; its conversion API is unused here (we force
+    # ONNX below), so the noise is pure distraction in the worker log.
+    import logging as _logging
+    import warnings as _warnings
+    _logging.getLogger("coremltools").setLevel(_logging.ERROR)
+    _warnings.filterwarnings(
+        "ignore", message=r"Torch version .* has not been tested with coremltools"
+    )
 
     try:
         # Change basic_pitch model path from .mlpackage to .onnx
@@ -232,6 +262,49 @@ def to_serializable(obj):
     return obj
 
 
+# Formats libsndfile opens natively. Everything else (m4a/aac/webm/mp4)
+# must be transcoded first — sf.read() in stem_separator raises
+# "Format not recognised" otherwise.
+_LIBSNDFILE_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif"}
+
+
+def _ensure_decodable(audio_path: str) -> tuple[str, Optional[str]]:
+    """Return a path libsndfile can open.
+
+    For m4a/aac/webm/mp4 sources, transcode to a temporary wav with
+    ffmpeg. Returns (path_to_analyze, temp_path_or_None); the caller
+    must unlink the temp path when done.
+    """
+    suffix = Path(audio_path).suffix.lower()
+    if suffix in _LIBSNDFILE_SUFFIXES:
+        return audio_path, None
+
+    import shutil
+    import subprocess
+    import tempfile
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError(
+            f"Cannot decode {suffix or 'this'} audio without ffmpeg. "
+            "Install it (brew install ffmpeg) or upload wav/mp3/flac."
+        )
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".wav", prefix="toneforge_decode_", delete=False
+    )
+    tmp.close()
+    proc = subprocess.run(
+        [ffmpeg, "-y", "-i", audio_path, "-ac", "2", "-ar", "44100", tmp.name],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        Path(tmp.name).unlink(missing_ok=True)
+        tail = (proc.stderr or "").strip().splitlines()
+        detail = tail[-1] if tail else "unknown ffmpeg error"
+        raise RuntimeError(f"ffmpeg could not decode {suffix}: {detail}")
+    return tmp.name, tmp.name
+
+
 def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] = None, original_filename: Optional[str] = None):
     """
     Run deep analysis on an audio file.
@@ -249,6 +322,16 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("analysis_worker")
 
+    # Self-diagnosing hangs: if this subprocess deadlocks (e.g. threads
+    # stuck on a lock in the parallel MIDI stage), dump every thread's
+    # Python traceback to stderr every 10 minutes so the parent worker's
+    # log captures exactly where it stalled before the watchdog kills it.
+    try:
+        import faulthandler
+        faulthandler.dump_traceback_later(600, repeat=True)
+    except Exception:  # noqa: BLE001
+        pass
+
     # Lower process priority to avoid hogging CPU
     # nice value 10 means lower priority (normal is 0, max low is 19)
     try:
@@ -257,6 +340,7 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
     except (OSError, AttributeError):
         pass  # nice() not available on Windows or permission denied
 
+    _converted_tmp: Optional[str] = None
     try:
         import torch
         import librosa
@@ -276,6 +360,12 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         device_info = {"device_name": device_name}
 
         send_progress(queue, "upload", 0.05, f"Processing on {device_name}...")
+
+        # Transcode formats libsndfile can't open (m4a/aac/webm) to a
+        # temp wav before anything touches the file.
+        audio_path, _converted_tmp = _ensure_decodable(audio_path)
+        if _converted_tmp:
+            send_progress(queue, "upload", 0.07, "Converted audio for analysis")
 
         # Step 1: Stem separation
         send_progress(queue, "stems", 0.1, f"Separating stems on {device_name}...")
@@ -564,6 +654,35 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 "classifier will see notes=[] for every stem and default to chord."
             )
 
+        # Melody/accompaniment role tagging on polyphonic stems.
+        #
+        # The polyphonic extractor dumps chord tones, arpeggio filler and
+        # the actual tune into one flat ``notes`` list, so the JAM lead
+        # lane rendered a cluttered mix "untrue" to what it claims to be.
+        # annotate_roles adds ``"role": "melody"|"harmony"`` to each note
+        # dict (onset-cluster + register-gate heuristic, see
+        # tone_forge/midi/melody_split.py). Purely additive: consumers
+        # that ignore ``role`` see the exact same lane as before; the
+        # JAM lead lane and landmark_notes selection filter on it.
+        # Monophonic stems (bass, vocals) are single-line by
+        # construction and are left untagged.
+        try:
+            from tone_forge.midi.melody_split import annotate_roles
+            for _stem_name, _midi_result in midi_stems.items():
+                if not isinstance(_midi_result, dict):
+                    continue
+                if not (
+                    _stem_name == "other"
+                    or _stem_name == "piano"
+                    or _stem_name.startswith("guitar")
+                ):
+                    continue
+                _notes = _midi_result.get("notes") or []
+                if _notes:
+                    _midi_result["notes"] = annotate_roles(_notes)
+        except Exception as _role_exc:
+            logger.warning(f"[melody-split] role tagging failed: {_role_exc}")
+
         # Bracket the harm_ratio future so the per-stage timeline
         # shows whether it overlapped successfully (finished_ms close
         # to or before midi_extraction.other.started_ms) or whether
@@ -729,6 +848,7 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         _st = time.perf_counter()
         try:
             from tone_forge.analysis.sections import SectionDetector
+            from tone_forge.analysis.structure import analyze_structure
             # Segmenter parity with unified_pipeline._detect_sections
             # (unified_pipeline.py:2063). Both paths now share the
             # SectionDetector defaults (min_section_duration=8.0s,
@@ -741,8 +861,27 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             # the JAM UI. Stage A relabels types downstream, so the
             # merge-adjacent-same-type step was destructive without
             # being informative.
+            #
+            # Preferred path (task 11): All-In-One structure model —
+            # boundary F@0.5s 0.404 vs 0.060, label accuracy 0.495 vs
+            # 0.232 on SALAMI-IA. Demucs stems from Step 2 are staged
+            # into allin1's demix layout so it skips its own Demucs
+            # pass. Falls back to the RMS-novelty detector when
+            # allin1 is unavailable or fails.
+            structure = None
+            try:
+                structure = analyze_structure(audio_path, stems=stems)
+            except Exception as e:
+                logger.warning(f"Structure backend failed: {e}")
+
             detector = SectionDetector(sr=sr_dur)
-            arrangement = detector.detect_sections(y_dur, sr_dur)
+            if structure and structure.get("segments"):
+                arrangement = detector.detect_sections_with_structure(
+                    y_dur, sr=sr_dur, segments=structure["segments"]
+                )
+                logger.info("Section labels from allin1 structure model")
+            else:
+                arrangement = detector.detect_sections(y_dur, sr_dur)
 
             merged_sections = list(arrangement.sections)
             sections_data = [s.to_dict() for s in merged_sections]
@@ -809,7 +948,13 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             # ``guitar_parts`` to a single entry and we surface it as
             # an extra lane too.
             chord_input_stems: dict = {}
-            for _stem_name in ("other", "bass", "vocals", "drums"):
+            # Harmonic stems only. Running the chord detector on the
+            # vocals (monophonic melody) or drums (unpitched noise)
+            # stems produced chord ribbons that just traced the tune or
+            # hallucinated from broadband energy — "very untrue to what
+            # it is claiming" in user terms. Those lanes are dropped;
+            # the UI's lane picker simply won't offer them.
+            for _stem_name in ("other", "bass"):
                 _p = stems.get(_stem_name)
                 if _p is not None:
                     chord_input_stems[_stem_name] = _p
@@ -1081,8 +1226,21 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                         decision.dominant_stem
                         and decision.dominant_stem in stem_notes_by_name
                     ):
+                        # Prefer melody-role notes (see the role-tagging
+                        # block after notes-normalize) so landmarks trace
+                        # the tune rather than chord tones + filler.
+                        # Untagged stems (bass/vocals) default to
+                        # "melody" and pass through unchanged; an all-
+                        # harmony section falls back to the full lane.
+                        _dom_notes = stem_notes_by_name[
+                            decision.dominant_stem
+                        ]
+                        _melody_notes = [
+                            n for n in _dom_notes
+                            if n.get("role", "melody") == "melody"
+                        ]
                         section.landmark_notes = select_landmark_notes(
-                            stem_midi=stem_notes_by_name[decision.dominant_stem],
+                            stem_midi=_melody_notes or _dom_notes,
                             section_start_s=float(section.start_time),
                             section_end_s=float(section.end_time),
                         )
@@ -1147,18 +1305,28 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                     # ``h2_result.degenerate`` is True (short songs, no
                     # usable chord data) the energy-heuristic ``type``
                     # is left in place.
+                    # Skipped when the allin1 structure model supplied
+                    # the labels (label_source == "allin1") — those are
+                    # authoritative over the H2 heuristic (0.495 vs
+                    # 0.232 label accuracy on SALAMI-IA).
                     from tone_forge.analysis.section_naming import (
                         derive_section_types,
                     )
 
+                    _allin1_labels = any(
+                        getattr(s, "label_source", "") == "allin1"
+                        for s in merged_sections
+                    )
                     derived_types = derive_section_types(decisions)
-                    for section, st in zip(merged_sections, derived_types):
-                        section.type = st
+                    if not _allin1_labels:
+                        for section, st in zip(merged_sections, derived_types):
+                            section.type = st
                     # Stage B: refine using per-stem song-form aggregates.
                     # Defensive no-op when per_stem_features_by_stem is empty
                     # (guidance-mode classification didn't run) or when row
                     # counts disagree with the section count.
-                    if per_stem_features_by_stem and all(
+                    # Also skipped for allin1 labels.
+                    if not _allin1_labels and per_stem_features_by_stem and all(
                         len(rows) == len(merged_sections)
                         for rows in per_stem_features_by_stem.values()
                     ):
@@ -1204,9 +1372,12 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         # for the looper to align stems to a beat grid. Neither was being
         # surfaced before — the result fell through to "— bpm · —".
         #
-        # Tempo: librosa.beat.beat_track on the downsampled mono signal.
-        # Cheap (sub-second for a 4-minute track) and robust enough for a
-        # display value.
+        # Tempo/beats/downbeats: tone_forge.beat_tracking.track_beats —
+        # Beat This! transformer (real downbeats) with librosa fallback.
+        # Same shared tracker the server pipeline uses; measured on
+        # BabySlakh: beats F1 0.895 / downbeats 0.872 vs librosa
+        # 0.815 / 0.512 (the old [::4] downbeat guess was phase-wrong
+        # on 3/10 tracks).
         #
         # Key: reuse tone_forge.midi_extractor.detect_key, which scores
         # weighted pitch-class histograms against major/minor scale
@@ -1216,19 +1387,16 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         tempo_bpm: Optional[float] = None
         detected_key: Optional[str] = None
         beat_times: list = []
+        downbeat_times: list = []
         _st = time.perf_counter()
         try:
-            tempo_raw, beat_frames = librosa.beat.beat_track(y=y_dur, sr=sr_dur)
-            # librosa may return a 0-d numpy array; coerce to float.
-            tempo_bpm = float(np.asarray(tempo_raw).item()) if tempo_raw is not None else None
-            if tempo_bpm and (tempo_bpm < 40 or tempo_bpm > 240):
-                # Out-of-range estimates are almost always wrong — drop them.
-                tempo_bpm = None
-                beat_frames = []
-            # Keep beat times so the UI can drive a click track / looper grid
-            # without re-running beat tracking. Stored in seconds.
-            if beat_frames is not None and len(beat_frames) > 0:
-                beat_times = librosa.frames_to_time(beat_frames, sr=sr_dur).tolist()
+            from tone_forge.beat_tracking import track_beats
+
+            beat_grid = track_beats(y_dur, sr_dur)
+            # Worker contract: tempo is None (not 0.0) when undetected.
+            tempo_bpm = beat_grid["tempo_bpm"] or None
+            beat_times = beat_grid["beats_s"]
+            downbeat_times = beat_grid["downbeats_s"]
         except Exception as e:
             logger.warning(f"Tempo estimation failed: {e}")
         _record_stage("tempo_estimation", _st, time.perf_counter())
@@ -1289,6 +1457,31 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         _st = time.perf_counter()
         _record_stage("role_classification", _st, _st)
 
+        # Determine detected type using recommended_source_kind (uses primary/highest score)
+        # This is more accurate than checking is_synth first which causes false positives
+        # for effects-heavy guitar like shoegaze
+        source_kind = getattr(detection, 'recommended_source_kind', 'isolated_guitar')
+
+        # Map source_kind to detected_type
+        if source_kind == "synth":
+            detected_type = "synth"
+        elif source_kind == "bass":
+            detected_type = "bass"
+        elif source_kind == "drums":
+            detected_type = "drums"
+        elif source_kind == "vocals":
+            detected_type = "vocals"
+        else:
+            # Default to guitar for isolated_guitar, full_mix, etc.
+            detected_type = "guitar"
+
+        # Log confidence scores for debugging
+        logger.info(f"Detection - source_kind: {source_kind}, detected_type: {detected_type}")
+        logger.info(f"Confidence scores - guitar: {getattr(detection, 'guitar_confidence', 0):.2f}, "
+                    f"synth: {getattr(detection, 'synth_confidence', 0):.2f}, "
+                    f"bass: {getattr(detection, 'bass_confidence', 0):.2f}, "
+                    f"drums: {getattr(detection, 'drums_confidence', 0):.2f}")
+
         # Step 6: Quality analysis
         send_progress(queue, "quality", 0.92, "Analyzing quality metrics...")
         stem_quality_data = None
@@ -1296,29 +1489,48 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         contamination_data = None
         _st = time.perf_counter()
         try:
-            from tone_forge.reconstruction.stem_quality import analyze_stem_quality
-            from tone_forge.reconstruction.contamination import analyze_contamination
+            from tone_forge.reconstruction.stem_quality import get_analyzer
+            from tone_forge.reconstruction.contamination import detect_contamination
 
             # Analyze stem quality on the "other" stem (where guitar is) or main audio
             stem_path_for_quality = stems.get("other", stems.get("guitar", audio_path))
-            stem_quality = analyze_stem_quality(str(stem_path_for_quality), stem_type=detected_type)
-            stem_quality_data = stem_quality.to_dict() if hasattr(stem_quality, 'to_dict') else {
+            y_quality, sr_quality = librosa.load(
+                str(stem_path_for_quality), sr=None, mono=True
+            )
+            stem_quality = get_analyzer().analyze(
+                y_quality, sr_quality, stem_type=detected_type
+            )
+            raw_quality = stem_quality.to_dict() if hasattr(stem_quality, 'to_dict') else {
                 "overall_quality": getattr(stem_quality, 'overall_quality', 0.5),
                 "transient_integrity": getattr(stem_quality, 'transient_integrity', 0.5),
                 "contamination_score": getattr(stem_quality, 'contamination_score', 0.1),
                 "reverb_density": getattr(stem_quality, 'reverb_density', 0.3),
                 "snr_estimate": getattr(stem_quality, 'snr_estimate', 20.0),
             }
+            # Metrics arrive as np.float32/np.bool_ scalars, which break
+            # json.dumps when the remote worker posts the result payload.
+            stem_quality_data = _to_jsonable(raw_quality)
 
-            # Analyze contamination
-            contamination = analyze_contamination(y_dur, sr_dur, stem_type=detected_type)
-            if hasattr(contamination, 'to_dict'):
-                contamination_data = contamination.to_dict()
-            else:
-                contamination_data = {
-                    "overall_contamination": getattr(contamination, 'overall_contamination', 0.1),
-                    "regions": [],
-                }
+            # Analyze contamination. Serialize to the shape the studio UI
+            # reads: overall_contamination + contamination_by_type for the
+            # metrics card, regions ({start, end}) for waveform overlays.
+            contamination = detect_contamination(y_dur, sr_dur, stem_type=detected_type)
+            contamination_data = {
+                "overall_contamination": float(contamination.overall_contamination),
+                "contamination_by_type": {
+                    (t.value if hasattr(t, "value") else str(t)): float(v)
+                    for t, v in (contamination.contamination_by_type or {}).items()
+                },
+                "regions": [
+                    {
+                        "start": float(e.time_start),
+                        "end": float(e.time_end),
+                        "type": e.contamination_type.value,
+                        "severity": float(e.severity),
+                    }
+                    for e in contamination.events
+                ],
+            }
 
             # Build quality report
             quality_report_data = {
@@ -1376,31 +1588,6 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             "sample_rate": sr_dur,
         }
         _record_stage("waveform_generation", _st, time.perf_counter())
-
-        # Determine detected type using recommended_source_kind (uses primary/highest score)
-        # This is more accurate than checking is_synth first which causes false positives
-        # for effects-heavy guitar like shoegaze
-        source_kind = getattr(detection, 'recommended_source_kind', 'isolated_guitar')
-
-        # Map source_kind to detected_type
-        if source_kind == "synth":
-            detected_type = "synth"
-        elif source_kind == "bass":
-            detected_type = "bass"
-        elif source_kind == "drums":
-            detected_type = "drums"
-        elif source_kind == "vocals":
-            detected_type = "vocals"
-        else:
-            # Default to guitar for isolated_guitar, full_mix, etc.
-            detected_type = "guitar"
-
-        # Log confidence scores for debugging
-        logger.info(f"Detection - source_kind: {source_kind}, detected_type: {detected_type}")
-        logger.info(f"Confidence scores - guitar: {getattr(detection, 'guitar_confidence', 0):.2f}, "
-                    f"synth: {getattr(detection, 'synth_confidence', 0):.2f}, "
-                    f"bass: {getattr(detection, 'bass_confidence', 0):.2f}, "
-                    f"drums: {getattr(detection, 'drums_confidence', 0):.2f}")
 
         total_processing_time = time.time() - start_time
 
@@ -1460,9 +1647,8 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             # strip never saw beats. We emit *all three* keys: the
             # canonical pair plus the legacy ``beat_times`` for any
             # caller still pinned to the old name. ``downbeats_s`` is
-            # derived 4/4 (every 4th beat from anchor); a real
-            # downbeat tracker can replace this without changing the
-            # bundle contract.
+            # measured by beat_this when available (librosa fallback
+            # derives 4/4 from the beat anchor).
             "tempo_bpm": tempo_bpm,
             "detected_key": detected_key,
             # Tuning offset from A=440 concert pitch, in cents.
@@ -1472,7 +1658,7 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             "tuning_offset_cents": tuning_offset_cents,
             "beat_times": beat_times,
             "beats_s": beat_times,
-            "downbeats_s": beat_times[::4] if beat_times else [],
+            "downbeats_s": downbeat_times,
             # Waveform for arrangement view
             "waveform": waveform_data,
             # Detection
@@ -1634,6 +1820,8 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         logger.exception("Analysis failed")
         send_error(queue, str(e))
     finally:
+        if _converted_tmp:
+            Path(_converted_tmp).unlink(missing_ok=True)
         send_done(queue)
 
 

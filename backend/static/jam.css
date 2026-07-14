@@ -250,6 +250,23 @@ a.np-source:focus-visible {
   color: var(--text);
   background: rgba(249, 115, 22, 0.06);
 }
+/* Attribution credit line (D-024) — shown only for licensed sessions. */
+a.np-credit {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-decoration: none;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+a.np-credit[href]:hover,
+a.np-credit[href]:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+}
 
 .perform-stage {
   display: grid;
@@ -4342,3 +4359,327 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 .lp-tweak-readout { text-align: right; font-variant-numeric: tabular-nums; color: var(--text, #e6e8ec); }
 .lp-tweak-row input[type="range"] { width: 100%; }
 .lp-voice-actions { display: flex; justify-content: flex-end; padding-top: 6px; }
+
+/* ============================================================ landing reskin
+   JamN marketing landing for #view-intake. Purple/indigo theme, scoped so the
+   band-room and perform views keep the calm orange language. Every functional
+   id is preserved (#upload-form, #upload-file, #upload-submit, #engine-banner*,
+   #intake-form/#intake-instrument/#intake-submit, #upload-attest,
+   #intake-change-device) — this block is visual only.
+   ============================================================================ */
+:root {
+  --brand-purple: #8b5cf6;
+  --brand-purple-lite: #a78bfa;
+  --brand-grad: linear-gradient(120deg, #a855f7 0%, #7c6cf5 50%, #6366f1 100%);
+}
+
+/* Deep purple-black backdrop (harmonises every view, fixed while scrolling). */
+body {
+  background:
+    radial-gradient(1200px 620px at 50% -12%, rgba(96, 63, 176, 0.34), transparent 60%),
+    radial-gradient(900px 520px at 10% 6%, rgba(124, 58, 237, 0.12), transparent 55%),
+    radial-gradient(900px 520px at 90% 6%, rgba(99, 102, 241, 0.12), transparent 55%),
+    #07060d;
+  background-attachment: fixed;
+}
+
+/* header */
+.jam-header {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+  padding: 20px 32px;
+  justify-content: flex-start;
+  gap: clamp(32px, 7vw, 120px);
+  position: relative;
+}
+.brand { display: inline-flex; align-items: center; gap: 11px; font-size: 20px; flex: none; }
+.brand-mark, .brand-mark svg { display: inline-flex; }
+.brand-text { display: inline-flex; flex-direction: column; line-height: 1; gap: 3px; }
+.brand-name { font-weight: 800; letter-spacing: -0.01em; }
+.brand-domain {
+  font-size: 11px; font-weight: 500; letter-spacing: 0.02em;
+  color: var(--text-dim); text-transform: lowercase;
+}
+.jam-header #account-chip { margin-left: auto; }
+.nav-burger {
+  display: none;                       /* desktop: inline nav, no burger */
+  align-items: center; justify-content: center;
+  width: 40px; height: 40px; margin-left: 14px;
+  border-radius: 10px; cursor: pointer;
+  color: var(--text); background: rgba(124, 58, 237, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.28);
+}
+.nav-burger svg { width: 22px; height: 22px; }
+.jam-header nav a {
+  font-size: 15px; padding: 8px 14px; border-radius: 9px;
+  transition: color .15s, background .15s;
+}
+.jam-header nav a:hover { color: var(--text); }
+.jam-header nav a.active {
+  color: #fff;
+  background: rgba(124, 58, 237, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.35);
+}
+
+/* decorative waveform wisps flanking the intake column */
+#view-intake { position: relative; }
+#view-intake::before,
+#view-intake::after {
+  content: "";
+  position: absolute; top: 40px;
+  width: 42%; height: 320px;
+  pointer-events: none; z-index: 0; opacity: 0.7;
+  background: radial-gradient(60% 80% at 50% 50%, rgba(139, 92, 246, 0.22), transparent 70%);
+  filter: blur(2px);
+  -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 6px);
+          mask-image: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 6px);
+}
+#view-intake::before { left: -6%; transform: rotate(-6deg); }
+#view-intake::after  { right: -6%; transform: rotate(6deg); }
+
+.landing {
+  position: relative; z-index: 1;
+  max-width: 680px; margin: 0 auto;
+  text-align: center;
+}
+
+/* hero */
+.landing .hero {
+  font-size: 72px; line-height: 0.98; font-weight: 800;
+  letter-spacing: -0.02em; margin: 40px 0 18px;
+}
+.hero-accent {
+  background: var(--brand-grad);
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+.landing .sub { color: var(--text-dim); font-size: 19px; line-height: 1.5; margin: 0 0 40px; }
+
+/* upload card — the single dominant focal point of the page */
+.upload-card {
+  position: relative;
+  width: 100%; max-width: 600px; margin: 0 auto;
+  background: linear-gradient(180deg, rgba(32, 24, 54, 0.72), rgba(18, 14, 30, 0.72));
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  border-radius: 26px;
+  padding: 44px 48px 40px;
+  text-align: center;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 24px 60px rgba(6, 4, 16, 0.55);
+}
+/* soft purple radial glow that lifts the card off the background */
+.upload-card__glow {
+  position: absolute; inset: -16% -12% -22%;
+  z-index: -1; pointer-events: none;
+  background: radial-gradient(closest-side,
+    rgba(139, 92, 246, 0.40),
+    rgba(124, 58, 237, 0.14) 58%,
+    transparent 80%);
+  filter: blur(48px);
+}
+.upload-card__badge {
+  width: 60px; height: 60px; margin: 0 auto 16px;
+  display: grid; place-items: center; border-radius: 50%;
+  color: var(--brand-purple-lite);
+  background: rgba(139, 92, 246, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.25);
+}
+.upload-card__badge svg { width: 28px; height: 28px; }
+.upload-card__title { font-size: 27px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 7px; }
+.upload-card__meta { color: var(--text-dim); font-size: 15px; letter-spacing: 0.04em; margin: 0 0 26px; }
+
+.upload-form { display: block; }
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+  border: 1.5px dashed rgba(139, 92, 246, 0.42);
+  border-radius: 18px; padding: 48px 22px; cursor: pointer;
+  background: rgba(139, 92, 246, 0.03);
+  transition: border-color .15s, background .15s;
+}
+.dropzone:hover { border-color: var(--brand-purple-lite); background: rgba(139, 92, 246, 0.08); }
+.dropzone__icon { color: var(--brand-purple-lite); line-height: 0; }
+.dropzone__icon svg { width: 44px; height: 44px; display: block; }
+.dropzone__cta { color: var(--brand-purple-lite); font-size: 20px; font-weight: 700; }
+.dropzone__hint { color: var(--text-dim); font-size: 15px; }
+
+.analyze-btn {
+  margin-top: 20px; width: 100%;
+  border: none; border-radius: 13px;
+  padding: 17px 20px; font-size: 17px; font-weight: 700;
+  font-family: inherit; color: #fff;
+  background: var(--brand-grad); cursor: pointer;
+  box-shadow: 0 10px 26px rgba(124, 58, 237, 0.35);
+  transition: filter .15s, opacity .15s, transform .1s;
+}
+.analyze-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.analyze-btn:active:not(:disabled) { transform: translateY(1px); }
+.analyze-btn:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
+
+/* engine status compacted into a small pill inside the card */
+.landing .engine-banner {
+  max-width: none; width: 100%; margin: 14px 0 0;
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  padding: 11px 14px; border-radius: 12px;
+  background: rgba(16, 12, 26, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.landing .engine-banner-text { display: flex; flex-direction: column; gap: 1px; }
+.landing .engine-banner-text strong { font-size: 13.5px; font-weight: 600; }
+.landing .engine-banner-text span { font-size: 12.5px; color: var(--text-dim); }
+.landing .engine-banner-dot { flex: none; }
+
+/* rights attestation — sits quietly at the base of the card */
+.attest {
+  display: flex; gap: 10px; align-items: flex-start; justify-content: center;
+  max-width: 520px; margin: 20px auto 0;
+  color: var(--text-dim); font-size: 13px; line-height: 1.4; cursor: pointer;
+  text-align: left;
+}
+.attest input { margin-top: 2px; flex: none; accent-color: var(--brand-purple); }
+.landing .intake-error { margin: 16px auto 0; max-width: 560px; }
+
+/* decorative feature cards */
+.feature-cards {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 40px 0 0;
+}
+.feature-card {
+  background: rgba(20, 16, 32, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px; padding: 22px 16px; text-align: center;
+}
+.feature-card__icon { display: inline-flex; color: var(--brand-purple-lite); margin-bottom: 12px; }
+.feature-card__icon svg { width: 30px; height: 30px; }
+.feature-card h3 { font-size: 18px; font-weight: 700; margin: 0 0 6px; }
+.feature-card p { font-size: 13.5px; color: var(--text-dim); margin: 0; line-height: 1.4; }
+
+/* footer chips */
+.landing-footer {
+  display: flex; justify-content: center; gap: 40px; flex-wrap: wrap;
+  margin: 44px 0 0; padding-top: 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text-dim); font-size: 14px;
+}
+.landing-footer__item { display: inline-flex; align-items: center; gap: 8px; }
+.landing-footer__item svg { width: 17px; height: 17px; color: var(--brand-purple-lite); }
+
+@media (max-width: 620px) {
+  .landing .hero { font-size: 46px; }
+  .upload-card { padding: 28px 22px 30px; }
+  .feature-cards { grid-template-columns: repeat(2, 1fr); }
+  .landing-footer { gap: 20px; }
+}
+
+/* ============================================================ one-screen fit
+   The landing must fit a single viewport with NO scroll on any device. When
+   #view-intake is the active view we turn <body> into a full-height flex
+   column (header auto, #jam-app fills the rest) and center the landing inside.
+   Vertical rhythm collapses to a single flex `gap`, every size uses vh-aware
+   clamp()s, and decorative rows are shed on short viewports so the upload card
+   always stays above the fold. Scoped via :has() so band-room / perform views
+   keep their normal scrolling behaviour.
+   ============================================================================ */
+body:has(#view-intake.active) {
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+body:has(#view-intake.active) > .jam-header { flex: 0 0 auto; }
+body:has(#view-intake.active) #jam-app {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-width: 900px;
+  padding: clamp(6px, 1.5vh, 20px) 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body:has(#view-intake.active) #view-intake.active { width: 100%; }
+
+/* Collapse the landing's stacked margins into one flex gap */
+#view-intake .landing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(6px, 1.4vh, 20px);
+  max-width: 680px;
+  max-height: 100%;
+  overflow: hidden;
+}
+#view-intake .landing .hero {
+  margin: 0;
+  font-size: clamp(24px, 4.4vh, 58px);
+  line-height: 1.02;
+}
+#view-intake .landing .sub {
+  margin: 0;
+  font-size: clamp(13px, 1.9vh, 19px);
+}
+#view-intake .upload-card {
+  width: 100%;
+  max-width: 600px;
+  box-sizing: border-box;
+  padding: clamp(20px, 3vh, 44px) clamp(22px, 4vw, 48px) clamp(18px, 2.8vh, 40px);
+}
+#view-intake .upload-card__badge {
+  width: clamp(40px, 6vh, 60px);
+  height: clamp(40px, 6vh, 60px);
+  margin: 0 auto clamp(6px, 1.4vh, 16px);
+}
+#view-intake .upload-card__badge svg { width: clamp(20px, 3vh, 28px); height: clamp(20px, 3vh, 28px); }
+#view-intake .upload-card__title { font-size: clamp(19px, 2.7vh, 27px); }
+#view-intake .upload-card__meta { margin: 0 0 clamp(12px, 2.2vh, 26px); }
+#view-intake .dropzone { padding: clamp(16px, 3.2vh, 48px) 22px; gap: clamp(5px, 1.1vh, 9px); }
+#view-intake .dropzone__icon svg { width: clamp(30px, 4.6vh, 44px); height: clamp(30px, 4.6vh, 44px); }
+#view-intake .analyze-btn {
+  margin-top: clamp(12px, 1.9vh, 20px);
+  padding: clamp(12px, 1.8vh, 17px) 20px;
+}
+#view-intake .landing .engine-banner { margin: clamp(8px, 1.3vh, 14px) 0 0; }
+#view-intake .attest { margin: clamp(12px, 1.8vh, 20px) auto 0; }
+
+/* Progressive shedding so the essential upload stack never clips on short
+   viewports. Trust pill, then hero secondary text, then badge, in that order.
+   The card title, dropzone, button and attest always survive. */
+@media (max-height: 700px) {
+  #view-intake .landing .sub { display: none; }
+}
+@media (max-height: 600px) {
+  #view-intake .landing .engine-banner { display: none; }
+}
+@media (max-height: 520px) {
+  #view-intake .landing .hero { display: none; }
+  #view-intake .upload-card__badge { display: none; }
+}
+
+/* Narrow phones: collapse the inline nav into a hamburger dropdown. Sign-in
+   (#account-chip) stays a separate always-visible element to the left of the
+   burger. Pure CSS toggle via the hidden #nav-toggle checkbox — no JS needed. */
+@media (max-width: 620px) {
+  .jam-header { padding: 12px 16px; }
+  .brand { font-size: 17px; }
+  .nav-burger { display: inline-flex; }
+
+  /* nav becomes an absolutely-positioned dropdown panel, hidden until toggled */
+  .jam-header nav {
+    display: none;
+    position: absolute; top: calc(100% + 6px); right: 12px;
+    flex-direction: column; align-items: stretch; gap: 4px;
+    margin-left: 0; padding: 8px;
+    min-width: 168px; z-index: 60;
+    background: #150f24;
+    border: 1px solid rgba(167, 139, 250, 0.28);
+    border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  }
+  .nav-toggle:checked ~ nav { display: flex; }
+  .jam-header nav a { font-size: 15px; padding: 11px 14px; border-radius: 10px; }
+
+  /* Free up header space: hide the email, keep only a compact Sign out button
+     that never wraps. Sign-in stays separate from the burger. */
+  .jam-header #account-chip { gap: 6px; }
+  .jam-header .account-email { display: none; }
+  .jam-header .account-btn {
+    padding: 7px 12px; font-size: 13px; white-space: nowrap; line-height: 1;
+  }
+}

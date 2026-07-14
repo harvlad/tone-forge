@@ -74,6 +74,14 @@ struct RecordToggle: View {
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onTapGesture { handleTap() }
         .onLongPressGesture(minimumDuration: 0.6) { handleLongPress() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(accessibilityLabelText)
+        .accessibilityHint(
+            appState.sessionRecorder.state == .idle
+                ? "Arms the recorder"
+                : "Stops and saves. Long-press to discard."
+        )
         .onAppear { pulse = true }
         .animation(
             appState.sessionRecorder.state == .recording
@@ -110,6 +118,16 @@ struct RecordToggle: View {
     private var isCountingIn: Bool {
         !hasBundle && appState.sessionRecorder.state != .idle
             && appState.songSeconds < 0
+    }
+
+    private var accessibilityLabelText: String {
+        if isCountingIn { return "Recording count-in" }
+        switch appState.sessionRecorder.state {
+        case .idle:      return "Record"
+        case .armed:     return "Recorder armed, waiting for first note"
+        case .recording:
+            return "Recording, \(appState.sessionRecorder.eventCount) events"
+        }
     }
 
     private var label: String {

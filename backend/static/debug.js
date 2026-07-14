@@ -834,7 +834,7 @@
   // ==================================================================
   async function loadHistory() {
     try {
-      const r = await fetch('/api/history?limit=100');
+      const r = await fetch('/api/history?limit=100&full=1');
       const data = await r.json();
       state.history = data.history || [];
       renderHistory();

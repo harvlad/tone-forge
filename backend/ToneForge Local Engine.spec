@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_data_files
 datas = [('/Users/mattharvey/Sites/tone-forge/backend/tone_forge', 'tone_forge'), ('/Users/mattharvey/Sites/tone-forge/backend/data', 'data'), ('/Library/Frameworks/Python.framework/Versions/3.10/lib/python3.10/site-packages/demucs/remote', 'demucs/remote'), ('/Library/Frameworks/Python.framework/Versions/3.10/lib/python3.10/site-packages/basic_pitch', 'basic_pitch')]
 datas += collect_data_files('demucs')
 datas += collect_data_files('basic_pitch')
+datas += collect_data_files('allin1')
 
 
 a = Analysis(
@@ -11,7 +12,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=['uvicorn', 'uvicorn.logging', 'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan', 'uvicorn.lifespan.on', 'fastapi', 'starlette', 'pydantic', 'pystray', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'librosa', 'soundfile', 'audioread', 'resampy', 'torch', 'torchaudio', 'demucs', 'demucs.pretrained', 'demucs.apply', 'basic_pitch', 'numpy', 'scipy', 'scipy.signal', 'scipy.fft', 'tone_forge', 'tone_forge.analyzer', 'tone_forge.stem_separator', 'tone_forge.midi_extractor', 'tone_forge.auto_detect', 'local_engine.server'],
+    hiddenimports=['uvicorn', 'uvicorn.logging', 'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan', 'uvicorn.lifespan.on', 'fastapi', 'starlette', 'pydantic', 'pystray', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'librosa', 'soundfile', 'audioread', 'resampy', 'torch', 'torchaudio', 'demucs', 'demucs.pretrained', 'demucs.apply', 'basic_pitch', 'beat_this', 'beat_this.inference', 'allin1', 'allin1.analyze', 'allin1.models', 'natten', 'hydra', 'omegaconf', 'huggingface_hub', 'numpy', 'scipy', 'scipy.signal', 'scipy.fft', 'tone_forge', 'tone_forge.analyzer', 'tone_forge.stem_separator', 'tone_forge.midi_extractor', 'tone_forge.auto_detect', 'local_engine.server', 'local_engine.remote_worker', 'local_engine.analysis_worker', 'requests'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

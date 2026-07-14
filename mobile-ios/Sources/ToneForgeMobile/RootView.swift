@@ -57,7 +57,7 @@ public struct RootView: View {
 
             // LibraryView hosts its own NavigationStack (searchable +
             // toolbar), so it skips TabScaffold.
-            LibraryView(onActivate: { appState.showPerformanceTab() })
+            LibraryView(onActivate: { appState.openSong() })
                 .tabItem {
                     Label(AppTab.library.title,
                           systemImage: AppTab.library.systemImage)
@@ -125,16 +125,20 @@ struct LibraryView: View {
     )
     @State private var showMusicPicker = false
     @State private var showFilePicker = false
+    @State private var showCCTracks = false
+    @State private var showSettings = false
 
     /// Called once a bundle activates so the parent can flip to a
     /// performance tab.
     let onActivate: () -> Void
 
-    private var client: HistoryClient { HistoryClient() }
+    private var client: HistoryClient { HistoryClient(timeout: AppConfig.historyTimeout) }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                libraryHeader
+
                 Picker("Library section", selection: $segment) {
                     ForEach(LibrarySegment.allCases) { seg in
                         Text(seg.title).tag(seg)
@@ -153,9 +157,23 @@ struct LibraryView: View {
                     RecordingsListView()
                 }
             }
-            .navigationTitle("Library")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
+            .sheet(isPresented: $showSettings) { SettingsView() }
             .task {
                 if entries.isEmpty { await reload() }
+            }
+            // Cross-device pickup: signing in (or out) changes what
+            // the backend returns for this bearer, so refresh.
+            // onReceive (not onChange): accountStore is a nested
+            // ObservableObject, so its @Published writes don't
+            // re-render this view on their own.
+            .onReceive(
+                appState.accountStore.$profile
+                    .dropFirst()
+                    .removeDuplicates()
+            ) { _ in
+                Task { await reload() }
             }
             .onAppear {
                 importer.onLoaded = {
@@ -173,6 +191,16 @@ struct LibraryView: View {
                 }
             }
             #endif
+            // Curated CC demo tracks (D-024): server-side import, so
+            // the sheet hands back a running job id — no attestation,
+            // no transcode, straight into the progress sheet.
+            .sheet(isPresented: $showCCTracks) {
+                CCTracksSheet { jobId, track in
+                    importer.startCuratedJob(
+                        jobId: jobId, title: track.title, appState: appState
+                    )
+                }
+            }
             .sheet(
                 isPresented: Binding(
                     get: { importer.phase == .awaitingAttestation },
@@ -238,30 +266,13 @@ struct LibraryView: View {
                     Text(err).foregroundStyle(.red).tfLibraryRowChrome()
                 }
 
-                if appState.isDownloading, !appState.downloadProgress.isEmpty {
-                    ForEach(appState.downloadProgress.keys.sorted(), id: \.self) { role in
-                        if let prog = appState.downloadProgress[role] {
-                            stemProgressRow(role: role, progress: prog)
-                                .tfLibraryCard()
-                                .tfLibraryRowChrome()
-                        }
-                    }
-                }
-
                 if let err = appState.loadingError {
                     Text(err).foregroundStyle(.red).tfLibraryRowChrome()
                 }
-
-                addSongButton
-                    .tfLibraryRowChrome()
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(TFTheme.background)
-            .searchable(text: $query, prompt: "Search songs")
-            .onSubmit(of: .search) {
-                Task { await reload() }
-            }
             // Live search as you type, 300 ms debounced so we don't
             // spam the server on every keystroke. Clearing the query
             // (or cancelling search) restores the full Recent list.
@@ -279,9 +290,9 @@ struct LibraryView: View {
 
     // MARK: - Import entry points
 
-    /// Bottom-of-list "Add Song" card (mockup). Same import menu that
-    /// used to live in the toolbar; keeps the `import-menu` identifier
-    /// for UI tests.
+    /// Toolbar "+" beside the Library title. Same import menu that
+    /// used to live in the bottom card; keeps the `import-menu`
+    /// identifier for UI tests.
     private var addSongButton: some View {
         Menu {
             Button {
@@ -294,18 +305,83 @@ struct LibraryView: View {
             } label: {
                 Label("From Files", systemImage: "folder")
             }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                Text("Add Song")
+            Button {
+                showCCTracks = true
+            } label: {
+                Label("Demo Tracks", systemImage: "sparkles")
             }
-            .font(.body.weight(.semibold))
-            .foregroundStyle(TFTheme.textPrimary)
-            .frame(maxWidth: .infinity)
-            .tfLibraryCard()
+        } label: {
+            Image(systemName: "plus")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(TFTheme.textPrimary)
         }
-        .buttonStyle(.plain)
         .accessibilityIdentifier("import-menu")
+    }
+
+    // MARK: - Custom header
+
+    /// Own title row: large "Library" with the settings gear + add
+    /// menu on the same baseline (native large-title toolbar can't sit
+    /// the buttons on the title row). Search lives here too so the
+    /// hidden nav bar doesn't cost the `.searchable` field.
+    private var libraryHeader: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text("Library")
+                    .font(.largeTitle.bold())
+                    .foregroundStyle(TFTheme.textPrimary)
+                Spacer()
+                HStack(spacing: 18) {
+                    settingsButton
+                    addSongButton
+                }
+            }
+            if segment == .songs {
+                searchField
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(TFTheme.textSecondary)
+            TextField("Search songs", text: $query)
+                .textFieldStyle(.plain)
+                .foregroundStyle(TFTheme.textPrimary)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .onSubmit { Task { await reload() } }
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(TFTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(TFTheme.surface, in: Capsule())
+        .overlay(Capsule().stroke(TFTheme.stroke, lineWidth: 1))
+    }
+
+    /// Settings gear (D-022 update: moved here from the per-tab Now
+    /// Playing header).
+    private var settingsButton: some View {
+        Button {
+            showSettings = true
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.body)
+                .foregroundStyle(TFTheme.textPrimary)
+        }
+        .accessibilityLabel("Settings")
+        .accessibilityIdentifier("library-settings-button")
     }
 
     @ViewBuilder
@@ -376,10 +452,21 @@ struct LibraryView: View {
     @ViewBuilder
     private func entryRow(_ entry: HistoryEntry) -> some View {
         let isActive = appState.currentBundle?.analysisId == entry.id
+        // A cold first load runs JSON fetch + a stem download that emits
+        // no incremental bytes, so `downloadFraction` is nil until the
+        // first stem lands. `loadingBundleId` flips the instant the row
+        // is tapped, driving an indeterminate spinner over that gap.
+        let isLoadingRow = appState.loadingBundleId == entry.id
+        // While this song's stems download, show a single aggregate
+        // progress on its own row instead of a stack of per-stem rows.
+        let loadingFraction: Double? = isLoadingRow ? appState.downloadFraction : nil
         Button {
             Task {
-                await appState.loadBundle(analysisId: entry.id)
-                if appState.loadingError == nil { onActivate() }
+                // onReady fires the instant the song is activated —
+                // before the stem download — so Learn opens right away
+                // instead of minutes later.
+                await appState.loadBundle(analysisId: entry.id,
+                                          onReady: onActivate)
             }
         } label: {
             HStack(spacing: 12) {
@@ -391,7 +478,14 @@ struct LibraryView: View {
                         .font(.body.weight(.semibold))
                         .foregroundStyle(TFTheme.textPrimary)
                         .lineLimit(1)
-                    if let sub = entrySubtitle(entry) {
+                    if let frac = loadingFraction {
+                        rowProgressBar(frac)
+                    } else if isLoadingRow {
+                        Text("Downloading…")
+                            .font(.caption)
+                            .foregroundStyle(TFTheme.textSecondary)
+                            .lineLimit(1)
+                    } else if let sub = entrySubtitle(entry) {
                         Text(sub)
                             .font(.caption)
                             .foregroundStyle(TFTheme.textSecondary)
@@ -399,7 +493,15 @@ struct LibraryView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                if let dur = entry.duration {
+                if let frac = loadingFraction {
+                    Text("\(Int(frac * 100))%")
+                        .font(.caption)
+                        .foregroundStyle(TFTheme.textSecondary)
+                        .monospacedDigit()
+                } else if isLoadingRow {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if let dur = entry.duration {
                     Text(formatDuration(dur))
                         .font(.caption)
                         .foregroundStyle(TFTheme.textSecondary)
@@ -420,15 +522,25 @@ struct LibraryView: View {
         .disabled(appState.isDownloading)
     }
 
+    /// Slim determinate bar shown inline on the song row that is
+    /// currently downloading its stems.
+    private func rowProgressBar(_ fraction: Double) -> some View {
+        ProgressView(value: fraction)
+            .progressViewStyle(.linear)
+            .tint(Color.accentColor)
+            .frame(height: 3)
+    }
+
     /// Row for a locally persisted bundle (offline fallback). Activates
     /// straight from the cache — no manifest fetch — so it works with
     /// the backend unreachable.
     private func localBundleRow(_ bundle: SongBundle) -> some View {
         let isActive = appState.currentBundle?.analysisId == bundle.analysisId
+        let isLoadingRow = appState.loadingBundleId == bundle.analysisId
+        let loadingFraction: Double? = isLoadingRow ? appState.downloadFraction : nil
         return Button {
             Task {
-                await appState.loadCachedBundle(bundle)
-                if appState.loadingError == nil { onActivate() }
+                await appState.loadCachedBundle(bundle, onReady: onActivate)
             }
         } label: {
             HStack(spacing: 12) {
@@ -441,7 +553,9 @@ struct LibraryView: View {
                         .font(.body.weight(.semibold))
                         .foregroundStyle(TFTheme.textPrimary)
                         .lineLimit(1)
-                    if !bundle.meta.artist.isEmpty {
+                    if let frac = loadingFraction {
+                        rowProgressBar(frac)
+                    } else if !bundle.meta.artist.isEmpty {
                         Text(bundle.meta.artist)
                             .font(.caption)
                             .foregroundStyle(TFTheme.textSecondary)
@@ -449,10 +563,20 @@ struct LibraryView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                Text(formatDuration(bundle.meta.durationSec))
-                    .font(.caption)
-                    .foregroundStyle(TFTheme.textSecondary)
-                    .monospacedDigit()
+                if let frac = loadingFraction {
+                    Text("\(Int(frac * 100))%")
+                        .font(.caption)
+                        .foregroundStyle(TFTheme.textSecondary)
+                        .monospacedDigit()
+                } else if isLoadingRow {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text(formatDuration(bundle.meta.durationSec))
+                        .font(.caption)
+                        .foregroundStyle(TFTheme.textSecondary)
+                        .monospacedDigit()
+                }
                 rowMenu {
                     Button(role: .destructive) {
                         Task { await deleteBundle(bundle) }
@@ -468,38 +592,9 @@ struct LibraryView: View {
         .disabled(appState.isDownloading)
     }
 
-    private func stemProgressRow(role: String, progress: BundleStore.StemProgress) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(role.capitalized)
-                Spacer()
-                if progress.isComplete {
-                    Text("Done").font(.caption).foregroundStyle(.secondary)
-                } else if progress.bytesTotal > 0 {
-                    let pct = Int(Double(progress.bytesDownloaded) / Double(progress.bytesTotal) * 100)
-                    Text("\(pct)%").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text(formatBytes(progress.bytesDownloaded))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            ProgressView(
-                value: Double(progress.bytesDownloaded),
-                total: Double(max(progress.bytesTotal, progress.bytesDownloaded, 1))
-            )
-        }
-    }
-
     private func formatDuration(_ seconds: Double) -> String {
         let s = max(0, Int(seconds.rounded(.down)))
         return String(format: "%d:%02d", s / 60, s % 60)
-    }
-
-    private func formatBytes(_ bytes: Int64) -> String {
-        let mb = Double(bytes) / 1024.0 / 1024.0
-        if mb >= 1 { return String(format: "%.1f MB", mb) }
-        return String(format: "%.0f KB", Double(bytes) / 1024.0)
     }
 
     /// Server + local + in-memory delete via AppState. On failure the

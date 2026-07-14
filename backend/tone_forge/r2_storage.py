@@ -34,13 +34,21 @@ directly; a later patch will pipe through ffmpeg for AAC-in-M4A.
 from __future__ import annotations
 
 import functools
+import json
 import mimetypes
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 
 
 _DEFAULT_BUCKET = "tone-forge-stems"
+_HISTORY_KEY = "data/history.json"
+_HISTORY_CACHE_TTL_SEC = 30  # Re-fetch from R2 if cache is older than this
+
+# In-memory cache for history to avoid R2 fetch on every request
+_history_cache: dict = {"data": None, "fetched_at": 0.0, "lock": threading.Lock()}
 _PRESIGN_TTL_SEC = 7 * 24 * 3600  # 7 days — R2's presign hard cap is 7d
 
 
@@ -143,6 +151,78 @@ def public_url_for(key: str) -> str:
     )
 
 
+# TTL for URLs re-presigned at read time. Short because the read path
+# regenerates a fresh URL on every bundle/session fetch — the client
+# only needs long enough to download the stems it was just handed.
+_READ_PRESIGN_TTL_SEC = 24 * 3600
+
+
+def key_from_url(url: str) -> Optional[str]:
+    """Extract the object key from a URL that points into our bucket.
+
+    Recognises both URL shapes this module can emit:
+
+    - presigned endpoint form (path-style or virtual-hosted):
+      ``https://{account}.r2.cloudflarestorage.com/{bucket}/{key}?X-Amz-…``
+      ``https://{bucket}.{account}.r2.cloudflarestorage.com/{key}?X-Amz-…``
+    - public-host form: ``https://{R2_PUBLIC_HOST}/{key}``
+
+    Returns ``None`` for anything else (local paths, third-party URLs,
+    other buckets) so callers can safely feed it arbitrary stored
+    values.
+    """
+    if not isinstance(url, str) or not url.startswith("https://"):
+        return None
+    from urllib.parse import unquote, urlparse
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    path = unquote(parsed.path or "")
+
+    public = os.environ.get("R2_PUBLIC_HOST")
+    if public and host == public.strip().rstrip("/").lower():
+        return path.lstrip("/") or None
+
+    if host.endswith(".r2.cloudflarestorage.com"):
+        bucket = bucket_name().lower()
+        if host.startswith(bucket + "."):
+            return path.lstrip("/") or None
+        prefix = f"/{bucket}/"
+        if path.startswith(prefix):
+            return path[len(prefix):] or None
+    return None
+
+
+def refresh_url(url: str, ttl_sec: int = _READ_PRESIGN_TTL_SEC) -> str:
+    """Re-issue a fresh URL for a stored our-bucket URL.
+
+    Presigned URLs written into history at upload time expire (R2 caps
+    presigns at 7 days), so a stored URL eventually goes dead.
+    Refreshing at read time makes the stored value's age irrelevant:
+    every bundle/session fetch hands the client a fresh short-TTL URL.
+
+    Returns the input unchanged when the URL isn't ours, R2 isn't
+    configured, or presigning fails — callers never need a fallback.
+    """
+    key = key_from_url(url)
+    if not key:
+        return url
+    host = os.environ.get("R2_PUBLIC_HOST")
+    if host:
+        return f"https://{host.strip().rstrip('/')}/{key.lstrip('/')}"
+    if not is_configured():
+        return url
+    try:
+        return _client().generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket_name(), "Key": key},
+            ExpiresIn=ttl_sec,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[r2] refresh_url failed for key {key}: {exc}")
+        return url
+
+
 def stem_key(analysis_id: str, role: str, extension: str) -> str:
     """Deterministic object key for a stem.
 
@@ -242,3 +322,95 @@ def upload_stem(
         # cycle with tone_forge_api's log configuration.
         print(f"[r2] upload failed for {src} → {key}: {exc}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Shared history storage
+#
+# When R2 is configured, history.json is stored on R2 so multiple backends
+# (local dev machine, VPS) share the same song library. Analysis on local
+# shows up on mobile immediately without manual sync.
+# ---------------------------------------------------------------------------
+
+
+def load_history() -> Optional[list]:
+    """Load history from R2, with in-memory caching.
+
+    Returns None if R2 isn't configured or on any error (caller should
+    fall back to local history.json).
+
+    Cache TTL is 30s - frequent enough for multi-device updates to feel
+    near-instant, cheap enough that most bundle/chops requests hit cache.
+    """
+    if not is_configured():
+        return None
+
+    now = time.time()
+    with _history_cache["lock"]:
+        if (_history_cache["data"] is not None and
+            now - _history_cache["fetched_at"] < _HISTORY_CACHE_TTL_SEC):
+            return _history_cache["data"]
+
+    try:
+        from botocore.exceptions import ClientError
+        import io
+
+        client = _client()
+        try:
+            response = client.get_object(Bucket=bucket_name(), Key=_HISTORY_KEY)
+            content = response["Body"].read().decode("utf-8")
+            data = json.loads(content)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                # No history on R2 yet - return empty list
+                data = []
+            else:
+                raise
+
+        with _history_cache["lock"]:
+            _history_cache["data"] = data
+            _history_cache["fetched_at"] = now
+        return data
+    except Exception as exc:
+        print(f"[r2] load_history failed: {exc}")
+        return None
+
+
+def save_history(history: list) -> bool:
+    """Save history to R2.
+
+    Returns True on success, False if R2 isn't configured or on error.
+    Updates the in-memory cache on success.
+    """
+    if not is_configured():
+        return False
+
+    try:
+        content = json.dumps(history, indent=2, default=str)
+        _client().put_object(
+            Bucket=bucket_name(),
+            Key=_HISTORY_KEY,
+            Body=content.encode("utf-8"),
+            ContentType="application/json",
+        )
+
+        # Update cache immediately so subsequent reads see the new data
+        with _history_cache["lock"]:
+            _history_cache["data"] = history
+            _history_cache["fetched_at"] = time.time()
+
+        return True
+    except Exception as exc:
+        print(f"[r2] save_history failed: {exc}")
+        return False
+
+
+def invalidate_history_cache() -> None:
+    """Force next load_history() to fetch from R2.
+
+    Call this after another backend might have modified history (e.g.,
+    after receiving a webhook or before showing critical data).
+    """
+    with _history_cache["lock"]:
+        _history_cache["fetched_at"] = 0.0

@@ -54,16 +54,10 @@ struct SamplePadGrid4x4: View {
                         cols: 4,
                         onPadDown: { row, col in
                             let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
-                            if isEmpty(gridRow: gridRow, gridCol: gridCol) {
-                                // "+" tile: open pack browser to assign sound
-                                if let browse = onOpenBrowse {
-                                    browse(gridRow, gridCol)
-                                } else {
-                                    chopPickerTarget = ChopPickerTarget(row: gridRow, col: gridCol)
-                                }
-                            } else {
-                                coordinator.touchPadDown(row: gridRow, col: gridCol)
-                            }
+                            // Empty pads do nothing on tap; long-press opens
+                            // the radial with "Add Sound".
+                            guard !isEmpty(gridRow: gridRow, gridCol: gridCol) else { return }
+                            coordinator.touchPadDown(row: gridRow, col: gridCol)
                         },
                         onPadUp: { row, col in
                             let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
@@ -71,25 +65,24 @@ struct SamplePadGrid4x4: View {
                         },
                         onLongPress: { row, col in
                             let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
-                            // Show radial menu instead of sheet directly
-                            if !isEmpty(gridRow: gridRow, gridCol: gridCol) {
-                                let center = padCenter(
-                                    localRow: row, localCol: col,
-                                    size: geo.size
-                                )
-                                radialMenuState = makeRadialMenuState(
-                                    gridRow: gridRow,
-                                    gridCol: gridCol,
-                                    center: center
-                                )
-                            } else {
-                                // Empty pad: open pack browser
-                                if let browse = onOpenBrowse {
-                                    browse(gridRow, gridCol)
-                                } else {
-                                    chopPickerTarget = ChopPickerTarget(row: gridRow, col: gridCol)
-                                }
-                            }
+                            // Anchor the wheel on the pressed pad; clamp
+                            // keeps the full wheel on-screen near edges so
+                            // it never clips under the pads or controls.
+                            // Empty pads get a single "Add Sound" action;
+                            // assigned pads get the full editing wheel.
+                            let center = padCenter(
+                                localRow: row, localCol: col, size: geo.size
+                            )
+                            let empty = isEmpty(gridRow: gridRow, gridCol: gridCol)
+                            radialMenuState = makeRadialMenuState(
+                                gridRow: gridRow,
+                                gridCol: gridCol,
+                                center: center,
+                                containerSize: geo.size,
+                                actions: empty
+                                    ? PadRadialAction.empty
+                                    : PadRadialAction.assigned
+                            )
                         },
                         onLongPressDrag: { point in
                             radialDragPosition = point
@@ -97,7 +90,11 @@ struct SamplePadGrid4x4: View {
                         onLongPressEnd: { point in
                             // Determine action from final position
                             if let state = radialMenuState {
-                                if let action = PadRadialMenu.action(at: point, center: state.center) {
+                                if let action = PadRadialMenu.action(
+                                    at: point,
+                                    center: state.center,
+                                    actions: state.actions
+                                ) {
                                     handleRadialAction(action, state: state)
                                 }
                                 radialMenuState = nil
@@ -156,8 +153,14 @@ struct SamplePadGrid4x4: View {
                 )
             }
         }
-        .sheet(item: $chopPickerTarget) { target in
-            ChopPickerSheet(
+        // NOTE: SwiftUI only presents ONE `.sheet` reliably per view node.
+        // The chop-picker and sequence-builder sheets are attached to
+        // separate background nodes so they don't shadow `sheetTarget`
+        // (which powers effects/source/trimmer, e.g. the radial "Chop").
+        .background {
+            Color.clear
+                .sheet(item: $chopPickerTarget) { target in
+                    ChopPickerSheet(
                 onSelect: { [target] ref, _ in
                     handleChopSelection(ref, target: (target.row, target.col))
                 },
@@ -167,6 +170,7 @@ struct SamplePadGrid4x4: View {
                 sequences: sequencesForPicker,
                 downloadablePacks: downloadablePacksForPicker,
                 downloadingPackIds: downloadingPackIds,
+                downloadFractions: downloadFractions,
                 onDownloadPack: { packId in
                     guard let entry = appState.curatedCatalog.first(where: { $0.packId == packId })
                     else { return }
@@ -183,10 +187,14 @@ struct SamplePadGrid4x4: View {
                 }
             )
             .task { await appState.refreshCuratedCatalog() }
+                }
         }
-        .sheet(item: $sequenceBuilderTarget) { target in
-            SequenceBuilderSheet(gridRow: target.row, gridCol: target.col)
-                .environmentObject(appState)
+        .background {
+            Color.clear
+                .sheet(item: $sequenceBuilderTarget) { target in
+                    SequenceBuilderSheet(gridRow: target.row, gridCol: target.col)
+                        .environmentObject(appState)
+                }
         }
     }
 
@@ -220,18 +228,33 @@ struct SamplePadGrid4x4: View {
     private func makeRadialMenuState(
         gridRow: Int,
         gridCol: Int,
-        center: CGPoint
+        center: CGPoint,
+        containerSize: CGSize,
+        actions: [PadRadialAction]
     ) -> PadRadialMenuState {
         let padIdx = gridRow * 10 + gridCol
-        // TODO: Get actual pack ID and loop state from coordinator
+        // FUTURE: Get actual pack ID and loop state from coordinator
         return PadRadialMenuState(
             gridRow: gridRow,
             gridCol: gridCol,
-            center: center,
+            center: Self.clampWheelCenter(center, in: containerSize),
             packId: nil,
             padIdx: padIdx,
-            hasLoop: false
+            hasLoop: false,
+            actions: actions
         )
+    }
+
+    /// Nudge the wheel center inward so the full 300pt wheel stays
+    /// on-screen near edge/corner pads. Falls back to the container
+    /// midpoint when there isn't room for the wheel on an axis.
+    static func clampWheelCenter(_ c: CGPoint, in size: CGSize) -> CGPoint {
+        let r: CGFloat = 158  // outerRadius (150) + drag/label margin
+        func clamp(_ v: CGFloat, _ extent: CGFloat) -> CGFloat {
+            guard extent > 2 * r else { return extent / 2 }
+            return min(max(v, r), extent - r)
+        }
+        return CGPoint(x: clamp(c.x, size.width), y: clamp(c.y, size.height))
     }
 
     private func handleRadialAction(_ action: PadRadialAction, state: PadRadialMenuState) {
@@ -248,7 +271,7 @@ struct SamplePadGrid4x4: View {
                 sheetTarget = .trimmer(trimmerTarget)
             }
         case .loop:
-            // TODO: Toggle loop transform on pad
+            // FUTURE: Toggle loop transform on pad
             // Requires adding togglePadLoop to ModeCoordinator
             break
         case .reset:
@@ -263,6 +286,18 @@ struct SamplePadGrid4x4: View {
             // pattern auto-assigns back to this pad.
             sequenceBuilderTarget = SequenceBuilderTarget(
                 row: state.gridRow, col: state.gridCol)
+        case .addSound:
+            // Empty pad: open the pack browser to assign a sound.
+            if let browse = onOpenBrowse {
+                browse(state.gridRow, state.gridCol)
+            } else {
+                chopPickerTarget = ChopPickerTarget(
+                    row: state.gridRow, col: state.gridCol)
+            }
+        case .voiceRecord:
+            // Empty pad: open the voice-record interface directly.
+            sheetTarget = .source(PadSourceTarget(
+                gridRow: state.gridRow, gridCol: state.gridCol, sample: nil))
         }
     }
 
@@ -296,7 +331,8 @@ struct SamplePadGrid4x4: View {
                             visual: visual(gridRow: gridRow, gridCol: gridCol),
                             pressed: coordinator.pressedPads.contains(
                                 gridRow * 10 + gridCol),
-                            ringing: ringing.contains(gridRow * 10 + gridCol)
+                            ringing: ringing.contains(gridRow * 10 + gridCol),
+                            pulse: coordinator.sequencePulses[gridRow * 10 + gridCol]
                         )
                     }
                 }
@@ -305,7 +341,12 @@ struct SamplePadGrid4x4: View {
     }
 
     @ViewBuilder
-    private func tile(visual: PadVisual, pressed: Bool, ringing: Bool) -> some View {
+    private func tile(
+        visual: PadVisual,
+        pressed: Bool,
+        ringing: Bool,
+        pulse: SequencePulse? = nil
+    ) -> some View {
         let tint = Self.color(fromHex: visual.colorHint)
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 10)
@@ -344,6 +385,25 @@ struct SamplePadGrid4x4: View {
                     .padding(6)
             }
 
+            if let pulse {
+                // Whole-tile flash on downbeats — a heartbeat locked to
+                // the loop tempo. Animation is keyed on the step so it
+                // re-fires each downbeat.
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.white.opacity(pulse.isDownbeat ? 0.18 : 0.0))
+                    .animation(
+                        .easeOut(duration: max(0.05, pulse.secondsPerStep)),
+                        value: pulse.step)
+                // Step meter along the bottom — one segment per step so
+                // 8/16/32 loops read at a glance; the lit segment advances
+                // in lock with the tempo.
+                VStack {
+                    Spacer(minLength: 0)
+                    SequenceLoopMeter(pulse: pulse, tint: tint)
+                }
+                .padding(4)
+            }
+
             if pressed {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(.white.opacity(0.25))
@@ -354,8 +414,10 @@ struct SamplePadGrid4x4: View {
                 .stroke(
                     pressed
                         ? Color.white
-                        : (ringing ? .white.opacity(0.85) : TFTheme.stroke),
-                    lineWidth: pressed ? 2 : (ringing ? 1.5 : 1)
+                        : (ringing
+                            ? .white.opacity(0.85)
+                            : (pulse != nil ? tint.opacity(0.9) : TFTheme.stroke)),
+                    lineWidth: pressed ? 2 : (ringing || pulse != nil ? 1.5 : 1)
                 )
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -508,6 +570,22 @@ struct SamplePadGrid4x4: View {
             .map { $0.packId })
     }
 
+    /// Fractional progress (0–1) per in-flight curated download —
+    /// byte-weighted when the server declared sizes, else pad-count.
+    private var downloadFractions: [String: Double] {
+        appState.curatedDownloads.reduce(into: [:]) { dict, kv in
+            let p = kv.value
+            guard !p.isComplete else { return }
+            if p.bytesTotal > 0 {
+                dict[kv.key] = Double(p.bytesDownloaded) / Double(p.bytesTotal)
+            } else if p.padsTotal > 0 {
+                dict[kv.key] = Double(p.padsCompleted) / Double(p.padsTotal)
+            } else {
+                dict[kv.key] = 0
+            }
+        }
+    }
+
     /// Handle selection from the ChopPickerSheet.
     private func handleChopSelection(_ ref: ChopReference, target: (row: Int, col: Int)) {
         print("[SamplePadGrid4x4] handleChopSelection called with ref: \(ref), target: \(target)")
@@ -526,7 +604,7 @@ struct SamplePadGrid4x4: View {
                 targetCol: target.col,
                 patternId: patternId
             )
-        case .bundleChop, .localSample, .customURL:
+        case .bundleChop, .localSample, .customURL, .synthChord:
             print("[SamplePadGrid4x4] Unhandled ref type: \(ref)")
             break
         }
@@ -535,5 +613,31 @@ struct SamplePadGrid4x4: View {
     /// Preview a chop reference.
     private func previewChopReference(_ ref: ChopReference) {
         appState.previewChopReference(ref)
+    }
+}
+
+/// Bottom-edge step meter for a running sequence pad. One segment per
+/// step (8/16/32) so the loop length reads at a glance; the current
+/// segment lights white and advances in lock with the loop tempo,
+/// trailing segments hold the pad tint.
+private struct SequenceLoopMeter: View {
+    let pulse: SequencePulse
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 1) {
+            ForEach(0..<max(1, pulse.stepCount), id: \.self) { i in
+                RoundedRectangle(cornerRadius: 0.5)
+                    .fill(color(for: i))
+            }
+        }
+        .frame(height: 3)
+        .animation(.linear(duration: 0.06), value: pulse.step)
+    }
+
+    private func color(for i: Int) -> Color {
+        if i == pulse.step { return .white }
+        if i < pulse.step { return tint.opacity(0.55) }
+        return .white.opacity(0.12)
     }
 }

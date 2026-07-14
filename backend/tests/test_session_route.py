@@ -195,6 +195,43 @@ def test_session_route_emits_legacy_sidecar_fields(
     assert body["legacy_preset_matches"]["guitar"]["preset_name"] == "Analog Lead"
 
 
+def test_session_route_emits_attribution_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attribution metadata (D-024) lives on the history ENTRY, not the
+    result blob — the route must surface it as ``legacy_attribution``
+    so /jam/:id reloads can render the credit line."""
+    entry = _history_entry()
+    entry["name"] = "Night Drive"
+    entry["artist"] = "Some Artist"
+    entry["license"] = "CC-BY"
+    entry["license_url"] = "https://creativecommons.org/licenses/by/4.0/"
+    entry["source_url"] = "https://example.org/night-drive"
+    entry["attribution"] = "“Night Drive” by Some Artist (CC BY)"
+    monkeypatch.setattr(
+        tone_forge_api, "_get_history_item",
+        lambda _id: entry if _id == "sess-real" else None,
+    )
+    body = client.get("/api/session/sess-real").json()
+    attr = body["legacy_attribution"]
+    assert attr["title"] == "Night Drive"
+    assert attr["artist"] == "Some Artist"
+    assert attr["license"] == "CC-BY"
+    assert attr["license_url"] == "https://creativecommons.org/licenses/by/4.0/"
+    assert attr["source_url"] == "https://example.org/night-drive"
+    assert attr["attribution"] == "“Night Drive” by Some Artist (CC BY)"
+
+
+def test_session_route_attribution_sidecar_empty_for_old_entries() -> None:
+    """Pre-D-024 rows have no attribution keys — sidecar falls back to
+    empty strings so the client's license-empty guard hides the line."""
+    body = client.get("/api/session/sess-real").json()
+    attr = body["legacy_attribution"]
+    assert attr["artist"] == ""
+    assert attr["license"] == ""
+    assert attr["attribution"] == ""
+
+
 def test_session_route_preserves_extra_stems() -> None:
     """``guitar_texture`` / ``guitar_texture_2`` / ``guitar_rhythm`` round-trip
     via the ``stems.extras`` array so the Jam UI can render every

@@ -20,6 +20,12 @@ struct PracticeOverlay: View {
         VStack(spacing: 14) {
             header
             expectedChordCard
+            if let prediction = controller.prediction() {
+                LearnCountdownBar(
+                    prediction: prediction,
+                    songSeconds: appState.songSeconds
+                )
+            }
             chordPads
             Spacer(minLength: 0)
             statsRow
@@ -100,14 +106,23 @@ struct PracticeOverlay: View {
 
     @ViewBuilder
     private var chordPads: some View {
-        if let section = controller.activeSection {
-            let chords = controller.progressionChords(for: section)
+        if controller.activeSection != nil {
+            // Whole-song chord vocabulary, not just the section's
+            // bar progression: passing chords the scorer expects must
+            // always be playable, and a stable layout across sections
+            // builds muscle memory.
+            let chords = controller.songChords
             if chords.isEmpty {
-                Text("No chords in this section — listen and follow along")
+                Text("No chords in this song — listen and follow along")
                     .font(.caption)
                     .foregroundStyle(TFTheme.textSecondary)
             } else {
-                HStack(spacing: 8) {
+                LazyVGrid(
+                    columns: [GridItem(
+                        .adaptive(minimum: 84, maximum: 160), spacing: 8
+                    )],
+                    spacing: 8
+                ) {
                     ForEach(
                         Array(chords.enumerated()), id: \.offset
                     ) { _, symbol in
@@ -119,10 +134,19 @@ struct PracticeOverlay: View {
         }
     }
 
+    /// Amber "up next" tint, mirrored on the Launchpad pulse.
+    private static let nextColor = Color(
+        red: 1.00, green: 0.72, blue: 0.30)
+
     private func chordPad(_ symbol: String) -> some View {
         let isExpected = appState.currentChord.map {
             LearnScorer.matches(pressed: symbol, target: $0.symbol)
         } ?? false
+        // Up next (distinct chord) blinks; the blink phase rides the
+        // 30 Hz songSeconds publisher, no extra timer.
+        let isNext = !isExpected
+            && controller.prediction()?.nextSymbol == symbol
+        let blinkOn = Int(appState.songSeconds / 0.35) % 2 == 0
         return Button {
             controller.recordPress(symbol: symbol)
         } label: {
@@ -134,19 +158,26 @@ struct PracticeOverlay: View {
                 .background(
                     isExpected
                         ? Color.accentColor.opacity(0.45)
-                        : TFTheme.chipFill,
+                        : isNext && blinkOn
+                            ? Self.nextColor.opacity(0.35)
+                            : TFTheme.chipFill,
                     in: RoundedRectangle(cornerRadius: 12)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(
-                            isExpected ? Color.accentColor : TFTheme.stroke,
-                            lineWidth: 1
+                            isExpected
+                                ? Color.accentColor
+                                : isNext
+                                    ? Self.nextColor
+                                    : TFTheme.stroke,
+                            lineWidth: isNext ? 2 : 1
                         )
                 )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Play \(symbol)")
+        .accessibilityLabel(
+            isNext ? "Play \(symbol), up next" : "Play \(symbol)")
     }
 
     // MARK: - Stats

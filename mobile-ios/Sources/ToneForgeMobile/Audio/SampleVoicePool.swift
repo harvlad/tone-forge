@@ -59,6 +59,9 @@ public struct SampleTrigger: Sendable {
     public let chokeGroup: Int?
     /// Voice gain in dB, applied to the per-voice mixer.
     public let gainDb: Double
+    /// Stereo pan (-1 hard left … +1 hard right), applied to the
+    /// per-voice mixer. Clamped inside the pool.
+    public let pan: Float
     /// Per-pad realtime effect params (delay + resonant lowpass).
     /// Applied to the per-voice AVAudioUnitDelay + AVAudioUnitEQ on
     /// allocation; values are clamped inside the pool.
@@ -69,12 +72,14 @@ public struct SampleTrigger: Sendable {
         loop: Bool,
         chokeGroup: Int?,
         gainDb: Double,
+        pan: Float = 0,
         effects: SamplePadEffects = .neutral
     ) {
         self.padKey = padKey
         self.loop = loop
         self.chokeGroup = chokeGroup
         self.gainDb = gainDb
+        self.pan = pan
         self.effects = effects
     }
 }
@@ -283,6 +288,7 @@ public final class SampleVoicePool: ObservableObject {
         // Voice gain: dB → linear, clamped to [0, 2].
         let linear = Float(pow(10.0, req.gainDb / 20.0))
         slot.mixer.outputVolume = max(0, min(2, linear))
+        slot.mixer.pan = max(-1, min(1, req.pan))
 
         // Apply per-pad effects onto this slot's delay + eq. Clamp
         // once so a stale persisted override can't push
@@ -404,6 +410,7 @@ public final class SampleVoicePool: ObservableObject {
 
         let linear = Float(pow(10.0, req.gainDb / 20.0))
         slot.mixer.outputVolume = max(0, min(2, linear))
+        slot.mixer.pan = max(-1, min(1, req.pan))
         applyEffects(req.effects.clamped(), to: slot)
 
         slot.player.scheduleBuffer(slicedBuffer, at: nil, options: [.interrupts], completionHandler: nil)

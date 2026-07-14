@@ -735,3 +735,88 @@ auto-generated boundaries without re-analyzing. Radial menu provides
 quick access to per-pad actions without navigating sheets. All three
 features integrate with existing transport, event bus, and session
 capture infrastructure.
+
+## D-024: CC / royalty-free source content + attribution support (implemented)
+
+**Date:** 2026-07-11
+**Decision:** ship demo/test content sourced from CC-BY and CC0
+catalogs, with first-class attribution metadata across mobile, desktop,
+and web. Avoids the licensing exposure of commercial recordings while
+the local-first migration lands.
+
+**Approved sources (CC-BY / CC0 / public domain):**
+- Free Music Archive (freemusicarchive.org) — CC, per-track license check
+- Jamendo — indie full tracks, CC
+- ccMixter — remix-friendly CC stems + songs
+- Internet Archive (archive.org) — public domain + CC
+- Pixabay Music / Uppbeat / Bensound — royalty-free, attribution varies
+- YouTube Audio Library — free WAV/MP3, per-track attribution flag
+- Musopen — classical, public domain (good chord-detection test bed)
+- Incompetech (Kevin MacLeod) — CC-BY, one-line credit
+- Wikimedia Commons — mixed PD/CC
+
+**License rules (hard constraints):**
+- CC0: no attribution required. CC-BY: credit line required.
+- CC-BY-ND: stem separation / remix is a derivative — NOT allowed.
+- CC-BY-SA: derivatives must carry the same license — avoid for
+  shipped content.
+- CC-BY-NC: testing OK, blocks commercial use — avoid for shipped
+  content.
+- Safe set for shipping = CC0 + CC-BY only, license verified per track.
+
+**Implementation plan (all platforms):**
+1. Attribution metadata on a song: `title / artist / license /
+   sourceURL` — extend song bundle meta (already carries title/artist;
+   add `license` + `sourceURL`), or a per-import attribution record.
+2. Credits line shown on the song (Library row detail or Now Playing)
+   plus an aggregate credits screen.
+3. Backend: attribution fields flow through analysis result → history →
+   session bundle so every client renders them.
+4. Curated CC-BY/CC0 test-track list wired into quick import
+   (best stem-separation tests: Jamendo + FMA pop/rock/electronic;
+   Musopen classical for harmonic/chord detection).
+
+**Alternatives:**
+- Commercial tracks for demos (rejected: licensing exposure — the
+  driver for the local-first migration).
+- Attribution-free "royalty-free" assumption (rejected: royalty-free ≠
+  no license; most CC requires attribution and ND/SA/NC carry
+  derivative restrictions).
+
+**Why:** stem separation and chopping are derivative works, so source
+licensing is load-bearing, not cosmetic. CC0/CC-BY with in-app credits
+gives legally clean demo content on every platform and a reusable
+attribution pipeline for future licensed catalogs.
+
+**Implemented (2026-07-12):**
+- Field set: history/job meta `title, artist, license, license_url,
+  source_url, attribution` (snake_case, `""` = unknown/user-owned);
+  bundle meta adds `license / licenseUrl / attribution` (camelCase).
+  Swift `BundleMeta` carries them as optionals so old cached bundles
+  decode.
+- Auto tag extraction (no edit sheet): precedence form field > file
+  tags (server-side mutagen, `tone_forge/media_tags.py`) > filename
+  stem (title only). iOS transcodes to a bare WAV, so
+  ImportCoordinator captures title/artist from the ORIGINAL source
+  (LibraryTrack fields / AVURLAsset commonMetadata) and sends them as
+  form fields via `JobSubmitting.submit(extraFields:)`.
+- Both history writers stamp attribution (`_run_analysis_job` and the
+  engine `POST /api/engine/job/{id}/complete` path); `/jam/:id` gets a
+  `legacy_attribution` sidecar on the session bundle.
+- Curated catalog: `static/cc-tracks/catalog.json` +
+  `GET /api/cc-tracks` + `POST /api/cc-tracks/{id}/import`. Import is
+  SERVER-SIDE (client uploads nothing) and pre-attested with
+  `attestation_source: "curated"` — the server owns the audio and the
+  license, so there is nothing for the user to attest to; the client
+  follows the returned job id through the normal job flow
+  (`ImportCoordinator.startCuratedJob`). `scripts/fetch_cc_tracks.py`
+  gates CC-BY entries on TASL completeness before they enter the
+  catalog.
+- Render rule (web + iOS): credit shown only when `license` non-empty;
+  text = verbatim `attribution` if set, else
+  `"{artist} — {title} ({license})"`; links to sourceUrl, falling back
+  to the license deed. iOS: third caption line on NowPlayingHeader;
+  web: `#np-credit` under the Now Playing title.
+- Aggregate Credits screen: Settings → Legal & compliance → "Credits &
+  licenses" (licensed songs from history + sample-pack
+  license/provenance from manifests).

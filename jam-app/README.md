@@ -1,5 +1,11 @@
 # JamApp — minimal native macOS app for Jam
 
+> **DEPRECATED** — superseded by [`../jam-desktop/`](../jam-desktop/),
+> a fully native SwiftUI rewrite with in-process audio (stems,
+> tempo-stretch, monitor/tone) and Launchpad Pro MK3 support. This
+> WKWebView wrapper stays in-tree until jam-desktop parity sign-off,
+> then gets removed. No new features land here.
+
 A tiny SwiftUI app that opens the existing Jam web UI in a `WKWebView`.
 A native window around the same frontend you'd get at
 <http://localhost:8000/jam> — no Electron, no Chromium, just Safari's

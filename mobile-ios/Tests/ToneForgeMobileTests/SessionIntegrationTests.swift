@@ -241,6 +241,12 @@ final class SessionIntegrationTests: XCTestCase {
         // Record against packB…
         let packB = try makePack(packId: "packB", padIdxs: [0])
         app.activateSamplePack(packB, stemFiles: [:])
+        // Activation decodes buffers on a fire-and-forget task, so a
+        // fast run can reach the replay tick before packB is resident
+        // (triggerRaw would degrade to padNotFound silence). The sync
+        // preload is the documented test/offline path; the async twin
+        // re-checks residency after its decode, so racing it is safe.
+        try app.sampleScheduler.preloadPack(packB, stemFiles: [:])
         app.armSessionRecording()
         publishPadDown(row: 8, col: 1, at: 0.0)
         app.stopAndSaveSessionRecording()

@@ -1,0 +1,78 @@
+{
+  "catalogVersion": 1,
+  "_comment": "Curated CC0/CC-BY demo tracks. Entries are appended by scripts/fetch_cc_tracks.py, which validates CC-BY attribution completeness (title + author + source link + license link) before anything ships. 'file' is relative to static/cc-tracks/audio/ and is never exposed via GET /api/cc-tracks.",
+  "tracks": [
+    {
+      "id": "cheery-monday",
+      "title": "Cheery Monday",
+      "artist": "Kevin MacLeod",
+      "license": "CC-BY",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "sourceUrl": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Cheery%20Monday.mp3",
+      "attribution": "“Cheery Monday” by Kevin MacLeod (CC BY), https://incompetech.com/music/royalty-free/mp3-royaltyfree/Cheery%20Monday.mp3",
+      "file": "cheery-monday.mp3",
+      "durationSec": 80.22,
+      "description": "Upbeat ska-flavored pop — bright horns and offbeat chords"
+    },
+    {
+      "id": "funkorama",
+      "title": "Funkorama",
+      "artist": "Kevin MacLeod",
+      "license": "CC-BY",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "sourceUrl": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Funkorama.mp3",
+      "attribution": "“Funkorama” by Kevin MacLeod (CC BY), https://incompetech.com/music/royalty-free/mp3-royaltyfree/Funkorama.mp3",
+      "file": "funkorama.mp3",
+      "durationSec": 201.46,
+      "description": "Classic funk groove — clav and horn stabs"
+    },
+    {
+      "id": "slow-burn",
+      "title": "Slow Burn",
+      "artist": "Kevin MacLeod",
+      "license": "CC-BY",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "sourceUrl": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Slow%20Burn.mp3",
+      "attribution": "“Slow Burn” by Kevin MacLeod (CC BY), https://incompetech.com/music/royalty-free/mp3-royaltyfree/Slow%20Burn.mp3",
+      "file": "slow-burn.mp3",
+      "durationSec": 228.78,
+      "description": "Smoky late-night jazz lounge"
+    },
+    {
+      "id": "deadly-roulette",
+      "title": "Deadly Roulette",
+      "artist": "Kevin MacLeod",
+      "license": "CC-BY",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "sourceUrl": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Deadly%20Roulette.mp3",
+      "attribution": "“Deadly Roulette” by Kevin MacLeod (CC BY), https://incompetech.com/music/royalty-free/mp3-royaltyfree/Deadly%20Roulette.mp3",
+      "file": "deadly-roulette.mp3",
+      "durationSec": 159.29,
+      "description": "60s spy-movie big band swagger"
+    },
+    {
+      "id": "backbay-lounge",
+      "title": "Backbay Lounge",
+      "artist": "Kevin MacLeod",
+      "license": "CC-BY",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "sourceUrl": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Backbay%20Lounge.mp3",
+      "attribution": "“Backbay Lounge” by Kevin MacLeod (CC BY), https://incompetech.com/music/royalty-free/mp3-royaltyfree/Backbay%20Lounge.mp3",
+      "file": "backbay-lounge.mp3",
+      "durationSec": 266.55,
+      "description": "Easy jazz quartet — brushes and upright bass"
+    },
+    {
+      "id": "george-street-shuffle",
+      "title": "George Street Shuffle",
+      "artist": "Kevin MacLeod",
+      "license": "CC-BY",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "sourceUrl": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/George%20Street%20Shuffle.mp3",
+      "attribution": "“George Street Shuffle” by Kevin MacLeod (CC BY), https://incompetech.com/music/royalty-free/mp3-royaltyfree/George%20Street%20Shuffle.mp3",
+      "file": "george-street-shuffle.mp3",
+      "durationSec": 268.3,
+      "description": "Laid-back jazz shuffle with horn section"
+    }
+  ]
+}

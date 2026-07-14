@@ -97,6 +97,20 @@ public final class CoreMIDIInterface: MIDIInterface {
             }
         }
         MIDIOutputPortCreate(client, "ToneForge Out" as CFString, &outputPort)
+        Self.enableNetworkSession()
+    }
+
+    /// Turn on CoreMIDI's built-in "Network Session 1" so RTP-MIDI
+    /// peers (a Mac/host on the same network) appear as a source. iOS
+    /// leaves this off by default and ships no UI to toggle it; enabling
+    /// it here fires a setup-changed notification, so the transport
+    /// rescans and binds the session automatically. iOS-only API.
+    private static func enableNetworkSession() {
+        #if os(iOS)
+        let session = MIDINetworkSession.default()
+        session.isEnabled = true
+        session.connectionPolicy = .anyone
+        #endif
     }
 
     deinit {

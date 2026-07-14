@@ -94,9 +94,15 @@ def test_apply_chain_broadcasts_resolved_spec_to_peer() -> None:
                 "request_id": "req-1",
             })
 
-            # Sender gets an ACK; never sees its own broadcast.
+            # Sender gets an ACK carrying the resolved spec — a sender
+            # that is also the audio owner (jam-desktop) programs its
+            # DSP from this, since broadcast() excludes the sender.
             ack = browser_ws.receive_json()
-            assert ack == {"type": "ack", "request_id": "req-1"}
+            assert ack["type"] == "ack"
+            assert ack["request_id"] == "req-1"
+            assert ack["chain_id"] == "tfc.classic_rock"
+            assert ack["chain"]["id"] == "tfc.classic_rock"
+            assert "parameters" in ack["chain"]
 
             # Connect peer receives the resolved spec.
             forwarded = connect_ws.receive_json()

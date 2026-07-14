@@ -1401,7 +1401,7 @@ def extract_drum_midi(
     audio_path: str,
     preset_name: str = "Drums",
     min_velocity: int = 40,
-    quantize_drums: bool = True,
+    quantize_drums: bool = False,
 ) -> MIDIExtractionResult:
     """
     Extract drum MIDI from audio using advanced onset detection and spectral classification.
@@ -1416,7 +1416,14 @@ def extract_drum_midi(
         audio_path: Path to audio file (ideally an isolated drums stem)
         preset_name: Name for the MIDI file
         min_velocity: Minimum velocity threshold to include a hit
-        quantize_drums: Whether to quantize to 16th note grid
+        quantize_drums: Whether to snap hits to a 16th-note grid built
+            from the tempo estimate. Defaults to False: the grid is
+            anchored at t=0 with an *estimated* tempo, so phase error
+            plus tempo drift systematically moves detected onsets away
+            from the played hits. Measured on Slakh Track00001 drums
+            (mir_eval onset F1 @50ms): quantized 0.394, raw 0.622.
+            Quantization for playback belongs downstream in the UI,
+            not in the extraction ground truth.
 
     Returns:
         MIDIExtractionResult with drum MIDI data

@@ -73,6 +73,13 @@ final class PadTouchUIView: UIView {
         super.init(frame: frame)
         isMultipleTouchEnabled = true
         backgroundColor = .clear
+        // VoiceOver: expose the surface as a single direct-interaction
+        // element (the standard pattern for instrument surfaces —
+        // touches pass straight through so pads stay playable).
+        isAccessibilityElement = true
+        accessibilityLabel = "Pad grid"
+        accessibilityHint = "Musical pad surface. Uses direct touch."
+        accessibilityTraits = [.allowsDirectInteraction]
     }
 
     required init?(coder: NSCoder) {

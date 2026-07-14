@@ -25,6 +25,12 @@ struct NowPlayingHeader<Accessory: View>: View {
     /// When non-nil, shows a gear on the trailing edge that opens the
     /// Settings sheet (D-022: settings live in the header, not a tab).
     var onSettings: (() -> Void)? = nil
+    /// Attribution credit (D-024) — shown as a third caption line only
+    /// for licensed songs (curated CC tracks). Nil keeps the card at
+    /// its two-line shape, so snapshot goldens don't shift.
+    var creditLine: String? = nil
+    /// Optional link target for the credit line (source page).
+    var creditURL: URL? = nil
     /// Optional accessory view (e.g., pack picker) displayed before
     /// the settings button.
     @ViewBuilder var accessory: () -> Accessory
@@ -48,6 +54,20 @@ struct NowPlayingHeader<Accessory: View>: View {
                     .font(.caption)
                     .foregroundStyle(TFTheme.textSecondary)
                     .lineLimit(1)
+
+                if let creditLine, !creditLine.isEmpty {
+                    Group {
+                        if let creditURL {
+                            Link(creditLine, destination: creditURL)
+                        } else {
+                            Text(creditLine)
+                        }
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("nowplaying.credit")
+                }
             }
 
             Spacer()

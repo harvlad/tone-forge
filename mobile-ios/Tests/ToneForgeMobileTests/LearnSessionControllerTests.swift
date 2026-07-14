@@ -100,6 +100,13 @@ final class LearnSessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.totalSections, 3)
     }
 
+    func testSongChordsUniqueFirstAppearanceOrder() {
+        // Timeline: Dm Bb C F C F — repeats collapse globally, order
+        // of first appearance preserved. Practice grid + Launchpad
+        // bottom row both draw from this.
+        XCTAssertEqual(controller.songChords, ["Dm", "Bb", "C", "F"])
+    }
+
     func testProgressionChordsCollapseRepeats() {
         XCTAssertEqual(
             controller.progressionChords(for: verse),
@@ -226,5 +233,73 @@ final class LearnSessionControllerTests: XCTestCase {
         app.modeCoordinator.setMode(.learnSong)
         app.onLoopWrap?()
         XCTAssertEqual(controller.lastPassResult?.isPassing, true)
+    }
+
+    // MARK: - Chord prediction (practice grid + Launchpad)
+
+    private static let fixtureChords = fixtureBundle.timeline.chords
+
+    func testPredictionFindsNextDistinctChord() {
+        // At t=1 inside Dm (0-2), next distinct is Bb at 2.
+        let p = LearnSessionController.prediction(
+            chords: Self.fixtureChords,
+            current: Self.fixtureChords[0],
+            now: 1.0
+        )
+        XCTAssertEqual(p?.currentSymbol, "Dm")
+        XCTAssertEqual(p?.nextSymbol, "Bb")
+        XCTAssertEqual(p?.remainingSec ?? -1, 1.0, accuracy: 0.001)
+        // Lookahead = gap (2 s, within 0.5–8 clamp) → progress 0.5.
+        XCTAssertEqual(p?.progress ?? -1, 0.5, accuracy: 0.001)
+        XCTAssertEqual(p?.imminent, false)
+    }
+
+    func testPredictionSkipsRepeatedSymbols() {
+        let chords = [
+            ChordEvent(start: 0, end: 2, symbol: "Am"),
+            ChordEvent(start: 2, end: 4, symbol: "Am"),
+            ChordEvent(start: 4, end: 6, symbol: "G"),
+        ]
+        let p = LearnSessionController.prediction(
+            chords: chords, current: chords[0], now: 1.0
+        )
+        // Repeated Am at 2 is skipped; next distinct is G at 4.
+        XCTAssertEqual(p?.nextSymbol, "G")
+        XCTAssertEqual(p?.remainingSec ?? -1, 3.0, accuracy: 0.001)
+    }
+
+    func testPredictionImminentInFinalWindow() {
+        let p = LearnSessionController.prediction(
+            chords: Self.fixtureChords,
+            current: Self.fixtureChords[0],
+            now: 1.5
+        )
+        XCTAssertEqual(p?.imminent, true)
+        XCTAssertEqual(p?.progress ?? -1, 0.75, accuracy: 0.001)
+    }
+
+    func testPredictionNilAtEndOfTimeline() {
+        // Last chord (F, 12-16) has no distinct successor.
+        XCTAssertNil(LearnSessionController.prediction(
+            chords: Self.fixtureChords,
+            current: Self.fixtureChords[5],
+            now: 13.0
+        ))
+        // No current chord → nil.
+        XCTAssertNil(LearnSessionController.prediction(
+            chords: Self.fixtureChords, current: nil, now: 0
+        ))
+    }
+
+    func testPredictionProgressClamped() {
+        // Past the change moment (loop edge): progress caps at 1,
+        // remaining floors at 0.
+        let p = LearnSessionController.prediction(
+            chords: Self.fixtureChords,
+            current: Self.fixtureChords[0],
+            now: 2.5
+        )
+        XCTAssertEqual(p?.progress ?? -1, 1.0, accuracy: 0.001)
+        XCTAssertEqual(p?.remainingSec ?? -1, 0.0, accuracy: 0.001)
     }
 }

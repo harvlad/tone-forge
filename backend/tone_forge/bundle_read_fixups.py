@@ -365,6 +365,16 @@ def apply_bundle_read_fixups(result: dict) -> None:
 
     raw_sections = result.get("sections")
 
+    # Sections labeled by the allin1 structure model are
+    # authoritative (boundary F@0.5s 0.404 vs 0.060 for the
+    # heuristic path) — the read-path resegmentation passes (Fix C,
+    # Fix 4) and their H2 relabels must not touch them. Advisory
+    # Fix B duration flags still apply.
+    _allin1_sections = isinstance(raw_sections, list) and any(
+        isinstance(s, dict) and s.get("label_source") == "allin1"
+        for s in raw_sections
+    )
+
     # Decode persisted MIDI stems into per-stem ``notes`` lists once
     # per call. ``apply_bundle_read_fixups`` runs BEFORE
     # ``_decode_midi_stems_for_payload`` in the API layer, so
@@ -414,23 +424,27 @@ def apply_bundle_read_fixups(result: dict) -> None:
             pass
 
         # Fix C — boundary re-detection inside flagged spans.
+        # Skipped for allin1 segmentations (see gate above).
         try:
             from tone_forge.analysis.section_resegment import (
                 resegment_flagged_sections,
             )
             _fix_c_chords = result.get("chords")
-            resegmented = resegment_flagged_sections(
-                raw_sections,
-                _decoded_midi_stems,
-                chord_regions=(
-                    _fix_c_chords
-                    if isinstance(_fix_c_chords, list)
-                    else None
-                ),
-                beats_s=_bundle_beats_arr,
-                energy_curve=_bundle_energy_arr,
-                energy_curve_sr=10.0,
-            )
+            if _allin1_sections:
+                resegmented = raw_sections
+            else:
+                resegmented = resegment_flagged_sections(
+                    raw_sections,
+                    _decoded_midi_stems,
+                    chord_regions=(
+                        _fix_c_chords
+                        if isinstance(_fix_c_chords, list)
+                        else None
+                    ),
+                    beats_s=_bundle_beats_arr,
+                    energy_curve=_bundle_energy_arr,
+                    energy_curve_sr=10.0,
+                )
             if len(resegmented) != len(raw_sections):
                 raw_sections = resegmented
                 result["sections"] = raw_sections
@@ -451,9 +465,11 @@ def apply_bundle_read_fixups(result: dict) -> None:
             pass
 
     # Round-2 Fix 4 — chord-vocabulary Jaccard boundary refinement.
+    # Skipped for allin1 segmentations (see gate above).
     if (
         isinstance(raw_sections, list)
         and result.get("chords")
+        and not _allin1_sections
     ):
         try:
             from tone_forge.analysis.chord_vocab_boundaries import (

@@ -43,14 +43,16 @@ final class AppTabTests: XCTestCase {
         )
     }
 
-    func testContributeRestoresLastGridMode() {
+    func testContributeAlwaysUsesSampleMode() {
+        // Instrument (.hybrid) retired — Contribute pins .sample
+        // regardless of the persisted grid raw.
         XCTAssertEqual(
             TabModePolicy.mode(for: .contribute, lastContributeModeRaw: "sample"),
             .sample
         )
         XCTAssertEqual(
             TabModePolicy.mode(for: .contribute, lastContributeModeRaw: "hybrid"),
-            .hybrid
+            .sample
         )
     }
 

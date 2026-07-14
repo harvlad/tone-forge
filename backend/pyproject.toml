@@ -1,0 +1,24 @@
+# Tooling config for the Tone Forge backend.
+# (Not a packaging manifest — the backend is run from source.)
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [
+    "build",
+    "dist",
+    "founder_corpus",
+    "benchmark_results",
+    "profile_results",
+    "preset_catalog_output",
+    "data",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+# Retrofit gate: high-signal correctness rules only — syntax errors
+# (E9), comparison bugs (F63), syntax-adjacent errors (F7), and
+# undefined names (F82). The legacy codebase has too many style
+# violations (E501, F401, ...) to gate on the full E/F/W set yet;
+# expand this list as modules are cleaned up.
+select = ["E9", "F63", "F7", "F82"]

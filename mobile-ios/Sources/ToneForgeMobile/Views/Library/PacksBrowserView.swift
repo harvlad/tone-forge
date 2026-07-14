@@ -418,12 +418,17 @@ struct PacksBrowserView: View {
             ProgressView()
                 .controlSize(.small)
         } else if isActive {
+            // Active pack: filled check in the accent color.
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(Color.accentColor)
         } else if isCached {
-            Image(systemName: "arrow.down.circle.fill")
+            // Downloaded but not active: outline check (distinct from
+            // the download arrow so "already have it" doesn't read as
+            // "tap to download").
+            Image(systemName: "checkmark.circle")
                 .foregroundStyle(.green)
         } else {
+            // Not downloaded: the tap-to-download arrow.
             Image(systemName: "arrow.down.circle")
                 .foregroundStyle(.secondary)
         }

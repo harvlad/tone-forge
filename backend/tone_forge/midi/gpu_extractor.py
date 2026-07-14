@@ -2030,11 +2030,15 @@ def extract_midi_hybrid(
         # Stem-specific thresholds for CoreML extraction
         # Higher thresholds = fewer notes (reduce false positives)
         # Lower thresholds = more notes (reduce false negatives)
+        # "other" tuned on Slakh per-stem MIDI ground truth (mir_eval,
+        # onset 50ms / pitch 50c): 0.55/0.45 missed most notes in dense
+        # polyphony; 0.3/0.2 roughly doubled onset F1 (0.34 -> 0.49 on
+        # BabySlakh Track00003) with full-note F1 also up.
         stem_thresholds = {
             "bass": {"onset": 0.5, "frame": 0.4},    # Bass: stricter to reduce FPs
             "lead": {"onset": 0.5, "frame": 0.4},    # Lead: balanced (81% F1)
             "pads": {"onset": 0.6, "frame": 0.5},     # Pads: best tested
-            "other": {"onset": 0.55, "frame": 0.45}, # Other: balanced
+            "other": {"onset": 0.3, "frame": 0.2},   # Other: Slakh-tuned
         }
         thresholds = stem_thresholds.get(stem_type, {"onset": 0.5, "frame": 0.4})
 

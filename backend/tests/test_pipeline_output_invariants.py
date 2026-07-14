@@ -198,10 +198,11 @@ def test_track_beats_produces_non_empty_beat_grid():
     assert np.all(np.diff(arr) > 0)
 
 
-def test_track_beats_derives_downbeats_at_quarter_rate():
-    """At 4/4 derivation the downbeat count is len(beats) // 4 (or
-    +1 if the first beat is a downbeat). Until a real downbeat
-    tracker lands, this contract is the honest fallback."""
+def test_track_beats_produces_sane_downbeat_grid():
+    """Downbeats are measured (beat_this) or 4/4-derived (librosa
+    fallback). Either way the structural contract holds: at least one
+    downbeat, strictly ascending, and sparser than the beat grid
+    (a downbeat is one beat per bar, so count <= beat count)."""
     pipeline = UnifiedPipeline()
     audio_data = _make_audio_data(_make_rhythmic_clip(duration_s=8.0))
 
@@ -210,12 +211,11 @@ def test_track_beats_derives_downbeats_at_quarter_rate():
     n_beats = len(grid["beats_s"])
     n_downbeats = len(grid["downbeats_s"])
     assert n_downbeats >= 1
-    # 4/4 derivation: every 4th beat starting at index 0.
-    expected_min = (n_beats + 3) // 4
-    assert n_downbeats == expected_min, (
-        f"Expected {expected_min} downbeats (every 4th beat); got "
-        f"{n_downbeats} from {n_beats} beats."
+    assert n_downbeats <= n_beats, (
+        f"downbeats ({n_downbeats}) cannot outnumber beats ({n_beats})"
     )
+    arr = np.asarray(grid["downbeats_s"])
+    assert np.all(np.diff(arr) > 0), "downbeats must be strictly ascending"
 
 
 def test_track_beats_degrades_silently_on_silence():

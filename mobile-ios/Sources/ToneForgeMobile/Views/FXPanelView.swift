@@ -85,6 +85,8 @@ struct FXPanelBody: View {
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(preset.name) effects preset")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
     // MARK: - EQ Section
@@ -338,6 +340,8 @@ struct FXPanelBody: View {
 
             Slider(value: value, in: range)
                 .tint(TFTheme.faderTint)
+                .accessibilityLabel(label)
+                .accessibilityValue(String(format: format, value.wrappedValue))
 
             Text(String(format: format, value.wrappedValue))
                 .font(.subheadline.monospacedDigit())

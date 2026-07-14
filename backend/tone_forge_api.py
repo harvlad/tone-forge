@@ -23,10 +23,12 @@ os.environ["ONNX_LOG_LEVEL"] = "3"
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -133,6 +135,7 @@ def _compute_waveform_peaks(y: np.ndarray, num_points: int = 1000) -> dict:
 
 
 import asyncio
+from contextlib import asynccontextmanager as _asynccontextmanager, suppress as _suppress
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -175,6 +178,10 @@ from tone_forge.unified_pipeline import (
     select_pipeline_config,
 )
 
+# Async analysis job registry — decouples an analysis run from the HTTP
+# request that started it (background-survivable import + long analyses).
+from tone_forge.analysis_jobs import JobRegistry
+
 # Session engine — canonical SessionBundle assembler (Priority 5).
 from tone_forge.session import build as build_session_bundle, serialize as serialize_session_bundle
 from tone_forge.session.protocol import ErrorCode, PeerLeftReason
@@ -196,6 +203,7 @@ from tone_forge.contracts import (
     DevicePreferences as _DevicePreferences,
     DeviceProbe as _DeviceProbe,
     MonitorChainFamily as _MonitorChainFamily,
+    ToneMatch,
 )
 
 # Tone retrieval — calibration + tier classifier + fallback policy (Priority 6).
@@ -238,26 +246,72 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 _HISTORY_FILE = Path(__file__).parent / "data" / "history.json"
 
+# Async analysis jobs live under the same writable data dir as history.
+# Single-process uvicorn => the in-memory registry is authoritative; the
+# on-disk mirror only exists for crash recovery.
+_JOBS = JobRegistry(Path(__file__).parent / "data" / "jobs")
+
 # Serializes read-modify-write cycles on history.json. The legacy request
 # handlers predate this lock; only the mutation paths touched by deep
 # delete / retention take it. A full locking audit is out of scope.
 _HISTORY_LOCK = threading.Lock()
 
-# Directories we're allowed to serve files from AND delete files under.
-# Shared by /api/admin/serve-file and the deep-delete path so both sides
-# of the lifecycle agree on what "ours" means.
+# Directory roots we're allowed to serve files from AND delete files
+# under. Shared by /api/admin/serve-file and the deep-delete path so both
+# sides of the lifecycle agree on what "ours" means. A root match alone is
+# NOT sufficient — see _path_in_allowed_dirs.
 _ALLOWED_FILE_PREFIXES = [
     "/tmp/",
     "/private/tmp/",  # macOS /tmp symlink target
     "/var/folders/",  # macOS temp
     "/private/var/folders/",  # macOS /var symlink target
-    str(Path.home() / ".cache"),
-    str(Path.home() / ".toneforge"),  # ToneForge cache dir
+    str(Path.home() / ".cache") + "/",
+    str(Path.home() / ".toneforge") + "/",  # ToneForge cache dir
 ]
 
 
+def _path_in_allowed_dirs(path: Path) -> bool:
+    """True iff ``path`` resolves inside a directory we own.
+
+    Both conditions are checked on the fully *resolved* path so a symlink
+    planted in /tmp can't widen access:
+
+      1. it lives under one of ``_ALLOWED_FILE_PREFIXES`` (temp roots,
+         ``~/.cache``, ``~/.toneforge``), and
+      2. some path component is toneforge-owned (``toneforge_stems_*``,
+         ``toneforge_yt_*``, ``toneforge_yt_cache``, ``.toneforge``, ...)
+         — so arbitrary files that merely sit in /tmp stay off limits.
+    """
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    resolved_str = str(resolved)
+    if not any(resolved_str.startswith(prefix) for prefix in _ALLOWED_FILE_PREFIXES):
+        return False
+    return any(
+        part == ".toneforge" or part.startswith("toneforge")
+        for part in resolved.parts
+    )
+
+
 def _load_history() -> list[dict]:
-    """Load history from JSON file."""
+    """Load history from R2 (if configured) or local JSON file.
+
+    R2 storage enables multiple backends (local dev, VPS) to share the
+    same song library - analyze on local, see it on mobile immediately.
+    """
+    # Try R2 first when configured
+    try:
+        from tone_forge import r2_storage
+        if r2_storage.is_configured():
+            r2_history = r2_storage.load_history()
+            if r2_history is not None:
+                return r2_history
+    except Exception as exc:
+        logger.warning(f"R2 history load failed, falling back to local: {exc}")
+
+    # Fallback to local file
     if not _HISTORY_FILE.exists():
         return []
     try:
@@ -268,20 +322,74 @@ def _load_history() -> list[dict]:
 
 
 def _save_history(history: list[dict]) -> None:
-    """Save history to JSON file."""
+    """Save history to R2 (if configured) and local JSON file.
+
+    We always save locally as a backup/cache, and to R2 for sharing
+    across backends when configured.
+    """
+    # Always save locally as backup
     _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(_HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=2, cls=NumpyJSONEncoder)
 
+    # Also save to R2 when configured
+    try:
+        from tone_forge import r2_storage
+        if r2_storage.is_configured():
+            if not r2_storage.save_history(history):
+                logger.warning("R2 history save returned False")
+    except Exception as exc:
+        logger.warning(f"R2 history save failed: {exc}")
 
-def _add_to_history(entry: dict, full_result: dict = None) -> dict:
+
+async def _request_ownership(request: Request) -> tuple[str | None, str | None]:
+    """(device_id, owner_id) for stamping a new analysis.
+
+    Owner is the signed-in user when a session is present, otherwise the
+    account that previously claimed this device (so a signed-in phone
+    keeps attributing analyses even when a request carries no session).
+    Never raises — anonymous analyze must keep working no matter what.
+    """
+    from tone_forge.auth.deps import current_user
+
+    device_id = (request.headers.get("x-device-id") or "").strip() or None
+    user = await current_user(request)
+    if user is not None:
+        return device_id, user.id
+    if device_id:
+        store = getattr(request.app.state, "auth_store", None)
+        if store is not None:
+            try:
+                return device_id, await store.device_owner(device_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("device_owner lookup failed")
+    return device_id, None
+
+
+def _add_to_history(
+    entry: dict,
+    full_result: dict = None,
+    device_id: str | None = None,
+    owner_id: str | None = None,
+) -> dict:
     """Add an entry to history and return it with ID.
 
     Args:
         entry: Metadata about the analysis (name, detected_type, etc.)
         full_result: The complete analysis result for reloading later
+        device_id: Client's persistent X-Device-Id (ownership stamping)
+        owner_id: Account that owns this analysis, when known
     """
-    entry["id"] = str(uuid.uuid4())[:8]
+    if device_id:
+        entry["device_id"] = device_id
+    if owner_id:
+        entry["owner_id"] = owner_id
+    # Full-entropy id (128 bits). These ids appear in shareable /jam/{id}
+    # URLs and are the only thing gating access to an analysis today, so
+    # they must not be enumerable (the old 8-hex-char truncation was ~32
+    # bits). Existing short ids in history keep working — lookups match
+    # by exact string.
+    entry["id"] = uuid.uuid4().hex
     entry["timestamp"] = datetime.now().isoformat()
     if full_result:
         entry["result"] = full_result
@@ -296,6 +404,64 @@ def _add_to_history(entry: dict, full_result: dict = None) -> dict:
     for old in dropped:
         _deep_delete_entry(old)
     return entry
+
+
+# -----------------------------------------------------------------------------
+# Attribution metadata (D-024)
+#
+# Every analysis submit resolves a small attribution dict — precedence
+# form field > file tags (mutagen) > filename (title only) — that rides
+# the job and is stamped into the history entry by whichever writer
+# completes it. Empty string means unknown/user-owned; license fields
+# only ever arrive via curated CC imports (user imports never send them).
+# -----------------------------------------------------------------------------
+
+_ATTRIBUTION_FIELDS = (
+    "title", "artist", "license", "license_url", "source_url", "attribution",
+)
+
+
+def _resolve_attribution_meta(
+    form: dict,
+    audio_path: Path | None = None,
+    filename: str | None = None,
+) -> dict:
+    """Resolve the attribution dict for a submit.
+
+    ``form`` holds the raw form-field values (missing keys treated as
+    empty). File tags fill title/artist gaps when the original bytes
+    are available (web uploads); iOS WAVs are tag-stripped, so the app
+    sends form fields instead. Filename stem is the title of last
+    resort.
+    """
+    from tone_forge.media_tags import read_tags, sanitize_tag
+
+    meta = {k: sanitize_tag(form.get(k) or "") for k in _ATTRIBUTION_FIELDS}
+    if audio_path is not None and (not meta["title"] or not meta["artist"]):
+        tags = read_tags(audio_path)
+        if not meta["title"]:
+            meta["title"] = tags.get("title", "")
+        if not meta["artist"]:
+            meta["artist"] = tags.get("artist", "")
+    if not meta["title"] and filename:
+        meta["title"] = sanitize_tag(Path(filename).stem)
+    return meta
+
+
+def _stamp_attribution(entry: dict, meta: dict | None) -> None:
+    """Merge a resolved attribution dict into a history entry (pre-save).
+
+    A non-empty title upgrades the display name (tagged "Blue in Green"
+    beats "track07.mp3"); the remaining fields stamp only when non-empty
+    so old entries and old readers see no shape change.
+    """
+    if not meta:
+        return
+    if meta.get("title"):
+        entry["name"] = meta["title"]
+    for key in ("artist", "license", "license_url", "source_url", "attribution"):
+        if meta.get(key):
+            entry[key] = meta[key]
 
 
 def _get_history_item(entry_id: str) -> dict | None:
@@ -378,16 +544,8 @@ def _safe_delete_path(path: Path) -> None:
     remove the whole dir — stems always live in a per-analysis mkdtemp
     and leaving siblings behind would defeat the purge.
     """
-    try:
-        path_str = str(path)
-        resolved_str = str(path.resolve())
-    except OSError:
-        return
-    if not any(
-        path_str.startswith(prefix) or resolved_str.startswith(prefix)
-        for prefix in _ALLOWED_FILE_PREFIXES
-    ):
-        logger.warning("deep-delete skipped path outside allowlist: %s", path_str)
+    if not _path_in_allowed_dirs(path):
+        logger.warning("deep-delete skipped path outside allowlist: %s", path)
         return
     parent = path.parent
     if parent.name.startswith("toneforge_stems_"):
@@ -464,6 +622,14 @@ async def _retention_loop() -> None:
             await asyncio.to_thread(_purge_expired_history)
         except Exception:  # noqa: BLE001
             logger.exception("retention purge failed")
+        try:
+            _JOBS.sweep()
+        except Exception:  # noqa: BLE001
+            logger.exception("job sweep failed")
+        try:
+            await asyncio.to_thread(_sweep_expired_uploads)
+        except Exception:  # noqa: BLE001
+            logger.exception("upload sweep failed")
         await asyncio.sleep(_RETENTION_INTERVAL_SEC)
 
 
@@ -471,19 +637,191 @@ async def _retention_loop() -> None:
 SUPPORTED_PLATFORMS = ["helix", "pedals", "synth"]
 
 
-app = FastAPI(title="Tone Forge", version="0.5.0")
+@_asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup: recover the job registry and run the retention loop.
 
-
-@app.on_event("startup")
-async def _start_retention() -> None:
-    """Kick off the 7-day retention purge loop.
-
-    Disabled via TONEFORGE_DISABLE_RETENTION (pytest sets it; also handy
-    for local dev when you want analyses to stick around).
+    Retention is disabled via TONEFORGE_DISABLE_RETENTION (pytest sets
+    it; also handy for local dev when you want analyses to stick
+    around). The loop task is cancelled on shutdown.
     """
-    if os.environ.get("TONEFORGE_DISABLE_RETENTION"):
-        return
-    asyncio.create_task(_retention_loop())
+    # Mark jobs interrupted by the previous process as errored so clients
+    # stop polling them; drop expired job files.
+    try:
+        _JOBS.recover()
+    except Exception:  # noqa: BLE001
+        logger.exception("job registry recovery failed")
+
+    # Accounts: Postgres when DATABASE_URL is set, in-memory otherwise
+    # (dev/tests). Routes reach the store via app.state.auth_store.
+    from tone_forge.auth import db as _auth_db
+    from tone_forge.auth.store import MemoryAuthStore as _MemoryAuthStore
+
+    try:
+        _auth_pool = await _auth_db.init_pool()
+    except Exception:  # noqa: BLE001
+        logger.exception("auth: postgres init failed — using memory store")
+        _auth_pool = None
+    if _auth_pool is not None:
+        from tone_forge.auth.db import PostgresAuthStore
+
+        app.state.auth_store = PostgresAuthStore(_auth_pool)
+    else:
+        app.state.auth_store = _MemoryAuthStore()
+
+    retention_task: asyncio.Task | None = None
+    if not os.environ.get("TONEFORGE_DISABLE_RETENTION"):
+        retention_task = asyncio.create_task(_retention_loop())
+    try:
+        yield
+    finally:
+        if retention_task is not None:
+            retention_task.cancel()
+            with _suppress(asyncio.CancelledError):
+                await retention_task
+        await _auth_db.close_pool()
+
+
+app = FastAPI(title="Tone Forge", version="0.5.0", lifespan=_lifespan)
+
+from tone_forge.auth.routes import router as _auth_router  # noqa: E402
+
+app.include_router(_auth_router)
+
+
+# ---------------------------------------------------------------------------
+# Admin/debug endpoint guard
+#
+# /studio, /api/admin/* and /api/debug/* are operator tools, never needed by
+# the public web app or the iOS client. Access rules:
+#
+#   * TONEFORGE_ADMIN_TOKEN set   -> request must carry the token in the
+#     X-Admin-Token header (or "Authorization: Bearer <token>").
+#   * token unset (local dev)     -> only direct loopback connections pass.
+#     Proxied requests (X-Forwarded-For/X-Real-IP present) are rejected even
+#     from 127.0.0.1, so an nginx front-end can't accidentally expose these
+#     when the operator forgot to set a token.
+#
+# /api/admin/serve-file is exempt: the iOS app uses it as the stem-download
+# fallback when R2 isn't configured. It has its own path allowlist.
+# ---------------------------------------------------------------------------
+
+_ADMIN_GUARDED_PREFIXES = ("/api/admin/", "/api/debug/")
+_ADMIN_GUARD_EXEMPT = ("/api/admin/serve-file",)
+# "testclient" is the synthetic host starlette's in-process TestClient uses;
+# a real socket peer is always an IP address, so this can't be spoofed
+# remotely.
+_LOOPBACK_HOSTS = ("127.0.0.1", "::1", "testclient")
+
+
+_ADMIN_COOKIE = "toneforge_admin"
+
+
+def _admin_request_authorized(request: Request) -> bool:
+    import secrets as _secrets
+
+    supplied = request.headers.get("x-admin-token", "")
+    if not supplied:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            supplied = auth[7:].strip()
+    if not supplied and request.url.path == "/studio":
+        # Explicit ?token= outranks any cookie: a stale/wrong cookie
+        # must not shadow a freshly supplied token.
+        supplied = request.query_params.get("token", "")
+    if not supplied:
+        # Browser flow: /studio?token=<admin token> sets this cookie so
+        # the operator can use the Studio UI (and its /api/admin/*
+        # fetches) from a normal browser tab without an extension that
+        # injects headers.
+        supplied = request.cookies.get(_ADMIN_COOKIE, "")
+
+    # Read at request time (not import time) so tests and runtime env
+    # changes take effect without a reload.
+    admin_token = os.environ.get("TONEFORGE_ADMIN_TOKEN", "")
+    if admin_token:
+        return bool(supplied) and _secrets.compare_digest(supplied, admin_token)
+
+    # No token configured: allow only direct loopback (local dev). A
+    # forwarding header means the request came through a proxy, so the
+    # loopback client address belongs to the proxy, not the caller.
+    if request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip"):
+        return False
+    client = request.client
+    return client is not None and client.host in _LOOPBACK_HOSTS
+
+
+@app.middleware("http")
+async def _admin_guard(request: Request, call_next):
+    path = request.url.path
+    if (
+        path == "/studio" or path.startswith(_ADMIN_GUARDED_PREFIXES)
+    ) and path not in _ADMIN_GUARD_EXEMPT:
+        if not _admin_request_authorized(request):
+            # 404 (not 401/403) so the endpoints' existence isn't leaked.
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        # Valid ?token= on /studio: persist it as a cookie and redirect
+        # to a clean URL so the token doesn't sit in browser history or
+        # get leaked via Referer. Other query params (e.g. ?analysis=)
+        # survive the redirect.
+        if path == "/studio" and request.query_params.get("token"):
+            from fastapi.responses import RedirectResponse
+
+            rest = "&".join(
+                f"{k}={v}"
+                for k, v in request.query_params.items()
+                if k != "token"
+            )
+            target = "/studio" + (f"?{rest}" if rest else "")
+            resp = RedirectResponse(target, status_code=303)
+            https = (
+                request.url.scheme == "https"
+                or request.headers.get("x-forwarded-proto") == "https"
+            )
+            resp.set_cookie(
+                _ADMIN_COOKIE,
+                request.query_params["token"],
+                max_age=30 * 24 * 3600,
+                httponly=True,
+                secure=https,
+                samesite="lax",
+            )
+            return resp
+    return await call_next(request)
+
+
+# Upload size cap. nginx enforces client_max_body_size at the proxy, but
+# uvicorn is also reachable directly (local dev, LAN) so the app enforces
+# its own limit. Declared-length check only: FastAPI buffers multipart
+# bodies to spooled temp files, so a lying Content-Length wastes disk, not
+# memory, and nginx catches streamed oversends in production.
+_MAX_UPLOAD_BYTES = int(
+    float(os.environ.get("TONEFORGE_MAX_UPLOAD_MB", "500")) * 1024 * 1024
+)
+
+
+@app.middleware("http")
+async def _upload_size_guard(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH"):
+        declared = request.headers.get("content-length")
+        if declared is not None:
+            try:
+                length = int(declared)
+            except ValueError:
+                return JSONResponse(
+                    status_code=400, content={"detail": "Invalid Content-Length"}
+                )
+            if length > _MAX_UPLOAD_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": (
+                            f"Request body too large: limit is "
+                            f"{_MAX_UPLOAD_BYTES // (1024 * 1024)} MB"
+                        )
+                    },
+                )
+    return await call_next(request)
 
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -492,18 +830,25 @@ app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 @app.get("/")
 async def root() -> FileResponse:
+    """ToneForge Jam — the default home page."""
+    return FileResponse(_STATIC_DIR / "jam.html")
+
+
+@app.get("/guitar")
+async def guitar_page() -> FileResponse:
+    """Guitar tone analysis and gear recommendations."""
     return FileResponse(_STATIC_DIR / "index.html")
 
 
-@app.get("/analysis/{analysis_id}")
-async def analysis_page(analysis_id: str) -> FileResponse:
-    """Serve the app for a specific analysis (shareable URL)."""
+@app.get("/guitar/{analysis_id}")
+async def guitar_analysis_page(analysis_id: str) -> FileResponse:
+    """Serve the guitar app for a specific analysis (shareable URL)."""
     return FileResponse(_STATIC_DIR / "index.html")
 
 
 @app.get("/jam")
 async def jam_page() -> FileResponse:
-    """ToneForge Jam — paste a song, separate stems, drop into a session."""
+    """ToneForge Jam — alias for root."""
     return FileResponse(_STATIC_DIR / "jam.html")
 
 
@@ -952,7 +1297,18 @@ async def connect_bridge(ws: WebSocket) -> None:
                 except Exception as _apply_log_exc:
                     logger.warning(f"[connect-bridge] tone applied log failed: {_apply_log_exc}")
                 if rid is not None:
-                    await ws.send_json({"type": "ack", "request_id": rid})
+                    # The resolved spec rides along so a sender that is
+                    # ALSO the audio owner (jam-desktop: picker and
+                    # engine are the same client) can program its DSP
+                    # without a second round-trip — broadcast() excludes
+                    # the sender, so the spec would otherwise never
+                    # reach it. jam.js ignores the extra keys.
+                    await ws.send_json({
+                        "type": "ack",
+                        "request_id": rid,
+                        "chain_id": spec["id"],
+                        "chain": spec,
+                    })
             elif mtype == "connect_state":
                 # v2: Connect → Browser engine snapshot. Cache the last
                 # one so a late-joining JAM sees it on join. Broadcast
@@ -1237,6 +1593,7 @@ async def preview_waveform_url_endpoint(request: PreviewUrlRequest) -> JSONRespo
     """
     import librosa
 
+    _require_url_ingest()
     if not _check_yt_dlp():
         raise HTTPException(
             status_code=400,
@@ -1274,6 +1631,7 @@ async def preview_waveform_url_endpoint(request: PreviewUrlRequest) -> JSONRespo
 
 @app.post("/api/analyze")
 async def analyze_endpoint(
+    request: Request,
     file: UploadFile = File(...),
     source_kind: str = "auto",  # Auto-detect by default
     platform: str = "auto",
@@ -1324,12 +1682,13 @@ async def analyze_endpoint(
         response["analysis_mode"] = config.mode.value
 
         # Add to history
+        device_id, owner_id = await _request_ownership(request)
         history_entry = _add_to_history({
             "name": file.filename or "Uploaded file",
             "detected_type": response.get("detected_type", "guitar"),
             "summary": response.get("detection", {}).get("summary", ""),
             "duration": response.get("duration_sec"),
-        }, full_result=response)
+        }, full_result=response, device_id=device_id, owner_id=owner_id)
 
         response["history_id"] = history_entry["id"]
 
@@ -1344,6 +1703,7 @@ async def analyze_endpoint(
 
 @app.post("/api/analyze-stream")
 async def analyze_stream_endpoint(
+    request: Request,
     file: UploadFile = File(...),
     source_kind: str = Form("auto"),
     platform: str = Form("auto"),
@@ -1352,6 +1712,13 @@ async def analyze_stream_endpoint(
     analysis_mode: str = Form("studio"),  # quick, studio, or deep
     start_time: Optional[float] = Form(None),  # Trim start in seconds
     end_time: Optional[float] = Form(None),  # Trim end in seconds
+    attested: str = Form("false"),  # Client ownership attestation
+    title: str = Form(""),  # Attribution overrides (D-024)
+    artist: str = Form(""),
+    license: str = Form(""),
+    license_url: str = Form(""),
+    source_url: str = Form(""),
+    attribution: str = Form(""),
 ) -> StreamingResponse:
     """Analyze with SSE progress streaming using unified pipeline.
 
@@ -1366,6 +1733,7 @@ async def analyze_stream_endpoint(
     # Convert string form params to booleans
     extract_midi_bool = extract_midi.lower() not in ("false", "0", "no")
     fast_mode_bool = fast_mode.lower() not in ("false", "0", "no")
+    attested_bool = attested.lower() in ("true", "1", "yes")
 
     # Build unified pipeline config (Phase 0D: deep wins over fast_mode default).
     config = select_pipeline_config(
@@ -1377,6 +1745,15 @@ async def analyze_stream_endpoint(
     config.trim_start = start_time
     config.trim_end = end_time
     config.source_name = file.filename
+
+    # Resolve before streaming starts — the request context is not
+    # guaranteed to survive the life of the generator.
+    device_id, owner_id = await _request_ownership(request)
+    attribution_form = {
+        "title": title, "artist": artist, "license": license,
+        "license_url": license_url, "source_url": source_url,
+        "attribution": attribution,
+    }
 
     async def generate():
         def send_event(event_type: str, data: dict):
@@ -1394,6 +1771,11 @@ async def analyze_stream_endpoint(
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".wav") as tmp:
             shutil.copyfileobj(file.file, tmp)
             tmp_path = Path(tmp.name)
+
+        # Tags come off the original bytes, before analysis touches them.
+        attribution_meta = _resolve_attribution_meta(
+            attribution_form, audio_path=tmp_path, filename=file.filename
+        )
 
         try:
             # Use unified pipeline
@@ -1415,12 +1797,17 @@ async def analyze_stream_endpoint(
                     response["deep_analysis"] = config.mode == UnifiedAnalysisMode.DEEP
 
                     # Add to history
-                    history_entry = _add_to_history({
+                    entry = {
                         "name": file.filename or "Uploaded file",
                         "detected_type": response.get("detected_type", "guitar"),
                         "summary": response.get("detection", {}).get("summary", ""),
                         "duration": response.get("duration_sec"),
-                    }, full_result=response)
+                        "attested": attested_bool,
+                    }
+                    _stamp_attribution(entry, attribution_meta)
+                    history_entry = _add_to_history(
+                        entry, full_result=response,
+                        device_id=device_id, owner_id=owner_id)
 
                     response["history_id"] = history_entry["id"]
 
@@ -1443,6 +1830,723 @@ async def analyze_stream_endpoint(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Async analysis jobs
+#
+# Same pipeline as /api/analyze-stream, but the run is owned by a server
+# job instead of the request. The uploaded WAV is drained inside the POST
+# (the stream dies with the request), then an asyncio task drives the
+# analysis. Clients attach via /events (live SSE) or /result (long-poll)
+# and can drop/reconnect — a locked phone or a 10-minute analysis no
+# longer aborts the import.
+# ---------------------------------------------------------------------------
+
+
+def _on_job_complete(job) -> None:
+    """Terminal-state hook. Inert until push infra exists — this is the
+    APNs seam. A device token is only present once /api/register-device
+    is wired on the client."""
+    if job is not None and job.device_token:
+        logger.info(
+            "job %s reached %s with device_token set; APNs push not yet wired",
+            job.id, job.status,
+        )
+
+
+async def _run_analysis_job(job_id: str, tmp_path: Path, filename: str, config) -> None:
+    """Drive the streaming pipeline for a job, mirroring progress into the
+    registry. CPU work is already offloaded to the pipeline's process
+    pool, so awaiting the async generator never blocks the event loop."""
+    try:
+        await _JOBS.update(job_id, status="running", message="Analyzing…", percent=5)
+        pipeline = get_unified_pipeline()
+        async for event in pipeline.analyze_streaming(tmp_path, config):
+            if isinstance(event, ProgressEvent):
+                await _JOBS.update(job_id, percent=event.percent, message=event.message)
+            elif isinstance(event, AnalysisResult):
+                response = event.to_dict()
+                response["filename"] = filename
+                response["analysis_mode"] = config.mode.value
+                response["deep_analysis"] = config.mode == UnifiedAnalysisMode.DEEP
+                job = _JOBS.get(job_id)
+                entry = {
+                    "name": filename or "Uploaded file",
+                    "detected_type": response.get("detected_type", "guitar"),
+                    "summary": response.get("detection", {}).get("summary", ""),
+                    "duration": response.get("duration_sec"),
+                    "attested": bool(job.attested) if job else False,
+                }
+                _stamp_attribution(entry, job.meta if job else None)
+                history_entry = _add_to_history(
+                    entry, full_result=response,
+                    device_id=job.device_id if job else None,
+                    owner_id=job.owner_id if job else None)
+                await _JOBS.update(
+                    job_id,
+                    status="done",
+                    percent=100,
+                    message="Analysis complete",
+                    history_id=history_entry["id"],
+                )
+                _on_job_complete(_JOBS.get(job_id))
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Job analysis failed")
+        await _JOBS.update(job_id, status="error", message="Analysis failed", error=str(e))
+        _on_job_complete(_JOBS.get(job_id))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@app.post("/api/analyze-job")
+async def analyze_job_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+    source_kind: str = Form("auto"),
+    extract_midi: str = Form("true"),
+    fast_mode: str = Form("true"),
+    analysis_mode: str = Form("studio"),
+    start_time: Optional[float] = Form(None),
+    end_time: Optional[float] = Form(None),
+    attested: str = Form("false"),
+    title: str = Form(""),  # Attribution overrides (D-024)
+    artist: str = Form(""),
+    license: str = Form(""),
+    license_url: str = Form(""),
+    source_url: str = Form(""),
+    attribution: str = Form(""),
+) -> JSONResponse:
+    """Create an analysis job and return its id immediately.
+
+    The upload is drained here (the request stream can't outlive the
+    response); analysis then runs detached in an asyncio task.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix and suffix not in _ACCEPTED_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type {suffix}. Accepted: {sorted(_ACCEPTED_SUFFIXES)}.",
+        )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".wav") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    extract_midi_bool = extract_midi.lower() not in ("false", "0", "no")
+    fast_mode_bool = fast_mode.lower() not in ("false", "0", "no")
+    attested_bool = attested.lower() in ("true", "1", "yes")
+    config = select_pipeline_config(analysis_mode=analysis_mode, fast_mode=fast_mode_bool)
+    config.extract_midi = extract_midi_bool
+    config.trim_start = start_time
+    config.trim_end = end_time
+    config.source_name = file.filename
+
+    # Record the client's ownership attestation with the job (and later
+    # the history entry) — the server-side half of the compliance trail.
+    device_id, owner_id = await _request_ownership(request)
+    job = _JOBS.create(
+        filename=file.filename,
+        attested=attested_bool,
+        device_id=device_id,
+        owner_id=owner_id,
+        meta=_resolve_attribution_meta(
+            {"title": title, "artist": artist, "license": license,
+             "license_url": license_url, "source_url": source_url,
+             "attribution": attribution},
+            audio_path=tmp_path, filename=file.filename,
+        ),
+    )
+    asyncio.create_task(_run_analysis_job(job.id, tmp_path, file.filename or "", config))
+    return JSONResponse({"job_id": job.id})
+
+
+@app.get("/api/job/{job_id}")
+async def get_job_endpoint(job_id: str) -> JSONResponse:
+    """Current job snapshot — cheap poll target."""
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    return JSONResponse(job.public_dict())
+
+
+@app.get("/api/job/{job_id}/result")
+async def job_result_endpoint(job_id: str) -> JSONResponse:
+    """Long-poll for the terminal result.
+
+    200 + history_id when done, 500 + error when failed, 202 + status
+    while still running (client re-polls). Blocks up to 25s waiting for
+    a transition so a background poll is cheap and near-instant.
+    """
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    if job.status not in ("done", "error"):
+        job = await _JOBS.wait(job_id, job.version, timeout=25)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    if job.status == "done":
+        return JSONResponse({"job_id": job.id, "history_id": job.history_id})
+    if job.status == "error":
+        return JSONResponse(
+            {"job_id": job.id, "error": job.error or "analysis failed"},
+            status_code=500,
+        )
+    return JSONResponse(
+        {"job_id": job.id, "status": job.status, "percent": job.percent},
+        status_code=202,
+    )
+
+
+@app.get("/api/job/{job_id}/events")
+async def job_events_endpoint(job_id: str) -> StreamingResponse:
+    """Reconnectable SSE. Replays the current snapshot on connect, then
+    streams every state change; emits a heartbeat comment on idle so no
+    proxy read timeout can trip during a long silent analysis phase."""
+    if _JOBS.get(job_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+
+    async def generate():
+        last = -1
+        while True:
+            job = await _JOBS.wait(job_id, last, timeout=15)
+            if job is None:
+                yield 'event: error\ndata: {"message": "unknown job"}\n\n'
+                return
+            if job.version != last:
+                last = job.version
+                yield f"data: {json.dumps(job.public_dict())}\n\n"
+            else:
+                yield ": heartbeat\n\n"
+            if job.status in ("done", "error"):
+                return
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/jobs")
+async def list_jobs_endpoint(
+    request: Request, limit: int = Query(50, ge=1, le=100)
+) -> JSONResponse:
+    """Jobs visible to this caller: device-id header match OR owner-id
+    match when signed in (same scoping as /api/history?scope=mine).
+    Anonymous with no device id gets an empty list — never 401, never
+    another caller's jobs. Newest first. Queued engine jobs carry a
+    1-based ``queue_position`` matching the worker's FIFO claim order."""
+    device_id, owner_id = await _request_ownership(request)
+    if not device_id and not owner_id:
+        return JSONResponse({"jobs": []})
+    mine = [
+        j for j in _JOBS.all()
+        if (device_id and j.device_id == device_id)
+        or (owner_id and j.owner_id == owner_id)
+    ]
+    mine.sort(key=lambda j: j.created_at, reverse=True)
+    positions = _JOBS.queued_engine_positions()
+    rows = []
+    for j in mine[:limit]:
+        row = j.public_dict()
+        if j.id in positions:
+            row["queue_position"] = positions[j.id]
+        rows.append(row)
+    return JSONResponse({"jobs": rows})
+
+
+@app.post("/api/register-device")
+async def register_device_endpoint(
+    job_id: str = Form(...),
+    device_token: str = Form(...),
+) -> JSONResponse:
+    """Attach an APNs device token to a job for future push. Inert until
+    push infra exists — stored so the completion hook can use it later."""
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    await _JOBS.update(job_id, device_token=device_token)
+    return JSONResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Remote GPU engine jobs
+#
+# Deep analysis (Demucs + MIDI) needs a GPU the VPS doesn't have. The
+# desktop Studio app runs the engine on the user's Mac and *dials out*
+# to this backend over HTTPS — no inbound port, no mixed-content, works
+# from any browser:
+#
+#   browser  -> POST /api/analyze-upload          (file kept 7 days)
+#   worker   -> POST /api/engine/claim            (long-poll; also presence)
+#   worker   -> GET  /api/engine/job/{id}/file    (download the source)
+#   worker   -> POST /api/engine/job/{id}/progress
+#   worker   -> POST /api/engine/job/{id}/stem    (per-role stem upload)
+#   worker   -> POST /api/engine/job/{id}/complete (result JSON -> history)
+#   browser  -> GET  /api/job/{id}/events          (same SSE as server jobs)
+#
+# Worker auth: TONEFORGE_ENGINE_TOKEN (X-Engine-Token or Bearer). Same
+# fallback rule as the admin guard — token unset means loopback-only,
+# so local dev works without config but a production box without the
+# env var never accepts remote workers.
+# ---------------------------------------------------------------------------
+
+_UPLOADS_DIR = Path(__file__).parent / "data" / "uploads"
+_UPLOAD_RETENTION_SEC = 7 * 24 * 3600
+# Engine-uploaded stems land under ~/.toneforge so the serve-file
+# allowlist (and deep delete) can reach them.
+_ENGINE_STEMS_ROOT = Path.home() / ".toneforge" / "stems"
+# Worker is "online" if it claimed/heartbeat within this window. Claim
+# long-polls for up to 25 s and re-loops immediately, so 40 s tolerates
+# one dropped request.
+_ENGINE_ONLINE_WINDOW_SEC = 40.0
+_ENGINE_PRESENCE = {"last_seen": 0.0, "device": "", "worker_id": ""}
+
+_STEM_ROLE_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+
+
+def _engine_request_authorized(request: Request) -> bool:
+    """Same shape as the admin guard: shared token when configured,
+    direct-loopback-only when not."""
+    import secrets as _secrets
+
+    supplied = request.headers.get("x-engine-token", "")
+    if not supplied:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            supplied = auth[7:].strip()
+    token = os.environ.get("TONEFORGE_ENGINE_TOKEN", "")
+    if token:
+        return bool(supplied) and _secrets.compare_digest(supplied, token)
+    if request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip"):
+        return False
+    client = request.client
+    return client is not None and client.host in _LOOPBACK_HOSTS
+
+
+def _require_engine_auth(request: Request) -> None:
+    if not _engine_request_authorized(request):
+        # 404 like the admin guard so the surface isn't enumerable.
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+def _engine_online() -> bool:
+    return time.time() - _ENGINE_PRESENCE["last_seen"] < _ENGINE_ONLINE_WINDOW_SEC
+
+
+def _mark_engine_seen(worker_id: str = "", device: str = "") -> None:
+    _ENGINE_PRESENCE["last_seen"] = time.time()
+    if worker_id:
+        _ENGINE_PRESENCE["worker_id"] = worker_id
+    if device:
+        _ENGINE_PRESENCE["device"] = device
+
+
+def _sweep_expired_uploads() -> int:
+    """Delete uploaded source files older than the 7-day retention
+    window. Runs from the retention loop; mtime is the upload time."""
+    if not _UPLOADS_DIR.exists():
+        return 0
+    cutoff = time.time() - _UPLOAD_RETENTION_SEC
+    removed = 0
+    for path in _UPLOADS_DIR.iterdir():
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+                removed += 1
+        except OSError:
+            logger.warning("upload sweep could not remove %s", path)
+    if removed:
+        logger.info("upload sweep removed %d expired uploads", removed)
+    return removed
+
+
+def _engine_job_or_404(job_id: str):
+    job = _JOBS.get(job_id)
+    if job is None or job.kind != "engine":
+        raise HTTPException(status_code=404, detail="Unknown job")
+    return job
+
+
+@app.post("/api/analyze-upload")
+async def analyze_upload_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+    attested: str = Form("false"),
+    extract_midi: str = Form("true"),
+    title: str = Form(""),  # Attribution overrides (D-024)
+    artist: str = Form(""),
+    license: str = Form(""),
+    license_url: str = Form(""),
+    source_url: str = Form(""),
+    attribution: str = Form(""),
+) -> JSONResponse:
+    """Queue an uploaded song for deep analysis on a remote GPU engine.
+
+    The file is stored under data/uploads/ for the 7-day retention
+    window (the worker downloads it from there; a worker crash or a
+    server restart never loses the source). Returns the job id — the
+    browser follows /api/job/{id}/events for progress and picks up
+    history_id on completion.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _ACCEPTED_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type {suffix or '(none)'}. "
+                   f"Accepted: {sorted(_ACCEPTED_SUFFIXES)}.",
+        )
+    attested_bool = attested.lower() in ("true", "1", "yes")
+    if not attested_bool:
+        raise HTTPException(
+            status_code=400,
+            detail="Upload requires the rights attestation.",
+        )
+
+    _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    device_id, owner_id = await _request_ownership(request)
+    job = _JOBS.create_engine_job(
+        filename=file.filename,
+        attested=True,
+        device_id=device_id,
+        owner_id=owner_id,
+        payload={
+            "extract_midi": extract_midi.lower() not in ("false", "0", "no"),
+            "source_name": file.filename or "Uploaded file",
+            "stems": {},
+        },
+    )
+    upload_path = _UPLOADS_DIR / f"{job.id}{suffix}"
+    with upload_path.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+    # Tags need the stored bytes, so attribution resolves after the
+    # write (the job id names the file, so the job must exist first).
+    await _JOBS.update(
+        job.id,
+        message="Waiting for GPU engine…" if not _engine_online() else "Queued",
+        payload={**(job.payload or {}), "upload_path": str(upload_path)},
+        meta=_resolve_attribution_meta(
+            {"title": title, "artist": artist, "license": license,
+             "license_url": license_url, "source_url": source_url,
+             "attribution": attribution},
+            audio_path=upload_path, filename=file.filename,
+        ),
+    )
+    return JSONResponse({"job_id": job.id, "engine_online": _engine_online()})
+
+
+# ---------------------------------------------------------------------------
+# Curated CC0/CC-BY demo tracks (D-024)
+#
+# A small server-side catalog of royalty-free songs importable in one
+# tap. Import runs the exact analyze-upload engine-job flow — the file
+# already lives on this host, so the "upload" is a local copy into
+# data/uploads/. Curated tracks are pre-cleared: the server attests
+# (attestation_source="curated") and stamps the catalog's license
+# metadata, so no client attestation sheet is shown.
+# ---------------------------------------------------------------------------
+
+_CC_TRACKS_DIR = Path(__file__).parent / "static" / "cc-tracks"
+
+
+def _load_cc_catalog() -> list[dict]:
+    """Curated track entries from static/cc-tracks/catalog.json."""
+    try:
+        data = json.loads((_CC_TRACKS_DIR / "catalog.json").read_text())
+    except Exception:  # noqa: BLE001 — missing/corrupt catalog = empty
+        logger.exception("could not read cc-tracks catalog")
+        return []
+    tracks = data.get("tracks") if isinstance(data, dict) else data
+    return [t for t in (tracks or []) if isinstance(t, dict) and t.get("id")]
+
+
+async def _create_job_from_local_path(
+    src: Path,
+    filename: str,
+    *,
+    meta: dict,
+    device_id: str | None,
+    owner_id: str | None,
+    attestation_source: str,
+    extract_midi: bool = True,
+):
+    """Queue an engine job for a file already on this host.
+
+    Same contract as /api/analyze-upload (copy under data/uploads/
+    named by job id, 7-day retention, worker claims it) minus the
+    multipart drain. ``attested`` is forced True — callers only reach
+    this for server-vetted content, recorded via attestation_source.
+    """
+    _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    job = _JOBS.create_engine_job(
+        filename=filename,
+        attested=True,
+        device_id=device_id,
+        owner_id=owner_id,
+        meta=meta,
+        payload={
+            "extract_midi": extract_midi,
+            "source_name": meta.get("title") or filename,
+            "stems": {},
+            "attestation_source": attestation_source,
+        },
+    )
+    upload_path = _UPLOADS_DIR / f"{job.id}{src.suffix.lower()}"
+    shutil.copyfile(src, upload_path)
+    await _JOBS.update(
+        job.id,
+        message="Waiting for GPU engine…" if not _engine_online() else "Queued",
+        payload={**(job.payload or {}), "upload_path": str(upload_path)},
+    )
+    return job
+
+
+@app.get("/api/cc-tracks")
+async def cc_tracks_endpoint() -> JSONResponse:
+    """Curated catalog for the demo-track pickers. ``file`` stays
+    server-side — clients import by id, never fetch the audio raw."""
+    tracks = [
+        {k: v for k, v in track.items() if k != "file"}
+        for track in _load_cc_catalog()
+    ]
+    return JSONResponse({"tracks": tracks})
+
+
+@app.post("/api/cc-tracks/{track_id}/import")
+async def import_cc_track_endpoint(track_id: str, request: Request) -> JSONResponse:
+    """One-tap import of a curated track — returns {"job_id"} with the
+    same shape as /api/analyze-upload so clients reuse the job flow."""
+    track = next(
+        (t for t in _load_cc_catalog() if t.get("id") == track_id), None
+    )
+    if track is None:
+        raise HTTPException(status_code=404, detail="Unknown track")
+    audio_dir = (_CC_TRACKS_DIR / "audio").resolve()
+    src = (audio_dir / str(track.get("file") or "")).resolve()
+    # The catalog is trusted content but still disk data — keep the
+    # resolved path pinned under audio/ so a bad entry can't serve
+    # arbitrary files.
+    if not src.is_file() or audio_dir not in src.parents:
+        raise HTTPException(status_code=410, detail="Track audio not available")
+    if src.suffix.lower() not in _ACCEPTED_SUFFIXES:
+        raise HTTPException(status_code=410, detail="Track audio not available")
+
+    device_id, owner_id = await _request_ownership(request)
+    meta = {
+        "title": str(track.get("title") or ""),
+        "artist": str(track.get("artist") or ""),
+        "license": str(track.get("license") or ""),
+        "license_url": str(track.get("licenseUrl") or ""),
+        "source_url": str(track.get("sourceUrl") or ""),
+        "attribution": str(track.get("attribution") or ""),
+    }
+    job = await _create_job_from_local_path(
+        src,
+        filename=src.name,
+        meta=meta,
+        device_id=device_id,
+        owner_id=owner_id,
+        attestation_source="curated",
+    )
+    return JSONResponse({"job_id": job.id, "engine_online": _engine_online()})
+
+
+@app.get("/api/engine/status")
+async def engine_status_endpoint() -> JSONResponse:
+    """Public presence probe — the jam page's banner on non-localhost
+    hosts polls this instead of http://127.0.0.1:7777/health."""
+    return JSONResponse({
+        "online": _engine_online(),
+        "device": _ENGINE_PRESENCE["device"] or None,
+    })
+
+
+@app.post("/api/engine/claim")
+async def engine_claim_endpoint(request: Request) -> JSONResponse:
+    """Long-poll for the next queued engine job (also the heartbeat).
+
+    Body: {"worker_id": str, "device": str, "wait_sec": float<=25}.
+    Returns 200 + job descriptor, or 204 when nothing arrived in time.
+    """
+    _require_engine_auth(request)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    _mark_engine_seen(
+        worker_id=str(body.get("worker_id") or ""),
+        device=str(body.get("device") or ""),
+    )
+    deadline = time.time() + min(float(body.get("wait_sec") or 20.0), 25.0)
+    while True:
+        job = _JOBS.next_queued_engine_job()
+        if job is not None:
+            await _JOBS.update(
+                job.id, status="running", percent=2,
+                message="Claimed by GPU engine",
+            )
+            payload = job.payload or {}
+            return JSONResponse({
+                "job_id": job.id,
+                "filename": job.filename,
+                "extract_midi": bool(payload.get("extract_midi", True)),
+                "source_name": payload.get("source_name") or job.filename,
+            })
+        if time.time() >= deadline:
+            # 204 must carry no body. JSONResponse({}) serialised a
+            # 2-byte "{}" payload against a zero Content-Length, so
+            # uvicorn raised "Response content longer than
+            # Content-Length" and dropped the connection mid-response —
+            # every idle long-poll surfaced to the worker as a read
+            # timeout and no engine could ever claim a job.
+            from fastapi import Response as _Response
+            return _Response(status_code=204)
+        await asyncio.sleep(0.5)
+
+
+@app.get("/api/engine/job/{job_id}/file")
+async def engine_job_file_endpoint(job_id: str, request: Request):
+    """Serve the uploaded source file to the claiming worker."""
+    _require_engine_auth(request)
+    job = _engine_job_or_404(job_id)
+    upload_path = Path((job.payload or {}).get("upload_path") or "")
+    if not upload_path.is_file() or upload_path.parent != _UPLOADS_DIR:
+        raise HTTPException(status_code=410, detail="Source file no longer available")
+    return FileResponse(upload_path, filename=job.filename or upload_path.name)
+
+
+@app.post("/api/engine/job/{job_id}/progress")
+async def engine_job_progress_endpoint(job_id: str, request: Request) -> JSONResponse:
+    """Worker progress mirror: {"percent": float, "message": str}."""
+    _require_engine_auth(request)
+    _engine_job_or_404(job_id)
+    _mark_engine_seen()
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    fields: dict = {}
+    if isinstance(body.get("percent"), (int, float)):
+        fields["percent"] = max(0.0, min(100.0, float(body["percent"])))
+    if isinstance(body.get("message"), str):
+        fields["message"] = body["message"][:200]
+    if fields:
+        await _JOBS.update(job_id, **fields)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/engine/job/{job_id}/stem")
+async def engine_job_stem_endpoint(
+    job_id: str,
+    request: Request,
+    role: str = Form(...),
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    """Receive one separated stem from the worker.
+
+    Stored under ~/.toneforge/stems/{job_id}/ — inside the serve-file
+    allowlist, so the web player streams it immediately and the lazy R2
+    upload on the first mobile bundle fetch finds it on disk.
+    """
+    _require_engine_auth(request)
+    job = _engine_job_or_404(job_id)
+    _mark_engine_seen()
+    role = role.strip().lower()
+    if not _STEM_ROLE_RE.match(role):
+        raise HTTPException(status_code=400, detail="Invalid stem role")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _ACCEPTED_SUFFIXES:
+        raise HTTPException(status_code=400, detail=f"Unsupported stem type {suffix}")
+    stem_dir = _ENGINE_STEMS_ROOT / job_id
+    stem_dir.mkdir(parents=True, exist_ok=True)
+    stem_path = stem_dir / f"{role}{suffix}"
+    with stem_path.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+    payload = dict(job.payload or {})
+    stems = dict(payload.get("stems") or {})
+    stems[role] = str(stem_path)
+    payload["stems"] = stems
+    await _JOBS.update(job_id, payload=payload)
+    return JSONResponse({"ok": True, "role": role})
+
+
+@app.post("/api/engine/job/{job_id}/complete")
+async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONResponse:
+    """Terminal success: persist the result to history.
+
+    Body is the analysis result dict from the engine pipeline. Any
+    engine-local stem URLs in it are replaced with the paths of the
+    stems the worker uploaded via /stem — those live on *this* host.
+    """
+    _require_engine_auth(request)
+    job = _engine_job_or_404(job_id)
+    _mark_engine_seen()
+    try:
+        result = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Body must be the result JSON")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=400, detail="Body must be the result JSON")
+
+    payload = job.payload or {}
+    uploaded_stems = payload.get("stems") or {}
+    # 127.0.0.1:7777 serve-file URLs from the engine host are useless
+    # here; the uploaded copies are authoritative. Wrap them in this
+    # host's serve-file route — the web bundle passes audio_url through
+    # verbatim, so a raw filesystem path would never be fetchable, while
+    # every consumer (R2 lazy upload, deep delete, chops, transcode)
+    # unwraps /api/admin/serve-file?path=... already.
+    result["stems_paths"] = {
+        role: f"/api/admin/serve-file?path={path}"
+        for role, path in uploaded_stems.items()
+    }
+    result.pop("stems", None)
+    result.setdefault("filename", job.filename)
+    result.setdefault("source_name", payload.get("source_name") or job.filename)
+
+    entry = {
+        "name": payload.get("source_name") or job.filename or "Uploaded file",
+        "detected_type": result.get("detected_type", "guitar"),
+        "summary": result.get("detection", {}).get("summary", ""),
+        "duration": result.get("duration_sec"),
+        "attested": bool(job.attested),
+        "deep_analysis": True,
+    }
+    if payload.get("attestation_source"):
+        entry["attestation_source"] = payload["attestation_source"]
+    _stamp_attribution(entry, job.meta)
+    history_entry = _add_to_history(
+        entry, full_result=_convert_numpy_types(result),
+        device_id=job.device_id, owner_id=job.owner_id)
+    await _JOBS.update(
+        job_id, status="done", percent=100,
+        message="Analysis complete", history_id=history_entry["id"],
+    )
+    _on_job_complete(_JOBS.get(job_id))
+    return JSONResponse({"ok": True, "history_id": history_entry["id"]})
+
+
+@app.post("/api/engine/job/{job_id}/fail")
+async def engine_job_fail_endpoint(job_id: str, request: Request) -> JSONResponse:
+    """Terminal failure from the worker: {"error": str}."""
+    _require_engine_auth(request)
+    _engine_job_or_404(job_id)
+    _mark_engine_seen()
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    error = str(body.get("error") or "engine analysis failed")[:500]
+    await _JOBS.update(
+        job_id, status="error", message="Analysis failed", error=error,
+    )
+    _on_job_complete(_JOBS.get(job_id))
+    return JSONResponse({"ok": True})
 
 
 def _generate_synth_hints(desc) -> list[str]:
@@ -1870,28 +2974,70 @@ async def admin_page():
     return FileResponse("static/studio.html")
 
 
+@app.get("/api/downloads/studio-app")
+async def download_studio_app():
+    """Redirect to a freshly signed R2 URL for the macOS Studio app.
+
+    jam.html links here instead of embedding a presigned URL directly —
+    presigned URLs expire (R2 caps them at 7 days) and leak the access
+    key ID into the page source.
+    """
+    from fastapi.responses import RedirectResponse
+
+    from tone_forge import r2_storage
+
+    if not r2_storage.is_configured():
+        raise HTTPException(status_code=404, detail="Download not available")
+    try:
+        url = r2_storage.public_url_for("downloads/ToneForge-Studio.dmg")
+    except Exception:  # noqa: BLE001
+        logger.exception("studio-app download URL generation failed")
+        raise HTTPException(status_code=404, detail="Download not available")
+    return RedirectResponse(url, status_code=307)
+
+
 @app.get("/api/admin/serve-file")
 async def admin_serve_file(
     path: str = Query(..., description="Path to the file to serve"),
     download: bool = Query(False, description="Force download instead of streaming"),
+    fmt: str = Query("", description="Transcode target, e.g. 'm4a' for AAC-LC"),
 ):
     """Serve stem files or other generated files for playback/download.
 
     Security: Only serves files from allowed directories (temp dirs, demucs output).
+
+    ``fmt=m4a`` opt-in: lossless sources (WAV/FLAC/AIFF) are transcoded to
+    AAC-LC M4A (~5x smaller) on first request and cached, so the mobile
+    client downloads ~8 MB/stem instead of ~40 MB. Falls back to the raw
+    file when ffmpeg is unavailable or the encode fails — never an error.
     """
     file_path = Path(path)
 
-    # Security: only allow serving from specific directories (shared with
-    # the deep-delete path — see _ALLOWED_FILE_PREFIXES).
-    # Check both resolved and original path (symlinks can cause issues)
-    path_str = str(file_path.resolve())
-    path_str_orig = str(file_path)
-    if not any(path_str.startswith(prefix) or path_str_orig.startswith(prefix) for prefix in _ALLOWED_FILE_PREFIXES):
-        logger.warning(f"Serve-file blocked: {path_str} (orig: {path_str_orig})")
+    # Security: only serve from toneforge-owned directories, judged on the
+    # fully resolved path (shared with the deep-delete path — see
+    # _path_in_allowed_dirs). A symlink planted inside /tmp cannot widen
+    # access because the original path is never trusted.
+    if not _path_in_allowed_dirs(file_path):
+        logger.warning(f"Serve-file blocked: {file_path}")
         raise HTTPException(status_code=403, detail="Access denied: file not in allowed directory")
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
+
+    # Lazy AAC transcode (opt-in via fmt=m4a). Only lossless inputs are
+    # worth re-encoding; already-compressed formats pass through. The
+    # transcode is CPU-bound + shells out to ffmpeg, so run it off the
+    # event loop. Result is cached by (path, mtime, size) inside the
+    # audio_transcode module — the first request pays, the rest are hits.
+    if fmt.lower() == "m4a" and file_path.suffix.lower() in (".wav", ".flac", ".aiff", ".aif"):
+        from tone_forge.audio_transcode import transcode_to_m4a
+        m4a_path = await asyncio.to_thread(transcode_to_m4a, str(file_path))
+        if m4a_path is not None:
+            return FileResponse(
+                path=str(m4a_path),
+                media_type="audio/mp4",
+            )
+        # else: fall through and serve the original file unchanged.
 
     # Determine content type
     suffix = file_path.suffix.lower()
@@ -1899,6 +3045,9 @@ async def admin_serve_file(
         ".wav": "audio/wav",
         ".mp3": "audio/mpeg",
         ".flac": "audio/flac",
+        ".m4a": "audio/mp4",
+        ".mp4": "audio/mp4",
+        ".aac": "audio/aac",
         ".mid": "audio/midi",
         ".midi": "audio/midi",
     }
@@ -2847,13 +3996,68 @@ async def admin_analyze_deep(
     )
 
 
+# Lightweight fields the list surfaces (Library rows, product/studio
+# history lists). The full analysis ``result`` blob is ~500KB/entry —
+# embedding it per row bloats the list to megabytes and times out over
+# cellular. Clients that need the result fetch ``/api/history/{id}``.
+_HISTORY_LIST_FIELDS = (
+    "id",
+    "timestamp",
+    "name",
+    "filename",
+    "detected_type",
+    "summary",
+    "duration",
+    "amp_family",
+    "tempo_bpm",
+    "detected_key",
+    # Attribution (D-024): only present on entries that have them —
+    # old entries project the same rows as before.
+    "artist",
+    "license",
+)
+
+
+def _history_list_row(entry: dict) -> dict:
+    """Project a history entry down to its lightweight list fields."""
+    return {k: entry[k] for k in _HISTORY_LIST_FIELDS if k in entry}
+
+
 @app.get("/api/history")
 async def get_history(
+    request: Request,
     q: Optional[str] = Query(None, description="Search query"),
     limit: int = Query(50, ge=1, le=100),
+    full: bool = Query(
+        False,
+        description="Embed the full analysis result per row (heavy; "
+        "debug tools only).",
+    ),
+    scope: Optional[str] = Query(
+        None,
+        description='"mine" = only the signed-in user\'s analyses '
+        "(401 when anonymous). Default: everything (unchanged shape).",
+    ),
 ) -> JSONResponse:
-    """Get analysis history, optionally filtered by search query."""
+    """Get analysis history, optionally filtered by search query.
+
+    Returns lightweight metadata rows by default. Pass ``full=1`` to
+    embed each entry's complete ``result`` blob (debug History tab).
+    """
     history = _load_history()
+
+    if scope == "mine":
+        from tone_forge.auth.deps import current_user
+
+        user = await current_user(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Sign in required")
+        device_id = (request.headers.get("x-device-id") or "").strip()
+        history = [
+            entry for entry in history
+            if entry.get("owner_id") == user.id
+            or (device_id and entry.get("device_id") == device_id)
+        ]
 
     if q:
         q_lower = q.lower()
@@ -2865,8 +4069,58 @@ async def get_history(
             or q_lower in (entry.get("amp_family") or "").lower()
         ]
 
+    history = history[:limit]
+    if not full:
+        history = [_history_list_row(entry) for entry in history]
+
     # Convert numpy types and handle inf/nan values
-    return JSONResponse(_convert_numpy_types({"history": history[:limit]}))
+    return JSONResponse(_convert_numpy_types({"history": history}))
+
+
+@app.post("/api/auth/claim")
+async def claim_device_endpoint(request: Request) -> JSONResponse:
+    """Bind a device to the signed-in account and backfill history.
+
+    Every unowned history entry stamped with this device_id gets
+    owner_id set — the "keep my analyses" moment after first sign-in.
+    Idempotent: already-owned entries are left alone.
+    """
+    from tone_forge.auth.deps import current_user
+
+    user = await current_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    device_id = str(body.get("device_id") or "").strip()
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id required")
+
+    await request.app.state.auth_store.claim_device(device_id, user.id)
+
+    # Backfill under the history lock; drop the R2 cache first so we
+    # read-modify-write the freshest copy of the shared JSON.
+    try:
+        from tone_forge import r2_storage
+        r2_storage.invalidate_history_cache()
+    except Exception:  # noqa: BLE001
+        pass
+    claimed = 0
+    with _HISTORY_LOCK:
+        history = _load_history()
+        for entry in history:
+            if entry.get("device_id") == device_id and not entry.get("owner_id"):
+                entry["owner_id"] = user.id
+                claimed += 1
+        if claimed:
+            _save_history(history)
+    logger.info(
+        "auth: user %s claimed device %s (%d entries)",
+        user.id, device_id, claimed,
+    )
+    return JSONResponse({"claimed": claimed})
 
 
 # ---------------------------------------------------------------------------
@@ -3006,6 +4260,9 @@ async def get_history_entry(entry_id: str) -> JSONResponse:
     entry = _get_history_item(entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="History entry not found")
+    # Presigned R2 stem URLs stored at upload time expire; refresh them
+    # so this read never hands out a dead URL.
+    _refresh_r2_stem_urls(entry.get("result"))
     # Convert numpy types and handle inf/nan values
     return JSONResponse(_convert_numpy_types(entry))
 
@@ -3032,6 +4289,9 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
             status_code=422,
             detail="History entry has no analysis result",
         )
+    # Refresh expired presigned R2 stem URLs before the bundle assembler
+    # copies them into the StemSet — stored presigns die after 7 days.
+    _refresh_r2_stem_urls(result)
     device_caps = _device_caps_for_session()
     tone_match = _retrieve_tone_for_history(result, device_caps=device_caps)
     # Apply legacy-bundle fixups (Fix B / Fix C / Round-2 chord-detector)
@@ -3076,6 +4336,17 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
     payload["legacy_midi_stems"] = _decode_midi_stems_for_payload(
         result.get("midi_stems") or {}
     )
+    # Attribution metadata (D-024) lives on the history ENTRY, not the
+    # result blob the bundle is built from — surface it as a sidecar so
+    # the Jam client can render the credit line on /jam/:id loads.
+    payload["legacy_attribution"] = {
+        "title": entry.get("name") or "",
+        "artist": entry.get("artist") or "",
+        "license": entry.get("license") or "",
+        "license_url": entry.get("license_url") or "",
+        "source_url": entry.get("source_url") or "",
+        "attribution": entry.get("attribution") or "",
+    }
 
     return JSONResponse(_convert_numpy_types(payload))
 
@@ -3127,6 +4398,9 @@ async def get_song_chops(
     result = entry.get("result")
     if not isinstance(result, dict):
         raise HTTPException(status_code=422, detail="Song has no analysis result")
+
+    # Refresh expired presigned R2 stem URLs before resolving stem URLs.
+    _refresh_r2_stem_urls(result)
 
     # Resolve the WAV path for the requested stem. 'mix' uses the
     # original audio; the others use the Demucs stem output. Missing
@@ -3437,10 +4711,11 @@ def _mobile_stem_records(result: dict) -> list[dict]:
             continue
         seen.add(role)
         url = _stem_url_from_raw(raw) if raw else None
+        url, codec = _maybe_transcoded_stem(url, _codec_from_stem_url(url))
         out.append({
             "role": role,
             "url": url,
-            "codec": _codec_from_stem_url(url),
+            "codec": codec,
             "sampleRateHz": sample_rate,
         })
     for role in sorted(stems_paths.keys()):
@@ -3450,13 +4725,39 @@ def _mobile_stem_records(result: dict) -> list[dict]:
         if not raw:
             continue
         url = _stem_url_from_raw(raw)
+        url, codec = _maybe_transcoded_stem(url, _codec_from_stem_url(url))
         out.append({
             "role": role,
             "url": url,
-            "codec": _codec_from_stem_url(url),
+            "codec": codec,
             "sampleRateHz": sample_rate,
         })
     return out
+
+
+def _maybe_transcoded_stem(url: str | None, codec: str) -> tuple[str | None, str]:
+    """Rewrite a local lossless serve-file stem URL to request the AAC
+    transcode, when ffmpeg is available on this host.
+
+    Returns ``(url, codec)`` — either the m4a-serving pair (URL gains
+    ``&fmt=m4a``, codec becomes ``"m4a"``) or the inputs unchanged.
+    Only rewrites ``/api/admin/serve-file`` URLs pointing at a lossless
+    file; remote (R2) URLs and already-compressed stems pass through so
+    the client caches them under the correct extension.
+    """
+    if not isinstance(url, str) or not url:
+        return url, codec
+    if not url.startswith("/api/admin/serve-file?path="):
+        return url, codec
+    path_part = url.split("path=", 1)[1].split("&", 1)[0]
+    ext = path_part.rsplit(".", 1)[-1].lower() if "." in path_part else ""
+    if ext not in ("wav", "flac", "aiff", "aif"):
+        return url, codec
+    from tone_forge.audio_transcode import is_ffmpeg_available
+    if not is_ffmpeg_available():
+        return url, codec
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}fmt=m4a", "m4a"
 
 
 def _stem_url_from_raw(raw_val):
@@ -3486,6 +4787,40 @@ def _stem_url_from_raw(raw_val):
     if raw_val.startswith(("http://", "https://", "/api/")):
         return raw_val
     return f"/api/admin/serve-file?path={raw_val}"
+
+
+def _refresh_r2_stem_urls(result: dict | None) -> None:
+    """Re-presign any R2 stem URLs in ``result['stems_paths']`` in place.
+
+    ``_maybe_upload_stems_to_r2`` writes the presigned URL of the moment
+    into the persisted history entry. R2 caps presigns at 7 days, so a
+    stored URL eventually 403s and the song's stems silently die.
+    Calling this at every read choke point (history/session/bundle/chops)
+    hands the client a fresh short-TTL URL and makes the stored value's
+    age irrelevant.
+
+    Mutates the in-memory result only — deliberately never persisted,
+    since the next read refreshes again anyway. No-op when R2 isn't
+    configured or the URLs aren't ours.
+    """
+    if not isinstance(result, dict):
+        return
+    stems_paths = result.get("stems_paths")
+    if not isinstance(stems_paths, dict) or not stems_paths:
+        return
+    try:
+        from tone_forge import r2_storage
+    except Exception:
+        return
+    for role, raw in list(stems_paths.items()):
+        if not isinstance(raw, str) or not raw.startswith("https://"):
+            continue
+        try:
+            fresh = r2_storage.refresh_url(raw)
+        except Exception:
+            continue
+        if fresh != raw:
+            stems_paths[role] = fresh
 
 
 def _maybe_upload_stems_to_r2(entry_id: str, entry: dict) -> bool:
@@ -3531,11 +4866,25 @@ def _maybe_upload_stems_to_r2(entry_id: str, entry: dict) -> bool:
     for role, raw in list(stems_paths.items()):
         if not isinstance(raw, str) or not raw:
             continue
-        # Already remote — nothing to do.
+        # Already remote — nothing to do. But local-engine localhost URLs
+        # still need uploading (http://127.0.0.1:7777/api/serve-file?path=...).
         if raw.startswith(("http://", "https://")):
-            continue
+            is_localhost = any(
+                raw.startswith(p) for p in (
+                    "http://127.0.0.1:7777/",
+                    "http://localhost:7777/",
+                )
+            )
+            if not is_localhost:
+                continue
         # Local path (or /api/... wrapped path — strip the wrapper).
         local_path = raw
+        # Handle local-engine URLs: http://127.0.0.1:7777/api/serve-file?path=...
+        for prefix in ("http://127.0.0.1:7777/api/serve-file?path=",
+                       "http://localhost:7777/api/serve-file?path="):
+            if raw.startswith(prefix):
+                local_path = raw[len(prefix):]
+                break
         if raw.startswith("/api/admin/serve-file?path="):
             local_path = raw[len("/api/admin/serve-file?path=") :]
         # Prefer AAC when ffmpeg is available. Silent fall-back to WAV
@@ -3577,12 +4926,20 @@ async def get_song_bundle(entry_id: str) -> JSONResponse:
     # serve-file wrapper if R2 isn't configured or the upload flaked.
     if _maybe_upload_stems_to_r2(entry_id, entry):
         _update_history_item(entry_id, entry)
+    # Refresh any presigned R2 URLs that were persisted on an earlier
+    # request — stored presigns expire after 7 days.
+    _refresh_r2_stem_urls(result)
 
     # ----- Meta ------------------------------------------------------
     meta = {
         "title": entry.get("name") or result.get("filename") or "Untitled",
         "artist": entry.get("artist") or result.get("artist") or "",
         "sourceUrl": entry.get("source_url") or result.get("source_url") or "",
+        # Attribution (D-024). Empty string = unknown/user-owned; the
+        # clients only render a credit line when license is non-empty.
+        "license": entry.get("license") or "",
+        "licenseUrl": entry.get("license_url") or "",
+        "attribution": entry.get("attribution") or "",
         "durationSec": float(result.get("duration_sec") or 0.0),
         "tempoBpm": float(result.get("tempo_bpm") or 0.0) or None,
         "detectedKey": result.get("detected_key") or None,
@@ -4185,6 +5542,187 @@ async def delete_device_preferences_endpoint() -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+# -----------------------------------------------------------------------------
+# Beat Capture corrections (D-024)
+#
+# Devices upload a handful of drum-role corrections (7 analysis features +
+# the model's guess + the user's fix) so the server-side training corpus
+# improves. No audio ever leaves the device. Requires a signed-in user;
+# rows are stamped with the account + X-Device-Id for provenance.
+# -----------------------------------------------------------------------------
+
+
+class BeatCorrectionRow(BaseModel):
+    """One uploaded correction. `features` is a name→value map keyed by
+    the canonical `OnsetFeatures.featureNames`; roles are raw label
+    strings; `ts` is a client ISO-8601 timestamp."""
+
+    features: dict[str, float]
+    original: str
+    corrected: str
+    ts: str
+
+
+class BeatCorrectionsRequest(BaseModel):
+    corrections: list[BeatCorrectionRow]
+
+
+@app.post("/api/beat-corrections")
+async def post_beat_corrections(
+    payload: BeatCorrectionsRequest,
+    request: Request,
+) -> JSONResponse:
+    """Ingest a batch of drum-role corrections into the training corpus.
+
+    401 when unauthenticated; 400 when any row fails schema validation
+    (unknown role / missing or non-finite feature). Returns the number
+    of accepted rows so the client can clear exactly what it sent.
+    """
+    from tone_forge.auth.deps import current_user
+    from tone_forge import beat_corpus
+
+    user = await current_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in required")
+
+    device_id = (request.headers.get("x-device-id") or "").strip() or None
+    rows = [row.model_dump() for row in payload.corrections]
+    try:
+        written = beat_corpus.append(
+            rows, device_id=device_id, owner_id=user.id
+        )
+    except beat_corpus.CorrectionSchemaError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return JSONResponse(content={"accepted": written})
+
+
+@app.get("/api/beat-corrections/export")
+async def export_beat_corrections(request: Request):
+    """Dump the whole correction corpus as CSV for the off-device trainer.
+
+    Engine-token gated (same guard as model publish) so the corpus — which
+    aggregates every user's corrections — is never publicly enumerable. CI
+    curls this and feeds it to `train_beat_model.sh --corrections`, so the
+    runner needs no direct R2 credentials. Columns match the trainer
+    contract: the canonical feature names in order, then original +
+    corrected role labels.
+    """
+    import csv as _csv
+    import io as _io
+    from fastapi import Response
+
+    _require_engine_auth(request)
+    from tone_forge import beat_corpus
+
+    buf = _io.StringIO()
+    writer = _csv.writer(buf)
+    writer.writerow(list(beat_corpus.FEATURE_NAMES) + ["original", "corrected"])
+    for row in beat_corpus.read_all():
+        features = row.get("features", {})
+        try:
+            feats = [features[name] for name in beat_corpus.FEATURE_NAMES]
+        except KeyError:
+            continue  # skip malformed rows
+        writer.writerow(feats + [row.get("original"), row.get("corrected")])
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# -----------------------------------------------------------------------------
+# Beat Capture model distribution (D-024)
+#
+# Serves versioned CoreML drum classifiers so every app build ships (and
+# every running app can background-update to) the newest published model.
+# A model is a compiled `.mlmodelc` *directory*. The trainer/CI publishes
+# it as a single zip; the server explodes it into per-file objects plus a
+# manifest.json (each member + sha256). Clients rebuild the directory by
+# fetching the manifest then each file — no client-side unzip needed
+# (iOS has no public zip API). Publish is engine-token gated; fetch is
+# public.
+# -----------------------------------------------------------------------------
+
+
+@app.get("/api/beat-model/latest")
+async def get_beat_model_latest() -> JSONResponse:
+    """Pointer to the current model: ``{version, sha256, files, url}``.
+
+    ``sha256`` is over the canonical manifest JSON; ``files`` is the
+    member count; ``url`` points at the manifest. 404 when nothing has
+    been published. Declared before the ``/{version}`` routes so
+    "latest" is never matched as a version id.
+    """
+    from tone_forge import beat_model_store
+
+    pointer = beat_model_store.latest()
+    if pointer is None:
+        raise HTTPException(status_code=404, detail="No published model")
+    version = pointer["version"]
+    return JSONResponse(
+        content={
+            "version": version,
+            "sha256": pointer.get("sha256"),
+            "files": pointer.get("files"),
+            "url": f"/api/beat-model/{version}/manifest",
+        }
+    )
+
+
+@app.get("/api/beat-model/{version}/manifest")
+async def get_beat_model_manifest(version: str) -> JSONResponse:
+    """Return the manifest for `version`: ``{version, files:[{path,
+    sha256, size}]}`` (404 if unknown). Immutable per version."""
+    from tone_forge import beat_model_store
+
+    manifest = beat_model_store.read_manifest(version)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Unknown model version")
+    return JSONResponse(
+        content=manifest,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@app.get("/api/beat-model/{version}/file/{member:path}")
+async def get_beat_model_file(version: str, member: str):
+    """Return the bytes of one ``.mlmodelc`` member file (404 if
+    absent/invalid). Immutable per version, so long-cache."""
+    from fastapi import Response
+    from tone_forge import beat_model_store
+
+    data = beat_model_store.read_file(version, member)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Unknown model file")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@app.post("/api/beat-model")
+async def post_beat_model(
+    request: Request,
+    version: str = Form(...),
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    """Publish a new model version (engine-token gated). Explodes the
+    zip into per-file objects + manifest and repoints `latest`. Returns
+    ``{version, sha256, files}``."""
+    _require_engine_auth(request)
+    from tone_forge import beat_model_store
+
+    data = await file.read()
+    try:
+        pointer = beat_model_store.publish(version, data)
+    except beat_model_store.ModelStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return JSONResponse(content=pointer)
+
+
 def _serialize_audio_device_info(info: Optional[_AudioDeviceInfo]) -> Optional[dict]:
     """Wire shape for one CoreAudio device in the probe response."""
     if info is None:
@@ -4323,6 +5861,24 @@ def _retrieve_tone_for_history(
     )
 
 
+def _url_ingest_enabled() -> bool:
+    """URL-ingest endpoints (yt-dlp downloads) are opt-in via env flag.
+
+    Off by default: downloading audio from streaming platforms is a
+    ToS/legal risk and must never be exposed on a public deployment.
+    Set TONEFORGE_ENABLE_URL_INGEST=1 for local dev experiments only.
+    """
+    return os.environ.get("TONEFORGE_ENABLE_URL_INGEST", "").lower() in (
+        "1", "true", "yes",
+    )
+
+
+def _require_url_ingest() -> None:
+    """Raise 404 when URL ingest is disabled (hide endpoint existence)."""
+    if not _url_ingest_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
 def _check_yt_dlp() -> bool:
     """Check if yt-dlp is available."""
     import sys
@@ -4345,7 +5901,7 @@ async def capabilities() -> dict:
     return {
         "version": app.version,
         "stem_separation": stem_separator.is_available(),
-        "youtube_support": _check_yt_dlp(),
+        "youtube_support": _url_ingest_enabled() and _check_yt_dlp(),
         "supported_source_kinds": ["isolated_guitar", "stem_separated", "full_mix", "synth"],
         "supported_platforms": SUPPORTED_PLATFORMS,
         "platform_info": {
@@ -4435,7 +5991,10 @@ async def export_preset(request: ExportRequest) -> JSONResponse:
 
     format_type = request.format.lower()
 
-    try:
+    def build():
+        """Blocking export dispatch. Runs in a worker thread — some
+        formats (project_bundle zips stems, .als generation) are
+        CPU-bound and would stall the event loop."""
         if format_type == "hlx":
             result = preset_export.export_helix_preset(
                 request.chain,
@@ -4594,15 +6153,23 @@ async def export_preset(request: ExportRequest) -> JSONResponse:
                 detail=f"Unknown format: {format_type}. Supported: {list(preset_export.EXPORT_FORMATS.keys())}",
             )
 
-        return JSONResponse({
-            "filename": result.filename,
-            "format": result.format,
-            "content": result.content,
-            "content_type": result.content_type,
-        })
+        return result
 
+    try:
+        result = await asyncio.to_thread(build)
+    except HTTPException:
+        # 400s raised inside build() (missing analysis data, unknown
+        # format) must reach the client as-is, not re-wrapped as 500.
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Export failed: {e}") from e
+
+    return JSONResponse({
+        "filename": result.filename,
+        "format": result.format,
+        "content": result.content,
+        "content_type": result.content_type,
+    })
 
 
 @app.get("/api/export-formats")
@@ -5680,12 +7247,15 @@ def _download_youtube_audio(url: str, output_dir: Path, duration: int = 30) -> t
 
 
 @app.post("/api/analyze-url")
-async def analyze_url_endpoint(request: UrlAnalyzeRequest) -> JSONResponse:
+async def analyze_url_endpoint(
+    request: UrlAnalyzeRequest, http_request: Request
+) -> JSONResponse:
     """Analyze audio from a YouTube URL using unified pipeline.
 
     Downloads the audio using yt-dlp, then runs analysis.
     Supports multiple platforms: helix, pedals, synth.
     """
+    _require_url_ingest()
     if not _check_yt_dlp():
         raise HTTPException(
             status_code=501,
@@ -5730,13 +7300,14 @@ async def analyze_url_endpoint(request: UrlAnalyzeRequest) -> JSONResponse:
         response["analysis_mode"] = config.mode.value
 
         # Add to history
+        device_id, owner_id = await _request_ownership(http_request)
         history_entry = _add_to_history({
             "name": display_name or url[:50],
             "detected_type": response.get("detected_type", "guitar"),
             "summary": response.get("detection", {}).get("summary", ""),
             "duration": response.get("duration_sec"),
             "source_url": url,
-        }, full_result=response)
+        }, full_result=response, device_id=device_id, owner_id=owner_id)
 
         response["history_id"] = history_entry["id"]
 
@@ -5752,13 +7323,17 @@ async def analyze_url_endpoint(request: UrlAnalyzeRequest) -> JSONResponse:
 
 
 @app.post("/api/analyze-url-stream")
-async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
+async def analyze_url_stream_endpoint(
+    request: UrlAnalyzeRequest, http_request: Request
+):
     """Analyze audio from a YouTube URL using unified pipeline with SSE progress.
 
     Returns Server-Sent Events with progress updates, then final result.
     Deep analysis REQUIRES local engine to avoid blocking the server.
     """
     import httpx
+
+    _require_url_ingest()
 
     analysis_mode = getattr(request, 'analysis_mode', 'quick')
     is_deep = analysis_mode.lower() == "deep" and not request.fast_mode
@@ -5787,6 +7362,10 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
     config.trim_start = request.start_time
     config.trim_end = request.end_time
     config.source_url = request.url
+
+    # Resolve before streaming starts — the request context is not
+    # guaranteed to survive the life of the generator.
+    device_id, owner_id = await _request_ownership(http_request)
 
     async def generate():
         def send_event(event_type: str, data: dict):
@@ -5923,7 +7502,9 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                                                 "duration": result_data.get("duration_sec"),
                                                 "source_url": url,
                                                 "deep_analysis": is_deep,
-                                            }, full_result=result_data)
+                                            }, full_result=result_data,
+                                               device_id=device_id,
+                                               owner_id=owner_id)
                                             result_data["history_id"] = history_entry["id"]
                                         except Exception as hist_err:
                                             logger.warning(f"[analyze-url-stream] history persist failed on local-engine path: {hist_err}")
@@ -6010,7 +7591,8 @@ async def analyze_url_stream_endpoint(request: UrlAnalyzeRequest):
                         "duration": response.get("duration_sec"),
                         "source_url": url,
                         "deep_analysis": config.mode == UnifiedAnalysisMode.DEEP,
-                    }, full_result=response)
+                    }, full_result=response,
+                       device_id=device_id, owner_id=owner_id)
 
                     response["history_id"] = history_entry["id"]
 

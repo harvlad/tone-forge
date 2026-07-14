@@ -56,6 +56,28 @@ final class HistoryClientTests: XCTestCase {
         XCTAssertEqual(result[1].name, "Track Two")
     }
 
+    // MARK: - Attribution fields (D-024)
+
+    func testEntryDecodesAttributionFields() throws {
+        let json = """
+        {"id": "x", "timestamp": "2025-01-01T00:00:00Z",
+         "name": "Night Drive", "artist": "Some Artist", "license": "CC-BY"}
+        """.data(using: .utf8)!
+        let entry = try JSONDecoder().decode(HistoryEntry.self, from: json)
+        XCTAssertEqual(entry.artist, "Some Artist")
+        XCTAssertEqual(entry.license, "CC-BY")
+    }
+
+    func testEntryDecodesWithoutAttributionFields() throws {
+        // Pre-D-024 server rows omit artist/license — must decode nil.
+        let json = """
+        {"id": "x", "timestamp": "2025-01-01T00:00:00Z", "name": "Old Song"}
+        """.data(using: .utf8)!
+        let entry = try JSONDecoder().decode(HistoryEntry.self, from: json)
+        XCTAssertNil(entry.artist)
+        XCTAssertNil(entry.license)
+    }
+
     // MARK: - URL construction
 
     func testFetchAppendsQueryAndLimit() async throws {

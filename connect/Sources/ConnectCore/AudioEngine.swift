@@ -44,6 +44,24 @@ public final class AudioEngine {
         /// `LatencyProbe.Result.confidence`. Nil iff measuredRoundTripSec
         /// is nil.
         public let measurementConfidence: String?
+
+        /// Public so downstream bridge layers (jam-desktop) can build
+        /// reports in tests without a live engine.
+        public init(
+            inputDeviceLatencySec: Double,
+            outputDeviceLatencySec: Double,
+            bufferDurationSec: Double,
+            estimatedRoundTripSec: Double,
+            measuredRoundTripSec: Double?,
+            measurementConfidence: String?
+        ) {
+            self.inputDeviceLatencySec = inputDeviceLatencySec
+            self.outputDeviceLatencySec = outputDeviceLatencySec
+            self.bufferDurationSec = bufferDurationSec
+            self.estimatedRoundTripSec = estimatedRoundTripSec
+            self.measuredRoundTripSec = measuredRoundTripSec
+            self.measurementConfidence = measurementConfidence
+        }
     }
 
     /// Snapshot of engine state for the v2 `connect_state` wire frame.
@@ -66,6 +84,32 @@ public final class AudioEngine {
         public let monitorMuted: Bool     // gain == 0
         public let ampSimEnabled: Bool
         public let activeChainId: String?
+
+        /// Public so downstream bridge layers (jam-desktop) can build
+        /// snapshots in tests without a live engine.
+        public init(
+            stateName: String,
+            inputDeviceName: String?,
+            outputDeviceName: String?,
+            sampleRate: Double,
+            channelsIn: Int,
+            monitorEnabled: Bool,
+            monitorGain: Float,
+            monitorMuted: Bool,
+            ampSimEnabled: Bool,
+            activeChainId: String?
+        ) {
+            self.stateName = stateName
+            self.inputDeviceName = inputDeviceName
+            self.outputDeviceName = outputDeviceName
+            self.sampleRate = sampleRate
+            self.channelsIn = channelsIn
+            self.monitorEnabled = monitorEnabled
+            self.monitorGain = monitorGain
+            self.monitorMuted = monitorMuted
+            self.ampSimEnabled = ampSimEnabled
+            self.activeChainId = activeChainId
+        }
     }
 
     /// Lifecycle state surfaced via `onStateChange`. The state machine
@@ -118,6 +162,18 @@ public final class AudioEngine {
     ///
     /// Audio-Ownership Pivot, Phase 4 commit B.
     public var onLatencyReportReady: ((LatencyReport) -> Void)?
+
+    /// Fired on the main queue after a reconfig restart succeeds —
+    /// i.e. the graph was rebuilt against a new device/format and the
+    /// engine is `.running` again. External owners that attached their
+    /// own subgraph via `avEngine` (jam-desktop's stem player) MUST
+    /// re-attach and re-connect their nodes here: the reconfig path
+    /// only re-wires this engine's own nodes, so a device flap
+    /// silently orphans anything attached from outside.
+    ///
+    /// Not fired on cold start — only on successful recovery from a
+    /// configuration change.
+    public var onGraphRebuilt: (() -> Void)?
 
     public private(set) var state: State = .stopped {
         didSet {
@@ -191,6 +247,18 @@ public final class AudioEngine {
             if ampSimEnabled != oldValue { emitConnectStateSnapshot() }
         }
     }
+
+    /// The underlying AVAudioEngine, exposed so an embedding app
+    /// (jam-desktop) can attach its own playback subgraph — e.g. a
+    /// per-stem player → gain → submix → timePitch chain — and route
+    /// it into `mainMixer`. Contract:
+    ///
+    ///   - attach/connect only from the main queue;
+    ///   - re-attach your subgraph in `onGraphRebuilt`, because a
+    ///     device reconfig rebuilds only this engine's own nodes.
+    ///
+    /// Read-only: the engine instance itself is never replaced.
+    public var avEngine: AVAudioEngine { engine }
 
     // MARK: - Internals
 
@@ -481,6 +549,11 @@ public final class AudioEngine {
             try engine.start()
             reconfigAttempt = 0
             state = .running
+            // Graph is live again against the new device/format. Tell
+            // external subgraph owners (see `avEngine`) to re-attach —
+            // the re-wire loop above only covered our own stem players.
+            let rebuiltCb = onGraphRebuilt
+            DispatchQueue.main.async { rebuiltCb?() }
         } catch {
             if reconfigAttempt >= maxReconfigAttempts {
                 let reason = "reconfig_exhausted_after_\(reconfigAttempt)_attempts"

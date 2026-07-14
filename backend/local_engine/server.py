@@ -23,10 +23,12 @@ import asyncio
 import json
 import logging
 import multiprocessing
+import os
 import sys
 import tempfile
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -63,10 +65,27 @@ async def cleanup_process(analysis_id: str, process: multiprocessing.Process, ti
     async with _analysis_lock:
         _active_analyses.pop(analysis_id, None)
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup: connect bridge, plugin scan, model check. Shutdown: bridge stop.
+
+    The startup routines are defined later in the module; Python's late
+    binding resolves them at request time (after full module load).
+    """
+    await _spawn_connect_bridge()
+    await startup_plugin_scan()
+    await startup_check_models()
+    try:
+        yield
+    finally:
+        await _stop_connect_bridge()
+
+
 app = FastAPI(
     title="ToneForge Local Engine",
     description="GPU-accelerated audio processing for ToneForge",
     version="0.1.0",
+    lifespan=_lifespan,
 )
 
 # Import the Connect supervisor lazily — it has no heavyweight imports
@@ -75,7 +94,6 @@ app = FastAPI(
 from local_engine.connect_bridge import get_supervisor as _get_connect_supervisor
 
 
-@app.on_event("startup")
 async def _spawn_connect_bridge() -> None:
     """Auto-launch the Connect audio bridge on local engine startup.
 
@@ -94,7 +112,6 @@ async def _spawn_connect_bridge() -> None:
         logger.warning("Connect bridge auto-start failed: %s", e)
 
 
-@app.on_event("shutdown")
 async def _stop_connect_bridge() -> None:
     """Tear the Connect bridge down with the local engine."""
     try:
@@ -102,14 +119,39 @@ async def _stop_connect_bridge() -> None:
     except Exception as e:
         logger.warning("Connect bridge stop failed: %s", e)
 
-# Allow CORS from any origin (needed for browser to call localhost)
+# CORS: the ToneForge web app (whatever origin it's deployed on) must be
+# able to call this localhost helper, so the default is a wildcard — but
+# WITHOUT credentials. `allow_origins=["*"]` + `allow_credentials=True`
+# makes Starlette echo any Origin back with credentials allowed, which
+# lets arbitrary sites send credentialed requests. The engine uses no
+# cookies or auth, so credentials stay off. Operators can pin origins
+# via TONEFORGE_ALLOWED_ORIGINS (comma-separated).
+_cors_origins = [
+    o.strip()
+    for o in os.environ.get("TONEFORGE_ALLOWED_ORIGINS", "*").split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+# Private Network Access (PNA) middleware - allows public websites to access localhost
+# Required for VPS-hosted pages to connect to local engine
+@app.middleware("http")
+async def private_network_access_middleware(request, call_next):
+    # Handle preflight requests for Private Network Access
+    if request.method == "OPTIONS":
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
 
 
 # -----------------------------------------------------------------------------
@@ -746,7 +788,6 @@ _scan_in_progress = False
 _last_scan_result = None
 
 
-@app.on_event("startup")
 async def startup_plugin_scan():
     """Auto-scan for plugins on startup if needed."""
     global _scan_in_progress, _last_scan_result
@@ -1231,7 +1272,6 @@ async def cancel_model_download():
     return {"success": True, "message": "Download cancellation requested"}
 
 
-@app.on_event("startup")
 async def startup_check_models():
     """Check for required models on startup and log status."""
     logger.info("Checking ML model status...")

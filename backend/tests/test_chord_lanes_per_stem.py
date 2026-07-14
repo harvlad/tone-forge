@@ -83,10 +83,11 @@ def _make_stems_dict(tmp_path: Path, names: list) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_per_stem_chord_detection_runs_for_each_input_stem(tmp_path: Path):
-    """Each stem in the input dict triggers exactly one ``detect_chords``
-    call. The "other" stem additionally goes through
-    ``detect_chords_with_key`` (it's the reference lane that surfaces
-    detected_key alongside the chord records).
+    """Only harmonic stems get a chord lane: "other" goes through
+    ``detect_chords_with_key`` (reference lane, surfaces detected_key)
+    and "bass" through ``detect_chords``. Vocals (monophonic melody)
+    and drums (unpitched) are deliberately excluded — chord ribbons
+    fitted to them traced the tune / hallucinated from noise.
     """
     audio_data = _make_audio_data()
     stems = _make_stems_dict(tmp_path, ["other", "bass", "vocals", "drums"])
@@ -129,14 +130,12 @@ def test_per_stem_chord_detection_runs_for_each_input_stem(tmp_path: Path):
     # "other" lane runs through detect_chords_with_key (one call).
     assert len(detect_chords_with_key_calls) == 1
 
-    # The other three stems (bass/vocals/drums) each run through
-    # detect_chords (three calls).
-    assert len(detect_chords_calls) == 3
+    # Only "bass" runs through detect_chords; vocals and drums are
+    # excluded from chord lanes entirely.
+    assert len(detect_chords_calls) == 1
 
-    # fixed_by_stem carries all four stems.
-    assert set(chord_lane["fixed_by_stem"].keys()) == {
-        "other", "bass", "vocals", "drums",
-    }
+    # fixed_by_stem carries the two harmonic stems only.
+    assert set(chord_lane["fixed_by_stem"].keys()) == {"other", "bass"}
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +182,8 @@ def test_per_stem_chord_detection_preserves_legacy_other_lane(tmp_path: Path):
 
 def test_per_stem_chord_detection_skips_missing_stems(tmp_path: Path):
     """An absent stem (no entry in the input dict) must not appear in
-    the per-stem dict. The detector is not called for it.
+    the per-stem dict, and non-harmonic stems (drums) never get a
+    lane even when present.
     """
     audio_data = _make_audio_data()
     # Only "other" and "drums" — no bass, no vocals.
@@ -213,9 +213,10 @@ def test_per_stem_chord_detection_skips_missing_stems(tmp_path: Path):
         ))
 
     keys = set(chord_lane["fixed_by_stem"].keys())
-    assert keys == {"other", "drums"}
+    assert keys == {"other"}
     assert "bass" not in keys
     assert "vocals" not in keys
+    assert "drums" not in keys
 
 
 # ---------------------------------------------------------------------------

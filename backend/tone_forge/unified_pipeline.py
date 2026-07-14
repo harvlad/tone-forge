@@ -751,6 +751,7 @@ class UnifiedPipeline:
             # 7. Detect arrangement sections
             sections = None
             energy_curve = None
+            sections_from_allin1 = False
             yield ProgressEvent("sections", "Analyzing arrangement...", 87)
             stage_start = time.time()
             try:
@@ -758,10 +759,17 @@ class UnifiedPipeline:
                     audio_data, midi_stems,
                     tempo_hint=tempo_bpm,
                     beats_s=beats_s,
+                    stems=stems,
                 )
                 if section_result:
                     sections = section_result.get("sections")
                     energy_curve = section_result.get("energy_curve")
+                    # allin1 labels are authoritative: skip the H2
+                    # Stage A/B relabel and Fix C resegmentation
+                    # below (roles + advisory flags still run).
+                    sections_from_allin1 = (
+                        section_result.get("label_source") == "allin1"
+                    )
                     # Belt-and-braces: if the hoisted beat tracker
                     # failed (tempo_bpm==0) but the section detector
                     # successfully recovered one, accept it.
@@ -953,8 +961,21 @@ class UnifiedPipeline:
                         # client falls back to the chord ribbon.
                         section["dominant_stem"] = decision.dominant_stem
                         if decision.dominant_stem and decision.dominant_stem in stem_notes_by_name:
+                            # Prefer melody-role notes (see the role
+                            # tagging in _extract_midi) so landmarks
+                            # trace the tune rather than chord tones +
+                            # filler. Untagged notes default to
+                            # "melody"; all-harmony falls back to the
+                            # full lane.
+                            _dom_notes = stem_notes_by_name[
+                                decision.dominant_stem
+                            ]
+                            _melody_notes = [
+                                n for n in _dom_notes
+                                if n.get("role", "melody") == "melody"
+                            ]
                             section["landmark_notes"] = list(select_landmark_notes(
-                                stem_midi=stem_notes_by_name[decision.dominant_stem],
+                                stem_midi=_melody_notes or _dom_notes,
                                 section_start_s=section_start_s,
                                 section_end_s=section_end_s,
                             ))
@@ -1116,13 +1137,18 @@ class UnifiedPipeline:
                         # songs, no usable chord data) we leave the
                         # energy-heuristic ``type`` in place — the H2
                         # signal has no evidence to override it.
+                        # Skipped entirely when the allin1 structure
+                        # model supplied labels (measured 0.495 vs
+                        # 0.232 label accuracy) — those are
+                        # authoritative over the H2 heuristic.
                         from tone_forge.analysis.section_naming import (
                             derive_section_types,
                         )
 
                         derived_types = derive_section_types(decisions)
-                        for section, st in zip(sections, derived_types):
-                            section["type"] = st.value
+                        if not sections_from_allin1:
+                            for section, st in zip(sections, derived_types):
+                                section["type"] = st.value
 
                         # Stage B: refine using per-stem song-form
                         # aggregates (vocals, drums, energy ramp).
@@ -1130,7 +1156,8 @@ class UnifiedPipeline:
                         # No-op when the guidance block didn't run or
                         # didn't produce a feature row per section (the
                         # ``len`` guard) — Stage A labels survive.
-                        if per_stem_features_by_stem and all(
+                        # Also skipped for allin1 labels.
+                        if not sections_from_allin1 and per_stem_features_by_stem and all(
                             len(rows) == len(sections)
                             for rows in per_stem_features_by_stem.values()
                         ):
@@ -1217,7 +1244,11 @@ class UnifiedPipeline:
             # evidence across sub-sections. Finally re-run the
             # duration guard so any sub-section still exceeding the
             # threshold keeps its flag.
-            if sections:
+            # Skipped when allin1 supplied the segmentation — its
+            # boundaries are authoritative (F@0.5s 0.404 vs 0.060)
+            # and re-splitting them against MIDI novelty would undo
+            # the improvement.
+            if sections and not sections_from_allin1:
                 try:
                     from tone_forge.analysis.section_resegment import (
                         resegment_flagged_sections,
@@ -1812,6 +1843,25 @@ class UnifiedPipeline:
             if midi_data and midi_data.get("note_count", 0) > 0:
                 midi_stems[stem_type] = midi_data
 
+        # Melody/accompaniment role tagging on polyphonic stems —
+        # mirrors local_engine/analysis_worker.py so both paths emit
+        # role-tagged notes. Additive: every original key survives,
+        # consumers that ignore ``role`` see the same lane as before.
+        try:
+            from tone_forge.midi.melody_split import annotate_roles
+            for stem_type, midi_data in midi_stems.items():
+                if not (
+                    stem_type == "other"
+                    or stem_type == "piano"
+                    or stem_type.startswith("guitar")
+                ):
+                    continue
+                notes = midi_data.get("notes") or []
+                if notes:
+                    midi_data["notes"] = annotate_roles(notes)
+        except Exception as e:
+            logger.warning(f"Melody-role tagging failed: {e}")
+
         return midi_stems
 
     async def _extract_midi_ensemble(
@@ -1992,89 +2042,38 @@ class UnifiedPipeline:
     ) -> Dict[str, Any]:
         """Pipeline-level beat-tracking stage (Phase 7 hoist).
 
-        Runs ``librosa.beat.beat_track`` once on the most informative
-        source available (the demucs 'other' stem when present —
-        harmonic + percussive but free of vocals — else the full mix).
+        Delegates to ``tone_forge.beat_tracking.track_beats`` — Beat
+        This! transformer when available (real downbeats), librosa
+        fallback otherwise. Runs on the FULL MIX: beat_this is trained
+        on mixes, and on BabySlakh it scores beats F1 0.895 /
+        downbeats 0.872 vs librosa 0.815 / 0.512 (the old ``[::4]``
+        downbeat guess was phase-wrong on 3/10 tracks).
         Returns ``{tempo_bpm, beats_s, downbeats_s}`` for both the
         section detector and the chord-lane snap step to consume.
 
         Failure is silent and observable: every output is degraded
         rather than raised. ``tempo_bpm == 0.0`` signals "no tempo
-        detected" without breaking the pipeline; the new pipeline-
-        output invariant test (``test_pipeline_output_invariants``)
-        catches the silent-zero regression for non-silent fixtures.
-
-        ``downbeats_s`` is currently derived from ``beats_s`` at 4/4
-        (every 4th beat starting at beat 0). When/if a real downbeat
-        tracker lands (madmom DBN, librosa.beat.plp, or a learned
-        head), it can replace the derivation without changing the
-        AnalysisResult / SongUnderstanding contract.
+        detected" without breaking the pipeline; the pipeline-output
+        invariant test (``test_pipeline_output_invariants``) catches
+        the silent-zero regression for non-silent fixtures.
         """
         def track() -> Dict[str, Any]:
-            import librosa as _lr
-            # Prefer the 'other' stem (harmonic + percussive without
-            # vocals/bass smear); the chord lane uses the same source,
-            # which keeps the beat grid musically aligned to the
-            # chord-region edges. Fall back to the full mix on any
-            # load failure.
-            y, sr = audio_data.audio, audio_data.sr
-            if stems is not None:
-                other_path = stems.get("other")
-                if other_path is not None:
-                    try:
-                        y, sr = _lr.load(str(other_path), sr=sr, mono=True)
-                    except Exception as e:  # pragma: no cover - defensive
-                        logger.warning(
-                            f"Beat tracking: 'other' stem load failed "
-                            f"({e}); using full mix"
-                        )
-                        y, sr = audio_data.audio, audio_data.sr
+            from tone_forge.beat_tracking import track_beats
 
-            tempo_bpm = 0.0
-            beats_s: List[float] = []
-            downbeats_s: List[float] = []
-            try:
-                tempo_raw, beat_frames = _lr.beat.beat_track(y=y, sr=sr)
-                tempo_val = (
-                    float(np.asarray(tempo_raw).item())
-                    if tempo_raw is not None else 0.0
+            result = track_beats(audio_data.audio, audio_data.sr)
+            if result["tempo_bpm"] > 0.0:
+                logger.info(
+                    f"Beat tracking ({result['method']}): "
+                    f"tempo={result['tempo_bpm']:.1f} BPM, "
+                    f"{len(result['beats_s'])} beats, "
+                    f"{len(result['downbeats_s'])} downbeats"
                 )
-                # Same 40–240 BPM sanity window the legacy in-stage
-                # code used. Out-of-range outputs are almost always
-                # phantom-pulse artefacts and would mislead the UI.
-                if (
-                    40.0 <= tempo_val <= 240.0
-                    and beat_frames is not None
-                    and len(beat_frames) >= 2
-                ):
-                    tempo_bpm = tempo_val
-                    beats_s = _lr.frames_to_time(
-                        beat_frames, sr=sr
-                    ).tolist()
-                    # Derive downbeats at 4/4 (every 4th beat starting
-                    # from beat 0). The first beat in the librosa
-                    # tracking output is treated as the anchor; this
-                    # is an estimate, not a measured downbeat — UI
-                    # honesty: render as a thinner tick than a
-                    # measured one would warrant.
-                    downbeats_s = beats_s[::4]
-                    logger.info(
-                        f"Beat tracking: tempo={tempo_bpm:.1f} BPM, "
-                        f"{len(beats_s)} beats, "
-                        f"{len(downbeats_s)} downbeats (derived 4/4)"
-                    )
-                else:
-                    logger.warning(
-                        f"Beat tracking: tempo {tempo_val:.1f} BPM "
-                        f"outside 40–240 range or <2 beats; degrading"
-                    )
-            except Exception as e:  # pragma: no cover - defensive
-                logger.warning(f"Beat tracking failed: {e}")
-
+            else:
+                logger.warning("Beat tracking: no tempo detected; degrading")
             return {
-                "tempo_bpm": tempo_bpm,
-                "beats_s": beats_s,
-                "downbeats_s": downbeats_s,
+                "tempo_bpm": result["tempo_bpm"],
+                "beats_s": result["beats_s"],
+                "downbeats_s": result["downbeats_s"],
             }
 
         return await run_in_thread(track)
@@ -2085,8 +2084,23 @@ class UnifiedPipeline:
         midi_stems: Dict[str, Dict[str, Any]],
         tempo_hint: float = 0.0,
         beats_s: Optional[List[float]] = None,
+        stems: Optional[Dict[str, Path]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Detect arrangement sections using section detector.
+
+        Preferred path (task 11): the All-In-One structure model
+        (``tone_forge.analysis.structure``) supplies boundaries and
+        functional labels — measured on SALAMI-IA it moves boundary
+        F@0.5s 0.060→0.404 and label accuracy 0.232→0.495 over the
+        RMS-novelty detector. ``stems`` (demucs paths from the stem
+        separation stage) are staged into allin1's demix layout so it
+        skips its own Demucs pass. When allin1 is unavailable or
+        fails, the legacy RMS-novelty path below runs unchanged.
+
+        The returned dict carries ``label_source``: "allin1" labels
+        are authoritative — downstream H2 Stage A/B relabeling and
+        Fix C resegmentation are skipped (advisory Fix B flags and
+        structural-role classification still run).
 
         ``tempo_hint`` is the pipeline-level tempo from ``_track_beats``.
         When > 0 it short-circuits the section detector's internal
@@ -2105,6 +2119,7 @@ class UnifiedPipeline:
         """
         def detect():
             from tone_forge.analysis.sections import SectionDetector
+            from tone_forge.analysis.structure import analyze_structure
 
             # Prefer the hoisted pipeline tempo; fall back to MIDI
             # tempo when the hoisted beat tracker degraded.
@@ -2116,17 +2131,44 @@ class UnifiedPipeline:
                         break
 
             detector = SectionDetector(sr=audio_data.sr)
-            result = detector.detect_sections(
-                audio_data.audio,
-                sr=audio_data.sr,
-                tempo=tempo,
-                beats_s=beats_s,
-            )
 
+            structure = None
+            if audio_data.path:
+                try:
+                    structure = analyze_structure(
+                        audio_data.path, stems=stems
+                    )
+                except Exception as e:
+                    logger.warning(f"Structure backend failed: {e}")
+
+            label_source = "heuristic"
+            if structure and structure.get("segments"):
+                result = detector.detect_sections_with_structure(
+                    audio_data.audio,
+                    sr=audio_data.sr,
+                    segments=structure["segments"],
+                    tempo=tempo,
+                    beats_s=beats_s,
+                )
+                label_source = "allin1"
+            else:
+                result = detector.detect_sections(
+                    audio_data.audio,
+                    sr=audio_data.sr,
+                    tempo=tempo,
+                    beats_s=beats_s,
+                )
+
+            # Sections carry ``label_source`` per-dict (via
+            # ``ArrangementSection.to_dict``) so the persisted marker
+            # survives re-serialization; the bundle read-path fixups
+            # (Fix C / Fix 4) check it to leave allin1 segmentations
+            # untouched on read.
             return {
                 "sections": [s.to_dict() for s in result.sections],
                 "energy_curve": result.energy_curve.tolist() if len(result.energy_curve) > 0 else [],
                 "tempo_bpm": result.tempo_bpm,
+                "label_source": label_source,
             }
 
         return await run_in_thread(detect)
@@ -2265,8 +2307,13 @@ class UnifiedPipeline:
             snapped_by_stem: Dict[str, Optional[List[Dict[str, Any]]]] = {
                 "other": snapped,
             }
+            # Harmonic stems only: chord detection on the vocals
+            # (monophonic melody) or drums (unpitched noise) stems
+            # produced ribbons that traced the tune or hallucinated
+            # from broadband energy — untrue lanes. Mirrors the same
+            # pruning in local_engine/analysis_worker.py.
             if stems:
-                for _stem_name in ("bass", "vocals", "drums"):
+                for _stem_name in ("bass",):
                     _p = stems.get(_stem_name)
                     if _p is None:
                         continue

@@ -4,6 +4,10 @@ soundfile>=0.12.1
 numpy>=1.26
 scipy>=1.11
 
+# Attribution metadata (title/artist) from uploaded MP3/M4A/FLAC/OGG.
+# Best-effort — tone_forge.media_tags returns {} when missing/corrupt.
+mutagen>=1.47
+
 # Web server (for the frontend)
 fastapi>=0.104
 uvicorn[standard]>=0.24
@@ -15,6 +19,19 @@ demucs>=4.0.1
 torch>=2.1
 torchaudio>=2.1
 
+# Beat/downbeat tracking (Beat This!, MIT). Optional at runtime —
+# tone_forge.beat_tracking falls back to librosa when missing.
+# Measured on BabySlakh: beats F1 0.895/downbeats 0.872 vs librosa
+# 0.815/0.512.
+beat-this>=1.1.0
+
+# Music structure analysis (All-In-One, MIT; MPS/CPU port). Optional
+# at runtime — tone_forge.analysis.structure falls back to the
+# RMS-novelty SectionDetector when missing. Measured on 24 SALAMI-IA
+# tracks: boundary F@0.5s 0.404 vs 0.060, label accuracy 0.495 vs
+# 0.232. Requires torch>=2.8 (natten-mps).
+all-in-one-mps>=1.0.0
+
 # Extra audio features (optional, faster than librosa for some things)
 # essentia>=2.1b6.dev1110
 
@@ -23,6 +40,11 @@ torchaudio>=2.1
 # installed or if R2_* env vars aren't set. See tone_forge/r2_storage.py.
 boto3>=1.34
 
+# Accounts (optional sign-in). Postgres when DATABASE_URL is set —
+# backend falls back to an in-memory store otherwise. See tone_forge/auth/.
+asyncpg>=0.29
+PyJWT[crypto]>=2.8         # Sign in with Apple identity-token verification
+httpx>=0.25                # Resend email client (also used by FastAPI's TestClient)
+
 # Dev
 pytest>=7.4
-httpx>=0.25                # only for tests (FastAPI's TestClient uses it)

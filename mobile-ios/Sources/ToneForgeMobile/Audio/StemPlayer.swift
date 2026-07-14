@@ -92,10 +92,19 @@ public final class StemPlayer: ObservableObject {
     /// Attach player nodes for each stem in ``bundle``. ``localURLs``
     /// maps stem role → local file URL (already downloaded via
     /// BundleStore). Silently skips stems without a local URL.
-    public func load(bundle: SongBundle, localURLs: [String: URL]) throws {
+    ///
+    /// Opening the AVAudioFiles is the slow, disk-bound part of a cold
+    /// load, so it runs concurrently off the main actor; the cheap
+    /// engine attach/connect wiring stays here on the audio graph.
+    public func load(bundle: SongBundle, localURLs: [String: URL]) async throws {
         unload()
         #if canImport(AVFoundation)
         guard let engine = engine else { return }
+
+        // Open every stem file in parallel, off-main. Results come back
+        // in the stable bundle-stem order for deterministic mixer layout.
+        let opened = await Self.openStemFiles(bundle: bundle, localURLs: localURLs)
+
         let mixer = AVAudioMixerNode()
         let pitch = AVAudioUnitTimePitch()
         engine.engine.attach(mixer)
@@ -114,23 +123,17 @@ public final class StemPlayer: ObservableObject {
         var newChannels: [Channel] = []
         var newStates: [StemState] = []
 
-        for stem in bundle.stems {
-            guard let url = localURLs[stem.role] else { continue }
-            do {
-                let file = try AVAudioFile(forReading: url)
-                let player = AVAudioPlayerNode()
-                let gain = AVAudioMixerNode()
+        for (role, file) in opened {
+            let player = AVAudioPlayerNode()
+            let gain = AVAudioMixerNode()
 
-                engine.engine.attach(player)
-                engine.engine.attach(gain)
-                engine.engine.connect(player, to: gain, format: file.processingFormat)
-                engine.engine.connect(gain, to: mixer, format: file.processingFormat)
+            engine.engine.attach(player)
+            engine.engine.attach(gain)
+            engine.engine.connect(player, to: gain, format: file.processingFormat)
+            engine.engine.connect(gain, to: mixer, format: file.processingFormat)
 
-                newChannels.append(Channel(role: stem.role, file: file, player: player, gainNode: gain))
-                newStates.append(StemState(role: stem.role, gain: 1.0, isMuted: false, isSoloed: false))
-            } catch {
-                print("[StemPlayer] failed to open \(stem.role) at \(url.path): \(error)")
-            }
+            newChannels.append(Channel(role: role, file: file, player: player, gainNode: gain))
+            newStates.append(StemState(role: role, gain: 1.0, isMuted: false, isSoloed: false))
         }
 
         self.channels = newChannels
@@ -139,6 +142,42 @@ public final class StemPlayer: ObservableObject {
         applyGains()
         #endif
     }
+
+    #if canImport(AVFoundation)
+    /// Open the stem AVAudioFiles concurrently (off the main actor).
+    /// Returns them ordered to match ``bundle.stems`` so the mixer strip
+    /// layout is deterministic regardless of which open finishes first.
+    /// A stem that fails to open is dropped with a log line.
+    private static func openStemFiles(
+        bundle: SongBundle, localURLs: [String: URL]
+    ) async -> [(role: String, file: AVAudioFile)] {
+        let jobs: [(Int, String, URL)] = bundle.stems.enumerated().compactMap {
+            idx, stem in
+            guard let url = localURLs[stem.role] else { return nil }
+            return (idx, stem.role, url)
+        }
+        let opened = await withTaskGroup(
+            of: (Int, String, AVAudioFile)?.self
+        ) { group -> [(Int, String, AVAudioFile)] in
+            for (idx, role, url) in jobs {
+                group.addTask {
+                    do {
+                        return (idx, role, try AVAudioFile(forReading: url))
+                    } catch {
+                        print("[StemPlayer] failed to open \(role) at \(url.path): \(error)")
+                        return nil
+                    }
+                }
+            }
+            var acc: [(Int, String, AVAudioFile)] = []
+            for await r in group { if let r { acc.append(r) } }
+            return acc
+        }
+        return opened
+            .sorted { $0.0 < $1.0 }
+            .map { (role: $0.1, file: $0.2) }
+    }
+    #endif
 
     /// Detach and free all nodes. Called before loading a new bundle
     /// or on scene teardown.

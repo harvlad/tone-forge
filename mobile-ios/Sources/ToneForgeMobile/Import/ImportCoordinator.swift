@@ -111,6 +111,29 @@ public final class ImportCoordinator: ObservableObject {
         run(source)
     }
 
+    /// Curated cc-track import (D-024). The job was already created
+    /// server-side (POST /api/cc-tracks/{id}/import) — the server owns
+    /// the audio and the license, so there is no attestation gate and
+    /// nothing to transcode or upload; just follow the job like any
+    /// other import so the user gets the same progress sheet.
+    public func startCuratedJob(jobId: String, title: String, appState: AppState) {
+        guard case .idle = phase else { return }
+        self.appState = appState
+        pendingSource = nil
+        lastSource = nil  // retry() is a no-op: the job is already running
+        trackTitle = title
+        phase = .uploading(message: "Analyzing…", percent: nil)
+        worker = Task {
+            do {
+                try await self.followSubmittedJob(jobId: jobId, title: title)
+            } catch is CancellationError {
+                self.phase = .idle
+            } catch {
+                self.phase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
     /// Attestation sheet callbacks.
     public func attestationAccepted() {
         guard let source = pendingSource else {
@@ -163,6 +186,11 @@ public final class ImportCoordinator: ObservableObject {
         defer { try? FileManager.default.removeItem(at: tempWAV) }
 
         do {
+            // Attribution (D-024): the transcode below produces a bare
+            // WAV — file tags don't survive it, so title/artist must be
+            // captured from the ORIGINAL source and sent as form fields.
+            let attribution = await attributionFields(for: source)
+
             try await produceAnalysisWAV(source, output: tempWAV)
             try Task.checkCancellation()
 
@@ -178,67 +206,120 @@ public final class ImportCoordinator: ObservableObject {
             // the phone locks, or the app is killed, the background poll
             // finishes it and notifies.
             let jobId = try await jobClient.submit(
-                baseURL: baseURL, wavFileURL: tempWAV, filename: filename
+                baseURL: baseURL, wavFileURL: tempWAV, filename: filename,
+                extraFields: attribution
             )
             try Task.checkCancellation()
-            JobCompletionCenter.shared.register(
-                jobId: jobId,
-                title: source.displayName,
-                baseURL: baseURL,
-                artworkData: pendingArtworkData
-            )
-
-            // Foreground: stream /events for live percent. If this stream
-            // drops (lock/background), the background session takes over —
-            // so a stream error here is not fatal to the analysis.
-            var historyId: String?
-            do {
-                let events = jobClient.events(baseURL: baseURL, jobId: jobId)
-                for try await event in events {
-                    try Task.checkCancellation()
-                    switch event {
-                    case .progress(let message, let percent):
-                        phase = .uploading(message: message, percent: percent)
-                    case .completed(let id):
-                        historyId = id
-                    }
-                }
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                // Stream broke but the job keeps running server-side;
-                // hand off to the background path and detach the UI.
-                phase = .idle
-                return
-            }
-
-            guard let historyId else {
-                // Stream ended without a terminal result; background poll
-                // will still finish it. Detach quietly.
-                phase = .idle
-                return
-            }
-
-            // Foreground won the race. Claim completion so the background
-            // path won't double-fire, then load the bundle in-place.
-            JobCompletionCenter.shared.foregroundCompleted(jobId: jobId)
-            phase = .loading
-            await appState.loadBundle(analysisId: historyId)
-            if let loadError = appState.loadingError {
-                phase = .failed(loadError)
-            } else {
-                if let art = pendingArtworkData {
-                    _ = try? ArtworkStore().save(art, analysisId: historyId)
-                    pendingArtworkData = nil
-                }
-                phase = .done(historyId: historyId)
-                onLoaded?()
-            }
+            try await followSubmittedJob(jobId: jobId, title: source.displayName)
         } catch is CancellationError {
             phase = .idle
         } catch {
             phase = .failed(error.localizedDescription)
         }
+    }
+
+    /// Follow an already-submitted server job to completion: register
+    /// it with JobCompletionCenter, stream /events for the foreground
+    /// percent, then load the finished bundle in place. Shared by user
+    /// imports and curated cc-track imports (D-024), which create the
+    /// job server-side and have nothing to transcode or upload.
+    private func followSubmittedJob(jobId: String, title: String) async throws {
+        guard let appState else { return }
+        let baseURL = appState.backendBaseURL
+        JobCompletionCenter.shared.register(
+            jobId: jobId,
+            title: title,
+            baseURL: baseURL,
+            artworkData: pendingArtworkData
+        )
+
+        // Foreground: stream /events for live percent. If this stream
+        // drops (lock/background), the background session takes over —
+        // so a stream error here is not fatal to the analysis.
+        var historyId: String?
+        do {
+            let events = jobClient.events(baseURL: baseURL, jobId: jobId)
+            for try await event in events {
+                try Task.checkCancellation()
+                switch event {
+                case .progress(let message, let percent):
+                    phase = .uploading(message: message, percent: percent)
+                case .completed(let id):
+                    historyId = id
+                }
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Stream broke but the job keeps running server-side;
+            // hand off to the background path and detach the UI.
+            phase = .idle
+            return
+        }
+
+        guard let historyId else {
+            // Stream ended without a terminal result; background poll
+            // will still finish it. Detach quietly.
+            phase = .idle
+            return
+        }
+
+        // Foreground won the race. Claim completion so the background
+        // path won't double-fire, then load the bundle in-place.
+        JobCompletionCenter.shared.foregroundCompleted(jobId: jobId)
+        phase = .loading
+        await appState.loadBundle(analysisId: historyId)
+        if let loadError = appState.loadingError {
+            phase = .failed(loadError)
+        } else {
+            if let art = pendingArtworkData {
+                _ = try? ArtworkStore().save(art, analysisId: historyId)
+                pendingArtworkData = nil
+            }
+            phase = .done(historyId: historyId)
+            onLoaded?()
+        }
+    }
+
+    /// Attribution form fields for the submit (D-024). Only non-empty
+    /// values are sent — the server treats empty as "unknown" anyway.
+    /// License fields are never sent from user imports; only the
+    /// curated cc-tracks path carries a license.
+    func attributionFields(
+        for source: ImportSource
+    ) async -> [(name: String, value: String)] {
+        var title = ""
+        var artist = ""
+        switch source {
+        case .mediaItem(let track):
+            title = track.title
+            artist = track.artist
+        case .fileURL(let url):
+            #if canImport(AVFoundation)
+            // The picker's security-scoped grant must be active while
+            // AVFoundation reads the file's metadata.
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer {
+                if scoped { url.stopAccessingSecurityScopedResource() }
+            }
+            let asset = AVURLAsset(url: url)
+            if let items = try? await asset.load(.commonMetadata) {
+                for item in items {
+                    guard let value = try? await item.load(.stringValue),
+                          !value.isEmpty else { continue }
+                    switch item.commonKey {
+                    case .commonKeyTitle?: title = value
+                    case .commonKeyArtist?: artist = value
+                    default: break
+                    }
+                }
+            }
+            #endif
+        }
+        var fields: [(name: String, value: String)] = []
+        if !title.isEmpty { fields.append((name: "title", value: title)) }
+        if !artist.isEmpty { fields.append((name: "artist", value: artist)) }
+        return fields
     }
 
     /// Produce the canonical analysis WAV at `output` for either source.

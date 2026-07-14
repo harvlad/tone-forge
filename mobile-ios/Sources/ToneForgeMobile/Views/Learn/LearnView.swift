@@ -31,13 +31,18 @@ struct LearnView: View {
     var body: some View {
         Group {
             if appState.currentBundle == nil {
-                placeholder
+                JamWelcomeView()
             } else if controller.phase == .practicing {
                 PracticeOverlay(controller: controller)
             } else {
                 overview
             }
         }
+        // The three branches are full-screen surfaces of different
+        // heights; without this an ancestor's implicit animation makes
+        // the swap (open a song, or Stop → phase .idle) scale/zoom.
+        .animation(nil, value: appState.currentBundle?.analysisId)
+        .animation(nil, value: controller.phase)
         .sheet(isPresented: $showOverview) {
             SectionOverviewSheet(controller: controller)
         }
@@ -208,7 +213,14 @@ struct LearnView: View {
                     controller.startSection(target)
                 }
             } label: {
-                Label("Practice", systemImage: "play.fill")
+                // Stems still downloading: pressing Practice would run
+                // the transport against an empty StemPlayer (silence),
+                // so gate the button until audio is actually loadable.
+                Label(
+                    appState.isDownloading ? "Loading…" : "Practice",
+                    systemImage: appState.isDownloading
+                        ? "arrow.down.circle" : "play.fill"
+                )
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 9)
@@ -217,8 +229,10 @@ struct LearnView: View {
                     .foregroundStyle(.black)
             }
             .buttonStyle(.plain)
-            .disabled(practiceTarget == nil)
-            .accessibilityLabel("Start practicing")
+            .disabled(practiceTarget == nil || appState.isDownloading)
+            .accessibilityLabel(
+                appState.isDownloading
+                    ? "Downloading song audio" : "Start practicing")
 
             Button {
                 showOverview = true

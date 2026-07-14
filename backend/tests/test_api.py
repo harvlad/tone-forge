@@ -115,9 +115,9 @@ class TestRootEndpoint:
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
 
-    def test_root_contains_tone_forge(self):
+    def test_root_contains_brand(self):
         response = client.get("/")
-        assert b"Tone Forge" in response.content
+        assert b"JamN" in response.content
 
 
 class TestStaticFiles:
@@ -132,6 +132,188 @@ class TestStaticFiles:
         response = client.get("/static/app.js")
         assert response.status_code == 200
         # JavaScript content type varies
+        assert response.status_code == 200
+
+
+class TestUrlIngestGate:
+    """URL-ingest (yt-dlp) endpoints are opt-in via TONEFORGE_ENABLE_URL_INGEST.
+
+    Off by default: they must 404 so a public deployment never exposes
+    platform-download functionality.
+    """
+
+    _ENDPOINTS = [
+        ("/api/analyze-url", {"url": "https://example.com/watch?v=x"}),
+        ("/api/analyze-url-stream", {"url": "https://example.com/watch?v=x"}),
+        ("/api/preview-waveform-url", {"url": "https://example.com/watch?v=x"}),
+    ]
+
+    def test_endpoints_404_when_disabled(self, monkeypatch):
+        monkeypatch.delenv("TONEFORGE_ENABLE_URL_INGEST", raising=False)
+        for path, payload in self._ENDPOINTS:
+            response = client.post(path, json=payload)
+            assert response.status_code == 404, path
+
+    def test_capabilities_hides_youtube_when_disabled(self, monkeypatch):
+        monkeypatch.delenv("TONEFORGE_ENABLE_URL_INGEST", raising=False)
+        response = client.get("/api/capabilities")
+        assert response.status_code == 200
+        assert response.json()["youtube_support"] is False
+
+    def test_endpoints_not_404_when_enabled(self, monkeypatch):
+        import tone_forge_api
+
+        monkeypatch.setenv("TONEFORGE_ENABLE_URL_INGEST", "1")
+        # Stub yt-dlp as unavailable so endpoints short-circuit with their
+        # own "not installed" error instead of hitting the network.
+        monkeypatch.setattr(tone_forge_api, "_check_yt_dlp", lambda: False)
+        for path, payload in self._ENDPOINTS:
+            response = client.post(path, json=payload)
+            # Only asserting the gate no longer hides the endpoint.
+            assert response.status_code != 404, path
+
+
+class TestAdminGuard:
+    """/studio, /api/admin/*, /api/debug/* require token or direct loopback."""
+
+    def test_loopback_without_token_allowed(self, monkeypatch):
+        monkeypatch.delenv("TONEFORGE_ADMIN_TOKEN", raising=False)
+        # TestClient counts as loopback; endpoint responds normally.
+        response = client.get("/studio")
+        assert response.status_code == 200
+
+    def test_forwarded_request_without_token_rejected(self, monkeypatch):
+        monkeypatch.delenv("TONEFORGE_ADMIN_TOKEN", raising=False)
+        response = client.get(
+            "/api/debug/sessions", headers={"X-Forwarded-For": "203.0.113.9"}
+        )
+        assert response.status_code == 404
+
+    def test_token_required_when_configured(self, monkeypatch):
+        monkeypatch.setenv("TONEFORGE_ADMIN_TOKEN", "sekrit")
+        assert client.get("/api/debug/sessions").status_code == 404
+        assert (
+            client.get(
+                "/api/debug/sessions", headers={"X-Admin-Token": "wrong"}
+            ).status_code
+            == 404
+        )
+        assert (
+            client.get(
+                "/api/debug/sessions", headers={"X-Admin-Token": "sekrit"}
+            ).status_code
+            == 200
+        )
+
+    def test_bearer_token_accepted(self, monkeypatch):
+        monkeypatch.setenv("TONEFORGE_ADMIN_TOKEN", "sekrit")
+        response = client.get(
+            "/api/debug/sessions", headers={"Authorization": "Bearer sekrit"}
+        )
+        assert response.status_code == 200
+
+    def test_studio_query_token_sets_cookie_and_redirects(self, monkeypatch):
+        monkeypatch.setenv("TONEFORGE_ADMIN_TOKEN", "sekrit")
+        client.cookies.clear()
+        response = client.get(
+            "/studio",
+            params={"token": "sekrit", "analysis": "abc123"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        # Token stripped from the redirect target, other params kept.
+        assert response.headers["location"] == "/studio?analysis=abc123"
+        assert response.cookies.get("toneforge_admin") == "sekrit"
+
+    def test_studio_wrong_query_token_rejected(self, monkeypatch):
+        monkeypatch.setenv("TONEFORGE_ADMIN_TOKEN", "sekrit")
+        client.cookies.clear()
+        response = client.get(
+            "/studio", params={"token": "wrong"}, follow_redirects=False
+        )
+        assert response.status_code == 404
+
+    def test_admin_cookie_grants_access(self, monkeypatch):
+        monkeypatch.setenv("TONEFORGE_ADMIN_TOKEN", "sekrit")
+        client.cookies.clear()
+        client.cookies.set("toneforge_admin", "sekrit")
+        assert client.get("/api/debug/sessions").status_code == 200
+        client.cookies.set("toneforge_admin", "wrong")
+        assert client.get("/api/debug/sessions").status_code == 404
+        client.cookies.clear()
+
+    def test_serve_file_exempt_from_guard(self, monkeypatch):
+        monkeypatch.setenv("TONEFORGE_ADMIN_TOKEN", "sekrit")
+        # No token supplied: still reaches the handler (403/404 from its own
+        # path allowlist, not the guard's 404-with-JSON-detail).
+        response = client.get("/api/admin/serve-file", params={"path": "/etc/passwd"})
+        assert response.status_code == 403
+
+
+class TestServeFileAllowlist:
+    """serve-file only serves resolved paths inside toneforge-owned dirs."""
+
+    def test_serves_file_in_toneforge_temp_dir(self):
+        stems_dir = Path(tempfile.mkdtemp(prefix="toneforge_stems_"))
+        try:
+            wav = stems_dir / "drums.wav"
+            wav.write_bytes(b"RIFF")
+            response = client.get("/api/admin/serve-file", params={"path": str(wav)})
+            assert response.status_code == 200
+        finally:
+            import shutil
+
+            shutil.rmtree(stems_dir, ignore_errors=True)
+
+    def test_blocks_plain_tmp_file(self):
+        with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
+            response = client.get(
+                "/api/admin/serve-file", params={"path": tmp.name}
+            )
+            assert response.status_code == 403
+
+    def test_blocks_symlink_escape(self):
+        stems_dir = Path(tempfile.mkdtemp(prefix="toneforge_stems_"))
+        try:
+            link = stems_dir / "escape.wav"
+            link.symlink_to("/etc/hosts")
+            response = client.get(
+                "/api/admin/serve-file", params={"path": str(link)}
+            )
+            assert response.status_code == 403
+        finally:
+            import shutil
+
+            shutil.rmtree(stems_dir, ignore_errors=True)
+
+    def test_blocks_dotdot_traversal(self):
+        response = client.get(
+            "/api/admin/serve-file",
+            params={"path": "/tmp/toneforge_stems_x/../../etc/hosts"},
+        )
+        assert response.status_code == 403
+
+
+class TestUploadSizeGuard:
+    """POST bodies above TONEFORGE_MAX_UPLOAD_MB are rejected with 413."""
+
+    def test_oversized_declared_length_rejected(self):
+        import tone_forge_api
+
+        limit = tone_forge_api._MAX_UPLOAD_BYTES
+        response = client.post(
+            "/api/analyze",
+            headers={"Content-Length": str(limit + 1)},
+            content=b"",
+        )
+        assert response.status_code == 413
+
+    def test_normal_upload_unaffected(self):
+        wav_data = _make_test_wav(duration=0.5)
+        response = client.post(
+            "/api/preview-waveform",
+            files={"file": ("test.wav", wav_data, "audio/wav")},
+        )
         assert response.status_code == 200
 
 

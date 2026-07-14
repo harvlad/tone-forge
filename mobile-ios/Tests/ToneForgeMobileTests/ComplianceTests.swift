@@ -6,9 +6,10 @@
 //   1. No streaming-ingestion strings anywhere in shipped source.
 //   2. No TODO markers (style rule; `// FUTURE:` is the sanctioned
 //      escape hatch).
-//   3. The upload surface is EXACTLY AnalyzeClient + LayerClient,
-//      and neither references the local sample/bounce stores — new
-//      upload paths must consciously update this test.
+//   3. The upload surface is EXACTLY AnalyzeClient + JobClient +
+//      LayerClient, and none of them reference the local sample/
+//      bounce stores — new upload paths must consciously update
+//      this test.
 //   4. `neverUpload` tripwire: mic/vocoded metadata can't be marked
 //      uploadable via init, decode, or the store's save path.
 //   5. Attestation gates original-song bounce BEFORE any disk work.
@@ -98,14 +99,19 @@ final class ComplianceTests: XCTestCase {
                       + hits.joined(separator: "\n"))
     }
 
-    /// The whole outbound-upload surface is two files, and neither
-    /// touches the local sample/bounce stores. Adding `httpBody` /
-    /// `uploadTask` anywhere else fails here until the new path is
-    /// consciously reviewed and listed.
+    /// The whole outbound-upload surface is four files, and none of
+    /// them touch the local sample/bounce stores. Adding `httpBody` /
+    /// `uploadTask` / `URLSession.shared.upload(` anywhere else fails
+    /// here until the new path is consciously reviewed and listed.
     func testUploadSurfaceIsClosedAndTouchesNoLocalAudioStores() throws {
         let allowedUploaders: Set<String> = [
             "Sources/ToneForgeEngine/AnalyzeClient.swift",
+            "Sources/ToneForgeEngine/JobClient.swift",
             "Sources/ToneForgeEngine/LayerClient.swift",
+            // Accounts (magic link + SIWA): posts JSON bodies only —
+            // Apple identity token, device id for claim, logout. Never
+            // touches sample/bounce stores (marker asserts above).
+            "Sources/ToneForgeEngine/Auth/AuthClient.swift",
         ]
         let localStoreMarkers = [
             "Documents/samples", "Documents/bounces",
@@ -115,6 +121,7 @@ final class ComplianceTests: XCTestCase {
         for (path, text) in try shippedSources() where path.hasSuffix(".swift") {
             let uploads = text.contains("httpBody")
                 || text.contains("uploadTask")
+                || text.contains("URLSession.shared.upload(")
             guard uploads else { continue }
             uploaders.insert(path)
             for marker in localStoreMarkers {

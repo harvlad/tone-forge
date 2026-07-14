@@ -24,9 +24,19 @@ struct ModeGridView: View {
     @ObservedObject var coordinator: ModeCoordinator
     @EnvironmentObject private var appState: AppState
 
+    /// Arrange mode: drag a pad onto another cell to swap them. Play +
+    /// long-press are disabled while this is on (ContributeSurface owns
+    /// the toggle).
+    var arranging: Bool = false
+
     /// Long-press target; `.sheet(item:)` presents the effects editor
     /// (pack pads) or the source sheet (empty / local pads, P3).
     @State private var sheetTarget: PadSheetTarget?
+
+    // Arrange-drag transient state (gridRaw = row*10 + col).
+    @State private var dragSource: Int?
+    @State private var dragTarget: Int?
+    @State private var dragPoint: CGPoint?
 
     var body: some View {
         // The UIKit touch view sits UNDER the Canvas (which opts out
@@ -34,28 +44,39 @@ struct ModeGridView: View {
         // the paint stays a pure SwiftUI Canvas — this also keeps
         // ImageRenderer snapshots showing the real grid instead of a
         // "can't flatten UIViewRepresentable" placeholder.
-        ZStack {
-            PadTouchOverlay(
-                onPadDown: { row, col in
-                    coordinator.touchPadDown(row: row, col: col)
-                },
-                onPadUp: { row, col in
-                    coordinator.touchPadUp(row: row, col: col)
-                },
-                onLongPress: { row, col in
-                    sheetTarget = coordinator.padSheetTarget(
-                        row: row, col: col
-                    )
-                }
-            )
-            GridCanvas(
-                visuals: coordinator.padVisuals,
-                pressed: coordinator.pressedPads,
-                ringing: coordinator.ringingGridPads(
-                    from: appState.ringingPadKeys
+        GeometryReader { geo in
+            let size = geo.size
+            ZStack {
+                PadTouchOverlay(
+                    onPadDown: { row, col in
+                        coordinator.touchPadDown(row: row, col: col)
+                    },
+                    onPadUp: { row, col in
+                        coordinator.touchPadUp(row: row, col: col)
+                    },
+                    onLongPress: { row, col in
+                        sheetTarget = coordinator.padSheetTarget(
+                            row: row, col: col
+                        )
+                    }
                 )
-            )
-            .allowsHitTesting(false)
+                .allowsHitTesting(!arranging)
+                GridCanvas(
+                    visuals: coordinator.padVisuals,
+                    pressed: coordinator.pressedPads,
+                    ringing: coordinator.ringingGridPads(
+                        from: appState.ringingPadKeys
+                    ),
+                    arrangeSource: arranging ? dragSource : nil,
+                    arrangeTarget: arranging ? dragTarget : nil
+                )
+                .allowsHitTesting(false)
+                if arranging, let src = dragSource, let pt = dragPoint {
+                    arrangeGhost(src: src, at: pt, in: size)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(arranging ? arrangeDrag(in: size) : nil)
         }
         .aspectRatio(1, contentMode: .fit)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -107,6 +128,65 @@ struct ModeGridView: View {
             )
         }
     }
+
+    // MARK: - Arrange drag
+
+    private func arrangeDrag(in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 8, coordinateSpace: .local)
+            .onChanged { value in
+                if dragSource == nil {
+                    let start = cellRaw(at: value.startLocation, in: size)
+                    if isOccupied(start) { dragSource = start }
+                }
+                guard dragSource != nil else { return }
+                dragPoint = value.location
+                dragTarget = cellRaw(at: value.location, in: size)
+            }
+            .onEnded { value in
+                defer { dragSource = nil; dragTarget = nil; dragPoint = nil }
+                guard let s = dragSource else { return }
+                let t = cellRaw(at: value.location, in: size)
+                if s != t { coordinator.swapPads(from: s, to: t) }
+            }
+    }
+
+    /// Point → gridRaw (row*10+col), PadIndex convention (row 1 bottom).
+    private func cellRaw(at p: CGPoint, in size: CGSize) -> Int {
+        let cw = size.width / 8
+        let ch = size.height / 8
+        let col = min(max(Int(p.x / cw) + 1, 1), 8)
+        let row = min(max(8 - Int(p.y / ch), 1), 8)
+        return row * 10 + col
+    }
+
+    private func isOccupied(_ gridRaw: Int) -> Bool {
+        let row = gridRaw / 10, col = gridRaw % 10
+        guard (1...8).contains(row), (1...8).contains(col) else { return false }
+        return coordinator.padVisuals[(row - 1) * 8 + (col - 1)].colorHint != 0
+    }
+
+    /// Floating tile that follows the finger while dragging a pad.
+    @ViewBuilder
+    private func arrangeGhost(src: Int, at pt: CGPoint, in size: CGSize) -> some View {
+        let row = src / 10, col = src % 10
+        let visual = coordinator.padVisuals[(row - 1) * 8 + (col - 1)]
+        let cw = size.width / 8
+        let ch = size.height / 8
+        RoundedRectangle(cornerRadius: 6)
+            .fill(Color(
+                red: Double((visual.colorHint >> 16) & 0xFF) / 255,
+                green: Double((visual.colorHint >> 8) & 0xFF) / 255,
+                blue: Double(visual.colorHint & 0xFF) / 255
+            ).opacity(0.9))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(.white, lineWidth: 2)
+            )
+            .frame(width: cw - 4, height: ch - 4)
+            .shadow(radius: 6)
+            .position(pt)
+            .allowsHitTesting(false)
+    }
 }
 
 // MARK: - Canvas painter
@@ -120,6 +200,10 @@ private struct GridCanvas: View {
     /// with a persistent outline so the user can see what's still
     /// sounding after lifting their finger.
     let ringing: Set<Int>
+    /// Arrange mode: the cell being dragged (dimmed) and the drop
+    /// target under the finger (highlighted). nil when not arranging.
+    var arrangeSource: Int?
+    var arrangeTarget: Int?
 
     var body: some View {
         Canvas { context, size in
@@ -144,6 +228,9 @@ private struct GridCanvas: View {
                     draw(visual, in: rect,
                          pressed: pressed.contains(raw),
                          ringing: ringing.contains(raw),
+                         isArrangeSource: raw == arrangeSource,
+                         isArrangeTarget: raw == arrangeTarget
+                            && raw != arrangeSource,
                          context: &context)
                 }
             }
@@ -155,6 +242,8 @@ private struct GridCanvas: View {
         in rect: CGRect,
         pressed: Bool,
         ringing: Bool,
+        isArrangeSource: Bool = false,
+        isArrangeTarget: Bool = false,
         context: inout GraphicsContext
     ) {
         let shape = Path(roundedRect: rect, cornerRadius: 6)
@@ -181,6 +270,19 @@ private struct GridCanvas: View {
         if pressed {
             context.fill(shape, with: .color(.white.opacity(0.35)))
             context.stroke(shape, with: .color(.white), lineWidth: 2)
+        }
+
+        if isArrangeSource {
+            // The pad lifted out — dim its home cell.
+            context.fill(shape, with: .color(.black.opacity(0.55)))
+            context.stroke(
+                shape, with: .color(.white.opacity(0.4)),
+                style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
+            )
+        }
+        if isArrangeTarget {
+            // Drop target under the finger.
+            context.stroke(shape, with: .color(.accentColor), lineWidth: 3)
         }
 
         if let label = visual.label, !label.isEmpty {

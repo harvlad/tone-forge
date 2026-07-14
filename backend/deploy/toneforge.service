@@ -1,0 +1,44 @@
+[Unit]
+Description=ToneForge API Server
+# Accounts live in local Postgres; start after it so the startup
+# migration runner finds the socket. Wants= (not Requires=) keeps the
+# API up in MemoryAuthStore fallback if Postgres is down.
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=toneforge
+WorkingDirectory=/opt/toneforge/backend
+Environment="PATH=/opt/toneforge/venv/bin"
+# Device preferences path - Linux-appropriate location
+Environment="TONEFORGE_DEVICE_PREFS_PATH=/opt/toneforge/backend/data/device.json"
+# Numba JIT cache: venv is read-only under ProtectSystem=strict, so
+# librosa's numba functions can't cache next to their source. Point at
+# a writable path (listed in ReadWritePaths) or analysis fails with
+# "cannot cache function: no locator available".
+Environment="NUMBA_CACHE_DIR=/opt/toneforge/backend/data/numba-cache"
+# HOME is /opt/toneforge (read-only under ProtectSystem=strict), so any
+# library writing to ~/.cache (torch/demucs weights, librosa, etc.)
+# fails with "[Errno 30] Read-only file system: /opt/toneforge/.cache".
+# Redirect HOME + XDG cache into the writable data dir.
+Environment="HOME=/opt/toneforge/backend/data"
+Environment="XDG_CACHE_HOME=/opt/toneforge/backend/data/.cache"
+# R2 storage credentials + TONEFORGE_ADMIN_TOKEN
+EnvironmentFile=/opt/toneforge/.env
+# Bind loopback only: all public traffic must come through nginx (TLS,
+# body-size limits). Exposing uvicorn directly on 0.0.0.0 bypasses every
+# proxy-level protection.
+ExecStart=/opt/toneforge/venv/bin/uvicorn tone_forge_api:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/toneforge/backend/data
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target
