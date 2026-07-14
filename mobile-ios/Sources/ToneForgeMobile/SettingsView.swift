@@ -46,6 +46,11 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                AccountSection(
+                    account: appState.accountStore,
+                    baseURL: appState.backendBaseURL
+                )
+
                 Section("Server") {
                     HStack {
                         TextField("Backend URL", text: $backendText)
@@ -55,7 +60,17 @@ struct SettingsView: View {
                             .keyboardType(.URL)
                             #endif
                         Button("Set") {
-                            if let url = URL(string: backendText.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                            // Normalize to https: ATS rejects plain http
+                            // on device, so an http:// override would
+                            // silently break every backend fetch.
+                            var text = backendText
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                            if text.lowercased().hasPrefix("http://") {
+                                text = "https://" + text.dropFirst("http://".count)
+                            } else if !text.lowercased().hasPrefix("https://") {
+                                text = "https://" + text
+                            }
+                            if let url = URL(string: text) {
                                 appState.backendBaseURL = url
                             }
                         }
@@ -102,6 +117,11 @@ struct SettingsView: View {
                 // is actually observed.
                 ReverbSection(engine: appState.audioEngine)
 
+                MIDIControllersSection(
+                    settings: appState.sampleSettings,
+                    transport: appState.midiKeyboard
+                )
+
                 Section {
                     Button("Reset to defaults") {
                         appState.padSynth.update(params: PadSynthParams())
@@ -117,6 +137,11 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-diagnostics-link")
                 }
+
+                // Beat Capture (D-024): device-local classifier
+                // corrections, exportable as training CSV. Hidden until
+                // the user has logged at least one correction.
+                BeatTrainingSection(store: appState.beatTrainingStore)
 
                 // Storage browsers (P7): samples / sessions /
                 // bounces, each with per-row delete + delete-all.
@@ -179,6 +204,9 @@ struct SettingsView: View {
             }
             Button("Terms of Service") { showTerms = true }
             Button("Privacy Policy") { showPrivacy = true }
+            // Aggregate attribution roll-up (D-024): licensed demo
+            // tracks + sample-pack license/provenance.
+            NavigationLink("Credits & licenses") { CreditsView() }
             LabeledContent(
                 "Ownership attestation",
                 value: attestationStatus
@@ -293,6 +321,75 @@ private struct LevelsSection: View {
                     .foregroundStyle(.secondary)
             }
             Slider(value: value, in: 0...1)
+        }
+    }
+}
+
+// MARK: - Beat capture training data
+
+/// Beat Capture (D-024): shows the count of device-local classifier
+/// corrections and a share-sheet export of them as training CSV. Split
+/// out so the nested store is `@ObservedObject`-observed. Hidden until
+/// at least one correction exists.
+private struct BeatTrainingSection: View {
+    @ObservedObject var store: BeatTrainingStore
+
+    var body: some View {
+        if !store.corrections.isEmpty {
+            Section("Beat capture") {
+                LabeledContent("Logged corrections") {
+                    Text("\(store.corrections.count)")
+                        .foregroundStyle(.secondary)
+                }
+                if let url = try? store.exportCSVFile() {
+                    ShareLink("Export training data", item: url)
+                        .accessibilityIdentifier("settings-beat-export")
+                }
+            }
+        }
+    }
+}
+
+// MARK: - MIDI controllers
+
+/// Generic MIDI note-controller settings. Lists connected inputs and
+/// exposes the pad-routing toggle (synth vs. sample pack). Split out so
+/// the nested store + transport are `@ObservedObject`-observed.
+private struct MIDIControllersSection: View {
+    @ObservedObject var settings: SampleSettingsStore
+    /// nil until `bootAudio` wires the CoreMIDI transport.
+    let transport: MIDIKeyboardTransport?
+
+    var body: some View {
+        Section("MIDI controllers") {
+            Toggle("Pads play samples", isOn: $settings.midiPadsToSamples)
+            Text("When on, an attached MIDI pad box (LPD8/MPD) triggers "
+                 + "the active sample pack. When off, pads play the synth.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let transport {
+                MIDIInputsList(transport: transport)
+            }
+        }
+    }
+}
+
+/// Live list of connected MIDI inputs. Own view so the transport is
+/// `@ObservedObject`-observed (updates on hot-plug).
+private struct MIDIInputsList: View {
+    @ObservedObject var transport: MIDIKeyboardTransport
+
+    var body: some View {
+        if transport.connectedInputs.isEmpty {
+            Text("No MIDI controllers connected")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(transport.connectedInputs, id: \.self) { name in
+                Label(name, systemImage: "pianokeys")
+                    .font(.caption)
+            }
         }
     }
 }

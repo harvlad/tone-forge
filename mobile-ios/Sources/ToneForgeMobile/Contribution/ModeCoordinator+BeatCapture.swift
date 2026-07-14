@@ -46,6 +46,14 @@ extension ModeCoordinator {
     /// Minimum tempo confidence to auto-accept an estimate.
     private static var beatTempoConfidenceFloor: Double { 0.4 }
 
+    /// Active drum classifier. Goes through the Core ML seam so a
+    /// trained model can drop in without touching this call site; the
+    /// `infer` closure returns nil today (no model bundled), falling
+    /// back to the heuristic.
+    static var beatClassifier: BeatClassifier {
+        ModelBackedBeatClassifier { _ in nil }
+    }
+
     /// Analyse a captured take into a `BeatCaptureResult`. Heavy DSP
     /// runs off the main actor.
     public func analyzeBeatTake(
@@ -55,10 +63,11 @@ extension ModeCoordinator {
         let sr = AudioEngine.canonicalSampleRate
 
         // Onset detection + classification (off-main).
+        let classifier = Self.beatClassifier
         let hits = await Task.detached(priority: .userInitiated) {
             BeatOnsetExtractor.extract(
                 samples, sampleRate: sr,
-                classifier: HeuristicBeatClassifier()
+                classifier: classifier
             )
         }.value
 
