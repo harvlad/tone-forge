@@ -13,9 +13,9 @@ struct ChordDiagramView: View {
     let diagram: ChordDiagram
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 8) {
             Text(diagram.symbol)
-                .font(.system(.callout, design: .rounded).weight(.semibold))
+                .font(.system(size: 24, weight: .bold, design: .rounded))
                 .lineLimit(1)
             Canvas { context, size in
                 draw(in: context, size: size)
@@ -27,6 +27,9 @@ struct ChordDiagramView: View {
     private static let fretRows = 4
 
     private func draw(in context: GraphicsContext, size: CGSize) {
+        // Scale factor for line widths and dot sizes.
+        let scale = min(size.width, size.height) / 100
+
         // Layout: marker row on top, grid below.
         let markerHeight: CGFloat = size.height * 0.14
         let inset: CGFloat = size.width * 0.08
@@ -37,6 +40,12 @@ struct ChordDiagramView: View {
         let stringSpacing = (gridRight - gridLeft) / 5
         let fretSpacing = (gridBottom - gridTop) / CGFloat(Self.fretRows)
 
+        let stringLine = max(1.5, 2 * scale)
+        let fretLine = max(1.5, 2 * scale)
+        let nutLine = max(4, 5 * scale)
+        let dotRadius = max(6, 5.5 * scale)
+        let markerRadius = max(5, 4.5 * scale)
+
         func stringX(_ string: Int) -> CGFloat {
             gridLeft + CGFloat(string) * stringSpacing
         }
@@ -46,7 +55,7 @@ struct ChordDiagramView: View {
             var path = Path()
             path.move(to: CGPoint(x: stringX(string), y: gridTop))
             path.addLine(to: CGPoint(x: stringX(string), y: gridBottom))
-            context.stroke(path, with: .color(.secondary), lineWidth: 1)
+            context.stroke(path, with: .color(.secondary), lineWidth: stringLine)
         }
 
         // Frets; thick nut when the window starts at fret 1.
@@ -59,14 +68,14 @@ struct ChordDiagramView: View {
             context.stroke(
                 path,
                 with: .color(isNut ? .primary : .secondary),
-                lineWidth: isNut ? 3 : 1
+                lineWidth: isNut ? nutLine : fretLine
             )
         }
 
         // Base-fret label when up the neck.
         if diagram.baseFret > 1 {
             context.draw(
-                Text("\(diagram.baseFret)fr").font(.system(size: 9)),
+                Text("\(diagram.baseFret)fr").font(.system(size: max(10, 12 * scale))),
                 at: CGPoint(x: gridLeft - inset * 0.5, y: gridTop + fretSpacing / 2),
                 anchor: .trailing
             )
@@ -76,18 +85,21 @@ struct ChordDiagramView: View {
         let markerY = markerHeight / 2
         for string in diagram.openStrings {
             let rect = CGRect(
-                x: stringX(string) - 4, y: markerY - 4, width: 8, height: 8)
+                x: stringX(string) - markerRadius,
+                y: markerY - markerRadius,
+                width: markerRadius * 2,
+                height: markerRadius * 2)
             context.stroke(
-                Path(ellipseIn: rect), with: .color(.secondary), lineWidth: 1)
+                Path(ellipseIn: rect), with: .color(.secondary), lineWidth: max(1.5, 2 * scale))
         }
         for string in diagram.mutedStrings {
             let x = stringX(string)
             var cross = Path()
-            cross.move(to: CGPoint(x: x - 4, y: markerY - 4))
-            cross.addLine(to: CGPoint(x: x + 4, y: markerY + 4))
-            cross.move(to: CGPoint(x: x + 4, y: markerY - 4))
-            cross.addLine(to: CGPoint(x: x - 4, y: markerY + 4))
-            context.stroke(cross, with: .color(.secondary), lineWidth: 1.2)
+            cross.move(to: CGPoint(x: x - markerRadius, y: markerY - markerRadius))
+            cross.addLine(to: CGPoint(x: x + markerRadius, y: markerY + markerRadius))
+            cross.move(to: CGPoint(x: x + markerRadius, y: markerY - markerRadius))
+            cross.addLine(to: CGPoint(x: x - markerRadius, y: markerY + markerRadius))
+            context.stroke(cross, with: .color(.secondary), lineWidth: max(1.5, 2 * scale))
         }
 
         func dotCenter(string: Int, fret: Int) -> CGPoint {
@@ -101,10 +113,10 @@ struct ChordDiagramView: View {
             let from = dotCenter(string: barre.fromString, fret: barre.fret)
             let to = dotCenter(string: barre.toString, fret: barre.fret)
             let rect = CGRect(
-                x: from.x - 5, y: from.y - 5,
-                width: to.x - from.x + 10, height: 10)
+                x: from.x - dotRadius, y: from.y - dotRadius,
+                width: to.x - from.x + dotRadius * 2, height: dotRadius * 2)
             context.fill(
-                Path(roundedRect: rect, cornerRadius: 5),
+                Path(roundedRect: rect, cornerRadius: dotRadius),
                 with: .color(.primary.opacity(0.75))
             )
         }
@@ -113,7 +125,8 @@ struct ChordDiagramView: View {
         for dot in diagram.dots {
             let center = dotCenter(string: dot.string, fret: dot.fret)
             let rect = CGRect(
-                x: center.x - 5, y: center.y - 5, width: 10, height: 10)
+                x: center.x - dotRadius, y: center.y - dotRadius,
+                width: dotRadius * 2, height: dotRadius * 2)
             context.fill(Path(ellipseIn: rect), with: .color(.primary))
         }
     }

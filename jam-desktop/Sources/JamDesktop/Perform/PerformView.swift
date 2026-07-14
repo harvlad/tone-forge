@@ -12,6 +12,7 @@
 
 import SwiftUI
 import JamDesktopCore
+import ToneForgeEngine
 
 struct PerformView: View {
     @EnvironmentObject private var model: AppModel
@@ -61,13 +62,17 @@ struct PerformView: View {
                 }
 
                 if let ribbon = session.ribbon {
-                    ChordRibbonView(
+                    // Primary: chord label + diagram
+                    chordLabelRow(ribbon: ribbon)
+                    diagramAndTabRow(ribbon: ribbon)
+                        .frame(maxHeight: .infinity)
+
+                    // Secondary: ribbon strip + section strip
+                    ChordRibbonStripView(
                         ribbon: ribbon,
                         positionSeconds: session.transport.positionSeconds
                     )
-                    .frame(maxHeight: .infinity)
-
-                    diagramAndTabRow(ribbon: ribbon)
+                    .frame(height: 56)
 
                     SectionStripView(
                         sections: ribbon.sections,
@@ -100,16 +105,42 @@ struct PerformView: View {
         }
     }
 
+    /// Big current/next chord labels (Am → Em).
+    private func chordLabelRow(ribbon: ChordRibbonModel) -> some View {
+        let window = ribbon.window(at: session.transport.positionSeconds, count: 2)
+        let current = ribbon.currentChord(at: session.transport.positionSeconds)
+        let next: ChordEvent? = {
+            guard let first = window.first else { return nil }
+            if current != nil {
+                return window.count > 1 ? window[1] : nil
+            }
+            return first
+        }()
+
+        return HStack(alignment: .firstTextBaseline, spacing: 24) {
+            Text(current?.symbol ?? "—")
+                .font(.system(size: 72, weight: .bold, design: .rounded))
+                .monospacedDigit()
+            if let next {
+                Text("→ \(next.symbol)")
+                    .font(.system(size: 32, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(nil, value: session.transport.positionSeconds)
+    }
+
     /// Current-chord diagram beside the scrolling lead tab lane.
     @ViewBuilder
     private func diagramAndTabRow(ribbon: ChordRibbonModel) -> some View {
         let symbol = ribbon.currentChord(
             at: session.transport.positionSeconds)?.symbol
         if !tabLane.notes.isEmpty || symbol != nil {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .center, spacing: 24) {
                 if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
                     ChordDiagramView(diagram: diagram)
-                        .frame(width: 90)
+                        .frame(width: 280, height: 340)
                 }
                 if !tabLane.notes.isEmpty {
                     VStack(alignment: .trailing, spacing: 4) {
@@ -128,7 +159,7 @@ struct PerformView: View {
                     }
                 }
             }
-            .frame(height: 140)
+            .frame(minHeight: 340)
         }
     }
 

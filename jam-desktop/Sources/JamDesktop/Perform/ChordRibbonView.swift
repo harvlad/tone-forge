@@ -55,6 +55,41 @@ struct ChordRibbonView: View {
     // MARK: - Canvas ribbon
 
     private var ribbonCanvas: some View {
+        ChordRibbonCanvas(
+            ribbon: ribbon,
+            positionSeconds: positionSeconds,
+            lookBehind: lookBehind,
+            lookAhead: lookAhead
+        )
+        .frame(minHeight: 64)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// Strip-only version (no labels) for secondary placement.
+struct ChordRibbonStripView: View {
+    let ribbon: ChordRibbonModel
+    let positionSeconds: Double
+
+    var body: some View {
+        ChordRibbonCanvas(
+            ribbon: ribbon,
+            positionSeconds: positionSeconds,
+            lookBehind: 2,
+            lookAhead: 10
+        )
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// Shared canvas for chord ribbon rendering.
+private struct ChordRibbonCanvas: View {
+    let ribbon: ChordRibbonModel
+    let positionSeconds: Double
+    let lookBehind: Double
+    let lookAhead: Double
+
+    var body: some View {
         Canvas { context, size in
             let windowStart = positionSeconds - lookBehind
             let windowSpan = lookBehind + lookAhead
@@ -74,7 +109,7 @@ struct ChordRibbonView: View {
 
                 let isCurrent = ribbon.chordIndex(at: positionSeconds) == idx
                 let rect = CGRect(
-                    x: x0 + 1, y: 8, width: x1 - x0 - 2, height: size.height - 16
+                    x: x0 + 1, y: 4, width: x1 - x0 - 2, height: size.height - 8
                 )
                 let shape = Path(roundedRect: rect, cornerRadius: 6)
                 context.fill(
@@ -85,7 +120,7 @@ struct ChordRibbonView: View {
                 )
 
                 let label = Text(chord.symbol)
-                    .font(.system(size: 15, weight: isCurrent ? .bold : .medium))
+                    .font(.system(size: 13, weight: isCurrent ? .bold : .medium))
                     .foregroundStyle(isCurrent ? Color.white : Color.primary)
                 context.draw(
                     context.resolve(label),
@@ -100,7 +135,5 @@ struct ChordRibbonView: View {
             line.addLine(to: CGPoint(x: playheadX, y: size.height))
             context.stroke(line, with: .color(.red.opacity(0.8)), lineWidth: 2)
         }
-        .frame(minHeight: 64)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
     }
 }

@@ -870,6 +870,9 @@ private struct SoundPickerSheet: View {
         .scrollContentBackground(.hidden)
     }
 
+    // Grid indices for 4x4 pack pad display (row 3 at top, row 0 at bottom)
+    private static let packPadIndices = [12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3]
+
     private func packPadGrid(packId: String) -> some View {
         let resolved = packs.activePack
         return VStack(spacing: 12) {
@@ -880,13 +883,13 @@ private struct SoundPickerSheet: View {
 
                 // 4x4 grid of pads (bottom-left = 0, matching iOS convention)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                    ForEach((0..<4).reversed(), id: \.self) { row in
-                        ForEach(0..<4, id: \.self) { col in
-                            let idx = row * 4 + col
-                            let pad = resolved.pack.pads.first { $0.padIdx == idx }
-                            let playable = resolved.padFileURLs[idx] != nil
-                            packPadCell(packId: packId, padIdx: idx, pad: pad, playable: playable)
-                        }
+                    ForEach(Self.packPadIndices, id: \.self) { idx in
+                        packPadCell(
+                            packId: packId,
+                            padIdx: idx,
+                            pad: resolved.pack.pads.first { $0.padIdx == idx },
+                            playable: resolved.padFileURLs[idx] != nil
+                        )
                     }
                 }
                 .padding()
