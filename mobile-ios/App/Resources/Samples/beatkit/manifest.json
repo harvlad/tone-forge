@@ -1,0 +1,88 @@
+{
+  "manifestVersion": 2,
+  "packId": "beatkit",
+  "name": "Beat Kit",
+  "family": "percussion",
+  "paletteHint": "orange",
+  "license": "CC0 1.0 (public domain). Some samples derived from the TR-808 recordings by Edward Loveall (CC0).",
+  "provenance": "Boochi44/free-drum-samples (CC0 1.0). One-shots derived from the CC0 TR-808 sample set (tidalcycles/sounds-tr808-fischer, Edward Loveall / Michael Fischer).",
+  "pads": [
+    {
+      "padIdx": 0,
+      "name": "Kick",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "00_kick.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 1,
+      "name": "Snare",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "01_snare.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 2,
+      "name": "Closed Hat",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "02_closed_hat.m4a",
+      "chokeGroup": 1,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 3,
+      "name": "Open Hat",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "03_open_hat.m4a",
+      "chokeGroup": 1,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 4,
+      "name": "Clap",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "04_clap.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 5,
+      "name": "Rim",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "05_rim.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    },
+    {
+      "padIdx": 6,
+      "name": "Perc",
+      "family": "percussion",
+      "colorHint": "orange",
+      "filename": "06_perc.m4a",
+      "chokeGroup": null,
+      "loopPointSec": null,
+      "gainDb": 0,
+      "defaultQuantize": "1/8"
+    }
+  ]
+}

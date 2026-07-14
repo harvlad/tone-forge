@@ -55,6 +55,12 @@ public final class MicRecorder: ObservableObject {
     @Published public private(set) var elapsedSec: Double = 0
     @Published public private(set) var routeWarning: RouteWarning?
 
+    /// Rolling window of recent input peak amplitudes (0…1), newest
+    /// last. Drives the live waveform meter in the capture UI. Capped
+    /// at `maxLevels`; older values fall off the front.
+    @Published public private(set) var levels: [Float] = []
+    public static let maxLevels = 64
+
     /// Fired on the main actor when the 8 s cap auto-stops the
     /// recording. Payload = the finished 48 kHz mono capture.
     public var onAutoStop: (([Float]) -> Void)?
@@ -64,6 +70,10 @@ public final class MicRecorder: ObservableObject {
     private var box: CaptureBox?
     private var elapsedTimer: Timer?
     private var startedAt: Date?
+    /// Cap for the current take. Defaults to the 8 s compliance cap;
+    /// analysis-only flows (Beat Capture) may pass a longer value since
+    /// nothing is written to PadSampleStore.
+    private var activeMaxDurationSec: Double = maxDurationSec
 
     public init(session: AudioSessionController) {
         self.session = session
@@ -73,12 +83,15 @@ public final class MicRecorder: ObservableObject {
 
     /// Request permission, flip the session to record mode, and start
     /// accumulating. Throws instead of silently recording nothing.
-    public func start() async throws {
+    public func start(
+        maxDurationSec: Double = MicRecorder.maxDurationSec
+    ) async throws {
         guard !isRecording else { throw RecorderError.alreadyRecording }
         guard await Self.requestPermission() else {
             throw RecorderError.permissionDenied
         }
 
+        activeMaxDurationSec = maxDurationSec
         session.activateForRecording()
         routeWarning = session.isOutputBuiltInSpeaker
             ? .speakerFeedbackRisk
@@ -88,13 +101,16 @@ public final class MicRecorder: ObservableObject {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         let box = CaptureBox(
-            capFrames: Int(Self.maxDurationSec * format.sampleRate)
+            capFrames: Int(maxDurationSec * format.sampleRate)
         )
         input.installTap(onBus: 0, bufferSize: 1024, format: format) {
             [weak self] buffer, _ in
             // Tap thread. Accumulate; on cap, hop to main to finish.
-            if box.append(buffer) {
-                DispatchQueue.main.async { self?.autoStop() }
+            let peak = Self.peak(of: buffer)
+            let capped = box.append(buffer)
+            DispatchQueue.main.async {
+                self?.pushLevel(peak)
+                if capped { self?.autoStop() }
             }
         }
 
@@ -112,6 +128,7 @@ public final class MicRecorder: ObservableObject {
         self.box = box
         self.startedAt = Date()
         self.elapsedSec = 0
+        self.levels = []
         self.isRecording = true
         self.elapsedTimer = Timer.scheduledTimer(
             withTimeInterval: 1.0 / 30.0, repeats: true
@@ -119,7 +136,8 @@ public final class MicRecorder: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, let startedAt = self.startedAt else { return }
                 self.elapsedSec = min(
-                    Date().timeIntervalSince(startedAt), Self.maxDurationSec
+                    Date().timeIntervalSince(startedAt),
+                    self.activeMaxDurationSec
                 )
             }
         }
@@ -144,6 +162,31 @@ public final class MicRecorder: ObservableObject {
         guard isRecording else { return }  // stop() may have raced us
         let samples = finish() ?? []
         onAutoStop?(samples)
+    }
+
+    /// Append a peak to the rolling meter window, dropping the oldest
+    /// once past the cap. Ignored after the recorder has stopped.
+    private func pushLevel(_ peak: Float) {
+        guard isRecording else { return }
+        levels.append(peak)
+        if levels.count > Self.maxLevels {
+            levels.removeFirst(levels.count - Self.maxLevels)
+        }
+    }
+
+    /// Peak absolute amplitude across channel 0 of a tap buffer (0…1).
+    nonisolated private static func peak(of buffer: AVAudioPCMBuffer) -> Float {
+        guard let ch = buffer.floatChannelData, buffer.frameLength > 0 else {
+            return 0
+        }
+        let frames = Int(buffer.frameLength)
+        var maxAbs: Float = 0
+        let data = ch[0]
+        for i in 0..<frames {
+            let a = abs(data[i])
+            if a > maxAbs { maxAbs = a }
+        }
+        return min(maxAbs, 1)
     }
 
     private func finish() -> [Float]? {
