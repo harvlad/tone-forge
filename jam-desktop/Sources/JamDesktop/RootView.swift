@@ -77,7 +77,6 @@ struct RootView: View {
                 } label: {
                     Label("Launchpad", systemImage: "square.grid.3x3.fill")
                 }
-                .disabled(model.session == nil)
                 .help("Chop pads (Launchpad Pro MK3 mirror)")
             }
             ToolbarItem(placement: .automatic) {
