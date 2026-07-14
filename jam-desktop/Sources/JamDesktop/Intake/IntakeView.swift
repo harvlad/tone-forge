@@ -20,73 +20,110 @@ struct IntakeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 32) {
-                // Branding header
+            VStack(spacing: 40) {
+                // Hero headline
                 VStack(spacing: 8) {
-                    JamLogo()
-                        .frame(width: 80, height: 80)
-                    Text("jamn")
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                    Text("Make music together.")
+                        .font(.system(size: 42, weight: .bold))
                         .foregroundStyle(.white)
-                    HStack(spacing: 20) {
-                        tagline(icon: "book", accent: "Learn", rest: " songs.")
-                        tagline(icon: "square.grid.3x3.fill", accent: "Jam", rest: " along.")
-                        tagline(icon: "music.note", accent: "Create", rest: " something new.")
-                    }
-                    .padding(.top, 4)
+
+                    (Text("Upload a song.")
+                        .foregroundStyle(.white)
+                     + Text(" Become part of it.")
+                        .foregroundStyle(.white.opacity(0.5)))
+                        .font(.system(size: 20, weight: .regular))
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.top, 16)
+                .padding(.top, 32)
 
-                // Intake card
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack {
-                        Text("What are we playing?")
+                // Upload card
+                VStack(spacing: 24) {
+                    // Music icon
+                    Circle()
+                        .fill(JamTheme.accent.opacity(0.2))
+                        .frame(width: 64, height: 64)
+                        .overlay {
+                            Image(systemName: "music.note")
+                                .font(.system(size: 24))
+                                .foregroundStyle(JamTheme.accent)
+                        }
+
+                    VStack(spacing: 6) {
+                        Text("Upload a song")
                             .font(.title2.bold())
-                        Spacer()
-                        engineBanner
+                            .foregroundStyle(.white)
+                        Text("Supported: MP3 \u{2022} WAV \u{2022} M4A")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
 
-                    urlRow
-
+                    // Drop zone
                     UploadDropZone { fileURL in
                         startUpload(fileURL)
                     }
 
-                    HStack(spacing: 12) {
-                        Button("Browse demo tracks…") {
-                            showingDemoTracks = true
-                        }
-
-                        Spacer()
-
-                        instrumentPicker
+                    // Engine status
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(engineOnline ? Color.green : Color.orange)
+                            .frame(width: 8, height: 8)
+                        Text(engineOnline ? "Ready" : "Offline")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
                     }
-                }
-                .padding(24)
-                .jamCard()
 
-                // History
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Recent songs")
-                        .font(.headline)
-                    HistoryListView()
+                    Text("Audio stays on your computer.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+                .padding(32)
+                .frame(maxWidth: 600)
+                .background(
+                    RoundedRectangle(cornerRadius: JamTheme.cardCornerRadius)
+                        .fill(JamTheme.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: JamTheme.cardCornerRadius)
+                                .strokeBorder(JamTheme.accent.opacity(0.4), lineWidth: 1)
+                        )
+                        .shadow(color: JamTheme.accent.opacity(0.3), radius: 20, x: 0, y: 0)
+                )
+
+                // Start Jam button
+                Button {
+                    showingDemoTracks = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "play.fill")
+                        Text("Start Jam")
+                    }
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 14)
+                    .background(JamTheme.accentGradient, in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 40)
             .padding(.vertical, 24)
-            .frame(maxWidth: 960)
             .frame(maxWidth: .infinity)
         }
         .sheet(isPresented: $showingDemoTracks) {
             DemoTracksSheet { track in
                 showingDemoTracks = false
-                queue.enqueueDemoImport(
-                    baseURL: model.backendBaseURL,
-                    trackId: track.id,
-                    title: track.title
-                )
-                model.view = .bandRoom
+                // Check if already analyzed - load directly instead of re-analyzing
+                if let existing = history.entries.first(where: { $0.name == track.title }) {
+                    Task {
+                        await model.loadSession(analysisId: existing.id)
+                    }
+                } else {
+                    queue.enqueueDemoImport(
+                        baseURL: model.backendBaseURL,
+                        trackId: track.id,
+                        title: track.title
+                    )
+                    model.view = .bandRoom
+                }
             }
         }
         .task {
@@ -95,54 +132,10 @@ struct IntakeView: View {
         }
     }
 
-    // MARK: - Engine banner
+    // MARK: - Helpers
 
-    @ViewBuilder
-    private var engineBanner: some View {
-        if let status = intake.engineStatus {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(status.online ? Color.green : Color.orange)
-                    .frame(width: 8, height: 8)
-                Text(status.online
-                    ? "Analysis engine online\(status.device.map { " (\($0))" } ?? "")"
-                    : "Analysis engine offline — jobs will queue")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    // MARK: - URL paste
-
-    private var urlRow: some View {
-        HStack(spacing: 8) {
-            TextField("Paste a song URL…", text: $sourceUrl)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit(startURLAnalysis)
-
-            Button("Analyze") {
-                startURLAnalysis()
-            }
-            .disabled(sourceUrl.trimmingCharacters(in: .whitespaces).isEmpty)
-        }
-    }
-
-    // MARK: - Instrument
-
-    private var instrumentPicker: some View {
-        Picker("Instrument", selection: instrumentBinding) {
-            ForEach(IntakeInstrument.all) { item in
-                Text(item.label)
-                    .tag(item.id)
-                    .selectionDisabled(!item.enabled)
-            }
-        }
-        .frame(maxWidth: 260)
-    }
-
-    private var instrumentBinding: Binding<String> {
-        Binding(get: { intake.instrument }, set: { intake.instrument = $0 })
+    private var engineOnline: Bool {
+        intake.engineStatus?.online ?? true
     }
 
     // MARK: - Flow starts
@@ -165,56 +158,4 @@ struct IntakeView: View {
         model.view = .bandRoom
     }
 
-    // MARK: - Tagline helper
-
-    private func tagline(icon: String, accent: String, rest: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.caption)
-                .foregroundStyle(JamTheme.brandGreenDark)
-            (Text(accent)
-                .foregroundStyle(JamTheme.brandGreenLight)
-                .fontWeight(.semibold)
-                + Text(rest)
-                .foregroundStyle(.white.opacity(0.7)))
-                .font(.caption)
-        }
-    }
-}
-
-// MARK: - Jam Logo
-
-/// The Jam mark: waveform bars with a play triangle, brand gradient.
-private struct JamLogo: View {
-    private let bars: [CGFloat] = [0.4, 0.72, 1.0, 0.82, 0.58, 0.42]
-
-    var body: some View {
-        GeometryReader { geo in
-            let h = geo.size.height
-            let barWidth = geo.size.width * 0.1
-            let spacing = geo.size.width * 0.045
-            HStack(alignment: .center, spacing: spacing) {
-                ForEach(bars.indices, id: \.self) { i in
-                    Capsule()
-                        .frame(width: barWidth, height: h * bars[i])
-                }
-                Triangle()
-                    .frame(width: barWidth * 1.4, height: barWidth * 1.6)
-            }
-            .frame(width: geo.size.width, height: h, alignment: .center)
-            .foregroundStyle(JamTheme.brandGradient)
-        }
-    }
-}
-
-/// Right-pointing play triangle.
-private struct Triangle: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        p.closeSubpath()
-        return p
-    }
 }

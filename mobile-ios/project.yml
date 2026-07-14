@@ -39,6 +39,7 @@ schemes:
     test:
       targets:
         - package: ToneForgeMobilePackage/ToneForgeEngineTests
+        - package: ToneForgeMobilePackage/ToneForgeMLTests
         - package: ToneForgeMobilePackage/ToneForgeMobileTests
         - ToneForgeMobileUITests
 
@@ -62,6 +63,12 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: ToneForge
+        # Resolve from the version build settings (single source of
+        # truth) so the Learn welcome screen reports real numbers. The
+        # postBuildScript later overwrites CFBundleVersion with the git
+        # commit count in the built product.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # Modern launch screen (empty = plain system background).
         # Without a UILaunchScreen/UILaunchStoryboardName key iOS runs
         # the app letterboxed at legacy iPhone SE dimensions and
@@ -83,14 +90,50 @@ targets:
           ToneForge records short samples from the microphone so you
           can play them on the pads. Recordings stay on this device
           and are never uploaded.
+        # Keep stems/practice audio playing when the app is backgrounded
+        # or the screen locks mid-session.
+        UIBackgroundModes: [audio]
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # Production traffic is HTTPS (https://jamn.app). The only ATS
+        # exception is localhost for local backend development.
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
     dependencies:
       - package: ToneForgeMobilePackage
         product: ToneForgeMobile
+      # ToneForgeML (Core ML drum classifier) — transitively pulled by
+      # ToneForgeMobile, listed explicitly so the linker + resource bundle
+      # are guaranteed into the app.
+      - package: ToneForgeMobilePackage
+        product: ToneForgeML
+    # Sign in with Apple. Automatic signing (team below) adds the
+    # capability to the App ID on first device build.
+    # TEMP: disabled for free personal-team on-device build (free teams
+    # cannot use the applesignin capability). Re-enable on a paid team.
+    # entitlements:
+    #   path: App/ToneForgeMobileApp.entitlements
+    #   properties:
+    #     com.apple.developer.applesignin: [Default]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.harvlad.toneforge.mobile
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        # Version is a single source of truth: MARKETING_VERSION is the
+        # human-facing semver; CURRENT_PROJECT_VERSION is a fallback build
+        # number. App/Info.plist references both via $(...) so the Learn
+        # welcome screen (JamWelcomeView.versionLine) shows the real
+        # values. The postBuildScript below overwrites CFBundleVersion in
+        # the built product with the git commit count so every build is
+        # uniquely + monotonically tracked with zero manual bumping.
+        MARKETING_VERSION: "0.9.0"
+        CURRENT_PROJECT_VERSION: "244"
         SWIFT_VERSION: "5.10"
         TARGETED_DEVICE_FAMILY: "1,2"   # iPhone + iPad
         ENABLE_PREVIEWS: YES
@@ -101,6 +144,32 @@ targets:
         # this repo they'll need to swap in their own team + a unique
         # bundle identifier.
         DEVELOPMENT_TEAM: H887LZYZ3M
+    preBuildScripts:
+      # Beat Capture (D-024): embed the latest published drum-classifier
+      # model into the engine Resources before SwiftPM compiles it, so
+      # every build ships the newest model. Best-effort — the script
+      # keeps the committed baseline when the model server is
+      # unreachable, so it never blocks a build.
+      - name: Fetch latest Beat Capture model
+        basedOnDependencyAnalysis: false
+        script: |
+          fetch="$SRCROOT/../scripts/fetch_beat_model.sh"
+          [ -x "$fetch" ] && bash "$fetch" || true
+    postBuildScripts:
+      # Stamp the built product's CFBundleVersion with the git commit
+      # count so the build number is realistic + auto-tracked. Falls back
+      # to CURRENT_PROJECT_VERSION when git is unavailable (e.g. exported
+      # source). Runs after the product is assembled so Bundle.main reads
+      # the stamped value at runtime.
+      - name: Stamp build number from git
+        basedOnDependencyAnalysis: false
+        script: |
+          plist="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+          [ -f "$plist" ] || exit 0
+          build=$(git -C "$SRCROOT" rev-list --count HEAD 2>/dev/null)
+          [ -n "$build" ] || build="$CURRENT_PROJECT_VERSION"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build" "$plist"
+          echo "Stamped CFBundleVersion = $build"
 
   # XCUITest bundle exercising the attestation gate through the app's
   # -uitest-* launch-argument contract (UITestSupport.swift).

@@ -39,14 +39,12 @@ public struct HeuristicBeatClassifier: BeatClassifier {
 
         // Dark region (below the mid band). A phone mic rolls off the
         // sub-bass, so many low thumps never reach the 808 low-band
-        // ratio above — split them by noisiness instead:
-        //   tonal / resonant thump (chest boom, beatbox kick) → kick
-        //   broadband noisy slap (hand/stomach slap, snare)     → snare
+        // ratio above. Anything this dark is a thump, never a snare — a
+        // real snare's noise burst sits up around 1.5 kHz. Beatbox kicks
+        // are breathy and semi-noisy, so an earlier pitchedness split
+        // wrongly dumped them on snare. Commit the whole dark band to
+        // kick; showmanship over 1:1 transcription.
         if f.centroidHz < 400 {
-            if f.pitchedness < 0.35 {
-                let noisy = Double(min((0.35 - f.pitchedness) / 0.35, 1))
-                return BeatClassification(role: .snare, confidence: 0.5 + 0.35 * noisy)
-            }
             let darkCue = Double(min((500 - f.centroidHz) / 500, 1))
             let lowCue = Double(min(f.lowBandRatio / 0.45, 1))
             return BeatClassification(
@@ -88,6 +86,14 @@ public struct HeuristicBeatClassifier: BeatClassifier {
         // the nearest real drum by brightness — the goal is an
         // intentional-sounding beat, not a 1:1 transcription. Biased low
         // so soft body thumps (chest beats) land on kick.
+        //
+        // A resonant, tonal onset (high pitchedness) is a mouth/chest
+        // "boom", not a noise burst — a laptop mic brightens its centroid
+        // well past the low band, but it is still a kick. Claim it before
+        // the snare fallback grabs it.
+        if f.pitchedness >= 0.5 && f.centroidHz < 2400 {
+            return BeatClassification(role: .kick, confidence: 0.5)
+        }
         if f.centroidHz < 1200 {
             return BeatClassification(role: .kick, confidence: 0.45)
         }

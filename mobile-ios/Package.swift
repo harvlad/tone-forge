@@ -27,22 +27,43 @@ let package = Package(
     ],
     products: [
         .library(name: "ToneForgeEngine", targets: ["ToneForgeEngine"]),
+        .library(name: "ToneForgeML", targets: ["ToneForgeML"]),
         .library(name: "ToneForgeMobile", targets: ["ToneForgeMobile"]),
     ],
     targets: [
         .target(
             name: "ToneForgeEngine",
-            path: "Sources/ToneForgeEngine"
+            path: "Sources/ToneForgeEngine",
+            // Raw .mlmodel is kept in git for reference/versioning but
+            // never bundled — only the compiled .mlmodelc ships.
+            exclude: ["Resources/BeatClassifier.mlmodel"],
+            resources: [
+                // Pre-compiled Beat Capture drum classifier. Ships a
+                // baseline model; a fresher cached download can override
+                // it at runtime (see BeatModelStore). Compiled by the
+                // BeatModelTrainer tool, committed as a .mlmodelc dir.
+                .copy("Resources/BeatClassifier.mlmodelc"),
+            ]
+        ),
+        .target(
+            name: "ToneForgeML",
+            dependencies: ["ToneForgeEngine"],
+            path: "Sources/ToneForgeML"
         ),
         .target(
             name: "ToneForgeMobile",
-            dependencies: ["ToneForgeEngine"],
+            dependencies: ["ToneForgeEngine", "ToneForgeML"],
             path: "Sources/ToneForgeMobile"
         ),
         .testTarget(
             name: "ToneForgeEngineTests",
             dependencies: ["ToneForgeEngine"],
             path: "Tests/ToneForgeEngineTests"
+        ),
+        .testTarget(
+            name: "ToneForgeMLTests",
+            dependencies: ["ToneForgeML"],
+            path: "Tests/ToneForgeMLTests"
         ),
         .testTarget(
             name: "ToneForgeMobileTests",

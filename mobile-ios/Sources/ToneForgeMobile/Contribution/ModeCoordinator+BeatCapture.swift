@@ -8,6 +8,7 @@
 
 import Foundation
 import ToneForgeEngine
+import ToneForgeML
 
 /// Outcome of analysing one beat take.
 public struct BeatCaptureResult: Sendable {
@@ -46,12 +47,14 @@ extension ModeCoordinator {
     /// Minimum tempo confidence to auto-accept an estimate.
     private static var beatTempoConfidenceFloor: Double { 0.4 }
 
-    /// Active drum classifier. Goes through the Core ML seam so a
-    /// trained model can drop in without touching this call site; the
-    /// `infer` closure returns nil today (no model bundled), falling
-    /// back to the heuristic.
+    /// Active drum classifier. Prefers a downloaded model, else the
+    /// bundled baseline, running through the Core ML seam; falls back to
+    /// the heuristic when no model loads.
     static var beatClassifier: BeatClassifier {
-        ModelBackedBeatClassifier { _ in nil }
+        if let url = BeatModelStore.activeModelURL() ?? BeatModel.bundledModelURL() {
+            return CoreMLBeatClassifier.make(modelURL: url, confidenceFloor: 0.3)
+        }
+        return HeuristicBeatClassifier()
     }
 
     /// Analyse a captured take into a `BeatCaptureResult`. Heavy DSP
@@ -133,12 +136,29 @@ extension ModeCoordinator {
         return pattern.id
     }
 
-    /// Record a user correction of a detected hit (training data).
+    /// Check the backend for a newer drum-classifier model and download
+    /// it in the background. Cheap no-op when already current; failures
+    /// are ignored (the app keeps using the cached/bundled model). Call
+    /// on launch — the next capture picks up any freshly cached model.
+    public func refreshBeatModelInBackground() {
+        let baseURL = app.backendBaseURL
+        Task.detached(priority: .background) {
+            _ = try? await BeatModelClient().updateIfAvailable(baseURL: baseURL)
+        }
+    }
+
+    /// Record a user correction of a detected hit (training data). When
+    /// the user has opted in, the queued corrections upload to the
+    /// backend and clear locally on success.
     public func logBeatCorrection(hit: DetectedHit, corrected: DrumRole) {
         app.beatTrainingStore.log(
             features: hit.features,
             original: hit.role,
             corrected: corrected
         )
+        guard BeatTrainingStore.shareOptIn else { return }
+        let store = app.beatTrainingStore
+        let baseURL = app.backendBaseURL
+        Task { await store.flush(baseURL: baseURL) }
     }
 }

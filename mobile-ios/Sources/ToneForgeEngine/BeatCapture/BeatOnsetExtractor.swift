@@ -43,6 +43,14 @@ public enum BeatOnsetExtractor {
     static let maxSliceSec = 0.14
     /// Minimum velocity floor so quiet-but-real hits stay audible.
     static let minVelocity: Float = 0.1
+    /// Onsets closer than this collapse into one event (loudest wins).
+    /// A single mouth/hand percussion hit fires the transient detector
+    /// several times ~90 ms apart (attack click + resonant body); merge
+    /// them so one "boom" is one hit, not three.
+    static let minOnsetGapSec = 0.11
+    /// Drop hits quieter than this fraction of the loudest — kills the
+    /// breath / room artifacts that sit between real hits.
+    static let relativeNoiseFloor: Float = 0.14
 
     /// Detect and classify every percussive onset in `samples`.
     public static func extract(
@@ -71,10 +79,31 @@ public enum BeatOnsetExtractor {
         }
         guard !raws.isEmpty else { return [] }
 
-        // Global peak for velocity normalisation.
-        let globalPeak = raws.map(\.feat.peakRMS).max() ?? 0
+        // Debounce: collapse onset clusters (one physical hit fires the
+        // transient detector several times). Chain on the *previous*
+        // onset time so an entire run of closely-spaced onsets collapses
+        // to its single loudest slice — not just adjacent pairs.
+        var deduped: [Raw] = []
+        var prevOnsetTime = -Double.infinity
+        for raw in raws {
+            if raw.time - prevOnsetTime < minOnsetGapSec,
+               let last = deduped.last {
+                if raw.feat.peakRMS > last.feat.peakRMS {
+                    deduped[deduped.count - 1] = raw
+                }
+            } else {
+                deduped.append(raw)
+            }
+            prevOnsetTime = raw.time
+        }
 
-        return raws.map { raw in
+        // Global peak for velocity normalisation + noise gate.
+        let globalPeak = deduped.map(\.feat.peakRMS).max() ?? 0
+        let floor = globalPeak * relativeNoiseFloor
+        let kept = deduped.filter { $0.feat.peakRMS >= floor }
+        guard !kept.isEmpty else { return [] }
+
+        return kept.map { raw in
             let c = classifier.classify(raw.feat)
             let velocity: Float
             if globalPeak > 1e-9 {

@@ -39,6 +39,10 @@ struct BeatCaptureSheet: View {
     @State private var previewPlayer: SequencerPlayer?
     @State private var isPreviewing = false
 
+    /// "Help improve drum detection" opt-in (mirrors the shared
+    /// UserDefaults flag the upload gate reads).
+    @AppStorage(BeatTrainingStore.shareOptInKey) private var shareOptIn = true
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -131,9 +135,26 @@ struct BeatCaptureSheet: View {
                 roleCountsSection
                 quantizeSection
                 hitListSection
+                shareSection
             }
         }
         .safeAreaInset(edge: .bottom) { reviewActions }
+    }
+
+    /// "Help improve drum detection" opt-in. When on, correcting a hit
+    /// uploads the correction (analysis features only, never audio) to
+    /// the backend training corpus.
+    private var shareSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Help improve drum detection", isOn: $shareOptIn)
+                .onChange(of: shareOptIn) { _, newValue in
+                    BeatTrainingStore.shareOptIn = newValue
+                }
+            Text("Sends your role corrections (analysis features only, "
+                 + "never audio) so detection improves over time.")
+                .font(.footnote)
+                .foregroundStyle(JamTheme.textSecondary)
+        }
     }
 
     private func failedView(_ msg: String) -> some View {

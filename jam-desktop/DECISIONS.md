@@ -232,3 +232,26 @@ double-fire); per-device config (too much surface for v1).
 double-firing when both transports see the same device. Note routing enum
 keeps the common case (synth) simple while supporting pad boxes. 12 tests
 verify discovery, note routing, CC passthrough, and Launchpad exclusion.
+
+## D-014: Clean .build on Swift version mismatch
+
+**Date:** 2026-07-15
+**Decision:** when build fails with "module compiled with Swift X.X
+cannot be imported by the Swift Y.Y compiler", run `rm -rf .build`
+before rebuilding.
+**Why:** SwiftPM caches compiled modules keyed by Swift version. Xcode
+updates or toolchain switches leave stale `.swiftmodule` files that
+cannot be imported by the new compiler. The fix is always a clean build;
+no incremental workaround exists.
+
+## D-015: Build workflow — swift build then build_app.sh
+
+**Date:** 2026-07-15
+**Decision:** after code changes, run both: `swift build` (~4s, compile
+check) then `./build_app.sh` (~65s, full app bundle to `dist/Jamn.app`).
+**Alternatives:** swift build only (no runnable app); build_app.sh only
+(slow feedback on compile errors).
+**Why:** swift build catches syntax/type errors fast without waiting for
+full release compilation and bundle assembly. build_app.sh produces the
+actual testable app with resources (ML models, samples, audio bundles)
+and ad-hoc signing. Both steps required for complete verification.

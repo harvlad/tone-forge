@@ -1,0 +1,112 @@
+# Beat Capture model — train + publish pipeline.
+#
+# Trains the CoreML drum classifier (synthetic corpus, optionally merged
+# with exported real corrections), publishes the compiled .mlmodelc to
+# the backend, and commits the refreshed baseline back to main so
+# offline builds embed it too. Running clients pick the new model up on
+# their next background update; every subsequent app build fetches it at
+# build time.
+#
+# macOS-only: CreateML + coremlc require a full Xcode toolchain.
+#
+# Trigger: manual (workflow_dispatch). Training is heavy and publishing
+# is a deliberate act, so it is never run automatically on push.
+#
+# Secrets required (Settings -> Secrets and variables -> Actions):
+#   TONEFORGE_ENGINE_TOKEN   engine token accepted by POST /api/beat-model
+#
+# Variables (optional):
+#   TONEFORGE_BASE_URL       backend base (default https://jamn.app)
+
+name: beat-model-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_baseline:
+        description: "Commit the retrained baseline model back to main"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write  # for committing the refreshed baseline model
+
+jobs:
+  train-publish:
+    runs-on: macos-14  # Apple Silicon; CreateML needs full Xcode
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for the baseline commit + short sha
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Fetch correction corpus
+        id: corpus
+        env:
+          TONEFORGE_ENGINE_TOKEN: ${{ secrets.TONEFORGE_ENGINE_TOKEN }}
+          TONEFORGE_BASE_URL: ${{ vars.TONEFORGE_BASE_URL }}
+        run: |
+          set -uo pipefail  # best-effort: a missing corpus must not block training
+          base="${TONEFORGE_BASE_URL:-https://jamn.app}"
+          out="$RUNNER_TEMP/beat_corrections.csv"
+          if curl -fsS -H "X-Engine-Token: ${TONEFORGE_ENGINE_TOKEN:-}" \
+               "$base/api/beat-corrections/export" -o "$out"; then
+            rows=$(($(wc -l < "$out") - 1))  # minus header
+            echo "Fetched $rows correction row(s)"
+            if [[ "$rows" -gt 0 ]]; then
+              echo "path=$out" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "corpus export unavailable; training on synthetic corpus only"
+          fi
+
+      - name: Train model
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ steps.corpus.outputs.path }}" ]]; then
+            bash scripts/train_beat_model.sh --corrections "${{ steps.corpus.outputs.path }}"
+          else
+            bash scripts/train_beat_model.sh
+          fi
+
+      - name: Derive version
+        id: ver
+        run: |
+          set -euo pipefail
+          version="$(date -u +%Y.%m.%d)-$(git rev-parse --short HEAD)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Model version: $version"
+
+      - name: Publish model
+        env:
+          TONEFORGE_ENGINE_TOKEN: ${{ secrets.TONEFORGE_ENGINE_TOKEN }}
+          TONEFORGE_BASE_URL: ${{ vars.TONEFORGE_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TONEFORGE_ENGINE_TOKEN:-}" ]]; then
+            echo "::error::TONEFORGE_ENGINE_TOKEN is unset; cannot publish"
+            exit 1
+          fi
+          bash scripts/publish_beat_model.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Commit refreshed baseline
+        if: ${{ inputs.commit_baseline }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mobile-ios/Sources/ToneForgeEngine/Resources/BeatClassifier.mlmodel \
+                  mobile-ios/Sources/ToneForgeEngine/Resources/BeatClassifier.mlmodelc
+          if git diff --cached --quiet; then
+            echo "Baseline unchanged; nothing to commit."
+            exit 0
+          fi
+          git commit -m "beat-model: publish ${{ steps.ver.outputs.version }}"
+          # Push to main so offline builds embed the newest baseline. If
+          # main advanced during the run the push fails; re-run to retry.
+          git push origin HEAD:main

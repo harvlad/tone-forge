@@ -5,6 +5,7 @@
 
 import SwiftUI
 import JamDesktopCore
+import ToneForgeEngine
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
@@ -20,25 +21,40 @@ struct RootView: View {
     @State private var showJamPads = false
     @State private var showPacks = false
     @State private var showBeatCapture = false
+    @State private var showVocoder = false
+    @State private var contributeMode: ContributeMode = .beat
 
     // Local @State for the picker to avoid @Bindable capture issues.
     // Syncs bidirectionally with model.view via onChange.
     @State private var selectedView: JamView = .intake
 
     var body: some View {
-        Group {
-            switch model.view {
-            case .intake:
-                IntakeView()
-            case .bandRoom:
-                BandRoomView()
-            case .rehearsal:
-                RehearsalView()
-            case .perform:
-                PerformView()
-            case .studio:
-                StudioView()
+        HStack(spacing: 0) {
+            // Left sidebar (only on Intake view)
+            if model.view == .intake {
+                SidebarView(
+                    selectedMode: $contributeMode,
+                    onSongTap: loadSong,
+                    onVoiceTap: { showVocoder = true },
+                    onBeatTap: { showBeatCapture = true },
+                    onSampleTap: { showLaunchpad = true },
+                    onLaunchpadTap: { showLaunchpad = true },
+                    onSequencerTap: { showSequencer = true },
+                    onRecordingsTap: { showRecordings = true },
+                    onJamPadsTap: { showJamPads = true },
+                    onPacksTap: { showPacks = true }
+                )
+                .environmentObject(history)
+                .environmentObject(model)
+
+                // Separator
+                Rectangle()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(width: 1)
             }
+
+            // Main content
+            mainContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(JamTheme.background)
@@ -85,8 +101,7 @@ struct RootView: View {
                 } label: {
                     Label("Sequencer", systemImage: "squares.below.rectangle")
                 }
-                .disabled(model.session == nil)
-                .help("Step sequencer (patterns over the song's chops)")
+                .help("Step sequencer (chords, pack pads, and song chops)")
             }
             ToolbarItem(placement: .automatic) {
                 Button {
@@ -153,6 +168,10 @@ struct RootView: View {
             BeatCaptureSheet(onOpenInSequencer: { showSequencer = true })
                 .environmentObject(session)
         }
+        .sheet(isPresented: $showVocoder) {
+            VocoderCaptureSheet(target: VocoderCaptureTarget(padIndex: 0))
+                .environmentObject(session)
+        }
         .task {
             session.startBridge(
                 sessionId: model.bridgeSessionId,
@@ -161,6 +180,30 @@ struct RootView: View {
             // Recover this device's server-side jobs after a relaunch
             // without requiring a visit to the Band Room.
             await queue.refreshFromServer(baseURL: model.backendBaseURL)
+        }
+    }
+
+    /// Main content area (view switcher).
+    @ViewBuilder
+    private var mainContent: some View {
+        switch model.view {
+        case .intake:
+            IntakeView()
+        case .bandRoom:
+            BandRoomView()
+        case .rehearsal:
+            RehearsalView()
+        case .perform:
+            PerformView()
+        case .studio:
+            StudioView()
+        }
+    }
+
+    /// Load a song from history directly (skip re-download).
+    private func loadSong(_ entry: HistoryEntry) {
+        Task {
+            await model.loadSession(analysisId: entry.id)
         }
     }
 

@@ -496,16 +496,34 @@ private struct PadCell: View {
         padContent
             .opacity(isDragSource ? 0.4 : 1.0)
             .contentShape(Rectangle())
-            .gesture(moveMode ? nil : playGesture)
-            .simultaneousGesture(TapGesture().modifiers(.control).onEnded { handleRightClick() })
             .draggable(String(padIdx)) { dragPreview(assignment: launchpad.assignments[pad]) }
             .dropDestination(for: String.self, action: handleDrop, isTargeted: handleDropTarget)
             .onChange(of: moveMode) { _, newValue in
                 if !newValue { isDropTarget = false }
             }
-            .overlay(SecondaryClickOverlay { handleRightClick() })
+            .overlay(
+                PadClickOverlay(
+                    moveMode: moveMode,
+                    onPrimaryClick: handlePrimaryClick,
+                    onSecondaryClick: handleRightClick
+                )
+            )
             .background(frameTracker)
             .onHover { hovered = $0 }
+    }
+
+    private func handlePrimaryClick() {
+        guard !moveMode else { return }
+        if hasContent {
+            // Trigger sound for filled pads
+            launchpad.padDown(pad)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                launchpad.padUp(pad)
+            }
+        } else {
+            // Show radial menu for empty pads (Add Sound, Sequence, Voice Record)
+            showRadialMenu()
+        }
     }
 
     private var padContent: some View {
@@ -942,27 +960,47 @@ private struct SoundPickerSheet: View {
     }
 }
 
-// MARK: - Secondary Click Overlay
+// MARK: - Pad Click Overlay
 
-/// NSViewRepresentable that captures right-click before system context menu.
-private struct SecondaryClickOverlay: NSViewRepresentable {
+/// NSViewRepresentable that captures both primary and secondary clicks.
+/// SwiftUI TapGesture can be unreliable on macOS; NSView gives consistent behavior.
+/// When moveMode is true, passes events through to allow drag gestures.
+private struct PadClickOverlay: NSViewRepresentable {
+    let moveMode: Bool
+    let onPrimaryClick: () -> Void
     let onSecondaryClick: () -> Void
 
     func makeNSView(context: Context) -> NSView {
-        let view = SecondaryClickView()
+        let view = PadClickView()
+        view.moveMode = moveMode
+        view.onPrimaryClick = onPrimaryClick
         view.onSecondaryClick = onSecondaryClick
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        if let view = nsView as? SecondaryClickView {
+        if let view = nsView as? PadClickView {
+            view.moveMode = moveMode
+            view.onPrimaryClick = onPrimaryClick
             view.onSecondaryClick = onSecondaryClick
         }
     }
 }
 
-private class SecondaryClickView: NSView {
+private class PadClickView: NSView {
+    var moveMode = false
+    var onPrimaryClick: (() -> Void)?
     var onSecondaryClick: (() -> Void)?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // In move mode, let clicks pass through to SwiftUI for drag handling
+        if moveMode { return nil }
+        return super.hitTest(point)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onPrimaryClick?()
+    }
 
     override func rightMouseDown(with event: NSEvent) {
         onSecondaryClick?()
@@ -970,7 +1008,7 @@ private class SecondaryClickView: NSView {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
+        !moveMode
     }
 
     override var isFlipped: Bool { true }
