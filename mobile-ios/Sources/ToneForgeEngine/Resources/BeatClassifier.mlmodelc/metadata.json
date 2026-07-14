@@ -19,15 +19,12 @@
         "shortDescription" : ""
       }
     ],
-    "version" : "2026-07-14T21:51:51Z",
+    "version" : "2026-07-14T22:39:52Z",
     "modelParameters" : [
 
     ],
     "author" : "ToneForge",
     "specificationVersion" : 1,
-    "stateSchema" : [
-
-    ],
     "isUpdatable" : "0",
     "availability" : {
       "macOS" : "10.13",
@@ -53,14 +50,14 @@
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
-        "name" : "pitchedness",
+        "name" : "zcr",
         "shortDescription" : ""
       },
       {
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
-        "name" : "attackSec",
+        "name" : "centroidHz",
         "shortDescription" : ""
       },
       {
@@ -74,7 +71,14 @@
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
-        "name" : "zcr",
+        "name" : "pitchedness",
+        "shortDescription" : ""
+      },
+      {
+        "isOptional" : "0",
+        "formattedType" : "Double",
+        "type" : "Double",
+        "name" : "attackSec",
         "shortDescription" : ""
       },
       {
@@ -90,13 +94,6 @@
         "type" : "Double",
         "name" : "peakRMS",
         "shortDescription" : ""
-      },
-      {
-        "isOptional" : "0",
-        "formattedType" : "Double",
-        "type" : "Double",
-        "name" : "centroidHz",
-        "shortDescription" : ""
       }
     ],
     "classLabels" : [
@@ -110,7 +107,7 @@
     ],
     "generatedClassName" : "BeatClassifier",
     "userDefinedMetadata" : {
-      "com.apple.createml.version" : "26.3.1"
+      "com.apple.createml.version" : "14.8.7"
     },
     "method" : "predict"
   }
