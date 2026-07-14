@@ -63,6 +63,36 @@ public final class BeatTrainingStore: ObservableObject {
         persist()
     }
 
+    // MARK: - Export (training data)
+
+    /// CSV of every correction: the canonical feature columns followed
+    /// by `original`, `corrected`, and an ISO-8601 `timestamp`. Feeds an
+    /// off-device Core ML training run. Empty (header only) when nothing
+    /// has been logged.
+    public func exportCSV() -> String {
+        let header =
+            (OnsetFeatures.featureNames + ["original", "corrected", "timestamp"])
+            .joined(separator: ",")
+        let iso = ISO8601DateFormatter()
+        let rows = corrections.map { c -> String in
+            let feats = c.features.featureVector
+                .map { String(format: "%.6f", $0) }
+                .joined(separator: ",")
+            return
+                "\(feats),\(c.original.rawValue),\(c.corrected.rawValue),\(iso.string(from: c.timestamp))"
+        }
+        return ([header] + rows).joined(separator: "\n")
+    }
+
+    /// Write the CSV export to a temp file and return its URL (for a
+    /// share sheet). Throws on write failure.
+    public func exportCSVFile() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("beat_training_export.csv")
+        try exportCSV().write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
     // MARK: - Persistence
 
     private static func defaultDirectory() -> URL {

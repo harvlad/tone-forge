@@ -159,4 +159,56 @@ final class MicRecorderTests: XCTestCase {
         )
         XCTAssertEqual(hz, 1000)
     }
+
+    // MARK: - Level meter (peak + rolling window)
+
+    func testPeakIsMaxAbsAcrossFrames() {
+        let buffer = makeBuffer(channels: [[-0.9, 0.2, 0.6, -0.1]])
+        XCTAssertEqual(MicRecorder.peak(of: buffer), 0.9, accuracy: 1e-6)
+    }
+
+    func testPeakClampsAboveUnity() {
+        // A hot buffer must never report a level above full-scale.
+        let buffer = makeBuffer(channels: [[1.5, -2.0, 0.3]])
+        XCTAssertEqual(MicRecorder.peak(of: buffer), 1.0)
+    }
+
+    func testPeakOfEmptyBufferIsZero() {
+        let format = AVAudioFormat(
+            standardFormatWithSampleRate: 48_000, channels: 1
+        )!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8)!
+        buffer.frameLength = 0
+        XCTAssertEqual(MicRecorder.peak(of: buffer), 0)
+    }
+
+    func testPeakAveragesNothing_StereoUsesChannelZero() {
+        // peak(of:) reads channel 0 only — the tap's mono-ising happens
+        // in CaptureBox, not here.
+        let buffer = makeBuffer(channels: [[0.4, 0.1], [0.95, 0.95]])
+        XCTAssertEqual(MicRecorder.peak(of: buffer), 0.4, accuracy: 1e-6)
+    }
+
+    func testAppendLevelGrowsUnderCap() {
+        var w: [Float] = []
+        w = MicRecorder.appendLevel(0.1, to: w, cap: 4)
+        w = MicRecorder.appendLevel(0.2, to: w, cap: 4)
+        XCTAssertEqual(w, [0.1, 0.2])
+    }
+
+    func testAppendLevelDropsOldestPastCap() {
+        var w: [Float] = [0.1, 0.2, 0.3]
+        w = MicRecorder.appendLevel(0.4, to: w, cap: 3)
+        XCTAssertEqual(w, [0.2, 0.3, 0.4])
+    }
+
+    func testAppendLevelKeepsNewestLast() {
+        var w: [Float] = []
+        for i in 0..<200 {
+            w = MicRecorder.appendLevel(Float(i), to: w, cap: MicRecorder.maxLevels)
+        }
+        XCTAssertEqual(w.count, MicRecorder.maxLevels)
+        XCTAssertEqual(w.last, 199)
+        XCTAssertEqual(w.first, Float(200 - MicRecorder.maxLevels))
+    }
 }

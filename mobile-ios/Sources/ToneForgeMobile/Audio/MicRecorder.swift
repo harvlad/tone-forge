@@ -168,14 +168,22 @@ public final class MicRecorder: ObservableObject {
     /// once past the cap. Ignored after the recorder has stopped.
     private func pushLevel(_ peak: Float) {
         guard isRecording else { return }
-        levels.append(peak)
-        if levels.count > Self.maxLevels {
-            levels.removeFirst(levels.count - Self.maxLevels)
-        }
+        levels = Self.appendLevel(peak, to: levels, cap: Self.maxLevels)
+    }
+
+    /// Pure rolling-window append: push `peak`, drop the oldest values
+    /// until the window is at most `cap` long. Newest is last.
+    nonisolated static func appendLevel(
+        _ peak: Float, to window: [Float], cap: Int
+    ) -> [Float] {
+        var w = window
+        w.append(peak)
+        if w.count > cap { w.removeFirst(w.count - cap) }
+        return w
     }
 
     /// Peak absolute amplitude across channel 0 of a tap buffer (0…1).
-    nonisolated private static func peak(of buffer: AVAudioPCMBuffer) -> Float {
+    nonisolated static func peak(of buffer: AVAudioPCMBuffer) -> Float {
         guard let ch = buffer.floatChannelData, buffer.frameLength > 0 else {
             return 0
         }

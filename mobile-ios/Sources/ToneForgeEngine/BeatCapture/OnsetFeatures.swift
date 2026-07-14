@@ -44,6 +44,23 @@ public struct OnsetFeatures: Sendable, Equatable, Codable {
         self.peakRMS = peakRMS
     }
 
+    /// Canonical feature column order. The single source of truth for
+    /// both CSV training-export and Core ML model input — keep the two
+    /// in lockstep or a retrained model silently reads shuffled columns.
+    public static let featureNames = [
+        "centroidHz", "zcr", "attackSec", "durationSec",
+        "pitchedness", "lowBandRatio", "peakRMS",
+    ]
+
+    /// Features as an ordered `Double` vector matching `featureNames`.
+    /// Feeds the Core ML seam and the CSV exporter.
+    public var featureVector: [Double] {
+        [
+            Double(centroidHz), Double(zcr), attackSec, durationSec,
+            Double(pitchedness), Double(lowBandRatio), Double(peakRMS),
+        ]
+    }
+
     /// Extract features from one onset slice.
     ///
     /// Spectral features need ≥1024 samples and pitchedness ≥2048;
