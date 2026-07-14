@@ -29,6 +29,17 @@ enum JamTheme {
         endPoint: .bottomTrailing
     )
 
+    /// Brand green (light, 0xC6F24E).
+    static let brandGreenLight = Color(hex: 0xC6F24E)
+    /// Brand green (dark, 0x36C81A).
+    static let brandGreenDark = Color(hex: 0x36C81A)
+    /// Brand gradient for logo and CTAs.
+    static let brandGradient = LinearGradient(
+        colors: [brandGreenLight, brandGreenDark],
+        startPoint: .top,
+        endPoint: .bottom
+    )
+
     static let textPrimary = Color.white.opacity(0.92)
     static let textSecondary = Color.white.opacity(0.55)
     /// Error text (web: #f87171).

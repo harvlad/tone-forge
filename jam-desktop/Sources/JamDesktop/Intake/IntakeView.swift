@@ -20,13 +20,33 @@ struct IntakeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                engineBanner
+            VStack(spacing: 32) {
+                // Branding header
+                VStack(spacing: 8) {
+                    JamLogo()
+                        .frame(width: 80, height: 80)
+                    Text("jamn")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                    HStack(spacing: 20) {
+                        tagline(icon: "book", accent: "Learn", rest: " songs.")
+                        tagline(icon: "square.grid.3x3.fill", accent: "Jam", rest: " along.")
+                        tagline(icon: "music.note", accent: "Create", rest: " something new.")
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 16)
 
-                Text("What are we playing?")
-                    .font(.largeTitle.bold())
-
+                // Intake card
                 VStack(alignment: .leading, spacing: 20) {
+                    HStack {
+                        Text("What are we playing?")
+                            .font(.title2.bold())
+                        Spacer()
+                        engineBanner
+                    }
+
                     urlRow
 
                     UploadDropZone { fileURL in
@@ -43,15 +63,19 @@ struct IntakeView: View {
                         instrumentPicker
                     }
                 }
-                .padding(20)
+                .padding(24)
                 .jamCard()
 
-                Divider()
-
-                HistoryListView()
+                // History
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Recent songs")
+                        .font(.headline)
+                    HistoryListView()
+                }
             }
-            .padding(24)
-            .frame(maxWidth: 720)
+            .padding(.horizontal, 40)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 960)
             .frame(maxWidth: .infinity)
         }
         .sheet(isPresented: $showingDemoTracks) {
@@ -139,5 +163,58 @@ struct IntakeView: View {
             attested: intake.attested
         )
         model.view = .bandRoom
+    }
+
+    // MARK: - Tagline helper
+
+    private func tagline(icon: String, accent: String, rest: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(JamTheme.brandGreenDark)
+            (Text(accent)
+                .foregroundStyle(JamTheme.brandGreenLight)
+                .fontWeight(.semibold)
+                + Text(rest)
+                .foregroundStyle(.white.opacity(0.7)))
+                .font(.caption)
+        }
+    }
+}
+
+// MARK: - Jam Logo
+
+/// The Jam mark: waveform bars with a play triangle, brand gradient.
+private struct JamLogo: View {
+    private let bars: [CGFloat] = [0.4, 0.72, 1.0, 0.82, 0.58, 0.42]
+
+    var body: some View {
+        GeometryReader { geo in
+            let h = geo.size.height
+            let barWidth = geo.size.width * 0.1
+            let spacing = geo.size.width * 0.045
+            HStack(alignment: .center, spacing: spacing) {
+                ForEach(bars.indices, id: \.self) { i in
+                    Capsule()
+                        .frame(width: barWidth, height: h * bars[i])
+                }
+                Triangle()
+                    .frame(width: barWidth * 1.4, height: barWidth * 1.6)
+            }
+            .frame(width: geo.size.width, height: h, alignment: .center)
+            .foregroundStyle(JamTheme.brandGradient)
+        }
+    }
+}
+
+/// Right-pointing play triangle.
+private struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.closeSubpath()
+        return p
     }
 }
