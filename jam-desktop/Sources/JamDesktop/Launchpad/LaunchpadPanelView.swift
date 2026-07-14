@@ -171,8 +171,8 @@ struct LaunchpadPanelView: View {
             // TODO: Clear chop assignment when supported
 
         case .sequence:
-            // Open sequencer to create/load pattern, then assign to this pad
-            showSequencerEditor = true
+            // Open pattern picker to assign a pattern to this pad
+            patternAssignTarget = padIdx
 
         case .edit:
             // Load the pattern into the sequencer for editing
