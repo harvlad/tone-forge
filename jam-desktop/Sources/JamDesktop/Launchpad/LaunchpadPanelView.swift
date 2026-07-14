@@ -414,6 +414,9 @@ struct LaunchpadPanelView: View {
                                 onShowRadial: { state in
                                     radialMenuState = state
                                 },
+                                onEmptyTap: { idx in
+                                    soundPickerTarget = idx
+                                },
                                 onDragStart: { dragSourcePad = padIdx },
                                 onDrop: { sourcePadIdx in
                                     swapPads(sourcePadIdx, padIdx)
@@ -462,6 +465,8 @@ private struct PadCell: View {
     let isDragSource: Bool
     /// Open radial menu at this pad.
     let onShowRadial: (PadRadialMenuState) -> Void
+    /// Called when empty pad is tapped (open sound picker).
+    let onEmptyTap: (Int) -> Void
     let onDragStart: () -> Void
     let onDrop: (Int) -> Void
     let onDragEnd: () -> Void
@@ -610,7 +615,7 @@ private struct PadCell: View {
                 guard !pressed else { return }
                 pressed = true
                 if !hasContent {
-                    showRadialMenu()
+                    onEmptyTap(padIdx)
                 } else {
                     launchpad.padDown(pad)
                 }
