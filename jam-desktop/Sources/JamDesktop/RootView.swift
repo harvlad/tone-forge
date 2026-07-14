@@ -19,6 +19,7 @@ struct RootView: View {
     @State private var showRecordings = false
     @State private var showJamPads = false
     @State private var showPacks = false
+    @State private var showBeatCapture = false
 
     // Local @State for the picker to avoid @Bindable capture issues.
     // Syncs bidirectionally with model.view via onChange.
@@ -90,6 +91,14 @@ struct RootView: View {
             }
             ToolbarItem(placement: .automatic) {
                 Button {
+                    showBeatCapture.toggle()
+                } label: {
+                    Label("Beat", systemImage: "figure.dance")
+                }
+                .help("Beat Capture — tap a rhythm into a drum pattern")
+            }
+            ToolbarItem(placement: .automatic) {
+                Button {
                     showRecordings.toggle()
                 } label: {
                     Label("Recordings", systemImage: "record.circle")
@@ -139,6 +148,10 @@ struct RootView: View {
         .sheet(isPresented: $showPacks) {
             PacksBrowserView()
                 .environmentObject(model)
+                .environmentObject(session)
+        }
+        .sheet(isPresented: $showBeatCapture) {
+            BeatCaptureSheet(onOpenInSequencer: { showSequencer = true })
                 .environmentObject(session)
         }
         .task {

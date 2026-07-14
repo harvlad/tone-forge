@@ -99,6 +99,16 @@ final class SessionController: ObservableObject {
     /// Vocoder capture session (mic → preview → offline render).
     private(set) lazy var vocoderCapture = VocoderCaptureSession(
         monitor: vocoderMonitor)
+    /// Beat Capture (D-024): analysis-only mic take → drum pattern.
+    private(set) lazy var beatCapture = BeatCaptureSession()
+    /// Device-local drum-classifier correction log (training data).
+    let beatTrainingStore = BeatTrainingStore()
+    /// Guards one-time registration of the bundled `beatkit` pack.
+    var beatKitRegistered = false
+
+    /// Attached song's tempo, when a bundle is loaded — Beat Capture
+    /// follows it before falling back to estimation.
+    var currentSongTempoBpm: Double? { attachedBundle?.meta.tempoBpm }
 
     /// Analysis id of the session currently wired into the engine —
     /// PerformView re-attaches only when it changes.
@@ -210,6 +220,7 @@ final class SessionController: ObservableObject {
         launchpad.padAssignmentStore = padAssignmentStore
         launchpad.onTrigger = { [weak self] pad, assignment, fireAt in
             guard let self else { return }
+            print("[Trigger] pad=\(pad) stem=\(assignment.stem) chopIdx=\(assignment.chop.idx)")
             let rate = max(0.1, self.transport.tempoPct)
             let delay = max(0, fireAt - clock.nowSongSeconds) / rate
             self.chopPlayer.trigger(assignment, afterSeconds: delay)
@@ -423,7 +434,13 @@ final class SessionController: ObservableObject {
     /// Fire a pad from the pack browser's trigger grid. Starts the
     /// engine lazily — packs play without a session attached.
     func triggerPackPad(packId: String, padIdx: Int, velocity: Float = 1) {
+        print("[PackPad] packId=\(packId) padIdx=\(padIdx) registered=\(packPlayer.isRegistered(packId: packId))")
         ensureEngineStarted()
+        // Ensure pack is registered (may not be if assigned before app restart)
+        if !packPlayer.isRegistered(packId: packId) {
+            packs.activate(packId: packId)
+            print("[PackPad] activated pack, now registered=\(packPlayer.isRegistered(packId: packId))")
+        }
         packPlayer.trigger(packId: packId, padIdx: padIdx, velocity: velocity)
     }
 
@@ -495,7 +512,7 @@ final class SessionController: ObservableObject {
 
     // MARK: - Private
 
-    private func ensureEngineStarted() {
+    func ensureEngineStarted() {
         guard !engineStarted else { return }
         do {
             try engine.start()

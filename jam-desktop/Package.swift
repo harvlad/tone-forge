@@ -51,7 +51,8 @@ let package = Package(
                 .product(name: "ConnectCore", package: "connect"),
                 .product(name: "ToneForgeEngine", package: "mobile-ios"),
             ],
-            path: "Sources/JamDesktopAudio"
+            path: "Sources/JamDesktopAudio",
+            resources: [.copy("Resources/Samples")]
         ),
         .executableTarget(
             name: "JamDesktop",
