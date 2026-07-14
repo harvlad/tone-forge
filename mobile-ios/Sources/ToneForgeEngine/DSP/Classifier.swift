@@ -228,6 +228,48 @@ public struct HeuristicClassifier: SampleClassifying {
         return (centroid, variability)
     }
 
+    /// Fraction of spectral power below `cutoffHz` (0…1) over a
+    /// 1024/256 Hann STFT. A strong low-band cue for kick vs the rest
+    /// of a drum kit (chest thumps / table booms concentrate here).
+    static func lowBandRatio(_ x: [Float], sampleRate: Double, cutoffHz: Float = 150) -> Float {
+        guard x.count >= fftSize,
+              let setup = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(fftSize), .FORWARD)
+        else { return 0 }
+        defer { vDSP_DFT_DestroySetup(setup) }
+
+        var window = [Float](repeating: 0, count: fftSize)
+        vDSP_hann_window(&window, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
+
+        let bins = fftSize / 2
+        let binHz = Float(sampleRate) / Float(fftSize)
+        let cutoffBin = max(1, min(bins, Int((cutoffHz / binHz).rounded())))
+        let frameCount = (x.count - fftSize) / hopSize + 1
+
+        var frame = [Float](repeating: 0, count: fftSize)
+        let zeros = [Float](repeating: 0, count: fftSize)
+        var outReal = [Float](repeating: 0, count: fftSize)
+        var outImag = [Float](repeating: 0, count: fftSize)
+
+        var low: Float = 0
+        var total: Float = 0
+        for k in 0..<frameCount {
+            let offset = k * hopSize
+            x.withUnsafeBufferPointer { buf in
+                vDSP_vmul(
+                    buf.baseAddress! + offset, 1, window, 1,
+                    &frame, 1, vDSP_Length(fftSize)
+                )
+            }
+            vDSP_DFT_Execute(setup, frame, zeros, &outReal, &outImag)
+            for b in 0..<bins {
+                let power = outReal[b] * outReal[b] + outImag[b] * outImag[b]
+                total += power
+                if b < cutoffBin { low += power }
+            }
+        }
+        return total > 1e-12 ? low / total : 0
+    }
+
     /// Assign every FFT bin to one of 26 mel bands (80 Hz–12 kHz
     /// centers, HTK mel). Bins outside land in the edge bands.
     static func melLayout(binHz: Float, bins: Int) -> (bandOfBin: [Int], bandCenterHz: [Float]) {

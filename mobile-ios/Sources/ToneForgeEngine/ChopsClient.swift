@@ -80,7 +80,9 @@ public struct ChopsClient: Sendable {
             throw ChopsClientError.invalidURL
         }
 
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        AuthContext.shared.apply(to: &request)
+        let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse,
            !(200..<300).contains(http.statusCode)
         {

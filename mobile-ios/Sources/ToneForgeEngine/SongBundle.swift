@@ -66,6 +66,11 @@ public struct BundleMeta: Codable, Sendable, Equatable {
     public let durationSec: Double
     public let tempoBpm: Double?
     public let detectedKey: String?
+    // Attribution (D-024). Optionals so bundles cached before the
+    // server emitted these keys still decode.
+    public let license: String?
+    public let licenseUrl: String?
+    public let attribution: String?
 
     public init(
         title: String,
@@ -73,7 +78,10 @@ public struct BundleMeta: Codable, Sendable, Equatable {
         sourceUrl: String,
         durationSec: Double,
         tempoBpm: Double? = nil,
-        detectedKey: String? = nil
+        detectedKey: String? = nil,
+        license: String? = nil,
+        licenseUrl: String? = nil,
+        attribution: String? = nil
     ) {
         self.title = title
         self.artist = artist
@@ -81,6 +89,9 @@ public struct BundleMeta: Codable, Sendable, Equatable {
         self.durationSec = durationSec
         self.tempoBpm = tempoBpm
         self.detectedKey = detectedKey
+        self.license = license
+        self.licenseUrl = licenseUrl
+        self.attribution = attribution
     }
 }
 

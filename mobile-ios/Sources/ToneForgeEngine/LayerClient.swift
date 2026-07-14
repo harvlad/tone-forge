@@ -107,6 +107,7 @@ public struct LayerClient: Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(timeline)
+        AuthContext.shared.apply(to: &request)
 
         let (data, response) = try await session.data(for: request)
         try Self.assertOk(response, data: data)
@@ -126,7 +127,9 @@ public struct LayerClient: Sendable {
         )?.absoluteURL else {
             throw LayerClientError.invalidURL
         }
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        AuthContext.shared.apply(to: &request)
+        let (data, response) = try await session.data(for: request)
         try Self.assertOk(response, data: data)
         struct Wrapper: Decodable { let layers: [LayerSummary] }
         return try JSONDecoder().decode(Wrapper.self, from: data).layers
@@ -146,7 +149,9 @@ public struct LayerClient: Sendable {
         )?.absoluteURL else {
             throw LayerClientError.invalidURL
         }
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        AuthContext.shared.apply(to: &request)
+        let (data, response) = try await session.data(for: request)
         try Self.assertOk(response, data: data)
         return try JSONDecoder().decode(LayerTimeline.self, from: data)
     }

@@ -56,6 +56,7 @@ public struct BundleLoader {
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.timeoutInterval = timeout
+        AuthContext.shared.apply(to: &req)
         let (data, response) = try await URLSession.shared.data(for: req)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw BundleLoaderError.badResponse(http.statusCode)

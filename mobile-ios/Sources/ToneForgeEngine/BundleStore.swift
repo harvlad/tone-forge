@@ -48,13 +48,32 @@ public final class BundleStore: @unchecked Sendable {
 
     private let fileManager: FileManager
     private let session: URLSession
+    /// Test seam: when set, bundles/stems live under this directory
+    /// instead of Application Support/Caches.
+    private let rootOverride: URL?
 
     public init(
         fileManager: FileManager = .default,
-        session: URLSession = .shared
+        session: URLSession = BundleStore.makeStemSession(),
+        rootOverride: URL? = nil
     ) {
         self.fileManager = fileManager
         self.session = session
+        self.rootOverride = rootOverride
+    }
+
+    /// Dedicated session for stem downloads with real timeouts. The
+    /// default `.shared` session has a 7-day `timeoutIntervalForResource`,
+    /// so a stalled stem transfer would hang the whole download stream
+    /// forever — `isDownloading` never clears and every Library row is
+    /// `.disabled` on it, freezing the UI. These ceilings turn a stall
+    /// into a normal error the caller can surface and recover from.
+    public static func makeStemSession() -> URLSession {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 30    // gap between data packets
+        cfg.timeoutIntervalForResource = 300  // whole-stem ceiling
+        cfg.waitsForConnectivity = false
+        return URLSession(configuration: cfg)
     }
 
     // MARK: - Directory helpers
@@ -62,7 +81,7 @@ public final class BundleStore: @unchecked Sendable {
     /// Application Support root for our JSON bundles. Created on
     /// first access.
     public func bundlesDir() throws -> URL {
-        let base = try fileManager.url(
+        let base = try rootOverride ?? fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
@@ -76,7 +95,7 @@ public final class BundleStore: @unchecked Sendable {
 
     /// Caches root for downloaded stems. Created on first access.
     public func stemsDir() throws -> URL {
-        let base = try fileManager.url(
+        let base = try rootOverride ?? fileManager.url(
             for: .cachesDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
@@ -168,16 +187,103 @@ public final class BundleStore: @unchecked Sendable {
         }
     }
 
+    // MARK: - Cache eviction
+
+    /// Default total-size cap for the stem cache. iOS may also purge
+    /// Caches under storage pressure; this keeps us from being the
+    /// reason it has to.
+    public static let defaultStemCacheLimitBytes: Int64 = 2 << 30  // 2 GiB
+
+    /// Evict least-recently-used per-analysis stem directories until
+    /// the cache fits ``maxBytes``. Recency is the directory's
+    /// modification date, which ``touchStemDir`` bumps on cache hits
+    /// and downloads. Ids in ``keeping`` are never evicted (the song
+    /// just downloaded / currently loaded). Best-effort.
+    @discardableResult
+    public func enforceStemCacheLimit(
+        maxBytes: Int64 = BundleStore.defaultStemCacheLimitBytes,
+        keeping: Set<String> = []
+    ) -> [String] {
+        guard let root = try? stemsDir(),
+              let entries = try? fileManager.contentsOfDirectory(
+                  at: root,
+                  includingPropertiesForKeys: [.contentModificationDateKey]
+              )
+        else { return [] }
+
+        struct DirInfo {
+            let url: URL
+            let id: String
+            let size: Int64
+            let accessed: Date
+        }
+        var dirs: [DirInfo] = []
+        var total: Int64 = 0
+        for entry in entries where entry.hasDirectoryPath {
+            let size = directorySize(entry)
+            let accessed = (try? entry.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate) ?? .distantPast
+            dirs.append(DirInfo(
+                url: entry,
+                id: entry.lastPathComponent,
+                size: size,
+                accessed: accessed
+            ))
+            total += size
+        }
+        guard total > maxBytes else { return [] }
+
+        var evicted: [String] = []
+        for dir in dirs.sorted(by: { $0.accessed < $1.accessed }) {
+            if total <= maxBytes { break }
+            guard !keeping.contains(dir.id) else { continue }
+            try? fileManager.removeItem(at: dir.url)
+            total -= dir.size
+            evicted.append(dir.id)
+        }
+        return evicted
+    }
+
+    /// Bump the analysis's stem-dir modification date so LRU eviction
+    /// prefers colder entries.
+    private func touchStemDir(analysisId: String) {
+        guard let dir = try? stemsDir()
+            .appendingPathComponent(analysisId, isDirectory: true),
+              fileManager.fileExists(atPath: dir.path)
+        else { return }
+        try? fileManager.setAttributes(
+            [.modificationDate: Date()], ofItemAtPath: dir.path
+        )
+    }
+
+    /// Recursive byte count of every regular file under ``url``.
+    private func directorySize(_ url: URL) -> Int64 {
+        guard let walker = fileManager.enumerator(
+            at: url, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in walker {
+            guard let values = try? file.resourceValues(
+                forKeys: [.fileSizeKey, .isRegularFileKey]
+            ), values.isRegularFile == true else { continue }
+            total += Int64(values.fileSize ?? 0)
+        }
+        return total
+    }
+
     // MARK: - Stem downloads
 
     /// Local file URL if this stem is already fully downloaded, nil
     /// otherwise. "Fully downloaded" = file exists and matches the
     /// declared size, if we ever store one; for now, just existence.
+    /// A hit refreshes the analysis's LRU recency.
     public func cachedStem(for stem: BundleStem, analysisId: String) -> URL? {
         let ext = codecExtension(from: stem)
         guard let url = try? stemLocalURL(analysisId: analysisId, role: stem.role, ext: ext),
               fileManager.fileExists(atPath: url.path)
         else { return nil }
+        touchStemDir(analysisId: analysisId)
         return url
     }
 
@@ -209,6 +315,9 @@ public final class BundleStore: @unchecked Sendable {
                         }
                         try await group.waitForAll()
                     }
+                    // Keep the cache bounded; never evict what we just
+                    // fetched.
+                    self.enforceStemCacheLimit(keeping: [bundle.analysisId])
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -262,7 +371,9 @@ public final class BundleStore: @unchecked Sendable {
             throw BundleError.invalidURL(urlString)
         }
 
-        let (tempURL, response) = try await session.download(from: remote)
+        var request = URLRequest(url: remote)
+        AuthContext.shared.apply(to: &request)
+        let (tempURL, response) = try await session.download(for: request)
         defer { try? fileManager.removeItem(at: tempURL) }
 
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {

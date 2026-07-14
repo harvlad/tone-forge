@@ -71,6 +71,20 @@ public struct SamplePack: Codable, Sendable, Equatable {
     /// allowed by the schema for future 8×8 layouts but the current
     /// SamplePadGrid clamps to 0..15.
     public let pads: [SamplePad]
+    /// Optional starter groove shipped with the pack (manifestVersion
+    /// 2+). Its `id` is generated deterministically from the packId on
+    /// the backend so re-activating the pack re-saves the same pattern
+    /// (idempotent by id) instead of accumulating duplicates. Tracks
+    /// reference `.packPad(packId, padIdx)` into this same pack.
+    /// Optional key — v1 manifests decode with this nil (Swift
+    /// synthesizes `decodeIfPresent` for Optional properties).
+    public let defaultSequence: SequencerPattern?
+    /// Rights statement for the pack's audio (e.g. "Proprietary — ©
+    /// ToneForge …"). Optional/additive: older manifests decode nil.
+    public let license: String?
+    /// Machine-readable origin trail (e.g. "Synthesized in-house by
+    /// scripts/generate_sample_packs.py …"). Optional/additive.
+    public let provenance: String?
 
     public init(
         manifestVersion: Int = 1,
@@ -78,7 +92,10 @@ public struct SamplePack: Codable, Sendable, Equatable {
         name: String,
         family: SampleFamily,
         paletteHint: String? = nil,
-        pads: [SamplePad]
+        pads: [SamplePad],
+        defaultSequence: SequencerPattern? = nil,
+        license: String? = nil,
+        provenance: String? = nil
     ) {
         self.manifestVersion = manifestVersion
         self.packId = packId
@@ -86,6 +103,9 @@ public struct SamplePack: Codable, Sendable, Equatable {
         self.family = family
         self.paletteHint = paletteHint
         self.pads = pads
+        self.defaultSequence = defaultSequence
+        self.license = license
+        self.provenance = provenance
     }
 }
 

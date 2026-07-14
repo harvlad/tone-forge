@@ -200,7 +200,9 @@ public final class PackClient: @unchecked Sendable {
     /// room for future top-level fields (pagination, featured, etc.).
     public func fetchCatalog(baseURL: URL) async throws -> [SamplePackCatalogEntry] {
         let url = baseURL.appendingPathComponent("api/sample-packs")
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        AuthContext.shared.apply(to: &request)
+        let (data, response) = try await session.data(for: request)
         try Self.checkOk(response)
         struct Wrapper: Decodable { let packs: [SamplePackCatalogEntry] }
         return try JSONDecoder().decode(Wrapper.self, from: data).packs
@@ -217,7 +219,9 @@ public final class PackClient: @unchecked Sendable {
         let url = baseURL
             .appendingPathComponent("api/sample-packs")
             .appendingPathComponent(packId)
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        AuthContext.shared.apply(to: &request)
+        let (data, response) = try await session.data(for: request)
         try Self.checkOk(response)
         return try JSONDecoder().decode(SamplePack.self, from: data)
     }
@@ -364,6 +368,49 @@ public final class PackClient: @unchecked Sendable {
         }
     }
 
+    // MARK: Manifest refresh (cache-bust)
+
+    /// Re-fetch just the ~1 KB `manifest.json` for an already-cached
+    /// pack and overwrite the on-disk copy when the server advertises a
+    /// newer `manifestVersion` (or the same version with differing
+    /// bytes). Pad audio is untouched — a v1→v2 bump only adds fields
+    /// (e.g. `defaultSequence`), so the cached pads stay valid.
+    ///
+    /// Returns the freshly-decoded `SamplePack` when the on-disk
+    /// manifest was updated; `nil` when nothing changed or the pack is
+    /// not cached. Network/decoding failures throw — callers should
+    /// treat a throw as "keep the cached copy" (offline-safe).
+    ///
+    /// - Parameter cacheRoot: same parent the pack was cached under.
+    @discardableResult
+    public func refreshCachedManifest(
+        baseURL: URL,
+        packId: String,
+        cacheRoot: URL
+    ) async throws -> SamplePack? {
+        try Self.validatePackId(packId)
+        let packDir = cacheRoot.appendingPathComponent(packId, isDirectory: true)
+        let manifestURL = packDir.appendingPathComponent("manifest.json")
+        // Only refresh packs we already have on disk.
+        guard fileManager.fileExists(atPath: manifestURL.path) else { return nil }
+
+        let cachedData = try Data(contentsOf: manifestURL)
+        let cached = try? JSONDecoder().decode(SamplePack.self, from: cachedData)
+
+        let fresh = try await fetchManifest(baseURL: baseURL, packId: packId)
+        let freshData = try JSONEncoder().encode(fresh)
+
+        // Skip the write when nothing meaningful changed: same version
+        // and identical re-encoded bytes.
+        if let cached,
+           cached.manifestVersion == fresh.manifestVersion,
+           cachedData == freshData {
+            return nil
+        }
+        try freshData.write(to: manifestURL, options: [.atomic])
+        return fresh
+    }
+
     // MARK: - Private
 
     /// Sum sizes of manifest + all pad files if the pack is fully on
@@ -420,7 +467,9 @@ public final class PackClient: @unchecked Sendable {
             .appendingPathComponent("pads")
             .appendingPathComponent(filename)
 
-        let (tempURL, response) = try await session.download(from: url)
+        var request = URLRequest(url: url)
+        AuthContext.shared.apply(to: &request)
+        let (tempURL, response) = try await session.download(for: request)
         defer { try? fileManager.removeItem(at: tempURL) }
         try Self.checkOk(response)
 

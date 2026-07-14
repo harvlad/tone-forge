@@ -59,6 +59,11 @@ public enum AnalyzeClient {
         (name: "extract_midi", value: "true"),
         (name: "fast_mode", value: "false"),
         (name: "analysis_mode", value: "deep"),
+        // Every mobile upload passes the ImportCoordinator's ownership
+        // attestation gate before it reaches the network, so the client
+        // asserts it here and the server records it with the job/history
+        // entry (the server-side half of the compliance trail).
+        (name: "attested", value: "true"),
     ]
 
     // MARK: - Multipart encoding (pure)
@@ -68,6 +73,25 @@ public enum AnalyzeClient {
     /// RFC 2046.
     public static func multipartBody(
         fileData: Data,
+        filename: String,
+        contentType: String,
+        fields: [(name: String, value: String)],
+        boundary: String
+    ) -> Data {
+        var body = multipartPrefix(
+            filename: filename,
+            contentType: contentType,
+            fields: fields,
+            boundary: boundary
+        )
+        body.append(fileData)
+        body.append(multipartSuffix(boundary: boundary))
+        return body
+    }
+
+    /// Everything before the file bytes: text fields plus the file
+    /// part's headers.
+    public static func multipartPrefix(
         filename: String,
         contentType: String,
         fields: [(name: String, value: String)],
@@ -84,9 +108,46 @@ public enum AnalyzeClient {
         append("--\(boundary)\r\n")
         append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
         append("Content-Type: \(contentType)\r\n\r\n")
-        body.append(fileData)
-        append("\r\n--\(boundary)--\r\n")
         return body
+    }
+
+    /// Closing boundary after the file bytes.
+    public static func multipartSuffix(boundary: String) -> Data {
+        Data("\r\n--\(boundary)--\r\n".utf8)
+    }
+
+    /// Compose the multipart body into a temp file, streaming the
+    /// audio in 1 MB chunks so large recordings never sit in memory.
+    /// Pair with `URLSession.upload(for:fromFile:)`. Caller deletes
+    /// the returned file when the upload finishes.
+    public static func writeMultipartBodyFile(
+        fileURL: URL,
+        filename: String,
+        contentType: String,
+        fields: [(name: String, value: String)],
+        boundary: String
+    ) throws -> URL {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("toneforge-upload-\(UUID().uuidString).multipart")
+        FileManager.default.createFile(atPath: tempURL.path, contents: nil)
+        let output = try FileHandle(forWritingTo: tempURL)
+        defer { try? output.close() }
+
+        try output.write(contentsOf: multipartPrefix(
+            filename: filename,
+            contentType: contentType,
+            fields: fields,
+            boundary: boundary
+        ))
+
+        let input = try FileHandle(forReadingFrom: fileURL)
+        defer { try? input.close() }
+        while let chunk = try input.read(upToCount: 1 << 20), !chunk.isEmpty {
+            try output.write(contentsOf: chunk)
+        }
+
+        try output.write(contentsOf: multipartSuffix(boundary: boundary))
+        return tempURL
     }
 
     // MARK: - SSE parsing (pure)
@@ -166,6 +227,7 @@ public enum AnalyzeClient {
                         fields: defaultFields,
                         boundary: boundary
                     )
+                    AuthContext.shared.apply(to: &request)
 
                     let (bytes, response) = try await session.bytes(for: request)
                     if let http = response as? HTTPURLResponse, http.statusCode != 200 {

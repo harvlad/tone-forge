@@ -21,6 +21,11 @@ public struct HistoryEntry: Sendable, Codable, Identifiable, Equatable {
     public let summary: String?
     public let duration: Double?
     public let ampFamily: String?
+    // Attribution (D-024): non-empty license marks a curated CC track;
+    // the Credits screen filters on it. Optionals so pre-D-024 server
+    // responses still decode.
+    public let artist: String?
+    public let license: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -30,6 +35,8 @@ public struct HistoryEntry: Sendable, Codable, Identifiable, Equatable {
         case summary
         case duration
         case ampFamily = "amp_family"
+        case artist
+        case license
     }
 
     public init(
@@ -39,7 +46,9 @@ public struct HistoryEntry: Sendable, Codable, Identifiable, Equatable {
         detectedType: String? = nil,
         summary: String? = nil,
         duration: Double? = nil,
-        ampFamily: String? = nil
+        ampFamily: String? = nil,
+        artist: String? = nil,
+        license: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -48,6 +57,8 @@ public struct HistoryEntry: Sendable, Codable, Identifiable, Equatable {
         self.summary = summary
         self.duration = duration
         self.ampFamily = ampFamily
+        self.artist = artist
+        self.license = license
     }
 }
 
@@ -104,6 +115,7 @@ public struct HistoryClient: Sendable {
 
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
+        AuthContext.shared.apply(to: &request)
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw HistoryClientError.httpStatus(http.statusCode)
@@ -131,6 +143,7 @@ public struct HistoryClient: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         request.timeoutInterval = timeout
+        AuthContext.shared.apply(to: &request)
         let (_, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw HistoryClientError.httpStatus(http.statusCode)
