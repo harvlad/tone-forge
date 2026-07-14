@@ -53,6 +53,19 @@ final class DrumRoleTests: XCTestCase {
         XCTAssertEqual(BeatKit.fallbackPadIdx(for: .perc), 7)
     }
 
+    func testRoleReverseLookupRoundTrips() {
+        // Every role's chopRef resolves back to that role — the editor's
+        // correction menu relies on this to show the current role.
+        for role in DrumRole.allCases {
+            XCTAssertEqual(BeatKit.role(for: role.chopRef), role)
+        }
+    }
+
+    func testRoleReverseLookupNilForNonKitRef() {
+        XCTAssertNil(BeatKit.role(for: .packPad(packId: "starter", padIdx: 0)))
+        XCTAssertNil(BeatKit.role(for: .synthChord(symbol: "Cmaj7", octaveShift: 0)))
+    }
+
     func testCodableRoundTrip() throws {
         let data = try JSONEncoder().encode(DrumRole.closedHat)
         let decoded = try JSONDecoder().decode(DrumRole.self, from: data)

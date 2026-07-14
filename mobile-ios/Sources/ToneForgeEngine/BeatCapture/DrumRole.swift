@@ -77,6 +77,22 @@ public enum BeatKit {
         return .packPad(packId: fallbackPackId, padIdx: fallbackPadIdx(for: role))
     }
 
+    /// Reverse of `chopRef(for:)`: the `DrumRole` a chop reference maps
+    /// to, or nil when it isn't a kit pad (so the editor only offers
+    /// role correction on actual drum tracks). Matches the active kit
+    /// under `useBeatKit`.
+    public static func role(for chopRef: ChopReference) -> DrumRole? {
+        guard case let .packPad(packId, padIdx) = chopRef else { return nil }
+        if useBeatKit {
+            guard packId == self.packId else { return nil }
+            return DrumRole.allCases.first { $0.padIdx == padIdx }
+        }
+        guard packId == fallbackPackId else { return nil }
+        // Fallback pads collide (clap/rim → snare, etc.); pick the first
+        // role that resolves to this pad for a stable display.
+        return DrumRole.allCases.first { fallbackPadIdx(for: $0) == padIdx }
+    }
+
     /// Nearest starter-kit pad for a role (kick=4, snare=5, hat=6,
     /// tom=7). Roles without a dedicated starter pad borrow the
     /// closest match: clap/rim → snare, openHat → hat, perc → tom.
