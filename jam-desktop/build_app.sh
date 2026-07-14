@@ -141,6 +141,15 @@ if [[ ! -x "$(xcode-select -p 2>/dev/null)/usr/bin/xcodebuild" ]]; then
     fi
 fi
 
+# Beat Capture (D-024): embed the latest published drum-classifier
+# model. Best-effort — the script keeps the committed baseline when the
+# model server is unreachable, so this never blocks a build.
+FETCH_MODEL="$SCRIPT_DIR/../scripts/fetch_beat_model.sh"
+if [[ -x "$FETCH_MODEL" ]]; then
+    log "Fetching latest Beat Capture model"
+    bash "$FETCH_MODEL" || warn "beat model fetch failed; using committed baseline"
+fi
+
 log "Compiling release binary"
 swift build "${SWIFT_BUILD_ARGS[@]}"
 BIN_PATH="$(swift build "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)/$APP_NAME"

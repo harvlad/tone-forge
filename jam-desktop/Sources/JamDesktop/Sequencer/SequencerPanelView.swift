@@ -7,10 +7,10 @@
 // play/stop transport (the SequencerClock drives its own timing; the
 // song transport is not involved).
 //
-// Track sources are the loaded bundle's chop presets (harmonic,
-// sections, …) via an add-track menu. Pack pads, local samples and
-// synth chords arrive with iOS parity Phase 5 — patterns referencing
-// them load fine and simply stay silent.
+// Track sources: synth chords (a C-major diatonic palette, playable
+// with no song loaded) plus the loaded bundle's chop presets
+// (harmonic, sections, …) via the add-track menu. Pack-pad / local
+// sample patterns still load fine and route through the adapter.
 //
 // SequencerPlayer is an ObservableObject (ToneForgeEngine), so the
 // editor observes it with @ObservedObject rather than @Observable.
@@ -68,6 +68,10 @@ struct SequencerPanelView: View {
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
+        // Playback works with no song loaded (synth chords + pack pads
+        // route to their own P5 players). player.play() alone doesn't
+        // start the engine, so ensure it here.
+        .onAppear { session.ensureEngineStarted() }
     }
 }
 
@@ -226,7 +230,7 @@ private struct SequencerEditorView: View {
                 .foregroundStyle(.secondary)
             Text("No tracks yet")
                 .font(.headline)
-            Text("Add chops from the loaded song to build a pattern.")
+            Text("Add chords to build a pattern — load a song for its chops too.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             addTrackMenu(label: "Add Track")
@@ -300,8 +304,21 @@ private struct SequencerEditorView: View {
     /// SequencerAudioAdapter resolves against.
     private func addTrackMenu(label: String) -> some View {
         Menu {
-            if presets.isEmpty {
-                Text("Load a song to add its chops")
+            // Synth chords work with no song loaded — route to the
+            // DesktopSynthNode. A C-major diatonic palette is a sane
+            // default starting point.
+            Menu("Chords") {
+                ForEach(Self.defaultChordSymbols, id: \.self) { symbol in
+                    Button(symbol) {
+                        player.addTrack(
+                            for: .synthChord(symbol: symbol, octaveShift: 0),
+                            name: symbol
+                        )
+                    }
+                }
+            }
+            if !presets.isEmpty {
+                Divider()
             }
             ForEach(presets.keys.sorted(), id: \.self) { key in
                 let chops = presets[key]!.chops.sorted { $0.idx < $1.idx }
@@ -324,6 +341,11 @@ private struct SequencerEditorView: View {
         }
         .fixedSize()
     }
+
+    /// C-major diatonic triads — a usable chord palette when no song is
+    /// loaded (matches ChordParser-parseable symbols).
+    private static let defaultChordSymbols =
+        ["C", "Dm", "Em", "F", "G", "Am", "Bdim"]
 
     private func chopLabel(_ chop: Chop, fallback: String) -> String {
         chop.chordSymbol ?? chop.sectionLabel ?? fallback

@@ -59,6 +59,7 @@ let package = Package(
             dependencies: [
                 "JamDesktopCore",
                 "JamDesktopAudio",
+                .product(name: "ToneForgeML", package: "mobile-ios"),
             ],
             path: "Sources/JamDesktop"
         ),

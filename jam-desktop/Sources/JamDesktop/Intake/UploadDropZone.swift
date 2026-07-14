@@ -35,27 +35,40 @@ struct UploadDropZone: View {
     }
 
     private var dropArea: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "waveform.badge.plus")
-                .font(.system(size: 28))
-                .foregroundStyle(.secondary)
-            Text("Drop an audio file here")
+        VStack(spacing: 12) {
+            // Plus icon in circle
+            Circle()
+                .fill(JamTheme.accent)
+                .frame(width: 48, height: 48)
+                .overlay {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+
+            Text("Choose File")
                 .font(.headline)
-            Button("Browse…") {
-                showingPicker = true
-            }
-            .disabled(!intake.attested)
+                .foregroundStyle(.white)
+
+            Text("or drag & drop")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
+        .padding(.vertical, 32)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(
-                    isTargeted ? Color.accentColor : Color.secondary.opacity(0.4),
-                    style: StrokeStyle(lineWidth: 2, dash: [6])
+                    isTargeted ? JamTheme.accent : JamTheme.accent.opacity(0.3),
+                    style: StrokeStyle(lineWidth: 2, dash: [8, 6])
                 )
         )
         .contentShape(Rectangle())
+        .onTapGesture {
+            if intake.attested {
+                showingPicker = true
+            }
+        }
         .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
             guard intake.attested, let provider = providers.first else { return false }
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in

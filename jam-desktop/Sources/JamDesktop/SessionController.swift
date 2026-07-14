@@ -103,6 +103,10 @@ final class SessionController: ObservableObject {
     private(set) lazy var beatCapture = BeatCaptureSession()
     /// Device-local drum-classifier correction log (training data).
     let beatTrainingStore = BeatTrainingStore()
+    /// Backend base URL, captured from `startBridge` so Beat Capture
+    /// correction uploads have a destination without threading the URL
+    /// through every call.
+    private(set) var backendBaseURL: URL?
     /// Guards one-time registration of the bundled `beatkit` pack.
     var beatKitRegistered = false
 
@@ -326,10 +330,15 @@ final class SessionController: ObservableObject {
     /// when settings change the session id or backend.
     func startBridge(sessionId: String, backendBaseURL: URL) {
         foreignAudioOwnerSeen = false
+        self.backendBaseURL = backendBaseURL
         bridge.start(
             sessionId: sessionId,
             url: BridgeClient.bridgeURL(backendBaseURL: backendBaseURL)
         )
+        // Beat Capture (D-024): pull a newer drum-classifier model in the
+        // background now that the backend URL is known; the next capture
+        // uses it once cached.
+        refreshBeatModelInBackground()
     }
 
     func stopBridge() {
