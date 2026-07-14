@@ -30,9 +30,9 @@ struct RecordingsListView: View {
             layersSection
             sketchLayersSection
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #endif
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(TFTheme.background)
         #if canImport(UIKit)
         .sheet(item: $m4aShareItem) { item in
             ActivityShareSheet(activityItems: [item.url])
@@ -56,6 +56,7 @@ struct RecordingsListView: View {
             } else {
                 ForEach(appState.savedLayers, id: \.layerId) { layer in
                     layerRow(layer)
+                        .tfLibraryRowChrome()
                 }
             }
         } header: {
@@ -80,6 +81,7 @@ struct RecordingsListView: View {
             } else {
                 ForEach(appState.savedSketchLayers, id: \.layerId) { layer in
                     layerRow(layer, isSketch: true)
+                        .tfLibraryRowChrome()
                 }
             }
         } header: {
@@ -102,9 +104,18 @@ struct RecordingsListView: View {
                     appState.toggleLayerPlayback(layerId: layer.layerId)
                 }
             } label: {
-                Image(systemName: isActive ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(tileGradient(for: layer.layerId))
+                    .frame(width: 52, height: 52)
+                    .overlay(
+                        Image(systemName: isActive ? "pause.fill" : "play.fill")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(TFTheme.stroke, lineWidth: 1)
+                    )
             }
             .buttonStyle(.borderless)
 
@@ -115,14 +126,17 @@ struct RecordingsListView: View {
                         .onSubmit { commitRename(layer, isSketch: isSketch) }
                 } else {
                     Text(layer.name)
-                        .font(.body)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(TFTheme.textPrimary)
+                        .lineLimit(1)
                 }
                 Text(subtitle(for: layer))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .lineLimit(1)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Menu {
                 Button(renamingLayerId == layer.layerId ? "Save name" : "Rename") {
@@ -158,11 +172,16 @@ struct RecordingsListView: View {
                     || appState.exportingLayerIds.contains(layer.layerId) {
                     ProgressView().controlSize(.small)
                 } else {
-                    Image(systemName: "ellipsis.circle")
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "ellipsis")
+                        .rotationEffect(.degrees(90))
+                        .foregroundStyle(TFTheme.textSecondary)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                 }
             }
         }
+        .tfLibraryCard(active: isActive)
+        .contentShape(Rectangle())
     }
 
     /// Push-to-backend menu row. Disabled while an upload for this
@@ -246,6 +265,25 @@ struct RecordingsListView: View {
             parts.append(pack)
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Stable per-layer hue — hashes the layerId and spins the hue
+    /// wheel, matching ArtworkView's art-less fallback so recordings
+    /// get distinctive, consistent tiles.
+    private func tileGradient(for id: String) -> LinearGradient {
+        var seed = 0
+        for scalar in id.unicodeScalars {
+            seed = (seed &* 31) &+ Int(scalar.value)
+        }
+        let hue = Double(abs(seed) % 360) / 360.0
+        return LinearGradient(
+            colors: [
+                Color(hue: hue, saturation: 0.55, brightness: 0.45),
+                Color(hue: hue, saturation: 0.65, brightness: 0.20),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     private func formatDuration(_ sec: Double) -> String {

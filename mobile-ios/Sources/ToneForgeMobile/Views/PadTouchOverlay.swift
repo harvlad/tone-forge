@@ -25,6 +25,10 @@ struct PadTouchOverlay: UIViewRepresentable {
     let onPadDown: (Int, Int) -> Void
     let onPadUp: (Int, Int) -> Void
     let onLongPress: (Int, Int) -> Void
+    /// Called with touch location (in view coords) while dragging after long-press.
+    var onLongPressDrag: ((CGPoint) -> Void)?
+    /// Called when the touch that triggered long-press ends.
+    var onLongPressEnd: ((CGPoint) -> Void)?
 
     func makeUIView(context: Context) -> PadTouchUIView {
         let view = PadTouchUIView()
@@ -42,6 +46,8 @@ struct PadTouchOverlay: UIViewRepresentable {
         view.onPadDown = onPadDown
         view.onPadUp = onPadUp
         view.onLongPress = onLongPress
+        view.onLongPressDrag = onLongPressDrag
+        view.onLongPressEnd = onLongPressEnd
     }
 }
 
@@ -51,6 +57,8 @@ final class PadTouchUIView: UIView {
     var onPadDown: ((Int, Int) -> Void)?
     var onPadUp: ((Int, Int) -> Void)?
     var onLongPress: ((Int, Int) -> Void)?
+    var onLongPressDrag: ((CGPoint) -> Void)?
+    var onLongPressEnd: ((CGPoint) -> Void)?
 
     /// Live touches → pad key (row * 100 + col) currently held by
     /// that touch. Base 100 keeps the encoding unambiguous for any
@@ -58,6 +66,8 @@ final class PadTouchUIView: UIView {
     private var touchPads: [UITouch: Int] = [:]
     /// Long-press timers per touch (cancelled on move/lift).
     private var longPressTimers: [UITouch: Timer] = [:]
+    /// Touches that have triggered long-press and are being tracked for drag.
+    private var longPressTouches: Set<UITouch> = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -81,35 +91,50 @@ final class PadTouchUIView: UIView {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
             let (row, col) = pad(at: touch.location(in: self))
-            touchPads[touch] = row * 100 + col
+            let key = row * 100 + col
+            touchPads[touch] = key
+            // Fire the attack immediately: real-time audio + on-screen
+            // pressed state. Long-press releases it before the sheet.
             onPadDown?(row, col)
 
-            let timer = Timer.scheduledTimer(
+            // Long-press timer - if this fires, it's a hold not a tap
+            let longPressTimer = Timer.scheduledTimer(
                 withTimeInterval: 0.5, repeats: false
             ) { [weak self] _ in
                 guard let self, self.touchPads[touch] != nil else { return }
-                // Release the pad BEFORE presenting the sheet so no
-                // voice rings under the editor.
+
                 self.touchPads.removeValue(forKey: touch)
                 self.longPressTimers.removeValue(forKey: touch)
+
+                // Release the ringing pad first so no voice rings under
+                // the sheet, then fire the long-press.
                 self.onPadUp?(row, col)
+                self.longPressTouches.insert(touch)
                 self.onLongPress?(row, col)
             }
-            longPressTimers[touch] = timer
+            longPressTimers[touch] = longPressTimer
         }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
+            // Handle long-press drag tracking
+            if longPressTouches.contains(touch) {
+                onLongPressDrag?(touch.location(in: self))
+                continue
+            }
+
             guard let previous = touchPads[touch] else { continue }
             let (row, col) = pad(at: touch.location(in: self))
             let key = row * 100 + col
             guard key != previous else { continue }
-            // Slid onto a different pad: release the old, press the
-            // new, and cancel the long-press (it's a slide, not a
-            // hold).
+
+            // Slid onto a different pad: cancel long-press timer
             longPressTimers.removeValue(forKey: touch)?.invalidate()
+
             touchPads[touch] = key
+
+            // Slide: release old pad, press new pad immediately
             onPadUp?(previous / 100, previous % 100)
             onPadDown?(row, col)
         }
@@ -125,10 +150,19 @@ final class PadTouchUIView: UIView {
 
     private func endTouches(_ touches: Set<UITouch>) {
         for touch in touches {
+            // Handle long-press touch release
+            if longPressTouches.remove(touch) != nil {
+                onLongPressEnd?(touch.location(in: self))
+                continue
+            }
+
             longPressTimers.removeValue(forKey: touch)?.invalidate()
+
             guard let key = touchPads.removeValue(forKey: touch) else {
                 continue
             }
+
+            // Pad was pressed on touch-down; release it now.
             onPadUp?(key / 100, key % 100)
         }
     }
@@ -144,6 +178,8 @@ struct PadTouchOverlay: View {
     let onPadDown: (Int, Int) -> Void
     let onPadUp: (Int, Int) -> Void
     let onLongPress: (Int, Int) -> Void
+    var onLongPressDrag: ((CGPoint) -> Void)?
+    var onLongPressEnd: ((CGPoint) -> Void)?
 
     var body: some View { Color.clear }
 }

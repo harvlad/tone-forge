@@ -29,10 +29,10 @@ enum UITestSupport {
         ProcessInfo.processInfo.arguments.contains("-uitest-stub-import")
     }
 
-    /// Transport for LibraryView's ImportCoordinator: the real SSE
+    /// Transport for LibraryView's ImportCoordinator: the real job
     /// client normally, the never-finishing stub under UI test.
-    static func makeAnalyzeClient() -> any AnalyzeStreaming {
-        stubImportEnabled ? StubAnalyzeClient() : BackendAnalyzeClient()
+    static func makeJobClient() -> any JobSubmitting {
+        stubImportEnabled ? StubJobClient() : BackendJobClient()
     }
 
     /// Write a canonical 0.1 s 440 Hz sine (44.1 kHz mono 16-bit WAV)
@@ -77,13 +77,19 @@ enum UITestSupport {
     }
 }
 
-/// Analyze transport that reports progress and never completes: the
-/// attestation UI tests only need the Analysing sheet to be visible.
-/// Cancellation (Cancel button / coordinator dismiss) terminates the
-/// stream via task cancellation.
-struct StubAnalyzeClient: AnalyzeStreaming {
-    func stream(
+/// Job transport that submits a fake job and reports progress without
+/// ever completing: the attestation UI tests only need the Analysing
+/// sheet to be visible. Cancellation (Cancel button / coordinator
+/// dismiss) terminates the stream via task cancellation.
+struct StubJobClient: JobSubmitting {
+    func submit(
         baseURL: URL, wavFileURL: URL, filename: String
+    ) async throws -> String {
+        "uitest-stub-job"
+    }
+
+    func events(
+        baseURL: URL, jobId: String
     ) -> AsyncThrowingStream<AnalyzeEvent, Error> {
         AsyncThrowingStream { continuation in
             continuation.yield(.progress(message: "Analysing (stub)…", percent: 42))

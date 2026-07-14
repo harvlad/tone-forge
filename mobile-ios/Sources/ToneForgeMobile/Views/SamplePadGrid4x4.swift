@@ -16,39 +16,101 @@
 import SwiftUI
 import ToneForgeEngine
 
+/// Target for the ChopPickerSheet - identifies which pad to assign to.
+private struct ChopPickerTarget: Identifiable {
+    let id = UUID()
+    let row: Int
+    let col: Int
+}
+
+/// Target for the SequenceBuilderSheet - the pad whose radial menu
+/// opened the builder (the recorded sequence auto-assigns here).
+private struct SequenceBuilderTarget: Identifiable {
+    let id = UUID()
+    let row: Int
+    let col: Int
+}
+
 struct SamplePadGrid4x4: View {
     @ObservedObject var coordinator: ModeCoordinator
+    /// Callback to open pack browser for assigning sounds to empty pads.
+    var onOpenBrowse: ((Int, Int) -> Void)? = nil
     @EnvironmentObject private var appState: AppState
 
     @State private var sheetTarget: PadSheetTarget?
+    @State private var chopPickerTarget: ChopPickerTarget?
+    @State private var sequenceBuilderTarget: SequenceBuilderTarget?
+    @State private var radialMenuState: PadRadialMenuState?
+    @State private var gridFrame: CGRect = .zero
+    @State private var gridSize: CGSize = .zero
+    @State private var radialDragPosition: CGPoint?
 
     var body: some View {
         ZStack {
-            PadTouchOverlay(
-                rows: 4,
-                cols: 4,
-                onPadDown: { row, col in
-                    let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
-                    if isEmpty(gridRow: gridRow, gridCol: gridCol) {
-                        // "+" tile: assign instead of trigger.
-                        sheetTarget = coordinator.padSheetTarget(
-                            row: gridRow, col: gridCol)
-                    } else {
-                        coordinator.touchPadDown(row: gridRow, col: gridCol)
-                    }
-                },
-                onPadUp: { row, col in
-                    let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
-                    coordinator.touchPadUp(row: gridRow, col: gridCol)
-                },
-                onLongPress: { row, col in
-                    let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
-                    sheetTarget = coordinator.padSheetTarget(
-                        row: gridRow, col: gridCol)
+            GeometryReader { geo in
+                ZStack {
+                    PadTouchOverlay(
+                        rows: 4,
+                        cols: 4,
+                        onPadDown: { row, col in
+                            let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
+                            if isEmpty(gridRow: gridRow, gridCol: gridCol) {
+                                // "+" tile: open pack browser to assign sound
+                                if let browse = onOpenBrowse {
+                                    browse(gridRow, gridCol)
+                                } else {
+                                    chopPickerTarget = ChopPickerTarget(row: gridRow, col: gridCol)
+                                }
+                            } else {
+                                coordinator.touchPadDown(row: gridRow, col: gridCol)
+                            }
+                        },
+                        onPadUp: { row, col in
+                            let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
+                            coordinator.touchPadUp(row: gridRow, col: gridCol)
+                        },
+                        onLongPress: { row, col in
+                            let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
+                            // Show radial menu instead of sheet directly
+                            if !isEmpty(gridRow: gridRow, gridCol: gridCol) {
+                                let center = padCenter(
+                                    localRow: row, localCol: col,
+                                    size: geo.size
+                                )
+                                radialMenuState = makeRadialMenuState(
+                                    gridRow: gridRow,
+                                    gridCol: gridCol,
+                                    center: center
+                                )
+                            } else {
+                                // Empty pad: open pack browser
+                                if let browse = onOpenBrowse {
+                                    browse(gridRow, gridCol)
+                                } else {
+                                    chopPickerTarget = ChopPickerTarget(row: gridRow, col: gridCol)
+                                }
+                            }
+                        },
+                        onLongPressDrag: { point in
+                            radialDragPosition = point
+                        },
+                        onLongPressEnd: { point in
+                            // Determine action from final position
+                            if let state = radialMenuState {
+                                if let action = PadRadialMenu.action(at: point, center: state.center) {
+                                    handleRadialAction(action, state: state)
+                                }
+                                radialMenuState = nil
+                                radialDragPosition = nil
+                            }
+                        }
+                    )
+                    tiles
+                        .allowsHitTesting(false)
                 }
-            )
-            tiles
-                .allowsHitTesting(false)
+                .onAppear { gridFrame = geo.frame(in: .global) }
+                .onChange(of: geo.size) { _, _ in gridFrame = geo.frame(in: .global) }
+            }
         }
         // Flexible height (no square constraint): the grid absorbs
         // whatever the Play stack has left, so the tab always fits
@@ -70,7 +132,137 @@ struct SamplePadGrid4x4: View {
                     target: target,
                     onPreview: preview(row: target.gridRow, col: target.gridCol)
                 )
+            case .trimmer(let target):
+                SampleTrimmerSheet(
+                    target: target,
+                    onPreview: previewTrimmed(target: target)
+                )
             }
+        }
+        .overlay {
+            if let state = radialMenuState {
+                PadRadialMenu(
+                    state: state,
+                    onAction: { action in
+                        handleRadialAction(action, state: state)
+                        radialMenuState = nil
+                        radialDragPosition = nil
+                    },
+                    onDismiss: {
+                        radialMenuState = nil
+                        radialDragPosition = nil
+                    },
+                    externalDragPosition: radialDragPosition
+                )
+            }
+        }
+        .sheet(item: $chopPickerTarget) { target in
+            ChopPickerSheet(
+                onSelect: { [target] ref, _ in
+                    handleChopSelection(ref, target: (target.row, target.col))
+                },
+                bundleChops: bundleChopsForPicker,
+                samplePacks: samplePacksForPicker,
+                localSamples: [],
+                sequences: sequencesForPicker,
+                downloadablePacks: downloadablePacksForPicker,
+                downloadingPackIds: downloadingPackIds,
+                onDownloadPack: { packId in
+                    guard let entry = appState.curatedCatalog.first(where: { $0.packId == packId })
+                    else { return }
+                    Task { await appState.downloadCuratedPack(entry) }
+                },
+                onPreview: { ref in
+                    previewChopReference(ref)
+                },
+                onStopPreview: {
+                    coordinator.stopPreviewPad()
+                },
+                previewDurationProvider: { packId, padIdx in
+                    appState.previewPadDurationSec(packId: packId, padIdx: padIdx)
+                }
+            )
+            .task { await appState.refreshCuratedCatalog() }
+        }
+        .sheet(item: $sequenceBuilderTarget) { target in
+            SequenceBuilderSheet(gridRow: target.row, gridCol: target.col)
+                .environmentObject(appState)
+        }
+    }
+
+    // MARK: - Radial Menu
+
+    /// Tile spacing matches VStack/HStack spacing: 6 in tiles view.
+    private let tileSpacing: CGFloat = 6
+
+    /// Calculate the center of a tile in local coordinates, accounting for spacing.
+    private func padCenter(localRow: Int, localCol: Int, size: CGSize) -> CGPoint {
+        // With spacing, total space for 4 tiles + 3 gaps
+        let totalGapWidth = tileSpacing * 3
+        let totalGapHeight = tileSpacing * 3
+        let cellWidth = (size.width - totalGapWidth) / 4
+        let cellHeight = (size.height - totalGapHeight) / 4
+
+        // localCol is 1-based (1–4), localRow is 1-based (1=bottom, 4=top)
+        // screenCol 0-based: 0=left
+        // screenRow 0-based: 0=top
+        let screenCol = localCol - 1  // 0–3
+        let screenRow = 4 - localRow  // 0–3 (0=top)
+
+        // x = leading edge of cell + half cell width
+        let x = CGFloat(screenCol) * (cellWidth + tileSpacing) + cellWidth / 2
+        // y = top edge of cell + half cell height
+        let y = CGFloat(screenRow) * (cellHeight + tileSpacing) + cellHeight / 2
+
+        return CGPoint(x: x, y: y)
+    }
+
+    private func makeRadialMenuState(
+        gridRow: Int,
+        gridCol: Int,
+        center: CGPoint
+    ) -> PadRadialMenuState {
+        let padIdx = gridRow * 10 + gridCol
+        // TODO: Get actual pack ID and loop state from coordinator
+        return PadRadialMenuState(
+            gridRow: gridRow,
+            gridCol: gridCol,
+            center: center,
+            packId: nil,
+            padIdx: padIdx,
+            hasLoop: false
+        )
+    }
+
+    private func handleRadialAction(_ action: PadRadialAction, state: PadRadialMenuState) {
+        switch action {
+        case .effects:
+            // Open effects editor
+            sheetTarget = coordinator.padSheetTarget(
+                row: state.gridRow, col: state.gridCol)
+        case .chop:
+            // Open sample waveform trimmer
+            if let trimmerTarget = coordinator.padTrimmerTarget(
+                row: state.gridRow, col: state.gridCol
+            ) {
+                sheetTarget = .trimmer(trimmerTarget)
+            }
+        case .loop:
+            // TODO: Toggle loop transform on pad
+            // Requires adding togglePadLoop to ModeCoordinator
+            break
+        case .reset:
+            // Reset pad to default state (clear effects, trim, loop)
+            coordinator.resetPadToDefault(
+                row: state.gridRow, col: state.gridCol)
+        case .delete:
+            // Hide the pad from the grid
+            coordinator.hidePackPad(row: state.gridRow, col: state.gridCol)
+        case .sequence:
+            // Open the 4x4 launchpad sequence builder; the recorded
+            // pattern auto-assigns back to this pad.
+            sequenceBuilderTarget = SequenceBuilderTarget(
+                row: state.gridRow, col: state.gridCol)
         }
     }
 
@@ -176,6 +368,7 @@ struct SamplePadGrid4x4: View {
         case .vocoded:     return "waveform"
         case .transformed: return "wand.and.stars"
         case .loop:        return "repeat"
+        case .edited:      return "pencil"
         }
     }
 
@@ -196,5 +389,151 @@ struct SamplePadGrid4x4: View {
                 coordinator.touchPadUp(row: row, col: col)
             }
         }
+    }
+
+    /// Preview a trimmed portion of a sample. Used by the waveform trimmer.
+    private func previewTrimmed(target: SampleTrimmerTarget) -> (Double, Double) -> Void {
+        { [coordinator] startFraction, endFraction in
+            coordinator.previewTrimmed(
+                packId: target.packId,
+                padIdx: target.padIdx,
+                startFraction: startFraction,
+                endFraction: endFraction
+            )
+        }
+    }
+
+    // MARK: - ChopPicker Data
+
+    /// Saved sequencer patterns available to assign to a pad.
+    private var sequencesForPicker: [SequenceInfo] {
+        appState.sequencerPatternStore.all().map { pattern in
+            SequenceInfo(
+                id: pattern.id,
+                name: pattern.name,
+                trackCount: pattern.tracks.count,
+                stepCount: pattern.stepCount.rawValue
+            )
+        }
+    }
+
+    /// Bundle chops grouped by preset key from the current song.
+    private var bundleChopsForPicker: [String: [Chop]] {
+        guard let bundle = appState.currentBundle else { return [:] }
+        var result: [String: [Chop]] = [:]
+
+        for (key, preset) in bundle.presets {
+            if !preset.chops.isEmpty {
+                result[key] = preset.chops
+            }
+        }
+
+        // Create section chops from timeline if no preset exists
+        if result["sections"] == nil && !bundle.timeline.sections.isEmpty {
+            result["sections"] = bundle.timeline.sections.enumerated().map { idx, section in
+                Chop(
+                    idx: idx,
+                    startSec: section.start,
+                    endSec: section.end,
+                    durationSec: section.end - section.start,
+                    kind: "section",
+                    root: nil,
+                    sectionLabel: section.label,
+                    chordSymbol: nil,
+                    colorHint: nil
+                )
+            }
+        }
+
+        return result
+    }
+
+    /// Sample packs available for the picker.
+    private var samplePacksForPicker: [SamplePackInfo] {
+        var packs: [SamplePackInfo] = []
+
+        // Active sample pack
+        if let active = appState.activeSamplePack {
+            let pads = active.pack.pads.map { pad in
+                SamplePadInfo(padIdx: pad.padIdx, name: pad.name, family: pad.family)
+            }
+            packs.append(SamplePackInfo(
+                id: active.pack.packId,
+                name: active.pack.packId.replacingOccurrences(of: "-", with: " ").capitalized,
+                padCount: pads.count,
+                pads: pads
+            ))
+        }
+
+        // All carousel pages (other packs)
+        for page in appState.carouselPages {
+            if packs.contains(where: { $0.id == page.id }) { continue }
+            if let resolved = appState.resolvedPack(for: page) {
+                let pads = resolved.pack.pads.map { pad in
+                    SamplePadInfo(padIdx: pad.padIdx, name: pad.name, family: pad.family)
+                }
+                packs.append(SamplePackInfo(
+                    id: resolved.pack.packId,
+                    name: page.displayName,
+                    padCount: pads.count,
+                    pads: pads
+                ))
+            }
+        }
+
+        return packs
+    }
+
+    /// Curated catalog packs not yet resolved into the picker (not
+    /// downloaded) — surfaced as download rows so the user can pull
+    /// them inline instead of leaving for the Library.
+    private var downloadablePacksForPicker: [DownloadablePackInfo] {
+        let present = Set(samplePacksForPicker.map { $0.id })
+        return appState.curatedCatalog
+            .filter { !present.contains($0.packId) }
+            .map { entry in
+                DownloadablePackInfo(
+                    id: entry.packId,
+                    name: entry.name,
+                    family: entry.family,
+                    padCount: entry.padCount
+                )
+            }
+    }
+
+    /// packIds with an in-flight (not-complete) curated download.
+    private var downloadingPackIds: Set<String> {
+        Set(appState.curatedDownloads.values
+            .filter { !$0.isComplete }
+            .map { $0.packId })
+    }
+
+    /// Handle selection from the ChopPickerSheet.
+    private func handleChopSelection(_ ref: ChopReference, target: (row: Int, col: Int)) {
+        print("[SamplePadGrid4x4] handleChopSelection called with ref: \(ref), target: \(target)")
+        switch ref {
+        case .packPad(let packId, let padIdx):
+            print("[SamplePadGrid4x4] Assigning packPad - packId: \(packId), padIdx: \(padIdx)")
+            coordinator.assignPadFromPack(
+                targetRow: target.row,
+                targetCol: target.col,
+                sourcePackId: packId,
+                sourcePadIdx: padIdx
+            )
+        case .sequence(let patternId):
+            coordinator.assignSequence(
+                targetRow: target.row,
+                targetCol: target.col,
+                patternId: patternId
+            )
+        case .bundleChop, .localSample, .customURL:
+            print("[SamplePadGrid4x4] Unhandled ref type: \(ref)")
+            break
+        }
+    }
+
+    /// Preview a chop reference.
+    private func previewChopReference(_ ref: ChopReference) {
+        appState.previewChopReference(ref)
     }
 }

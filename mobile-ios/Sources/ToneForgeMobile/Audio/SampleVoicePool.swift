@@ -340,6 +340,81 @@ public final class SampleVoicePool: ObservableObject {
     }
     #endif
 
+    /// Fire a segment of a sample buffer. Used by the trimmer preview to
+    /// play only the selected portion. Plays immediately (no quantize).
+    /// Creates a slice buffer on the fly — acceptable for UI preview,
+    /// not intended for latency-critical performance paths.
+    #if canImport(AVFoundation)
+    @discardableResult
+    public func triggerSegment(
+        _ req: SampleTrigger,
+        buffer: AVAudioPCMBuffer,
+        startFraction: Double,
+        endFraction: Double
+    ) -> Int? {
+        guard isAttached else { return nil }
+        guard startFraction < endFraction else { return nil }
+
+        let totalFrames = Int(buffer.frameLength)
+        let startFrame = Int(Double(totalFrames) * startFraction)
+        let frameCount = Int(Double(totalFrames) * (endFraction - startFraction))
+        guard frameCount > 0 else { return nil }
+
+        // Create a sliced buffer containing only the selected frames
+        guard let format = buffer.format as AVAudioFormat?,
+              let slicedBuffer = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(frameCount)
+              )
+        else { return nil }
+
+        slicedBuffer.frameLength = AVAudioFrameCount(frameCount)
+
+        // Copy sample data from source to slice
+        let channelCount = Int(format.channelCount)
+        for ch in 0..<channelCount {
+            if let src = buffer.floatChannelData?[ch],
+               let dst = slicedBuffer.floatChannelData?[ch] {
+                for i in 0..<frameCount {
+                    dst[i] = src[startFrame + i]
+                }
+            }
+        }
+
+        // Choke any existing voice for this pad
+        for i in slots.indices
+        where slots[i].isActive && slots[i].padKey == req.padKey {
+            releaseSlot(i)
+        }
+
+        let idx = allocate()
+        var slot = slots[idx]
+
+        slot.fadeTask?.cancel()
+        slot.fadeTask = nil
+        slot.pendingPlayItem?.cancel()
+        slot.pendingPlayItem = nil
+        slot.player.stop()
+
+        slot.padKey = req.padKey
+        slot.chokeGroup = nil
+        slot.isActive = true
+        slot.isLooping = false
+        slot.startedAtHostTime = mach_absolute_time()
+
+        let linear = Float(pow(10.0, req.gainDb / 20.0))
+        slot.mixer.outputVolume = max(0, min(2, linear))
+        applyEffects(req.effects.clamped(), to: slot)
+
+        slot.player.scheduleBuffer(slicedBuffer, at: nil, options: [.interrupts], completionHandler: nil)
+        slot.player.play()
+
+        slots[idx] = slot
+        refreshRingingPadKeys()
+        return idx
+    }
+    #endif
+
     // MARK: - Release / query
 
     /// Stop every active voice belonging to `padKey` with a 20 ms

@@ -1,0 +1,247 @@
+{
+ "name": "Deadly Roulette",
+ "detected_type": "guitar",
+ "summary": "Detected: drums, synth, bass, guitar, vocals",
+ "duration": 159.29469387755103,
+ "attested": true,
+ "deep_analysis": true,
+ "attestation_source": "curated",
+ "artist": "Kevin MacLeod",
+ "license": "CC-BY",
+ "license_url": "https://creativecommons.org/licenses/by/4.0/",
+ "source_url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Deadly%20Roulette.mp3",
+ "attribution": "\u201cDeadly Roulette\u201d by Kevin MacLeod (CC BY), https://incompetech.com/music/royalty-free/mp3-royaltyfree/Deadly%20Roulette.mp3",
+ "device_id": "2132e57b-a271-4ed8-8e3f-f88d917a2be7",
+ "id": "69441871fed548d7b7c2ee379020b565",
+ "timestamp": "2026-07-13T08:53:57.118619",
+ "result": {
+  "success": true,
+  "filename": "deadly-roulette.mp3",
+  "source_name": "deadly-roulette.mp3",
+  "source_url": null,
+  "duration_sec": 159.29469387755103,
+  "sample_rate": 22050,
+  "tempo_bpm": 103.44827586206927,
+  "detected_key": "C major",
+  "tuning_offset_cents": 3.0,
+  "detected_type": "guitar",
+  "guitar": {
+   "descriptor": {
+    "source": {
+     "kind": "isolated_guitar",
+     "duration_sec": 159.29469387755103,
+     "sample_rate": 22050,
+     "filename": "toneforge_remote_zjsih_fe.mp3"
+    },
+    "guitar": {
+     "pickup_brightness": 0.07366513751313031,
+     "playing_style": "chord_riff",
+     "estimated_tuning": "unknown"
+    },
+    "amp": {
+     "family": "bogner",
+     "gain": 0.6916349457156188,
+     "voicing": {
+      "bass": 0.75,
+      "mid": 0.3173348487301422,
+      "treble": 0.3230967857020652,
+      "presence": 0.2837514993913105,
+      "mid_scoop": 1.0
+     },
+     "alternates": [
+      {
+       "family": "soldano",
+       "score": 0.36757764594749154
+      }
+     ]
+    },
+    "cab": {
+     "configuration": "4x12",
+     "speaker_character": "alnico_blue_like",
+     "mic_position": "on_axis_cap"
+    },
+    "effects": {
+     "overdrive_pedal": null,
+     "compressor": {
+      "amount": 0.616758033023393,
+      "character": "studio"
+     },
+     "modulation": null,
+     "delay": {
+      "type": "tape",
+      "time_ms": 580.4988662131519,
+      "feedback": 0.42048439113203967,
+      "mix": 0.33638751290563174
+     },
+     "reverb": {
+      "type": "plate",
+      "size": 0.3879562256887319,
+      "mix": 0.26426890702231787
+     }
+    },
+    "confidence": {
+     "amp_family": 0.4499998707759362,
+     "gain": 0.6396030826646324,
+     "cab": 0.5500748892751919,
+     "effects": 0.6009162538716896
+    },
+    "version": "0.1.0"
+   }
+  },
+  "bass": null,
+  "synth": null,
+  "drums": null,
+  "descriptor": {
+   "source": {
+    "kind": "isolated_guitar",
+    "duration_sec": 159.29469387755103,
+    "sample_rate": 22050,
+    "filename": "toneforge_remote_zjsih_fe.mp3"
+   },
+   "guitar": {
+    "pickup_brightness": 0.07366513751313031,
+    "playing_style": "chord_riff",
+    "estimated_tuning": "unknown"
+   },
+   "amp": {
+    "family": "bogner",
+    "gain": 0.6916349457156188,
+    "voicing": {
+     "bass": 0.75,
+     "mid": 0.3173348487301422,
+     "treble": 0.3230967857020652,
+     "presence": 0.2837514993913105,
+     "mid_scoop": 1.0
+    },
+    "alternates": [
+     {
+      "family": "soldano",
+      "score": 0.36757764594749154
+     }
+    ]
+   },
+   "cab": {
+    "configuration": "4x12",
+    "speaker_character": "alnico_blue_like",
+    "mic_position": "on_axis_cap"
+   },
+   "effects": {
+    "overdrive_pedal": null,
+    "compressor": {
+     "amount": 0.616758033023393,
+     "character": "studio"
+    },
+    "modulation": null,
+    "delay": {
+     "type": "tape",
+     "time_ms": 580.4988662131519,
+     "feedback": 0.42048439113203967,
+     "mix": 0.33638751290563174
+    },
+    "reverb": {
+     "type": "plate",
+     "size": 0.3879562256887319,
+     "mix": 0.26426890702231787
+    }
+   },
+   "confidence": {
+    "amp_family": 0.4499998707759362,
+    "gain": 0.6396030826646324,
+    "cab": 0.5500748892751919,
+    "effects": 0.6009162538716896
+   },
+   "version": "0.1.0"
+  },
+  "stems_paths": {
+   "drums": "/api/admin/serve-file?path=/opt/toneforge/backend/data/.toneforge/stems/de451d5ce38f/drums.wav",
+   "bass": "/api/admin/serve-file?path=/opt/toneforge/backend/data/.toneforge/stems/de451d5ce38f/bass.wav",
+   "guitar": "/api/admin/serve-file?path=/opt/toneforge/backend/data/.toneforge/stems/de451d5ce38f/guitar.wav",
+   "vocals": "/api/admin/serve-file?path=/opt/toneforge/backend/data/.toneforge/stems/de451d5ce38f/vocals.wav"
+  },
+  "processing_time": 105.1665289402008,
+  "total_time_sec": 105.1665289402008,
+  "profiling": {
+   "total_ms": 105166.5289402008,
+   "stages": {
+    "stem_separation": {
+     "started_ms": 0.0,
+     "finished_ms": 13573.47,
+     "duration_ms": 13573.46,
+     "gpu_used": true
+    },
+    "midi_extraction.bass": {
+     "started_ms": 13574.25,
+     "finished_ms": 39308.33,
+     "duration_ms": 25734.08
+    },
+    "midi_extraction.drums": {
+     "started_ms": 13574.13,
+     "finished_ms": 41505.96,
+     "duration_ms": 27931.83
+    },
+    "midi_extraction.vocals": {
+     "started_ms": 13574.44,
+     "finished_ms": 41766.46,
+     "duration_ms": 28192.02
+    }
+   },
+   "audio_duration_sec": 159.29469387755103,
+   "processing_ratio": 0.6602010800249364,
+   "extraction_time_sec": 110.23300075531006
+  },
+  "extraction_time_sec": 110.23300075531006,
+  "device": {
+   "device_name": "Apple Silicon GPU"
+  },
+  "midi_stems": {
+   "bass": {
+    "filename": "bass.mid",
+    "note_count": 403,
+    "duration_seconds": 159.29469387755103,
+    "extraction_tempo_bpm": 103.359375,
+    "pitch_range": [
+     24,
+     65
+    ],
+    "method": "pyin_dsp_octave_validated_gap_filled",
+    "notes_per_second": 2.529902222040013
+   },
+   "drums": {
+    "filename": "drums.mid",
+    "note_count": 1072,
+    "duration_seconds": 159.29469387755103,
+    "extraction_tempo_bpm": 103.359375,
+    "pitch_range": [
+     36,
+     42
+    ],
+    "method": "onset_detection",
+    "notes_per_second": 6.729665464086586
+   },
+   "vocals": {
+    "filename": "vocals.mid",
+    "note_count": 2,
+    "duration_seconds": 159.29469387755103,
+    "extraction_tempo_bpm": 120.0,
+    "pitch_range": [
+     67,
+     72
+    ],
+    "method": "hca_polyphonic",
+    "notes_per_second": 0.012555346015086913
+   },
+   "guitar": {
+    "filename": "other.mid",
+    "note_count": 721,
+    "duration_seconds": 159.29469387755103,
+    "extraction_tempo_bpm": 120.0,
+    "pitch_range": [
+     38,
+     96
+    ],
+    "method": "coreml_gpu",
+    "notes_per_second": 4.526202238438832
+   }
+  }
+ }
+}

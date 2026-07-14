@@ -1,0 +1,38 @@
+{
+ "sections": [
+  {
+   "type": "intro",
+   "start_time": 0.0,
+   "end_time": 12.5,
+   "duration": 12.5,
+   "confidence": 0.8,
+   "energy_mean": 0.2,
+   "energy_peak": 0.4,
+   "note_density": 1.1,
+   "guidance_mode": "chord",
+   "guidance_confidence": 0.7,
+   "guidance_reason": "sparse harmonic bed",
+   "dominant_stem": "other",
+   "structural_role": "opening",
+   "bpm": 120.0
+  },
+  {
+   "type": "chorus",
+   "start_time": 12.5,
+   "end_time": 40.0,
+   "confidence": 0.9,
+   "guidance_mode": "lead",
+   "landmark_notes": [
+    {"pitch": 64, "start": 13.0, "end": 13.5, "velocity": 100}
+   ],
+   "debug_features": []
+  }
+ ],
+ "transitions": [],
+ "duration": 40.0,
+ "tempo_bpm": 120.0,
+ "time_signature": [4, 4],
+ "key": "A minor",
+ "energy_curve": [0.1, 0.2, 0.5, 0.9, 0.6],
+ "energy_curve_sr": 2.0
+}

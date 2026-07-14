@@ -23,6 +23,7 @@ public enum PadBadge: String, Sendable, Equatable, Codable {
     case vocoded      // produced by the vocoder (P5)
     case transformed  // has a non-empty PadTransform chain (P4)
     case loop         // pad loops while held/latched
+    case edited       // effects or trim modified from baseline
 }
 
 /// Everything the grid painter needs to draw one pad. Kept UIKit-free

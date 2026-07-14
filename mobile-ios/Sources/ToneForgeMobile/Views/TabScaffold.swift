@@ -11,13 +11,24 @@
 
 import SwiftUI
 
-struct TabScaffold<Content: View>: View {
+struct TabScaffold<Content: View, Accessory: View>: View {
     @EnvironmentObject private var appState: AppState
 
-    var showsTransport: Bool = true
-    @ViewBuilder var content: () -> Content
+    var showsTransport: Bool
+    var accessory: () -> Accessory
+    var content: () -> Content
 
     @State private var showSettings = false
+
+    init(
+        showsTransport: Bool = true,
+        @ViewBuilder accessory: @escaping () -> Accessory,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.showsTransport = showsTransport
+        self.accessory = accessory
+        self.content = content
+    }
 
     var body: some View {
         let hasSong = appState.currentBundle != nil
@@ -31,7 +42,8 @@ struct TabScaffold<Content: View>: View {
                 tempoBpm: appState.currentBundle?.meta.tempoBpm,
                 analysisId: appState.currentBundle?.analysisId,
                 onEject: hasSong ? { appState.ejectSong() } : nil,
-                onSettings: { showSettings = true }
+                onSettings: { showSettings = true },
+                accessory: accessory
             )
 
             content()
@@ -45,5 +57,18 @@ struct TabScaffold<Content: View>: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .background(TFTheme.background.ignoresSafeArea())
         .sheet(isPresented: $showSettings) { SettingsView() }
+    }
+}
+
+// MARK: - Convenience initializer (no accessory)
+
+extension TabScaffold where Accessory == EmptyView {
+    init(
+        showsTransport: Bool = true,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.showsTransport = showsTransport
+        self.accessory = { EmptyView() }
+        self.content = content
     }
 }

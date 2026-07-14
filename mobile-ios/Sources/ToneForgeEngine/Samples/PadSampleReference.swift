@@ -16,11 +16,14 @@ public enum PadSampleReference: Codable, Hashable, Sendable {
     case packPad(packId: String, padIdx: Int)
     /// A locally-created sample (PadSampleStore payload).
     case localSample(id: UUID)
+    /// A saved sequencer pattern (SequencerPatternStore). Pressing the pad
+    /// plays the whole sequence.
+    case sequence(patternId: UUID)
 
     // MARK: - Codable (frozen wire shape)
 
     private enum CodingKeys: String, CodingKey {
-        case type, packId, padIdx, id
+        case type, packId, padIdx, id, patternId
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,6 +37,8 @@ public enum PadSampleReference: Codable, Hashable, Sendable {
             )
         case "localSample":
             self = .localSample(id: try c.decode(UUID.self, forKey: .id))
+        case "sequence":
+            self = .sequence(patternId: try c.decode(UUID.self, forKey: .patternId))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type, in: c,
@@ -52,6 +57,9 @@ public enum PadSampleReference: Codable, Hashable, Sendable {
         case .localSample(let id):
             try c.encode("localSample", forKey: .type)
             try c.encode(id, forKey: .id)
+        case .sequence(let patternId):
+            try c.encode("sequence", forKey: .type)
+            try c.encode(patternId, forKey: .patternId)
         }
     }
 }

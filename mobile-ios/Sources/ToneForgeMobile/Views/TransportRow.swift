@@ -39,6 +39,13 @@ struct TransportRow: View {
             }
             .accessibilityLabel("Next section")
 
+            // Stop all samples
+            stopAllButton
+
+            // Record toggle
+            RecordToggle()
+                .fixedSize(horizontal: true, vertical: false)
+
             Spacer()
 
             Text(readout)
@@ -88,5 +95,23 @@ struct TransportRow: View {
     private static func formatTime(_ s: Double) -> String {
         let total = max(0, Int(s.rounded(.down)))
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    // MARK: - Stop All
+
+    private var stopAllButton: some View {
+        // Tint red when a loop is known-ringing; otherwise dim. Always
+        // tappable — one-shot tails aren't tracked in ringingPadKeys
+        // (slots stay active after the buffer ends), so the button must
+        // stay enabled to panic-stop them.
+        let hasRinging = !appState.ringingPadKeys.isEmpty
+        return Button {
+            appState.stopAllSamplePads()
+        } label: {
+            Image(systemName: "stop.fill")
+                .font(.title3)
+                .foregroundStyle(hasRinging ? Color.red : TFTheme.textSecondary)
+        }
+        .accessibilityLabel("Stop all samples")
     }
 }

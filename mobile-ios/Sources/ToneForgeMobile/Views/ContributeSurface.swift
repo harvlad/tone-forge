@@ -31,39 +31,23 @@ struct ContributeSurface: View {
     /// Sample mode's escape hatch to the advanced 8×8 quadrant grid
     /// (local assignments outside the pack quadrant live there).
     @State private var showAdvancedGrid = false
-    /// Instrument settings sheet (D-022 Phase 8).
-    @State private var showInstrumentSheet = false
+    /// Toggle between Pads and Sequencer in sample mode.
+    @State private var showSequencer = false
 
     var body: some View {
         let hasSong = appState.currentBundle != nil
 
-        // Single control row (was three): mode segments + pack strip
-        // + stop-all + the sample-mode grid toggle. Merged so the tab
-        // fits a phone screen without scrolling.
+        // Control row: pad/sequencer + advanced-grid toggles.
         HStack(spacing: 8) {
-            contributeModeSegment(title: "Instrument", mode: .hybrid)
-            if coordinator.appMode == .hybrid {
-                instrumentSettingsButton
-            }
-            contributeModeSegment(title: "Samples", mode: .sample)
-            PackPicker(
-                pages: appState.carouselPages,
-                activePackId: appState.activeSamplePack?.pack.packId,
-                onSelect: { appState.activateCarouselPage(packId: $0) },
-                onOpen: { onOpenBrowse(nil) }
-            )
-            stopAllButton
-            if coordinator.appMode == .sample {
-                advancedGridToggle
-            }
+            Spacer()
+            sequencerToggle
+            advancedGridToggle
         }
         .padding(.horizontal, 12)
-        .sheet(isPresented: $showInstrumentSheet) {
-            InstrumentPickerSheet()
-        }
 
         if hasSong {
-            // Sections + record pill share one row (layers context).
+            // Sections + layer slot share one row (layers context).
+            // Transport (play/stop/record) moved to quantize row.
             HStack(spacing: 0) {
                 SectionChips(
                     sections: appState.currentBundle?.timeline.sections ?? [],
@@ -74,10 +58,8 @@ struct ContributeSurface: View {
                     onSeek: { t in appState.seekAndPlay(to: t) },
                     onGateToggle: { label in toggleGate(label: label) }
                 )
+                Spacer()
                 LayerSlotToggle()
-                    .padding(.trailing, 8)
-                RecordToggle()
-                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.trailing, 12)
             }
             .frame(height: 44)
@@ -85,18 +67,16 @@ struct ContributeSurface: View {
 
         padSurface
 
-        // Quantize chips; in the sketch context the record pill
-        // shares this row (no sections row to live on).
+        // Quantize chips row.
         HStack(spacing: 8) {
             QuantizeControls(
                 quantize: quantizeBinding,
                 hold: $sampleSettings.holdMode,
                 beatBar: $sampleSettings.beatBarMode
             )
+            Spacer()
             if !hasSong {
                 LayerSlotToggle()
-                RecordToggle()
-                    .fixedSize(horizontal: true, vertical: false)
             }
         }
         .padding(.horizontal, 12)
@@ -121,40 +101,42 @@ struct ContributeSurface: View {
 
     @ViewBuilder
     private var padSurface: some View {
-        if coordinator.appMode == .sample && !showAdvancedGrid {
-            SamplePadGrid4x4(coordinator: coordinator)
-                .padding(.horizontal, 12)
-        } else {
+        if coordinator.appMode == .sample && showSequencer {
+            let bpm = appState.currentBundle?.meta.tempoBpm ?? sketchSettings.tempoBpm
+            SequencerTabView(
+                eventBus: appState.contributionBus,
+                songBPM: bpm,
+                currentBeat: appState.songSeconds * bpm / 60,
+                isPlaying: appState.isPlaying,
+                analysisId: appState.currentBundle?.analysisId ?? ""
+            )
+            .padding(.horizontal, 12)
+        } else if showAdvancedGrid {
+            // 8x8 advanced grid for power users
             ModeGridView(coordinator: coordinator)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            // 4x4 grid for both Instrument and Sample modes
+            SamplePadGrid4x4(coordinator: coordinator)
+                .padding(.horizontal, 12)
         }
     }
 
-    // MARK: - Instrument | Samples switch
-
-    private func contributeModeSegment(title: String, mode: AppMode) -> some View {
+    /// Toggle between Pads and Sequencer views in sample mode.
+    private var sequencerToggle: some View {
         Button {
-            coordinator.setMode(mode)
+            showSequencer.toggle()
+            if showSequencer { showAdvancedGrid = false }
         } label: {
-            Text(title)
+            Image(systemName: showSequencer
+                ? "pianokeys" : "slider.vertical.3")
                 .font(TFTheme.chipFont)
-                .tfChip(active: coordinator.appMode == mode)
+                .tfChip(active: showSequencer)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title) mode")
-    }
-
-    /// Gear button to open the Instrument settings sheet (D-022 Phase 8).
-    private var instrumentSettingsButton: some View {
-        Button {
-            showInstrumentSheet = true
-        } label: {
-            Image(systemName: "gearshape.fill")
-                .font(.caption)
-                .foregroundStyle(TFTheme.textSecondary)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Instrument settings")
+        .accessibilityLabel(showSequencer
+            ? "Switch to pad grid"
+            : "Switch to sequencer")
     }
 
     /// Grid-icon toggle between the named 4×4 and the advanced 8×8
@@ -162,6 +144,7 @@ struct ContributeSurface: View {
     private var advancedGridToggle: some View {
         Button {
             showAdvancedGrid.toggle()
+            if showAdvancedGrid { showSequencer = false }
         } label: {
             Image(systemName: showAdvancedGrid
                 ? "square.grid.2x2" : "square.grid.4x3.fill")

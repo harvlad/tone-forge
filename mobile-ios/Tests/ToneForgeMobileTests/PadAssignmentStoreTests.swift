@@ -138,4 +138,22 @@ final class PadAssignmentStoreTests: XCTestCase {
         )
         XCTAssertEqual(re, decoded)
     }
+
+    func testPadSampleReferenceSequenceCase() throws {
+        // Additive .sequence case (D-023): decode by wire shape + round-trip.
+        let id = UUID(uuidString: "6F9B2C4D-1A2B-4C3D-8E5F-0123456789AB")!
+        let json = """
+        [{"type":"sequence","patternId":"6F9B2C4D-1A2B-4C3D-8E5F-0123456789AB"}]
+        """
+        let decoded = try JSONDecoder().decode(
+            [PadSampleReference].self, from: Data(json.utf8)
+        )
+        XCTAssertEqual(decoded, [.sequence(patternId: id)])
+
+        let re = try JSONDecoder().decode(
+            [PadSampleReference].self,
+            from: try JSONEncoder().encode(decoded)
+        )
+        XCTAssertEqual(re, decoded)
+    }
 }

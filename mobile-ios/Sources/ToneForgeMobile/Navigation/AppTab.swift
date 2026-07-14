@@ -74,10 +74,8 @@ public enum TabModePolicy {
         case .jam:
             return .jamInKey
         case .contribute:
-            if let last = AppMode(rawValue: lastContributeModeRaw),
-               last == .sample || last == .hybrid {
-                return last
-            }
+            // Instrument (.hybrid) mode retired — Contribute always
+            // uses .sample. Enum/router kept dormant.
             return .sample
         case .mixer, .library:
             return nil

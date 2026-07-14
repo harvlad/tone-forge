@@ -11,12 +11,8 @@ import Foundation
 public enum AppConfig {
 
     /// Default backend base URL used when the user has never set one.
-    #if DEBUG
-    public static let defaultBackendURL = URL(string: "http://Matts-MacBook-Pro.local:8000")!
-    #else
-    // Placeholder production host — update before shipping.
-    public static let defaultBackendURL = URL(string: "https://api.toneforge.app")!
-    #endif
+    /// Beta: Hetzner VPS. Update to https://api.toneforge.app when domain is ready.
+    public static let defaultBackendURL = URL(string: "http://62.238.54.81:8000")!
 
     /// DMCA / copyright takedown contact surfaced in Settings → Legal.
     public static let takedownEmail = "copyright@toneforge.app"

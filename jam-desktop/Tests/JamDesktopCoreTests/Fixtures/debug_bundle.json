@@ -1,0 +1,66 @@
+{
+  "session_id": "abc123",
+  "audio": {
+    "duration_s": 245.5,
+    "sample_rate": 44100
+  },
+  "understanding": {
+    "sections": [
+      {
+        "start_s": 0.0,
+        "end_s": 12.5,
+        "label": "intro",
+        "guidance_mode": "chord",
+        "guidance_confidence": 0.82,
+        "guidance_reason": "high chord density, low lead activity",
+        "dominant_stem": "other",
+        "bpm": 120.0,
+        "landmark_notes": [
+          { "pitch": 60.0, "start": 0.5, "end": 1.0, "velocity": 96 },
+          { "pitch": 72.0, "start": 2.0, "end": 2.5, "velocity": 80 }
+        ],
+        "debug_features": [
+          {
+            "stem_name": "other",
+            "chord_density_per_s": 0.42,
+            "monophonic_ratio": 0.1,
+            "repetition_score": 0.75,
+            "repetition_period_beats": null,
+            "polyphony_score": 0.9,
+            "lead_activity_score": 0.05,
+            "pitch_class_diversity": 0.6,
+            "voiced_frame_ratio": 0.88,
+            "note_count": 42
+          },
+          {
+            "stem_name": "vocals",
+            "chord_density_per_s": 0.0,
+            "monophonic_ratio": 0.95,
+            "repetition_score": 0.2,
+            "repetition_period_beats": 4.0,
+            "polyphony_score": 0.05,
+            "lead_activity_score": 0.8,
+            "pitch_class_diversity": 0.4,
+            "voiced_frame_ratio": 0.7,
+            "note_count": 18
+          }
+        ]
+      },
+      {
+        "start_s": 12.5,
+        "end_s": 40.0,
+        "label": "verse",
+        "guidance_mode": "riff"
+      }
+    ],
+    "chords": [
+      { "start_s": 0.0, "end_s": 2.1, "symbol": "C" },
+      { "start_s": 2.1, "end_s": 4.0, "symbol": "Fmaj7" }
+    ],
+    "chords_beat_snapped": [
+      { "start_s": 0.0, "end_s": 2.0, "symbol": "C" },
+      { "start_s": 2.0, "end_s": 4.0, "symbol": "Fmaj7" },
+      { "start_s": 4.0, "end_s": 6.0, "symbol": "Bm" }
+    ]
+  }
+}

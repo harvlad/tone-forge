@@ -31,6 +31,11 @@ enum TFTheme {
     /// Hairline strokes around cards and chips.
     static let stroke = Color.white.opacity(0.08)
 
+    /// Fader/slider accent — the mockup's purple channel sliders.
+    static let faderTint = color(hex: 0x8B5CF6)
+    /// Active segmented-control fill (Mixer/FX segment highlight).
+    static let segmentActiveFill = color(hex: 0x1E3A8A)
+
     static let textPrimary = Color.white.opacity(0.92)
     static let textSecondary = Color.white.opacity(0.55)
 
@@ -94,5 +99,34 @@ extension View {
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(TFTheme.stroke, lineWidth: 1)
             )
+    }
+
+    /// Library list row card — the mockup's spaced, rounded rows.
+    /// `active` paints the purple selected treatment (currently loaded
+    /// song / active pack / playing layer).
+    func tfLibraryCard(active: Bool = false) -> some View {
+        self
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                active ? TFTheme.faderTint.opacity(0.22) : TFTheme.surface,
+                in: RoundedRectangle(cornerRadius: 14)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(
+                        active ? TFTheme.faderTint.opacity(0.85) : TFTheme.stroke,
+                        lineWidth: active ? 1.5 : 1
+                    )
+            )
+    }
+
+    /// List-row chrome for library cards: no separators, transparent
+    /// row fill (the card supplies its own), tight vertical gaps.
+    func tfLibraryRowChrome() -> some View {
+        self
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
     }
 }

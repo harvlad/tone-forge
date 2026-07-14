@@ -156,12 +156,40 @@ public final class AppState: ObservableObject {
     private static func loadBackendBaseURL() -> URL {
         if let stored = UserDefaults.standard.string(forKey: backendURLDefaultsKey),
            let url = URL(string: stored) {
+            // Purge stale dev/LAN overrides (a MacBook's Bonjour or
+            // private-network address that's unreachable off the dev
+            // LAN). Keeps public overrides. Ensures a device never
+            // gets stranded on a dead dev host across rebuilds.
+            if isDevHost(url) {
+                UserDefaults.standard.removeObject(forKey: backendURLDefaultsKey)
+                return AppConfig.defaultBackendURL
+            }
             return url
         }
         // Build-configuration default: dev host Bonjour address in
         // DEBUG (overridable via the DEBUG-only backend fields),
         // production host in release.
         return AppConfig.defaultBackendURL
+    }
+
+    /// True when `url`'s host is a local/dev address: Bonjour `.local`,
+    /// `localhost`, a bare hostname (no dots), or an RFC-1918 private
+    /// IPv4 range. Public hosts (the VPS, a real domain) return false.
+    private static func isDevHost(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        if host == "localhost" || host.hasSuffix(".local") { return true }
+        // Bare hostname with no dot (e.g. a machine name) — not routable
+        // off the local network.
+        if !host.contains(".") { return true }
+        // RFC-1918 private IPv4 ranges.
+        let octets = host.split(separator: ".").compactMap { Int($0) }
+        if octets.count == 4 {
+            if octets[0] == 10 { return true }
+            if octets[0] == 192 && octets[1] == 168 { return true }
+            if octets[0] == 172 && (16...31).contains(octets[1]) { return true }
+            if octets[0] == 127 { return true }
+        }
+        return false
     }
 
     private static func saveBackendBaseURL(_ url: URL) {
@@ -300,6 +328,8 @@ public final class AppState: ObservableObject {
     // the scheduler's local-buffer path.
     public let padSampleStore = PadSampleStore()
     public let padAssignmentStore = PadAssignmentStore()
+    /// Saved sequencer patterns, assignable to pads.
+    public let sequencerPatternStore = SequencerPatternStore()
     public lazy var micRecorder: MicRecorder =
         MicRecorder(session: audioEngine.session)
 
@@ -616,6 +646,11 @@ public final class AppState: ObservableObject {
         // the restored tab now that the coordinator is live.
         selectedTab = AppTab(rawValue: sampleSettings.appTabRaw) ?? .contribute
         wireLaunchpad()
+
+        // Background-survivable analysis completion. Wires notification
+        // routing, resumes any jobs orphaned by a kill/relaunch, and
+        // flushes a finished song waiting to open.
+        JobCompletionCenter.shared.boot(appState: self)
     }
 
     /// P2: Launchpad Pro MK3 over CoreMIDI. Pad events publish on the
@@ -1048,10 +1083,10 @@ public final class AppState: ObservableObject {
 
     /// Make sure `packId`'s buffers are resident in the scheduler
     /// without changing the active pack. Used before multi-pack layer
-    /// replay. Silently skips unresolvable packs (deleted cache,
-    /// different song's DNA) — those events degrade to padNotFound,
-    /// matching the pre-multi-pack behavior.
-    private func ensurePackLoaded(packId: String) {
+    /// replay and sample preview. Silently skips unresolvable packs
+    /// (deleted cache, different song's DNA) — those events degrade to
+    /// padNotFound, matching the pre-multi-pack behavior.
+    public func ensurePackLoaded(packId: String) {
         guard !sampleScheduler.isPackLoaded(packId: packId) else { return }
         if let entry = songDnaPacks.first(where: { $0.pack.pack.packId == packId }) {
             try? sampleScheduler.preloadPack(
@@ -1084,6 +1119,18 @@ public final class AppState: ObservableObject {
         guard let bank = sampleBank else { return nil }
         return (try? bank.loadBundled(packId: packId))
             ?? (try? bank.loadCached(packId: packId))
+    }
+
+    /// Pad manifest info (name, family, loops) for a pack pad in any
+    /// resolvable pack — used to paint a foreign-pack pad pinned to a
+    /// single grid cell (multi-pack grids). nil = pack/pad unresolvable.
+    public func packPadInfo(
+        packId: String, padIdx: Int
+    ) -> (name: String, family: SampleFamily, loops: Bool)? {
+        guard let resolved = resolvedPack(forPackId: packId),
+              let pad = resolved.pack.pads.first(where: { $0.padIdx == padIdx })
+        else { return nil }
+        return (pad.name, pad.family, pad.loopPointSec != nil)
     }
 
     /// Drop the current song's DNA packs from the scheduler — their
@@ -1126,6 +1173,20 @@ public final class AppState: ObservableObject {
                 await activate(bundle: cached)
             } else {
                 loadingError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Open a background-finished analysis: load its bundle and flip to
+    /// a performance tab. Called by JobCompletionCenter when a job
+    /// completes out-of-band (poll/relaunch) or a completion
+    /// notification is tapped — the single entry point that turns a
+    /// finished history id into a playing song.
+    public func openFinishedSong(historyId: String) {
+        Task { @MainActor in
+            await loadBundle(analysisId: historyId)
+            if loadingError == nil {
+                showPerformanceTab()
             }
         }
     }
@@ -1481,6 +1542,10 @@ public final class AppState: ObservableObject {
             }
         case .active:
             usbLaunchpad?.resume()
+            // A job that finished while we were backgrounded queues its
+            // song; opening it here (rather than mid-poll) guarantees the
+            // UI is live when the performance tab flips in.
+            JobCompletionCenter.shared.flushPendingOpen()
         case .inactive:
             break
         @unknown default:
@@ -1721,6 +1786,7 @@ public final class AppState: ObservableObject {
     /// packs (loops and tails alike). Stems + pad synth are untouched.
     public func stopAllSamplePads() {
         sampleVoicePool.stopAll()
+        modeCoordinator.sequencePadManager.stopAll()
     }
 
     /// Update the per-song section allowlist. Persists to
@@ -1798,7 +1864,11 @@ public final class AppState: ObservableObject {
     /// recording without the clock advancing would capture
     /// meaningless timestamps. The arm-time seek inserts no gap
     /// marker (the recorder is armed, not yet recording).
-    public func armSessionRecording() {
+    /// - Parameter startTransport: when false, arms the recorder without
+    ///   starting the song transport (or the sketch count-in). Used by the
+    ///   sequencer, whose own clock drives playback — pressing Record there
+    ///   should not kick off the song.
+    public func armSessionRecording(startTransport: Bool = true) {
         layerError = nil
         // Recording at practice speed would capture timestamps
         // skewed against the real-time grid — force 1.0 for the take
@@ -1820,11 +1890,13 @@ public final class AppState: ObservableObject {
                 tempoBpm: sketchSettings.tempoBpm,
                 padMapping: modeCoordinator.currentPadMapping()
             )
-            let barDuration = Double(sketchSettings.timeSigNumerator)
-                * 60.0 / sketchSettings.tempoBpm
-            seek(to: sketchSettings.countInEnabled ? -barDuration : 0)
+            if startTransport {
+                let barDuration = Double(sketchSettings.timeSigNumerator)
+                    * 60.0 / sketchSettings.tempoBpm
+                seek(to: sketchSettings.countInEnabled ? -barDuration : 0)
+            }
         }
-        if !isPlaying {
+        if startTransport, !isPlaying {
             play()
         }
         syncIdleTimer()
@@ -2118,6 +2190,9 @@ public final class AppState: ObservableObject {
                 padBuffers[raw] = sampleScheduler.transformResolver?(
                     base, SampleScheduler.localPackId, raw
                 ) ?? base
+            case .sequence:
+                // Sequences have no single buffer to bounce; skip.
+                continue
             }
         }
 
@@ -2574,5 +2649,124 @@ public final class AppState: ObservableObject {
             layerError = "Export layer: \(error.localizedDescription)"
             return nil
         }
+    }
+}
+
+// MARK: - SequencerPlayerDelegate (D-023)
+
+/// Sounds the sequencer track types that don't route through the pad
+/// bus: bundle chops (slices of the loaded song's stems), local samples,
+/// and custom URLs. Each resolves to a file URL + optional slice window
+/// and fires a gated one-shot through `SampleScheduler`. packPad tracks
+/// never reach here — they publish `padDown/padUp` to the bus directly.
+extension AppState: SequencerPlayerDelegate {
+
+    public func sequencerPlayer(
+        _ player: SequencerPlayer,
+        playBundleChop presetKey: String,
+        chopIndex: Int,
+        velocity: Float
+    ) {
+        fireBundleChopOneShot(presetKey: presetKey, chopIndex: chopIndex, velocity: velocity)
+    }
+
+    public func sequencerPlayer(
+        _ player: SequencerPlayer,
+        playLocalSample id: UUID,
+        velocity: Float
+    ) {
+        fireLocalSampleOneShot(id: id, velocity: velocity)
+    }
+
+    public func sequencerPlayer(
+        _ player: SequencerPlayer,
+        playURL url: URL,
+        startSec: Double?,
+        endSec: Double?,
+        velocity: Float
+    ) {
+        fireURLOneShot(url: url, startSec: startSec, endSec: endSec, velocity: velocity)
+    }
+
+    public func sequencerPlayer(
+        _ player: SequencerPlayer,
+        playPackPad packId: String,
+        padIdx: Int,
+        velocity: Float
+    ) {
+        ensurePackLoaded(packId: packId)
+        // triggerRaw bypasses the contribution guard — this is a
+        // sequencer-driven trigger, not a live user contribution.
+        _ = sampleScheduler.triggerRaw(padIdx: padIdx, packId: packId)
+    }
+}
+
+// MARK: - Chop preview + one-shot firing
+
+extension AppState {
+
+    /// One-shot playback length (seconds) of a pack pad, so preview UI
+    /// can revert its play/stop button when the sound finishes. Loads
+    /// the pack if needed (preview already does this). Returns nil for
+    /// looping pads or if the buffer can't be resolved.
+    public func previewPadDurationSec(packId: String, padIdx: Int) -> Double? {
+        ensurePackLoaded(packId: packId)
+        return sampleScheduler.oneShotDurationSec(packId: packId, padIdx: padIdx)
+    }
+
+    /// Preview a chop reference using the same audio path as playback.
+    /// Reliable while browsing (does not depend on grid assignment):
+    /// packPad plays directly from the pack; other refs use the one-shot
+    /// file engine. This is what the ChopPickerSheet ▶ buttons call.
+    public func previewChopReference(_ ref: ChopReference, velocity: Float = 1.0) {
+        switch ref {
+        case .packPad(let packId, let padIdx):
+            modeCoordinator.previewPadFromPack(packId: packId, padIdx: padIdx)
+        case .bundleChop(let presetKey, let chopIndex, _):
+            fireBundleChopOneShot(presetKey: presetKey, chopIndex: chopIndex, velocity: velocity)
+        case .localSample(let id):
+            fireLocalSampleOneShot(id: id, velocity: velocity)
+        case .customURL(let url, let startSec, let endSec):
+            fireURLOneShot(url: url, startSec: startSec, endSec: endSec, velocity: velocity)
+        case .sequence:
+            break
+        }
+    }
+
+    fileprivate func fireBundleChopOneShot(presetKey: String, chopIndex: Int, velocity: Float) {
+        guard let bundle = currentBundle,
+              let preset = bundle.presets[presetKey],
+              preset.chops.indices.contains(chopIndex),
+              let stemURL = currentStemLocalURLs[preset.stem]
+        else { return }
+        let chop = preset.chops[chopIndex]
+        sampleScheduler.triggerFileOneShot(
+            url: stemURL,
+            startSec: chop.startSec,
+            endSec: chop.endSec,
+            velocity: velocity,
+            cacheKey: "chop:\(bundle.analysisId):\(presetKey):\(chopIndex)"
+        )
+    }
+
+    fileprivate func fireLocalSampleOneShot(id: UUID, velocity: Float) {
+        guard let url = try? padSampleStore.wavURL(id: id) else { return }
+        sampleScheduler.triggerFileOneShot(
+            url: url,
+            startSec: nil,
+            endSec: nil,
+            velocity: velocity,
+            cacheKey: "local:\(id.uuidString)"
+        )
+    }
+
+    fileprivate func fireURLOneShot(url: URL, startSec: Double?, endSec: Double?, velocity: Float) {
+        sampleScheduler.triggerFileOneShot(
+            url: url,
+            startSec: startSec,
+            endSec: endSec,
+            velocity: velocity,
+            cacheKey: "url:\(url.absoluteString):\(startSec ?? 0):\(endSec ?? 0)"
+        )
     }
 }

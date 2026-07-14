@@ -264,6 +264,23 @@ public final class SampleScheduler: ObservableObject {
         }
         return loadedPacks[packId]?.buffers[padIdx]
     }
+
+    /// Playback length (seconds) of a pad's one-shot buffer, for UI
+    /// auto-reset after a preview. Returns nil for looping pads (no
+    /// natural end — they stop only on manual release) or when the pad
+    /// isn't loaded.
+    public func oneShotDurationSec(packId: String, padIdx: Int) -> Double? {
+        guard let entry = loadedPacks[packId],
+              let pad = entry.pack.pack.pads.first(where: { $0.padIdx == padIdx }),
+              let buffer = entry.buffers[padIdx]
+        else { return nil }
+        if pad.loopPointSec != nil || (loopResolver?(packId, padIdx) ?? false) {
+            return nil
+        }
+        let sr = buffer.format.sampleRate
+        guard sr > 0 else { return nil }
+        return Double(buffer.frameLength) / sr
+    }
     #endif
 
     /// Release any ringing voices belonging to `packId` and drop its
@@ -424,6 +441,13 @@ public final class SampleScheduler: ObservableObject {
         guard let baseBuffer = entry.buffers[padIdx] else { return .padNotFound }
         let buffer = transformResolver?(baseBuffer, pid, padIdx) ?? baseBuffer
 
+        // Hold mode retrigger: stop any existing voice for this pad before
+        // firing a new one. This gives "self-choke" behavior — rapid taps
+        // restart the sample instead of stacking voices.
+        if holdMode == .hold, pool.isActive(padKey: padKey) {
+            pool.release(padKey: padKey)
+        }
+
         let loop: Bool = (holdMode == .toggle) && (pad.loopPointSec != nil || effectiveQuantize == .off)
         // hold-mode always one-shot; toggle-mode loops if the pad has
         // a loop point or if quantize is off (short loops).
@@ -484,6 +508,13 @@ public final class SampleScheduler: ObservableObject {
 
         let buffer = transformResolver?(local.buffer, Self.localPackId, padIdx)
             ?? local.buffer
+
+        // Hold mode retrigger: stop any existing voice for this pad before
+        // firing a new one (self-choke).
+        if holdMode == .hold, pool.isActive(padKey: padKey) {
+            pool.release(padKey: padKey)
+        }
+
         let effects = effectsResolver?(Self.localPackId, padIdx, nil) ?? .neutral
         let req = SampleTrigger(
             padKey: padKey,
@@ -629,6 +660,109 @@ public final class SampleScheduler: ObservableObject {
             ))
         }
     }
+
+    // MARK: - Preview with trim bounds
+
+    /// Preview a pad sample with trim bounds. Used by the waveform trimmer
+    /// to audition the selected region. Bypasses quantize and contribution
+    /// guard — this is a UI preview, not a contribution event.
+    #if canImport(AVFoundation)
+    public func previewTrimmed(
+        padIdx: Int,
+        packId: String,
+        startFraction: Double,
+        endFraction: Double
+    ) {
+        guard let entry = loadedPacks[packId],
+              let baseBuffer = entry.buffers[padIdx]
+        else { return }
+
+        let buffer = transformResolver?(baseBuffer, packId, padIdx) ?? baseBuffer
+        let pad = entry.pack.pack.pads.first { $0.padIdx == padIdx }
+        let effects = effectsResolver?(packId, padIdx, pad?.effects)
+            ?? pad?.effects ?? .neutral
+
+        let req = SampleTrigger(
+            padKey: SamplePadKey(packId: packId, padIdx: padIdx),
+            loop: false,
+            chokeGroup: nil,
+            gainDb: pad?.gainDb ?? 0,
+            effects: effects
+        )
+        pool.triggerSegment(
+            req,
+            buffer: buffer,
+            startFraction: startFraction,
+            endFraction: endFraction
+        )
+    }
+    #endif
+
+    // MARK: - One-shot file playback (sequencer delegate)
+
+    #if canImport(AVFoundation)
+    /// Canonical-format buffers for sequencer one-shots, keyed by a
+    /// caller-supplied identity (chop ref, sample id, URL). Sliced
+    /// stems and whole local samples are loaded + converted once here
+    /// and reused across every step that fires them.
+    private var oneShotCache: [String: AVAudioPCMBuffer] = [:]
+
+    /// Play a slice of an audio file as a gated one-shot voice. This is
+    /// the audio path behind `SequencerPlayerDelegate` — bundleChop /
+    /// localSample / customURL sequencer tracks don't route through the
+    /// pad bus, so they land here instead. Loads + caches the
+    /// canonical-format buffer on first use (slicing `startSec..endSec`
+    /// when given), then fires immediately through the voice pool.
+    ///
+    /// - Parameters:
+    ///   - url: source audio file (stem or sample).
+    ///   - startSec/endSec: slice window; pass nil/nil to play the whole
+    ///     file. loadBuffer clamps `endSec` to the file length.
+    ///   - gainDb: base voice gain.
+    ///   - velocity: 0–1 step velocity, folded into gain (0 dB at 1.0).
+    ///   - cacheKey: stable identity so repeated triggers reuse the buffer.
+    public func triggerFileOneShot(
+        url: URL,
+        startSec: Double?,
+        endSec: Double?,
+        gainDb: Double = 0,
+        velocity: Float = 1.0,
+        cacheKey: String
+    ) {
+        let buffer: AVAudioPCMBuffer
+        if let cached = oneShotCache[cacheKey] {
+            buffer = cached
+        } else {
+            let slice: StemSlice? = (startSec != nil || endSec != nil)
+                ? StemSlice(
+                    stemRole: "",
+                    startSec: startSec ?? 0,
+                    endSec: endSec ?? .greatestFiniteMagnitude
+                )
+                : nil
+            guard let loaded = Self.loadBuffer(
+                from: url, slice: slice, target: engine?.canonicalFormat
+            ) else { return }
+            oneShotCache[cacheKey] = loaded
+            buffer = loaded
+        }
+
+        // Velocity → gain trim (0 dB at full velocity, floored at -60).
+        let clampedVel = max(0, min(1, velocity))
+        let velDb = clampedVel > 0.001 ? 20.0 * log10(Double(clampedVel)) : -60.0
+        let padKey = SamplePadKey(
+            packId: "__seq__", padIdx: abs(cacheKey.hashValue % 1_000_000)
+        )
+        let req = SampleTrigger(
+            padKey: padKey,
+            loop: false,
+            chokeGroup: nil,
+            gainDb: gainDb + velDb,
+            effects: .neutral
+        )
+        pool.trigger(req, buffer: buffer, at: nil)
+    }
+    #endif
 
     // MARK: - Private helpers
 

@@ -46,10 +46,9 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                #if DEBUG
-                Section("Backend (debug)") {
+                Section("Server") {
                     HStack {
-                        TextField("Base URL", text: $backendText)
+                        TextField("Backend URL", text: $backendText)
                             .autocorrectionDisabled()
                             #if os(iOS)
                             .textInputAutocapitalization(.never)
@@ -63,7 +62,6 @@ struct SettingsView: View {
                         .buttonStyle(.borderless)
                     }
                 }
-                #endif
 
                 // Voice drives PadSynthParams.masterGain via the
                 // wireSampleSettings sink (single writer). It replaced

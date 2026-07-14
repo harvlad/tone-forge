@@ -39,7 +39,7 @@ struct FXPanelBody: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: 14) {
                 presetSection
                 eqSection
                 compSection
@@ -90,7 +90,7 @@ struct FXPanelBody: View {
     // MARK: - EQ Section
 
     private var eqSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("EQ", neutral: store.eq.isNeutral)
 
             fxSlider(
@@ -149,7 +149,7 @@ struct FXPanelBody: View {
     // MARK: - Compressor Section
 
     private var compSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Compressor", neutral: store.comp.isNeutral)
 
             fxSlider(
@@ -205,7 +205,7 @@ struct FXPanelBody: View {
     // MARK: - Reverb Section
 
     private var reverbSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Reverb", neutral: store.reverb.isNeutral)
 
             fxSlider(
@@ -241,7 +241,7 @@ struct FXPanelBody: View {
     // MARK: - Delay Section
 
     private var delaySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Delay", neutral: store.delay.isNeutral)
 
             fxSlider(
@@ -337,7 +337,7 @@ struct FXPanelBody: View {
                 .frame(width: 70, alignment: .leading)
 
             Slider(value: value, in: range)
-                .tint(.accentColor)
+                .tint(TFTheme.faderTint)
 
             Text(String(format: format, value.wrappedValue))
                 .font(.subheadline.monospacedDigit())

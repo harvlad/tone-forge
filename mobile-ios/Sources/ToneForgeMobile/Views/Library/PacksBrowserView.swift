@@ -49,6 +49,8 @@ struct PacksBrowserView: View {
     @State private var filter: PackFilter
     /// D-022 Phase 8: segment selection.
     @State private var segment: PacksBrowserSegment = .packs
+    /// Downloaded pack opened for pad-by-pad audition (nil = closed).
+    @State private var detailPack: SamplePackCatalogEntry?
 
     private let initialFamily: SampleFamily?
     /// Fired after a pack activates (sheet hosts dismiss; the Library
@@ -75,6 +77,18 @@ struct PacksBrowserView: View {
             await appState.refreshCuratedCatalog()
         }
         .onDisappear { previewPlayer.stop() }
+        .sheet(item: $detailPack) { entry in
+            PackDetailSheet(
+                entry: entry,
+                isActive: appState.activeSamplePack?.pack.packId == entry.packId,
+                onActivate: {
+                    appState.activateCuratedPack(packId: entry.packId)
+                    onActivated?()
+                    detailPack = nil
+                }
+            )
+            .environmentObject(appState)
+        }
     }
 
     // MARK: - Segment picker
@@ -117,9 +131,9 @@ struct PacksBrowserView: View {
                 bundledSection
                 curatedSection
             }
-            #if os(iOS)
-            .listStyle(.insetGrouped)
-            #endif
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(TFTheme.background)
         }
     }
 
@@ -222,6 +236,7 @@ struct PacksBrowserView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .tfLibraryRowChrome()
                 }
             }
         } header: {
@@ -249,6 +264,7 @@ struct PacksBrowserView: View {
                 )
             }
             .buttonStyle(.plain)
+            .tfLibraryRowChrome()
         } header: {
             Text("Bundled")
         }
@@ -285,6 +301,7 @@ struct PacksBrowserView: View {
             } else {
                 ForEach(filtered) { entry in
                     curatedRow(entry: entry)
+                        .tfLibraryRowChrome()
                 }
             }
         } header: {
@@ -334,6 +351,7 @@ struct PacksBrowserView: View {
                 }
                 curatedAccessory(progress: progress, isCached: isCached, isActive: isActive)
             }
+            .tfLibraryCard(active: isActive)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -366,7 +384,7 @@ struct PacksBrowserView: View {
                 fallback
             }
         }
-        .frame(width: 44, height: 44)
+        .frame(width: 52, height: 52)
     }
 
     private func previewButton(packId: String, url: URL) -> some View {
@@ -432,15 +450,14 @@ struct PacksBrowserView: View {
     private func handleCuratedTap(entry: SamplePackCatalogEntry, isCached: Bool) {
         previewPlayer.stop()
         if isCached {
-            appState.activateCuratedPack(packId: entry.packId)
-            onActivated?()
+            // Open the detail sheet to audition pads before activating.
+            detailPack = entry
         } else {
             Task {
                 await appState.downloadCuratedPack(entry)
-                // Once the download completes, activate immediately.
+                // Once cached, open the detail sheet for preview.
                 if appState.cachedPackIds.contains(entry.packId) {
-                    appState.activateCuratedPack(packId: entry.packId)
-                    onActivated?()
+                    detailPack = entry
                 }
             }
         }
@@ -450,20 +467,30 @@ struct PacksBrowserView: View {
 
     private func packRow(title: String, subtitle: String, isActive: Bool) -> some View {
         HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(TFTheme.faderTint.opacity(0.22))
+                .frame(width: 52, height: 52)
+                .overlay(
+                    Image(systemName: "waveform")
+                        .foregroundStyle(TFTheme.faderTint)
+                )
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.body)
-                    .foregroundStyle(.primary)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(TFTheme.textPrimary)
+                    .lineLimit(1)
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 8)
             if isActive {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Color.accentColor)
             }
         }
+        .tfLibraryCard(active: isActive)
         .contentShape(Rectangle())
     }
 
@@ -483,6 +510,132 @@ struct PacksBrowserView: View {
     }
 }
 
+// MARK: - Pack detail / preview sheet
+
+/// Opened after a curated pack is cached. Lists the pack's pads with a
+/// per-pad play button (auditions via `previewChopReference(.packPad)`
+/// without switching the active pack) plus an Activate button.
+private struct PackDetailSheet: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    let entry: SamplePackCatalogEntry
+    let isActive: Bool
+    let onActivate: () -> Void
+
+    @State private var pads: [SamplePad] = []
+    @State private var loadError: String?
+    /// padIdx currently auditioning (nil = none).
+    @State private var playingPadIdx: Int?
+
+    private let columns = [GridItem(.adaptive(minimum: 140), spacing: 12)]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                if let loadError {
+                    Text(loadError)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding()
+                } else {
+                    LazyVGrid(columns: columns, spacing: 12) {
+                        ForEach(pads, id: \.padIdx) { pad in
+                            padTile(pad)
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+            .background(TFTheme.background)
+            .navigationTitle(entry.name)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isActive ? "Active" : "Activate", action: onActivate)
+                        .disabled(isActive)
+                }
+            }
+        }
+        .onAppear(perform: loadPads)
+        .onDisappear { appState.modeCoordinator.stopPreviewPad() }
+    }
+
+    private func padTile(_ pad: SamplePad) -> some View {
+        let isPlaying = playingPadIdx == pad.padIdx
+        let tint = TFTheme.familyTint(pad.family)
+        return Button {
+            togglePreview(pad)
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Image(systemName: CategoryCards.icon(for: pad.family))
+                        .foregroundStyle(tint)
+                    Spacer()
+                    Image(systemName: isPlaying ? "stop.circle.fill" : "play.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(isPlaying ? Color.accentColor : tint)
+                }
+                Text(pad.name)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(TFTheme.textPrimary)
+                    .lineLimit(1)
+                Text(CategoryCards.title(for: pad.family))
+                    .font(.caption2)
+                    .foregroundStyle(TFTheme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(tint.opacity(isPlaying ? 0.28 : 0.14))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isPlaying ? tint : TFTheme.stroke, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func togglePreview(_ pad: SamplePad) {
+        if playingPadIdx == pad.padIdx {
+            appState.modeCoordinator.stopPreviewPad()
+            playingPadIdx = nil
+            return
+        }
+        appState.previewChopReference(.packPad(packId: entry.packId, padIdx: pad.padIdx))
+        playingPadIdx = pad.padIdx
+        // Revert the tile to its play icon when the one-shot finishes.
+        if let dur = appState.previewPadDurationSec(packId: entry.packId, padIdx: pad.padIdx) {
+            let idx = pad.padIdx
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(dur * 1_000_000_000))
+                if playingPadIdx == idx { playingPadIdx = nil }
+            }
+        }
+    }
+
+    private func loadPads() {
+        guard let bank = appState.sampleBank else {
+            loadError = "Sample bank unavailable."
+            return
+        }
+        do {
+            let resolved = try bank.loadCached(packId: entry.packId)
+            pads = resolved.pack.pads.sorted { $0.padIdx < $1.padIdx }
+        } catch {
+            loadError = "Could not load pack: \(error.localizedDescription)"
+        }
+    }
+}
+
 // MARK: - My Samples segment
 
 /// Inline samples browser for the Packs tab My Samples segment (D-022
@@ -497,15 +650,15 @@ private struct MySamplesContent: View {
     var body: some View {
         List {
             if store.samples.isEmpty {
-                Section {
-                    Text("No samples yet. Capture one with the mic or vocoder on the Contribute tab.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
+                Text("No samples yet. Capture one with the mic or vocoder on the Contribute tab.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .tfLibraryRowChrome()
             } else {
                 Section {
                     ForEach(store.samples, id: \.id) { meta in
                         sampleRow(meta)
+                            .tfLibraryRowChrome()
                             .swipeActions(edge: .trailing) {
                                 Button("Delete", role: .destructive) {
                                     appState.modeCoordinator.deleteLocalSample(id: meta.id)
@@ -516,17 +669,16 @@ private struct MySamplesContent: View {
                     Text("\(store.samples.count) sample\(store.samples.count == 1 ? "" : "s") · \(byteString(store.totalBytes()))")
                 }
 
-                Section {
-                    Button("Delete all samples", role: .destructive) {
-                        showDeleteAllConfirm = true
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
+                Button("Delete all samples", role: .destructive) {
+                    showDeleteAllConfirm = true
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .tfLibraryRowChrome()
             }
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #endif
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(TFTheme.background)
         .confirmationDialog(
             "Delete all samples?",
             isPresented: $showDeleteAllConfirm,
@@ -545,20 +697,31 @@ private struct MySamplesContent: View {
 
     private func sampleRow(_ meta: PadSampleMetadata) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: sourceIcon(meta.source))
-                .foregroundStyle(tint(meta.colorHint))
-                .frame(width: 32)
+            RoundedRectangle(cornerRadius: 10)
+                .fill(tint(meta.colorHint).opacity(0.22))
+                .frame(width: 52, height: 52)
+                .overlay(
+                    Image(systemName: sourceIcon(meta.source))
+                        .font(.title3)
+                        .foregroundStyle(tint(meta.colorHint))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(TFTheme.stroke, lineWidth: 1)
+                )
             VStack(alignment: .leading, spacing: 2) {
                 Text(classLabel(meta.effectiveClass))
-                    .font(.body)
-                    .foregroundStyle(.primary)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(TFTheme.textPrimary)
                     .lineLimit(1)
                 Text(sampleSubtitle(meta))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 8)
         }
+        .tfLibraryCard()
         .contentShape(Rectangle())
     }
 

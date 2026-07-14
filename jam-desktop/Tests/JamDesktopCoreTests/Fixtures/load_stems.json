@@ -1,0 +1,8 @@
+{
+  "type": "load_stems",
+  "v": 2,
+  "stems": [
+    {"id": "demucs.drums", "url": "http://127.0.0.1:8000/api/serve-file?p=drums.wav", "display_name": "Drums"},
+    {"id": "demucs.bass", "url": "http://127.0.0.1:8000/api/serve-file?p=bass.wav", "display_name": "Bass"}
+  ]
+}

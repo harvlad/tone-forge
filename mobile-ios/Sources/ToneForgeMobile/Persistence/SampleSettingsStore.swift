@@ -142,6 +142,13 @@ public final class SampleSettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// Hidden pack pads. Keyed by "packId#padIdx". When a user deletes
+    /// a pack pad via the radial menu, it's added here and excluded from
+    /// the sample quadrant until unhidden.
+    @Published public var hiddenPadKeys: Set<String> {
+        didSet { save() }
+    }
+
     /// Built-in defaults, shared by init and the tests.
     nonisolated public static let defaultVoiceGain: Double = 0.9
     nonisolated public static let defaultChopGain: Double = 0.55
@@ -181,6 +188,7 @@ public final class SampleSettingsStore: ObservableObject {
         self.instrumentPresetId = loaded.instrumentPresetId
         self.instrumentOctaveShift = max(-3, min(3, loaded.instrumentOctaveShift))
         self.instrumentBrightness = max(0.5, min(2.0, loaded.instrumentBrightness))
+        self.hiddenPadKeys = Set(loaded.hiddenPadKeys)
     }
 
     // MARK: - Pad-effect override convenience
@@ -250,6 +258,28 @@ public final class SampleSettingsStore: ObservableObject {
         }
     }
 
+    // MARK: - Hidden pad convenience
+
+    /// Check if a pack pad is hidden.
+    public func isPadHidden(packId: String, padIdx: Int) -> Bool {
+        hiddenPadKeys.contains(Self.padEffectsKey(packId: packId, padIdx: padIdx))
+    }
+
+    /// Hide a pack pad (remove from grid until unhidden).
+    public func hidePad(packId: String, padIdx: Int) {
+        hiddenPadKeys.insert(Self.padEffectsKey(packId: packId, padIdx: padIdx))
+    }
+
+    /// Unhide a pack pad (restore to grid).
+    public func unhidePad(packId: String, padIdx: Int) {
+        hiddenPadKeys.remove(Self.padEffectsKey(packId: packId, padIdx: padIdx))
+    }
+
+    /// Unhide all pads for a given pack.
+    public func unhideAllPads(packId: String) {
+        hiddenPadKeys = hiddenPadKeys.filter { !$0.hasPrefix("\(packId)#") }
+    }
+
     // MARK: - Persistence
 
     /// Wire shape of the on-disk blob. Kept as a value type so encode
@@ -299,6 +329,8 @@ public final class SampleSettingsStore: ObservableObject {
         var instrumentOctaveShift: Int
         /// Instrument mode brightness 0.5...2.0 (D-022 Phase 8).
         var instrumentBrightness: Double
+        /// Hidden pack pads, keyed by "packId#padIdx".
+        var hiddenPadKeys: [String]
 
         static let defaults = Persisted(
             storeVersion: 1,
@@ -317,7 +349,8 @@ public final class SampleSettingsStore: ObservableObject {
             lastContributeModeRaw: SampleSettingsStore.defaultLastContributeModeRaw,
             instrumentPresetId: SampleSettingsStore.defaultInstrumentPresetId,
             instrumentOctaveShift: SampleSettingsStore.defaultInstrumentOctaveShift,
-            instrumentBrightness: SampleSettingsStore.defaultInstrumentBrightness
+            instrumentBrightness: SampleSettingsStore.defaultInstrumentBrightness,
+            hiddenPadKeys: []
         )
 
         // Custom decoding so pre-6d blobs that lack the newer keys
@@ -328,7 +361,8 @@ public final class SampleSettingsStore: ObservableObject {
                  padEffectsByKey, voiceGainLinear, chopGainLinear,
                  vocoderGainLinear, appModeRaw, appTabRaw,
                  lastContributeModeRaw, instrumentPresetId,
-                 instrumentOctaveShift, instrumentBrightness
+                 instrumentOctaveShift, instrumentBrightness,
+                 hiddenPadKeys
         }
 
         /// Decode-only key from the D-019 blob shape. Kept out of
@@ -354,7 +388,8 @@ public final class SampleSettingsStore: ObservableObject {
             lastContributeModeRaw: String,
             instrumentPresetId: String,
             instrumentOctaveShift: Int,
-            instrumentBrightness: Double
+            instrumentBrightness: Double,
+            hiddenPadKeys: [String] = []
         ) {
             self.storeVersion = storeVersion
             self.currentPackId = currentPackId
@@ -373,6 +408,7 @@ public final class SampleSettingsStore: ObservableObject {
             self.instrumentPresetId = instrumentPresetId
             self.instrumentOctaveShift = instrumentOctaveShift
             self.instrumentBrightness = instrumentBrightness
+            self.hiddenPadKeys = hiddenPadKeys
         }
 
         init(from decoder: Decoder) throws {
@@ -424,6 +460,9 @@ public final class SampleSettingsStore: ObservableObject {
             self.instrumentBrightness = try c.decodeIfPresent(
                 Double.self, forKey: .instrumentBrightness
             ) ?? SampleSettingsStore.defaultInstrumentBrightness
+            self.hiddenPadKeys = try c.decodeIfPresent(
+                [String].self, forKey: .hiddenPadKeys
+            ) ?? []
         }
     }
 
@@ -458,7 +497,8 @@ public final class SampleSettingsStore: ObservableObject {
             lastContributeModeRaw: lastContributeModeRaw,
             instrumentPresetId: instrumentPresetId,
             instrumentOctaveShift: max(-3, min(3, instrumentOctaveShift)),
-            instrumentBrightness: max(0.5, min(2.0, instrumentBrightness))
+            instrumentBrightness: max(0.5, min(2.0, instrumentBrightness)),
+            hiddenPadKeys: Array(hiddenPadKeys).sorted()
         )
         if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: Self.defaultsKey)

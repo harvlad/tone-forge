@@ -8,11 +8,14 @@
 // One coordinator covers both ingestion paths (Music library + Files),
 // so the ownership-attestation gate lives here and can't be bypassed
 // by either picker. Audio is transcoded to the canonical analysis WAV
-// off the main actor, streamed to POST /api/analyze-stream, and the
-// finished analysis is loaded into AppState like any history entry.
+// off the main actor, then submitted as a server-side job (POST
+// /api/analyze-job). The job outlives this connection: the foreground
+// streams /events for live percent, but final completion terminates in
+// the app-lifetime JobCompletionCenter, not here — so a lock, a
+// backgrounding, or a kill can't lose the analysis.
 //
-// The analyze transport is injectable (`AnalyzeStreaming`) so UI tests
-// can stub the network entirely (`-uitest-stub-import`).
+// The job transport is injectable (`JobSubmitting`) so UI tests can stub
+// the network entirely (`-uitest-stub-import`).
 
 import Foundation
 import Combine
@@ -20,29 +23,6 @@ import ToneForgeEngine
 #if canImport(AVFoundation)
 import AVFoundation
 #endif
-
-/// Minimal transport seam over AnalyzeClient for test stubbing.
-public protocol AnalyzeStreaming: Sendable {
-    func stream(
-        baseURL: URL, wavFileURL: URL, filename: String
-    ) -> AsyncThrowingStream<AnalyzeEvent, Error>
-}
-
-/// Production transport: the real SSE client with the app-wide upload
-/// timeout.
-public struct BackendAnalyzeClient: AnalyzeStreaming {
-    public init() {}
-    public func stream(
-        baseURL: URL, wavFileURL: URL, filename: String
-    ) -> AsyncThrowingStream<AnalyzeEvent, Error> {
-        AnalyzeClient.analyzeStream(
-            baseURL: baseURL,
-            wavFileURL: wavFileURL,
-            filename: filename,
-            timeout: AppConfig.analyzeTimeout
-        )
-    }
-}
 
 public enum ImportError: Error, LocalizedError {
     case trackNotAnalysable(reason: String)
@@ -96,7 +76,7 @@ public final class ImportCoordinator: ObservableObject {
     /// source is the same track.
     public var pendingArtworkData: Data?
 
-    private let analyzeClient: any AnalyzeStreaming
+    private let jobClient: any JobSubmitting
     private weak var appState: AppState?
     private var pendingSource: ImportSource?
     private var lastSource: ImportSource?
@@ -104,10 +84,10 @@ public final class ImportCoordinator: ObservableObject {
 
     public init(
         attestation: AttestationStore? = nil,
-        analyzeClient: any AnalyzeStreaming = BackendAnalyzeClient()
+        jobClient: any JobSubmitting = BackendJobClient()
     ) {
         self.attestation = attestation ?? AttestationStore()
-        self.analyzeClient = analyzeClient
+        self.jobClient = jobClient
     }
 
     /// True while the progress sheet should be up.
@@ -152,7 +132,13 @@ public final class ImportCoordinator: ObservableObject {
         run(source)
     }
 
-    /// Cancel a running import / dismiss a finished one.
+    /// Detach the UI from a running import, or dismiss a finished one.
+    ///
+    /// Cancels only the foreground `/events` stream — NOT the server job.
+    /// Once a job is submitted, JobCompletionCenter owns its completion
+    /// (background poll + notification), so closing this sheet must not
+    /// kill an in-flight analysis. The worker before submit is safe to
+    /// cancel (nothing registered yet).
     public func dismiss() {
         worker?.cancel()
         worker = nil
@@ -177,39 +163,65 @@ public final class ImportCoordinator: ObservableObject {
         defer { try? FileManager.default.removeItem(at: tempWAV) }
 
         do {
-            let staged = try await stageInput(source)
-            defer { staged.cleanup() }
-
-            #if canImport(AVFoundation)
-            let input = staged.url
-            _ = try await Task.detached(priority: .userInitiated) {
-                try AudioTranscoder.transcodeToAnalysisWAV(input: input, output: tempWAV)
-            }.value
-            #endif
+            try await produceAnalysisWAV(source, output: tempWAV)
             try Task.checkCancellation()
 
             guard let appState else { return }
             phase = .uploading(message: "Uploading…", percent: nil)
 
+            let baseURL = appState.backendBaseURL
             let filename = source.displayName
                 .replacingOccurrences(of: "/", with: "-") + ".wav"
-            var historyId: String?
-            let events = analyzeClient.stream(
-                baseURL: appState.backendBaseURL, wavFileURL: tempWAV, filename: filename
+
+            // Submit the job. From here the analysis lives server-side and
+            // is owned by JobCompletionCenter: even if this sheet closes,
+            // the phone locks, or the app is killed, the background poll
+            // finishes it and notifies.
+            let jobId = try await jobClient.submit(
+                baseURL: baseURL, wavFileURL: tempWAV, filename: filename
             )
-            for try await event in events {
-                try Task.checkCancellation()
-                switch event {
-                case .progress(let message, let percent):
-                    phase = .uploading(message: message, percent: percent)
-                case .completed(let id):
-                    historyId = id
+            try Task.checkCancellation()
+            JobCompletionCenter.shared.register(
+                jobId: jobId,
+                title: source.displayName,
+                baseURL: baseURL,
+                artworkData: pendingArtworkData
+            )
+
+            // Foreground: stream /events for live percent. If this stream
+            // drops (lock/background), the background session takes over —
+            // so a stream error here is not fatal to the analysis.
+            var historyId: String?
+            do {
+                let events = jobClient.events(baseURL: baseURL, jobId: jobId)
+                for try await event in events {
+                    try Task.checkCancellation()
+                    switch event {
+                    case .progress(let message, let percent):
+                        phase = .uploading(message: message, percent: percent)
+                    case .completed(let id):
+                        historyId = id
+                    }
                 }
-            }
-            guard let historyId else {
-                throw AnalyzeClientError.streamEndedWithoutResult
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Stream broke but the job keeps running server-side;
+                // hand off to the background path and detach the UI.
+                phase = .idle
+                return
             }
 
+            guard let historyId else {
+                // Stream ended without a terminal result; background poll
+                // will still finish it. Detach quietly.
+                phase = .idle
+                return
+            }
+
+            // Foreground won the race. Claim completion so the background
+            // path won't double-fire, then load the bundle in-place.
+            JobCompletionCenter.shared.foregroundCompleted(jobId: jobId)
             phase = .loading
             await appState.loadBundle(analysisId: historyId)
             if let loadError = appState.loadingError {
@@ -229,12 +241,13 @@ public final class ImportCoordinator: ObservableObject {
         }
     }
 
-    /// Resolve the source to a readable local URL. File-picker URLs
-    /// are copied into tmp under security-scoped access so the read
-    /// outlives the picker's grant; media items are read in place.
-    private func stageInput(
-        _ source: ImportSource
-    ) async throws -> (url: URL, cleanup: () -> Void) {
+    /// Produce the canonical analysis WAV at `output` for either source.
+    ///
+    /// Music-library items are decoded straight from their
+    /// `ipod-library://` asset URL with AVAssetReader — `AVAudioFile`
+    /// can't open those URLs. File-picker URLs are copied into tmp
+    /// under security-scoped access, then transcoded via `AVAudioFile`.
+    private func produceAnalysisWAV(_ source: ImportSource, output: URL) async throws {
         switch source {
         case .mediaItem(let track):
             guard track.isAnalysable, let assetURL = track.assetURL else {
@@ -245,9 +258,9 @@ public final class ImportCoordinator: ObservableObject {
             #if canImport(AVFoundation)
             // MPMediaItem.hasProtectedAsset is unreliable: it reports
             // false for downloaded Apple Music tracks even though the
-            // file is FairPlay-protected, and AVAudioFile then fails
-            // with an opaque CoreAudio 'wht?' error. Ask the asset
-            // itself so those tracks get the proper DRM message.
+            // file is FairPlay-protected. Ask the asset itself so those
+            // tracks get the proper DRM message instead of an opaque
+            // CoreAudio read error.
             let isProtected = (try? await AVURLAsset(url: assetURL)
                 .load(.hasProtectedContent)) ?? false
             if isProtected {
@@ -255,19 +268,74 @@ public final class ImportCoordinator: ObservableObject {
                     reason: "streaming (DRM) — not analysable"
                 )
             }
+            // AVAudioFile / AVAssetReader can't open `ipod-library://`
+            // URLs directly. AVAssetExportSession is Apple's sanctioned
+            // path: export the media item to a readable local .m4a,
+            // then transcode that ordinary file.
+            let exported = try await exportMediaItem(assetURL: assetURL)
+            defer { try? FileManager.default.removeItem(at: exported) }
+            _ = try await Task.detached(priority: .userInitiated) {
+                try AudioTranscoder.transcodeToAnalysisWAV(input: exported, output: output)
+            }.value
             #endif
-            return (assetURL, {})
 
         case .fileURL(let url):
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer {
-                if scoped { url.stopAccessingSecurityScopedResource() }
-            }
-            let copy = FileManager.default.temporaryDirectory
-                .appendingPathComponent("import-src-\(UUID().uuidString)")
-                .appendingPathExtension(url.pathExtension)
-            try FileManager.default.copyItem(at: url, to: copy)
-            return (copy, { try? FileManager.default.removeItem(at: copy) })
+            let staged = try stageFileURL(url)
+            defer { staged.cleanup() }
+            #if canImport(AVFoundation)
+            let input = staged.url
+            _ = try await Task.detached(priority: .userInitiated) {
+                try AudioTranscoder.transcodeToAnalysisWAV(input: input, output: output)
+            }.value
+            #endif
         }
+    }
+
+    #if canImport(AVFoundation)
+    /// Export a Music-library asset to a readable temp .m4a via
+    /// AVAssetExportSession — the only reliable way to get audio out of
+    /// an `ipod-library://` item into a file AVFoundation can decode.
+    private func exportMediaItem(assetURL: URL) async throws -> URL {
+        let asset = AVURLAsset(url: assetURL)
+        guard let session = AVAssetExportSession(
+            asset: asset, presetName: AVAssetExportPresetAppleM4A
+        ) else {
+            throw ImportError.trackNotAnalysable(reason: "export unavailable")
+        }
+        let output = FileManager.default.temporaryDirectory
+            .appendingPathComponent("import-media-\(UUID().uuidString).m4a")
+        try? FileManager.default.removeItem(at: output)
+        session.outputURL = output
+        session.outputFileType = .m4a
+
+        await withCheckedContinuation { continuation in
+            session.exportAsynchronously { continuation.resume() }
+        }
+
+        guard session.status == .completed else {
+            // Downloaded Apple Music tracks stay FairPlay-encrypted, so
+            // export fails (AVFoundation -11800 / OSStatus -16979).
+            // hasProtectedContent under-reports these, so this is where
+            // most DRM tracks actually get caught.
+            throw ImportError.trackNotAnalysable(
+                reason: "Apple Music / protected track — import a song you own"
+            )
+        }
+        return output
+    }
+    #endif
+
+    /// Copy a file-picker URL into tmp under security-scoped access so
+    /// the read outlives the picker's grant.
+    private func stageFileURL(_ url: URL) throws -> (url: URL, cleanup: () -> Void) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+        }
+        let copy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("import-src-\(UUID().uuidString)")
+            .appendingPathExtension(url.pathExtension)
+        try FileManager.default.copyItem(at: url, to: copy)
+        return (copy, { try? FileManager.default.removeItem(at: copy) })
     }
 }

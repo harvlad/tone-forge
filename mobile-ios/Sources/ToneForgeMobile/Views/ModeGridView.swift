@@ -75,6 +75,11 @@ struct ModeGridView: View {
                     target: target,
                     onPreview: preview(row: target.gridRow, col: target.gridCol)
                 )
+            case .trimmer(let target):
+                SampleTrimmerSheet(
+                    target: target,
+                    onPreview: previewTrimmed(target: target)
+                )
             }
         }
     }
@@ -88,6 +93,18 @@ struct ModeGridView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 coordinator.touchPadUp(row: row, col: col)
             }
+        }
+    }
+
+    /// Preview a trimmed portion of a sample. Used by the waveform trimmer.
+    private func previewTrimmed(target: SampleTrimmerTarget) -> (Double, Double) -> Void {
+        { [coordinator] startFraction, endFraction in
+            coordinator.previewTrimmed(
+                packId: target.packId,
+                padIdx: target.padIdx,
+                startFraction: startFraction,
+                endFraction: endFraction
+            )
         }
     }
 }
@@ -210,6 +227,7 @@ private struct GridCanvas: View {
         case .vocoded:     return "waveform"
         case .transformed: return "wand.and.stars"
         case .loop:        return "repeat"
+        case .edited:      return "pencil"
         }
     }
 

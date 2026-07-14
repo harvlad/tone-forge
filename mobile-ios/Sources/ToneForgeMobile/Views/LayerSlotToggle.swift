@@ -11,7 +11,24 @@ import ToneForgeEngine
 struct LayerSlotToggle: View {
     @EnvironmentObject private var appState: AppState
 
+    /// Only show the layer toggle when theres at least one recorded take
+    /// or recording is in progress. Avoids confusing users who arent
+    /// using the multi-layer recording feature.
+    private var shouldShow: Bool {
+        appState.layerSlots.hasTake(.a) ||
+        appState.layerSlots.hasTake(.b) ||
+        appState.sessionRecorder.state != .idle
+    }
+
     var body: some View {
+        if !shouldShow {
+            EmptyView()
+        } else {
+            layerButton
+        }
+    }
+
+    private var layerButton: some View {
         Button {
             appState.toggleActiveSlot()
         } label: {

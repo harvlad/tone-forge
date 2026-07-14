@@ -1,0 +1,16 @@
+{
+  "type": "session_data",
+  "v": 2,
+  "session_id": "device-abc",
+  "song": {"id": "song-1", "title": "Night Drive"},
+  "bpm": 120.0,
+  "key": {"root": 0, "scale": "Major"},
+  "chord_progression": [
+    {"symbol": "C", "start_s": 0.0, "end_s": 2.0},
+    {"symbol": "G", "start_s": 2.0, "end_s": 4.0}
+  ],
+  "section_markers": [
+    {"name": "Verse 1", "start_s": 0.0, "end_s": 16.0}
+  ],
+  "loop_markers": null
+}

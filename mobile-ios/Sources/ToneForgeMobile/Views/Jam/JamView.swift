@@ -58,6 +58,7 @@ struct JamView: View {
 
             controlsRow
         }
+        .frame(maxWidth: .infinity)
         .sheet(isPresented: $showKeySheet) {
             ScaleWheelSheet(controller: controller, jamSettings: jamSettings)
         }
@@ -227,11 +228,15 @@ struct JamView: View {
 
     private var controlsRow: some View {
         HStack(spacing: 8) {
-            quantizeChip
-            metronomeChip
-            loopSectionChip
-            followChip
-            Spacer()
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    quantizeChip
+                    metronomeChip
+                    loopSectionChip
+                    followChip
+                }
+            }
+            Spacer(minLength: 0)
             octaveStepper
             Button {
                 showSettingsSheet = true

@@ -1,0 +1,8 @@
+{
+  "type": "connect_state",
+  "v": 2,
+  "state": "running",
+  "device": {"input_name": "MacBook Pro Microphone", "output_name": "MacBook Pro Speakers", "sample_rate": 48000.0, "channels_in": 1},
+  "monitor": {"enabled": true, "gain": 0.8, "muted": false},
+  "dsp": {"amp_sim_enabled": true, "active_chain_id": "fender-clean"}
+}

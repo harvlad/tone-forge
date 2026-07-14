@@ -248,12 +248,15 @@ public final class BundleStore: @unchecked Sendable {
         }
         // Server-relative URLs (e.g. "/api/admin/serve-file?path=…")
         // resolve against the configured backend base. Absolute URLs
-        // pass through unchanged.
+        // pass through unchanged — EXCEPT localhost URLs from the local
+        // engine which need to be stripped and re-wrapped so the phone
+        // doesn't try to hit its own loopback interface.
         let remote: URL
-        if urlString.hasPrefix("/"), let base = baseURL,
-           let joined = URL(string: urlString, relativeTo: base) {
+        let rewrittenURL = BundleStore.rewriteLocalhostURL(urlString)
+        if rewrittenURL.hasPrefix("/"), let base = baseURL,
+           let joined = URL(string: rewrittenURL, relativeTo: base) {
             remote = joined
-        } else if let abs = URL(string: urlString), abs.scheme != nil {
+        } else if let abs = URL(string: rewrittenURL), abs.scheme != nil {
             remote = abs
         } else {
             throw BundleError.invalidURL(urlString)
@@ -281,6 +284,27 @@ public final class BundleStore: @unchecked Sendable {
             isComplete: true,
             localURL: localURL
         ))
+    }
+
+    /// Strip localhost URLs from the local engine and convert them to
+    /// server-relative paths. The local engine writes URLs like:
+    ///   http://127.0.0.1:7777/api/serve-file?path=/tmp/...
+    /// On a phone, 127.0.0.1 is the phone itself, not the dev Mac. We
+    /// extract the `path` query param and wrap it in our own relative
+    /// serve-file endpoint.
+    static func rewriteLocalhostURL(_ urlString: String) -> String {
+        // Prefixes written by the local engine (see tone_forge_api.py).
+        let localhostPrefixes = [
+            "http://127.0.0.1:7777/api/serve-file?path=",
+            "http://localhost:7777/api/serve-file?path="
+        ]
+        for prefix in localhostPrefixes {
+            if urlString.hasPrefix(prefix) {
+                let localPath = String(urlString.dropFirst(prefix.count))
+                return "/api/admin/serve-file?path=\(localPath)"
+            }
+        }
+        return urlString
     }
 
     /// Codec sniffer that mirrors `_codec_from_stem_url` on the backend

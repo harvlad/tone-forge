@@ -117,12 +117,11 @@ struct LibraryView: View {
     /// the latest task actually issues the network call (inherited
     /// from the removed Search tab).
     @State private var searchToken: UUID = UUID()
-    @State private var quickLoadId: String = ""
 
     // Import flow (Music library / Files → attestation → analyze).
     // The analyze transport is stubbed under `-uitest-stub-import`.
     @StateObject private var importer = ImportCoordinator(
-        analyzeClient: UITestSupport.makeAnalyzeClient()
+        jobClient: UITestSupport.makeJobClient()
     )
     @State private var showMusicPicker = false
     @State private var showFilePicker = false
@@ -155,11 +154,6 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle("Library")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    importMenu
-                }
-            }
             .task {
                 if entries.isEmpty { await reload() }
             }
@@ -207,70 +201,63 @@ struct LibraryView: View {
     private var songsList: some View {
             List {
                 uitestStubImportSection
-                quickLoadSection
+
                 if !entries.isEmpty {
-                    Section("Recent") {
-                        ForEach(entries) { entry in
-                            entryRow(entry)
-                                .swipeActions(edge: .trailing) {
-                                    Button(role: .destructive) {
-                                        Task { await delete(entry) }
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
+                    ForEach(entries) { entry in
+                        entryRow(entry)
+                            .tfLibraryRowChrome()
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    Task { await delete(entry) }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
                                 }
-                        }
+                            }
                     }
                 } else if isLoading {
-                    Section {
-                        HStack {
-                            ProgressView()
-                            Text("Loading history…").foregroundStyle(.secondary)
-                        }
+                    HStack {
+                        ProgressView()
+                        Text("Loading history…").foregroundStyle(.secondary)
                     }
+                    .tfLibraryRowChrome()
                 } else if localBundles.isEmpty {
-                    Section {
-                        Text("No history yet — analyze a song from the backend and it will show up here.")
-                            .foregroundStyle(.secondary)
-                            .font(.callout)
-                    }
+                    Text("No history yet — analyze a song from the backend and it will show up here.")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                        .tfLibraryRowChrome()
                 }
 
                 if !localBundles.isEmpty {
-                    Section("Downloaded") {
-                        ForEach(localBundles, id: \.analysisId) { bundle in
-                            localBundleRow(bundle)
-                        }
+                    ForEach(localBundles, id: \.analysisId) { bundle in
+                        localBundleRow(bundle)
+                            .tfLibraryRowChrome()
                     }
                 }
 
                 if let err = fetchError {
-                    Section("Error") { Text(err).foregroundStyle(.red) }
+                    Text(err).foregroundStyle(.red).tfLibraryRowChrome()
                 }
 
                 if appState.isDownloading, !appState.downloadProgress.isEmpty {
-                    Section("Downloading stems") {
-                        ForEach(appState.downloadProgress.keys.sorted(), id: \.self) { role in
-                            if let prog = appState.downloadProgress[role] {
-                                stemProgressRow(role: role, progress: prog)
-                            }
+                    ForEach(appState.downloadProgress.keys.sorted(), id: \.self) { role in
+                        if let prog = appState.downloadProgress[role] {
+                            stemProgressRow(role: role, progress: prog)
+                                .tfLibraryCard()
+                                .tfLibraryRowChrome()
                         }
                     }
                 }
 
                 if let err = appState.loadingError {
-                    Section("Load error") { Text(err).foregroundStyle(.red) }
+                    Text(err).foregroundStyle(.red).tfLibraryRowChrome()
                 }
 
-                if let bundle = appState.currentBundle {
-                    Section("Loaded") {
-                        LabeledContent("Title", value: bundle.meta.title)
-                        LabeledContent("Duration", value: String(format: "%.1fs", bundle.meta.durationSec))
-                        LabeledContent("Stems", value: String(bundle.stems.count))
-                        Button("Open") { onActivate() }
-                    }
-                }
+                addSongButton
+                    .tfLibraryRowChrome()
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(TFTheme.background)
             .searchable(text: $query, prompt: "Search songs")
             .onSubmit(of: .search) {
                 Task { await reload() }
@@ -292,7 +279,10 @@ struct LibraryView: View {
 
     // MARK: - Import entry points
 
-    private var importMenu: some View {
+    /// Bottom-of-list "Add Song" card (mockup). Same import menu that
+    /// used to live in the toolbar; keeps the `import-menu` identifier
+    /// for UI tests.
+    private var addSongButton: some View {
         Menu {
             Button {
                 showMusicPicker = true
@@ -305,8 +295,16 @@ struct LibraryView: View {
                 Label("From Files", systemImage: "folder")
             }
         } label: {
-            Label("Import", systemImage: "plus")
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                Text("Add Song")
+            }
+            .font(.body.weight(.semibold))
+            .foregroundStyle(TFTheme.textPrimary)
+            .frame(maxWidth: .infinity)
+            .tfLibraryCard()
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("import-menu")
     }
 
@@ -348,62 +346,74 @@ struct LibraryView: View {
 
     // MARK: - Sections / rows
 
-    /// DEBUG-only: raw analysisId quick-load. The staging-URL editor
-    /// moved to the Settings sheet (D-022); release builds use
-    /// `AppConfig.defaultBackendURL` with no editor.
+    /// Vertical three-dot menu on the trailing edge of a library card.
     @ViewBuilder
-    private var quickLoadSection: some View {
-        #if DEBUG
-        Section("Backend (debug)") {
-            HStack {
-                TextField("Quick-load analysisId", text: $quickLoadId)
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
-                Button("Load") {
-                    let id = quickLoadId.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !id.isEmpty else { return }
-                    Task {
-                        await appState.loadBundle(analysisId: id)
-                        if appState.loadingError == nil { onActivate() }
-                    }
-                }
-                .buttonStyle(.borderless)
-                .disabled(quickLoadId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.isDownloading)
-            }
+    private func rowMenu<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        Menu {
+            content()
+        } label: {
+            Image(systemName: "ellipsis")
+                .rotationEffect(.degrees(90))
+                .font(.body)
+                .foregroundStyle(TFTheme.textSecondary)
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
         }
-        #endif
+        .buttonStyle(.plain)
+    }
+
+    /// Single-line subtitle for a history row. No artist field on
+    /// HistoryEntry, so fall back to the detected type / amp family.
+    private func entrySubtitle(_ entry: HistoryEntry) -> String? {
+        if let type = entry.detectedType, !type.isEmpty {
+            return type.capitalized
+        }
+        if let amp = entry.ampFamily, !amp.isEmpty { return amp }
+        if let summary = entry.summary, !summary.isEmpty { return summary }
+        return nil
     }
 
     @ViewBuilder
     private func entryRow(_ entry: HistoryEntry) -> some View {
+        let isActive = appState.currentBundle?.analysisId == entry.id
         Button {
             Task {
                 await appState.loadBundle(analysisId: entry.id)
                 if appState.loadingError == nil { onActivate() }
             }
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.name ?? "Untitled")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
-                HStack(spacing: 8) {
-                    if let type = entry.detectedType, !type.isEmpty {
-                        Text(type).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let dur = entry.duration {
-                        Text(formatDuration(dur)).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let amp = entry.ampFamily, !amp.isEmpty {
-                        Text(amp).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                ArtworkView(analysisId: entry.id,
+                            title: entry.name ?? "Untitled",
+                            size: 52)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.name ?? "Untitled")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(TFTheme.textPrimary)
+                        .lineLimit(1)
+                    if let sub = entrySubtitle(entry) {
+                        Text(sub)
+                            .font(.caption)
+                            .foregroundStyle(TFTheme.textSecondary)
+                            .lineLimit(1)
                     }
                 }
-                if let summary = entry.summary, !summary.isEmpty {
-                    Text(summary).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 8)
+                if let dur = entry.duration {
+                    Text(formatDuration(dur))
+                        .font(.caption)
+                        .foregroundStyle(TFTheme.textSecondary)
+                        .monospacedDigit()
+                }
+                rowMenu {
+                    Button(role: .destructive) {
+                        Task { await delete(entry) }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .tfLibraryCard(active: isActive)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -414,25 +424,44 @@ struct LibraryView: View {
     /// straight from the cache — no manifest fetch — so it works with
     /// the backend unreachable.
     private func localBundleRow(_ bundle: SongBundle) -> some View {
-        Button {
+        let isActive = appState.currentBundle?.analysisId == bundle.analysisId
+        return Button {
             Task {
                 await appState.loadCachedBundle(bundle)
                 if appState.loadingError == nil { onActivate() }
             }
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(bundle.meta.title.isEmpty ? "Untitled" : bundle.meta.title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
-                HStack(spacing: 8) {
+            HStack(spacing: 12) {
+                ArtworkView(analysisId: bundle.analysisId,
+                            title: bundle.meta.title,
+                            artist: bundle.meta.artist.isEmpty ? nil : bundle.meta.artist,
+                            size: 52)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(bundle.meta.title.isEmpty ? "Untitled" : bundle.meta.title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(TFTheme.textPrimary)
+                        .lineLimit(1)
                     if !bundle.meta.artist.isEmpty {
-                        Text(bundle.meta.artist).font(.caption).foregroundStyle(.secondary)
+                        Text(bundle.meta.artist)
+                            .font(.caption)
+                            .foregroundStyle(TFTheme.textSecondary)
+                            .lineLimit(1)
                     }
-                    Text(formatDuration(bundle.meta.durationSec))
-                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Text(formatDuration(bundle.meta.durationSec))
+                    .font(.caption)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .monospacedDigit()
+                rowMenu {
+                    Button(role: .destructive) {
+                        Task { await deleteBundle(bundle) }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .tfLibraryCard(active: isActive)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -480,6 +509,17 @@ struct LibraryView: View {
         do {
             try await appState.deleteAnalysis(analysisId: entry.id)
             entries.removeAll { $0.id == entry.id }
+        } catch {
+            fetchError = error.localizedDescription
+        }
+    }
+
+    /// Delete a locally cached bundle (server + local + in-memory).
+    private func deleteBundle(_ bundle: SongBundle) async {
+        fetchError = nil
+        do {
+            try await appState.deleteAnalysis(analysisId: bundle.analysisId)
+            localBundles.removeAll { $0.analysisId == bundle.analysisId }
         } catch {
             fetchError = error.localizedDescription
         }

@@ -10,6 +10,11 @@ import ToneForgeMobile
 
 @main
 struct ToneForgeAppEntry: App {
+    // Background URLSession relaunch handshake: iOS wakes the app to
+    // deliver a finished analysis-job poll and hands us a completion
+    // handler via this delegate. Needed only for that handoff.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         ToneForgeScene()
     }

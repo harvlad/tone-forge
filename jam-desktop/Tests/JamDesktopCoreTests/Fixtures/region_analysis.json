@@ -1,0 +1,36 @@
+{
+ "bounds": {"start": 12.5, "end": 40.0, "duration": 27.5, "track_id": null},
+ "section_type": "chorus",
+ "notes": [
+  {"pitch": 64, "start": 13.0, "end": 13.5, "velocity": 0.8, "confidence": 0.9},
+  {"pitch": 67, "start": 13.5, "end": 14.0, "velocity": 0.7, "confidence": 0.85}
+ ],
+ "note_count": 2,
+ "confidence": {
+  "overall": 0.82,
+  "note_confidence": 0.88,
+  "timing_confidence": 0.8,
+  "pitch_confidence": 0.9,
+  "velocity_confidence": 0.6,
+  "issues": {"short_notes": 1},
+  "needs_cleanup": true,
+  "suggested_passes": ["merge_short_notes"]
+ },
+ "provenance": {
+  "detector_contributions": {"basic_pitch": 0.7, "onset": 0.3},
+  "cleanup_passes_applied": ["dedupe"],
+  "corrections_made": 3,
+  "octave_corrections": 1,
+  "timing_adjustments": 2,
+  "fp_risk": 0.12,
+  "fn_risk": 0.08,
+  "notes": []
+ },
+ "audio_features": {
+  "energy_mean": 0.5,
+  "energy_peak": 0.95,
+  "spectral_centroid": 1830.0,
+  "tempo_local": 121.3
+ },
+ "waveform_peaks": [0.1, 0.4, 0.8]
+}

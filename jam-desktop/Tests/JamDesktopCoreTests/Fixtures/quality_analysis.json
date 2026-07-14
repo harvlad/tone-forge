@@ -1,0 +1,79 @@
+{
+ "filename": "riff.wav",
+ "duration_sec": 42.5,
+ "sample_rate": 22050,
+ "load_time_ms": 310.2,
+ "reconstruction_available": true,
+ "stem_quality": {
+  "overall_quality": 0.82,
+  "contamination_score": 0.11,
+  "transient_integrity": 0.9,
+  "harmonic_purity": 0.75,
+  "reverb_density": 0.3,
+  "stereo_coherence": null,
+  "snr_estimate": 24.6
+ },
+ "contamination": {
+  "overall_contamination": 0.11,
+  "bass_bleed": 0.05,
+  "drum_bleed": 0.2,
+  "vocal_bleed": 0.0,
+  "reverb_contamination": 0.08
+ },
+ "artifacts": {
+  "clipping_detected": true,
+  "clipping_severity": 0.02,
+  "noise_floor_db": -61.5,
+  "dc_offset": 0.0003,
+  "phase_issues": false
+ },
+ "role": {
+  "primary_role": "lead",
+  "confidence": 0.7,
+  "spectral_profile": "bright_midrange",
+  "temporal_profile": "sustained"
+ },
+ "confidence_map": {
+  "global_confidence": 0.66,
+  "region_count": 12,
+  "low_confidence_regions": 2,
+  "high_confidence_regions": 7
+ },
+ "continuity": {
+  "sustained_regions": 5,
+  "avg_sustain_duration": 1.8,
+  "pitch_stability": 0.91
+ },
+ "priors": {
+  "source_archetype": "clean_electric",
+  "onset_threshold": 0.5,
+  "frame_threshold": 0.3,
+  "min_note_ms": 58.0,
+  "quantization_strength": 0.35
+ },
+ "quality_report": {
+  "overall_confidence": 0.74,
+  "quality_level": "good",
+  "should_proceed": true,
+  "warning_count": 1,
+  "warnings": [
+   {
+    "level": "warning",
+    "category": "contamination",
+    "message": "Moderate drum bleed detected",
+    "recommendation": "Consider a tighter stem separation model"
+   }
+  ]
+ },
+ "analysis_time_ms": 5230.0,
+ "confidence_scores": {
+  "amp_family": 0.45,
+  "gain": 0.64,
+  "cab": 0.55,
+  "effects": 0.6
+ },
+ "detected": {
+  "amp_family": "fender_clean",
+  "gain": 0.32
+ }
+}

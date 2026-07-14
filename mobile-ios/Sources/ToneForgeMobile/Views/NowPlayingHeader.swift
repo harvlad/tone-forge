@@ -11,7 +11,7 @@
 
 import SwiftUI
 
-struct NowPlayingHeader: View {
+struct NowPlayingHeader<Accessory: View>: View {
     let title: String
     let artist: String?
     let durationSec: Double?
@@ -25,6 +25,9 @@ struct NowPlayingHeader: View {
     /// When non-nil, shows a gear on the trailing edge that opens the
     /// Settings sheet (D-022: settings live in the header, not a tab).
     var onSettings: (() -> Void)? = nil
+    /// Optional accessory view (e.g., pack picker) displayed before
+    /// the settings button.
+    @ViewBuilder var accessory: () -> Accessory
 
     var body: some View {
         // Compact two-line card: real devices give the Play tab far
@@ -48,6 +51,8 @@ struct NowPlayingHeader: View {
             }
 
             Spacer()
+
+            accessory()
 
             if let onEject {
                 Button(action: onEject) {
@@ -87,6 +92,31 @@ struct NowPlayingHeader: View {
     private func formatDuration(_ s: Double) -> String {
         let total = max(0, Int(s.rounded(.down)))
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+// MARK: - Convenience initializer (no accessory)
+
+extension NowPlayingHeader where Accessory == EmptyView {
+    init(
+        title: String,
+        artist: String?,
+        durationSec: Double?,
+        keyLabel: String?,
+        tempoBpm: Double?,
+        analysisId: String? = nil,
+        onEject: (() -> Void)? = nil,
+        onSettings: (() -> Void)? = nil
+    ) {
+        self.title = title
+        self.artist = artist
+        self.durationSec = durationSec
+        self.keyLabel = keyLabel
+        self.tempoBpm = tempoBpm
+        self.analysisId = analysisId
+        self.onEject = onEject
+        self.onSettings = onSettings
+        self.accessory = { EmptyView() }
     }
 }
 

@@ -570,3 +570,168 @@ the simple SessionCapture extension).
 screen, and focused sheets for Samples/Instruments/FX/Settings. One grid
 surface per tab, one tab chrome, one transport row keeps the code simple
 while matching the mockups precisely.
+
+## D-023: Sequencer View + Chop Refinement UI
+
+**Date:** 2026-07-09
+**Decision:** add two major Contribute-surface features: (1) step
+sequencer for pattern-based and timeline-based sample triggering, (2)
+chop refinement UI with waveform editor and radial menu for per-pad
+actions.
+
+**Architecture decisions:**
+
+### Sequencer data model
+
+```
+SequencerPattern {
+    id: UUID
+    name: String
+    stepCount: PatternStepCount (8|16|32)
+    bpmOverride: Double?
+    tracks: [SequencerTrack]
+    swing: Float
+    isLooping: Bool
+}
+
+SequencerTrack {
+    id: UUID
+    chopRef: ChopReference
+    steps: [SequencerStep]
+    volume: Float
+    pan: Float
+    isMuted: Bool
+    isSoloed: Bool
+}
+
+SequencerStep {
+    velocity: Float (0 = off, 0.01–1.0 = on)
+    probability: Float (0–1, default 1.0)
+}
+```
+
+- `SequencerClock` subscribes to transport ticks and fires step callbacks
+  at quantized beat subdivisions (16th notes = 4 steps/beat).
+- `SequencerPlayer` owns pattern + clock, dispatches via
+  `ContributionEventBus` for pack pads (padDown/padUp events with
+  `.future("sequencer")` source) and delegate for bundle chops.
+- BPM syncs to song tempo by default; `bpmOverride` enables standalone
+  pattern playback.
+
+### Timeline arrangement model
+
+```
+TimelineArrangement {
+    id: UUID
+    analysisId: String
+    clips: [TimelineClip]
+    trackCount: Int
+    lengthBeats: Double?
+}
+
+TimelineClip {
+    id: UUID
+    chopRef: ChopReference
+    startBeat: Double
+    durationBeats: Double
+    velocity: Float
+    track: Int
+}
+```
+
+- Timeline clips are beat-anchored (survive tempo changes).
+- Clips quantize to 16th-note grid via `TimelineArrangement.quantize()`.
+- Horizontal scroll, draggable clips, beat ruler with bar markers.
+
+### Chop refinement model
+
+```
+ChopBoundaryEdit {
+    chopIndex: Int
+    originalStart/End: Double
+    editedStart/End: Double
+}
+
+ChopSplit {
+    parentIndex: Int
+    splitPoint: Double
+}
+
+ChopMerge {
+    firstIndex: Int
+    secondIndex: Int
+}
+
+ChopEdits {
+    boundaryEdits: [ChopBoundaryEdit]
+    splits: [ChopSplit]
+    merges: [ChopMerge]
+}
+```
+
+- `resolvedChops(bundleChops:edits:)` pure function applies edits at
+  runtime; original bundle unchanged.
+- `ResolvedChop` carries `resolvedId` (stable across re-renders) plus
+  `origin` enum (original | split | merged).
+
+### ChopReference unified type
+
+```
+enum ChopReference {
+    case bundleChop(presetKey: String, chopIndex: Int, resolvedId: Int?)
+    case packPad(packId: String, padIdx: Int)
+    case localSample(id: UUID)
+    case customURL(url: URL, startSec: Double?, endSec: Double?)
+}
+```
+
+- Single reference type for sequencer steps, timeline clips, and pad
+  assignments.
+- Codable with frozen wire shape for pattern/arrangement persistence.
+
+### Radial menu for pad actions
+
+- `PadRadialMenu` appears on 0.5s long-press of a sample pad.
+- Four segments: Effects (opens FX editor), Chop (opens waveform editor),
+  Loop (toggles loop transform), Delete (clears pad assignment).
+- Drag gesture to highlight, release to confirm; drag to center or
+  outside to cancel. Haptic feedback on segment changes.
+
+**Files created:**
+
+Engine (ToneForgeEngine):
+- `Chops/ChopEdit.swift` — edit model, resolvedChops()
+- `Chops/ChopReference.swift` — unified reference type
+- `Sequencer/SequencerPattern.swift` — pattern/track/step data model
+- `Sequencer/SequencerClock.swift` — step-based clock with swing
+- `Sequencer/SequencerPlayer.swift` — playback engine with bus dispatch
+- `Sequencer/TimelineArrangement.swift` — clip arrangement model
+
+Views (ToneForgeMobile):
+- `Views/Pad/PadRadialMenu.swift` — radial context menu
+- `Views/ChopEditor/ChopWaveformView.swift` — waveform with handles
+- `Views/ChopEditor/ChopEditorSheet.swift` — boundary editing sheet
+- `Views/Sequencer/TrackRowView.swift` — single track row
+- `Views/Sequencer/PatternEditorView.swift` — MPC-style step grid
+- `Views/Sequencer/TimelineView.swift` — DAW-style arrangement
+- `Views/Sequencer/SequencerTabView.swift` — Pattern/Timeline mode toggle
+- `Views/Sequencer/ChopPickerSheet.swift` — browse/select chops
+
+Tests:
+- `Tests/ToneForgeEngineTests/ChopEditTests.swift` — 24 tests for edits
+
+**Alternatives:**
+- Separate sequencer audio path (rejected: reusing ContributionEventBus
+  means session capture, layer recording, and latency probes all work
+  unchanged).
+- Mutable bundle chops (rejected: edits overlay at runtime to preserve
+  original analysis and enable undo/reset).
+- Context menu instead of radial (rejected: radial supports drag-to-select
+  which is faster for repeated actions and more game-like).
+
+**Why:** step sequencer and timeline arrangement add compositional power
+beyond live pad triggering. Chop refinement lets users fine-tune
+auto-generated boundaries without re-analyzing. Radial menu provides
+quick access to per-pad actions without navigating sheets. All three
+features integrate with existing transport, event bus, and session
+capture infrastructure.

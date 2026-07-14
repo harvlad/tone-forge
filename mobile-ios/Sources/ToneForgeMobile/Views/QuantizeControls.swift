@@ -17,36 +17,32 @@ struct QuantizeControls: View {
     @Binding var beatBar: BeatBarMode
 
     var body: some View {
-        HStack(spacing: 8) {
-            Menu {
-                Picker("Quantize", selection: $quantize) {
-                    ForEach(QuantizeMode.allCases, id: \.self) { m in
-                        Text(m.rawValue).tag(m)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Menu {
+                    Picker("Quantize", selection: $quantize) {
+                        ForEach(QuantizeMode.allCases, id: \.self) { m in
+                            Text(m.rawValue).tag(m)
+                        }
                     }
+                } label: {
+                    labelCapsule("Q", value: quantize.rawValue)
                 }
-            } label: {
-                labelCapsule("Q", value: quantize.rawValue)
-            }
 
-            Menu {
-                Picker("Hold", selection: $hold) {
-                    Text("Hold").tag(HoldMode.hold)
-                    Text("Toggle").tag(HoldMode.toggle)
+                // Simple toggle - tap cycles between Hold/Toggle
+                Button {
+                    hold = (hold == .hold) ? .toggle : .hold
+                } label: {
+                    labelCapsule("H", value: hold == .hold ? "Hold" : "Toggle")
                 }
-            } label: {
-                labelCapsule("H", value: hold == .hold ? "Hold" : "Toggle")
-            }
 
-            Menu {
-                Picker("Beat/Bar", selection: $beatBar) {
-                    Text("Beat").tag(BeatBarMode.beat)
-                    Text("Bar").tag(BeatBarMode.bar)
+                // Simple toggle - tap cycles between Beat/Bar
+                Button {
+                    beatBar = (beatBar == .beat) ? .bar : .beat
+                } label: {
+                    labelCapsule("Grid", value: beatBar == .beat ? "Beat" : "Bar")
                 }
-            } label: {
-                labelCapsule("Grid", value: beatBar == .beat ? "Beat" : "Bar")
             }
-
-            Spacer()
         }
         .font(.caption)
     }
@@ -64,5 +60,6 @@ struct QuantizeControls: View {
         .padding(.vertical, 5)
         .background(Capsule().fill(TFTheme.chipFill))
         .overlay(Capsule().stroke(TFTheme.stroke, lineWidth: 1))
+        .fixedSize()
     }
 }

@@ -59,16 +59,18 @@ struct PadSourceTarget: Identifiable {
     var gridRaw: Int { gridRow * 10 + gridCol }
 }
 
-/// Union of the two long-press sheets — `.sheet(item:)` needs one
+/// Union of the long-press sheets — `.sheet(item:)` needs one
 /// Identifiable value.
 enum PadSheetTarget: Identifiable {
     case effects(PadEffectsTarget)
     case source(PadSourceTarget)
+    case trimmer(SampleTrimmerTarget)
 
     var id: UUID {
         switch self {
         case .effects(let t): return t.id
         case .source(let t):  return t.id
+        case .trimmer(let t): return t.id
         }
     }
 }
@@ -117,6 +119,15 @@ public final class ModeCoordinator: ObservableObject {
     /// P4: owns rendered transform buffers + loop flags; fills the
     /// scheduler's transformResolver/loopResolver seams.
     let transformHost = PadTransformHost()
+
+    /// D-023: running SequencerPlayers behind "sequence pads". Each
+    /// pad's player re-publishes packPad triggers to the same bus, so a
+    /// sequence pad plays other pads over time. Layered by pad index.
+    lazy var sequencePadManager = SequencePadManager(
+        eventBus: app.contributionBus,
+        patternStore: app.sequencerPatternStore,
+        delegate: app
+    )
 
     public init(app: AppState) {
         self.app = app
@@ -174,6 +185,7 @@ public final class ModeCoordinator: ObservableObject {
             app.sampleSettings.lastContributeModeRaw = mode.rawValue
         }
         app.wavetableSynthNode.allNotesOff()
+        sequencePadManager.stopAll()
         // Local assignments are per-mode but scheduler buffers are
         // keyed by grid pad alone — swap them with the mode. Same
         // for armed transform renders.
@@ -190,6 +202,16 @@ public final class ModeCoordinator: ObservableObject {
     /// On-screen grid touch-down. Stamps hostTime BEFORE publishing so
     /// the LatencyProbe (P7) measures the true touch→attack path.
     public func touchPadDown(row: Int, col: Int) {
+        // Sequence pads don't sound themselves — they run a sequencer
+        // that re-fires other pads. Intercept before the normal bus
+        // publish; respect the global Hold/Toggle setting.
+        if let patternId = sequencePatternId(row: row, col: col) {
+            handleSequencePadDown(
+                patternId: patternId,
+                padIdx: PadIndex.at(row: row, col: col).rawValue
+            )
+            return
+        }
         app.contributionBus.publish(ContributionEvent(
             source: .touch,
             kind: .padDown(row: row, col: col),
@@ -200,12 +222,50 @@ public final class ModeCoordinator: ObservableObject {
 
     /// On-screen grid touch-up.
     public func touchPadUp(row: Int, col: Int) {
+        if sequencePatternId(row: row, col: col) != nil {
+            handleSequencePadUp(padIdx: PadIndex.at(row: row, col: col).rawValue)
+            return
+        }
         app.contributionBus.publish(ContributionEvent(
             source: .touch,
             kind: .padUp(row: row, col: col),
             timestamp: app.audioEngine.clock.nowSongSeconds,
             hostTime: mach_absolute_time()
         ))
+    }
+
+    // MARK: - Sequence pad routing (D-023)
+
+    /// The saved-pattern id assigned to this grid pad, or nil.
+    private func sequencePatternId(row: Int, col: Int) -> UUID? {
+        let grid = PadIndex.at(row: row, col: col)
+        guard grid.isValid,
+              let slot = app.padAssignmentStore.slot(mode: appMode, padIdx: grid.rawValue),
+              case .sequence(let patternId) = slot.ref
+        else { return nil }
+        return patternId
+    }
+
+    /// Pad-down on a sequence pad. Toggle: flip run state. Hold: start.
+    private func handleSequencePadDown(patternId: UUID, padIdx: Int) {
+        let bpm = app.currentBundle?.meta.tempoBpm ?? app.sketchSettings.tempoBpm
+        switch app.sampleSettings.holdMode {
+        case .toggle:
+            if sequencePadManager.isActive(padIdx: padIdx) {
+                sequencePadManager.stop(padIdx: padIdx)
+            } else {
+                sequencePadManager.start(patternId: patternId, padIdx: padIdx, songBPM: bpm)
+            }
+        case .hold:
+            sequencePadManager.start(patternId: patternId, padIdx: padIdx, songBPM: bpm)
+        }
+    }
+
+    /// Pad-up on a sequence pad. Hold: stop. Toggle: no-op.
+    private func handleSequencePadUp(padIdx: Int) {
+        if app.sampleSettings.holdMode == .hold {
+            sequencePadManager.stop(padIdx: padIdx)
+        }
     }
 
     // MARK: - Bus handling + execution
@@ -352,6 +412,9 @@ public final class ModeCoordinator: ObservableObject {
                         buffer, meta: meta, for: raw
                     )
                 }
+            case .sequence:
+                // Sequence pads are not part of session replay overlays.
+                continue
             }
         }
     }
@@ -470,14 +533,22 @@ public final class ModeCoordinator: ObservableObject {
         if let active = app.activeSamplePack {
             let packId = active.pack.packId
             for pad in active.pack.pads where (0..<16).contains(pad.padIdx) {
+                // Skip hidden pads
+                if app.sampleSettings.isPadHidden(packId: packId, padIdx: pad.padIdx) {
+                    continue
+                }
                 let grid = PadIndex.at(
                     row: 8 - pad.padIdx / 4,
                     col: pad.padIdx % 4 + 1
                 )
                 padBindings[grid.rawValue] = (packId: packId, padIdx: pad.padIdx)
+                // Show edited badge if user has modified effects from baseline
+                let hasEffectsOverride = app.sampleSettings
+                    .padEffectsOverride(packId: packId, padIdx: pad.padIdx) != nil
                 content[grid.rawValue] = PadContent(
                     label: pad.name,
                     colorHint: Self.familyColor(pad.family),
+                    badge: hasEffectsOverride ? .edited : nil,
                     loops: pad.loopPointSec != nil
                 )
             }
@@ -504,24 +575,53 @@ public final class ModeCoordinator: ObservableObject {
                 )
 
             case .packPad(let packId, let padIdx):
-                // Pack-pad slots exist only to carry a transform
-                // chain (P4). Overlay the badge on the pack's own
-                // content — but only while that pack is actually the
-                // one bound at this grid position.
-                guard let badge = Self.transformBadge(slot.transforms),
-                      let binding = padBindings[gridRaw],
-                      binding.packId == packId,
-                      binding.padIdx == padIdx,
-                      var existing = content[gridRaw]
-                else { continue }
-                existing.badge = badge
-                existing.loops =
-                    existing.loops || slot.transforms.contains(.loop)
-                content[gridRaw] = existing
+                if let binding = padBindings[gridRaw],
+                   binding.packId == packId, binding.padIdx == padIdx {
+                    // The active pack already painted this exact pad
+                    // here — overlay the transform-chain badge only (P4).
+                    guard let badge = Self.transformBadge(slot.transforms),
+                          var existing = content[gridRaw]
+                    else { continue }
+                    existing.badge = badge
+                    existing.loops =
+                        existing.loops || slot.transforms.contains(.loop)
+                    content[gridRaw] = existing
+                } else {
+                    // A pad from a pack other than the fronted one,
+                    // pinned to this single grid cell. Bind + paint it
+                    // from its own pack manifest so it triggers and shows.
+                    guard let info = app.packPadInfo(packId: packId, padIdx: padIdx)
+                    else { continue }
+                    app.ensurePackLoaded(packId: packId)
+                    padBindings[gridRaw] = (packId: packId, padIdx: padIdx)
+                    content[gridRaw] = PadContent(
+                        label: info.name,
+                        colorHint: Self.familyColor(info.family),
+                        badge: Self.transformBadge(slot.transforms),
+                        loops: info.loops || slot.transforms.contains(.loop)
+                    )
+                }
+
+            case .sequence(let patternId):
+                // A saved sequence assigned to this pad. No scheduler
+                // buffer — playback is handled by SequencePadManager on
+                // touch. Show a labeled tile so the pad isn't "empty".
+                let name = app.sequencerPatternStore
+                    .pattern(id: patternId)?.name ?? "Sequence"
+                padBindings[gridRaw] = nil
+                content[gridRaw] = PadContent(
+                    label: name,
+                    colorHint: Self.sequenceColor,
+                    badge: .loop,
+                    loops: true
+                )
             }
         }
         return content
     }
+
+    /// Tile color (0xRRGGBB) for pads holding a saved sequence.
+    static let sequenceColor: UInt32 = 0x30D5C8
 
     /// Grid badge for a pad carrying a transform chain: `.loop` when
     /// the chain loops, `.transformed` otherwise, nil for no chain.
@@ -662,6 +762,19 @@ public final class ModeCoordinator: ObservableObject {
         rebuildLayout()
     }
 
+    /// Point a grid pad at a saved sequencer pattern. Pressing the pad
+    /// runs the whole sequence (see SequencePadManager). Persists +
+    /// repaints. No audio buffer is loaded — the pad drives other pads.
+    public func assignSequence(targetRow: Int, targetCol: Int, patternId: UUID) {
+        let grid = PadIndex.at(row: targetRow, col: targetCol)
+        guard grid.isValid else { return }
+        app.padAssignmentStore.assign(
+            PadSlot(ref: .sequence(patternId: patternId)),
+            mode: appMode, padIdx: grid.rawValue
+        )
+        rebuildLayout()
+    }
+
     /// Un-assign a pad (the sample stays in the store; the pad falls
     /// back to the pack layout).
     public func clearLocalAssignment(gridPad gridRaw: Int) {
@@ -670,6 +783,27 @@ public final class ModeCoordinator: ObservableObject {
         clearHostedTransforms(
             packId: SampleScheduler.localPackId, padIdx: gridRaw
         )
+        rebuildLayout()
+    }
+
+    /// Hide a pack pad from the grid. The pad can be restored via
+    /// unhidePackPad or by switching packs.
+    public func hidePackPad(row: Int, col: Int) {
+        let grid = PadIndex.at(row: row, col: col)
+        guard let binding = padBindings[grid.rawValue],
+              binding.packId != SampleScheduler.localPackId
+        else {
+            // It's a local sample, use clearLocalAssignment instead
+            clearLocalAssignment(gridPad: grid.rawValue)
+            return
+        }
+        app.sampleSettings.hidePad(packId: binding.packId, padIdx: binding.padIdx)
+        rebuildLayout()
+    }
+
+    /// Unhide a previously hidden pack pad.
+    public func unhidePackPad(packId: String, padIdx: Int) {
+        app.sampleSettings.unhidePad(packId: packId, padIdx: padIdx)
         rebuildLayout()
     }
 
@@ -1107,6 +1241,10 @@ public final class ModeCoordinator: ObservableObject {
             return (SampleScheduler.localPackId, gridRaw)
         case .packPad(let packId, let padIdx):
             return (packId, padIdx)
+        case .sequence:
+            // Sequences have no scheduler buffer; they are handled by
+            // SequencePadManager. Return a sentinel that matches nothing.
+            return ("__sequence__", gridRaw)
         }
     }
 
@@ -1173,6 +1311,127 @@ public final class ModeCoordinator: ObservableObject {
             manifestBaseline: pad.effects,
             gridRow: row,
             gridCol: col
+        )
+    }
+
+    /// Preview a trimmed portion of a pad sample. Used by the waveform
+    /// trimmer to audition the selected region.
+    func previewTrimmed(
+        packId: String,
+        padIdx: Int,
+        startFraction: Double,
+        endFraction: Double
+    ) {
+        app.sampleScheduler.previewTrimmed(
+            padIdx: padIdx,
+            packId: packId,
+            startFraction: startFraction,
+            endFraction: endFraction
+        )
+    }
+
+    /// Reset a pad to its default state: clear effects override, trim, loop.
+    func resetPadToDefault(row: Int, col: Int) {
+        let grid = PadIndex.at(row: row, col: col)
+        guard let binding = padBindings[grid.rawValue] else { return }
+
+        // Clear effects override (reverts to manifest baseline)
+        app.sampleSettings.setPadEffectsOverride(
+            nil,
+            packId: binding.packId,
+            padIdx: binding.padIdx
+        )
+
+        // Clear loop and other transforms (nil base clears the render)
+        transformHost.setChain(
+            [],
+            packId: binding.packId,
+            padIdx: binding.padIdx,
+            base: nil,
+            tempoBpm: 120,
+            chord: []
+        )
+
+        // TODO: Clear trim settings once SampleTrimStore is implemented
+    }
+
+    /// Preview a pad sound from any pack. For the active pack, triggers
+    /// through the normal path. For other packs, activates that pack first.
+    /// Currently previewing pad (for stop functionality).
+    private var previewingPad: (packId: String, padIdx: Int)?
+
+    /// Preview a pad from any pack without switching the active pack.
+    func previewPadFromPack(packId: String, padIdx: Int) {
+        // Stop any currently playing preview first
+        stopPreviewPad()
+
+        // Ensure the pack is loaded (without switching active pack)
+        app.ensurePackLoaded(packId: packId)
+
+        // Use triggerRaw to bypass contributionGuard assertion (this is a preview, not a contribution)
+        _ = app.sampleScheduler.triggerRaw(padIdx: padIdx, packId: packId)
+
+        // Track what's previewing so we can stop it
+        previewingPad = (packId, padIdx)
+    }
+
+    /// Stop the currently previewing pad.
+    func stopPreviewPad() {
+        guard let previewing = previewingPad else { return }
+        app.sampleScheduler.release(padIdx: previewing.padIdx, packId: previewing.packId)
+        previewingPad = nil
+    }
+
+    /// Assign a pack pad to a specific grid position.
+    /// Unhides the pad and switches packs if needed.
+    func assignPadFromPack(
+        targetRow: Int,
+        targetCol: Int,
+        sourcePackId: String,
+        sourcePadIdx: Int
+    ) {
+        let grid = PadIndex.at(row: targetRow, col: targetCol)
+        guard grid.isValid else { return }
+
+        // Unhide the pad in case it was hidden.
+        app.sampleSettings.unhidePad(packId: sourcePackId, padIdx: sourcePadIdx)
+
+        // Pin just this one pack pad to the target grid cell — the grid
+        // can mix pads from multiple packs. Ensure the source pack's
+        // buffers are loaded so the pad triggers regardless of which
+        // pack is currently fronted, then persist + repaint.
+        app.ensurePackLoaded(packId: sourcePackId)
+        app.padAssignmentStore.assign(
+            PadSlot(ref: .packPad(packId: sourcePackId, padIdx: sourcePadIdx)),
+            mode: appMode, padIdx: grid.rawValue
+        )
+        rebuildLayout()
+    }
+
+    /// Trimmer target for a grid pad: provides sample info for waveform trimming.
+    func padTrimmerTarget(row: Int, col: Int) -> SampleTrimmerTarget? {
+        let grid = PadIndex.at(row: row, col: col)
+        guard let binding = padBindings[grid.rawValue],
+              let active = app.activeSamplePack,
+              active.pack.packId == binding.packId,
+              let pad = active.pack.pads.first(where: { $0.padIdx == binding.padIdx })
+        else { return nil }
+
+        // Generate placeholder peaks for now
+        // TODO: Load actual peaks from audio file
+        let peaks: [Float] = (0..<100).map { i in
+            let t = Float(i) / 100
+            return abs(sin(t * .pi * 6)) * (0.2 + 0.8 * (1 - t * 0.5))
+        }
+
+        return SampleTrimmerTarget(
+            packId: binding.packId,
+            padIdx: binding.padIdx,
+            padName: pad.name,
+            gridRow: row,
+            gridCol: col,
+            durationSec: 1.0, // TODO: Get actual duration from audio file
+            peaks: peaks
         )
     }
 }

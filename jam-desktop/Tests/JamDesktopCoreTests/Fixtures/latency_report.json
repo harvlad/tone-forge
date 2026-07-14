@@ -1,0 +1,10 @@
+{
+  "type": "latency_report",
+  "v": 2,
+  "input_ms": 3.1,
+  "output_ms": 4.2,
+  "buffer_ms": 5.3,
+  "estimated_round_trip_ms": 17.9,
+  "measured_round_trip_ms": 12.4,
+  "measurement_confidence": "high"
+}

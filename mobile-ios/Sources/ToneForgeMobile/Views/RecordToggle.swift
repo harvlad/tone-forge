@@ -23,18 +23,42 @@ struct RecordToggle: View {
     @EnvironmentObject private var appState: AppState
     @State private var pulse: Bool = false
 
+    /// When false, arming does not start the song transport. The
+    /// sequencer sets this — its own clock drives playback, so
+    /// pressing Record there should not kick off the song.
+    var startsTransport: Bool = true
+
+    /// Compact layout: no greedy `Spacer`, no inline error text, and
+    /// the label collapses to just the dot. Used inside crowded
+    /// transport rows (sequencer) where the full-width pill overflows.
+    var compact: Bool = false
+
+    /// Fired when the recorder arms (idle → armed). The sequencer uses
+    /// this to start its own clock so the pattern is audible + captured.
+    var onArm: (() -> Void)? = nil
+
+    /// Fired when the recorder stops or cancels (→ idle). Sequencer
+    /// stops its clock.
+    var onStop: (() -> Void)? = nil
+
     var body: some View {
         HStack(spacing: 10) {
             dot
-            Text(label)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(labelColor)
-            Spacer()
-            if let error = appState.layerError {
-                Text(error)
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
+            if !(compact && appState.sessionRecorder.state == .idle) {
+                Text(label)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(labelColor)
                     .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            if !compact {
+                Spacer()
+                if let error = appState.layerError {
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -122,14 +146,17 @@ struct RecordToggle: View {
     private func handleTap() {
         switch appState.sessionRecorder.state {
         case .idle:
-            appState.armSessionRecording()
+            appState.armSessionRecording(startTransport: startsTransport)
+            onArm?()
         case .armed, .recording:
             appState.stopAndSaveSessionRecording()
+            onStop?()
         }
     }
 
     private func handleLongPress() {
         guard appState.sessionRecorder.state != .idle else { return }
         appState.cancelSessionRecording()
+        onStop?()
     }
 }
