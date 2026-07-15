@@ -49,6 +49,8 @@ htmlcov/
 .build/
 .build-sim/
 .build-xcode/
+.build-xcode-dev/
+.build-xcode-sim/
 .swiftpm/
 DerivedData/
 
