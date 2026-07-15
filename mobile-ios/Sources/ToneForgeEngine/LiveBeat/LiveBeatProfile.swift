@@ -112,82 +112,92 @@ public struct LiveBeatProfile: Codable, Identifiable, Sendable, Equatable {
 
 extension LiveBeatProfile {
     /// Default profile with heuristic-based templates (no calibration).
-    /// Uses the same thresholds as HeuristicBeatClassifier but as
-    /// feature space templates. Useful as a starting point before
-    /// user calibration.
+    ///
+    /// Tuned for *mic taps*, not studio drums. A desk/chest thump through
+    /// a phone mic never reaches a real kick's sub-bass energy, so the
+    /// kick template does NOT demand a high `lowRatio` — it just claims
+    /// the darkest, least-noisy corner of tap space, with a wide
+    /// `lowRatio` variance so any relatively bass-heavy tap lands here
+    /// instead of on the snare. Roles separate by *relative* brightness
+    /// and noisiness (Mahalanobis-weighted), which is all the mic can
+    /// reliably give us before the user calibrates their own sounds.
     public static var heuristicDefault: LiveBeatProfile {
         LiveBeatProfile(
             name: "Default",
             templates: [
-                // Kick: dark, low-band heavy
+                // Kick: the darkest, least-noisy tap. Modest lowRatio
+                // (a mic thump, not a sub-bass drum) with wide tolerance
+                // so bass-leaning taps still land here over the snare.
                 LiveBeatTemplate(
                     label: "Kick",
                     role: .kick,
                     features: LiveBeatFeatures(
-                        centroidNorm: 0.1,
-                        zcr: 0.15,
-                        lowRatio: 0.6,
+                        centroidNorm: 0.12,
+                        zcr: 0.12,
+                        lowRatio: 0.42,
                         crestFactor: 4.0
                     ),
                     variance: LiveBeatFeatures(
-                        centroidNorm: 0.1,
+                        centroidNorm: 0.12,
                         zcr: 0.1,
-                        lowRatio: 0.15,
-                        crestFactor: 2.0
+                        lowRatio: 0.22,
+                        crestFactor: 2.5
                     ),
                     onsetThreshold: 0.15
                 ),
-                // Snare: mid-bright, medium low
+                // Snare: brighter and noisier than the kick, with clearly
+                // less low-band energy. Tight lowRatio keeps it from
+                // stealing genuinely bassy taps.
                 LiveBeatTemplate(
                     label: "Snare",
                     role: .snare,
                     features: LiveBeatFeatures(
                         centroidNorm: 0.4,
-                        zcr: 0.3,
-                        lowRatio: 0.25,
+                        zcr: 0.36,
+                        lowRatio: 0.18,
                         crestFactor: 5.0
                     ),
                     variance: LiveBeatFeatures(
-                        centroidNorm: 0.15,
-                        zcr: 0.1,
+                        centroidNorm: 0.16,
+                        zcr: 0.12,
                         lowRatio: 0.1,
-                        crestFactor: 2.0
+                        crestFactor: 2.5
                     ),
                     onsetThreshold: 0.12
                 ),
-                // Closed Hat: bright, noisy, no bass
+                // Closed Hat: brightest, noisiest, almost no low band.
                 LiveBeatTemplate(
                     label: "Hat",
                     role: .closedHat,
                     features: LiveBeatFeatures(
-                        centroidNorm: 0.7,
-                        zcr: 0.5,
-                        lowRatio: 0.05,
+                        centroidNorm: 0.68,
+                        zcr: 0.55,
+                        lowRatio: 0.06,
                         crestFactor: 3.0
                     ),
                     variance: LiveBeatFeatures(
-                        centroidNorm: 0.15,
-                        zcr: 0.15,
-                        lowRatio: 0.05,
-                        crestFactor: 1.5
+                        centroidNorm: 0.18,
+                        zcr: 0.18,
+                        lowRatio: 0.06,
+                        crestFactor: 2.0
                     ),
                     onsetThreshold: 0.08
                 ),
-                // Clap: mid-bright, medium duration
+                // Clap: mid-bright, noisy, sharp attack; little low band.
                 LiveBeatTemplate(
                     label: "Clap",
                     role: .clap,
                     features: LiveBeatFeatures(
                         centroidNorm: 0.5,
-                        zcr: 0.35,
-                        lowRatio: 0.15,
+                        zcr: 0.42,
+                        lowRatio: 0.12,
                         crestFactor: 4.5
                     ),
                     variance: LiveBeatFeatures(
-                        centroidNorm: 0.15,
-                        zcr: 0.1,
-                        lowRatio: 0.1,
-                        crestFactor: 2.0
+                        centroidNorm: 0.16,
+                        zcr: 0.12,
+                        lowRatio: 0.08,
+                        crestFactor: 2.5
                     ),
                     onsetThreshold: 0.10
                 ),

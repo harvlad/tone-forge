@@ -2,10 +2,14 @@
 //
 // Real-time audio tap for Live Beat mode. Installs on the main engine's
 // inputNode and detects percussive onsets using amplitude threshold with
-// hysteresis. On onset detection, captures a small sample window and
-// dispatches to the main actor for feature extraction and classification.
+// hysteresis. On onset detection the capture is deferred by one audio
+// buffer so the window holds the sound's *body* (post-attack), not just
+// the broadband attack click — the body is what carries the low-frequency
+// energy that separates a kick-thump from a snare-snap. The buffered
+// window is then dispatched to the main actor for feature extraction and
+// classification.
 //
-// Target latency: ~10ms (onset detected mid-buffer).
+// Target latency: ~one buffer of body (~21ms @ 48kHz) after the attack.
 
 import Accelerate
 import AVFoundation
@@ -17,7 +21,7 @@ public struct LiveBeatOnsetEvent: Sendable {
     /// Host time when the onset was detected.
     public let hostTime: UInt64
 
-    /// Captured samples around the onset (128 samples).
+    /// Captured body window following the onset (1024 samples).
     public let samples: [Float]
 
     /// RMS level at detection (for velocity).
@@ -159,12 +163,24 @@ public final class LiveBeatTap: ObservableObject {
     private var captureEngine: AVAudioEngine?
     /// Audio thread access - onset state machine.
     private nonisolated(unsafe) var detector = OnsetDetector()
-    private let ringBuffer = SampleRingBuffer(capacity: 256)
+    /// Holds at least two capture windows so the deferred body read
+    /// always has a full post-onset window available.
+    private let ringBuffer = SampleRingBuffer(capacity: 2048)
     /// Audio thread access - sample rate for events.
     private nonisolated(unsafe) var sampleRate: Double = 48000
 
-    /// Window size for feature extraction.
-    private let captureWindowSize = 128
+    /// Window size for feature extraction. Must match
+    /// `LiveBeatFeatures.windowSize` so the FFT sees a full window.
+    private let captureWindowSize = 1024
+
+    // Deferred-capture state (audio thread only). When an onset fires we
+    // don't read immediately — the attack click carries no low-frequency
+    // information. We arm this flag and read the *next* buffer, which
+    // holds the sound's body. The 100ms onset refractory guarantees no
+    // second onset arrives before this one is consumed.
+    private nonisolated(unsafe) var pendingBodyCapture = false
+    private nonisolated(unsafe) var pendingHostTime: UInt64 = 0
+    private nonisolated(unsafe) var pendingRMS: Float = 0
 
     public init(session: AudioSessionController) {
         self.session = session
@@ -201,6 +217,7 @@ public final class LiveBeatTap: ObservableObject {
             self.captureEngine = engine
             isRunning = true
             detector.reset()
+            pendingBodyCapture = false
         } catch {
             inputNode.removeTap(onBus: 0)
             session.revertToPlayback()
@@ -243,9 +260,27 @@ public final class LiveBeatTap: ObservableObject {
         var localDetector = detector
         let onsetDetected = localDetector.process(rms: rms, sampleCount: frameCount)
 
-        // Capture data before hopping to main actor
-        let capturedSamples = onsetDetected ? ringBuffer.read(count: captureWindowSize) : []
-        let hostTime = time.hostTime
+        // If an onset fired on the PREVIOUS buffer, its body has now been
+        // written into the ring — read the window and dispatch it. The
+        // velocity/host-time come from the original attack, not the body.
+        var bodySamples: [Float] = []
+        var bodyHostTime: UInt64 = 0
+        var bodyRMS: Float = 0
+        if pendingBodyCapture {
+            bodySamples = ringBuffer.read(count: captureWindowSize)
+            bodyHostTime = pendingHostTime
+            bodyRMS = pendingRMS
+            pendingBodyCapture = false
+        }
+
+        // Arm a deferred body capture for a fresh onset. The 100ms onset
+        // refractory guarantees the pending slot is consumed first.
+        if onsetDetected {
+            pendingBodyCapture = true
+            pendingHostTime = time.hostTime
+            pendingRMS = rms
+        }
+
         let sampleRate = self.sampleRate
         let envelope = localDetector.envelope
 
@@ -256,12 +291,12 @@ public final class LiveBeatTap: ObservableObject {
             self.detector = localDetector
             self.envelopeLevel = envelope
 
-            // Dispatch onset event
-            if onsetDetected && !capturedSamples.isEmpty {
+            // Dispatch the buffered body window from the prior onset.
+            if !bodySamples.isEmpty {
                 let event = LiveBeatOnsetEvent(
-                    hostTime: hostTime,
-                    samples: capturedSamples,
-                    rmsLevel: rms,
+                    hostTime: bodyHostTime,
+                    samples: bodySamples,
+                    rmsLevel: bodyRMS,
                     sampleRate: sampleRate
                 )
                 self.onOnset?(event)

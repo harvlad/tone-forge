@@ -1,9 +1,13 @@
 // LiveBeatFeatures.swift
 //
 // Micro-feature vector for real-time drum classification in Live Beat
-// mode. Extracted from a 128-sample window (~2.6ms @ 48kHz) to minimize
-// latency while capturing enough spectral information to distinguish
-// kick (low), snare (mid+bright), hat (high+noisy), clap (mid+wide).
+// mode. Extracted from a 1024-sample window (~21ms @ 48kHz). The window
+// must be long enough to *resolve* low frequency: a 128-sample window
+// (375 Hz FFT bins) collapsed the whole sub-500 Hz band into a single
+// bin, so kick body was unmeasurable and low taps misfired as snare.
+// 1024 samples give 47 Hz bins (~10 bins under 500 Hz), enough to
+// separate a dark body-thump from a bright snap while still classifying
+// within one audio buffer.
 //
 // These 4 features are a stripped-down version of OnsetFeatures,
 // optimized for sub-millisecond extraction on the main actor.
@@ -63,12 +67,12 @@ public struct LiveBeatFeatures: Sendable, Codable, Equatable {
 
 extension LiveBeatFeatures {
     /// FFT size for micro-feature extraction.
-    /// 128 samples = 64 frequency bins = 375 Hz resolution @ 48kHz.
-    public static let windowSize = 128
+    /// 1024 samples = 512 frequency bins = 47 Hz resolution @ 48kHz.
+    public static let windowSize = 1024
 
     /// Extract features from a short audio window.
     /// - Parameters:
-    ///   - samples: Audio samples (should be ~128 samples).
+    ///   - samples: Audio samples (should be ~1024 samples).
     ///   - sampleRate: Sample rate (typically 48000).
     /// - Returns: Extracted features, or nil if input too short.
     public static func extract(
@@ -133,7 +137,7 @@ extension LiveBeatFeatures {
         sampleRate: Double
     ) -> (centroidNorm: Float, lowRatio: Float) {
         // Pad to power of 2 for FFT
-        let fftSize = 128
+        let fftSize = windowSize
         let log2n = vDSP_Length(log2(Double(fftSize)))
 
         guard let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {

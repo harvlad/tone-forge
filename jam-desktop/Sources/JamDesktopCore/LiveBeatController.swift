@@ -167,7 +167,7 @@ public struct LiveBeatOnsetEvent: Sendable {
     /// Host time when the onset was detected.
     public let hostTime: UInt64
 
-    /// Captured samples around the onset (128 samples).
+    /// Captured body window following the onset (1024 samples).
     public let samples: [Float]
 
     /// RMS level at detection (for velocity).
