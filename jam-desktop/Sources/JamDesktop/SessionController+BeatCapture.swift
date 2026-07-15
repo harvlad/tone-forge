@@ -193,9 +193,13 @@ extension SessionController {
             }
         }
 
-        // Wire controller to trigger samples
+        // Wire controller to trigger samples. Arm the tap's feedback gate
+        // on every trigger so the drum one-shot leaving the speakers can't
+        // retrigger the detector (acoustic-feedback machine-gun).
         liveBeatController.onTriggerSample = { [weak self] role, velocity in
-            self?.triggerBeatKitSample(role: role, velocity: velocity)
+            guard let self else { return }
+            self.triggerBeatKitSample(role: role, velocity: velocity)
+            self.liveBeatTap.suppressDetection(ms: 70)
         }
 
         // Apply the active calibration profile (or fall back to default).

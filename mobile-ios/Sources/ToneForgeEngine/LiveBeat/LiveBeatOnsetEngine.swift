@@ -127,16 +127,20 @@ public struct LiveBeatOnsetDetector: Sendable {
 
         samplesSinceLastOnset += sampleCount
 
-        // Re-arm on either a level drop OR the refractory elapsing. The
-        // time-based path handles sounds with long acoustic decay (chest
-        // taps) whose envelope never falls below offThreshold in time.
-        if !isArmed && (envelope < offThreshold || samplesSinceLastOnset >= minIntervalSamples) {
+        // Re-arm ONLY on a genuine level drop below offThreshold. No
+        // time-based re-arm: a sound that sustains above threshold (a
+        // ringing drum sample bleeding from speakers, held music) must
+        // fire exactly once, not retrigger every refractory. The old
+        // time-based path caused machine-gun retriggering and, in
+        // speaker mode, an acoustic-feedback cascade. Fast release keeps
+        // real taps re-arming quickly between hits.
+        if !isArmed && envelope < offThreshold {
             isArmed = true
         }
 
         // Trigger only when armed, above threshold, and the refractory
-        // has elapsed. The refractory guarantees a prior deferred body
-        // capture is consumed before a second onset arrives.
+        // has elapsed. The refractory debounces one attack's wobble and
+        // guarantees a prior deferred body capture is consumed first.
         if isArmed && envelope >= onThreshold && samplesSinceLastOnset >= minIntervalSamples {
             isArmed = false
             samplesSinceLastOnset = 0
@@ -221,6 +225,14 @@ public final class LiveBeatOnsetProcessor: @unchecked Sendable {
     private var pendingHostTime: UInt64 = 0
     private var pendingRMS: Float = 0
 
+    // Self-trigger feedback gate. When the app plays its own drum sample
+    // out the speakers, the mic hears it; without a gate that bleed can
+    // retrigger the detector (a feedback cascade). The platform calls
+    // `suppressDetection` right after it fires a sample; onsets are
+    // swallowed until the gate elapses. Envelope still tracks so the
+    // detector's hysteresis stays coherent.
+    private var suppressRemaining = 0
+
     public init(
         config: LiveBeatOnsetConfig,
         captureWindowSize: Int = LiveBeatFeatures.windowSize,
@@ -245,10 +257,21 @@ public final class LiveBeatOnsetProcessor: @unchecked Sendable {
         detector.offThreshold = off
     }
 
+    /// Arm the self-trigger feedback gate for `samples` frames. The
+    /// platform calls this right after it plays its own drum sample so
+    /// the speaker bleed the mic hears can't retrigger the detector.
+    /// Onsets are swallowed while the gate is active; the envelope still
+    /// tracks so hysteresis stays coherent. Extends (not resets) an
+    /// existing gate so rapid hits keep it open.
+    public func suppressDetection(samples: Int) {
+        suppressRemaining = max(suppressRemaining, samples)
+    }
+
     /// Reset detector + deferred-capture state.
     public func reset() {
         detector.reset()
         pendingBodyCapture = false
+        suppressRemaining = 0
     }
 
     /// Process one buffer of mono samples. Computes RMS, feeds the onset
@@ -290,7 +313,16 @@ public final class LiveBeatOnsetProcessor: @unchecked Sendable {
 
         ringBuffer.write(samples, count: frameCount)
 
-        let onsetDetected = detector.process(rms: rms, sampleCount: frameCount)
+        var onsetDetected = detector.process(rms: rms, sampleCount: frameCount)
+
+        // Self-trigger feedback gate. While armed, swallow onsets so the
+        // app's own drum sample (heard by the mic from the speakers) can't
+        // retrigger the detector. The envelope already tracked above, so
+        // hysteresis stays coherent through the suppressed window.
+        if suppressRemaining > 0 {
+            suppressRemaining = max(0, suppressRemaining - frameCount)
+            onsetDetected = false
+        }
 
         // If an onset fired on the PREVIOUS buffer, its body has now been
         // written into the ring — read the window and emit it. Velocity /

@@ -259,7 +259,10 @@ public final class LiveBeatController: ObservableObject {
         // Only trigger if confidence is high enough (sound matches a calibrated template)
         guard match.confidence >= 0.4 else { return }
 
-        // Trigger sample
+        // Trigger sample, then arm the tap's feedback gate so the drum
+        // one-shot leaving the speakers can't retrigger the detector
+        // (acoustic-feedback machine-gun).
         onTriggerSample?(match.role, velocity)
+        tap.suppressDetection(ms: 70)
     }
 }

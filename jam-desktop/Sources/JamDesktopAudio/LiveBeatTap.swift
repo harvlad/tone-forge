@@ -33,14 +33,16 @@ public final class LiveBeatTap: ObservableObject {
         didSet { updateThresholds() }
     }
 
-    /// Base threshold (before sensitivity scaling).
-    public var baseThreshold: Float = 0.025 {
+    /// Base threshold (before sensitivity scaling). Low: desktop mics read
+    /// quiet, and a chest / desk thump's post-gain envelope is small — a
+    /// higher gate never fired even though the meter showed movement.
+    public var baseThreshold: Float = 0.012 {
         didSet { updateThresholds() }
     }
 
     /// Linear capture gain. Desktop mics read quieter than a handheld
     /// phone, so boost the signal before onset detection.
-    public var inputGain: Float = 2.0 {
+    public var inputGain: Float = 3.0 {
         didSet { processor.inputGain = inputGain }
     }
 
@@ -48,6 +50,8 @@ public final class LiveBeatTap: ObservableObject {
     private var captureEngine: AVAudioEngine?
     /// Shared onset DSP. Audio-thread access is serial (one tap callback).
     private let processor = LiveBeatOnsetProcessor(config: .desktop)
+    /// Capture sample rate (set on install), for ms→samples conversion.
+    private var captureSampleRate: Double = 48_000
 
     public init() {}
 
@@ -86,6 +90,7 @@ public final class LiveBeatTap: ObservableObject {
         do {
             try engine.start()
             self.captureEngine = engine
+            self.captureSampleRate = format.sampleRate
             isRunning = true
             processor.reset()
             processor.inputGain = inputGain
@@ -104,6 +109,15 @@ public final class LiveBeatTap: ObservableObject {
         captureEngine?.stop()
         captureEngine = nil
         isRunning = false
+    }
+
+    /// Arm the self-trigger feedback gate. Call right after the app plays
+    /// its own drum sample so the speaker bleed the mic hears can't
+    /// retrigger the detector. `ms` is the swallow window (~70 ms covers a
+    /// short one-shot's decay without eating the next real tap).
+    public func suppressDetection(ms: Double) {
+        let samples = Int(ms / 1000 * captureSampleRate)
+        processor.suppressDetection(samples: samples)
     }
 
     // MARK: - Private

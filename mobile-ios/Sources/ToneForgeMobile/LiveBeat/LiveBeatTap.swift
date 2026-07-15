@@ -42,6 +42,8 @@ public final class LiveBeatTap: ObservableObject {
     private var captureEngine: AVAudioEngine?
     /// Shared onset DSP. Audio-thread access is serial (one tap callback).
     private let processor = LiveBeatOnsetProcessor(config: .mobile)
+    /// Capture sample rate (set on install), for ms→samples conversion.
+    private var captureSampleRate: Double = 48_000
 
     public init(session: AudioSessionController) {
         self.session = session
@@ -75,6 +77,7 @@ public final class LiveBeatTap: ObservableObject {
         do {
             try engine.start()
             self.captureEngine = engine
+            self.captureSampleRate = format.sampleRate
             isRunning = true
             processor.reset()
             updateThresholds()
@@ -94,6 +97,15 @@ public final class LiveBeatTap: ObservableObject {
         captureEngine = nil
         session.revertToPlayback()
         isRunning = false
+    }
+
+    /// Arm the self-trigger feedback gate. Call right after the app plays
+    /// its own drum sample so the speaker bleed the mic hears can't
+    /// retrigger the detector. `ms` is the swallow window (~70 ms covers a
+    /// short one-shot's decay without eating the next real tap).
+    public func suppressDetection(ms: Double) {
+        let samples = Int(ms / 1000 * captureSampleRate)
+        processor.suppressDetection(samples: samples)
     }
 
     // MARK: - Private
