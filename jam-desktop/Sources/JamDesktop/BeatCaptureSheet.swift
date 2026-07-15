@@ -21,10 +21,18 @@ struct BeatCaptureSheet: View {
     /// to the sequencer panel.
     let onOpenInSequencer: () -> Void
 
-    private enum Phase: Equatable {
-        case idle, recording, analyzing, review, failed(String)
+    /// Mode selector: Record (existing) or Live Beat (real-time).
+    private enum CaptureMode: String, CaseIterable {
+        case record = "Record"
+        case liveBeat = "Live Beat"
     }
 
+    private enum Phase: Equatable {
+        case idle, recording, analyzing, review, failed(String)
+        case liveBeat  // Active Live Beat mode
+    }
+
+    @State private var captureMode: CaptureMode = .record
     @State private var phase: Phase = .idle
     @State private var hits: [DetectedHit] = []
     @State private var bpm: Double = 120
@@ -82,27 +90,47 @@ struct BeatCaptureSheet: View {
         case .analyzing: analyzingView
         case .review: reviewView
         case .failed(let msg): failedView(msg)
+        case .liveBeat: liveBeatView
         }
     }
 
     private var idleView: some View {
         VStack(spacing: 20) {
-            Image(systemName: "figure.dance")
+            Image(systemName: captureMode == .record ? "figure.dance" : "hand.tap.fill")
                 .font(.system(size: 44))
                 .foregroundStyle(JamTheme.accent)
-            Text("Tap, clap, or beatbox a rhythm. We'll detect the hits and build an editable drum pattern.")
+
+            // Mode picker
+            Picker("Mode", selection: $captureMode) {
+                ForEach(CaptureMode.allCases, id: \.self) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 240)
+
+            Text(captureMode == .record
+                ? "Tap, clap, or beatbox a rhythm. We'll detect the hits and build an editable drum pattern."
+                : "Tap surfaces to trigger drum samples in real-time. Desk = kick, thigh = snare, clap = clap.")
                 .font(.subheadline)
                 .foregroundStyle(JamTheme.textSecondary)
                 .multilineTextAlignment(.center)
-            if session.currentSongTempoBpm != nil {
+
+            if captureMode == .record, session.currentSongTempoBpm != nil {
                 Label("Following the song's tempo", systemImage: "metronome")
                     .font(.footnote)
                     .foregroundStyle(JamTheme.textSecondary)
             }
+
             Button {
-                startRecording()
+                if captureMode == .record {
+                    startRecording()
+                } else {
+                    startLiveBeat()
+                }
             } label: {
-                Label("Record", systemImage: "record.circle")
+                Label(captureMode == .record ? "Record" : "Start Live Beat",
+                      systemImage: captureMode == .record ? "record.circle" : "hand.tap.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
             }
@@ -401,7 +429,119 @@ struct BeatCaptureSheet: View {
             session.beatCapture.onAutoStop = nil
             session.beatCapture.cancel()
         }
+        if phase == .liveBeat {
+            stopLiveBeat()
+        }
         dismiss()
+    }
+
+    // MARK: - Live Beat
+
+    private var liveBeatView: some View {
+        LiveBeatActiveView(
+            controller: session.liveBeatController,
+            tap: session.liveBeatTap,
+            onStop: { stopLiveBeat() }
+        )
+    }
+
+    private func startLiveBeat() {
+        Task {
+            do {
+                try await session.startLiveBeat()
+                phase = .liveBeat
+            } catch {
+                phase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func stopLiveBeat() {
+        session.stopLiveBeat()
+        phase = .idle
+    }
+}
+
+// MARK: - Live Beat Active View
+
+/// UI shown while Live Beat is active.
+private struct LiveBeatActiveView: View {
+    @ObservedObject var controller: LiveBeatController
+    @ObservedObject var tap: LiveBeatTap
+    let onStop: () -> Void
+
+    var body: some View {
+        VStack(spacing: 24) {
+            // Envelope meter
+            VStack(spacing: 8) {
+                Text("Listening...")
+                    .font(.headline)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(JamTheme.surface)
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(JamTheme.accent)
+                            .frame(width: geo.size.width * CGFloat(min(1, tap.envelopeLevel * 10)))
+                    }
+                }
+                .frame(height: 24)
+            }
+
+            // Hit count
+            HStack(spacing: 16) {
+                VStack {
+                    Text("\(controller.hitCount)")
+                        .font(.system(size: 48, weight: .bold, design: .rounded))
+                        .foregroundStyle(JamTheme.accent)
+                    Text("Hits")
+                        .font(.caption)
+                        .foregroundStyle(JamTheme.textSecondary)
+                }
+
+                // Recent hits
+                if !controller.recentHits.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(controller.recentHits.suffix(8), id: \.timeSec) { hit in
+                                Text(hit.role.emoji)
+                                    .font(.title2)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: 200)
+                }
+            }
+
+            // Instructions
+            Text("Tap surfaces to trigger drums. Desk = kick, thigh = snare, clap = clap, table = hi-hat.")
+                .font(.caption)
+                .foregroundStyle(JamTheme.textSecondary)
+                .multilineTextAlignment(.center)
+
+            Button {
+                onStop()
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+        }
+        .padding(.top, 20)
+    }
+}
+
+private extension DrumRole {
+    var emoji: String {
+        switch self {
+        case .kick: return "🥁"
+        case .snare: return "🪘"
+        case .closedHat, .openHat: return "🎩"
+        case .clap: return "👏"
+        case .rim, .perc: return "🔔"
+        }
     }
 }
 

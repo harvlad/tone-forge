@@ -5,9 +5,19 @@
 // analyzing → review. Audio is analysis-only — nothing is written to
 // PadSampleStore. On "Open in Sequencer" the built pattern is saved
 // and handed to the sequencer via a pending id.
+//
+// Live Beat mode (added D-025): real-time percussion input. Tap any
+// surface to trigger drum samples immediately. User calibrates profiles
+// mapping their physical sounds to drum roles.
 
 import SwiftUI
 import ToneForgeEngine
+
+/// Beat capture mode selector: Record Beat (original) or Live Beat (real-time).
+enum BeatCaptureMode: String, CaseIterable {
+    case record = "Record Beat"
+    case live = "Live Beat"
+}
 
 struct BeatCaptureSheet: View {
     @ObservedObject var coordinator: ModeCoordinator
@@ -16,6 +26,9 @@ struct BeatCaptureSheet: View {
 
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
+
+    /// Mode toggle: Record Beat (analyze after) or Live Beat (real-time).
+    @State private var beatMode: BeatCaptureMode = .record
 
     /// Longer than the 8 s pad cap — allowed because Beat Capture never
     /// persists the audio (only the derived pattern).
@@ -41,23 +54,49 @@ struct BeatCaptureSheet: View {
 
     var body: some View {
         NavigationStack {
-            content
-                .padding()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .background(TFTheme.background)
-                .navigationTitle("Beat Capture")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { cancelAndDismiss() }
+            VStack(spacing: 0) {
+                // Mode picker
+                Picker("Mode", selection: $beatMode) {
+                    ForEach(BeatCaptureMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
                     }
                 }
+                .pickerStyle(.segmented)
+                .padding()
+
+                // Content based on mode
+                Group {
+                    if beatMode == .live {
+                        liveBeatContent
+                    } else {
+                        recordBeatContent
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+            .background(TFTheme.background)
+            .navigationTitle("Beat Capture")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { cancelAndDismiss() }
+                }
+            }
         }
     }
 
-    // MARK: - Phase content
+    // MARK: - Live Beat content
+
+    private var liveBeatContent: some View {
+        LiveBeatView(
+            controller: appState.liveBeatController,
+            profileStore: appState.liveBeatProfileStore
+        )
+    }
+
+    // MARK: - Record Beat content (existing flow)
 
     @ViewBuilder
-    private var content: some View {
+    private var recordBeatContent: some View {
         switch phase {
         case .idle: idleView
         case .recording: recordingView

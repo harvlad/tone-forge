@@ -157,8 +157,10 @@ struct LibraryView: View {
                     RecordingsListView()
                 }
             }
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)
+            #endif
             .sheet(isPresented: $showSettings) { SettingsView() }
             .task {
                 if entries.isEmpty { await reload() }

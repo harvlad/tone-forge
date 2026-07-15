@@ -410,6 +410,17 @@ public final class AppState: ObservableObject {
     public lazy var vocoderCapture: VocoderCaptureSession =
         VocoderCaptureSession(session: audioEngine.session, monitor: vocoderMonitor)
 
+    // MARK: - Live Beat (real-time percussion)
+    //
+    // Mic becomes live drum controller. Onset detection triggers
+    // immediate sample playback via SampleVoicePool. User calibrates
+    // profiles mapping their physical sounds to drum roles.
+    public let liveBeatProfileStore = LiveBeatProfileStore()
+    public lazy var liveBeatController: LiveBeatController =
+        LiveBeatController(session: audioEngine.session)
+    public lazy var liveBeatCalibrator: LiveBeatCalibrator =
+        LiveBeatCalibrator(session: audioEngine.session)
+
     // MARK: - Sketch mode
 
     /// Persisted sketch settings (tempo, time sig, metronome, sketch
@@ -717,6 +728,8 @@ public final class AppState: ObservableObject {
         // Beat Capture (D-024): pull a newer drum-classifier model in the
         // background; the next capture uses it once cached.
         modeCoordinator.refreshBeatModelInBackground()
+        // Live Beat (D-025): wire sample triggering from onset detection.
+        wireLiveBeat()
         // Restore the last tab (D-022). Assignment (not an init
         // default) so the didSet apply-path pins the engine mode for
         // the restored tab now that the coordinator is live.
@@ -1182,6 +1195,46 @@ public final class AppState: ObservableObject {
                 self?.audioEngine.setFXSettings(settings)
             }
             .store(in: &settingsCancellables)
+    }
+
+    /// Wire Live Beat (D-025): onset detection → immediate BeatKit trigger.
+    /// Uses `triggerRaw` to bypass quantize — live percussion needs
+    /// sub-20ms latency to feel like an instrument.
+    private func wireLiveBeat() {
+        // Wire the controller's sample trigger to the scheduler. Each
+        // detected onset fires the BeatKit pad for the matched drum role.
+        liveBeatController.onTriggerSample = { [weak self] role, velocity in
+            guard let self else { return }
+            // BeatKit must be preloaded for immediate triggers. Ensure it's
+            // loaded now (silent if already loaded).
+            if self.sampleScheduler.isPackLoaded(packId: BeatKit.packId) {
+                _ = self.sampleScheduler.triggerRaw(
+                    padIdx: role.padIdx, packId: BeatKit.packId
+                )
+            } else {
+                // Fallback: load beatkit then trigger (first hit may be delayed).
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.preloadBeatKit()
+                    _ = self.sampleScheduler.triggerRaw(
+                        padIdx: role.padIdx, packId: BeatKit.packId
+                    )
+                }
+            }
+        }
+        // Wire the active profile from the store to the controller.
+        if let profile = liveBeatProfileStore.activeProfile {
+            liveBeatController.activeProfile = profile
+        }
+    }
+
+    /// Preload the BeatKit pack for Live Beat mode. Non-destructive: does
+    /// not change the active pack, just ensures BeatKit buffers are resident.
+    private func preloadBeatKit() async {
+        guard let bank = sampleBank,
+              let pack = try? bank.loadBundled(packId: BeatKit.packId)
+        else { return }
+        await sampleScheduler.preloadPackAsync(pack, stemFiles: [:])
     }
 
     /// Attempt to load the bundled StarterPack (or whatever pack was

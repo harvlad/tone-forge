@@ -82,6 +82,20 @@ public final class StudioModel: ObservableObject {
         error = nil
         do {
             detail = try await client.fetchHistoryDetail(baseURL: baseURL, id: id)
+        } catch let decodingError as DecodingError {
+            // Provide more detail for JSON decoding failures
+            switch decodingError {
+            case .keyNotFound(let key, let context):
+                self.error = "Missing key '\(key.stringValue)' at \(context.codingPath.map(\.stringValue).joined(separator: "."))"
+            case .typeMismatch(let type, let context):
+                self.error = "Type mismatch for \(type) at \(context.codingPath.map(\.stringValue).joined(separator: "."))"
+            case .valueNotFound(let type, let context):
+                self.error = "Null value for \(type) at \(context.codingPath.map(\.stringValue).joined(separator: "."))"
+            case .dataCorrupted(let context):
+                self.error = "Data corrupted at \(context.codingPath.map(\.stringValue).joined(separator: ".")): \(context.debugDescription)"
+            @unknown default:
+                self.error = decodingError.localizedDescription
+            }
         } catch {
             self.error = error.localizedDescription
         }

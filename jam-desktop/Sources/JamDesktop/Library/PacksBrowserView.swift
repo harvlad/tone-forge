@@ -95,6 +95,21 @@ struct PacksBrowserView: View {
             rowAction(entry)
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            handleRowTap(entry)
+        }
+    }
+
+    private func handleRowTap(_ entry: SamplePackCatalogEntry) {
+        // Skip if downloading
+        guard packs.downloading[entry.packId] == nil else { return }
+
+        if packs.isCached(entry.packId) {
+            packs.activate(packId: entry.packId)
+        } else {
+            packs.download(baseURL: model.backendBaseURL, packId: entry.packId)
+        }
     }
 
     @ViewBuilder

@@ -97,6 +97,9 @@ public final class AnalysisQueueModel: ObservableObject {
     var maxReattachAttempts = 30
 
     private var watchers: [String: Task<Void, Never>] = [:]
+    /// Job IDs the user has explicitly dismissed. Prevents refreshFromServer
+    /// from resurrecting them.
+    private var dismissedJobIds: Set<String> = []
 
     public init(
         uploadClient: UploadSubmitting = UploadClient(),
@@ -188,12 +191,21 @@ public final class AnalysisQueueModel: ObservableObject {
     /// cancel. Server jobs keep running server-side (no cancel API);
     /// the row just stops being tracked here.
     public func dismiss(id: String) {
+        // Track dismissed job IDs so refreshFromServer doesn't resurrect them.
+        if let item = items.first(where: { $0.id == id }), let jobId = item.jobId {
+            dismissedJobIds.insert(jobId)
+        }
         watchers[id]?.cancel()
         watchers[id] = nil
         items.removeAll { $0.id == id }
     }
 
     public func clearFinished() {
+        for item in items where !item.status.isActive {
+            if let jobId = item.jobId {
+                dismissedJobIds.insert(jobId)
+            }
+        }
         items.removeAll { !$0.status.isActive }
     }
 
@@ -222,7 +234,8 @@ public final class AnalysisQueueModel: ObservableObject {
                 } else {
                     items[index].status = Self.status(from: row)
                 }
-            } else {
+            } else if !dismissedJobIds.contains(row.jobId) {
+                // Only restore if user hasn't dismissed this job.
                 let item = AnalysisQueueItem(
                     id: row.jobId, jobId: row.jobId,
                     title: row.filename ?? "Analysis", kind: .restored,

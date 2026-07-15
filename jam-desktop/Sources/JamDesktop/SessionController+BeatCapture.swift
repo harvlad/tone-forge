@@ -178,4 +178,42 @@ extension SessionController {
         let store = beatTrainingStore
         Task { await store.flush(baseURL: baseURL) }
     }
+
+    // MARK: - Live Beat
+
+    /// Start Live Beat real-time percussion mode.
+    func startLiveBeat() async throws {
+        ensureBeatKitRegistered()
+        ensureEngineStarted()
+
+        // Wire tap to controller
+        liveBeatTap.onOnset = { [weak self] event in
+            Task { @MainActor in
+                self?.liveBeatController.handleOnset(event)
+            }
+        }
+
+        // Wire controller to trigger samples
+        liveBeatController.onTriggerSample = { [weak self] role, velocity in
+            self?.triggerBeatKitSample(role: role, velocity: velocity)
+        }
+
+        try await liveBeatTap.install()
+        liveBeatController.start()
+    }
+
+    /// Stop Live Beat mode.
+    func stopLiveBeat() {
+        liveBeatTap.remove()
+        liveBeatController.stop()
+    }
+
+    /// Trigger a beatkit drum sample for the given role.
+    private func triggerBeatKitSample(role: DrumRole, velocity: Float) {
+        packPlayer.trigger(
+            packId: BeatKit.packId,
+            padIdx: role.padIdx,
+            velocity: velocity
+        )
+    }
 }

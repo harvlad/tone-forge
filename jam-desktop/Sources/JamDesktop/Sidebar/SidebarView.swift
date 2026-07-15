@@ -51,6 +51,8 @@ struct SidebarView: View {
     var onRecordingsTap: () -> Void = {}
     var onJamPadsTap: () -> Void = {}
     var onPacksTap: () -> Void = {}
+    /// View all songs callback
+    var onViewAllSongs: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -131,7 +133,7 @@ struct SidebarView: View {
             // View all songs link
             if !history.entries.isEmpty {
                 Button {
-                    // Navigate to library
+                    onViewAllSongs()
                 } label: {
                     HStack(spacing: 4) {
                         Text("View all songs")

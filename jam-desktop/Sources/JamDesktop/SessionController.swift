@@ -103,6 +103,9 @@ final class SessionController: ObservableObject {
     private(set) lazy var beatCapture = BeatCaptureSession()
     /// Device-local drum-classifier correction log (training data).
     let beatTrainingStore = BeatTrainingStore()
+    /// Live Beat (D-024): real-time percussion via mic onset detection.
+    let liveBeatController = LiveBeatController()
+    private(set) lazy var liveBeatTap = LiveBeatTap()
     /// Backend base URL, captured from `startBridge` so Beat Capture
     /// correction uploads have a destination without threading the URL
     /// through every call.

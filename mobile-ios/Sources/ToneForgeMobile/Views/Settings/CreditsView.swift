@@ -27,7 +27,9 @@ struct CreditsView: View {
             songsSection
             packsSection
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #endif
         .scrollContentBackground(.hidden)
         .background(TFTheme.background)
         .navigationTitle("Credits & licenses")

@@ -42,7 +42,8 @@ struct RootView: View {
                     onSequencerTap: { showSequencer = true },
                     onRecordingsTap: { showRecordings = true },
                     onJamPadsTap: { showJamPads = true },
-                    onPacksTap: { showPacks = true }
+                    onPacksTap: { showPacks = true },
+                    onViewAllSongs: { model.view = .bandRoom }
                 )
                 .environmentObject(history)
                 .environmentObject(model)
@@ -102,6 +103,20 @@ struct RootView: View {
                     Label("Sequencer", systemImage: "squares.below.rectangle")
                 }
                 .help("Step sequencer (chords, pack pads, and song chops)")
+            }
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    if session.sequencer.isPlaying {
+                        session.sequencer.stop()
+                    } else {
+                        session.ensureEngineStarted()
+                        session.sequencer.play()
+                    }
+                } label: {
+                    Image(systemName: session.sequencer.isPlaying ? "stop.fill" : "play.fill")
+                        .foregroundStyle(session.sequencer.isPlaying ? .red : .green)
+                }
+                .help(session.sequencer.isPlaying ? "Stop sequencer" : "Play sequencer")
             }
             ToolbarItem(placement: .automatic) {
                 Button {

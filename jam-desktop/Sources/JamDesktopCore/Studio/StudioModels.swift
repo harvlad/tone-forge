@@ -407,7 +407,9 @@ public struct MidiStemInfo: Decodable, Sendable {
 // MARK: - profiling
 
 /// Pipeline timing. Stage keys are dynamic ("midi_extraction.bass",
-/// "stem_separation", …) so stages decode as a dictionary.
+/// "stem_separation", …) so stages decode as a dictionary. Backend may
+/// include non-object keys (total_ms, audio_duration_sec) in the stages
+/// dict — custom init filters those out.
 public struct StudioProfiling: Decodable, Sendable {
     public let totalMs: Double?
     public let audioDurationSec: Double?
@@ -421,6 +423,28 @@ public struct StudioProfiling: Decodable, Sendable {
         case processingRatio = "processing_ratio"
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        totalMs = try container.decodeIfPresent(Double.self, forKey: .totalMs)
+        audioDurationSec = try container.decodeIfPresent(Double.self, forKey: .audioDurationSec)
+        processingRatio = try container.decodeIfPresent(Double.self, forKey: .processingRatio)
+
+        // Decode stages, skipping any keys that don't decode as ProfilingStage
+        if let rawStages = try container.decodeIfPresent([String: AnyCodable].self, forKey: .stages) {
+            var parsed: [String: ProfilingStage] = [:]
+            for (key, value) in rawStages {
+                // Try to re-decode each value as ProfilingStage
+                if let data = try? JSONEncoder().encode(value),
+                   let stage = try? JSONDecoder().decode(ProfilingStage.self, from: data) {
+                    parsed[key] = stage
+                }
+            }
+            stages = parsed.isEmpty ? nil : parsed
+        } else {
+            stages = nil
+        }
+    }
+
     public init(
         totalMs: Double? = nil, audioDurationSec: Double? = nil,
         processingRatio: Double? = nil,
@@ -430,6 +454,56 @@ public struct StudioProfiling: Decodable, Sendable {
         self.audioDurationSec = audioDurationSec
         self.processingRatio = processingRatio
         self.stages = stages
+    }
+}
+
+/// Type-erased wrapper for mixed JSON values in stages dict.
+private struct AnyCodable: Codable {
+    let value: Any
+
+    init(_ value: Any) { self.value = value }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let dict = try? container.decode([String: AnyCodable].self) {
+            value = dict.mapValues(\.value)
+        } else if let array = try? container.decode([AnyCodable].self) {
+            value = array.map(\.value)
+        } else if let double = try? container.decode(Double.self) {
+            value = double
+        } else if let int = try? container.decode(Int.self) {
+            value = int
+        } else if let bool = try? container.decode(Bool.self) {
+            value = bool
+        } else if let string = try? container.decode(String.self) {
+            value = string
+        } else if container.decodeNil() {
+            value = NSNull()
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported type")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch value {
+        case let dict as [String: Any]:
+            try container.encode(dict.mapValues { AnyCodable($0) })
+        case let array as [Any]:
+            try container.encode(array.map { AnyCodable($0) })
+        case let double as Double:
+            try container.encode(double)
+        case let int as Int:
+            try container.encode(int)
+        case let bool as Bool:
+            try container.encode(bool)
+        case let string as String:
+            try container.encode(string)
+        case is NSNull:
+            try container.encodeNil()
+        default:
+            try container.encodeNil()
+        }
     }
 }
 

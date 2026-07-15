@@ -381,7 +381,7 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         _t0 = time.perf_counter()
         stage_timings: dict = {}
 
-        def _record_stage(name: str, t_start: float, t_end: float) -> None:
+        def _record_stage(name: str, t_start: float, t_end: float, gpu_used: bool = False) -> None:
             """Append per-stage timestamps to ``stage_timings``.
 
             All values are ms relative to ``_t0`` (the perf_counter
@@ -389,11 +389,14 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             entries sorted by ``started_ms`` reveals overlap (or its
             absence) without re-running the pipeline.
             """
-            stage_timings[name] = {
+            entry = {
                 "started_ms": round((t_start - _t0) * 1000.0, 2),
                 "finished_ms": round((t_end - _t0) * 1000.0, 2),
                 "duration_ms": round((t_end - t_start) * 1000.0, 2),
             }
+            if gpu_used:
+                entry["gpu_used"] = True
+            stage_timings[name] = entry
 
         _st = time.perf_counter()
         stems = separate_all_stems(audio_path)
@@ -1609,10 +1612,15 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         # reads them keeps working unchanged. We attach them to the
         # already-recorded stage entries rather than re-emitting under
         # different keys.
+        _gpu_available = bool(
+            torch.backends.mps.is_available() or torch.cuda.is_available()
+        )
         if "stem_separation" in stage_timings:
-            stage_timings["stem_separation"]["gpu_used"] = (
-                torch.backends.mps.is_available() or torch.cuda.is_available()
-            )
+            stage_timings["stem_separation"]["gpu_used"] = _gpu_available
+        # Mark MIDI extraction stages as GPU-accelerated (basic-pitch uses TF/GPU)
+        for k in list(stage_timings.keys()):
+            if k.startswith("midi_extraction."):
+                stage_timings[k]["gpu_used"] = _gpu_available
         # Aggregate midi_extraction.* entries into a summary entry
         # so legacy consumers reading ``stages["midi_extraction"]``
         # still find what they expect. The per-stem entries remain
@@ -1626,6 +1634,7 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             stage_timings["midi_extraction"] = {
                 "duration_ms": _midi_total_ms,
                 "extraction_time_sec": midi_extraction_time,
+                "gpu_used": _gpu_available,
             }
 
         result = {
