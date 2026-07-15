@@ -198,6 +198,14 @@ extension SessionController {
             self?.triggerBeatKitSample(role: role, velocity: velocity)
         }
 
+        // Apply the active calibration profile (or fall back to default).
+        if let profile = liveBeatProfileStore.activeProfile {
+            liveBeatController.setProfile(profile)
+            liveBeatTap.sensitivity = profile.sensitivity
+        } else {
+            liveBeatController.resetToDefault()
+        }
+
         try await liveBeatTap.install()
         liveBeatController.start()
     }

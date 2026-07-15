@@ -1,17 +1,16 @@
 // LiveBeatCalibrator.swift
 //
-// iOS glue for Live Beat calibration. Owns the mic tap and drives the
+// macOS glue for Live Beat calibration. Owns the mic tap and drives the
 // platform-independent `LiveBeatCalibrationEngine` (ToneForgeEngine):
 // forwards onset events into the engine, republishes the envelope meter,
 // and reinstalls the tap per role. The calibration flow itself lives in
-// the shared engine so macOS reuses it.
+// the shared engine so iOS and macOS run the same logic.
 
-import AVFoundation
 import Combine
 import Foundation
 import ToneForgeEngine
 
-/// Calibrator for building Live Beat profiles (iOS).
+/// Calibrator for building Live Beat profiles (macOS).
 @MainActor
 public final class LiveBeatCalibrator: ObservableObject {
     // MARK: - Published State (mirrors the shared engine)
@@ -27,6 +26,9 @@ public final class LiveBeatCalibrator: ObservableObject {
 
     /// The profile being built.
     @Published public private(set) var profile: LiveBeatProfile?
+
+    /// Set when the tap fails to install (e.g. mic permission denied).
+    @Published public private(set) var installError: String?
 
     // MARK: - Configuration
 
@@ -44,11 +46,10 @@ public final class LiveBeatCalibrator: ObservableObject {
 
     // MARK: - Private
 
-    private let tap: LiveBeatTap
+    private let tap = LiveBeatTap()
     private let engine = LiveBeatCalibrationEngine()
 
-    public init(session: AudioSessionController) {
-        self.tap = LiveBeatTap(session: session)
+    public init() {
         setupBindings()
     }
 
@@ -56,6 +57,7 @@ public final class LiveBeatCalibrator: ObservableObject {
 
     /// Start a new calibration session.
     public func start(profileName: String) {
+        installError = nil
         engine.start(profileName: profileName)
     }
 
@@ -98,11 +100,17 @@ public final class LiveBeatCalibrator: ObservableObject {
         }
 
         // Reinstall the tap for each role so every run captures cleanly.
+        // Desktop install is async (mic permission + engine start).
         engine.onRoleChange = { [weak self] role in
             guard let self else { return }
             self.tap.remove()
-            if role != nil {
-                self.tap.install()
+            guard role != nil else { return }
+            Task { @MainActor in
+                do {
+                    try await self.tap.install()
+                } catch {
+                    self.installError = error.localizedDescription
+                }
             }
         }
     }

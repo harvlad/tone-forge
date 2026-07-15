@@ -7,7 +7,6 @@
 // namespaced key, storeVersion tag, corrupt blobs replaced on next write.
 
 import Foundation
-import ToneForgeEngine
 
 @MainActor
 public final class LiveBeatProfileStore: ObservableObject {

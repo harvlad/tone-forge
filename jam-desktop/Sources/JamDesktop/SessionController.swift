@@ -106,6 +106,10 @@ final class SessionController: ObservableObject {
     /// Live Beat (D-024): real-time percussion via mic onset detection.
     let liveBeatController = LiveBeatController()
     private(set) lazy var liveBeatTap = LiveBeatTap()
+    /// Persisted Live Beat calibration profiles (shared store).
+    let liveBeatProfileStore = LiveBeatProfileStore()
+    /// Calibration glue for teaching own drum sounds.
+    private(set) lazy var liveBeatCalibrator = LiveBeatCalibrator()
     /// Backend base URL, captured from `startBridge` so Beat Capture
     /// correction uploads have a destination without threading the URL
     /// through every call.

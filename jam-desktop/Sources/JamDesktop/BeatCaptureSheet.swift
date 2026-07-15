@@ -51,6 +51,10 @@ struct BeatCaptureSheet: View {
     /// UserDefaults flag the upload gate reads).
     @AppStorage(BeatTrainingStore.shareOptInKey) private var shareOptIn = true
 
+    /// Live Beat calibration + profile sheets.
+    @State private var showCalibration = false
+    @State private var showProfilePicker = false
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -63,6 +67,18 @@ struct BeatCaptureSheet: View {
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
+        .sheet(isPresented: $showCalibration) {
+            LiveBeatCalibrationView(
+                calibrator: session.liveBeatCalibrator,
+                profileStore: session.liveBeatProfileStore
+            )
+        }
+        .sheet(isPresented: $showProfilePicker) {
+            LiveBeatProfilePicker(
+                store: session.liveBeatProfileStore,
+                onSelect: { _ in }
+            )
+        }
     }
 
     private var header: some View {
@@ -122,6 +138,10 @@ struct BeatCaptureSheet: View {
                     .foregroundStyle(JamTheme.textSecondary)
             }
 
+            if captureMode == .liveBeat {
+                liveBeatProfileRow
+            }
+
             Button {
                 if captureMode == .record {
                     startRecording()
@@ -137,6 +157,39 @@ struct BeatCaptureSheet: View {
             .buttonStyle(.borderedProminent)
         }
         .padding(.top, 40)
+    }
+
+    /// Active-profile chip + Calibrate button shown on the Live Beat intro.
+    private var liveBeatProfileRow: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Profile")
+                    .font(.subheadline)
+                    .foregroundStyle(JamTheme.textSecondary)
+                Button {
+                    showProfilePicker = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(session.liveBeatProfileStore.activeProfile?.name ?? "Default")
+                            .font(.subheadline)
+                        Image(systemName: "chevron.down")
+                            .font(.caption)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(JamTheme.surface)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                showCalibration = true
+            } label: {
+                Label("Calibrate…", systemImage: "waveform.badge.mic")
+            }
+            .buttonStyle(.bordered)
+        }
     }
 
     private var recordingView: some View {
