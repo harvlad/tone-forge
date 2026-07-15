@@ -112,6 +112,11 @@ final class ComplianceTests: XCTestCase {
             // Apple identity token, device id for claim, logout. Never
             // touches sample/bounce stores (marker asserts above).
             "Sources/ToneForgeEngine/Auth/AuthClient.swift",
+            // Beat Capture corrections (D-024): posts a JSON batch of
+            // drum-role corrections — 7 named OnsetFeatures values plus
+            // the original/corrected role and a timestamp. Analysis
+            // features only; no audio and no sample/bounce store paths.
+            "Sources/ToneForgeEngine/BeatCapture/BeatCorrectionClient.swift",
         ]
         let localStoreMarkers = [
             "Documents/samples", "Documents/bounces",
