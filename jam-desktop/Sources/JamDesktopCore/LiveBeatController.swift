@@ -159,27 +159,4 @@ public final class LiveBeatController: ObservableObject {
     }
 }
 
-// MARK: - Onset Event
-
-/// Event dispatched when an onset is detected.
-/// Defined here so both JamDesktopCore and JamDesktopAudio can use it.
-public struct LiveBeatOnsetEvent: Sendable {
-    /// Host time when the onset was detected.
-    public let hostTime: UInt64
-
-    /// Captured body window following the onset (1024 samples).
-    public let samples: [Float]
-
-    /// RMS level at detection (for velocity).
-    public let rmsLevel: Float
-
-    /// Sample rate of the captured audio.
-    public let sampleRate: Double
-
-    public init(hostTime: UInt64, samples: [Float], rmsLevel: Float, sampleRate: Double) {
-        self.hostTime = hostTime
-        self.samples = samples
-        self.rmsLevel = rmsLevel
-        self.sampleRate = sampleRate
-    }
-}
+// `LiveBeatOnsetEvent` is defined in ToneForgeEngine (shared with iOS).
