@@ -69,7 +69,10 @@ public struct LiveBeatOnsetConfig: Sendable {
         attackCoeff: 0.3,
         releaseCoeff: 0.5,
         onThreshold: 0.04,
-        offThreshold: 0.01,
+        // ~0.6 x onThreshold: sits above the post-gain noise floor so the
+        // detector re-arms between taps (a lower value latched after the
+        // first hit and only one onset registered).
+        offThreshold: 0.024,
         minIntervalSamples: 4800
     )
 
@@ -82,7 +85,10 @@ public struct LiveBeatOnsetConfig: Sendable {
         attackCoeff: 0.3,
         releaseCoeff: 0.6,
         onThreshold: 0.02,
-        offThreshold: 0.006,
+        // ~0.6 x onThreshold: above the post-gain noise floor so the
+        // detector re-arms between taps (a lower value latched after the
+        // first hit and only one onset registered).
+        offThreshold: 0.012,
         minIntervalSamples: 2400
     )
 }
@@ -134,6 +140,11 @@ public struct LiveBeatOnsetDetector: Sendable {
         // time-based path caused machine-gun retriggering and, in
         // speaker mode, an acoustic-feedback cascade. Fast release keeps
         // real taps re-arming quickly between hits.
+        //
+        // offThreshold must sit ABOVE the (post-gain) noise floor and
+        // below onThreshold: too low and the envelope never dips under it
+        // when input gain lifts the ambient level, so the detector latches
+        // after the first hit and only one onset ever registers.
         if !isArmed && envelope < offThreshold {
             isArmed = true
         }

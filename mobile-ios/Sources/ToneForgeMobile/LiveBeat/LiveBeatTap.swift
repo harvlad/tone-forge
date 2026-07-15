@@ -122,7 +122,11 @@ public final class LiveBeatTap: ObservableObject {
     private func updateThresholds() {
         // Higher sensitivity = lower threshold
         let adjustedThreshold = baseThreshold / sensitivity
-        processor.setThresholds(on: adjustedThreshold, off: adjustedThreshold * 0.25)
+        // Re-arm at 0.6 x on-threshold. A wider hysteresis band (the old
+        // 0.25) put the re-arm level below the post-gain noise floor, so
+        // the detector never re-armed between taps and only the first hit
+        // registered. 0.6 sits above the floor and below the trigger.
+        processor.setThresholds(on: adjustedThreshold, off: adjustedThreshold * 0.6)
     }
 
     private nonisolated func processTapBuffer(_ buffer: AVAudioPCMBuffer, time: AVAudioTime) {

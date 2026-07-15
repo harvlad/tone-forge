@@ -62,6 +62,7 @@ struct LiveBeatCalibrationView: View {
                 engine: calibrator.guided.engine,
                 profileStore: profileStore,
                 profileName: profileName,
+                envelope: calibrator.envelopeLevel,
                 onRetry: { calibrator.startGuided(profileName: profileName) },
                 onDone: { dismiss() }
             )
@@ -335,6 +336,7 @@ private struct GuidedFlow: View {
     @ObservedObject var profileStore: LiveBeatProfileStore
 
     let profileName: String
+    let envelope: Float
     let onRetry: () -> Void
     let onDone: () -> Void
 
@@ -389,8 +391,32 @@ private struct GuidedFlow: View {
                 }
             }
 
+            // Live input meter — confirms the mic hears each tap.
+            inputMeter
+
             Spacer()
         }
+    }
+
+    /// Mic level bar so the user sees their taps register while recording.
+    private var inputMeter: some View {
+        VStack(spacing: 4) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(JamTheme.surface)
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.green)
+                        .frame(width: geo.size.width * CGFloat(min(1, envelope * 10)))
+                        .animation(.linear(duration: 0.05), value: envelope)
+                }
+            }
+            .frame(height: 10)
+            Text("Input")
+                .font(.caption2)
+                .foregroundStyle(JamTheme.textSecondary)
+        }
+        .frame(maxWidth: 220)
     }
 
     private func roleProgress(current: DrumRole) -> some View {
