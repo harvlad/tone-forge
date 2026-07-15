@@ -42,6 +42,10 @@ public final class LiveBeatCalibrator: ObservableObject {
         set { engine.rolesToCalibrate = newValue }
     }
 
+    /// Guided ("tap-along") calibration driver. Shares this calibrator's
+    /// tap; deterministic segmentation, no reliance on the live detector.
+    public let guided = LiveBeatGuidedSession()
+
     // MARK: - Private
 
     private let tap: LiveBeatTap
@@ -51,6 +55,23 @@ public final class LiveBeatCalibrator: ObservableObject {
         self.tap = LiveBeatTap(session: session)
         setupBindings()
     }
+
+    // MARK: - Guided API
+
+    /// Start a guided tap-along session (installs the tap for the whole run).
+    public func startGuided(profileName: String) {
+        tap.install()
+        guided.start(profileName: profileName)
+    }
+
+    /// Cancel a guided session and release the tap.
+    public func cancelGuided() {
+        guided.cancel()
+        tap.remove()
+    }
+
+    /// The profile built by the guided session (valid once complete).
+    public func finalizeGuided() -> LiveBeatProfile? { guided.finalize() }
 
     // MARK: - Public API
 
@@ -105,5 +126,11 @@ public final class LiveBeatCalibrator: ObservableObject {
                 self.tap.install()
             }
         }
+
+        // Guided session drives the shared tap's raw capture. The tap stays
+        // installed for the whole run (no per-role reinstall).
+        guided.onBeginCapture = { [weak self] in self?.tap.beginRawCapture() }
+        guided.onEndCapture = { [weak self] in self?.tap.endRawCapture() ?? [] }
+        guided.sampleRate = { [weak self] in self?.tap.sampleRate ?? 48_000 }
     }
 }

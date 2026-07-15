@@ -233,6 +233,15 @@ public final class LiveBeatOnsetProcessor: @unchecked Sendable {
     // detector's hysteresis stays coherent.
     private var suppressRemaining = 0
 
+    // Raw continuous capture for guided ("tap-along") calibration. When
+    // armed, every processed buffer is appended so the glue can hand the
+    // whole take to `LiveBeatGuidedCapture`. Stores the *gained* samples
+    // (same slice the runtime detector/ring sees) so training and
+    // inference agree. Lock-guarded: armed/read from the main actor,
+    // appended from the serial audio thread.
+    private var rawCapture: [Float]?
+    private let rawLock = NSLock()
+
     public init(
         config: LiveBeatOnsetConfig,
         captureWindowSize: Int = LiveBeatFeatures.windowSize,
@@ -265,6 +274,22 @@ public final class LiveBeatOnsetProcessor: @unchecked Sendable {
     /// existing gate so rapid hits keep it open.
     public func suppressDetection(samples: Int) {
         suppressRemaining = max(suppressRemaining, samples)
+    }
+
+    /// Begin accumulating a continuous raw take (guided calibration).
+    public func beginRawCapture() {
+        rawLock.lock()
+        rawCapture = []
+        rawLock.unlock()
+    }
+
+    /// Stop accumulating and return the take (empty if none was armed).
+    public func endRawCapture() -> [Float] {
+        rawLock.lock()
+        defer { rawLock.unlock() }
+        let take = rawCapture ?? []
+        rawCapture = nil
+        return take
     }
 
     /// Reset detector + deferred-capture state.
@@ -312,6 +337,13 @@ public final class LiveBeatOnsetProcessor: @unchecked Sendable {
         vDSP_rmsqv(samples, 1, &rms, vDSP_Length(frameCount))
 
         ringBuffer.write(samples, count: frameCount)
+
+        // Accumulate the raw take when guided calibration armed it.
+        rawLock.lock()
+        if rawCapture != nil {
+            rawCapture!.append(contentsOf: UnsafeBufferPointer(start: samples, count: frameCount))
+        }
+        rawLock.unlock()
 
         var onsetDetected = detector.process(rms: rms, sampleCount: frameCount)
 

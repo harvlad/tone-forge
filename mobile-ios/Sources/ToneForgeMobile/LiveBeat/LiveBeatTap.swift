@@ -108,6 +108,15 @@ public final class LiveBeatTap: ObservableObject {
         processor.suppressDetection(samples: samples)
     }
 
+    /// Sample rate of the running capture (for time→sample math).
+    public var sampleRate: Double { captureSampleRate }
+
+    /// Begin a continuous raw take for guided calibration.
+    public func beginRawCapture() { processor.beginRawCapture() }
+
+    /// Stop the raw take and return the accumulated mono samples.
+    public func endRawCapture() -> [Float] { processor.endRawCapture() }
+
     // MARK: - Private
 
     private func updateThresholds() {

@@ -120,6 +120,39 @@ public final class LiveBeatCalibrationEngine: ObservableObject {
         }
     }
 
+    /// Ingest a whole guided ("tap-along") take for the current role. The
+    /// platform recorded the mic continuously while the user tapped a
+    /// visual metronome; `expectedTimes` are the beat times (seconds from
+    /// the take start). Segmentation is deterministic — no dependence on
+    /// the live onset detector — so quiet taps and loud rooms don't break
+    /// calibration. Builds the template and advances to the next role.
+    public func ingestGuidedTake(
+        samples: [Float],
+        sampleRate: Double,
+        expectedTimes: [Double]
+    ) {
+        guard case let .waitingForHits(role, _, target) = step else { return }
+
+        let hits = LiveBeatGuidedCapture.extractHits(
+            from: samples, sampleRate: sampleRate, expectedTimes: expectedTimes
+        )
+
+        // Too few resolvable taps: fail this role so the UI can re-run it
+        // rather than saving a template from one or two hits.
+        guard hits.count >= minHitsPerRole else {
+            step = .failed("Only \(hits.count) taps detected for \(role.displayName). Try again.")
+            return
+        }
+
+        collectedFeatures = hits.map(\.features)
+        collectedRMS = hits.map(\.rms)
+        step = .waitingForHits(role: role, collected: hits.count, target: target)
+
+        buildTemplateForCurrentRole(role: role)
+        remainingRoles.removeFirst()
+        nextRole()
+    }
+
     // MARK: - Private
 
     private func nextRole() {
