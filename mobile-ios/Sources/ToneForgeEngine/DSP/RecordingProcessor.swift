@@ -42,11 +42,12 @@ public enum RecordingProcessor {
     static let fftSize = 1024
     static let hopSize = 256
     /// A flux frame must exceed median × this to count as an onset.
-    static let fluxMedianFactor: Float = 2.0
+    static let fluxMedianFactor: Float = 1.6
     /// …AND this fraction of the strongest flux frame. Without the
     /// peak-relative floor, steady material (median flux ≈ numeric
-    /// jitter) turns every jitter bump into an "onset".
-    static let fluxPeakFraction: Float = 0.2
+    /// jitter) turns every jitter bump into an "onset". Kept low so a
+    /// soft low-flux beatbox kick survives next to a bright snare/hat.
+    static let fluxPeakFraction: Float = 0.12
     /// Minimum spacing between reported onsets.
     static let minOnsetSpacingSec: Double = 0.050
 

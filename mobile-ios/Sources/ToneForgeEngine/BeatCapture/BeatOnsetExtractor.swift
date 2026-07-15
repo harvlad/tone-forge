@@ -49,8 +49,9 @@ public enum BeatOnsetExtractor {
     /// them so one "boom" is one hit, not three.
     static let minOnsetGapSec = 0.11
     /// Drop hits quieter than this fraction of the loudest — kills the
-    /// breath / room artifacts that sit between real hits.
-    static let relativeNoiseFloor: Float = 0.14
+    /// breath / room artifacts that sit between real hits. Kept low so a
+    /// soft beatbox kick isn't gated out beneath a louder snare/clap.
+    static let relativeNoiseFloor: Float = 0.10
 
     /// Detect and classify every percussive onset in `samples`.
     public static func extract(

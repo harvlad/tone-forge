@@ -73,13 +73,16 @@ public struct LiveBeatOnsetConfig: Sendable {
         minIntervalSamples: 4800
     )
 
-    /// macOS tap tuning: smoother envelope, ~50 ms refractory. Desktop
-    /// mics tend to be closer and cleaner than a handheld phone.
+    /// macOS tap tuning: fast attack so quiet low-frequency transients
+    /// (chest / desk thumps) cross the onset threshold before they decay.
+    /// A slow attack smooths short quiet hits away entirely, so it must
+    /// track the peak quickly. ~50 ms refractory; desktop mics are closer
+    /// than a handheld phone so the threshold sits a touch lower.
     public static let desktop = LiveBeatOnsetConfig(
-        attackCoeff: 0.8,
-        releaseCoeff: 0.995,
-        onThreshold: 0.025,
-        offThreshold: 0.008,
+        attackCoeff: 0.3,
+        releaseCoeff: 0.6,
+        onThreshold: 0.02,
+        offThreshold: 0.006,
         minIntervalSamples: 2400
     )
 }
@@ -199,8 +202,16 @@ public final class LiveBeatOnsetProcessor: @unchecked Sendable {
     /// `LiveBeatFeatures.windowSize` so the FFT sees a full window.
     public let captureWindowSize: Int
 
+    /// Linear gain applied to incoming samples before detection. The RMS
+    /// onset threshold is absolute, so a quiet-mic platform can raise this
+    /// to genuinely lift sensitivity (louder envelope crosses the same
+    /// threshold). 1.0 = passthrough.
+    public var inputGain: Float = 1.0
+
     private var detector: LiveBeatOnsetDetector
     private let ringBuffer: LiveBeatRingBuffer
+    /// Reusable scratch for the gained buffer (avoids per-call alloc).
+    private var scratch: [Float] = []
 
     // Deferred-capture state. An onset's attack click carries no
     // low-frequency information; we arm this flag and read the *next*
@@ -244,6 +255,31 @@ public final class LiveBeatOnsetProcessor: @unchecked Sendable {
     /// detector, and returns the deferred body window from the *previous*
     /// onset (if any) plus the current envelope.
     public func process(
+        samples: UnsafePointer<Float>,
+        frameCount: Int,
+        hostTime: UInt64,
+        sampleRate: Double
+    ) -> Result {
+        guard inputGain != 1.0 else {
+            return processCore(
+                samples: samples, frameCount: frameCount,
+                hostTime: hostTime, sampleRate: sampleRate
+            )
+        }
+        if scratch.count < frameCount {
+            scratch = [Float](repeating: 0, count: frameCount)
+        }
+        var g = inputGain
+        vDSP_vsmul(samples, 1, &g, &scratch, 1, vDSP_Length(frameCount))
+        return scratch.withUnsafeBufferPointer { buf in
+            processCore(
+                samples: buf.baseAddress!, frameCount: frameCount,
+                hostTime: hostTime, sampleRate: sampleRate
+            )
+        }
+    }
+
+    private func processCore(
         samples: UnsafePointer<Float>,
         frameCount: Int,
         hostTime: UInt64,

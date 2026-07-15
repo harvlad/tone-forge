@@ -38,6 +38,12 @@ public final class LiveBeatTap: ObservableObject {
         didSet { updateThresholds() }
     }
 
+    /// Linear capture gain. Desktop mics read quieter than a handheld
+    /// phone, so boost the signal before onset detection.
+    public var inputGain: Float = 2.0 {
+        didSet { processor.inputGain = inputGain }
+    }
+
     /// Dedicated capture engine (not the main playback engine).
     private var captureEngine: AVAudioEngine?
     /// Shared onset DSP. Audio-thread access is serial (one tap callback).
@@ -82,6 +88,7 @@ public final class LiveBeatTap: ObservableObject {
             self.captureEngine = engine
             isRunning = true
             processor.reset()
+            processor.inputGain = inputGain
             updateThresholds()
         } catch {
             inputNode.removeTap(onBus: 0)
