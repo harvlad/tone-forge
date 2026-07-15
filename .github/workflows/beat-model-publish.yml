@@ -27,6 +27,10 @@ on:
         description: "Commit the retrained baseline model back to main"
         type: boolean
         default: true
+      egmd_limit:
+        description: "Override E-GMD clip limit (blank = auto: 80 cron / 500 manual)"
+        type: string
+        default: ""
   schedule:
     # Weekly retrain from E-GMD + fresh corrections. Mon 06:00 UTC.
     - cron: "0 6 * * 1"
@@ -83,7 +87,7 @@ jobs:
           # synthetic backbone — flooding the corpus with them drags holdout
           # below the gate. Keep both limits modest: rare roles stay
           # synthetic-dominated and the model clears --min-accuracy.
-          EGMD_LIMIT: ${{ github.event_name == 'schedule' && '80' || '500' }}
+          EGMD_LIMIT: ${{ inputs.egmd_limit != '' && inputs.egmd_limit || (github.event_name == 'schedule' && '80' || '500') }}
           EGMD_CACHE_DIR: ${{ runner.temp }}/e-gmd
         run: |
           set -uo pipefail  # best-effort: dataset issues must not block training
