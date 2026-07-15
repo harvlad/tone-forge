@@ -46,5 +46,13 @@ asyncpg>=0.29
 PyJWT[crypto]>=2.8         # Sign in with Apple identity-token verification
 httpx>=0.25                # Resend email client (also used by FastAPI's TestClient)
 
+# E-GMD drum-classifier harvester (backend/scripts/harvest_egmd.py).
+# Trainer-only; the runtime backend never imports these. pretty_midi
+# parses ground-truth MIDI; remotezip streams a subset of the ~96 GB
+# E-GMD zip over HTTP range so we never download the whole archive.
+# See scripts/harvest_beat_dataset.sh.
+pretty_midi>=0.2.10
+remotezip>=0.12.3
+
 # Dev
 pytest>=7.4

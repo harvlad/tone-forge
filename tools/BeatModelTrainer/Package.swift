@@ -23,5 +23,13 @@ let package = Package(
             ],
             path: "Sources/BeatModelTrainer"
         ),
+        .testTarget(
+            name: "BeatModelTrainerTests",
+            dependencies: [
+                "BeatModelTrainer",
+                .product(name: "ToneForgeEngine", package: "ToneForgeMobile"),
+            ],
+            path: "Tests/BeatModelTrainerTests"
+        ),
     ]
 )

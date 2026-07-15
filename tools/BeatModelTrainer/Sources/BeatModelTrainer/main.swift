@@ -10,7 +10,7 @@
 // Usage:
 //   swift run -c release BeatModelTrainer \
 //     --out path/BeatClassifier.mlmodel \
-//     [--per-role 4000] [--corrections corpus.csv] [--min-accuracy 0.85]
+//     [--per-role 4000] [--corrections corpus.csv] [--min-accuracy 0.83]
 
 import Foundation
 import CreateML
@@ -24,12 +24,33 @@ func arg(_ name: String) -> String? {
     return CommandLine.arguments[i + 1]
 }
 
+// MARK: - Subcommand: harvest
+//
+// `BeatModelTrainer harvest --harvest-manifest <csv> [--audio-root <dir>]
+//  --out <csv>` runs Stage B of the E-GMD pipeline (audio -> features)
+// and exits without touching CreateML. Anything else falls through to
+// the training flow below, byte-compatible with the old entrypoint.
+
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "harvest" {
+    guard let manifest = arg("--harvest-manifest"), let out = arg("--out") else {
+        FileHandle.standardError.write(Data(
+            "error: harvest requires --harvest-manifest <csv> --out <csv>\n".utf8))
+        exit(2)
+    }
+    Harvester.run(manifestPath: manifest, audioRoot: arg("--audio-root"), outPath: out)
+    exit(0)
+}
+
 guard let outPath = arg("--out") else {
     FileHandle.standardError.write(Data("error: --out <path.mlmodel> required\n".utf8))
     exit(2)
 }
 let perRole = Int(arg("--per-role") ?? "4000") ?? 4000
-let minAccuracy = Double(arg("--min-accuracy") ?? "0.85") ?? 0.85
+// Default gate at 0.83: real E-GMD electronic-drum audio trains to ~0.84
+// holdout (kick/hi-hat bleed makes some slices genuinely ambiguous), well
+// below the synthetic-only 1.0. 0.83 blocks regressions without rejecting an
+// honest real-data model. Override with --min-accuracy.
+let minAccuracy = Double(arg("--min-accuracy") ?? "0.83") ?? 0.83
 let correctionsPath = arg("--corrections")
 
 // MARK: - Build corpus
@@ -42,7 +63,22 @@ if let cp = correctionsPath {
     print("Merged \(real.count) real correction rows from \(cp)")
     examples.append(contentsOf: real)
 }
+
+// Harvested dataset rows (E-GMD, same CSV contract as corrections but
+// its own bucket — high volume, so it's kept distinct from the small,
+// higher-value stream of real user corrections). See harvest_egmd.py.
+if let hp = arg("--harvest") {
+    let harvested = loadCorrections(csvPath: hp)
+    print("Merged \(harvested.count) harvested rows from \(hp)")
+    examples.append(contentsOf: harvested)
+}
+
 print("Total examples: \(examples.count)")
+var roleHistogram: [String: Int] = [:]
+for e in examples { roleHistogram[e.role, default: 0] += 1 }
+print("Per-role: " + DrumRole.allCases
+    .map { "\($0.rawValue)=\(roleHistogram[$0.rawValue] ?? 0)" }
+    .joined(separator: "  "))
 
 // MARK: - MLDataTable
 

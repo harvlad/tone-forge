@@ -20,8 +20,25 @@ fi
 
 mkdir -p "$RES_DIR"
 
+# When harvested (E-GMD) rows are supplied, real data dominates the
+# corpus, so shrink the synthetic backfill unless the caller pinned
+# --per-role explicitly.
+extra_args=()
+has_harvest=0
+has_per_role=0
+for a in "$@"; do
+  case "$a" in
+    --harvest) has_harvest=1 ;;
+    --per-role) has_per_role=1 ;;
+  esac
+done
+if [[ "$has_harvest" -eq 1 && "$has_per_role" -eq 0 ]]; then
+  extra_args+=(--per-role 2500)
+fi
+
 echo "==> Training model"
-( cd "$TRAINER" && swift run -c release BeatModelTrainer --out "$MODEL" "$@" )
+( cd "$TRAINER" && swift run -c release BeatModelTrainer --out "$MODEL" \
+    ${extra_args[@]+"${extra_args[@]}"} "$@" )
 
 echo "==> Compiling $MODEL -> $COMPILED"
 rm -rf "$COMPILED"

@@ -27,6 +27,9 @@ on:
         description: "Commit the retrained baseline model back to main"
         type: boolean
         default: true
+  schedule:
+    # Weekly retrain from E-GMD + fresh corrections. Mon 06:00 UTC.
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: write  # for committing the refreshed baseline model
@@ -65,14 +68,46 @@ jobs:
             echo "corpus export unavailable; training on synthetic corpus only"
           fi
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Harvest E-GMD
+        id: harvest
+        env:
+          # E-GMD is a ~96 GB zip streamed by HTTP range, so the limit
+          # bounds the download. Small on the weekly cron; larger sweep
+          # on manual dispatch.
+          EGMD_LIMIT: ${{ github.event_name == 'schedule' && '80' || '2000' }}
+          EGMD_CACHE_DIR: ${{ runner.temp }}/e-gmd
+        run: |
+          set -uo pipefail  # best-effort: dataset issues must not block training
+          python3 -m pip install --quiet "pretty_midi>=0.2.10" "remotezip>=0.12.3"
+          out="$RUNNER_TEMP/beat_harvest.csv"
+          # Last stdout line is the harvest CSV path (only on success + rows>0).
+          path="$(bash scripts/harvest_beat_dataset.sh "$out" --max-per-role 4000 | tail -n 1)"
+          if [[ -n "$path" && -f "$path" ]]; then
+            rows=$(($(wc -l < "$path") - 1))
+            echo "Harvested $rows E-GMD row(s)"
+            if [[ "$rows" -gt 0 ]]; then
+              echo "path=$path" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "E-GMD unavailable; training without harvested rows"
+          fi
+
       - name: Train model
         run: |
           set -euo pipefail
+          args=()
           if [[ -n "${{ steps.corpus.outputs.path }}" ]]; then
-            bash scripts/train_beat_model.sh --corrections "${{ steps.corpus.outputs.path }}"
-          else
-            bash scripts/train_beat_model.sh
+            args+=(--corrections "${{ steps.corpus.outputs.path }}")
           fi
+          if [[ -n "${{ steps.harvest.outputs.path }}" ]]; then
+            args+=(--harvest "${{ steps.harvest.outputs.path }}")
+          fi
+          bash scripts/train_beat_model.sh "${args[@]+"${args[@]}"}"
 
       - name: Derive version
         id: ver
@@ -95,7 +130,7 @@ jobs:
           bash scripts/publish_beat_model.sh "${{ steps.ver.outputs.version }}"
 
       - name: Commit refreshed baseline
-        if: ${{ inputs.commit_baseline }}
+        if: ${{ github.event_name == 'schedule' || inputs.commit_baseline }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
