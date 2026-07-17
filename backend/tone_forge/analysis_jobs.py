@@ -71,19 +71,23 @@ class JobState:
 
     def public_dict(self) -> dict:
         """Client-facing shape. ``id`` is surfaced as ``job_id`` to match
-        the submit response; ``device_token`` is never exposed."""
+        the submit response; ``device_token`` is never exposed.
+
+        All values are coerced to native Python types to ensure JSON
+        serialization works even if numpy types crept in from analysis.
+        """
         return {
-            "job_id": self.id,
-            "status": self.status,
-            "percent": self.percent,
-            "message": self.message,
-            "history_id": self.history_id,
-            "error": self.error,
-            "filename": self.filename,
-            "attested": self.attested,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "version": self.version,
+            "job_id": str(self.id),
+            "status": str(self.status),
+            "percent": float(self.percent),
+            "message": str(self.message) if self.message else "",
+            "history_id": str(self.history_id) if self.history_id else None,
+            "error": str(self.error) if self.error else None,
+            "filename": str(self.filename) if self.filename else None,
+            "attested": bool(self.attested),
+            "created_at": float(self.created_at),
+            "updated_at": float(self.updated_at),
+            "version": int(self.version),
         }
 
 
@@ -301,6 +305,11 @@ class JobRegistry:
 
     def _persist(self, job: JobState) -> None:
         try:
-            (self._dir / f"{job.id}.json").write_text(json.dumps(asdict(job)))
+            data = asdict(job)
+            # Coerce numpy types to native Python for JSON serialization
+            for key, value in data.items():
+                if hasattr(value, "item"):  # numpy scalar
+                    data[key] = value.item()
+            (self._dir / f"{job.id}.json").write_text(json.dumps(data))
         except Exception:  # noqa: BLE001
             logger.exception("could not persist job %s", job.id)
