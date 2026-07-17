@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -420,8 +421,17 @@ def test_cli_compare_accept(tmp_path: Path, capsys: pytest.CaptureFixture) -> No
     ])
     base_path = tmp_path / "base.json"
     cand_path = tmp_path / "cand.json"
-    dump_consensus_score(score_consensus_corpus(base_store), base_path)
-    dump_consensus_score(score_consensus_corpus(cand_store), cand_path)
+    # Pin wall seconds: real scoring of a 1-entry corpus takes microseconds,
+    # so the gate's 2x runtime rule would compare pure timing noise (flaky
+    # under load). Equal values make the runtime rule deterministic.
+    dump_consensus_score(
+        replace(score_consensus_corpus(base_store), score_wall_seconds=1.0),
+        base_path,
+    )
+    dump_consensus_score(
+        replace(score_consensus_corpus(cand_store), score_wall_seconds=1.0),
+        cand_path,
+    )
 
     rc = cs_main([
         "consensus_sweep_dummy", "compare",
@@ -468,8 +478,16 @@ def test_cli_compare_json(tmp_path: Path, capsys: pytest.CaptureFixture) -> None
     ])
     base_path = tmp_path / "base.json"
     cand_path = tmp_path / "cand.json"
-    dump_consensus_score(score_consensus_corpus(base_store), base_path)
-    dump_consensus_score(score_consensus_corpus(cand_store), cand_path)
+    # Pin wall seconds so the runtime rule is deterministic (see
+    # test_cli_compare_accept).
+    dump_consensus_score(
+        replace(score_consensus_corpus(base_store), score_wall_seconds=1.0),
+        base_path,
+    )
+    dump_consensus_score(
+        replace(score_consensus_corpus(cand_store), score_wall_seconds=1.0),
+        cand_path,
+    )
 
     rc = cs_main([
         "compare",
