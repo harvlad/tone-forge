@@ -47,7 +47,10 @@ public final class PackPadPlayer {
     ) {
         guard let resolved = packs[packId],
               let url = resolved.padFileURLs[padIdx]
-        else { return }
+        else {
+            print("[PackPadPlayer] dropped trigger: unknown pack/pad \(packId)/\(padIdx)")
+            return
+        }
         let gainDb = resolved.pack.pads
             .first(where: { $0.padIdx == padIdx })?.gainDb ?? 0
         let scaled = velocity * Float(pow(10.0, gainDb / 20.0))

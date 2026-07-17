@@ -167,7 +167,10 @@ public final class ChopPlayer {
         pan: Float,
         afterSeconds delaySeconds: Double
     ) {
-        guard avEngine.isRunning else { return }
+        guard avEngine.isRunning else {
+            print("[ChopPlayer] dropped trigger: engine not running")
+            return
+        }
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(max(0, startSec) * sampleRate)
         let endFrame = min(

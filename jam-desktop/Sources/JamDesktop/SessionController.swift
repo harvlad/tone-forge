@@ -529,7 +529,15 @@ final class SessionController: ObservableObject {
     // MARK: - Private
 
     func ensureEngineStarted() {
-        guard !engineStarted else { return }
+        // Recover if the engine died after a successful start (e.g. the
+        // device reconfig retry loop exhausted and the engine went .failed):
+        // a stale `engineStarted` flag would otherwise leave every trigger
+        // silently dropped at ChopPlayer's isRunning guard forever.
+        if engineStarted {
+            if engine.engine.isRunning { return }
+            print("[Session] engine flagged started but not running — restarting")
+            engineStarted = false
+        }
         do {
             try engine.start()
             chopPlayer.outputNode = engine.musicBus.input
