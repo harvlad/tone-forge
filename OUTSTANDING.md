@@ -48,6 +48,99 @@ if publicly exposed.
 - **Rule:** set the flag on dev machines only. Never set it on the production
   deployment. Revisit (remove or license-gate) before any public launch.
 
+## 4. Desktop Live Beat + Beat Capture — silent playback (MITIGATED, awaiting runtime confirmation)
+
+**Fixes landed (2026-07-17):**
+- `SessionController.ensureEngineStarted()` now self-recovers: if the
+  `engineStarted` flag is set but the underlying engine is not running
+  (e.g. the ConnectCore reconfig retry loop exhausted and the engine went
+  `.failed`), it clears the flag and restarts + rewires. Previously every
+  trigger was silently dropped forever at ChopPlayer's `isRunning` guard.
+- The two remaining *silent* drop points now log:
+  `[ChopPlayer] dropped trigger: engine not running` and
+  `[PackPadPlayer] dropped trigger: unknown pack/pad <id>/<idx>`.
+- Next repro with the stderr harness (below) is now decisive: one of
+  `[BeatCapture] beatkit resolve failed`, `[ChopPlayer] dropped trigger`,
+  `[PackPadPlayer] dropped trigger`, `[ChopPlayer] failed to open`, or
+  `[Session] engine flagged started but not running` will print.
+
+Original investigation notes:
+
+**Symptom (user, macOS Jamn dist build):**
+- Beat Capture detects onsets fine (e.g. background TV speech → 12 hits in ~4s,
+  classified Snare×9 / Perc×3), but **Preview / playback makes no sound**.
+- Live Beat: taps register (envelope meter + hit counter move) but **no drum
+  audio** after calibrating.
+- So detection works; the **trigger → audio path is silent** on desktop.
+
+**Ruled out by static analysis (all wiring correct in source):**
+- `SessionController+BeatCapture.startLiveBeat()` calls `ensureBeatKitRegistered()`
+  + `ensureEngineStarted()`; wires `onTriggerSample → triggerBeatKitSample →
+  packPlayer.trigger(BeatKit.packId, role.padIdx, velocity)`.
+- Beat Capture Preview (`BeatCaptureSheet.startPreview`) routes
+  `SequencerPlayer → sequencerAdapter → playPackPad → packPlayer.trigger` — same
+  packPlayer sink. `sequencerAdapter.packPlayer` IS wired (SessionController.swift:179).
+- `DrumRole.padIdx` = 0..6, all present in beatkit manifest + pads.
+- beatkit resources ARE bundled in the dist app:
+  `dist/Jamn.app/Contents/Resources/JamDesktop_JamDesktopAudio.bundle/Samples/beatkit/pads/*.m4a`
+  (all 7). `Bundle.module` name matches (`JamDesktop_JamDesktopAudio.bundle`).
+- `SampleBank.loadBundled → loadFromDirectory` throws if any pad missing (no
+  *partial* silent drop) — resolve either fully works or fully fails + logs
+  `[BeatCapture] beatkit resolve failed`.
+- `ChopPlayer.schedule` guards `avEngine.isRunning`; `chopPlayer.outputNode` set
+  in `ensureEngineStarted`, and reattached on graph rebuild
+  (SessionController.swift:166 `onGraphReattached`).
+- ConnectCore `AudioEngine` has a config-change observer + auto-restart; desktop
+  playback engine is that engine (`engine.engine.avEngine`).
+
+**Prime remaining suspects (need RUNTIME confirmation):**
+1. beatkit resolve fails at runtime in the packaged app (`Bundle.module` miss) →
+   look for `[BeatCapture] beatkit resolve failed` in stderr.
+2. Playback `avEngine` not running when trigger fires (two-engine device flap:
+   LiveBeatTap's dedicated capture `AVAudioEngine` starting may post an
+   `AVAudioEngineConfigurationChange` that stops the shared playback engine).
+   NOTE: this would NOT explain Beat Capture Preview being silent (no capture
+   engine running during Preview) — so if BOTH are silent, suspect #1 or the
+   voice→musicBus edge, not the flap.
+3. `[ChopPlayer] failed to open <url>` (m4a decode).
+
+**Discriminator not yet answered:** do normal song **stems** play in the desktop
+app? stems-play-but-beatkit-silent = packPlayer/beatkit path; all-silent =
+musicBus/output.
+
+**Diagnostic harness left running:** launch dist from terminal to capture stderr:
+```
+jam-desktop/dist/Jamn.app/Contents/MacOS/JamDesktop >/tmp/jamn-beat.log 2>&1 &
+```
+Then reproduce Preview + Live Beat, read `/tmp/jamn-beat.log` for the failing
+branch. As of session end only the startup line was present (input-device note).
+
+**When fixed:** propagate to both platforms if shared (iOS ModeCoordinator+BeatCapture
+mirrors the desktop path). Live Beat = Tap controller (template match), not transcribe.
+
+## 5. Desktop Beat Capture — false onsets from background noise (FIXED 2026-07-17)
+
+TV speech in the background produced 12 "drum" hits in ~4s. Fixed with a
+percussive gate in `BeatOnsetExtractor` (shared engine — both platforms):
+an onset is rejected unless it has (a) fast attack (`attackSec ≤ 0.03`),
+(b) decaying tail (last-quarter RMS ≤ 0.6 × peak RMS), and (c) relative
+quiet before it (30 ms pre-onset RMS ≤ 0.5 × peak RMS — catches syllable
+tail-ends that look percussive once the voice stops). Gate runs *before*
+the global-peak noise floor so loud speech can't gate out real quiet hits.
+Regression tests: `testSpeechOnlyProducesNoHits`,
+`testHitsSurviveInterleavedSpeech` in `BeatOnsetExtractorTests`.
+
+Still relevant: **macOS Voice-Isolation mic mode** flattens percussive
+attacks — verify Mic Mode = Standard when testing real taps (a flattened
+attack could now be gated out by design).
+
+### Recent Live Beat commits this thread
+- `22bea46` feat(livebeat): guided tap-along calibration (shared, both platforms)
+- `3e2983c` fix(livebeat): re-arm between taps + guided input meter
+  (root cause: tap `updateThresholds` off-ratio 0.25 sat below post-gain noise
+  floor → detector latched after first hit; raised to 0.6 + config offThreshold
+  mobile 0.024 / desktop 0.012. Regression test `LiveBeatOnsetDetectorTests`.)
+
 ## Production hardening reminders (not blocking, already safe by default)
 
 - `TONEFORGE_ADMIN_TOKEN` must be set in production — without it, `/studio`,
