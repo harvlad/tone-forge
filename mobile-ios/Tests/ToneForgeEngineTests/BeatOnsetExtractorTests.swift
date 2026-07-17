@@ -38,6 +38,20 @@ final class BeatOnsetExtractorTests: XCTestCase {
         [Float](repeating: 0, count: Int(seconds * sr))
     }
 
+    /// Voiced speech-like segment: slow attack (~60 ms ramp) into a
+    /// sustained harmonic tone with a little noise — a vowel, roughly.
+    private func vowel(_ amp: Float, seconds: Double = 0.3, seed: UInt64 = 9) -> [Float] {
+        let n = Int(seconds * sr)
+        let noise = seededNoise(n, seed: seed)
+        return (0..<n).map { i in
+            let t = Double(i) / sr
+            let ramp = Float(min(1.0, t / 0.06))
+            let tone = Float(
+                sin(2 * .pi * 180 * t) + 0.5 * sin(2 * .pi * 360 * t))
+            return amp * ramp * (0.8 * tone + 0.2 * noise[i])
+        }
+    }
+
     func testDetectsAllOnsets() {
         // 4 hits with wide gaps so onset detection is unambiguous.
         var buf: [Float] = []
@@ -99,5 +113,40 @@ final class BeatOnsetExtractorTests: XCTestCase {
             buf, sampleRate: sr, classifier: classifier
         )
         XCTAssertEqual(hits.first?.role, .kick)
+    }
+
+    /// Background speech alone (slow-attack sustained vowels) must not
+    /// register any hits — the percussive gate rejects it.
+    func testSpeechOnlyProducesNoHits() {
+        var buf: [Float] = []
+        buf += silence(0.1)
+        buf += vowel(0.7, seed: 3); buf += silence(0.15)
+        buf += vowel(0.6, seconds: 0.4, seed: 4); buf += silence(0.15)
+        buf += vowel(0.8, seed: 5); buf += silence(0.2)
+
+        let hits = BeatOnsetExtractor.extract(
+            buf, sampleRate: sr, classifier: classifier
+        )
+        XCTAssertTrue(
+            hits.isEmpty,
+            "speech-only buffer produced \(hits.count) hits"
+        )
+    }
+
+    /// Real hits survive the percussive gate even with louder speech
+    /// in between — and speech must not set the noise floor that would
+    /// otherwise gate out the quiet hit.
+    func testHitsSurviveInterleavedSpeech() {
+        var buf: [Float] = []
+        buf += silence(0.1)
+        buf += kick(0.9); buf += silence(0.3)
+        buf += vowel(0.95, seconds: 0.4, seed: 6); buf += silence(0.2)
+        buf += hat(0.4, seed: 7); buf += silence(0.3)
+
+        let hits = BeatOnsetExtractor.extract(
+            buf, sampleRate: sr, classifier: classifier
+        )
+        XCTAssertEqual(hits.count, 2, "expected kick+hat only, got \(hits.count)")
+        XCTAssertEqual(hits.first?.timeSec ?? -1, 0.10, accuracy: 0.03)
     }
 }

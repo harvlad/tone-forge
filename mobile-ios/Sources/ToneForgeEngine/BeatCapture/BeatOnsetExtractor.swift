@@ -52,6 +52,23 @@ public enum BeatOnsetExtractor {
     /// breath / room artifacts that sit between real hits. Kept low so a
     /// soft beatbox kick isn't gated out beneath a louder snare/clap.
     static let relativeNoiseFloor: Float = 0.10
+    /// Percussive gate: reject onsets that take longer than this to reach
+    /// 90% of their envelope peak. Drum hits peak near-instantly (<15 ms);
+    /// voiced speech ramps up over tens of milliseconds. (`attackSec` has
+    /// 5 ms granularity, so 0.03 = six RMS windows.)
+    static let maxAttackSec = 0.03
+    /// Percussive gate: reject onsets whose tail keeps ringing near the
+    /// peak — RMS of the last quarter of the slice over the peak RMS.
+    /// Percussion decays (kick τ≈50 ms → ratio ≈0.1 at 140 ms); sustained
+    /// speech stays near 1. Catches fast-attack plosives followed by
+    /// voicing that the attack gate alone would pass.
+    static let maxSustainRatio: Float = 0.6
+    /// Percussive gate: a real hit rises out of relative quiet — reject
+    /// onsets whose 30 ms *pre-onset* RMS is already near the slice peak.
+    /// Catches the tail-end of a spoken syllable (preceded by full-level
+    /// voicing) that looks percussive in isolation once the voice stops.
+    static let preOnsetWindowSec = 0.03
+    static let maxPreOnsetRatio: Float = 0.5
 
     /// Detect and classify every percussive onset in `samples`.
     public static func extract(
@@ -67,7 +84,13 @@ public enum BeatOnsetExtractor {
         let maxSliceLen = Int(maxSliceSec * sampleRate)
 
         // First pass: features + peak per onset.
-        struct Raw { let time: Double; let feat: OnsetFeatures }
+        struct Raw {
+            let time: Double
+            let feat: OnsetFeatures
+            let sustain: Float
+            let preRatio: Float
+        }
+        let preWindow = max(1, Int(preOnsetWindowSec * sampleRate))
         var raws: [Raw] = []
         raws.reserveCapacity(onsets.count)
         for (idx, start) in onsets.enumerated() {
@@ -76,7 +99,14 @@ public enum BeatOnsetExtractor {
             guard end > start else { continue }
             let slice = Array(samples[start..<end])
             let feat = OnsetFeatures.extract(slice, sampleRate: sampleRate)
-            raws.append(Raw(time: Double(start) / sampleRate, feat: feat))
+            let preStart = max(0, start - preWindow)
+            let pre = rms(samples, from: preStart, to: start)
+            raws.append(Raw(
+                time: Double(start) / sampleRate,
+                feat: feat,
+                sustain: tailSustain(slice, peakRMS: feat.peakRMS),
+                preRatio: feat.peakRMS > 1e-9 ? pre / feat.peakRMS : 0
+            ))
         }
         guard !raws.isEmpty else { return [] }
 
@@ -98,10 +128,21 @@ public enum BeatOnsetExtractor {
             prevOnsetTime = raw.time
         }
 
+        // Percussive gate: drop speech-like onsets (slow attack, sustained
+        // tail, or no pre-onset quiet) *before* computing the global peak,
+        // so loud background speech can't set the noise floor and gate out
+        // real quiet hits.
+        let percussive = deduped.filter {
+            $0.feat.attackSec <= maxAttackSec
+                && $0.sustain <= maxSustainRatio
+                && $0.preRatio <= maxPreOnsetRatio
+        }
+        guard !percussive.isEmpty else { return [] }
+
         // Global peak for velocity normalisation + noise gate.
-        let globalPeak = deduped.map(\.feat.peakRMS).max() ?? 0
+        let globalPeak = percussive.map(\.feat.peakRMS).max() ?? 0
         let floor = globalPeak * relativeNoiseFloor
-        let kept = deduped.filter { $0.feat.peakRMS >= floor }
+        let kept = percussive.filter { $0.feat.peakRMS >= floor }
         guard !kept.isEmpty else { return [] }
 
         return kept.map { raw in
@@ -120,5 +161,24 @@ public enum BeatOnsetExtractor {
                 features: raw.feat
             )
         }
+    }
+
+    /// Plain RMS over `samples[from..<to]`; 0 for an empty range.
+    private static func rms(_ samples: [Float], from: Int, to: Int) -> Float {
+        guard to > from else { return 0 }
+        var sum: Float = 0
+        for sample in samples[from..<to] { sum += sample * sample }
+        return (sum / Float(to - from)).squareRoot()
+    }
+
+    /// RMS of the last quarter of the slice relative to the windowed
+    /// peak RMS. ≈0 for decayed percussion, ≈1 for sustained speech.
+    private static func tailSustain(_ slice: [Float], peakRMS: Float) -> Float {
+        guard peakRMS > 1e-9, slice.count >= 8 else { return 0 }
+        let tailStart = slice.count * 3 / 4
+        var sum: Float = 0
+        for sample in slice[tailStart...] { sum += sample * sample }
+        let rms = (sum / Float(slice.count - tailStart)).squareRoot()
+        return rms / peakRMS
     }
 }
