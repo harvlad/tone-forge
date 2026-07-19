@@ -141,6 +141,42 @@ attack could now be gated out by design).
   floor → detector latched after first hit; raised to 0.6 + config offThreshold
   mobile 0.024 / desktop 0.012. Regression test `LiveBeatOnsetDetectorTests`.)
 
+## 6. Beat Capture — body-percussion classification (2026-07-18)
+
+Chest/stomach "kicks" read as snares to the per-hit classifier — the
+kick/snare distinction in a body-percussion take is *relative*, not
+absolute. Landed (shared engine, both platforms):
+
+- **Heuristic kick rescue** in `ModelBackedBeatClassifier`: a non-kick
+  model verdict is overridden when the heuristic grades kick with
+  confidence ≥ 0.5.
+- **Relative role refinement** (`BeatOnsetExtractor.refineRelativeRoles`):
+  2-means on spectral centroid over the kick/snare/perc cohort; the dark
+  cluster upgrades to kick. Guards: cohort ≥ 6, cluster ≥ 2, brightness
+  separation ≥ 1.3×, dark-cluster median loudness ≥ 0.5× bright (soft
+  ghost notes are naturally darker — a quiet dark cluster is ghosts, not
+  kicks).
+- **"Detect kick" toggle** (persisted, `beatCaptureDetectKick`): kick
+  takes and ghost-note takes proved statistically inseparable (loudness
+  ratios 0.57 vs 0.59 on live captures), so performer intent is declared
+  in the UI. Off = single-drum take: refinement skipped, kick verdicts
+  become snares. Toggle available pre-record and in review (re-analyzes
+  the held take without re-recording). Desktop + mobile sheets.
+- **Ghost-note sensitivity**: military-drum ghosts carry ~1–2% of the
+  accent's spectral flux (25:1 measured live) — the transient detector's
+  6% peak-fraction gate swallowed them. `RecordingProcessor.transients`
+  now takes a `peakFraction` parameter; beat capture passes 0.01
+  (`BeatOnsetExtractor.fluxPeakFraction`), the sample-classification
+  path keeps 0.06 (no percussive gate downstream — held tones would
+  sprout jitter onsets, caught by `testHeldToneClassifiesAsSustainedNote`).
+  Extractor's relative noise floor also halved (0.10 → 0.05).
+- **Per-role velocity normalization**: loudest hit per role = accent
+  (velocity 1); chest kicks no longer buried at ~0.15 by a global peak.
+
+Verified on live desktop captures: kick+snare takes refine correctly;
+toggle-off take = 20/20 snare with velocity spread; military-drum take
+kept 34 hits incl. peaks at 4% of accent.
+
 ## Production hardening reminders (not blocking, already safe by default)
 
 - `TONEFORGE_ADMIN_TOKEN` must be set in production — without it, `/studio`,

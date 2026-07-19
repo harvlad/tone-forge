@@ -65,7 +65,8 @@ extension SessionController {
     /// runs off the main actor.
     func analyzeBeatTake(
         _ samples: [Float],
-        quantize: BeatQuantize
+        quantize: BeatQuantize,
+        detectKick: Bool = true
     ) async -> BeatCaptureResult {
         let sr = BeatCaptureSession.canonicalSampleRate
 
@@ -74,7 +75,8 @@ extension SessionController {
         let hits = await Task.detached(priority: .userInitiated) {
             BeatOnsetExtractor.extract(
                 samples, sampleRate: sr,
-                classifier: classifier
+                classifier: classifier,
+                detectKick: detectKick
             )
         }.value
 

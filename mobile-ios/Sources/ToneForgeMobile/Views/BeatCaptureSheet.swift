@@ -52,6 +52,16 @@ struct BeatCaptureSheet: View {
     @State private var previewPlayer: SequencerPlayer?
     @State private var isPreviewing = false
 
+    /// Kick detection intent: body-percussion "kicks" and soft ghost
+    /// snares are acoustically identical, so the performer declares
+    /// whether the take has a kick voice. Off = single-drum take (soft
+    /// hits stay ghost notes).
+    @AppStorage("beatCaptureDetectKick") private var detectKick = true
+
+    /// Raw samples of the analysed take, kept so flipping "Detect kick"
+    /// in review can re-analyse without re-recording.
+    @State private var lastSamples: [Float] = []
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -120,6 +130,8 @@ struct BeatCaptureSheet: View {
                     .font(.footnote)
                     .foregroundStyle(TFTheme.textSecondary)
             }
+            detectKickToggle
+                .frame(maxWidth: 280)
             Button {
                 startRecording()
             } label: {
@@ -160,11 +172,33 @@ struct BeatCaptureSheet: View {
             VStack(alignment: .leading, spacing: 20) {
                 tempoSection
                 roleCountsSection
+                detectKickSection
                 quantizeSection
                 hitListSection
             }
         }
         .safeAreaInset(edge: .bottom) { reviewActions }
+    }
+
+    /// Kick-intent toggle. Flipping it in review re-analyses the kept
+    /// take (manual role corrections are re-derived).
+    private var detectKickToggle: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Detect kick", isOn: $detectKick)
+            Text("Off: treat every low thump as a soft snare "
+                 + "(one-drum take with ghost notes).")
+                .font(.footnote)
+                .foregroundStyle(TFTheme.textSecondary)
+        }
+    }
+
+    private var detectKickSection: some View {
+        detectKickToggle
+            .onChange(of: detectKick) { _, _ in
+                guard !lastSamples.isEmpty else { return }
+                stopPreview()
+                Task { await analyze(lastSamples) }
+            }
     }
 
     private func failedView(_ msg: String) -> some View {
@@ -274,7 +308,7 @@ struct BeatCaptureSheet: View {
 
     private var reviewActions: some View {
         HStack(spacing: 12) {
-            Button { stopPreview(); phase = .idle } label: {
+            Button { stopPreview(); lastSamples = []; phase = .idle } label: {
                 Text("Discard")
             }
             .buttonStyle(.bordered)
@@ -336,7 +370,10 @@ struct BeatCaptureSheet: View {
     private func analyze(_ samples: [Float]) async {
         appState.micRecorder.onAutoStop = nil
         phase = .analyzing
-        let result = await coordinator.analyzeBeatTake(samples, quantize: quantize)
+        lastSamples = samples
+        let result = await coordinator.analyzeBeatTake(
+            samples, quantize: quantize, detectKick: detectKick
+        )
         hits = result.hits
         bpm = result.bpm
         tempoConfidence = result.tempoConfidence

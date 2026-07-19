@@ -61,7 +61,8 @@ extension ModeCoordinator {
     /// runs off the main actor.
     public func analyzeBeatTake(
         _ samples: [Float],
-        quantize: BeatQuantize
+        quantize: BeatQuantize,
+        detectKick: Bool = true
     ) async -> BeatCaptureResult {
         let sr = AudioEngine.canonicalSampleRate
 
@@ -70,7 +71,8 @@ extension ModeCoordinator {
         let hits = await Task.detached(priority: .userInitiated) {
             BeatOnsetExtractor.extract(
                 samples, sampleRate: sr,
-                classifier: classifier
+                classifier: classifier,
+                detectKick: detectKick
             )
         }.value
 

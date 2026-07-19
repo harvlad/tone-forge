@@ -14,6 +14,10 @@ struct JamDesktopApp: App {
     @StateObject private var session = SessionController()
 
     init() {
+        // Line-buffer stdout so `print()` diagnostics reach a redirected
+        // log file immediately (stdout is block-buffered when piped).
+        setvbuf(stdout, nil, _IOLBF, 0)
+
         // Stamp a persistent device id onto every backend request so
         // analysis jobs are scoped to this machine (GET /api/jobs).
         AuthContext.shared.deviceId = DeviceIdentity.id()

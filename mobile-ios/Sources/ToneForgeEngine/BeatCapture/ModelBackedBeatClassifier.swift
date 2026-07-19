@@ -33,8 +33,26 @@ public struct ModelBackedBeatClassifier: BeatClassifier {
         self.infer = infer
     }
 
+    /// Minimum heuristic kick confidence needed to override a non-kick
+    /// model verdict (see `classify`).
+    static let kickRescueConfidence = 0.5
+
     public func classify(_ features: OnsetFeatures) -> BeatClassification {
         if let verdict = infer(features.featureVector) {
+            // Kick rescue: the trained model has only seen real-drum
+            // kicks (heavy sub-150 Hz body). A mouth/beatbox kick through
+            // a laptop mic arrives brightened — centroid ~2 kHz,
+            // lowBandRatio ~0.2 — and the model calls it snare. The
+            // heuristic is tuned for exactly these mic-coloured booms
+            // (low-band, dark-centroid, and tonal-boom rules), so when it
+            // is confident the onset is a kick, trust it over a non-kick
+            // model verdict. Showmanship over 1:1 transcription.
+            if verdict.role != .kick {
+                let h = HeuristicBeatClassifier().grade(features)
+                if h.role == .kick && h.confidence >= Self.kickRescueConfidence {
+                    return h
+                }
+            }
             return verdict
         }
         return fallback.classify(features)

@@ -51,6 +51,16 @@ struct BeatCaptureSheet: View {
     /// UserDefaults flag the upload gate reads).
     @AppStorage(BeatTrainingStore.shareOptInKey) private var shareOptIn = true
 
+    /// Kick detection intent: body-percussion "kicks" and soft ghost
+    /// snares are acoustically identical, so the performer declares
+    /// whether the take has a kick voice. Off = single-drum take (soft
+    /// hits stay ghost notes).
+    @AppStorage("beatCaptureDetectKick") private var detectKick = true
+
+    /// Raw samples of the analysed take, kept so flipping "Detect kick"
+    /// in review can re-analyse without re-recording.
+    @State private var lastSamples: [Float] = []
+
     /// Live Beat calibration + profile sheets.
     @State private var showCalibration = false
     @State private var showProfilePicker = false
@@ -138,6 +148,11 @@ struct BeatCaptureSheet: View {
                     .foregroundStyle(JamTheme.textSecondary)
             }
 
+            if captureMode == .record {
+                detectKickToggle
+                    .frame(maxWidth: 280)
+            }
+
             if captureMode == .liveBeat {
                 liveBeatProfileRow
             }
@@ -214,12 +229,34 @@ struct BeatCaptureSheet: View {
             VStack(alignment: .leading, spacing: 20) {
                 tempoSection
                 roleCountsSection
+                detectKickSection
                 quantizeSection
                 hitListSection
                 shareSection
             }
         }
         .safeAreaInset(edge: .bottom) { reviewActions }
+    }
+
+    /// Kick-intent toggle. Flipping it in review re-analyses the kept
+    /// take (manual role corrections are re-derived).
+    private var detectKickToggle: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Detect kick", isOn: $detectKick)
+            Text("Off: treat every low thump as a soft snare "
+                 + "(one-drum take with ghost notes).")
+                .font(.footnote)
+                .foregroundStyle(JamTheme.textSecondary)
+        }
+    }
+
+    private var detectKickSection: some View {
+        detectKickToggle
+            .onChange(of: detectKick) { _, _ in
+                guard !lastSamples.isEmpty else { return }
+                stopPreview()
+                Task { await analyze(lastSamples) }
+            }
     }
 
     /// "Help improve drum detection" opt-in. When on, correcting a hit
@@ -347,7 +384,7 @@ struct BeatCaptureSheet: View {
 
     private var reviewActions: some View {
         HStack(spacing: 12) {
-            Button { stopPreview(); phase = .idle } label: {
+            Button { stopPreview(); lastSamples = []; phase = .idle } label: {
                 Text("Discard")
             }
             .buttonStyle(.bordered)
@@ -408,7 +445,10 @@ struct BeatCaptureSheet: View {
     private func analyze(_ samples: [Float]) async {
         session.beatCapture.onAutoStop = nil
         phase = .analyzing
-        let result = await session.analyzeBeatTake(samples, quantize: quantize)
+        lastSamples = samples
+        let result = await session.analyzeBeatTake(
+            samples, quantize: quantize, detectKick: detectKick
+        )
         hits = result.hits
         bpm = result.bpm
         tempoConfidence = result.tempoConfidence

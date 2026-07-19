@@ -43,11 +43,16 @@ public enum RecordingProcessor {
     static let hopSize = 256
     /// A flux frame must exceed median × this to count as an onset.
     static let fluxMedianFactor: Float = 1.6
-    /// …AND this fraction of the strongest flux frame. Without the
-    /// peak-relative floor, steady material (median flux ≈ numeric
-    /// jitter) turns every jitter bump into an "onset". Kept low so a
-    /// soft low-flux beatbox kick survives next to a bright snare/hat.
-    static let fluxPeakFraction: Float = 0.12
+    /// …AND this fraction of the strongest flux frame (default).
+    /// Without the peak-relative floor, steady material (jitter flux
+    /// ≈ 1% of its attack peak) turns every jitter bump into an
+    /// "onset". Beat capture overrides this down to
+    /// `BeatOnsetExtractor.fluxPeakFraction` — a military-drum ghost
+    /// note also sits at ~1–2% of the accent's flux (25:1 observed
+    /// live), and the extractor's percussive gate cleans up anything
+    /// spurious; the sample-classification path has no such gate, so
+    /// it keeps the stricter default.
+    static let fluxPeakFraction: Float = 0.06
     /// Minimum spacing between reported onsets.
     static let minOnsetSpacingSec: Double = 0.050
 
@@ -162,7 +167,11 @@ public enum RecordingProcessor {
     /// 1024/256 Hann STFT. A frame is an onset when its flux exceeds
     /// median × 2 AND is a local maximum; onsets closer than 50 ms
     /// to a stronger one are suppressed.
-    static func transients(_ x: [Float], sampleRate: Double) -> [Int] {
+    static func transients(
+        _ x: [Float],
+        sampleRate: Double,
+        peakFraction: Float = fluxPeakFraction
+    ) -> [Int] {
         guard x.count >= fftSize else {
             // Too short for STFT — a trimmed capture starts at its
             // own attack by construction.
@@ -212,7 +221,7 @@ public enum RecordingProcessor {
         let median = sortedFlux[sortedFlux.count / 2]
         var maxFlux: Float = 0
         vDSP_maxv(flux, 1, &maxFlux, vDSP_Length(frameCount))
-        let threshold = max(median * fluxMedianFactor, maxFlux * fluxPeakFraction, 1e-6)
+        let threshold = max(median * fluxMedianFactor, maxFlux * peakFraction, 1e-6)
 
         // Local maxima above threshold, strongest-first suppression.
         var candidates: [(frame: Int, flux: Float)] = []
