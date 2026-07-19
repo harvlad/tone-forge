@@ -555,6 +555,31 @@ def _note_overlap_fraction(notes: List[Tuple[int, float, float]]) -> float:
     return t_poly / t_voiced if t_voiced > 0 else 0.0
 
 
+def _octave_pair_fraction(notes: List[Tuple[int, float, float]], window_s: float = 0.05) -> float:
+    """Fraction of notes that have an octave partner starting within window_s.
+
+    Detects octave-doubled bass (e.g., shelly_fire: pitch 26/50 or 38/62
+    simultaneously). These register as low poly_fraction because bp
+    merges or alternates rather than overlapping, but pyin (mono) can't
+    represent them. Measured: shelly_fire has octave_pair_frac ~0.25,
+    mono songs < 0.10.
+    """
+    if len(notes) < 2:
+        return 0.0
+    sorted_notes = sorted(notes, key=lambda x: x[1])
+    pair_count = 0
+    for i, (p1, s1, _) in enumerate(sorted_notes):
+        for j in range(i + 1, len(sorted_notes)):
+            p2, s2, _ = sorted_notes[j]
+            if s2 - s1 > window_s:
+                break
+            # Same pitch class, exactly 1 or 2 octaves apart
+            if p1 % 12 == p2 % 12 and abs(p1 - p2) in (12, 24):
+                pair_count += 1
+                break  # Count each note once
+    return pair_count / len(notes) if notes else 0.0
+
+
 # =============================================================================
 # CHORD-AWARE GAP FILLING (Phase 3 Step 4)
 # =============================================================================
