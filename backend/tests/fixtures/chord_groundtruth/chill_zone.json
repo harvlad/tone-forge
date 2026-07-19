@@ -1,0 +1,271 @@
+{
+  "song": "Chill Zone",
+  "artist": "(local sample)",
+  "source": "midi-derived from ChillZone_120bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 120,
+  "duration_s": 160.0,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/chill_zone/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/chill_zone/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 3.0,
+      "label": "G#7"
+    },
+    {
+      "start": 4.0,
+      "end": 7.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 7.0,
+      "end": 12.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 12.0,
+      "end": 16.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 16.0,
+      "end": 19.0,
+      "label": "G#7"
+    },
+    {
+      "start": 20.0,
+      "end": 23.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 23.0,
+      "end": 28.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 28.0,
+      "end": 31.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 32.0,
+      "end": 33.0,
+      "label": "G#7"
+    },
+    {
+      "start": 33.0,
+      "end": 35.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 36.0,
+      "end": 38.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 38.0,
+      "end": 40.0,
+      "label": "C#7"
+    },
+    {
+      "start": 40.0,
+      "end": 43.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 44.0,
+      "end": 47.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 48.0,
+      "end": 51.0,
+      "label": "G#7"
+    },
+    {
+      "start": 53.0,
+      "end": 54.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 54.0,
+      "end": 55.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 55.0,
+      "end": 56.0,
+      "label": "C#7"
+    },
+    {
+      "start": 57.0,
+      "end": 59.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 60.0,
+      "end": 64.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 64.0,
+      "end": 68.0,
+      "label": "G#7"
+    },
+    {
+      "start": 68.0,
+      "end": 72.0,
+      "label": "C#7"
+    },
+    {
+      "start": 72.0,
+      "end": 76.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 76.0,
+      "end": 80.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 80.0,
+      "end": 84.0,
+      "label": "G#7"
+    },
+    {
+      "start": 84.0,
+      "end": 88.0,
+      "label": "C#7"
+    },
+    {
+      "start": 88.0,
+      "end": 92.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 92.0,
+      "end": 99.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 99.0,
+      "end": 100.0,
+      "label": "G#7"
+    },
+    {
+      "start": 100.0,
+      "end": 102.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 102.0,
+      "end": 104.0,
+      "label": "C#7"
+    },
+    {
+      "start": 104.0,
+      "end": 108.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 108.0,
+      "end": 114.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 114.0,
+      "end": 116.0,
+      "label": "G#7"
+    },
+    {
+      "start": 116.0,
+      "end": 117.0,
+      "label": "C#7"
+    },
+    {
+      "start": 117.0,
+      "end": 118.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 118.0,
+      "end": 119.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 119.0,
+      "end": 120.0,
+      "label": "C#7"
+    },
+    {
+      "start": 120.0,
+      "end": 124.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 124.0,
+      "end": 128.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 128.0,
+      "end": 129.0,
+      "label": "Cm7"
+    },
+    {
+      "start": 129.0,
+      "end": 132.0,
+      "label": "G#7"
+    },
+    {
+      "start": 132.0,
+      "end": 136.0,
+      "label": "C#7"
+    },
+    {
+      "start": 136.0,
+      "end": 140.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 140.0,
+      "end": 141.0,
+      "label": "Csus4"
+    },
+    {
+      "start": 141.0,
+      "end": 144.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 144.0,
+      "end": 148.0,
+      "label": "G#7"
+    },
+    {
+      "start": 148.0,
+      "end": 152.0,
+      "label": "C#7"
+    },
+    {
+      "start": 152.0,
+      "end": 156.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 156.0,
+      "end": 160.0,
+      "label": "Fm7"
+    }
+  ]
+}

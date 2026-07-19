@@ -1,0 +1,601 @@
+{
+  "song": "Artificial Joy",
+  "artist": "(local sample)",
+  "source": "midi-derived from ArtificialJoy_120bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 120,
+  "duration_s": 414.62,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/artificial_joy/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/artificial_joy/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 1.0,
+      "label": "G#maj7"
+    },
+    {
+      "start": 1.0,
+      "end": 2.0,
+      "label": "G#7"
+    },
+    {
+      "start": 2.0,
+      "end": 4.182,
+      "label": "C7"
+    },
+    {
+      "start": 4.182,
+      "end": 6.364,
+      "label": "Dm7"
+    },
+    {
+      "start": 6.364,
+      "end": 8.545,
+      "label": "C7"
+    },
+    {
+      "start": 10.727,
+      "end": 12.909,
+      "label": "F7"
+    },
+    {
+      "start": 12.909,
+      "end": 14.0,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 14.0,
+      "end": 15.091,
+      "label": "C7"
+    },
+    {
+      "start": 17.273,
+      "end": 18.364,
+      "label": "C7"
+    },
+    {
+      "start": 18.364,
+      "end": 21.636,
+      "label": "F7"
+    },
+    {
+      "start": 21.636,
+      "end": 27.091,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 27.091,
+      "end": 28.182,
+      "label": "C7"
+    },
+    {
+      "start": 28.182,
+      "end": 31.455,
+      "label": "Am7"
+    },
+    {
+      "start": 31.455,
+      "end": 32.545,
+      "label": "Csus2"
+    },
+    {
+      "start": 32.545,
+      "end": 35.818,
+      "label": "C7"
+    },
+    {
+      "start": 35.818,
+      "end": 36.909,
+      "label": "Csus2"
+    },
+    {
+      "start": 36.909,
+      "end": 38.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 38.0,
+      "end": 39.091,
+      "label": "C7"
+    },
+    {
+      "start": 39.091,
+      "end": 40.182,
+      "label": "Am7"
+    },
+    {
+      "start": 40.182,
+      "end": 41.273,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 41.273,
+      "end": 47.818,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 47.818,
+      "end": 48.909,
+      "label": "C7"
+    },
+    {
+      "start": 48.909,
+      "end": 63.091,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 63.091,
+      "end": 64.182,
+      "label": "Asus4"
+    },
+    {
+      "start": 64.182,
+      "end": 65.273,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 65.273,
+      "end": 66.364,
+      "label": "C7"
+    },
+    {
+      "start": 70.727,
+      "end": 71.818,
+      "label": "D7"
+    },
+    {
+      "start": 71.818,
+      "end": 72.909,
+      "label": "E7"
+    },
+    {
+      "start": 74.0,
+      "end": 75.091,
+      "label": "G7"
+    },
+    {
+      "start": 78.364,
+      "end": 79.454,
+      "label": "A7"
+    },
+    {
+      "start": 79.454,
+      "end": 80.545,
+      "label": "D7"
+    },
+    {
+      "start": 80.545,
+      "end": 81.636,
+      "label": "Asus4"
+    },
+    {
+      "start": 81.636,
+      "end": 82.727,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 82.727,
+      "end": 83.771,
+      "label": "C7"
+    },
+    {
+      "start": 90.814,
+      "end": 91.814,
+      "label": "A7"
+    },
+    {
+      "start": 91.814,
+      "end": 92.814,
+      "label": "D7"
+    },
+    {
+      "start": 92.814,
+      "end": 93.814,
+      "label": "E7"
+    },
+    {
+      "start": 93.814,
+      "end": 94.814,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 94.814,
+      "end": 95.814,
+      "label": "Am7"
+    },
+    {
+      "start": 100.814,
+      "end": 101.814,
+      "label": "A7"
+    },
+    {
+      "start": 102.814,
+      "end": 103.814,
+      "label": "A7"
+    },
+    {
+      "start": 103.814,
+      "end": 106.814,
+      "label": "Em7"
+    },
+    {
+      "start": 106.814,
+      "end": 108.814,
+      "label": "Emaj7"
+    },
+    {
+      "start": 108.814,
+      "end": 112.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 112.814,
+      "end": 113.814,
+      "label": "A7"
+    },
+    {
+      "start": 113.814,
+      "end": 115.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 124.814,
+      "end": 128.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 128.814,
+      "end": 129.814,
+      "label": "A7"
+    },
+    {
+      "start": 129.814,
+      "end": 131.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 148.814,
+      "end": 150.814,
+      "label": "A7"
+    },
+    {
+      "start": 150.814,
+      "end": 151.814,
+      "label": "Am7"
+    },
+    {
+      "start": 151.814,
+      "end": 152.814,
+      "label": "A7"
+    },
+    {
+      "start": 152.814,
+      "end": 153.814,
+      "label": "Asus2"
+    },
+    {
+      "start": 153.814,
+      "end": 154.814,
+      "label": "Adim"
+    },
+    {
+      "start": 164.814,
+      "end": 167.814,
+      "label": "A7"
+    },
+    {
+      "start": 167.814,
+      "end": 168.814,
+      "label": "Am7"
+    },
+    {
+      "start": 180.814,
+      "end": 184.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 184.814,
+      "end": 185.814,
+      "label": "A7"
+    },
+    {
+      "start": 185.814,
+      "end": 187.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 196.814,
+      "end": 200.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 200.814,
+      "end": 201.814,
+      "label": "A7"
+    },
+    {
+      "start": 201.814,
+      "end": 203.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 204.814,
+      "end": 205.814,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 206.814,
+      "end": 207.814,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 208.814,
+      "end": 209.814,
+      "label": "Bdim"
+    },
+    {
+      "start": 209.814,
+      "end": 210.814,
+      "label": "F7"
+    },
+    {
+      "start": 210.814,
+      "end": 211.814,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 214.814,
+      "end": 217.814,
+      "label": "G7"
+    },
+    {
+      "start": 217.814,
+      "end": 218.814,
+      "label": "Gsus4"
+    },
+    {
+      "start": 218.814,
+      "end": 220.814,
+      "label": "G7"
+    },
+    {
+      "start": 220.814,
+      "end": 224.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 224.814,
+      "end": 225.814,
+      "label": "A7"
+    },
+    {
+      "start": 225.814,
+      "end": 227.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 228.814,
+      "end": 232.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 232.814,
+      "end": 233.814,
+      "label": "A7"
+    },
+    {
+      "start": 233.814,
+      "end": 235.814,
+      "label": "Asus4"
+    },
+    {
+      "start": 235.814,
+      "end": 236.814,
+      "label": "Am7"
+    },
+    {
+      "start": 236.814,
+      "end": 240.814,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 240.814,
+      "end": 244.814,
+      "label": "Em7"
+    },
+    {
+      "start": 244.814,
+      "end": 248.814,
+      "label": "Am7"
+    },
+    {
+      "start": 248.814,
+      "end": 252.814,
+      "label": "Em7"
+    },
+    {
+      "start": 252.814,
+      "end": 256.814,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 256.814,
+      "end": 260.814,
+      "label": "Em7"
+    },
+    {
+      "start": 260.814,
+      "end": 264.814,
+      "label": "Am7"
+    },
+    {
+      "start": 264.814,
+      "end": 268.814,
+      "label": "Em7"
+    },
+    {
+      "start": 268.814,
+      "end": 272.814,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 272.814,
+      "end": 276.814,
+      "label": "Em7"
+    },
+    {
+      "start": 276.814,
+      "end": 280.814,
+      "label": "Am7"
+    },
+    {
+      "start": 280.814,
+      "end": 284.814,
+      "label": "Em7"
+    },
+    {
+      "start": 284.814,
+      "end": 288.814,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 288.814,
+      "end": 292.814,
+      "label": "Em7"
+    },
+    {
+      "start": 292.814,
+      "end": 296.814,
+      "label": "Am7"
+    },
+    {
+      "start": 296.814,
+      "end": 300.814,
+      "label": "Em7"
+    },
+    {
+      "start": 300.814,
+      "end": 304.814,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 304.814,
+      "end": 308.814,
+      "label": "Em7"
+    },
+    {
+      "start": 308.814,
+      "end": 312.814,
+      "label": "Am7"
+    },
+    {
+      "start": 312.814,
+      "end": 316.814,
+      "label": "Em7"
+    },
+    {
+      "start": 316.814,
+      "end": 320.917,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 320.917,
+      "end": 325.166,
+      "label": "Em7"
+    },
+    {
+      "start": 325.166,
+      "end": 329.529,
+      "label": "Am7"
+    },
+    {
+      "start": 329.529,
+      "end": 333.893,
+      "label": "Em7"
+    },
+    {
+      "start": 333.893,
+      "end": 339.347,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 339.347,
+      "end": 342.62,
+      "label": "Em7"
+    },
+    {
+      "start": 342.62,
+      "end": 346.984,
+      "label": "Am7"
+    },
+    {
+      "start": 346.984,
+      "end": 351.347,
+      "label": "Em7"
+    },
+    {
+      "start": 351.347,
+      "end": 355.711,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 355.711,
+      "end": 360.075,
+      "label": "Em7"
+    },
+    {
+      "start": 360.075,
+      "end": 364.438,
+      "label": "Am7"
+    },
+    {
+      "start": 364.438,
+      "end": 368.802,
+      "label": "Em7"
+    },
+    {
+      "start": 368.802,
+      "end": 374.256,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 374.256,
+      "end": 377.529,
+      "label": "Em7"
+    },
+    {
+      "start": 377.529,
+      "end": 381.893,
+      "label": "Am7"
+    },
+    {
+      "start": 381.893,
+      "end": 386.256,
+      "label": "Em7"
+    },
+    {
+      "start": 386.256,
+      "end": 399.347,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 399.347,
+      "end": 403.711,
+      "label": "Em7"
+    },
+    {
+      "start": 403.711,
+      "end": 405.893,
+      "label": "C7"
+    }
+  ]
+}
