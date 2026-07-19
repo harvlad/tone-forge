@@ -1913,15 +1913,29 @@ def extract_midi_lead_ensemble(
             )
 
         if not rescue_triggered and tc_count_fp > 0:
-            # Fast path: return TC immediately.
+            # Fast path: return TC with octave validation.
+            # TorchCrepe often detects subharmonics (octave low) on synth leads.
+            # Measured on Demolition Warning: GT 62-86, TC raw 50-69 (12-17 low).
             tc_fastpath_used = True
+            method = "torchcrepe_gpu"
+            notes = tc_notes_fp
+
+            # Apply octave validation
+            try:
+                notes, octave_stats = validate_octave_with_harmonics(notes, y, sr)
+                if octave_stats['corrections'] > 0:
+                    method = method + "_octave_validated"
+                    logger.info(f"TC fastpath octave correction: {octave_stats['corrections']} notes")
+            except Exception as e:
+                logger.warning(f"TC fastpath octave validation failed: {e}")
+
             logger.info(
                 f"TC_FASTPATH_TELEMETRY branch=chooser flag=on "
                 f"tc_count={tc_count_fp} pyin_count=skipped "
-                f"harm_ratio={harm_ratio} winner=torchcrepe_gpu "
+                f"harm_ratio={harm_ratio} winner={method} "
                 f"rescue=False fastpath=True"
             )
-            return tc_notes_fp, tc_tempo_fp, duration, "torchcrepe_gpu"
+            return notes, tc_tempo_fp, duration, method
 
     # Run pYIN (monophonic detector)
     # Either ENABLE_TC_FASTPATH is False (legacy path) or rescue was
@@ -2061,8 +2075,19 @@ def extract_midi_lead_ensemble(
     if use_pyin:
         return pyin_notes, pyin_tempo, duration, "pyin_dsp"
     else:
+        # Apply octave validation to TorchCrepe output (subharmonic correction)
+        method = "torchcrepe_gpu"
+        notes = tc_notes
+        try:
+            notes, octave_stats = validate_octave_with_harmonics(notes, y, sr)
+            if octave_stats['corrections'] > 0:
+                method = method + "_octave_validated"
+                logger.info(f"TC chooser octave correction: {octave_stats['corrections']} notes")
+        except Exception as e:
+            logger.warning(f"TC chooser octave validation failed: {e}")
+
         logger.info(f"Lead: choosing torchcrepe ({tc_count} notes) over pYIN ({pyin_count} notes)")
-        return tc_notes, pyin_tempo, duration, "torchcrepe_gpu"
+        return notes, pyin_tempo, duration, method
 
 
 def pitch_to_notes(
