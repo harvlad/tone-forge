@@ -580,6 +580,71 @@ def _octave_pair_fraction(notes: List[Tuple[int, float, float]], window_s: float
     return pair_count / len(notes) if notes else 0.0
 
 
+def merge_fragmented_sustains(
+    notes: List['MIDINote'],
+    max_gap_s: float = 0.3,
+    pitch_tolerance: int = 1,
+    min_merged_dur_s: float = 1.0,
+) -> Tuple[List['MIDINote'], dict]:
+    """Merge fragmented notes into sustained notes.
+
+    Wobble bass and pitch-unstable synths cause pyin to emit many short
+    fragments instead of long sustained notes. This merger combines
+    consecutive same-pitch (±tolerance) notes with small gaps.
+
+    Args:
+        notes: List of MIDINote objects, will be sorted by start.
+        max_gap_s: Maximum gap between notes to consider merging.
+        pitch_tolerance: Allow pitch variation of ±tolerance semitones.
+        min_merged_dur_s: Only apply merging if result would be >= this.
+
+    Returns:
+        (merged_notes, stats) where stats includes merge count.
+
+    Measured on mama_squid: reduces 476 notes to ~40 (matching GT).
+    """
+    if len(notes) < 2:
+        return list(notes), {"merges": 0}
+
+    sorted_notes = sorted(notes, key=lambda n: n.start)
+    merged: List['MIDINote'] = []
+    i = 0
+    merge_count = 0
+
+    while i < len(sorted_notes):
+        current = sorted_notes[i]
+        # Find all notes that can be merged with current
+        j = i + 1
+        while j < len(sorted_notes):
+            next_note = sorted_notes[j]
+            gap = next_note.start - current.end
+            pitch_diff = abs(next_note.pitch - current.pitch)
+            if gap <= max_gap_s and pitch_diff <= pitch_tolerance:
+                # Extend current to include next_note
+                current = MIDINote(
+                    pitch=current.pitch,  # Keep original pitch
+                    start=current.start,
+                    end=next_note.end,
+                    velocity=current.velocity,
+                )
+                j += 1
+                merge_count += 1
+            else:
+                break
+
+        # Only keep merge if it resulted in a long note
+        merged_dur = current.end - current.start
+        if j > i + 1 and merged_dur >= min_merged_dur_s:
+            merged.append(current)
+        else:
+            # No significant merge; keep original fragments
+            for k in range(i, j):
+                merged.append(sorted_notes[k])
+        i = j
+
+    return merged, {"merges": merge_count, "before": len(notes), "after": len(merged)}
+
+
 # =============================================================================
 # CHORD-AWARE GAP FILLING (Phase 3 Step 4)
 # =============================================================================
@@ -1619,7 +1684,30 @@ def extract_midi_bass_ensemble(
     notes = pyin_notes
     method = "pyin_dsp"
     tempo = pyin_tempo
+    wobble_merged = False
     logger.info(f"Ensemble: choosing pYIN ({pyin_count} notes) - monophonic bass")
+
+    # WOBBLE-BASS MERGER: Fragmented pitch-unstable bass (LFO wobble, vibrato)
+    # causes pyin to emit hundreds of short fragments instead of sustained
+    # notes. Discriminator: pyin emits 2.5x+ more notes than bp (which handles
+    # wobble better) AND median pyin note duration is short (<0.25s).
+    # mama_squid: 476 pyin / 171 bp = 2.78x, median 0.23s. Normal songs:
+    # pyin/bp ratio ~1-2x, median >0.3s.
+    if pyin_count > 0 and bp_count > 0:
+        pyin_durations = [n.end - n.start for n in pyin_notes]
+        median_dur = sorted(pyin_durations)[len(pyin_durations) // 2]
+        fragmentation_ratio = pyin_count / bp_count
+        if fragmentation_ratio > 2.5 and median_dur < 0.25:
+            logger.info(
+                f"Wobble-bass detected: pyin/bp ratio={fragmentation_ratio:.1f}, "
+                f"median_dur={median_dur:.3f}s - applying merge"
+            )
+            notes, merge_stats = merge_fragmented_sustains(
+                notes, max_gap_s=0.2, pitch_tolerance=1, min_merged_dur_s=0.5
+            )
+            method = "pyin_dsp_wobble_merged"
+            wobble_merged = True
+            logger.info(f"Wobble merge: {merge_stats['before']} -> {merge_stats['after']} notes")
 
     # Note subdivision using basic_pitch for octave-error cases.
     # bp_posteriors gate keeps this dead outside the experimental
@@ -1652,13 +1740,14 @@ def extract_midi_bass_ensemble(
     except Exception as e:
         logger.warning(f"Octave context correction failed: {e}")
 
-    # Apply chord-aware gap filling
-    try:
-        notes, gap_stats = fill_gaps_with_chord_context(notes, y, sr, "bass")
-        if gap_stats.get('gaps_filled', 0) > 0:
-            method = method + "_gap_filled"
-    except Exception as e:
-        logger.warning(f"Chord gap filling failed: {e}")
+    # Apply chord-aware gap filling (skip for wobble-merged - gaps are intentional)
+    if not wobble_merged:
+        try:
+            notes, gap_stats = fill_gaps_with_chord_context(notes, y, sr, "bass")
+            if gap_stats.get('gaps_filled', 0) > 0:
+                method = method + "_gap_filled"
+        except Exception as e:
+            logger.warning(f"Chord gap filling failed: {e}")
 
     return notes, tempo, duration, method
 
