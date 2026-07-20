@@ -19,7 +19,7 @@
         "shortDescription" : ""
       }
     ],
-    "version" : "2026-07-15T13:26:51Z",
+    "version" : "2026-07-20T08:55:40Z",
     "modelParameters" : [
 
     ],
@@ -50,14 +50,14 @@
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
-        "name" : "zcr",
+        "name" : "durationSec",
         "shortDescription" : ""
       },
       {
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
-        "name" : "peakRMS",
+        "name" : "pitchedness",
         "shortDescription" : ""
       },
       {
@@ -78,21 +78,21 @@
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
-        "name" : "durationSec",
-        "shortDescription" : ""
-      },
-      {
-        "isOptional" : "0",
-        "formattedType" : "Double",
-        "type" : "Double",
-        "name" : "pitchedness",
-        "shortDescription" : ""
-      },
-      {
-        "isOptional" : "0",
-        "formattedType" : "Double",
-        "type" : "Double",
         "name" : "centroidHz",
+        "shortDescription" : ""
+      },
+      {
+        "isOptional" : "0",
+        "formattedType" : "Double",
+        "type" : "Double",
+        "name" : "zcr",
+        "shortDescription" : ""
+      },
+      {
+        "isOptional" : "0",
+        "formattedType" : "Double",
+        "type" : "Double",
+        "name" : "peakRMS",
         "shortDescription" : ""
       }
     ],
