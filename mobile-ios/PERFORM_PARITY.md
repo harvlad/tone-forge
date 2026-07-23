@@ -88,16 +88,42 @@ applies momentary state at buffer rate.
 
 Independent sync masters. Priority: **Link > MIDI-clock-in > internal.**
 
-### A. Ableton Link
-Needs Ableton **LinkKit** (closed C++ SDK, free license — signup
-required; add as binary xcframework).
+### A. Ableton Link — DRAFTED (reconciler tested; controller stubbed)
+Needs Ableton **LinkKit** (`github.com/Ableton/LinkKit`, free license —
+signup + app registration; add as xcframework). NOT vendored: adding it
+requires accepting Ableton's Link license.
 
-`LinkController` (new):
-- owns `ABLLink` session; publishes tempo + beat phase + start/stop over LAN.
-- Link ON: session tempo drives playback; stems time-stretch to Link
-  tempo via existing `timePitch` (rate = `linkBpm / songBpm`); downbeat
-  aligns to Link phase.
-- chop/loop launches quantize to Link boundary (`BeatClock.nextBoundary`).
+- `LinkReconciler` (engine, pure, 7 tests): stretch ratio
+  (`linkBpm/songBpm`, clamped), shortest signed phase-nudge (wraps to
+  ±½ bar), phase-lock tolerance.
+- `LinkController` (app): owns the `ABLLink` session + a 50 ms poll loop
+  feeding tempo/phase into the transport via injected sinks
+  (`applyStretch`, `nudgeSeconds`). Guarded by `canImport(ABLLink)` —
+  **inert stub until LinkKit is vendored** (`isAvailable == false`, all
+  no-ops), so the repo builds without the SDK.
+
+LICENSE (checked against LinkKit LICENSE.md, "Ableton Link SDK License
+v2.0"): "You may not … distribute the Link SDK or parts of it in any
+way." So LinkKit **must not be committed** to this repo — each dev
+fetches it and accepts the license. The repo also ships **headers only,
+no prebuilt lib** — build the static lib from its CMake/makefile.
+
+SETUP:
+  1. `git clone github.com/Ableton/LinkKit` into a gitignored
+     `Vendor/LinkKit`; build the lib per its makefile.
+  2. Add the lib + `LinkKit/` headers to project.yml (a target that is
+     absent on a fresh clone → keep it optional).
+  3. Import in the bridging header → `canImport(ABLLink)` flips true.
+
+ABLLink signatures were verified against the cloned `ABLLink.h` — this
+fixed two wrong calls in the first draft (`ABLLinkEnable` and
+`ABLLinkNumPeers` don't exist; use `ABLLinkSetActive` /
+`ABLLinkIsEnabled` / `ABLLinkIsConnected`). Still not compiler-checked
+(app target blocked on the iOS platform).
+
+Remaining: stem time-stretch coupling (reuse timePitch path), start/stop
+callback sync, chop/loop quantize to Link boundary
+(`BeatClock.nextBoundary`), UI toggle, on-device verify.
 
 ### B. CoreMIDI OUT (IN already ships)
 MIDI IN done: `USBLaunchpadTransport` + `MIDIKeyboardTransport` already
