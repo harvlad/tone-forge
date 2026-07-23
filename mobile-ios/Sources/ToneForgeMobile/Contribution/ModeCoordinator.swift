@@ -369,9 +369,14 @@ public final class ModeCoordinator: ObservableObject {
             // bright too.
             let vel = min(1.0, velocity + (isChordTone ? 0.15 : 0))
             app.wavetableSynthNode.noteOn(midi: midi, velocity: vel)
+            // Mirror to external gear (PERFORM_PARITY spec 2B); no-op
+            // unless MIDI out is enabled. Replays don't re-emit — the
+            // live pass already sent them.
+            if !event.isReplay { app.audioEngine.midiSendNoteOn(midi: midi, velocity: velocity) }
 
         case .synthNoteOff(let midi):
             app.wavetableSynthNode.noteOff(midi: midi)
+            if !event.isReplay { app.audioEngine.midiSendNoteOff(midi: midi) }
 
         case .padSynthNote(let midi, let velocity):
             // Jam in Key pads voice through the PadSynth (same sound
@@ -379,6 +384,16 @@ public final class ModeCoordinator: ObservableObject {
             // PadSynth expects MIDI-style 0…127.
             let vel = Float(max(0, min(1, velocity)) * 127)
             app.padSynth.triggerNote(midi: midi, velocity: vel)
+            // Mirror to external gear. Jam pads auto-release (no pad-up
+            // action), so schedule a matching note-off after a musical
+            // beat — otherwise external gear hangs the note.
+            if !event.isReplay {
+                app.audioEngine.midiSendNoteOn(midi: midi, velocity: velocity)
+                let beat = app.audioEngine.performanceFX.beatClock.beatDuration ?? 0.5
+                DispatchQueue.main.asyncAfter(deadline: .now() + beat) { [weak app] in
+                    app?.audioEngine.midiSendNoteOff(midi: midi)
+                }
+            }
 
         case .none:
             break

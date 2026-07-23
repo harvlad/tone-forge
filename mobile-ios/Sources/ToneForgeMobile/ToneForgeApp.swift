@@ -764,6 +764,10 @@ public final class AppState: ObservableObject {
                 ? .library : restoredTab
         }
         wireLaunchpad()
+        // Re-arm MIDI clock output if the user left it on (spec 2B).
+        if UserDefaults.standard.bool(forKey: "midiClockOut") {
+            audioEngine.setMIDIClockOutEnabled(true)
+        }
 
         // Background-survivable analysis completion. Wires notification
         // routing, resumes any jobs orphaned by a kill/relaunch, and

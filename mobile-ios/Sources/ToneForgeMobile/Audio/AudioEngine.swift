@@ -142,6 +142,14 @@ public final class AudioEngine: ObservableObject {
     /// varies over time is engaged. Declared outside the AVFoundation
     /// guard so the stop-path can nil it unconditionally.
     private var perfDriver: Timer?
+
+    // MIDI clock output (PERFORM_PARITY spec 2B). Lazily created when
+    // enabled so headless AppStates never open a CoreMIDI client.
+    private var midiOut: MIDIOutTransport?
+    private var midiClockDriver: Timer?
+    /// Song-time at the previous clock tick — the span whose crossed
+    /// 24 PPQN boundaries we emit next tick.
+    private var midiClockLastSongSec: Double = 0
     #if canImport(AVFoundation)
 
     /// Destination for synth-voice sources (PadSynth, WavetableSynthNode,
@@ -415,6 +423,8 @@ public final class AudioEngine: ObservableObject {
     /// that iOS suspends us.
     public func stop() {
         stopPerfDriver()
+        stopMIDIClockDriver()
+        midiOut?.sendStop()
         clock.stop()
         #if canImport(AVFoundation)
         if engine.isRunning {
@@ -446,9 +456,17 @@ public final class AudioEngine: ObservableObject {
         #endif
         clock.play()
         isRunning = true
+        // MIDI clock out: resume from current position (Continue), or
+        // Start when at the top. Resync the pulse span origin so we
+        // don't dump a backlog of pulses for the paused interval.
+        if let out = midiOut {
+            midiClockLastSongSec = clock.nowSongSeconds
+            clock.nowSongSeconds < 0.01 ? out.sendStart() : out.sendContinue()
+        }
     }
 
     public func pause() {
+        midiOut?.sendStop()
         clock.pause()
         // We don't stop the AVAudioEngine here — it stays running with
         // silence so touch-to-audio latency doesn't spike on resume.
@@ -456,6 +474,9 @@ public final class AudioEngine: ObservableObject {
 
     public func seek(to seconds: Double) {
         clock.seek(to: seconds)
+        // Re-anchor the clock-out span so the jump doesn't emit a burst
+        // (forward) or stall (backward) of catch-up pulses.
+        midiClockLastSongSec = seconds
     }
 
     // MARK: - Gain surface
@@ -682,6 +703,70 @@ public final class AudioEngine: ObservableObject {
     private func stopPerfDriver() {
         perfDriver?.invalidate()
         perfDriver = nil
+    }
+
+    // MARK: - MIDI clock output (PERFORM_PARITY spec 2B)
+
+    /// True while the "Tone Forge Jam" virtual source is publishing.
+    public var isMIDIClockOutEnabled: Bool { midiOut?.isAvailable ?? false }
+
+    /// Turn the virtual MIDI source on/off. When on, external gear that
+    /// subscribes to "Tone Forge Jam" follows the Jam transport: 24 PPQN
+    /// clock plus Start/Stop. Idempotent.
+    public func setMIDIClockOutEnabled(_ on: Bool) {
+        if on {
+            guard midiOut == nil else { return }
+            let out = MIDIOutTransport()
+            midiOut = out
+            midiClockLastSongSec = clock.nowSongSeconds
+            if clock.state == .playing { out.sendStart() }
+            startMIDIClockDriver()
+        } else {
+            stopMIDIClockDriver()
+            midiOut?.sendStop()
+            midiOut = nil
+        }
+    }
+
+    private func startMIDIClockDriver() {
+        guard midiClockDriver == nil else { return }
+        // Higher rate than the perf driver: 24 PPQN at fast tempi needs
+        // sub-10 ms granularity to keep pulse spacing sane. ~1 ms.
+        let timer = Timer(timeInterval: 0.001, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let out = self.midiOut,
+                      self.clock.state == .playing else { return }
+                let now = self.clock.nowSongSeconds
+                let gen = MIDIClockGenerator(beatClock: self.performanceFX.beatClock)
+                let pulses = gen.pulsesToEmit(
+                    fromSongSec: self.midiClockLastSongSec, toSongSec: now
+                )
+                if pulses > 0 {
+                    out.sendClockPulses(pulses)
+                    self.midiClockLastSongSec = now
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        midiClockDriver = timer
+    }
+
+    private func stopMIDIClockDriver() {
+        midiClockDriver?.invalidate()
+        midiClockDriver = nil
+    }
+
+    /// Forward a played note to external gear (no-op unless MIDI out is
+    /// enabled). Velocity is 0…1; clamped to a 1…127 MIDI velocity.
+    public func midiSendNoteOn(midi: Int, velocity: Double) {
+        guard let out = midiOut, (0...127).contains(midi) else { return }
+        let v = UInt8(max(1, min(127, Int((velocity * 127).rounded()))))
+        out.sendNoteOn(note: UInt8(midi), velocity: v)
+    }
+
+    public func midiSendNoteOff(midi: Int) {
+        guard let out = midiOut, (0...127).contains(midi) else { return }
+        out.sendNoteOff(note: UInt8(midi))
     }
 
     // MARK: - Session event handling

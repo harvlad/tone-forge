@@ -101,11 +101,30 @@ required; add as binary xcframework).
 
 ### B. CoreMIDI OUT (IN already ships)
 MIDI IN done: `USBLaunchpadTransport` + `MIDIKeyboardTransport` already
-route hardware → contribution bus. Remaining = OUT via new
-`MIDIOutTransport` (virtual source "Tone Forge Jam"):
-- OUT clock: 24 PPQN from BeatClock + start/stop/continue → external gear follows.
-- OUT notes: pad trigger → note-on out.
+route hardware → contribution bus.
+
+OUT — DRAFTED (engine-tested; app target unbuilt until iOS platform):
+- `MIDIOutEncoder` + `MIDIClockGenerator` (engine, pure, 8 tests): byte
+  encoders + 24 PPQN pulse math phase-locked to BeatClock.
+- `MIDIOutTransport` (app): virtual source "Tone Forge Jam" via
+  `MIDISourceCreateWithProtocol` + `MIDIReceived`; clock / start / stop /
+  continue / note-on / note-off.
+- `AudioEngine`: `setMIDIClockOutEnabled`, 1 ms clock driver emitting
+  crossed pulses, Start/Stop/Continue on play/pause/stop, span
+  re-anchored on seek.
+
+Wired:
+- Pad trigger → note-out from `ModeCoordinator.execute` (synthNoteOn/
+  Off + padSynthNote; jam pads auto-release so a note-off is scheduled
+  one beat later). Replays don't re-emit.
+- Settings toggle "MIDI clock output" (@AppStorage "midiClockOut"),
+  re-armed in bootAudio.
+
+Remaining:
+- Jitter: clock rides a main-thread timer; sample-accurate host-time
+  scheduling is the follow-up.
 - external clock-IN (follow, not just controller notes): optional later.
+- On-device verification (whole app target blocked on iOS platform).
 
 ### Files
 - new `Audio/MIDITransport.swift` (CoreMIDI; replaces stub in `LaunchpadTransport.swift`)
