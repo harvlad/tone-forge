@@ -33,6 +33,10 @@ struct JamView: View {
     @State private var showMetronomeSheet = false
     @State private var showChordSheet = false
 
+    /// Live performance-FX gesture state (PERFORM_PARITY spec 1). Held
+    /// pads engage momentarily; pushed to the engine on every change.
+    @State private var perfFX = PerfFXState.idle
+
     var body: some View {
         VStack(spacing: 8) {
             keyHeader
@@ -55,6 +59,8 @@ struct JamView: View {
             padGrid
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            fxRow
 
             controlsRow
         }
@@ -222,6 +228,82 @@ struct JamView: View {
                 followEnabled: jamSettings.followEnabled
             )
         }
+    }
+
+    // MARK: - Performance FX row (PERFORM_PARITY spec 1)
+
+    /// DJ-style momentary FX: a Filter XY pad plus four hold pads
+    /// (Gater / Stopper / Flanger / Throw). Beat-synced effects need the
+    /// song's tempo to sound (BeatClock) but the row is always shown —
+    /// Filter works without timing.
+    private var fxRow: some View {
+        HStack(spacing: 6) {
+            FilterXYPad(
+                engaged: perfFX.filter,
+                x: perfFX.filterX,
+                y: perfFX.filterY,
+                onChange: { x, y in
+                    perfFX.filter = true
+                    perfFX.filterX = x
+                    perfFX.filterY = y
+                    applyPerfFX()
+                },
+                onEnd: {
+                    perfFX.filter = false
+                    applyPerfFX()
+                }
+            )
+            .frame(width: 88)
+
+            fxHoldPad("Gater", system: "square.grid.4x3.fill",
+                      engaged: perfFX.gater) { perfFX.gater = $0 }
+            fxHoldPad("Stopper", system: "stop.circle",
+                      engaged: perfFX.stopper) { perfFX.stopper = $0 }
+            fxHoldPad("Flanger", system: "wind",
+                      engaged: perfFX.flanger) { perfFX.flanger = $0 }
+            fxHoldPad("Throw", system: "arrow.uturn.right",
+                      engaged: perfFX.delayThrow) { perfFX.delayThrow = $0 }
+        }
+        .frame(height: 56)
+        .padding(.horizontal, 12)
+    }
+
+    /// A momentary FX pad: engaged while held, released on lift.
+    private func fxHoldPad(
+        _ title: String,
+        system: String,
+        engaged: Bool,
+        set: @escaping (Bool) -> Void
+    ) -> some View {
+        VStack(spacing: 2) {
+            Image(systemName: system).font(.callout)
+            Text(title).font(.caption2)
+        }
+        .foregroundStyle(engaged ? TFTheme.textPrimary : TFTheme.textSecondary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            (engaged ? TFTheme.faderTint.opacity(0.8) : TFTheme.surface),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(engaged ? TFTheme.faderTint : TFTheme.stroke, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !engaged { set(true); applyPerfFX() }
+                }
+                .onEnded { _ in
+                    set(false); applyPerfFX()
+                }
+        )
+        .accessibilityLabel("\(title) effect, hold to engage")
+    }
+
+    private func applyPerfFX() {
+        appState.audioEngine.setPerfFXState(perfFX)
     }
 
     // MARK: - Controls row
@@ -474,6 +556,56 @@ private struct DegreePadButton: View {
             green: Double(c.g) / 127.0,
             blue: Double(c.b) / 127.0
         )
+    }
+}
+
+// MARK: - Filter XY pad
+
+/// Momentary resonant-filter surface (PERFORM_PARITY spec 1). Touch to
+/// engage; X = cutoff, Y = resonance (up = more). A dot tracks the
+/// finger while held. Coordinates are normalized 0..1 with Y inverted
+/// so dragging upward raises resonance.
+private struct FilterXYPad: View {
+    let engaged: Bool
+    let x: Double
+    let y: Double
+    let onChange: (Double, Double) -> Void
+    let onEnd: () -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(engaged ? TFTheme.faderTint.opacity(0.35) : TFTheme.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(engaged ? TFTheme.faderTint : TFTheme.stroke, lineWidth: 1)
+                    )
+                if engaged {
+                    Circle()
+                        .fill(TFTheme.faderTint)
+                        .frame(width: 12, height: 12)
+                        .position(x: x * w, y: (1 - y) * h)
+                }
+                Text("Filter")
+                    .font(.caption2)
+                    .foregroundStyle(engaged ? TFTheme.textPrimary : TFTheme.textSecondary)
+                    .padding(4)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        let nx = min(1, max(0, g.location.x / max(1, w)))
+                        let ny = 1 - min(1, max(0, g.location.y / max(1, h)))
+                        onChange(nx, ny)
+                    }
+                    .onEnded { _ in onEnd() }
+            )
+            .accessibilityLabel("Filter pad, drag to sweep cutoff and resonance")
+        }
     }
 }
 

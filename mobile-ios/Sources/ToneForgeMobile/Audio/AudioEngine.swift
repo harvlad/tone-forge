@@ -88,6 +88,10 @@ public final class AudioEngine: ObservableObject {
     /// Current master FX settings (D-022). Mutate via ``setFXSettings``.
     @Published public private(set) var fxSettings = FXSettings.neutral
 
+    /// Performance-FX (DJ FX) live controller. Nodes are bound in
+    /// `buildMasterFXGraph`; push gestures via ``setPerfFXState``.
+    public let performanceFX = PerformanceFXChain()
+
     #if canImport(AVFoundation)
     /// The shared AVAudioEngine. Exposed so downstream subsystems
     /// (StemPlayer, PadSynth) can attach their own nodes.
@@ -122,6 +126,23 @@ public final class AudioEngine: ObservableObject {
     private var fxReturnMixer: AVAudioMixerNode?
     private var masterEQ: AVAudioUnitEQ?
     private var masterComp: AVAudioUnitEffect?
+
+    // Performance-FX insert (PERFORM_PARITY spec 1). Built in
+    // buildMasterFXGraph, inserted between mainMixer and masterEQ:
+    // mainMixer → perfInput → perfFilter → perfFlanger → perfThrow →
+    // perfGater → masterEQ. Live control lives in `performanceFX`.
+    private var perfInputMixer: AVAudioMixerNode?
+    private var perfFilter: AVAudioUnitEQ?
+    private var perfFlanger: AVAudioUnitDelay?
+    private var perfThrow: AVAudioUnitDelay?
+    private var perfGaterMixer: AVAudioMixerNode?
+    #endif
+    /// 60 Hz modulation driver for beat-synced perf FX (gater square
+    /// wave, flanger LFO, stopper brake). Runs only while an effect that
+    /// varies over time is engaged. Declared outside the AVFoundation
+    /// guard so the stop-path can nil it unconditionally.
+    private var perfDriver: Timer?
+    #if canImport(AVFoundation)
 
     /// Destination for synth-voice sources (PadSynth, WavetableSynthNode,
     /// MicMonitor). Builds the graph on first access so ordering
@@ -291,12 +312,36 @@ public final class AudioEngine: ObservableObject {
         engine.attach(eq)
         engine.attach(comp)
 
+        // Performance-FX insert nodes (PERFORM_PARITY spec 1). Filter =
+        // one resonant band (bypassed until engaged); flanger + throw =
+        // short delays at wetDryMix 0; input + gater = plain mixers.
+        let perfIn = AVAudioMixerNode()
+        let perfFilt = AVAudioUnitEQ(numberOfBands: 1)
+        perfFilt.bands[0].bypass = true
+        perfFilt.bands[0].filterType = .resonantLowPass
+        let perfFlang = AVAudioUnitDelay()
+        perfFlang.wetDryMix = 0
+        let perfThr = AVAudioUnitDelay()
+        perfThr.wetDryMix = 0
+        let perfGate = AVAudioMixerNode()
+        for node in [perfIn, perfGate] { engine.attach(node) }
+        engine.attach(perfFilt)
+        engine.attach(perfFlang)
+        engine.attach(perfThr)
+
         // Disconnect mainMixer from outputNode (the implicit connection).
-        // Then wire: mainMixer → eq → comp → outputNode.
+        // Then wire the full master path through the perf insert:
+        // mainMixer → perfIn → filter → flanger → throw → gater → eq →
+        // comp → outputNode.
         engine.disconnectNodeOutput(engine.mainMixerNode)
 
         let format = canonicalFormat
-        engine.connect(engine.mainMixerNode, to: eq, format: format)
+        engine.connect(engine.mainMixerNode, to: perfIn, format: format)
+        engine.connect(perfIn, to: perfFilt, format: format)
+        engine.connect(perfFilt, to: perfFlang, format: format)
+        engine.connect(perfFlang, to: perfThr, format: format)
+        engine.connect(perfThr, to: perfGate, format: format)
+        engine.connect(perfGate, to: eq, format: format)
         engine.connect(eq, to: comp, format: format)
         engine.connect(comp, to: engine.outputNode, format: format)
 
@@ -305,6 +350,22 @@ public final class AudioEngine: ObservableObject {
 
         self.masterEQ = eq
         self.masterComp = comp
+        self.perfInputMixer = perfIn
+        self.perfFilter = perfFilt
+        self.perfFlanger = perfFlang
+        self.perfThrow = perfThr
+        self.perfGaterMixer = perfGate
+
+        // Hand the nodes to the live controller and wire the stopper's
+        // rate sink to the transport clock.
+        performanceFX.rateSink = { [weak self] rate in self?.clock.setRate(rate) }
+        performanceFX.bind(
+            input: perfIn,
+            filter: perfFilt,
+            flanger: perfFlang,
+            throwDelay: perfThr,
+            gater: perfGate
+        )
     }
     #endif
 
@@ -353,6 +414,7 @@ public final class AudioEngine: ObservableObject {
     /// disappearance or when the app is backgrounded for long enough
     /// that iOS suspends us.
     public func stop() {
+        stopPerfDriver()
         clock.stop()
         #if canImport(AVFoundation)
         if engine.isRunning {
@@ -572,6 +634,55 @@ public final class AudioEngine: ObservableObject {
         pow(10, db / 20)
     }
     #endif
+
+    // MARK: - Performance FX (PERFORM_PARITY spec 1)
+
+    /// Push a new performance-FX gesture state (held pads + filter XY).
+    /// Applies the static params immediately and starts/stops the 60 Hz
+    /// modulation driver depending on whether a time-varying effect
+    /// (gater/flanger/stopper) is now engaged.
+    public func setPerfFXState(_ state: PerfFXState) {
+        performanceFX.setState(state, now: clock.nowSongSeconds)
+        // Settle non-driven params once (restores gains on release).
+        performanceFX.applyModulation(now: clock.nowSongSeconds)
+        if performanceFX.needsModulation {
+            startPerfDriver()
+        } else {
+            stopPerfDriver()
+        }
+    }
+
+    /// Replace the tunable FX shapes (persisted config).
+    public func setPerfFXConfig(_ config: PerfFXConfig) {
+        performanceFX.config = config
+        performanceFX.applyStatic()
+    }
+
+    /// Update the beat grid the perf FX sync to (called on song load).
+    public func setPerfFXBeatClock(_ beatClock: BeatClock) {
+        performanceFX.beatClock = beatClock
+    }
+
+    private func startPerfDriver() {
+        guard perfDriver == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            // Scheduled on the main run loop, so we are main-isolated.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.performanceFX.applyModulation(now: self.clock.nowSongSeconds)
+                if !self.performanceFX.needsModulation {
+                    self.stopPerfDriver()
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        perfDriver = timer
+    }
+
+    private func stopPerfDriver() {
+        perfDriver?.invalidate()
+        perfDriver = nil
+    }
 
     // MARK: - Session event handling
 

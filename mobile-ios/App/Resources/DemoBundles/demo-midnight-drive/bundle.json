@@ -1,0 +1,142 @@
+{
+  "bundleVersion": 1,
+  "analysisId": "demo-midnight-drive",
+  "meta": {
+    "title": "Midnight Drive (Demo)",
+    "artist": "Tone Forge",
+    "sourceUrl": "",
+    "durationSec": 8.0,
+    "tempoBpm": 120.0,
+    "detectedKey": "C",
+    "license": "CC0-1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "attribution": "Original synth demo by Tone Forge, released CC0."
+  },
+  "timeline": {
+    "chords": [
+      {
+        "start": 0.0,
+        "end": 2.0,
+        "symbol": "C"
+      },
+      {
+        "start": 2.0,
+        "end": 4.0,
+        "symbol": "Am"
+      },
+      {
+        "start": 4.0,
+        "end": 6.0,
+        "symbol": "F"
+      },
+      {
+        "start": 6.0,
+        "end": 8.0,
+        "symbol": "G"
+      }
+    ],
+    "sections": [
+      {
+        "start": 0.0,
+        "end": 8.0,
+        "label": "Loop"
+      }
+    ],
+    "beats": [
+      0.0,
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      3.5,
+      4.0,
+      4.5,
+      5.0,
+      5.5,
+      6.0,
+      6.5,
+      7.0,
+      7.5
+    ],
+    "downbeats": [
+      0.0,
+      2.0,
+      4.0,
+      6.0
+    ]
+  },
+  "stems": [
+    {
+      "role": "drums",
+      "url": null,
+      "codec": "m4a",
+      "sampleRateHz": 48000
+    },
+    {
+      "role": "bass",
+      "url": null,
+      "codec": "m4a",
+      "sampleRateHz": 48000
+    },
+    {
+      "role": "other",
+      "url": null,
+      "codec": "m4a",
+      "sampleRateHz": 48000
+    }
+  ],
+  "presets": {
+    "harmonic": {
+      "stem": "other",
+      "sliceMode": "chord",
+      "chops": [
+        {
+          "idx": 0,
+          "startSec": 0.0,
+          "endSec": 2.0,
+          "durationSec": 2.0,
+          "kind": "chord",
+          "root": 0,
+          "sectionLabel": null,
+          "chordSymbol": "C",
+          "colorHint": null
+        },
+        {
+          "idx": 1,
+          "startSec": 2.0,
+          "endSec": 4.0,
+          "durationSec": 2.0,
+          "kind": "chord",
+          "root": 9,
+          "sectionLabel": null,
+          "chordSymbol": "Am",
+          "colorHint": null
+        },
+        {
+          "idx": 2,
+          "startSec": 4.0,
+          "endSec": 6.0,
+          "durationSec": 2.0,
+          "kind": "chord",
+          "root": 5,
+          "sectionLabel": null,
+          "chordSymbol": "F",
+          "colorHint": null
+        },
+        {
+          "idx": 3,
+          "startSec": 6.0,
+          "endSec": 8.0,
+          "durationSec": 2.0,
+          "kind": "chord",
+          "root": 7,
+          "sectionLabel": null,
+          "chordSymbol": "G",
+          "colorHint": null
+        }
+      ]
+    }
+  }
+}
