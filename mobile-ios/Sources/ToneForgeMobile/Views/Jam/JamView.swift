@@ -175,10 +175,11 @@ struct JamView: View {
     private func setPadMode(_ mode: JamPadMode) {
         guard jamSettings.padMode != mode else { return }
         jamSettings.padMode = mode
-        // Entering Samples: load the song's primary chop pack so the
-        // grid's pads have audio (buffers) to trigger.
+        // Entering Samples: preload the song's primary chop pack so the
+        // grid's pads have audio — buffers only, so it does NOT hijack
+        // the Contribute active pack / tabs.
         if mode == .samples, let dna = appState.songDnaPacks.first {
-            appState.activateSongDnaPack(dna)
+            appState.preloadSongDnaPack(dna)
         }
         if mode == .pads {
             // Latched chord visuals make no sense off-surface.
@@ -246,7 +247,7 @@ struct JamView: View {
                 // shows — songDnaPacks can populate after setPadMode, so
                 // activating only there raced the load (silent pads).
                 if let dna = appState.songDnaPacks.first {
-                    appState.activateSongDnaPack(dna)
+                    appState.preloadSongDnaPack(dna)
                 }
             }
         }

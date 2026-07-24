@@ -1694,6 +1694,14 @@ public final class AppState: ObservableObject {
         activateSamplePack(entry.pack, stemFiles: currentStemLocalURLs)
     }
 
+    /// Load a Song DNA pack's buffers WITHOUT making it the active
+    /// Contribute pack — Jam Samples triggers it by explicit packId, so
+    /// it must not swap the Contribute grid / hide its tabs (shared
+    /// scheduler state). Buffers land in the scheduler's loadedPacks.
+    public func preloadSongDnaPack(_ entry: SongDnaPack) {
+        Task { await sampleScheduler.preloadPackAsync(entry.pack, stemFiles: currentStemLocalURLs) }
+    }
+
     // MARK: - Deletion (compliance)
 
     /// Delete one analysis everywhere: server (history entry + stems +
