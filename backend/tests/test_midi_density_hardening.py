@@ -39,6 +39,12 @@ from pathlib import Path
 
 import pytest
 
+# These tests exercise coreml_extractor, which imports coremltools at
+# module load. coremltools is a heavy, optional ML dependency not
+# installed in CI — skip the whole module when it's unavailable rather
+# than erroring at fixture setup.
+pytest.importorskip("coremltools")
+
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
