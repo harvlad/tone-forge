@@ -176,6 +176,27 @@ public final class ModeCoordinator: ObservableObject {
     private var isExecuting = false
 
     private var busToken: ContributionEventBus.Token?
+    private var cancellables: Set<AnyCancellable> = []
+
+    /// Mirror Jam Samples clip state onto the Launchpad LEDs: dim tint =
+    /// idle, amber bright = armed (queued), full tint = playing. Chop i
+    /// sits at padVisuals[i] (reading order), matching `jamSampleAt`.
+    /// No-op unless the Jam surface is in Samples mode.
+    func refreshJamSamplesLEDs() {
+        guard appMode == .jamInKey, app.jamSettings.padMode == .samples,
+              let dna = app.songDnaPacks.first else { return }
+        let pads = dna.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
+        let packId = dna.pack.pack.packId
+        var v = Array(repeating: PadVisual.off, count: 64)
+        for (i, pad) in pads.prefix(64).enumerated() {
+            let key = SamplePadKey(packId: packId, padIdx: pad.padIdx)
+            let playing = app.sampleVoicePool.ringingPadKeys.contains(key)
+            let armed = app.sampleVoicePool.pendingPadKeys.contains(key)
+            let hint: UInt32 = armed ? 0xFF8000 : Self.familyColor(pad.family)
+            v[i] = PadVisual(colorHint: hint, isBright: playing || armed)
+        }
+        padVisuals = v
+    }
 
     public init(app: AppState) {
         self.app = app
@@ -224,6 +245,25 @@ public final class ModeCoordinator: ObservableObject {
         syncLocalBuffers()
         syncTransforms()
         rebuildLayout()
+
+        // Mirror Jam Samples clip state onto the Launchpad: repaint LEDs
+        // when a chop arms/plays/stops, and on entering/leaving Samples.
+        Publishers.Merge(
+            app.sampleVoicePool.$ringingPadKeys.map { _ in () },
+            app.sampleVoicePool.$pendingPadKeys.map { _ in () }
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] in self?.refreshJamSamplesLEDs() }
+        .store(in: &cancellables)
+
+        app.jamSettings.$padMode
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] mode in
+                guard let self else { return }
+                if mode == .samples { self.refreshJamSamplesLEDs() }
+                else { self.rebuildLayout() }  // restore normal LED frame
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Mode
