@@ -147,10 +147,26 @@ public final class ModeCoordinator: ObservableObject {
     /// still goes through the coordinator, satisfying the scheduler's
     /// `contributionGuard` (an assert that trips on direct trigger
     /// calls) while keeping quantize + section gating intact.
-    public func triggerJamSample(padIdx: Int, packId: String) {
+    public func triggerJamSample(padIdx: Int, packId: String, latch: Bool) {
         isExecuting = true
         defer { isExecuting = false }
-        _ = app.sampleScheduler.trigger(padIdx: padIdx, packId: packId)
+        let s = app.sampleScheduler
+        // Launchpad clip feel: launches wait for the next downbeat so
+        // multiple pads start together. Latch = tap on/off (loops);
+        // Tap = plays while held. Save/restore the scheduler's shared
+        // hold/quantize around the SYNCHRONOUS trigger so Contribute's
+        // settings are untouched (trigger schedules its launch inline).
+        let savedHold = s.holdMode, savedQ = s.quantize
+        s.holdMode = latch ? .toggle : .hold
+        s.quantize = .bar
+        _ = s.trigger(padIdx: padIdx, packId: packId)
+        s.holdMode = savedHold
+        s.quantize = savedQ
+    }
+
+    /// Release a held (Tap-mode) Jam sample on finger-up.
+    public func releaseJamSample(padIdx: Int, packId: String) {
+        app.sampleScheduler.release(padIdx: padIdx, packId: packId)
     }
 
     // MARK: - Private

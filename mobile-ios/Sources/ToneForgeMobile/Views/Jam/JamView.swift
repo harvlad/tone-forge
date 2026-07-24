@@ -37,6 +37,10 @@ struct JamView: View {
     /// pads engage momentarily; pushed to the engine on every change.
     @State private var perfFX = PerfFXState.idle
 
+    /// Samples trigger mode: Latch (tap on/off, loops) vs Tap (plays
+    /// while held). Launchpad-clip behavior; launches quantize to the bar.
+    @State private var samplesLatch = true
+
     var body: some View {
         VStack(spacing: 8) {
             keyHeader
@@ -165,7 +169,14 @@ struct JamView: View {
             case .chords:
                 triggerModeToggle
             case .samples:
-                EmptyView()
+                Button {
+                    samplesLatch.toggle()
+                } label: {
+                    Text(samplesLatch ? "Latch" : "Tap")
+                        .tfChip(active: samplesLatch)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Sample trigger mode: \(samplesLatch ? "Latch" : "Tap"), tap to toggle")
             }
         }
         .padding(.horizontal, 12)
@@ -239,8 +250,15 @@ struct JamView: View {
         case .samples:
             JamSamplesGrid(
                 pack: appState.songDnaPacks.first,
+                voicePool: appState.sampleVoicePool,
+                latch: samplesLatch,
                 onTrigger: { padIdx, packId in
-                    coordinator.triggerJamSample(padIdx: padIdx, packId: packId)
+                    coordinator.triggerJamSample(padIdx: padIdx, packId: packId, latch: samplesLatch)
+                },
+                onRelease: { padIdx, packId in
+                    // Tap mode plays while held — release on lift. Latch
+                    // stops on the next tap, so no release there.
+                    if !samplesLatch { coordinator.releaseJamSample(padIdx: padIdx, packId: packId) }
                 }
             )
             .onAppear {
@@ -593,8 +611,12 @@ private struct DegreePadButton: View {
 /// same transport clock as everything else, so hits land on the beat).
 struct JamSamplesGrid: View {
     let pack: SongDnaPack?
+    /// Observed so pads repaint when a chop starts/stops ringing.
+    @ObservedObject var voicePool: SampleVoicePool
+    let latch: Bool
     /// (padIdx, packId) of the tapped chop.
     let onTrigger: (Int, String) -> Void
+    let onRelease: (Int, String) -> Void
 
     @State private var pressed: Set<Int> = []
 
@@ -646,30 +668,48 @@ struct JamSamplesGrid: View {
     private func padTile(_ pad: SamplePad, packId: String) -> some View {
         let tint = TFTheme.familyTint(pad.family)
         let isDown = pressed.contains(pad.padIdx)
-        return Text(pad.name)
-            .font(TFTheme.padLabel)
-            .foregroundStyle(TFTheme.textPrimary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
-            .frame(height: 72)
-            .padding(6)
-            .background(tint.opacity(isDown ? 0.95 : 0.4),
-                        in: RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(isDown ? tint : TFTheme.stroke, lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10))
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        guard !pressed.contains(pad.padIdx) else { return }
-                        pressed.insert(pad.padIdx)
-                        onTrigger(pad.padIdx, packId)
-                    }
-                    .onEnded { _ in pressed.remove(pad.padIdx) }
-            )
-            .accessibilityLabel("Play sample \(pad.name)")
+        // Playing = this chop is currently ringing (looping in Latch, or
+        // held in Tap). Drives the loop indicator + a brighter fill.
+        let isPlaying = voicePool.ringingPadKeys.contains(
+            SamplePadKey(packId: packId, padIdx: pad.padIdx)
+        )
+        let active = isDown || isPlaying
+        return ZStack(alignment: .topTrailing) {
+            Text(pad.name)
+                .font(TFTheme.padLabel)
+                .foregroundStyle(TFTheme.textPrimary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if isPlaying {
+                Image(systemName: "repeat")
+                    .font(.caption2)
+                    .foregroundStyle(TFTheme.textPrimary)
+                    .padding(5)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 72)
+        .padding(6)
+        .background(tint.opacity(active ? 0.95 : 0.4),
+                    in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(active ? tint : TFTheme.stroke, lineWidth: isPlaying ? 2 : 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard !pressed.contains(pad.padIdx) else { return }
+                    pressed.insert(pad.padIdx)
+                    onTrigger(pad.padIdx, packId)
+                }
+                .onEnded { _ in
+                    pressed.remove(pad.padIdx)
+                    onRelease(pad.padIdx, packId)
+                }
+        )
+        .accessibilityLabel("\(isPlaying ? "Stop" : "Play") sample \(pad.name)")
     }
 }
 
