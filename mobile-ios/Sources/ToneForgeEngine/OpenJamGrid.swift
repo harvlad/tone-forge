@@ -79,6 +79,15 @@ public struct MusicalKey: Sendable, Equatable {
         // Split on the last space: root name may itself contain a
         // sharp/flat but not whitespace.
         let parts = raw.split(separator: " ", omittingEmptySubsequences: true)
+        // Bare root with no scale word ("C", "F#", "Bb") — assume major,
+        // the conventional default. Restricted to a genuine note token
+        // (≤2 chars) so ChordParser's lenient leading-letter parse can't
+        // turn a stray word like "bogus" into B major.
+        if parts.count == 1 {
+            let token = String(parts[0])
+            guard token.count <= 2, let parsed = ChordParser.parse(token) else { return nil }
+            return MusicalKey(root: parsed.root, scale: .major)
+        }
         guard parts.count >= 2 else { return nil }
 
         // Two-word scale names first ("D harmonic minor"), then the

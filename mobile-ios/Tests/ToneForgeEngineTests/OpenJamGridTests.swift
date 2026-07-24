@@ -69,6 +69,13 @@ final class OpenJamGridTests: XCTestCase {
         XCTAssertEqual(MusicalKey.parse("G maj")?.scale, .major)
     }
 
+    func testParseBareRootIsMajor() {
+        XCTAssertEqual(MusicalKey.parse("C")?.root.rawValue, 0)
+        XCTAssertEqual(MusicalKey.parse("C")?.scale, .major)
+        XCTAssertEqual(MusicalKey.parse("F#")?.scale, .major)
+        XCTAssertEqual(MusicalKey.parse("F#")?.root.rawValue, 6)
+    }
+
     func testParseNilOnJunk() {
         XCTAssertNil(MusicalKey.parse(nil))
         XCTAssertNil(MusicalKey.parse(""))
