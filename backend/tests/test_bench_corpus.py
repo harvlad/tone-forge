@@ -39,8 +39,8 @@ def test_corpus_fixture_fields_for_pub_feed() -> None:
     assert pf.duration_s == pytest.approx(147.057)
     assert pf.regression_floor_triad_relaxed == pytest.approx(0.42)
     assert len(pf.regions) > 0
-    # First region of pub_feed is the long intro+verse 1 chunk on A5
-    assert pf.regions[0][2] == "A5"
+    # First region of pub_feed is the long intro+verse 1 chunk.
+    assert pf.regions[0][2] == "F#5"
     assert pf.regions[0][0] == pytest.approx(0.0)
     # audio_path is resolved relative to backend/ regardless of
     # whether the file exists locally.
