@@ -151,6 +151,11 @@ public final class JamSettingsStore: ObservableObject {
     /// Not persisted — defaults to Latch each session.
     @Published public var sampleLatch: Bool = true
 
+    /// Which Song DNA pack (stem) the Samples grid is showing. nil =
+    /// first available. Shared so on-screen + Launchpad agree. Not
+    /// persisted (resets per song).
+    @Published public var selectedSamplePackId: String? = nil
+
     /// Pads mode hold: keep touched pads down (suppress pad-up) until
     /// the chip is toggled off.
     @Published public var holdEnabled: Bool {

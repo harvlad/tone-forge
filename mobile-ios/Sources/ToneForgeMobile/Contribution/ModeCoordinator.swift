@@ -184,7 +184,7 @@ public final class ModeCoordinator: ObservableObject {
     /// No-op unless the Jam surface is in Samples mode.
     func refreshJamSamplesLEDs() {
         guard appMode == .jamInKey, app.jamSettings.padMode == .samples,
-              let dna = app.songDnaPacks.first else { return }
+              let dna = app.selectedSongDnaPack else { return }
         let pads = dna.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
         let packId = dna.pack.pack.packId
         var v = Array(repeating: PadVisual.off, count: 64)
@@ -424,7 +424,7 @@ public final class ModeCoordinator: ObservableObject {
     /// Map a Launchpad grid cell (row/col 1…8) to a Jam Samples chop by
     /// reading order — top-left pad = first chop. Nil past the chop count.
     private func jamSampleAt(row: Int, col: Int) -> (padIdx: Int, packId: String)? {
-        guard let dna = app.songDnaPacks.first else { return nil }
+        guard let dna = app.selectedSongDnaPack else { return nil }
         let pads = dna.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
         let index = (row - 1) * 8 + (col - 1)
         guard index >= 0, index < pads.count else { return nil }

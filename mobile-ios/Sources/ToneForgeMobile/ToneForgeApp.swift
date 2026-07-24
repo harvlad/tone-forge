@@ -486,6 +486,14 @@ public final class AppState: ObservableObject {
     /// downloads land. Empty when no bundle is loaded.
     @Published public private(set) var songDnaPacks: [SongDnaPack] = []
 
+    /// The Song DNA pack the Jam Samples grid is currently showing —
+    /// the selection (`jamSettings.selectedSamplePackId`) or the first
+    /// available. Shared by the on-screen grid + Launchpad routing.
+    public var selectedSongDnaPack: SongDnaPack? {
+        let id = jamSettings.selectedSamplePackId
+        return songDnaPacks.first { $0.pack.pack.packId == id } ?? songDnaPacks.first
+    }
+
     // MARK: - Curated packs (Browse → Curated)
 
     /// Curated pack catalog from `GET /api/sample-packs`. Empty until

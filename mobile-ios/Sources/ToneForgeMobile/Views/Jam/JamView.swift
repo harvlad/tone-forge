@@ -44,6 +44,10 @@ struct JamView: View {
 
             padModeRow
 
+            if jamSettings.padMode == .samples, appState.songDnaPacks.count > 1 {
+                samplePackRow
+            }
+
             if jamSettings.padMode == .pads {
                 DegreePadRow(controller: controller)
             }
@@ -185,12 +189,35 @@ struct JamView: View {
         // Entering Samples: preload the song's primary chop pack so the
         // grid's pads have audio — buffers only, so it does NOT hijack
         // the Contribute active pack / tabs.
-        if mode == .samples, let dna = appState.songDnaPacks.first {
+        if mode == .samples, let dna = appState.selectedSongDnaPack {
             appState.preloadSongDnaPack(dna)
         }
         if mode == .pads {
             // Latched chord visuals make no sense off-surface.
             chordPadController.clearLatches()
+        }
+    }
+
+    /// Per-stem pack selector for Samples mode — one chip per Song DNA
+    /// pack (Drums / Bass / Chords…). Selecting one shows that stem's
+    /// chops and preloads its buffers; shared so the Launchpad follows.
+    private var samplePackRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(appState.songDnaPacks, id: \.id) { dna in
+                    let active = appState.selectedSongDnaPack?.id == dna.id
+                    Button {
+                        jamSettings.selectedSamplePackId = dna.pack.pack.packId
+                        appState.preloadSongDnaPack(dna)
+                    } label: {
+                        Text(dna.stem.capitalized)
+                            .tfChip(active: active)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(dna.displayName) samples")
+                }
+            }
+            .padding(.horizontal, 12)
         }
     }
 
@@ -247,7 +274,7 @@ struct JamView: View {
             )
         case .samples:
             JamSamplesGrid(
-                pack: appState.songDnaPacks.first,
+                pack: appState.selectedSongDnaPack,
                 voicePool: appState.sampleVoicePool,
                 latch: jamSettings.sampleLatch,
                 onTrigger: { padIdx, packId in
@@ -263,7 +290,7 @@ struct JamView: View {
                 // Ensure the song's chop pack is loaded whenever the grid
                 // shows — songDnaPacks can populate after setPadMode, so
                 // activating only there raced the load (silent pads).
-                if let dna = appState.songDnaPacks.first {
+                if let dna = appState.selectedSongDnaPack {
                     appState.preloadSongDnaPack(dna)
                 }
             }
