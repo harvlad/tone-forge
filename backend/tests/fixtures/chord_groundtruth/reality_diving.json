@@ -1,0 +1,270 @@
+{
+  "song": "Reality Diving",
+  "artist": "(local sample)",
+  "source": "midi-derived from RealityDiving_100bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 100,
+  "duration_s": 226.189,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/reality_diving/other.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 14.4,
+      "label": "Dm7"
+    },
+    {
+      "start": 14.4,
+      "end": 18.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 18.0,
+      "end": 19.2,
+      "label": "Gm7"
+    },
+    {
+      "start": 19.2,
+      "end": 22.8,
+      "label": "A#maj7"
+    },
+    {
+      "start": 22.8,
+      "end": 24.0,
+      "label": "A#7"
+    },
+    {
+      "start": 24.0,
+      "end": 26.4,
+      "label": "Gm7"
+    },
+    {
+      "start": 26.4,
+      "end": 27.6,
+      "label": "Dsus4"
+    },
+    {
+      "start": 27.6,
+      "end": 28.8,
+      "label": "Gm7"
+    },
+    {
+      "start": 28.8,
+      "end": 31.2,
+      "label": "Dsus4"
+    },
+    {
+      "start": 31.2,
+      "end": 32.4,
+      "label": "A7"
+    },
+    {
+      "start": 32.4,
+      "end": 36.0,
+      "label": "Dsus4"
+    },
+    {
+      "start": 36.0,
+      "end": 39.6,
+      "label": "A#7"
+    },
+    {
+      "start": 39.6,
+      "end": 40.8,
+      "label": "Gm7"
+    },
+    {
+      "start": 40.8,
+      "end": 42.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 42.0,
+      "end": 45.6,
+      "label": "A#7"
+    },
+    {
+      "start": 57.6,
+      "end": 58.8,
+      "label": "E7"
+    },
+    {
+      "start": 60.0,
+      "end": 61.2,
+      "label": "E7"
+    },
+    {
+      "start": 79.2,
+      "end": 80.4,
+      "label": "Am7"
+    },
+    {
+      "start": 86.4,
+      "end": 87.6,
+      "label": "Am7"
+    },
+    {
+      "start": 87.6,
+      "end": 88.8,
+      "label": "C7"
+    },
+    {
+      "start": 88.8,
+      "end": 90.0,
+      "label": "Am7"
+    },
+    {
+      "start": 93.6,
+      "end": 94.8,
+      "label": "Bm7"
+    },
+    {
+      "start": 94.8,
+      "end": 96.0,
+      "label": "D7"
+    },
+    {
+      "start": 96.0,
+      "end": 97.2,
+      "label": "Dsus4"
+    },
+    {
+      "start": 97.2,
+      "end": 99.6,
+      "label": "Am7"
+    },
+    {
+      "start": 109.2,
+      "end": 110.4,
+      "label": "D7"
+    },
+    {
+      "start": 110.4,
+      "end": 111.6,
+      "label": "Am7"
+    },
+    {
+      "start": 111.6,
+      "end": 112.8,
+      "label": "G7"
+    },
+    {
+      "start": 112.8,
+      "end": 114.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 127.2,
+      "end": 128.4,
+      "label": "Em7"
+    },
+    {
+      "start": 151.2,
+      "end": 152.4,
+      "label": "Em7"
+    },
+    {
+      "start": 160.8,
+      "end": 162.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 162.0,
+      "end": 163.2,
+      "label": "D7"
+    },
+    {
+      "start": 163.2,
+      "end": 164.4,
+      "label": "Dsus4"
+    },
+    {
+      "start": 164.4,
+      "end": 166.8,
+      "label": "Am7"
+    },
+    {
+      "start": 170.4,
+      "end": 171.6,
+      "label": "G7"
+    },
+    {
+      "start": 172.8,
+      "end": 174.0,
+      "label": "Em7"
+    },
+    {
+      "start": 175.2,
+      "end": 176.4,
+      "label": "Dsus4"
+    },
+    {
+      "start": 176.4,
+      "end": 177.6,
+      "label": "D7"
+    },
+    {
+      "start": 177.6,
+      "end": 178.8,
+      "label": "Dsus2"
+    },
+    {
+      "start": 178.8,
+      "end": 180.0,
+      "label": "G7"
+    },
+    {
+      "start": 180.0,
+      "end": 181.2,
+      "label": "Dsus4"
+    },
+    {
+      "start": 184.8,
+      "end": 186.0,
+      "label": "D7"
+    },
+    {
+      "start": 186.0,
+      "end": 187.2,
+      "label": "E7"
+    },
+    {
+      "start": 188.4,
+      "end": 189.6,
+      "label": "Gsus2"
+    },
+    {
+      "start": 189.6,
+      "end": 190.8,
+      "label": "A7"
+    },
+    {
+      "start": 190.8,
+      "end": 192.0,
+      "label": "Em7"
+    },
+    {
+      "start": 192.0,
+      "end": 194.4,
+      "label": "G7"
+    },
+    {
+      "start": 194.4,
+      "end": 195.6,
+      "label": "Em7"
+    },
+    {
+      "start": 195.6,
+      "end": 198.0,
+      "label": "D7"
+    }
+  ]
+}

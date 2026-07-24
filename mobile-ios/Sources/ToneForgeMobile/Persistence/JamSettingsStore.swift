@@ -64,11 +64,15 @@ public enum JamScaleVariant: String, CaseIterable, Codable, Sendable {
 public enum JamPadMode: String, CaseIterable, Codable, Sendable {
     case pads
     case chords
+    /// The loaded song's own chops (stems sliced by chord/section),
+    /// triggered on the grid — "remix your song" (PERFORM_PARITY).
+    case samples
 
     public var displayName: String {
         switch self {
-        case .pads:   return "Pads"
-        case .chords: return "Chords"
+        case .pads:    return "Pads"
+        case .chords:  return "Chords"
+        case .samples: return "Samples"
         }
     }
 }
@@ -141,6 +145,20 @@ public final class JamSettingsStore: ObservableObject {
     @Published public var padMode: JamPadMode {
         didSet { save() }
     }
+
+    /// Samples trigger mode: Latch (tap on/off, loops) vs Tap (plays
+    /// while held). Shared so on-screen + Launchpad hardware agree.
+    /// Persisted (UserDefaults, independent of the settings blob so no
+    /// migration surgery). Defaults to Latch.
+    @Published public var sampleLatch: Bool =
+        (UserDefaults.standard.object(forKey: "jam.sampleLatch") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(sampleLatch, forKey: "jam.sampleLatch") }
+    }
+
+    /// Which Song DNA pack (stem) the Samples grid is showing. nil =
+    /// first available. Shared so on-screen + Launchpad agree. Not
+    /// persisted (resets per song).
+    @Published public var selectedSamplePackId: String? = nil
 
     /// Pads mode hold: keep touched pads down (suppress pad-up) until
     /// the chip is toggled off.

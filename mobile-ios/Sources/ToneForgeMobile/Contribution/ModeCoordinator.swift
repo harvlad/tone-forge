@@ -140,6 +140,35 @@ public final class ModeCoordinator: ObservableObject {
         delegate: app
     )
 
+    // MARK: - Jam Samples (PERFORM_PARITY)
+
+    /// Fire a song chop from the Jam Samples grid. Jam mode routes pad
+    /// events to the synth, so this bypasses the ModeRouter — but it
+    /// still goes through the coordinator, satisfying the scheduler's
+    /// `contributionGuard` (an assert that trips on direct trigger
+    /// calls) while keeping quantize + section gating intact.
+    public func triggerJamSample(padIdx: Int, packId: String, latch: Bool) {
+        isExecuting = true
+        defer { isExecuting = false }
+        let s = app.sampleScheduler
+        // Launchpad clip feel: launches wait for the next downbeat so
+        // multiple pads start together. Latch = tap on/off (loops);
+        // Tap = plays while held. Save/restore the scheduler's shared
+        // hold/quantize around the SYNCHRONOUS trigger so Contribute's
+        // settings are untouched (trigger schedules its launch inline).
+        let savedHold = s.holdMode, savedQ = s.quantize
+        s.holdMode = latch ? .toggle : .hold
+        s.quantize = .bar
+        _ = s.trigger(padIdx: padIdx, packId: packId)
+        s.holdMode = savedHold
+        s.quantize = savedQ
+    }
+
+    /// Release a held (Tap-mode) Jam sample on finger-up.
+    public func releaseJamSample(padIdx: Int, packId: String) {
+        app.sampleScheduler.release(padIdx: padIdx, packId: packId)
+    }
+
     // MARK: - Private
 
     /// True only while this coordinator is executing a routed
@@ -147,6 +176,24 @@ public final class ModeCoordinator: ObservableObject {
     private var isExecuting = false
 
     private var busToken: ContributionEventBus.Token?
+    private var cancellables: Set<AnyCancellable> = []
+
+    /// Mirror Jam Samples clip state onto the Launchpad LEDs: dim tint =
+    /// idle, amber bright = armed (queued), full tint = playing. Chop i
+    /// sits at padVisuals[i] (reading order), matching `jamSampleAt`.
+    /// No-op unless the Jam surface is in Samples mode.
+    func refreshJamSamplesLEDs() {
+        guard appMode == .jamInKey, app.jamSettings.padMode == .samples else { return }
+        var v = Array(repeating: PadVisual.off, count: 64)
+        for (i, p) in app.jamSampleFlatPads.prefix(64).enumerated() {
+            let key = SamplePadKey(packId: p.packId, padIdx: p.padIdx)
+            let playing = app.sampleVoicePool.ringingPadKeys.contains(key)
+            let armed = app.sampleVoicePool.pendingPadKeys.contains(key)
+            let hint: UInt32 = armed ? 0xFF8000 : Self.familyColor(p.family)
+            v[i] = PadVisual(colorHint: hint, isBright: playing || armed)
+        }
+        padVisuals = v
+    }
 
     public init(app: AppState) {
         self.app = app
@@ -195,6 +242,25 @@ public final class ModeCoordinator: ObservableObject {
         syncLocalBuffers()
         syncTransforms()
         rebuildLayout()
+
+        // Mirror Jam Samples clip state onto the Launchpad: repaint LEDs
+        // when a chop arms/plays/stops, and on entering/leaving Samples.
+        Publishers.Merge(
+            app.sampleVoicePool.$ringingPadKeys.map { _ in () },
+            app.sampleVoicePool.$pendingPadKeys.map { _ in () }
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] in self?.refreshJamSamplesLEDs() }
+        .store(in: &cancellables)
+
+        app.jamSettings.$padMode
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] mode in
+                guard let self else { return }
+                if mode == .samples { self.refreshJamSamplesLEDs() }
+                else { self.rebuildLayout() }  // restore normal LED frame
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Mode
@@ -324,8 +390,41 @@ public final class ModeCoordinator: ObservableObject {
             break
         }
 
+        // Jam Samples: hardware (Launchpad) pad events arrive on the bus.
+        // When the Jam surface is in Samples mode, map them onto the
+        // song's chops (Launchpad-clip behavior) instead of the synth.
+        // On-screen Samples pads bypass the bus (direct calls), so this
+        // only catches hardware — no double-trigger.
+        if appMode == .jamInKey && app.jamSettings.padMode == .samples {
+            switch event.kind {
+            case .padDown(let row, let col):
+                if let (padIdx, packId) = jamSampleAt(row: row, col: col) {
+                    triggerJamSample(padIdx: padIdx, packId: packId,
+                                     latch: app.jamSettings.sampleLatch)
+                }
+                return
+            case .padUp(let row, let col):
+                if !app.jamSettings.sampleLatch,
+                   let (padIdx, packId) = jamSampleAt(row: row, col: col) {
+                    releaseJamSample(padIdx: padIdx, packId: packId)
+                }
+                return
+            default:
+                break
+            }
+        }
+
         let action = ModeRouter.resolve(event, mode: appMode, layout: layout)
         execute(action, for: event)
+    }
+
+    /// Map a Launchpad grid cell (row/col 1…8) to a Jam Samples chop by
+    /// reading order — top-left pad = first chop. Nil past the chop count.
+    private func jamSampleAt(row: Int, col: Int) -> (padIdx: Int, packId: String)? {
+        let flat = app.jamSampleFlatPads
+        let index = (row - 1) * 8 + (col - 1)
+        guard index >= 0, index < flat.count else { return nil }
+        return (flat[index].padIdx, flat[index].packId)
     }
 
     private func execute(_ action: AudioAction, for event: ContributionEvent) {
@@ -369,9 +468,14 @@ public final class ModeCoordinator: ObservableObject {
             // bright too.
             let vel = min(1.0, velocity + (isChordTone ? 0.15 : 0))
             app.wavetableSynthNode.noteOn(midi: midi, velocity: vel)
+            // Mirror to external gear (PERFORM_PARITY spec 2B); no-op
+            // unless MIDI out is enabled. Replays don't re-emit — the
+            // live pass already sent them.
+            if !event.isReplay { app.audioEngine.midiSendNoteOn(midi: midi, velocity: velocity) }
 
         case .synthNoteOff(let midi):
             app.wavetableSynthNode.noteOff(midi: midi)
+            if !event.isReplay { app.audioEngine.midiSendNoteOff(midi: midi) }
 
         case .padSynthNote(let midi, let velocity):
             // Jam in Key pads voice through the PadSynth (same sound
@@ -379,6 +483,16 @@ public final class ModeCoordinator: ObservableObject {
             // PadSynth expects MIDI-style 0…127.
             let vel = Float(max(0, min(1, velocity)) * 127)
             app.padSynth.triggerNote(midi: midi, velocity: vel)
+            // Mirror to external gear. Jam pads auto-release (no pad-up
+            // action), so schedule a matching note-off after a musical
+            // beat — otherwise external gear hangs the note.
+            if !event.isReplay {
+                app.audioEngine.midiSendNoteOn(midi: midi, velocity: velocity)
+                let beat = app.audioEngine.performanceFX.beatClock.beatDuration ?? 0.5
+                DispatchQueue.main.asyncAfter(deadline: .now() + beat) { [weak app] in
+                    app?.audioEngine.midiSendNoteOff(midi: midi)
+                }
+            }
 
         case .none:
             break

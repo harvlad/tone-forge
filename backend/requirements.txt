@@ -54,5 +54,10 @@ httpx>=0.25                # Resend email client (also used by FastAPI's TestCli
 pretty_midi>=0.2.10
 remotezip>=0.12.3
 
+# MIDI file writing for midi_extractor's export path (tone_forge/
+# midi_extractor.py imports MIDIUtil). Light pure-Python lib; was
+# undeclared, so the extractor tests errored in CI.
+MIDIUtil>=1.2.1
+
 # Dev
 pytest>=7.4

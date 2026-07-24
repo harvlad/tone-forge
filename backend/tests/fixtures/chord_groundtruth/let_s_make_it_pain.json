@@ -1,0 +1,146 @@
+{
+  "song": "Let's Make It Pain",
+  "artist": "(local sample)",
+  "source": "midi-derived from MakeItPain_130bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 130,
+  "duration_s": 33.231,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/let_s_make_it_pain/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/let_s_make_it_pain/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 1.846,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 1.846,
+      "end": 2.769,
+      "label": "Ddim"
+    },
+    {
+      "start": 2.769,
+      "end": 3.692,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 3.692,
+      "end": 4.615,
+      "label": "Ddim"
+    },
+    {
+      "start": 4.615,
+      "end": 5.538,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 5.538,
+      "end": 6.462,
+      "label": "Ddim"
+    },
+    {
+      "start": 6.462,
+      "end": 7.385,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 7.385,
+      "end": 12.0,
+      "label": "Ddim"
+    },
+    {
+      "start": 12.0,
+      "end": 12.923,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 12.923,
+      "end": 13.846,
+      "label": "Ddim"
+    },
+    {
+      "start": 13.846,
+      "end": 14.769,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 14.769,
+      "end": 15.692,
+      "label": "Ddim"
+    },
+    {
+      "start": 15.692,
+      "end": 16.615,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 16.615,
+      "end": 17.538,
+      "label": "G#dim"
+    },
+    {
+      "start": 17.538,
+      "end": 20.308,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 20.308,
+      "end": 21.231,
+      "label": "Ddim"
+    },
+    {
+      "start": 21.231,
+      "end": 22.154,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 22.154,
+      "end": 23.077,
+      "label": "Ddim"
+    },
+    {
+      "start": 23.077,
+      "end": 24.0,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 24.0,
+      "end": 28.615,
+      "label": "Ddim"
+    },
+    {
+      "start": 28.615,
+      "end": 29.538,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 29.538,
+      "end": 30.462,
+      "label": "Ddim"
+    },
+    {
+      "start": 30.462,
+      "end": 31.385,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 31.385,
+      "end": 32.308,
+      "label": "Ddim"
+    },
+    {
+      "start": 32.308,
+      "end": 33.231,
+      "label": "Dmaj7"
+    }
+  ]
+}

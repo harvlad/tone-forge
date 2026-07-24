@@ -156,6 +156,9 @@ public final class AppState: ObservableObject {
 
     @Published public var currentBundle: SongBundle?
     @Published public var loadingError: String?
+    /// True when the loaded song expected stems but none could be
+    /// downloaded (backend/R2 unavailable). Drives a "no audio" note.
+    @Published public private(set) var stemsUnavailable = false
     /// The analysis id whose bundle is loading right now (JSON fetch +
     /// stem download), or nil. Set the instant a Library row is tapped
     /// so the UI shows a spinner immediately — the cold-start stem
@@ -486,6 +489,36 @@ public final class AppState: ObservableObject {
     /// downloads land. Empty when no bundle is loaded.
     @Published public private(set) var songDnaPacks: [SongDnaPack] = []
 
+    /// The Song DNA pack the Jam Samples grid is currently showing —
+    /// the selection (`jamSettings.selectedSamplePackId`) or the first
+    /// available. Shared by the on-screen grid + Launchpad routing.
+    public var selectedSongDnaPack: SongDnaPack? {
+        let id = jamSettings.selectedSamplePackId
+        return songDnaPacks.first { $0.pack.pack.packId == id } ?? songDnaPacks.first
+    }
+
+    /// All song chops flattened across every stem pack, in a stable
+    /// order (pack order, then padIdx). This is the single ordering the
+    /// Jam Samples grid, the Launchpad mapping, and the LED mirror all
+    /// share — so on-screen pad N, hardware pad N, and LED N line up.
+    public struct JamSamplePad: Identifiable, Sendable {
+        public let packId: String
+        public let padIdx: Int
+        public let stem: String
+        public let name: String
+        public let family: SampleFamily
+        public var id: String { "\(packId)#\(padIdx)" }
+    }
+
+    public var jamSampleFlatPads: [JamSamplePad] {
+        songDnaPacks.flatMap { dna in
+            dna.pack.pack.pads
+                .sorted { $0.padIdx < $1.padIdx }
+                .map { JamSamplePad(packId: dna.pack.pack.packId, padIdx: $0.padIdx,
+                                    stem: dna.stem, name: $0.name, family: $0.family) }
+        }
+    }
+
     // MARK: - Curated packs (Browse → Curated)
 
     /// Curated pack catalog from `GET /api/sample-packs`. Empty until
@@ -733,13 +766,47 @@ public final class AppState: ObservableObject {
         // Restore the last tab (D-022). Assignment (not an init
         // default) so the didSet apply-path pins the engine mode for
         // the restored tab now that the coordinator is live.
-        let restoredTab = AppTab(rawValue: sampleSettings.appTabRaw) ?? .contribute
-        // No song auto-reloads at launch, so a restored Learn/Jam would
-        // land on an empty surface. Fall back to Library so the user can
-        // pick a song first.
-        selectedTab = (restoredTab.requiresSong && currentBundle == nil)
-            ? .library : restoredTab
+        //
+        // Instant gratification (PERFORM_PARITY spec 3.1): seed shipped
+        // demo songs into the local store so the Library is never empty
+        // and the first tap plays offline. Runs HERE (not at bootAudio
+        // top): the first App Support write must happen after the app's
+        // container Library is fully set up, otherwise createDirectory
+        // hits a first-touch ENOTDIR in the sim. Other stores above have
+        // already created App Support by now. No-op when no DemoBundles
+        // resource is shipped.
+        if let demoRoot = Bundle.main.url(forResource: "DemoBundles", withExtension: nil) {
+            // markerVersion bumped when the shipped demo content changes
+            // (v2 = 16 s + per-stem drums/bass/other loop packs) so a
+            // device that seeded an older demo re-seeds the new one.
+            bundleStore.seedBundledDemos(from: demoRoot, markerVersion: "v2")
+        }
+
+        // First launch (PERFORM_PARITY spec 3.4): if a seeded demo song
+        // is present, auto-open it straight into Jam so the first thing
+        // the user sees is a playable grid, not an empty Library. The
+        // async activate lands after this sync assignment — we pin .jam
+        // now and let the demo's stems fill in.
+        let firstRunKey = "toneforge.hasOpenedBefore"
+        let firstRun = !UserDefaults.standard.bool(forKey: firstRunKey)
+        if firstRun, let demo = (try? bundleStore.listLocalBundles())?.first {
+            UserDefaults.standard.set(true, forKey: firstRunKey)
+            Task { @MainActor in await loadCachedBundle(demo) }
+            selectedTab = .jam
+        } else {
+            if firstRun { UserDefaults.standard.set(true, forKey: firstRunKey) }
+            let restoredTab = AppTab(rawValue: sampleSettings.appTabRaw) ?? .contribute
+            // No song auto-reloads at launch, so a restored Learn/Jam
+            // would land on an empty surface. Fall back to Library so the
+            // user can pick a song first.
+            selectedTab = (restoredTab.requiresSong && currentBundle == nil)
+                ? .library : restoredTab
+        }
         wireLaunchpad()
+        // Re-arm MIDI clock output if the user left it on (spec 2B).
+        if UserDefaults.standard.bool(forKey: "midiClockOut") {
+            audioEngine.setMIDIClockOutEnabled(true)
+        }
 
         // Background-survivable analysis completion. Wires notification
         // routing, resumes any jobs orphaned by a kill/relaunch, and
@@ -1527,12 +1594,24 @@ public final class AppState: ObservableObject {
     ) async {
         currentBundle = bundle
         advancer = ChordAdvancer(chords: bundle.timeline.chords)
+        // Sync performance FX (gater/flanger/throw/stopper) to this
+        // song's beat grid (PERFORM_PARITY spec 1).
+        audioEngine.setPerfFXBeatClock(
+            BeatClock(timeline: bundle.timeline, tempoBpm: bundle.meta.tempoBpm)
+        )
         currentChord = nil
         nextChord = advancer.chords.first
         chordPhase = 0
         audioEngine.seek(to: 0)
         songSeconds = 0
         loopRegion = nil
+        stemsUnavailable = false
+        // Demo backing beds are short (a few bars) — loop them so
+        // playback doesn't just stop after one pass. Keyed on the
+        // "demo-" analysisId so real songs still play straight through.
+        if bundle.analysisId.hasPrefix("demo-"), bundle.meta.durationSec > 0 {
+            loopRegion = LoopRegion(startSec: 0, endSec: bundle.meta.durationSec)
+        }
 
         // Clear per-bundle Song DNA state; rebuilt once stems land.
         // Unload the previous song's DNA pack buffers first — those
@@ -1610,12 +1689,18 @@ public final class AppState: ObservableObject {
             currentStemLocalURLs = localURLs
             songDnaPacks = SongDnaPack.synthesize(from: bundle)
                 .filter { localURLs[$0.stem] != nil }
+            // Surface a "no audio" state when the song expected stems but
+            // none downloaded (backend/R2 unavailable — e.g. jamn.app
+            // analyses with no stored stems). The bundled demo is offline
+            // so it never trips this.
+            stemsUnavailable = !bundle.stems.isEmpty && localURLs.isEmpty
             updateWaveformPeaks(
                 analysisId: bundle.analysisId,
                 stemURLs: localURLs.values.sorted { $0.path < $1.path }
             )
         } catch {
             loadingError = error.localizedDescription
+            stemsUnavailable = !bundle.stems.isEmpty
         }
     }
 
@@ -1650,6 +1735,20 @@ public final class AppState: ObservableObject {
     /// can find their audio.
     public func activateSongDnaPack(_ entry: SongDnaPack) {
         activateSamplePack(entry.pack, stemFiles: currentStemLocalURLs)
+    }
+
+    /// Load a Song DNA pack's buffers WITHOUT making it the active
+    /// Contribute pack — Jam Samples triggers it by explicit packId, so
+    /// it must not swap the Contribute grid / hide its tabs (shared
+    /// scheduler state). Buffers land in the scheduler's loadedPacks.
+    public func preloadSongDnaPack(_ entry: SongDnaPack) {
+        Task { await sampleScheduler.preloadPackAsync(entry.pack, stemFiles: currentStemLocalURLs) }
+    }
+
+    /// Preload every stem pack — the Jam Samples grid shows them all in
+    /// one grid, so all buffers must be resident to trigger any pad.
+    public func preloadAllSongDnaPacks() {
+        for dna in songDnaPacks { preloadSongDnaPack(dna) }
     }
 
     // MARK: - Deletion (compliance)

@@ -18,31 +18,29 @@ from bench.corpus import (
 )
 
 
-EXPECTED_NAMES = (
-    "demolition_warning",
-    "jump_and_die",
-    "lets_make_it_pain",
-    "pub_feed",
-)
-
-
 def test_default_fixtures_dir_exists() -> None:
     assert DEFAULT_FIXTURES_DIR.is_dir(), DEFAULT_FIXTURES_DIR
 
 
-def test_iter_corpus_returns_four_fixtures_when_dry_run() -> None:
+def test_iter_corpus_returns_fixtures_when_dry_run() -> None:
+    # The corpus grows over time, so assert structure (non-empty, stable
+    # sorted order, a known-stable entry) rather than a hardcoded name
+    # list that goes stale on every new fixture.
     fixtures = iter_corpus_fixtures(require_audio=False)
-    assert [f.name for f in fixtures] == list(EXPECTED_NAMES)
+    names = [f.name for f in fixtures]
+    assert names, "corpus should not be empty"
+    assert names == sorted(names), "corpus order should be stable/sorted"
+    assert "pub_feed" in names
 
 
 def test_corpus_fixture_fields_for_pub_feed() -> None:
     fixtures = {f.name: f for f in iter_corpus_fixtures(require_audio=False)}
     pf = fixtures["pub_feed"]
     assert pf.duration_s == pytest.approx(147.057)
-    assert pf.regression_floor_triad_relaxed == pytest.approx(0.22)
+    assert pf.regression_floor_triad_relaxed == pytest.approx(0.42)
     assert len(pf.regions) > 0
-    # First region of pub_feed is the long intro+verse 1 chunk on A5
-    assert pf.regions[0][2] == "A5"
+    # First region of pub_feed is the long intro+verse 1 chunk.
+    assert pf.regions[0][2] == "F#5"
     assert pf.regions[0][0] == pytest.approx(0.0)
     # audio_path is resolved relative to backend/ regardless of
     # whether the file exists locally.

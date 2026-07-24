@@ -81,13 +81,14 @@ public final class BundleStore: @unchecked Sendable {
     /// Application Support root for our JSON bundles. Created on
     /// first access.
     public func bundlesDir() throws -> URL {
-        let base = try rootOverride ?? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let dir = base.appendingPathComponent("toneforge", isDirectory: true)
+        // "ToneForge" (capital) matches the canonical Application Support
+        // subdir the rest of the app already creates (BundleLoader,
+        // BeatTrainingStore). Using lowercase "toneforge" here collided
+        // with that existing dir and made createDirectory fail with a
+        // spurious ENOTDIR on iOS (case-insensitive volume) — first tap
+        // then found an empty Library. Match the capital name.
+        let dir = try searchRoot(.applicationSupportDirectory)
+            .appendingPathComponent("ToneForge", isDirectory: true)
             .appendingPathComponent("bundles", isDirectory: true)
         try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
@@ -95,16 +96,24 @@ public final class BundleStore: @unchecked Sendable {
 
     /// Caches root for downloaded stems. Created on first access.
     public func stemsDir() throws -> URL {
-        let base = try rootOverride ?? fileManager.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let dir = base.appendingPathComponent("toneforge", isDirectory: true)
+        let dir = try searchRoot(.cachesDirectory)
+            .appendingPathComponent("toneforge", isDirectory: true)
             .appendingPathComponent("stems", isDirectory: true)
         try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// Resolve a base search-path URL. Uses `urls(for:in:).first` (which
+    /// only returns the path) + our own `createDirectory` below, rather
+    /// than `url(for:…create:true)` — the latter throws a first-touch
+    /// ENOTDIR on iOS before the directory exists (observed in the sim
+    /// on a clean install). This mirrors the idiom the other stores use.
+    private func searchRoot(_ dir: FileManager.SearchPathDirectory) throws -> URL {
+        if let rootOverride { return rootOverride }
+        guard let base = fileManager.urls(for: dir, in: .userDomainMask).first else {
+            throw BundleError.invalidURL("no \(dir) in user domain")
+        }
+        return base
     }
 
     public func bundleJsonURL(analysisId: String) throws -> URL {
@@ -160,6 +169,81 @@ public final class BundleStore: @unchecked Sendable {
             bundles.append(bundle)
         }
         return bundles.sorted { $0.meta.title.lowercased() < $1.meta.title.lowercased() }
+    }
+
+    // MARK: - Demo seeding (PERFORM_PARITY spec 3.1)
+
+    /// One-shot marker so demo seeding runs once per marker version and
+    /// user deletions are never undone on the next launch. Lives under
+    /// `.../toneforge/` (the parent of bundlesDir).
+    private func seedMarkerURL(version: String) throws -> URL {
+        try bundlesDir()
+            .deletingLastPathComponent()
+            .appendingPathComponent("demos-seeded-\(version)")
+    }
+
+    /// Seed pre-analyzed demo songs shipped in the app on first launch so
+    /// the Library is never empty and the first tap plays fully offline.
+    ///
+    /// `resourceRoot` holds one subdirectory per demo, each laid out as:
+    ///   `{id}/bundle.json`
+    ///   `{id}/stems/{role}.{ext}`
+    /// The bundle JSON is copied into the normal bundle store and each
+    /// stem into the stem cache, so `listLocalBundles()` + `cachedStem`
+    /// find them exactly like a downloaded song.
+    ///
+    /// Idempotent: guarded by a one-shot marker keyed on `markerVersion`,
+    /// so removing a demo in the Library sticks. Bump `markerVersion`
+    /// only to force a re-seed after shipping new demo content. Returns
+    /// the analysis ids seeded this call (empty when already seeded).
+    @discardableResult
+    public func seedBundledDemos(
+        from resourceRoot: URL,
+        markerVersion: String = "v1"
+    ) -> [String] {
+        guard let marker = try? seedMarkerURL(version: markerVersion) else { return [] }
+        if fileManager.fileExists(atPath: marker.path) { return [] }
+
+        var seeded: [String] = []
+        let entries = (try? fileManager.contentsOfDirectory(
+            at: resourceRoot,
+            includingPropertiesForKeys: nil
+        )) ?? []
+
+        for entry in entries where entry.hasDirectoryPath {
+            let srcJson = entry.appendingPathComponent("bundle.json")
+            guard let data = try? Data(contentsOf: srcJson),
+                  let bundle = try? JSONDecoder().decode(SongBundle.self, from: data)
+            else { continue }
+
+            do {
+                try saveBundle(bundle)
+                let stemsSrc = entry.appendingPathComponent("stems", isDirectory: true)
+                for stem in bundle.stems {
+                    let ext = codecExtension(from: stem)
+                    let src = stemsSrc.appendingPathComponent("\(stem.role).\(ext)")
+                    guard fileManager.fileExists(atPath: src.path) else { continue }
+                    let dst = try stemLocalURL(
+                        analysisId: bundle.analysisId, role: stem.role, ext: ext
+                    )
+                    // Overwrite so a marker-version bump (new demo
+                    // content, same analysisId) actually refreshes the
+                    // stems instead of keeping the stale copies.
+                    if fileManager.fileExists(atPath: dst.path) {
+                        try? fileManager.removeItem(at: dst)
+                    }
+                    try fileManager.copyItem(at: src, to: dst)
+                }
+                seeded.append(bundle.analysisId)
+            } catch {
+                continue
+            }
+        }
+
+        // Write the marker even when nothing was seeded (empty/absent
+        // resource dir) so we don't rescan the app bundle every launch.
+        try? Data().write(to: marker)
+        return seeded
     }
 
     // MARK: - Local deletion

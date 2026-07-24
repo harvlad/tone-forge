@@ -9,42 +9,150 @@
   "_bar_durations_s": {
     "comment": "Bar n at 97 bpm = 4*60/97 = 2.4742s. Bridge bars 42-48 at 92 bpm = 2.6087s. Chorus 3 returns to 97 bpm at bar 50.",
     "bar_at_97": 2.47423,
-    "bar_at_92": 2.60870
+    "bar_at_92": 2.6087
   },
   "confidence": "approximate-v1",
   "schema_version": 2,
   "split": "test",
   "genre": "rock",
   "license": "first-party",
-  "tags": ["power-chords", "hand-validated"],
+  "tags": [
+    "power-chords",
+    "hand-validated"
+  ],
   "curated_by": "matt",
-  "_confidence_notes": "Bar-level chord assignments derived from visible power-chord fret-pair patterns. Region boundaries snap to bar lines. The bridge (bars 42-48) walks down from F#5 to A5 — best read of the ringing whole-notes on the D string. Chorus progression B5-A5-E5-A5 inferred from the recurring (2-4),(0-2),(7-9),(0-2) fret-pair motif across bars 18-21, 34-37, and 50-57. Quality is power-chord (5) throughout because The Chats' overdriven guitar plays root+fifth with no third audible.",
+  "_confidence_notes": "Bar-level chord assignments derived from visible power-chord fret-pair patterns. Region boundaries snap to bar lines. The bridge (bars 42-48) walks down from F#5 to A5 \u2014 best read of the ringing whole-notes on the D string. Chorus progression B5-A5-E5-A5 inferred from the recurring (2-4),(0-2),(7-9),(0-2) fret-pair motif across bars 18-21, 34-37, and 50-57. Quality is power-chord (5) throughout because The Chats' overdriven guitar plays root+fifth with no third audible. PITCH CORRECTION (truth v4): recording is 3 semitones below the Songsterr tab (band tuned down 1.5 steps); verified via bass median f0 = F#1 and chroma ranking (E/C#/F# dominant) on other.wav. All region labels transposed -3 from the tab (A5->F#5, B5->G#5, E5->C#5, D5->B5, F#5->D#5).",
   "source_audio_other_stem": "data/chord_groundtruth_audio/pub_feed/other.wav",
   "source_audio_bass_stem": "data/chord_groundtruth_audio/pub_feed/bass.wav",
   "_source_audio_notes": "Paths are resolved relative to backend/ when not absolute. Stems are demucs htdemucs_6s outputs copied from a successful local analysis run. The .wav glob in .gitignore keeps them from being committed; they need to be regenerated locally per machine. When the paths resolve to missing files, the Phase 7 regression test (tests/test_chord_eval_regression.py) skips cleanly.",
-  "regression_floor_triad_relaxed": 0.22,
-  "_regression_floor_notes": "Ratcheted from 0.20 to 0.22 after Phase 5/6 production measurement on the copied stems yielded 0.2347 (bass-routed, fixed-window grid, matches the production result.chords path). 0.22 sits ~0.015 below the measurement so small numerical drift from chord_detector or librosa updates doesn't false-trip. Target per the plan is 0.75; raise this floor in step with each measurement until target is reached.",
+  "regression_floor_triad_relaxed": 0.42,
+  "_regression_floor_notes": "BTC transformer lane measured 0.4385 triad-relaxed on truth v4 (pitch-corrected labels); floor 0.42 = measured minus epsilon. Production chroma+Viterbi measured 0.2640 on same truth. Strict WCSR is 0.0 for BTC by construction: large_voca has no power-chord vocabulary and every truth region is a 5th chord.",
   "regions": [
-    {"start": 0.000,   "end": 42.062,  "label": "A5",  "section": "Intro + Verse 1"},
-    {"start": 42.062,  "end": 44.536,  "label": "B5",  "section": "Chorus 1 b18"},
-    {"start": 44.536,  "end": 47.010,  "label": "A5",  "section": "Chorus 1 b19"},
-    {"start": 47.010,  "end": 49.485,  "label": "E5",  "section": "Chorus 1 b20"},
-    {"start": 49.485,  "end": 81.649,  "label": "A5",  "section": "Chorus 1 b21 + Post-Chorus + Verse 2"},
-    {"start": 81.649,  "end": 84.124,  "label": "B5",  "section": "Chorus 2 b34"},
-    {"start": 84.124,  "end": 86.598,  "label": "A5",  "section": "Chorus 2 b35"},
-    {"start": 86.598,  "end": 89.072,  "label": "E5",  "section": "Chorus 2 b36"},
-    {"start": 89.072,  "end": 101.443, "label": "A5",  "section": "Chorus 2 b37 + Solo"},
-    {"start": 101.443, "end": 106.661, "label": "F#5", "section": "Bridge b42-43"},
-    {"start": 106.661, "end": 111.879, "label": "E5",  "section": "Bridge b44-45"},
-    {"start": 111.879, "end": 117.097, "label": "D5",  "section": "Bridge b46-47"},
-    {"start": 117.097, "end": 122.315, "label": "A5",  "section": "Bridge b48 + pre-Chorus 3"},
-    {"start": 122.315, "end": 124.789, "label": "B5",  "section": "Chorus 3 b50"},
-    {"start": 124.789, "end": 127.264, "label": "A5",  "section": "Chorus 3 b51"},
-    {"start": 127.264, "end": 129.738, "label": "E5",  "section": "Chorus 3 b52"},
-    {"start": 129.738, "end": 132.212, "label": "A5",  "section": "Chorus 3 b53"},
-    {"start": 132.212, "end": 134.686, "label": "B5",  "section": "Chorus 3 b54"},
-    {"start": 134.686, "end": 137.161, "label": "A5",  "section": "Chorus 3 b55"},
-    {"start": 137.161, "end": 139.635, "label": "E5",  "section": "Chorus 3 b56"},
-    {"start": 139.635, "end": 147.057, "label": "A5",  "section": "Chorus 3 b57 + Outro"}
+    {
+      "start": 0.0,
+      "end": 42.062,
+      "label": "F#5",
+      "section": "Intro + Verse 1"
+    },
+    {
+      "start": 42.062,
+      "end": 44.536,
+      "label": "G#5",
+      "section": "Chorus 1 b18"
+    },
+    {
+      "start": 44.536,
+      "end": 47.01,
+      "label": "F#5",
+      "section": "Chorus 1 b19"
+    },
+    {
+      "start": 47.01,
+      "end": 49.485,
+      "label": "C#5",
+      "section": "Chorus 1 b20"
+    },
+    {
+      "start": 49.485,
+      "end": 81.649,
+      "label": "F#5",
+      "section": "Chorus 1 b21 + Post-Chorus + Verse 2"
+    },
+    {
+      "start": 81.649,
+      "end": 84.124,
+      "label": "G#5",
+      "section": "Chorus 2 b34"
+    },
+    {
+      "start": 84.124,
+      "end": 86.598,
+      "label": "F#5",
+      "section": "Chorus 2 b35"
+    },
+    {
+      "start": 86.598,
+      "end": 89.072,
+      "label": "C#5",
+      "section": "Chorus 2 b36"
+    },
+    {
+      "start": 89.072,
+      "end": 101.443,
+      "label": "F#5",
+      "section": "Chorus 2 b37 + Solo"
+    },
+    {
+      "start": 101.443,
+      "end": 106.661,
+      "label": "D#5",
+      "section": "Bridge b42-43"
+    },
+    {
+      "start": 106.661,
+      "end": 111.879,
+      "label": "C#5",
+      "section": "Bridge b44-45"
+    },
+    {
+      "start": 111.879,
+      "end": 117.097,
+      "label": "B5",
+      "section": "Bridge b46-47"
+    },
+    {
+      "start": 117.097,
+      "end": 122.315,
+      "label": "F#5",
+      "section": "Bridge b48 + pre-Chorus 3"
+    },
+    {
+      "start": 122.315,
+      "end": 124.789,
+      "label": "G#5",
+      "section": "Chorus 3 b50"
+    },
+    {
+      "start": 124.789,
+      "end": 127.264,
+      "label": "F#5",
+      "section": "Chorus 3 b51"
+    },
+    {
+      "start": 127.264,
+      "end": 129.738,
+      "label": "C#5",
+      "section": "Chorus 3 b52"
+    },
+    {
+      "start": 129.738,
+      "end": 132.212,
+      "label": "F#5",
+      "section": "Chorus 3 b53"
+    },
+    {
+      "start": 132.212,
+      "end": 134.686,
+      "label": "G#5",
+      "section": "Chorus 3 b54"
+    },
+    {
+      "start": 134.686,
+      "end": 137.161,
+      "label": "F#5",
+      "section": "Chorus 3 b55"
+    },
+    {
+      "start": 137.161,
+      "end": 139.635,
+      "label": "C#5",
+      "section": "Chorus 3 b56"
+    },
+    {
+      "start": 139.635,
+      "end": 147.057,
+      "label": "F#5",
+      "section": "Chorus 3 b57 + Outro"
+    }
   ]
 }

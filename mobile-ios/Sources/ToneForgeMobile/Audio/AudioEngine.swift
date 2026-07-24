@@ -88,6 +88,15 @@ public final class AudioEngine: ObservableObject {
     /// Current master FX settings (D-022). Mutate via ``setFXSettings``.
     @Published public private(set) var fxSettings = FXSettings.neutral
 
+    /// Performance-FX (DJ FX) live controller. Nodes are bound in
+    /// `buildMasterFXGraph`; push gestures via ``setPerfFXState``.
+    public let performanceFX = PerformanceFXChain()
+
+    /// Diagnostic kill-switch: when false, the perf-FX master insert is
+    /// skipped and the original mainMixer → EQ → comp path is used.
+    /// Temporary — for isolating the sim audio stutter / 15s stop.
+    public static var enablePerformanceFX = true
+
     #if canImport(AVFoundation)
     /// The shared AVAudioEngine. Exposed so downstream subsystems
     /// (StemPlayer, PadSynth) can attach their own nodes.
@@ -122,6 +131,31 @@ public final class AudioEngine: ObservableObject {
     private var fxReturnMixer: AVAudioMixerNode?
     private var masterEQ: AVAudioUnitEQ?
     private var masterComp: AVAudioUnitEffect?
+
+    // Performance-FX insert (PERFORM_PARITY spec 1). Built in
+    // buildMasterFXGraph, inserted between mainMixer and masterEQ:
+    // mainMixer → perfInput → perfFilter → perfFlanger → perfThrow →
+    // perfGater → masterEQ. Live control lives in `performanceFX`.
+    private var perfInputMixer: AVAudioMixerNode?
+    private var perfFilter: AVAudioUnitEQ?
+    private var perfFlanger: AVAudioUnitDelay?
+    private var perfThrow: AVAudioUnitDelay?
+    private var perfGaterMixer: AVAudioMixerNode?
+    #endif
+    /// 60 Hz modulation driver for beat-synced perf FX (gater square
+    /// wave, flanger LFO, stopper brake). Runs only while an effect that
+    /// varies over time is engaged. Declared outside the AVFoundation
+    /// guard so the stop-path can nil it unconditionally.
+    private var perfDriver: Timer?
+
+    // MIDI clock output (PERFORM_PARITY spec 2B). Lazily created when
+    // enabled so headless AppStates never open a CoreMIDI client.
+    private var midiOut: MIDIOutTransport?
+    private var midiClockDriver: Timer?
+    /// Song-time at the previous clock tick — the span whose crossed
+    /// 24 PPQN boundaries we emit next tick.
+    private var midiClockLastSongSec: Double = 0
+    #if canImport(AVFoundation)
 
     /// Destination for synth-voice sources (PadSynth, WavetableSynthNode,
     /// MicMonitor). Builds the graph on first access so ordering
@@ -291,12 +325,56 @@ public final class AudioEngine: ObservableObject {
         engine.attach(eq)
         engine.attach(comp)
 
+        // A/B kill-switch for diagnosing the sim audio stutter / 15s stop.
+        // When false, wire the original mainMixer → eq → comp → out path
+        // and skip the performance-FX insert entirely.
+        guard Self.enablePerformanceFX else {
+            engine.disconnectNodeOutput(engine.mainMixerNode)
+            let format = canonicalFormat
+            engine.connect(engine.mainMixerNode, to: eq, format: format)
+            engine.connect(eq, to: comp, format: format)
+            engine.connect(comp, to: engine.outputNode, format: format)
+            setCompressorParams(FXCompParams.neutral)
+            self.masterEQ = eq
+            self.masterComp = comp
+            return
+        }
+
+        // Performance-FX insert nodes (PERFORM_PARITY spec 1). Filter =
+        // one resonant band (bypassed until engaged); flanger + throw =
+        // short delays at wetDryMix 0; input + gater = plain mixers.
+        let perfIn = AVAudioMixerNode()
+        let perfFilt = AVAudioUnitEQ(numberOfBands: 1)
+        perfFilt.bands[0].bypass = true
+        perfFilt.bands[0].filterType = .resonantLowPass
+        // Idle: hard-bypass the AUs so they add no per-buffer cost until
+        // a gesture engages them (perf headroom on the sim).
+        perfFilt.bypass = true
+        let perfFlang = AVAudioUnitDelay()
+        perfFlang.wetDryMix = 0
+        perfFlang.bypass = true
+        let perfThr = AVAudioUnitDelay()
+        perfThr.wetDryMix = 0
+        perfThr.bypass = true
+        let perfGate = AVAudioMixerNode()
+        for node in [perfIn, perfGate] { engine.attach(node) }
+        engine.attach(perfFilt)
+        engine.attach(perfFlang)
+        engine.attach(perfThr)
+
         // Disconnect mainMixer from outputNode (the implicit connection).
-        // Then wire: mainMixer → eq → comp → outputNode.
+        // Then wire the full master path through the perf insert:
+        // mainMixer → perfIn → filter → flanger → throw → gater → eq →
+        // comp → outputNode.
         engine.disconnectNodeOutput(engine.mainMixerNode)
 
         let format = canonicalFormat
-        engine.connect(engine.mainMixerNode, to: eq, format: format)
+        engine.connect(engine.mainMixerNode, to: perfIn, format: format)
+        engine.connect(perfIn, to: perfFilt, format: format)
+        engine.connect(perfFilt, to: perfFlang, format: format)
+        engine.connect(perfFlang, to: perfThr, format: format)
+        engine.connect(perfThr, to: perfGate, format: format)
+        engine.connect(perfGate, to: eq, format: format)
         engine.connect(eq, to: comp, format: format)
         engine.connect(comp, to: engine.outputNode, format: format)
 
@@ -305,6 +383,22 @@ public final class AudioEngine: ObservableObject {
 
         self.masterEQ = eq
         self.masterComp = comp
+        self.perfInputMixer = perfIn
+        self.perfFilter = perfFilt
+        self.perfFlanger = perfFlang
+        self.perfThrow = perfThr
+        self.perfGaterMixer = perfGate
+
+        // Hand the nodes to the live controller and wire the stopper's
+        // rate sink to the transport clock.
+        performanceFX.rateSink = { [weak self] rate in self?.clock.setRate(rate) }
+        performanceFX.bind(
+            input: perfIn,
+            filter: perfFilt,
+            flanger: perfFlang,
+            throwDelay: perfThr,
+            gater: perfGate
+        )
     }
     #endif
 
@@ -353,6 +447,9 @@ public final class AudioEngine: ObservableObject {
     /// disappearance or when the app is backgrounded for long enough
     /// that iOS suspends us.
     public func stop() {
+        stopPerfDriver()
+        stopMIDIClockDriver()
+        midiOut?.sendStop()
         clock.stop()
         #if canImport(AVFoundation)
         if engine.isRunning {
@@ -384,9 +481,17 @@ public final class AudioEngine: ObservableObject {
         #endif
         clock.play()
         isRunning = true
+        // MIDI clock out: resume from current position (Continue), or
+        // Start when at the top. Resync the pulse span origin so we
+        // don't dump a backlog of pulses for the paused interval.
+        if let out = midiOut {
+            midiClockLastSongSec = clock.nowSongSeconds
+            clock.nowSongSeconds < 0.01 ? out.sendStart() : out.sendContinue()
+        }
     }
 
     public func pause() {
+        midiOut?.sendStop()
         clock.pause()
         // We don't stop the AVAudioEngine here — it stays running with
         // silence so touch-to-audio latency doesn't spike on resume.
@@ -394,6 +499,9 @@ public final class AudioEngine: ObservableObject {
 
     public func seek(to seconds: Double) {
         clock.seek(to: seconds)
+        // Re-anchor the clock-out span so the jump doesn't emit a burst
+        // (forward) or stall (backward) of catch-up pulses.
+        midiClockLastSongSec = seconds
     }
 
     // MARK: - Gain surface
@@ -572,6 +680,119 @@ public final class AudioEngine: ObservableObject {
         pow(10, db / 20)
     }
     #endif
+
+    // MARK: - Performance FX (PERFORM_PARITY spec 1)
+
+    /// Push a new performance-FX gesture state (held pads + filter XY).
+    /// Applies the static params immediately and starts/stops the 60 Hz
+    /// modulation driver depending on whether a time-varying effect
+    /// (gater/flanger/stopper) is now engaged.
+    public func setPerfFXState(_ state: PerfFXState) {
+        performanceFX.setState(state, now: clock.nowSongSeconds)
+        // Settle non-driven params once (restores gains on release).
+        performanceFX.applyModulation(now: clock.nowSongSeconds)
+        if performanceFX.needsModulation {
+            startPerfDriver()
+        } else {
+            stopPerfDriver()
+        }
+    }
+
+    /// Replace the tunable FX shapes (persisted config).
+    public func setPerfFXConfig(_ config: PerfFXConfig) {
+        performanceFX.config = config
+        performanceFX.applyStatic()
+    }
+
+    /// Update the beat grid the perf FX sync to (called on song load).
+    public func setPerfFXBeatClock(_ beatClock: BeatClock) {
+        performanceFX.beatClock = beatClock
+    }
+
+    private func startPerfDriver() {
+        guard perfDriver == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            // Scheduled on the main run loop, so we are main-isolated.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.performanceFX.applyModulation(now: self.clock.nowSongSeconds)
+                if !self.performanceFX.needsModulation {
+                    self.stopPerfDriver()
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        perfDriver = timer
+    }
+
+    private func stopPerfDriver() {
+        perfDriver?.invalidate()
+        perfDriver = nil
+    }
+
+    // MARK: - MIDI clock output (PERFORM_PARITY spec 2B)
+
+    /// True while the "Tone Forge Jam" virtual source is publishing.
+    public var isMIDIClockOutEnabled: Bool { midiOut?.isAvailable ?? false }
+
+    /// Turn the virtual MIDI source on/off. When on, external gear that
+    /// subscribes to "Tone Forge Jam" follows the Jam transport: 24 PPQN
+    /// clock plus Start/Stop. Idempotent.
+    public func setMIDIClockOutEnabled(_ on: Bool) {
+        if on {
+            guard midiOut == nil else { return }
+            let out = MIDIOutTransport()
+            midiOut = out
+            midiClockLastSongSec = clock.nowSongSeconds
+            if clock.state == .playing { out.sendStart() }
+            startMIDIClockDriver()
+        } else {
+            stopMIDIClockDriver()
+            midiOut?.sendStop()
+            midiOut = nil
+        }
+    }
+
+    private func startMIDIClockDriver() {
+        guard midiClockDriver == nil else { return }
+        // Higher rate than the perf driver: 24 PPQN at fast tempi needs
+        // sub-10 ms granularity to keep pulse spacing sane. ~1 ms.
+        let timer = Timer(timeInterval: 0.001, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let out = self.midiOut,
+                      self.clock.state == .playing else { return }
+                let now = self.clock.nowSongSeconds
+                let gen = MIDIClockGenerator(beatClock: self.performanceFX.beatClock)
+                let pulses = gen.pulsesToEmit(
+                    fromSongSec: self.midiClockLastSongSec, toSongSec: now
+                )
+                if pulses > 0 {
+                    out.sendClockPulses(pulses)
+                    self.midiClockLastSongSec = now
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        midiClockDriver = timer
+    }
+
+    private func stopMIDIClockDriver() {
+        midiClockDriver?.invalidate()
+        midiClockDriver = nil
+    }
+
+    /// Forward a played note to external gear (no-op unless MIDI out is
+    /// enabled). Velocity is 0…1; clamped to a 1…127 MIDI velocity.
+    public func midiSendNoteOn(midi: Int, velocity: Double) {
+        guard let out = midiOut, (0...127).contains(midi) else { return }
+        let v = UInt8(max(1, min(127, Int((velocity * 127).rounded()))))
+        out.sendNoteOn(note: UInt8(midi), velocity: v)
+    }
+
+    public func midiSendNoteOff(midi: Int) {
+        guard let out = midiOut, (0...127).contains(midi) else { return }
+        out.sendNoteOff(note: UInt8(midi))
+    }
 
     // MARK: - Session event handling
 

@@ -1,0 +1,316 @@
+{
+  "song": "Winter Mode",
+  "artist": "(local sample)",
+  "source": "midi-derived from WinterMode_100bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 100,
+  "duration_s": 134.4,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/winter_mode/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/winter_mode/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 2.4,
+      "label": "Gm7"
+    },
+    {
+      "start": 2.4,
+      "end": 4.8,
+      "label": "A#7"
+    },
+    {
+      "start": 4.8,
+      "end": 7.2,
+      "label": "F7"
+    },
+    {
+      "start": 7.2,
+      "end": 12.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 12.0,
+      "end": 13.2,
+      "label": "A#maj7"
+    },
+    {
+      "start": 13.2,
+      "end": 14.4,
+      "label": "F7"
+    },
+    {
+      "start": 14.4,
+      "end": 21.6,
+      "label": "Gm7"
+    },
+    {
+      "start": 21.6,
+      "end": 22.8,
+      "label": "A#7"
+    },
+    {
+      "start": 22.8,
+      "end": 24.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 24.0,
+      "end": 26.4,
+      "label": "F7"
+    },
+    {
+      "start": 26.4,
+      "end": 31.2,
+      "label": "Gm7"
+    },
+    {
+      "start": 31.2,
+      "end": 32.4,
+      "label": "A#maj7"
+    },
+    {
+      "start": 32.4,
+      "end": 33.6,
+      "label": "F7"
+    },
+    {
+      "start": 33.6,
+      "end": 39.6,
+      "label": "Gm7"
+    },
+    {
+      "start": 39.6,
+      "end": 40.8,
+      "label": "C7"
+    },
+    {
+      "start": 40.8,
+      "end": 42.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 42.0,
+      "end": 43.2,
+      "label": "Fsus4"
+    },
+    {
+      "start": 43.2,
+      "end": 44.4,
+      "label": "Dm7"
+    },
+    {
+      "start": 44.4,
+      "end": 45.6,
+      "label": "F7"
+    },
+    {
+      "start": 45.6,
+      "end": 50.4,
+      "label": "Gm7"
+    },
+    {
+      "start": 50.4,
+      "end": 52.8,
+      "label": "A#maj7"
+    },
+    {
+      "start": 52.8,
+      "end": 54.0,
+      "label": "G7"
+    },
+    {
+      "start": 54.0,
+      "end": 55.2,
+      "label": "Gmaj7"
+    },
+    {
+      "start": 55.2,
+      "end": 60.0,
+      "label": "G7"
+    },
+    {
+      "start": 60.0,
+      "end": 61.2,
+      "label": "A#7"
+    },
+    {
+      "start": 61.2,
+      "end": 62.4,
+      "label": "A#maj7"
+    },
+    {
+      "start": 62.4,
+      "end": 64.8,
+      "label": "F7"
+    },
+    {
+      "start": 64.8,
+      "end": 66.0,
+      "label": "Csus2"
+    },
+    {
+      "start": 66.0,
+      "end": 69.6,
+      "label": "G7"
+    },
+    {
+      "start": 69.6,
+      "end": 70.8,
+      "label": "A#maj7"
+    },
+    {
+      "start": 70.8,
+      "end": 72.0,
+      "label": "F7"
+    },
+    {
+      "start": 72.0,
+      "end": 76.8,
+      "label": "G7"
+    },
+    {
+      "start": 76.8,
+      "end": 78.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 78.0,
+      "end": 79.2,
+      "label": "Gm7"
+    },
+    {
+      "start": 79.2,
+      "end": 80.4,
+      "label": "A#maj7"
+    },
+    {
+      "start": 80.4,
+      "end": 81.6,
+      "label": "A#7"
+    },
+    {
+      "start": 81.6,
+      "end": 82.8,
+      "label": "Dm7"
+    },
+    {
+      "start": 82.8,
+      "end": 84.0,
+      "label": "F7"
+    },
+    {
+      "start": 84.0,
+      "end": 86.4,
+      "label": "Gm7"
+    },
+    {
+      "start": 86.4,
+      "end": 87.6,
+      "label": "D#maj7"
+    },
+    {
+      "start": 87.6,
+      "end": 88.8,
+      "label": "Gm7"
+    },
+    {
+      "start": 88.8,
+      "end": 90.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 90.0,
+      "end": 91.2,
+      "label": "Dm7"
+    },
+    {
+      "start": 91.2,
+      "end": 94.8,
+      "label": "Gm7"
+    },
+    {
+      "start": 96.0,
+      "end": 98.4,
+      "label": "G7"
+    },
+    {
+      "start": 98.4,
+      "end": 100.8,
+      "label": "A#7"
+    },
+    {
+      "start": 100.8,
+      "end": 103.2,
+      "label": "F7"
+    },
+    {
+      "start": 103.2,
+      "end": 104.4,
+      "label": "Csus2"
+    },
+    {
+      "start": 104.4,
+      "end": 108.0,
+      "label": "G7"
+    },
+    {
+      "start": 108.0,
+      "end": 109.2,
+      "label": "A#7"
+    },
+    {
+      "start": 109.2,
+      "end": 110.4,
+      "label": "F7"
+    },
+    {
+      "start": 110.4,
+      "end": 115.2,
+      "label": "G7"
+    },
+    {
+      "start": 115.2,
+      "end": 117.6,
+      "label": "Gm7"
+    },
+    {
+      "start": 117.6,
+      "end": 120.0,
+      "label": "A#7"
+    },
+    {
+      "start": 120.0,
+      "end": 122.4,
+      "label": "F7"
+    },
+    {
+      "start": 122.4,
+      "end": 127.2,
+      "label": "Gm7"
+    },
+    {
+      "start": 127.2,
+      "end": 128.4,
+      "label": "A#7"
+    },
+    {
+      "start": 128.4,
+      "end": 129.6,
+      "label": "F7"
+    },
+    {
+      "start": 129.6,
+      "end": 134.4,
+      "label": "Gm7"
+    }
+  ]
+}

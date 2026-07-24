@@ -518,15 +518,14 @@ public final class SampleScheduler: ObservableObject {
         // manifest-level `defaultQuantize`) being silent while
         // shoegaze-textures pads (no defaultQuantize) played fine.
         let transportRunning = (engine?.clock.state == .playing)
-        // Drum-machine convention: one-shot pads (loopPointSec == nil)
-        // always fire immediately, ignoring quantize. Kicks, snares,
-        // stabs — anything percussive — feels wrong if there's a
-        // 100–250 ms snap wait between finger-down and audio. Only
-        // sustained/looping pads (loopPointSec != nil) honour the
-        // pad's defaultQuantize so a held pad drops in cleanly on the
-        // next beat/bar. This mirrors MPC / Push / Maschine behavior.
         let isOneShot = (pad.loopPointSec == nil)
-        let effectiveQuantize: QuantizeMode = (transportRunning && !isOneShot)
+        // Session-view launch quantization: when a quantize grid is set
+        // (pad default or global) and the transport is running, EVERY
+        // pad — one-shots included — waits for the boundary so triggers
+        // land together. Quantize `.off` (the default) keeps the instant
+        // drum-machine feel, so this only changes behavior when the user
+        // has explicitly asked for a grid.
+        let effectiveQuantize: QuantizeMode = transportRunning
             ? (pad.defaultQuantize ?? quantize)
             : .off
         let targetSong = Quantizer.nextQuantized(
