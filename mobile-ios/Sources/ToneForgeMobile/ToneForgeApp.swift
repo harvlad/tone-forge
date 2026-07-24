@@ -497,6 +497,28 @@ public final class AppState: ObservableObject {
         return songDnaPacks.first { $0.pack.pack.packId == id } ?? songDnaPacks.first
     }
 
+    /// All song chops flattened across every stem pack, in a stable
+    /// order (pack order, then padIdx). This is the single ordering the
+    /// Jam Samples grid, the Launchpad mapping, and the LED mirror all
+    /// share — so on-screen pad N, hardware pad N, and LED N line up.
+    public struct JamSamplePad: Identifiable, Sendable {
+        public let packId: String
+        public let padIdx: Int
+        public let stem: String
+        public let name: String
+        public let family: SampleFamily
+        public var id: String { "\(packId)#\(padIdx)" }
+    }
+
+    public var jamSampleFlatPads: [JamSamplePad] {
+        songDnaPacks.flatMap { dna in
+            dna.pack.pack.pads
+                .sorted { $0.padIdx < $1.padIdx }
+                .map { JamSamplePad(packId: dna.pack.pack.packId, padIdx: $0.padIdx,
+                                    stem: dna.stem, name: $0.name, family: $0.family) }
+        }
+    }
+
     // MARK: - Curated packs (Browse → Curated)
 
     /// Curated pack catalog from `GET /api/sample-packs`. Empty until
@@ -1721,6 +1743,12 @@ public final class AppState: ObservableObject {
     /// scheduler state). Buffers land in the scheduler's loadedPacks.
     public func preloadSongDnaPack(_ entry: SongDnaPack) {
         Task { await sampleScheduler.preloadPackAsync(entry.pack, stemFiles: currentStemLocalURLs) }
+    }
+
+    /// Preload every stem pack — the Jam Samples grid shows them all in
+    /// one grid, so all buffers must be resident to trigger any pad.
+    public func preloadAllSongDnaPacks() {
+        for dna in songDnaPacks { preloadSongDnaPack(dna) }
     }
 
     // MARK: - Deletion (compliance)

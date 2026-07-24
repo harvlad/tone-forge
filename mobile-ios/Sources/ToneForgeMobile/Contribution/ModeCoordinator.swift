@@ -183,16 +183,13 @@ public final class ModeCoordinator: ObservableObject {
     /// sits at padVisuals[i] (reading order), matching `jamSampleAt`.
     /// No-op unless the Jam surface is in Samples mode.
     func refreshJamSamplesLEDs() {
-        guard appMode == .jamInKey, app.jamSettings.padMode == .samples,
-              let dna = app.selectedSongDnaPack else { return }
-        let pads = dna.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
-        let packId = dna.pack.pack.packId
+        guard appMode == .jamInKey, app.jamSettings.padMode == .samples else { return }
         var v = Array(repeating: PadVisual.off, count: 64)
-        for (i, pad) in pads.prefix(64).enumerated() {
-            let key = SamplePadKey(packId: packId, padIdx: pad.padIdx)
+        for (i, p) in app.jamSampleFlatPads.prefix(64).enumerated() {
+            let key = SamplePadKey(packId: p.packId, padIdx: p.padIdx)
             let playing = app.sampleVoicePool.ringingPadKeys.contains(key)
             let armed = app.sampleVoicePool.pendingPadKeys.contains(key)
-            let hint: UInt32 = armed ? 0xFF8000 : Self.familyColor(pad.family)
+            let hint: UInt32 = armed ? 0xFF8000 : Self.familyColor(p.family)
             v[i] = PadVisual(colorHint: hint, isBright: playing || armed)
         }
         padVisuals = v
@@ -424,11 +421,10 @@ public final class ModeCoordinator: ObservableObject {
     /// Map a Launchpad grid cell (row/col 1…8) to a Jam Samples chop by
     /// reading order — top-left pad = first chop. Nil past the chop count.
     private func jamSampleAt(row: Int, col: Int) -> (padIdx: Int, packId: String)? {
-        guard let dna = app.selectedSongDnaPack else { return nil }
-        let pads = dna.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
+        let flat = app.jamSampleFlatPads
         let index = (row - 1) * 8 + (col - 1)
-        guard index >= 0, index < pads.count else { return nil }
-        return (pads[index].padIdx, dna.pack.pack.packId)
+        guard index >= 0, index < flat.count else { return nil }
+        return (flat[index].padIdx, flat[index].packId)
     }
 
     private func execute(_ action: AudioAction, for event: ContributionEvent) {

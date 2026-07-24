@@ -44,10 +44,6 @@ struct JamView: View {
 
             padModeRow
 
-            if jamSettings.padMode == .samples, appState.songDnaPacks.count > 1 {
-                samplePackRow
-            }
-
             if jamSettings.padMode == .pads {
                 DegreePadRow(controller: controller)
             }
@@ -189,35 +185,12 @@ struct JamView: View {
         // Entering Samples: preload the song's primary chop pack so the
         // grid's pads have audio — buffers only, so it does NOT hijack
         // the Contribute active pack / tabs.
-        if mode == .samples, let dna = appState.selectedSongDnaPack {
-            appState.preloadSongDnaPack(dna)
+        if mode == .samples {
+            appState.preloadAllSongDnaPacks()
         }
         if mode == .pads {
             // Latched chord visuals make no sense off-surface.
             chordPadController.clearLatches()
-        }
-    }
-
-    /// Per-stem pack selector for Samples mode — one chip per Song DNA
-    /// pack (Drums / Bass / Chords…). Selecting one shows that stem's
-    /// chops and preloads its buffers; shared so the Launchpad follows.
-    private var samplePackRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(appState.songDnaPacks, id: \.id) { dna in
-                    let active = appState.selectedSongDnaPack?.id == dna.id
-                    Button {
-                        jamSettings.selectedSamplePackId = dna.pack.pack.packId
-                        appState.preloadSongDnaPack(dna)
-                    } label: {
-                        Text(dna.stem.capitalized)
-                            .tfChip(active: active)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(dna.displayName) samples")
-                }
-            }
-            .padding(.horizontal, 12)
         }
     }
 
@@ -274,9 +247,8 @@ struct JamView: View {
             )
         case .samples:
             JamSamplesGrid(
-                pack: appState.selectedSongDnaPack,
+                pads: appState.jamSampleFlatPads,
                 voicePool: appState.sampleVoicePool,
-                latch: jamSettings.sampleLatch,
                 onTrigger: { padIdx, packId in
                     coordinator.triggerJamSample(padIdx: padIdx, packId: packId, latch: jamSettings.sampleLatch)
                 },
@@ -287,12 +259,9 @@ struct JamView: View {
                 }
             )
             .onAppear {
-                // Ensure the song's chop pack is loaded whenever the grid
-                // shows — songDnaPacks can populate after setPadMode, so
-                // activating only there raced the load (silent pads).
-                if let dna = appState.selectedSongDnaPack {
-                    appState.preloadSongDnaPack(dna)
-                }
+                // All stem packs shown in one grid → load every pack's
+                // buffers (songDnaPacks may populate after setPadMode).
+                appState.preloadAllSongDnaPacks()
             }
         }
     }
@@ -630,52 +599,23 @@ private struct DegreePadButton: View {
 
 // MARK: - Jam Samples grid
 
-/// The loaded song's own chops as a trigger grid (PERFORM_PARITY).
-/// Pads come from a `SongDnaPack` (stems sliced by chord/section);
-/// tapping fires the chop through `SampleScheduler` (quantized to the
-/// same transport clock as everything else, so hits land on the beat).
+/// The loaded song's own chops as a trigger grid (PERFORM_PARITY) —
+/// ALL stems in one grid, each pad labeled by stem + chop. Tapping fires
+/// the chop through SampleScheduler (bar-quantized). Order matches
+/// AppState.jamSampleFlatPads so on-screen, Launchpad, and LED align.
 struct JamSamplesGrid: View {
-    let pack: SongDnaPack?
+    let pads: [AppState.JamSamplePad]
     /// Observed so pads repaint when a chop starts/stops ringing.
     @ObservedObject var voicePool: SampleVoicePool
-    let latch: Bool
-    /// (padIdx, packId) of the tapped chop.
     let onTrigger: (Int, String) -> Void
     let onRelease: (Int, String) -> Void
 
-    @State private var pressed: Set<Int> = []
+    @State private var pressed: Set<String> = []
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
 
     var body: some View {
-        if let pack, !pack.pack.pack.pads.isEmpty {
-            let packId = pack.pack.pack.packId
-            let pads = pack.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
-            VStack(spacing: 6) {
-                // Header: what these chops actually are (stem + slice
-                // mode), so "Samples" reads as the song's own loops, not
-                // a mystery grid.
-                HStack(spacing: 6) {
-                    Text(pack.stem.capitalized)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(TFTheme.textPrimary)
-                    Text("· \(pack.sliceMode) · \(pads.count) chops")
-                        .font(.caption2)
-                        .foregroundStyle(TFTheme.textSecondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 6) {
-                        ForEach(pads, id: \.padIdx) { pad in
-                            padTile(pad, packId: packId)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                }
-            }
-        } else {
+        if pads.isEmpty {
             VStack(spacing: 6) {
                 Text("No song samples")
                     .font(.subheadline.weight(.semibold))
@@ -687,36 +627,45 @@ struct JamSamplesGrid: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(24)
+        } else {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 6) {
+                    ForEach(pads) { pad in
+                        padTile(pad)
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
         }
     }
 
-    private func padTile(_ pad: SamplePad, packId: String) -> some View {
+    private func padTile(_ pad: AppState.JamSamplePad) -> some View {
         let tint = TFTheme.familyTint(pad.family)
-        let isDown = pressed.contains(pad.padIdx)
-        // Playing = this chop is currently ringing (looping in Latch, or
-        // held in Tap). Drives the loop indicator + a brighter fill.
-        let key = SamplePadKey(packId: packId, padIdx: pad.padIdx)
+        let isDown = pressed.contains(pad.id)
+        let key = SamplePadKey(packId: pad.packId, padIdx: pad.padIdx)
+        // Playing = ringing (looping in Latch / held in Tap); Armed =
+        // queued for the next downbeat.
         let isPlaying = voicePool.ringingPadKeys.contains(key)
-        // Armed = queued, waiting for the next downbeat to start.
         let isArmed = voicePool.pendingPadKeys.contains(key)
         let active = isDown || isPlaying
         let borderColor = isArmed ? Color.orange : (active ? tint : TFTheme.stroke)
         return ZStack(alignment: .topTrailing) {
-            Text(pad.name)
-                .font(TFTheme.padLabel)
-                .foregroundStyle(TFTheme.textPrimary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 2) {
+                Text(pad.stem.capitalized)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(TFTheme.textSecondary)
+                Text(pad.name)
+                    .font(TFTheme.padLabel)
+                    .foregroundStyle(TFTheme.textPrimary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             if isArmed {
                 Image(systemName: "hourglass")
-                    .font(.caption2)
-                    .foregroundStyle(Color.orange)
-                    .padding(5)
+                    .font(.caption2).foregroundStyle(Color.orange).padding(5)
             } else if isPlaying {
                 Image(systemName: "repeat")
-                    .font(.caption2)
-                    .foregroundStyle(TFTheme.textPrimary)
-                    .padding(5)
+                    .font(.caption2).foregroundStyle(TFTheme.textPrimary).padding(5)
             }
         }
         .frame(maxWidth: .infinity)
@@ -732,16 +681,16 @@ struct JamSamplesGrid: View {
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
-                    guard !pressed.contains(pad.padIdx) else { return }
-                    pressed.insert(pad.padIdx)
-                    onTrigger(pad.padIdx, packId)
+                    guard !pressed.contains(pad.id) else { return }
+                    pressed.insert(pad.id)
+                    onTrigger(pad.padIdx, pad.packId)
                 }
                 .onEnded { _ in
-                    pressed.remove(pad.padIdx)
-                    onRelease(pad.padIdx, packId)
+                    pressed.remove(pad.id)
+                    onRelease(pad.padIdx, pad.packId)
                 }
         )
-        .accessibilityLabel("\(isPlaying ? "Stop" : "Play") sample \(pad.name)")
+        .accessibilityLabel("\(isPlaying ? "Stop" : "Play") \(pad.stem) \(pad.name)")
     }
 }
 
