@@ -5,9 +5,9 @@
     "title": "Midnight Drive (Demo)",
     "artist": "Tone Forge",
     "sourceUrl": "",
-    "durationSec": 8.0,
+    "durationSec": 16.0,
     "tempoBpm": 120.0,
-    "detectedKey": "C",
+    "detectedKey": "C major",
     "license": "CC0-1.0",
     "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
     "attribution": "Original synth demo by Tone Forge, released CC0."
@@ -33,13 +33,38 @@
         "start": 6.0,
         "end": 8.0,
         "symbol": "G"
+      },
+      {
+        "start": 8.0,
+        "end": 10.0,
+        "symbol": "C"
+      },
+      {
+        "start": 10.0,
+        "end": 12.0,
+        "symbol": "Am"
+      },
+      {
+        "start": 12.0,
+        "end": 14.0,
+        "symbol": "F"
+      },
+      {
+        "start": 14.0,
+        "end": 16.0,
+        "symbol": "G"
       }
     ],
     "sections": [
       {
         "start": 0.0,
         "end": 8.0,
-        "label": "Loop"
+        "label": "A"
+      },
+      {
+        "start": 8.0,
+        "end": 16.0,
+        "label": "B"
       }
     ],
     "beats": [
@@ -58,13 +83,33 @@
       6.0,
       6.5,
       7.0,
-      7.5
+      7.5,
+      8.0,
+      8.5,
+      9.0,
+      9.5,
+      10.0,
+      10.5,
+      11.0,
+      11.5,
+      12.0,
+      12.5,
+      13.0,
+      13.5,
+      14.0,
+      14.5,
+      15.0,
+      15.5
     ],
     "downbeats": [
       0.0,
       2.0,
       4.0,
-      6.0
+      6.0,
+      8.0,
+      10.0,
+      12.0,
+      14.0
     ]
   },
   "stems": [
@@ -88,7 +133,57 @@
     }
   ],
   "presets": {
-    "harmonic": {
+    "drums:section": {
+      "stem": "drums",
+      "sliceMode": "section",
+      "chops": [
+        {
+          "idx": 0,
+          "startSec": 0.0,
+          "endSec": 4.0,
+          "durationSec": 4.0,
+          "kind": "section",
+          "root": null,
+          "sectionLabel": "Beat 1",
+          "chordSymbol": null,
+          "colorHint": null
+        },
+        {
+          "idx": 1,
+          "startSec": 4.0,
+          "endSec": 8.0,
+          "durationSec": 4.0,
+          "kind": "section",
+          "root": null,
+          "sectionLabel": "Beat 2",
+          "chordSymbol": null,
+          "colorHint": null
+        },
+        {
+          "idx": 2,
+          "startSec": 8.0,
+          "endSec": 12.0,
+          "durationSec": 4.0,
+          "kind": "section",
+          "root": null,
+          "sectionLabel": "Beat 3",
+          "chordSymbol": null,
+          "colorHint": null
+        },
+        {
+          "idx": 3,
+          "startSec": 12.0,
+          "endSec": 16.0,
+          "durationSec": 4.0,
+          "kind": "section",
+          "root": null,
+          "sectionLabel": "Beat 4",
+          "chordSymbol": null,
+          "colorHint": null
+        }
+      ]
+    },
+    "other:chord": {
       "stem": "other",
       "sliceMode": "chord",
       "chops": [

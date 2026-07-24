@@ -24,7 +24,7 @@ struct TransportRow: View {
             .accessibilityLabel("Previous section")
 
             Button {
-                appState.togglePlayPause()
+                Self.noAnim { appState.togglePlayPause() }
             } label: {
                 Image(systemName: appState.isPlaying
                       ? "pause.circle.fill" : "play.circle.fill")
@@ -105,14 +105,25 @@ struct TransportRow: View {
         // Tint red while samples are ringing.
         let hasRinging = !appState.ringingPadKeys.isEmpty
         return Button {
-            appState.stopAllSamplePads()
-            if appState.isPlaying { appState.togglePlayPause() }
-            appState.seek(to: 0)
+            Self.noAnim {
+                appState.stopAllSamplePads()
+                if appState.isPlaying { appState.togglePlayPause() }
+                appState.seek(to: 0)
+            }
         } label: {
             Image(systemName: "stop.fill")
                 .font(.title3)
                 .foregroundStyle(hasRinging ? Color.red : TFTheme.textSecondary)
         }
         .accessibilityLabel("Stop")
+    }
+
+    /// Run a transport mutation with implicit animations suppressed, so
+    /// a play/pause/stop state flip can't drive a SwiftUI transition that
+    /// scales/zooms the surface (same guard openSong uses on tab entry).
+    private static func noAnim(_ body: () -> Void) {
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx, body)
     }
 }

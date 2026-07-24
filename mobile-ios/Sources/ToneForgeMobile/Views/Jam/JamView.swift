@@ -163,8 +163,7 @@ struct JamView: View {
             case .pads:
                 holdChip
             case .chords:
-                triggerModeChip(title: "Momentary", mode: .momentary)
-                triggerModeChip(title: "Latch", mode: .latch)
+                triggerModeToggle
             case .samples:
                 EmptyView()
             }
@@ -200,21 +199,23 @@ struct JamView: View {
         )
     }
 
-    private func triggerModeChip(
-        title: String, mode: ChordPadController.TriggerMode
-    ) -> some View {
-        Button {
-            chordPadController.triggerMode = mode
-            if mode == .momentary {
-                // Latched visuals make no sense in momentary mode.
+    /// Single toggle for the chord trigger mode: Tap (momentary) vs
+    /// Latch. Active styling = latched; tapping flips between the two.
+    private var triggerModeToggle: some View {
+        let isLatch = chordPadController.triggerMode == .latch
+        return Button {
+            let new: ChordPadController.TriggerMode = isLatch ? .momentary : .latch
+            chordPadController.triggerMode = new
+            if new == .momentary {
+                // Latched visuals make no sense in tap mode.
                 chordPadController.clearLatches()
             }
         } label: {
-            Text(title)
-                .tfChip(active: chordPadController.triggerMode == mode)
+            Text(isLatch ? "Latch" : "Tap")
+                .tfChip(active: isLatch)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title) trigger mode")
+        .accessibilityLabel("Chord trigger mode: \(isLatch ? "Latch" : "Tap"), tap to toggle")
     }
 
     // MARK: - Pad grid
