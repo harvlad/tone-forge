@@ -602,13 +602,29 @@ struct JamSamplesGrid: View {
         if let pack, !pack.pack.pack.pads.isEmpty {
             let packId = pack.pack.pack.packId
             let pads = pack.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 6) {
-                    ForEach(pads, id: \.padIdx) { pad in
-                        padTile(pad, packId: packId)
-                    }
+            VStack(spacing: 6) {
+                // Header: what these chops actually are (stem + slice
+                // mode), so "Samples" reads as the song's own loops, not
+                // a mystery grid.
+                HStack(spacing: 6) {
+                    Text(pack.stem.capitalized)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TFTheme.textPrimary)
+                    Text("· \(pack.sliceMode) · \(pads.count) chops")
+                        .font(.caption2)
+                        .foregroundStyle(TFTheme.textSecondary)
+                    Spacer()
                 }
                 .padding(.horizontal, 12)
+
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 6) {
+                        ForEach(pads, id: \.padIdx) { pad in
+                            padTile(pad, packId: packId)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                }
             }
         } else {
             VStack(spacing: 6) {
