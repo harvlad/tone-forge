@@ -31,6 +31,9 @@ struct NowPlayingHeader<Accessory: View>: View {
     var creditLine: String? = nil
     /// Optional link target for the credit line (source page).
     var creditURL: URL? = nil
+    /// When true, the song's stems couldn't be downloaded — show a
+    /// "no audio" note so silence isn't a mystery.
+    var stemsUnavailable: Bool = false
     /// Optional accessory view (e.g., pack picker) displayed before
     /// the settings button.
     @ViewBuilder var accessory: () -> Accessory
@@ -54,6 +57,14 @@ struct NowPlayingHeader<Accessory: View>: View {
                     .font(.caption)
                     .foregroundStyle(TFTheme.textSecondary)
                     .lineLimit(1)
+
+                if stemsUnavailable {
+                    Label("Audio unavailable", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("nowplaying.noaudio")
+                }
 
                 if let creditLine, !creditLine.isEmpty {
                     Group {
@@ -126,7 +137,8 @@ extension NowPlayingHeader where Accessory == EmptyView {
         tempoBpm: Double?,
         analysisId: String? = nil,
         onEject: (() -> Void)? = nil,
-        onSettings: (() -> Void)? = nil
+        onSettings: (() -> Void)? = nil,
+        stemsUnavailable: Bool = false
     ) {
         self.title = title
         self.artist = artist
@@ -136,6 +148,7 @@ extension NowPlayingHeader where Accessory == EmptyView {
         self.analysisId = analysisId
         self.onEject = onEject
         self.onSettings = onSettings
+        self.stemsUnavailable = stemsUnavailable
         self.accessory = { EmptyView() }
     }
 }

@@ -156,6 +156,9 @@ public final class AppState: ObservableObject {
 
     @Published public var currentBundle: SongBundle?
     @Published public var loadingError: String?
+    /// True when the loaded song expected stems but none could be
+    /// downloaded (backend/R2 unavailable). Drives a "no audio" note.
+    @Published public private(set) var stemsUnavailable = false
     /// The analysis id whose bundle is loading right now (JSON fetch +
     /// stem download), or nil. Set the instant a Library row is tapped
     /// so the UI shows a spinner immediately — the cold-start stem
@@ -751,7 +754,10 @@ public final class AppState: ObservableObject {
         // already created App Support by now. No-op when no DemoBundles
         // resource is shipped.
         if let demoRoot = Bundle.main.url(forResource: "DemoBundles", withExtension: nil) {
-            bundleStore.seedBundledDemos(from: demoRoot)
+            // markerVersion bumped when the shipped demo content changes
+            // (v2 = 16 s + per-stem drums/bass/other loop packs) so a
+            // device that seeded an older demo re-seeds the new one.
+            bundleStore.seedBundledDemos(from: demoRoot, markerVersion: "v2")
         }
 
         // First launch (PERFORM_PARITY spec 3.4): if a seeded demo song
@@ -1577,6 +1583,7 @@ public final class AppState: ObservableObject {
         audioEngine.seek(to: 0)
         songSeconds = 0
         loopRegion = nil
+        stemsUnavailable = false
         // Demo backing beds are short (a few bars) — loop them so
         // playback doesn't just stop after one pass. Keyed on the
         // "demo-" analysisId so real songs still play straight through.
@@ -1660,12 +1667,18 @@ public final class AppState: ObservableObject {
             currentStemLocalURLs = localURLs
             songDnaPacks = SongDnaPack.synthesize(from: bundle)
                 .filter { localURLs[$0.stem] != nil }
+            // Surface a "no audio" state when the song expected stems but
+            // none downloaded (backend/R2 unavailable — e.g. jamn.app
+            // analyses with no stored stems). The bundled demo is offline
+            // so it never trips this.
+            stemsUnavailable = !bundle.stems.isEmpty && localURLs.isEmpty
             updateWaveformPeaks(
                 analysisId: bundle.analysisId,
                 stemURLs: localURLs.values.sorted { $0.path < $1.path }
             )
         } catch {
             loadingError = error.localizedDescription
+            stemsUnavailable = !bundle.stems.isEmpty
         }
     }
 

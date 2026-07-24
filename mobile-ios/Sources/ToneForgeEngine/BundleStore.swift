@@ -226,9 +226,13 @@ public final class BundleStore: @unchecked Sendable {
                     let dst = try stemLocalURL(
                         analysisId: bundle.analysisId, role: stem.role, ext: ext
                     )
-                    if !fileManager.fileExists(atPath: dst.path) {
-                        try fileManager.copyItem(at: src, to: dst)
+                    // Overwrite so a marker-version bump (new demo
+                    // content, same analysisId) actually refreshes the
+                    // stems instead of keeping the stale copies.
+                    if fileManager.fileExists(atPath: dst.path) {
+                        try? fileManager.removeItem(at: dst)
                     }
+                    try fileManager.copyItem(at: src, to: dst)
                 }
                 seeded.append(bundle.analysisId)
             } catch {

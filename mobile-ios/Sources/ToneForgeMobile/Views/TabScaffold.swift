@@ -47,6 +47,7 @@ struct TabScaffold<Content: View, Accessory: View>: View {
                     onEject: { appState.ejectSong() },
                     creditLine: Self.creditLine(for: appState.currentBundle?.meta),
                     creditURL: Self.creditURL(for: appState.currentBundle?.meta),
+                    stemsUnavailable: appState.stemsUnavailable,
                     accessory: accessory
                 )
             }

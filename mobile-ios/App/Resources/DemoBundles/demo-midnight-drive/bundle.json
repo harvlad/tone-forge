@@ -183,6 +183,56 @@
         }
       ]
     },
+    "bass:section": {
+      "stem": "bass",
+      "sliceMode": "section",
+      "chops": [
+        {
+          "idx": 0,
+          "startSec": 0.0,
+          "endSec": 4.0,
+          "durationSec": 4.0,
+          "kind": "section",
+          "root": null,
+          "sectionLabel": "Bass 1",
+          "chordSymbol": null,
+          "colorHint": null
+        },
+        {
+          "idx": 1,
+          "startSec": 4.0,
+          "endSec": 8.0,
+          "durationSec": 4.0,
+          "kind": "section",
+          "root": null,
+          "sectionLabel": "Bass 2",
+          "chordSymbol": null,
+          "colorHint": null
+        },
+        {
+          "idx": 2,
+          "startSec": 8.0,
+          "endSec": 12.0,
+          "durationSec": 4.0,
+          "kind": "section",
+          "root": null,
+          "sectionLabel": "Bass 3",
+          "chordSymbol": null,
+          "colorHint": null
+        },
+        {
+          "idx": 3,
+          "startSec": 12.0,
+          "endSec": 16.0,
+          "durationSec": 4.0,
+          "kind": "section",
+          "root": null,
+          "sectionLabel": "Bass 4",
+          "chordSymbol": null,
+          "colorHint": null
+        }
+      ]
+    },
     "other:chord": {
       "stem": "other",
       "sliceMode": "chord",

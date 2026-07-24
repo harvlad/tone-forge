@@ -148,8 +148,12 @@ public final class JamSettingsStore: ObservableObject {
 
     /// Samples trigger mode: Latch (tap on/off, loops) vs Tap (plays
     /// while held). Shared so on-screen + Launchpad hardware agree.
-    /// Not persisted — defaults to Latch each session.
-    @Published public var sampleLatch: Bool = true
+    /// Persisted (UserDefaults, independent of the settings blob so no
+    /// migration surgery). Defaults to Latch.
+    @Published public var sampleLatch: Bool =
+        (UserDefaults.standard.object(forKey: "jam.sampleLatch") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(sampleLatch, forKey: "jam.sampleLatch") }
+    }
 
     /// Which Song DNA pack (stem) the Samples grid is showing. nil =
     /// first available. Shared so on-screen + Launchpad agree. Not
