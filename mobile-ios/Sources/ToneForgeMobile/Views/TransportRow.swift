@@ -39,8 +39,8 @@ struct TransportRow: View {
             }
             .accessibilityLabel("Next section")
 
-            // Stop all samples
-            stopAllButton
+            // Full transport stop (halt + rewind + stop samples)
+            stopButton
 
             // Record toggle
             RecordToggle()
@@ -99,19 +99,20 @@ struct TransportRow: View {
 
     // MARK: - Stop All
 
-    private var stopAllButton: some View {
-        // Tint red when a loop is known-ringing; otherwise dim. Always
-        // tappable — one-shot tails aren't tracked in ringingPadKeys
-        // (slots stay active after the buffer ends), so the button must
-        // stay enabled to panic-stop them.
+    private var stopButton: some View {
+        // Full transport Stop (vs the play/pause toggle): halt the song,
+        // rewind to the top, and panic-stop any ringing sample voices.
+        // Tint red while samples are ringing.
         let hasRinging = !appState.ringingPadKeys.isEmpty
         return Button {
             appState.stopAllSamplePads()
+            if appState.isPlaying { appState.togglePlayPause() }
+            appState.seek(to: 0)
         } label: {
             Image(systemName: "stop.fill")
                 .font(.title3)
                 .foregroundStyle(hasRinging ? Color.red : TFTheme.textSecondary)
         }
-        .accessibilityLabel("Stop all samples")
+        .accessibilityLabel("Stop")
     }
 }
