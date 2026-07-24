@@ -242,7 +242,8 @@ struct JamView: View {
                 controller: chordPadController,
                 currentChordSymbol: appState.currentChord?.symbol,
                 nextChordSymbol: appState.nextChord?.symbol,
-                followEnabled: jamSettings.followEnabled
+                followEnabled: jamSettings.followEnabled,
+                songChordSymbols: appState.currentBundle?.timeline.chords.map(\.symbol) ?? []
             )
         case .samples:
             JamSamplesGrid(
