@@ -679,15 +679,6 @@ public final class AppState: ObservableObject {
         //
         // Contribution graph (voice/chop/vocoder → shared → dry+wet)
         // first, so the bus inputs exist for the attach calls below.
-        // Instant gratification (PERFORM_PARITY spec 3.1): seed shipped
-        // demo songs into the local store on first launch so the Library
-        // is never empty and the first tap plays offline. No-op (and no
-        // rescan after the first run) when no DemoBundles resource is
-        // shipped — audio licensing pending.
-        if let demoRoot = Bundle.main.url(forResource: "DemoBundles", withExtension: nil) {
-            bundleStore.seedBundledDemos(from: demoRoot)
-        }
-
         audioEngine.buildContributionGraph()
         padSynth.attach()
         // Hybrid-mode note instrument — a dry source on the voice bus,
@@ -743,6 +734,18 @@ public final class AppState: ObservableObject {
         // default) so the didSet apply-path pins the engine mode for
         // the restored tab now that the coordinator is live.
         //
+        // Instant gratification (PERFORM_PARITY spec 3.1): seed shipped
+        // demo songs into the local store so the Library is never empty
+        // and the first tap plays offline. Runs HERE (not at bootAudio
+        // top): the first App Support write must happen after the app's
+        // container Library is fully set up, otherwise createDirectory
+        // hits a first-touch ENOTDIR in the sim. Other stores above have
+        // already created App Support by now. No-op when no DemoBundles
+        // resource is shipped.
+        if let demoRoot = Bundle.main.url(forResource: "DemoBundles", withExtension: nil) {
+            bundleStore.seedBundledDemos(from: demoRoot)
+        }
+
         // First launch (PERFORM_PARITY spec 3.4): if a seeded demo song
         // is present, auto-open it straight into Jam so the first thing
         // the user sees is a playable grid, not an empty Library. The

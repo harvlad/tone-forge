@@ -81,13 +81,14 @@ public final class BundleStore: @unchecked Sendable {
     /// Application Support root for our JSON bundles. Created on
     /// first access.
     public func bundlesDir() throws -> URL {
-        let base = try rootOverride ?? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let dir = base.appendingPathComponent("toneforge", isDirectory: true)
+        // "ToneForge" (capital) matches the canonical Application Support
+        // subdir the rest of the app already creates (BundleLoader,
+        // BeatTrainingStore). Using lowercase "toneforge" here collided
+        // with that existing dir and made createDirectory fail with a
+        // spurious ENOTDIR on iOS (case-insensitive volume) — first tap
+        // then found an empty Library. Match the capital name.
+        let dir = try searchRoot(.applicationSupportDirectory)
+            .appendingPathComponent("ToneForge", isDirectory: true)
             .appendingPathComponent("bundles", isDirectory: true)
         try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
@@ -95,16 +96,24 @@ public final class BundleStore: @unchecked Sendable {
 
     /// Caches root for downloaded stems. Created on first access.
     public func stemsDir() throws -> URL {
-        let base = try rootOverride ?? fileManager.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let dir = base.appendingPathComponent("toneforge", isDirectory: true)
+        let dir = try searchRoot(.cachesDirectory)
+            .appendingPathComponent("toneforge", isDirectory: true)
             .appendingPathComponent("stems", isDirectory: true)
         try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// Resolve a base search-path URL. Uses `urls(for:in:).first` (which
+    /// only returns the path) + our own `createDirectory` below, rather
+    /// than `url(for:…create:true)` — the latter throws a first-touch
+    /// ENOTDIR on iOS before the directory exists (observed in the sim
+    /// on a clean install). This mirrors the idiom the other stores use.
+    private func searchRoot(_ dir: FileManager.SearchPathDirectory) throws -> URL {
+        if let rootOverride { return rootOverride }
+        guard let base = fileManager.urls(for: dir, in: .userDomainMask).first else {
+            throw BundleError.invalidURL("no \(dir) in user domain")
+        }
+        return base
     }
 
     public func bundleJsonURL(analysisId: String) throws -> URL {
