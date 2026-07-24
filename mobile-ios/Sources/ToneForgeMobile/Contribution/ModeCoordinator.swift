@@ -140,6 +140,19 @@ public final class ModeCoordinator: ObservableObject {
         delegate: app
     )
 
+    // MARK: - Jam Samples (PERFORM_PARITY)
+
+    /// Fire a song chop from the Jam Samples grid. Jam mode routes pad
+    /// events to the synth, so this bypasses the ModeRouter — but it
+    /// still goes through the coordinator, satisfying the scheduler's
+    /// `contributionGuard` (an assert that trips on direct trigger
+    /// calls) while keeping quantize + section gating intact.
+    public func triggerJamSample(padIdx: Int, packId: String) {
+        isExecuting = true
+        defer { isExecuting = false }
+        _ = app.sampleScheduler.trigger(padIdx: padIdx, packId: packId)
+    }
+
     // MARK: - Private
 
     /// True only while this coordinator is executing a routed

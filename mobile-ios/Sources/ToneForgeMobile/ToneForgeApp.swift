@@ -1569,6 +1569,12 @@ public final class AppState: ObservableObject {
         audioEngine.seek(to: 0)
         songSeconds = 0
         loopRegion = nil
+        // Demo backing beds are short (a few bars) — loop them so
+        // playback doesn't just stop after one pass. Keyed on the
+        // "demo-" analysisId so real songs still play straight through.
+        if bundle.analysisId.hasPrefix("demo-"), bundle.meta.durationSec > 0 {
+            loopRegion = LoopRegion(startSec: 0, endSec: bundle.meta.durationSec)
+        }
 
         // Clear per-bundle Song DNA state; rebuilt once stems land.
         // Unload the previous song's DNA pack buffers first — those

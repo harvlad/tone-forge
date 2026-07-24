@@ -64,11 +64,15 @@ public enum JamScaleVariant: String, CaseIterable, Codable, Sendable {
 public enum JamPadMode: String, CaseIterable, Codable, Sendable {
     case pads
     case chords
+    /// The loaded song's own chops (stems sliced by chord/section),
+    /// triggered on the grid — "remix your song" (PERFORM_PARITY).
+    case samples
 
     public var displayName: String {
         switch self {
-        case .pads:   return "Pads"
-        case .chords: return "Chords"
+        case .pads:    return "Pads"
+        case .chords:  return "Chords"
+        case .samples: return "Samples"
         }
     }
 }

@@ -92,6 +92,11 @@ public final class AudioEngine: ObservableObject {
     /// `buildMasterFXGraph`; push gestures via ``setPerfFXState``.
     public let performanceFX = PerformanceFXChain()
 
+    /// Diagnostic kill-switch: when false, the perf-FX master insert is
+    /// skipped and the original mainMixer → EQ → comp path is used.
+    /// Temporary — for isolating the sim audio stutter / 15s stop.
+    public static var enablePerformanceFX = true
+
     #if canImport(AVFoundation)
     /// The shared AVAudioEngine. Exposed so downstream subsystems
     /// (StemPlayer, PadSynth) can attach their own nodes.
@@ -320,6 +325,21 @@ public final class AudioEngine: ObservableObject {
         engine.attach(eq)
         engine.attach(comp)
 
+        // A/B kill-switch for diagnosing the sim audio stutter / 15s stop.
+        // When false, wire the original mainMixer → eq → comp → out path
+        // and skip the performance-FX insert entirely.
+        guard Self.enablePerformanceFX else {
+            engine.disconnectNodeOutput(engine.mainMixerNode)
+            let format = canonicalFormat
+            engine.connect(engine.mainMixerNode, to: eq, format: format)
+            engine.connect(eq, to: comp, format: format)
+            engine.connect(comp, to: engine.outputNode, format: format)
+            setCompressorParams(FXCompParams.neutral)
+            self.masterEQ = eq
+            self.masterComp = comp
+            return
+        }
+
         // Performance-FX insert nodes (PERFORM_PARITY spec 1). Filter =
         // one resonant band (bypassed until engaged); flanger + throw =
         // short delays at wetDryMix 0; input + gater = plain mixers.
@@ -327,10 +347,15 @@ public final class AudioEngine: ObservableObject {
         let perfFilt = AVAudioUnitEQ(numberOfBands: 1)
         perfFilt.bands[0].bypass = true
         perfFilt.bands[0].filterType = .resonantLowPass
+        // Idle: hard-bypass the AUs so they add no per-buffer cost until
+        // a gesture engages them (perf headroom on the sim).
+        perfFilt.bypass = true
         let perfFlang = AVAudioUnitDelay()
         perfFlang.wetDryMix = 0
+        perfFlang.bypass = true
         let perfThr = AVAudioUnitDelay()
         perfThr.wetDryMix = 0
+        perfThr.bypass = true
         let perfGate = AVAudioMixerNode()
         for node in [perfIn, perfGate] { engine.attach(node) }
         engine.attach(perfFilt)

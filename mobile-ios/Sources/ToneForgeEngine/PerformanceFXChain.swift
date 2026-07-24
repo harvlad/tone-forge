@@ -138,9 +138,13 @@ public final class PerformanceFXChain {
     /// flanger/throw enable + feedback + time. Safe with no nodes bound.
     public func applyStatic() {
         #if canImport(AVFoundation)
-        // Filter
-        if let band = filter?.bands.first {
-            if state.filter {
+        // Filter. Bypass the whole EQ unit (not just the band) when
+        // disengaged so it costs nothing in the idle master path — a
+        // wetDryMix/band-bypass alone still runs the AU every buffer,
+        // which needlessly eats headroom (audible as stutter on the sim).
+        if let filter {
+            filter.bypass = !state.filter
+            if state.filter, let band = filter.bands.first {
                 let fc = config.filter.clamped()
                 band.bypass = false
                 band.filterType = (fc.type == .lowPass) ? .resonantLowPass : .resonantHighPass
@@ -149,18 +153,18 @@ public final class PerformanceFXChain {
                 let y = max(0, min(1, state.filterY))
                 band.bandwidth = Float(max(0.05, 1.0 - 0.9 * y))
                 band.gain = Float(fc.resonanceDb(y: y))
-            } else {
-                band.bypass = true
             }
         }
-        // Flanger: feedback static, wetDryMix on/off; delayTime modulated.
+        // Flanger: bypass the AU when off; feedback static, delay modulated.
         if let fl = flanger {
+            fl.bypass = !state.flanger
             let fc = config.flanger.clamped()
             fl.feedback = Float(fc.feedback * 100)
             fl.wetDryMix = state.flanger ? 50 : 0
         }
-        // Throw: tempo-synced time + feedback; wetDryMix on/off.
+        // Throw: bypass the AU when off; tempo-synced time + feedback.
         if let th = throwDelay {
+            th.bypass = !state.delayThrow
             let dc = config.delayThrow.clamped()
             th.feedback = Float(dc.feedback * 100)
             if let t = throwTimeSecIntent() { th.delayTime = t }

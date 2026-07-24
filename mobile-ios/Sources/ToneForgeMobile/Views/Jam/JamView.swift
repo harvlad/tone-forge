@@ -165,6 +165,8 @@ struct JamView: View {
             case .chords:
                 triggerModeChip(title: "Momentary", mode: .momentary)
                 triggerModeChip(title: "Latch", mode: .latch)
+            case .samples:
+                EmptyView()
             }
         }
         .padding(.horizontal, 12)
@@ -173,6 +175,11 @@ struct JamView: View {
     private func setPadMode(_ mode: JamPadMode) {
         guard jamSettings.padMode != mode else { return }
         jamSettings.padMode = mode
+        // Entering Samples: load the song's primary chop pack so the
+        // grid's pads have audio (buffers) to trigger.
+        if mode == .samples, let dna = appState.songDnaPacks.first {
+            appState.activateSongDnaPack(dna)
+        }
         if mode == .pads {
             // Latched chord visuals make no sense off-surface.
             chordPadController.clearLatches()
@@ -227,6 +234,21 @@ struct JamView: View {
                 nextChordSymbol: appState.nextChord?.symbol,
                 followEnabled: jamSettings.followEnabled
             )
+        case .samples:
+            JamSamplesGrid(
+                pack: appState.songDnaPacks.first,
+                onTrigger: { padIdx, packId in
+                    coordinator.triggerJamSample(padIdx: padIdx, packId: packId)
+                }
+            )
+            .onAppear {
+                // Ensure the song's chop pack is loaded whenever the grid
+                // shows — songDnaPacks can populate after setPadMode, so
+                // activating only there raced the load (silent pads).
+                if let dna = appState.songDnaPacks.first {
+                    appState.activateSongDnaPack(dna)
+                }
+            }
         }
     }
 
@@ -451,6 +473,8 @@ struct JamView: View {
             controller.setOctaveShift(shift)
         case .chords:
             chordPadController.setOctaveShift(shift)
+        case .samples:
+            break  // Samples are fixed song chops — no octave transpose.
         }
     }
 
@@ -556,6 +580,78 @@ private struct DegreePadButton: View {
             green: Double(c.g) / 127.0,
             blue: Double(c.b) / 127.0
         )
+    }
+}
+
+// MARK: - Jam Samples grid
+
+/// The loaded song's own chops as a trigger grid (PERFORM_PARITY).
+/// Pads come from a `SongDnaPack` (stems sliced by chord/section);
+/// tapping fires the chop through `SampleScheduler` (quantized to the
+/// same transport clock as everything else, so hits land on the beat).
+struct JamSamplesGrid: View {
+    let pack: SongDnaPack?
+    /// (padIdx, packId) of the tapped chop.
+    let onTrigger: (Int, String) -> Void
+
+    @State private var pressed: Set<Int> = []
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
+
+    var body: some View {
+        if let pack, !pack.pack.pack.pads.isEmpty {
+            let packId = pack.pack.pack.packId
+            let pads = pack.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 6) {
+                    ForEach(pads, id: \.padIdx) { pad in
+                        padTile(pad, packId: packId)
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
+        } else {
+            VStack(spacing: 6) {
+                Text("No song samples")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(TFTheme.textPrimary)
+                Text("Load a song with chops to trigger its loops here.")
+                    .font(.caption)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(24)
+        }
+    }
+
+    private func padTile(_ pad: SamplePad, packId: String) -> some View {
+        let tint = TFTheme.familyTint(pad.family)
+        let isDown = pressed.contains(pad.padIdx)
+        return Text(pad.name)
+            .font(TFTheme.padLabel)
+            .foregroundStyle(TFTheme.textPrimary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .frame(height: 72)
+            .padding(6)
+            .background(tint.opacity(isDown ? 0.95 : 0.4),
+                        in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isDown ? tint : TFTheme.stroke, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard !pressed.contains(pad.padIdx) else { return }
+                        pressed.insert(pad.padIdx)
+                        onTrigger(pad.padIdx, packId)
+                    }
+                    .onEnded { _ in pressed.remove(pad.padIdx) }
+            )
+            .accessibilityLabel("Play sample \(pad.name)")
     }
 }
 
