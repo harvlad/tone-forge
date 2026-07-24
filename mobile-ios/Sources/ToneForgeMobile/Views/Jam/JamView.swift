@@ -37,9 +37,6 @@ struct JamView: View {
     /// pads engage momentarily; pushed to the engine on every change.
     @State private var perfFX = PerfFXState.idle
 
-    /// Samples trigger mode: Latch (tap on/off, loops) vs Tap (plays
-    /// while held). Launchpad-clip behavior; launches quantize to the bar.
-    @State private var samplesLatch = true
 
     var body: some View {
         VStack(spacing: 8) {
@@ -170,13 +167,13 @@ struct JamView: View {
                 triggerModeToggle
             case .samples:
                 Button {
-                    samplesLatch.toggle()
+                    jamSettings.sampleLatch.toggle()
                 } label: {
-                    Text(samplesLatch ? "Latch" : "Tap")
-                        .tfChip(active: samplesLatch)
+                    Text(jamSettings.sampleLatch ? "Latch" : "Tap")
+                        .tfChip(active: jamSettings.sampleLatch)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Sample trigger mode: \(samplesLatch ? "Latch" : "Tap"), tap to toggle")
+                .accessibilityLabel("Sample trigger mode: \(jamSettings.sampleLatch ? "Latch" : "Tap"), tap to toggle")
             }
         }
         .padding(.horizontal, 12)
@@ -251,14 +248,14 @@ struct JamView: View {
             JamSamplesGrid(
                 pack: appState.songDnaPacks.first,
                 voicePool: appState.sampleVoicePool,
-                latch: samplesLatch,
+                latch: jamSettings.sampleLatch,
                 onTrigger: { padIdx, packId in
-                    coordinator.triggerJamSample(padIdx: padIdx, packId: packId, latch: samplesLatch)
+                    coordinator.triggerJamSample(padIdx: padIdx, packId: packId, latch: jamSettings.sampleLatch)
                 },
                 onRelease: { padIdx, packId in
                     // Tap mode plays while held — release on lift. Latch
                     // stops on the next tap, so no release there.
-                    if !samplesLatch { coordinator.releaseJamSample(padIdx: padIdx, packId: packId) }
+                    if !jamSettings.sampleLatch { coordinator.releaseJamSample(padIdx: padIdx, packId: packId) }
                 }
             )
             .onAppear {
@@ -670,17 +667,24 @@ struct JamSamplesGrid: View {
         let isDown = pressed.contains(pad.padIdx)
         // Playing = this chop is currently ringing (looping in Latch, or
         // held in Tap). Drives the loop indicator + a brighter fill.
-        let isPlaying = voicePool.ringingPadKeys.contains(
-            SamplePadKey(packId: packId, padIdx: pad.padIdx)
-        )
+        let key = SamplePadKey(packId: packId, padIdx: pad.padIdx)
+        let isPlaying = voicePool.ringingPadKeys.contains(key)
+        // Armed = queued, waiting for the next downbeat to start.
+        let isArmed = voicePool.pendingPadKeys.contains(key)
         let active = isDown || isPlaying
+        let borderColor = isArmed ? Color.orange : (active ? tint : TFTheme.stroke)
         return ZStack(alignment: .topTrailing) {
             Text(pad.name)
                 .font(TFTheme.padLabel)
                 .foregroundStyle(TFTheme.textPrimary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if isPlaying {
+            if isArmed {
+                Image(systemName: "hourglass")
+                    .font(.caption2)
+                    .foregroundStyle(Color.orange)
+                    .padding(5)
+            } else if isPlaying {
                 Image(systemName: "repeat")
                     .font(.caption2)
                     .foregroundStyle(TFTheme.textPrimary)
@@ -690,11 +694,11 @@ struct JamSamplesGrid: View {
         .frame(maxWidth: .infinity)
         .frame(height: 72)
         .padding(6)
-        .background(tint.opacity(active ? 0.95 : 0.4),
+        .background(tint.opacity(active ? 0.95 : (isArmed ? 0.6 : 0.4)),
                     in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(active ? tint : TFTheme.stroke, lineWidth: isPlaying ? 2 : 1)
+                .stroke(borderColor, lineWidth: (isPlaying || isArmed) ? 2 : 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .gesture(

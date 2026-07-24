@@ -146,6 +146,11 @@ public final class JamSettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// Samples trigger mode: Latch (tap on/off, loops) vs Tap (plays
+    /// while held). Shared so on-screen + Launchpad hardware agree.
+    /// Not persisted — defaults to Latch each session.
+    @Published public var sampleLatch: Bool = true
+
     /// Pads mode hold: keep touched pads down (suppress pad-up) until
     /// the chip is toggled off.
     @Published public var holdEnabled: Bool {

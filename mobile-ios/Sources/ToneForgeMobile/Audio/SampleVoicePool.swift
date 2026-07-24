@@ -102,6 +102,11 @@ public final class SampleVoicePool: ObservableObject {
     /// they'd read as ringing forever.
     @Published public private(set) var ringingPadKeys: Set<SamplePadKey> = []
 
+    /// Pads with a launch scheduled for a future (quantized) time that
+    /// hasn't fired yet — the "armed"/queued state (blinking clip on a
+    /// Launchpad). Cleared when the play fires or is cancelled.
+    @Published public private(set) var pendingPadKeys: Set<SamplePadKey> = []
+
     #if canImport(AVFoundation)
     /// Slots are struct-wrapped so mutation stays value-typed; the
     /// nodes inside are reference types owned by the pool for the
@@ -328,6 +333,7 @@ public final class SampleVoicePool: ObservableObject {
                     Task { @MainActor [weak self] in
                         guard let self, self.slots.indices.contains(slotIdx) else { return }
                         self.slots[slotIdx].pendingPlayItem = nil
+                        self.refreshRingingPadKeys()  // armed → playing
                     }
                 }
                 slot.pendingPlayItem = item
@@ -510,6 +516,11 @@ public final class SampleVoicePool: ObservableObject {
             slot.isActive && slot.isLooping ? slot.padKey : nil
         })
         if now != ringingPadKeys { ringingPadKeys = now }
+        // Armed = a future-time play still pending on the slot.
+        let pending = Set(slots.compactMap { slot in
+            slot.pendingPlayItem != nil ? slot.padKey : nil
+        })
+        if pending != pendingPadKeys { pendingPadKeys = pending }
     }
 
     /// 20 ms linear release fade, then stop the player and mark the
@@ -535,6 +546,7 @@ public final class SampleVoicePool: ObservableObject {
             slots[idx].fadeTask = nil
             slots[idx].player.stop()
             slots[idx].mixer.outputVolume = 0
+            refreshRingingPadKeys()  // clear armed state
             return
         }
 

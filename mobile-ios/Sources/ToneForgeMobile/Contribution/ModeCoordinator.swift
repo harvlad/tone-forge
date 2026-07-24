@@ -353,8 +353,42 @@ public final class ModeCoordinator: ObservableObject {
             break
         }
 
+        // Jam Samples: hardware (Launchpad) pad events arrive on the bus.
+        // When the Jam surface is in Samples mode, map them onto the
+        // song's chops (Launchpad-clip behavior) instead of the synth.
+        // On-screen Samples pads bypass the bus (direct calls), so this
+        // only catches hardware — no double-trigger.
+        if appMode == .jamInKey && app.jamSettings.padMode == .samples {
+            switch event.kind {
+            case .padDown(let row, let col):
+                if let (padIdx, packId) = jamSampleAt(row: row, col: col) {
+                    triggerJamSample(padIdx: padIdx, packId: packId,
+                                     latch: app.jamSettings.sampleLatch)
+                }
+                return
+            case .padUp(let row, let col):
+                if !app.jamSettings.sampleLatch,
+                   let (padIdx, packId) = jamSampleAt(row: row, col: col) {
+                    releaseJamSample(padIdx: padIdx, packId: packId)
+                }
+                return
+            default:
+                break
+            }
+        }
+
         let action = ModeRouter.resolve(event, mode: appMode, layout: layout)
         execute(action, for: event)
+    }
+
+    /// Map a Launchpad grid cell (row/col 1…8) to a Jam Samples chop by
+    /// reading order — top-left pad = first chop. Nil past the chop count.
+    private func jamSampleAt(row: Int, col: Int) -> (padIdx: Int, packId: String)? {
+        guard let dna = app.songDnaPacks.first else { return nil }
+        let pads = dna.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
+        let index = (row - 1) * 8 + (col - 1)
+        guard index >= 0, index < pads.count else { return nil }
+        return (pads[index].padIdx, dna.pack.pack.packId)
     }
 
     private func execute(_ action: AudioAction, for event: ContributionEvent) {
