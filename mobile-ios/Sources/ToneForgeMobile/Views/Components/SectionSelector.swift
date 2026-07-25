@@ -48,6 +48,12 @@ struct SectionSelector: View {
     private func chip(index i: Int, section s: SectionEvent) -> some View {
         let isCurrent = currentIndex == i
         let isNext = nextIndex == i
+        // Suppress the name line when the label is just the position
+        // letter (generic "A"/"B" sections) — otherwise it reads "A / A".
+        let name = s.label
+        let showName = if let name, !name.isEmpty {
+            name.caseInsensitiveCompare(letter(i)) != .orderedSame
+        } else { false }
         return Button {
             Haptics.selectionChanged()
             onSelect(s)
@@ -56,10 +62,12 @@ struct SectionSelector: View {
                 Text(letter(i))
                     .font(style == .prominent ? .title3.weight(.bold) : .headline.weight(.semibold))
                     .foregroundStyle(isCurrent ? TFTheme.textPrimary : TFTheme.textSecondary)
-                Text(s.label ?? "Section \(i + 1)")
-                    .font(TFTheme.sectionLabel)
-                    .foregroundStyle(isCurrent ? TFTheme.textPrimary : TFTheme.textSecondary)
-                    .lineLimit(1)
+                if showName, let name {
+                    Text(name)
+                        .font(TFTheme.sectionLabel)
+                        .foregroundStyle(isCurrent ? TFTheme.textPrimary : TFTheme.textSecondary)
+                        .lineLimit(1)
+                }
             }
             .frame(minWidth: style == .prominent ? 68 : 52)
             .frame(height: TFTheme.sectionHeight)
