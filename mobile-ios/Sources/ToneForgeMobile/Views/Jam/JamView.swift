@@ -32,6 +32,10 @@ struct JamView: View {
     @State private var showSettingsSheet = false
     @State private var showMetronomeSheet = false
     @State private var showChordSheet = false
+    /// Progressive disclosure L3: long-pressing a Samples pad opens the
+    /// deeper instrument-construction workspace (the ex-Contribute
+    /// tools) — reached contextually from Jam, no permanent button.
+    @State private var showInstrumentEditor = false
 
     /// Live performance-FX gesture state (PERFORM_PARITY spec 1). Held
     /// pads engage momentarily; pushed to the engine on every change.
@@ -94,6 +98,9 @@ struct JamView: View {
         }
         .sheet(isPresented: $showChordSheet) {
             ChordDisplaySheet(controller: controller)
+        }
+        .fullScreenCover(isPresented: $showInstrumentEditor) {
+            InstrumentEditorView()
         }
     }
 
@@ -322,6 +329,10 @@ struct JamView: View {
                     // Tap mode plays while held — release on lift. Latch
                     // stops on the next tap, so no release there.
                     if !jamSettings.sampleLatch { coordinator.releaseJamSample(padIdx: padIdx, packId: packId) }
+                },
+                onLongPress: {
+                    Haptics.radialOpen()
+                    showInstrumentEditor = true
                 }
             )
             .onAppear {
@@ -628,6 +639,9 @@ struct JamSamplesGrid: View {
     @ObservedObject var voicePool: SampleVoicePool
     let onTrigger: (Int, String) -> Void
     let onRelease: (Int, String) -> Void
+    /// Long-press on any pad opens the deeper instrument editor
+    /// (progressive disclosure L3). Nil disables it.
+    var onLongPress: (() -> Void)? = nil
 
     @State private var pressed: Set<String> = []
 
@@ -667,7 +681,7 @@ struct JamSamplesGrid: View {
         let isArmed = voicePool.pendingPadKeys.contains(key)
         let state: PadState = isArmed ? .armed
             : (isPlaying ? .looping : (isDown ? .pressed : .idle))
-        return PerformancePad(
+        let tile = PerformancePad(
             title: pad.name,
             family: pad.family,
             icon: Self.familyIcon(pad.family),
@@ -689,6 +703,27 @@ struct JamSamplesGrid: View {
                 }
         )
         .accessibilityLabel("\(isPlaying ? "Stop" : "Play") \(pad.stem) \(pad.name)")
+
+        // Long-press → deeper construction (L3), attached only when the
+        // host wires it. Runs alongside the tap gesture and releases any
+        // ringing chop first so nothing rings under the editor.
+        return Group {
+            if let onLongPress {
+                tile
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.5)
+                            .onEnded { _ in
+                                if pressed.remove(pad.id) != nil {
+                                    onRelease(pad.padIdx, pad.packId)
+                                }
+                                onLongPress()
+                            }
+                    )
+                    .accessibilityHint("Long press to edit the instrument")
+            } else {
+                tile
+            }
+        }
     }
 
     /// Sound-family glyph for the pad tile (top-leading in PerformancePad).
