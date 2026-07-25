@@ -1689,6 +1689,11 @@ public final class AppState: ObservableObject {
             currentStemLocalURLs = localURLs
             songDnaPacks = SongDnaPack.synthesize(from: bundle)
                 .filter { localURLs[$0.stem] != nil }
+            // Decode the chop buffers now, on song load — long before the
+            // user reaches Jam Samples — so the first pad tap isn't a
+            // silent padNotFound while an on-demand decode is still in
+            // flight (the "have to tap twice" bug).
+            preloadAllSongDnaPacks()
             // Surface a "no audio" state when the song expected stems but
             // none downloaded (backend/R2 unavailable — e.g. jamn.app
             // analyses with no stored stems). The bundled demo is offline

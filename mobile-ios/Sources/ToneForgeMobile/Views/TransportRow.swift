@@ -107,6 +107,9 @@ struct TransportRow: View {
         return Button {
             Self.noAnim {
                 appState.stopAllSamplePads()
+                // Pause the clock too — a sample jam rolls it without
+                // `isPlaying`, so a plain pause wouldn't stop it.
+                appState.audioEngine.clock.pause()
                 if appState.isPlaying { appState.togglePlayPause() }
                 appState.seek(to: 0)
             }

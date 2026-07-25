@@ -626,6 +626,15 @@ public final class AudioEngine: ObservableObject {
         guard let comp = masterComp else { return }
         let p = params.clamped()
 
+        // Neutral (amountDb 0) must be TRANSPARENT, but the Dynamics
+        // Processor maps amountDb → HeadRoom, and HeadRoom 0 means hard
+        // limiting right at the -20 dB threshold — it squashed the whole
+        // mix (quiet master + audible ducking when sample voices stacked).
+        // Bypass the AU entirely when neutral so the master is clean;
+        // only engage it for a non-neutral preset.
+        comp.bypass = p.isNeutral
+        guard !p.isNeutral else { return }
+
         // Get the underlying AudioUnit
         let au = comp.audioUnit
 

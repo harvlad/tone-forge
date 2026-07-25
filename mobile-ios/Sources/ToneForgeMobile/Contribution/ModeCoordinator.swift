@@ -150,16 +150,29 @@ public final class ModeCoordinator: ObservableObject {
     public func triggerJamSample(padIdx: Int, packId: String, latch: Bool) {
         isExecuting = true
         defer { isExecuting = false }
+        // Session feel: launching a clip while stopped rolls the CLOCK
+        // (so clips quantize + loop in sync with each other) but NOT the
+        // song stems — a synced sample jam without the song. The song is
+        // started independently by the transport play button, which
+        // joins the stems onto the already-rolling clock.
+        let wasStopped = app.audioEngine.clock.state != .playing
+        if latch && wasStopped {
+            app.audioEngine.clock.play()
+        }
         let s = app.sampleScheduler
-        // Launchpad clip feel: launches wait for the next downbeat so
-        // multiple pads start together. Latch = tap on/off (loops);
-        // Tap = plays while held. Save/restore the scheduler's shared
-        // hold/quantize around the SYNCHRONOUS trigger so Contribute's
-        // settings are untouched (trigger schedules its launch inline).
         let savedHold = s.holdMode, savedQ = s.quantize
         s.holdMode = latch ? .toggle : .hold
-        s.quantize = .bar
-        _ = s.trigger(padIdx: padIdx, packId: packId)
+        if wasStopped {
+            // First launch (transport just started or a plain tap):
+            // fire immediately — this clip IS beat 1, no bar wait. Use
+            // triggerRaw to bypass the pad's bar-quantize for this hit.
+            _ = s.triggerRaw(padIdx: padIdx, packId: packId)
+        } else {
+            // Clock already rolling: quantize to the next bar so this
+            // clip locks in with the ones already playing.
+            s.quantize = .bar
+            _ = s.trigger(padIdx: padIdx, packId: packId)
+        }
         s.holdMode = savedHold
         s.quantize = savedQ
     }
