@@ -244,7 +244,7 @@ public final class AppState: ObservableObject {
     /// `modeCoordinator.start()`) so the didSet apply-path runs
     /// against a live coordinator; snapshot tests never boot, so
     /// constructing an AppState stays side-effect free.
-    @Published public var selectedTab: AppTab = .contribute {
+    @Published public var selectedTab: AppTab = .perform {
         didSet {
             if selectedTab.isPerformance { lastPerformanceTab = selectedTab }
             sampleSettings.appTabRaw = selectedTab.rawValue
@@ -255,7 +255,7 @@ public final class AppState: ObservableObject {
     /// Last performance tab the user was on — the deep-link target
     /// when the Library activates a song while Mixer or Library is
     /// selected.
-    public private(set) var lastPerformanceTab: AppTab = .contribute
+    public private(set) var lastPerformanceTab: AppTab = .perform
 
     /// Jump to a performance tab (Library song activation). Keeps the
     /// current tab when it already hosts a playing surface.
@@ -795,7 +795,7 @@ public final class AppState: ObservableObject {
             selectedTab = .jam
         } else {
             if firstRun { UserDefaults.standard.set(true, forKey: firstRunKey) }
-            let restoredTab = AppTab(rawValue: sampleSettings.appTabRaw) ?? .contribute
+            let restoredTab = AppTab(rawValue: sampleSettings.appTabRaw) ?? .perform
             // No song auto-reloads at launch, so a restored Learn/Jam
             // would land on an empty surface. Fall back to Library so the
             // user can pick a song first.

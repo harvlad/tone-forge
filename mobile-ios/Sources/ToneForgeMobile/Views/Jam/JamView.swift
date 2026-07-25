@@ -746,8 +746,9 @@ struct JamSamplesGrid: View {
 /// Momentary resonant-filter surface (PERFORM_PARITY spec 1). Touch to
 /// engage; X = cutoff, Y = resonance (up = more). A dot tracks the
 /// finger while held. Coordinates are normalized 0..1 with Y inverted
-/// so dragging upward raises resonance.
-private struct FilterXYPad: View {
+/// so dragging upward raises resonance. Shared by Jam's (hidden) FX row
+/// and the Perform FX bar.
+struct FilterXYPad: View {
     let engaged: Bool
     let x: Double
     let y: Double

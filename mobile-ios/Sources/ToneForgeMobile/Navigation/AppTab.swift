@@ -14,26 +14,34 @@ import Foundation
 import ToneForgeEngine
 
 /// The five top-level tabs.
+///
+/// `perform` keeps the raw value "contribute" so persisted
+/// `appTabRaw` values (and the legacy PlaySurface migration) still
+/// resolve after Contribute was reworked into the lean Perform
+/// surface (its construction tools live under Jam now — see
+/// InstrumentEditorView).
 public enum AppTab: String, CaseIterable, Hashable {
-    case learn, jam, contribute, mixer, library
+    case learn, jam
+    case perform = "contribute"
+    case mixer, library
 
     var title: String {
         switch self {
-        case .learn:      return "Learn"
-        case .jam:        return "Jam"
-        case .contribute: return "Contribute"
-        case .mixer:      return "Mixer"
-        case .library:    return "Library"
+        case .learn:   return "Learn"
+        case .jam:     return "Jam"
+        case .perform: return "Perform"
+        case .mixer:   return "Mixer"
+        case .library: return "Library"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .learn:      return "book.fill"
-        case .jam:        return "pianokeys"
-        case .contribute: return "square.grid.3x3.fill"
-        case .mixer:      return "slider.horizontal.3"
-        case .library:    return "music.note.list"
+        case .learn:   return "book.fill"
+        case .jam:     return "pianokeys"
+        case .perform: return "waveform"
+        case .mixer:   return "slider.horizontal.3"
+        case .library: return "music.note.list"
         }
     }
 
@@ -41,8 +49,8 @@ public enum AppTab: String, CaseIterable, Hashable {
     /// Library activates a song while Mixer/Library is selected.
     var isPerformance: Bool {
         switch self {
-        case .learn, .jam, .contribute: return true
-        case .mixer, .library:          return false
+        case .learn, .jam, .perform: return true
+        case .mixer, .library:       return false
         }
     }
 
@@ -52,28 +60,29 @@ public enum AppTab: String, CaseIterable, Hashable {
     /// instead of restoring straight into an empty Learn/Jam surface.
     var requiresSong: Bool {
         switch self {
-        case .learn, .jam:                  return true
-        case .contribute, .mixer, .library: return false
+        case .learn, .jam:               return true
+        case .perform, .mixer, .library: return false
         }
     }
 
     /// One-time migration from the legacy D-019 PlaySurface raw value
     /// ("learn" / "jam" / "contribute" / "chordPads"). Chord Pads
-    /// folded into Jam (D-022); unknowns fall back to Contribute.
+    /// folded into Jam (D-022); unknowns fall back to Perform (the
+    /// ex-Contribute raw value).
     public static func migratedRaw(fromLegacyPlaySurface raw: String?) -> String {
         switch raw {
         case "learn", "jam", "contribute": return raw ?? ""
         case "chordPads":                  return AppTab.jam.rawValue
-        default:                           return AppTab.contribute.rawValue
+        default:                           return AppTab.perform.rawValue
         }
     }
 }
 
 /// Pure tab → engine-mode policy (D-022). Learn and Jam pin their
-/// modes; Contribute restores the last sample/hybrid grid the user
-/// was in; Mixer and Library are passive surfaces that leave the
-/// engine mode untouched (so audio keeps behaving while the user
-/// mixes or browses).
+/// modes; Perform inherits Jam's instrument (.jamInKey) so the surface
+/// built in Jam plays identically live; Mixer and Library are passive
+/// surfaces that leave the engine mode untouched (so audio keeps
+/// behaving while the user mixes or browses).
 public enum TabModePolicy {
     public static func mode(
         for tab: AppTab,
@@ -82,12 +91,11 @@ public enum TabModePolicy {
         switch tab {
         case .learn:
             return .learnSong
-        case .jam:
+        case .jam, .perform:
+            // Perform reuses the Jam controllers + instrument state.
+            // The deeper .sample construction grid is entered only
+            // inside the Instrument Editor (see InstrumentEditorView).
             return .jamInKey
-        case .contribute:
-            // Instrument (.hybrid) mode retired — Contribute always
-            // uses .sample. Enum/router kept dormant.
-            return .sample
         case .mixer, .library:
             return nil
         }

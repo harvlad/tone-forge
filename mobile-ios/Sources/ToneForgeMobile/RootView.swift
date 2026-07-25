@@ -41,12 +41,12 @@ public struct RootView: View {
                 }
                 .tag(AppTab.jam)
 
-            ContributeTabView()
+            PerformTabView()
                 .tabItem {
-                    Label(AppTab.contribute.title,
-                          systemImage: AppTab.contribute.systemImage)
+                    Label(AppTab.perform.title,
+                          systemImage: AppTab.perform.systemImage)
                 }
-                .tag(AppTab.contribute)
+                .tag(AppTab.perform)
 
             MixerTabView()
                 .tabItem {
