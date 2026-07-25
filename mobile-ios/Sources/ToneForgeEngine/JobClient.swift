@@ -2,7 +2,7 @@
 //
 // Client for the async analysis job API (tone_forge_api.py):
 //
-//   POST {base}/api/analyze-job        -> {"job_id": "..."}   (returns fast)
+//   POST {base}/api/analyze-upload     -> {"job_id": "..."}   (returns fast)
 //   GET  {base}/api/job/{id}/events    -> reconnectable SSE, live percent
 //   GET  {base}/api/job/{id}/result    -> long-poll terminal result
 //
@@ -81,7 +81,13 @@ public struct BackendJobClient: JobSubmitting {
         extraFields: [(name: String, value: String)]
     ) async throws -> String {
         let boundary = "toneforge-\(UUID().uuidString)"
-        var request = URLRequest(url: baseURL.appendingPathComponent("api/analyze-job"))
+        // Engine-job path (/api/analyze-upload), NOT the legacy
+        // /api/analyze-job: the production backend has no GPU — jobs
+        // must go to the remote GPU engine worker, not the VPS CPU
+        // (which crawls/stalls mid-pipeline on real songs). Response
+        // shape is the same {"job_id": ...}; /api/job/{id}/events is
+        // shared by both job kinds.
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/analyze-upload"))
         request.httpMethod = "POST"
         request.timeoutInterval = uploadTimeout
         request.setValue(
