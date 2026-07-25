@@ -37,19 +37,29 @@ struct JamView: View {
     /// pads engage momentarily; pushed to the engine on every change.
     @State private var perfFX = PerfFXState.idle
 
+    /// Progressive disclosure: the DJ FX row is hidden until the
+    /// performer reveals it from the harmonic bar. Jam is for building —
+    /// live FX stay one tap away, not always on screen (Perform makes
+    /// them primary).
+    @State private var showFX = false
+
 
     var body: some View {
-        VStack(spacing: 8) {
-            keyHeader
+        VStack(spacing: TFTheme.Spacing.sm) {
+            sectionStrip
+
+            keyBar
+
+            ChordContext(
+                current: controller.currentChordSymbol,
+                next: controller.suggestedChords.map(\.symbol),
+                onSelectNext: { controller.trigger(symbol: $0) }
+            )
 
             padModeRow
 
             if jamSettings.padMode == .pads {
                 DegreePadRow(controller: controller)
-            }
-
-            CurrentChordPanel(controller: controller) {
-                showChordSheet = true
             }
 
             // Chord follow countdown strip (shown when follow mode is on)
@@ -58,19 +68,26 @@ struct JamView: View {
             }
 
             padGrid
-                .padding(.horizontal, 12)
+                .padding(.horizontal, TFTheme.Spacing.md)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            fxRow
+            if showFX {
+                fxRow
+            }
 
             controlsRow
         }
         .frame(maxWidth: .infinity)
+        .onAppear { Haptics.prepare() }
         .sheet(isPresented: $showKeySheet) {
             ScaleWheelSheet(controller: controller, jamSettings: jamSettings)
         }
         .sheet(isPresented: $showSettingsSheet) {
-            JamSettingsSheet(controller: controller, jamSettings: jamSettings)
+            JamSettingsSheet(
+                controller: controller,
+                jamSettings: jamSettings,
+                chordPadController: chordPadController
+            )
         }
         .sheet(isPresented: $showMetronomeSheet) {
             JamMetronomeSheet(controller: controller, jamSettings: jamSettings)
@@ -80,10 +97,36 @@ struct JamView: View {
         }
     }
 
-    // MARK: - Key header
+    // MARK: - Section strip
 
-    private var keyHeader: some View {
-        HStack(spacing: 8) {
+    /// Shared A/B/C… section selector (compact). Seeks the transport to
+    /// a section's start on tap. Hidden when the song has no sections.
+    @ViewBuilder
+    private var sectionStrip: some View {
+        if let sections = appState.currentBundle?.timeline.sections,
+           !sections.isEmpty {
+            SectionSelector(
+                sections: sections,
+                currentIndex: currentSectionIndex(sections),
+                style: .compact,
+                onSelect: { appState.seek(to: $0.start) }
+            )
+        }
+    }
+
+    private func currentSectionIndex(_ sections: [SectionEvent]) -> Int? {
+        let t = appState.songSeconds
+        return sections.firstIndex { $0.start <= t && t < $0.end }
+    }
+
+    // MARK: - Key bar
+
+    /// Compact harmonic-context toolbar above the ChordContext strip:
+    /// editable jam key, the minor scale variant (when relevant), and
+    /// the two secondary affordances — chord detail and the FX reveal
+    /// (progressive disclosure of the DJ FX row).
+    private var keyBar: some View {
+        HStack(spacing: TFTheme.Spacing.sm) {
             Button {
                 showKeySheet = true
             } label: {
@@ -99,8 +142,6 @@ struct JamView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Edit key")
-
-            Spacer()
 
             // Minor-family scale variant. Hidden for major/modal keys
             // where the variant has no effect.
@@ -130,8 +171,33 @@ struct JamView: View {
                     "Scale: \(jamSettings.scaleVariant.displayName)"
                 )
             }
+
+            Spacer()
+
+            Button {
+                showChordSheet = true
+            } label: {
+                Image(systemName: "music.note.list")
+                    .font(.callout)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .frame(width: TFTheme.minTouchTarget, height: 32)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Chord detail")
+
+            Button {
+                Haptics.selectionChanged()
+                showFX.toggle()
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.callout)
+                    .foregroundStyle(showFX ? TFTheme.accent : TFTheme.textSecondary)
+                    .frame(width: TFTheme.minTouchTarget, height: 32)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(showFX ? "Hide performance effects" : "Show performance effects")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, TFTheme.Spacing.md)
     }
 
     private var isMinorFamilyKey: Bool {
@@ -355,7 +421,6 @@ struct JamView: View {
                 }
             }
             Spacer(minLength: 0)
-            octaveStepper
             Button {
                 showSettingsSheet = true
             } label: {
@@ -365,7 +430,7 @@ struct JamView: View {
             }
             .accessibilityLabel("Jam settings")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, TFTheme.Spacing.md)
     }
 
     private var quantizeChip: some View {
@@ -472,52 +537,6 @@ struct JamView: View {
         }
     }
 
-    /// The chord grid keeps its own octave shift (ChordPadController,
-    /// unpersisted), the note pads use the persisted jam shift —
-    /// matching the two former surfaces.
-    private var currentOctaveShift: Int {
-        jamSettings.padMode == .chords
-            ? chordPadController.octaveShift
-            : jamSettings.octaveShift
-    }
-
-    private func setOctaveShift(_ shift: Int) {
-        switch jamSettings.padMode {
-        case .pads:
-            controller.setOctaveShift(shift)
-        case .chords:
-            chordPadController.setOctaveShift(shift)
-        case .samples:
-            break  // Samples are fixed song chops — no octave transpose.
-        }
-    }
-
-    private var octaveStepper: some View {
-        HStack(spacing: 6) {
-            Button {
-                setOctaveShift(currentOctaveShift - 1)
-            } label: {
-                Image(systemName: "minus")
-                    .font(.caption.weight(.bold))
-                    .frame(width: 22, height: 22)
-            }
-            .disabled(currentOctaveShift <= -3)
-            Text("Oct \(currentOctaveShift >= 0 ? "+" : "")\(currentOctaveShift)")
-                .font(TFTheme.chipFont)
-                .foregroundStyle(TFTheme.textPrimary)
-                .frame(minWidth: 48)
-            Button {
-                setOctaveShift(currentOctaveShift + 1)
-            } label: {
-                Image(systemName: "plus")
-                    .font(.caption.weight(.bold))
-                    .frame(width: 22, height: 22)
-            }
-            .disabled(currentOctaveShift >= 3)
-        }
-        .foregroundStyle(TFTheme.textSecondary)
-        .accessibilityLabel("Octave shift \(currentOctaveShift)")
-    }
 }
 
 // MARK: - Degree pads
@@ -640,49 +659,28 @@ struct JamSamplesGrid: View {
     }
 
     private func padTile(_ pad: AppState.JamSamplePad) -> some View {
-        let tint = TFTheme.familyTint(pad.family)
         let isDown = pressed.contains(pad.id)
         let key = SamplePadKey(packId: pad.packId, padIdx: pad.padIdx)
         // Playing = ringing (looping in Latch / held in Tap); Armed =
         // queued for the next downbeat.
         let isPlaying = voicePool.ringingPadKeys.contains(key)
         let isArmed = voicePool.pendingPadKeys.contains(key)
-        let active = isDown || isPlaying
-        let borderColor = isArmed ? Color.orange : (active ? tint : TFTheme.stroke)
-        return ZStack(alignment: .topTrailing) {
-            VStack(spacing: 2) {
-                Text(pad.stem.capitalized)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(TFTheme.textSecondary)
-                Text(pad.name)
-                    .font(TFTheme.padLabel)
-                    .foregroundStyle(TFTheme.textPrimary)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if isArmed {
-                Image(systemName: "hourglass")
-                    .font(.caption2).foregroundStyle(Color.orange).padding(5)
-            } else if isPlaying {
-                Image(systemName: "repeat")
-                    .font(.caption2).foregroundStyle(TFTheme.textPrimary).padding(5)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 72)
-        .padding(6)
-        .background(tint.opacity(active ? 0.95 : (isArmed ? 0.6 : 0.4)),
-                    in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(borderColor, lineWidth: (isPlaying || isArmed) ? 2 : 1)
+        let state: PadState = isArmed ? .armed
+            : (isPlaying ? .looping : (isDown ? .pressed : .idle))
+        return PerformancePad(
+            title: pad.name,
+            family: pad.family,
+            icon: Self.familyIcon(pad.family),
+            state: state
         )
-        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .frame(height: 72)
+        .contentShape(RoundedRectangle(cornerRadius: TFTheme.Radius.large))
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
                     guard !pressed.contains(pad.id) else { return }
                     pressed.insert(pad.id)
+                    Haptics.padTrigger()
                     onTrigger(pad.padIdx, pad.packId)
                 }
                 .onEnded { _ in
@@ -691,6 +689,20 @@ struct JamSamplesGrid: View {
                 }
         )
         .accessibilityLabel("\(isPlaying ? "Stop" : "Play") \(pad.stem) \(pad.name)")
+    }
+
+    /// Sound-family glyph for the pad tile (top-leading in PerformancePad).
+    static func familyIcon(_ family: SampleFamily) -> String {
+        switch family {
+        case .pads:       return "waveform.path"
+        case .percussion: return "metronome"
+        case .textures:   return "water.waves"
+        case .stabs:      return "pianokeys"
+        case .bass:       return "speaker.wave.2"
+        case .fx:         return "sparkles"
+        case .vocals:     return "mic"
+        case .mixed:      return "music.note"
+        }
     }
 }
 
@@ -744,55 +756,6 @@ private struct FilterXYPad: View {
     }
 }
 
-// MARK: - Current chord panel
-
-///"Current Chord: Dm  —  Suggested: [C] [Bb]" strip from the mockup.
-/// Suggested chips are tappable (they voice on the PadSynth); the
-/// panel itself opens the chord-progress sheet.
-struct CurrentChordPanel: View {
-    @ObservedObject var controller: JamInKeyController
-    var onOpenDetail: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Button(action: onOpenDetail) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Current Chord")
-                        .font(.caption2)
-                        .foregroundStyle(TFTheme.textSecondary)
-                    Text(controller.currentChordSymbol ?? "—")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(TFTheme.textPrimary)
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(
-                "Current chord \(controller.currentChordSymbol ?? "none"), show details"
-            )
-
-            Spacer()
-
-            let suggested = controller.suggestedChords
-            if !suggested.isEmpty {
-                Text("Suggested")
-                    .font(.caption2)
-                    .foregroundStyle(TFTheme.textSecondary)
-                ForEach(suggested, id: \.degree) { chord in
-                    Button {
-                        controller.trigger(symbol: chord.symbol)
-                    } label: {
-                        Text(chord.symbol)
-                            .font(TFTheme.chipFont)
-                            .tfChip(active: false)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Play \(chord.symbol)")
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .tfCard()
-        .padding(.horizontal, 12)
-    }
-}
+// The former CurrentChordPanel is replaced by the shared ChordContext
+// strip (Views/Components/ChordContext.swift), wired to the same
+// controller.currentChordSymbol + suggestedChords.

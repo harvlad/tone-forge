@@ -15,7 +15,26 @@ import ToneForgeEngine
 struct JamSettingsSheet: View {
     @ObservedObject var controller: JamInKeyController
     @ObservedObject var jamSettings: JamSettingsStore
+    /// Chords mode transposes the chord grid, which keeps its own
+    /// (unpersisted) octave. The octave stepper here routes to the
+    /// surface the performer is currently on, so it stays reachable
+    /// after moving out of the Jam toolbar.
+    @ObservedObject var chordPadController: ChordPadController
     @Environment(\.dismiss) private var dismiss
+
+    private var octaveShift: Int {
+        jamSettings.padMode == .chords
+            ? chordPadController.octaveShift
+            : jamSettings.octaveShift
+    }
+
+    private func setOctaveShift(_ shift: Int) {
+        switch jamSettings.padMode {
+        case .pads:    controller.setOctaveShift(shift)
+        case .chords:  chordPadController.setOctaveShift(shift)
+        case .samples: break  // fixed song chops — no transpose
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -48,13 +67,9 @@ struct JamSettingsSheet: View {
                         )
                     )
                     Stepper(
-                        "Octave \(jamSettings.octaveShift >= 0 ? "+" : "")\(jamSettings.octaveShift)",
-                        onIncrement: {
-                            controller.setOctaveShift(jamSettings.octaveShift + 1)
-                        },
-                        onDecrement: {
-                            controller.setOctaveShift(jamSettings.octaveShift - 1)
-                        }
+                        "Octave \(octaveShift >= 0 ? "+" : "")\(octaveShift)",
+                        onIncrement: { setOctaveShift(octaveShift + 1) },
+                        onDecrement: { setOctaveShift(octaveShift - 1) }
                     )
                 }
             }
