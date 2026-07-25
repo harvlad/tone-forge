@@ -141,8 +141,11 @@ struct ContributeSurface: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             // 4x4 grid for both Instrument and Sample modes
-            SamplePadGrid4x4(coordinator: coordinator)
-                .padding(.horizontal, 12)
+            SamplePadGrid4x4(
+                coordinator: coordinator,
+                onBeatCapture: { showBeatCapture = true }
+            )
+            .padding(.horizontal, 12)
         }
     }
 
