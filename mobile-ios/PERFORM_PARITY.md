@@ -185,3 +185,61 @@ First run = empty library; deep analyze = 2–4 min. Four fixes:
 - `BundleStore.swift`: local-bundle load path
 - `ImportCoordinator.swift`: Quick→Deep progressive states
 - `RootView.swift`: first-run route to Perform
+
+---
+
+## Spec 4 — Jam Samples (Ableton Session-view clips) — SHIPPED
+
+A third Jam pad-mode, `Samples`, that turns the loaded song's own chops
+into launchable clips — "remix your song" on the grid + Launchpad.
+
+### Grid
+- **All stems in one grid.** `AppState.jamSampleFlatPads` flattens every
+  Song DNA pack's chops (pack order, then padIdx) into one ordering the
+  on-screen grid, the Launchpad mapping, and the LED mirror all share —
+  so on-screen pad N == hardware pad N == LED N.
+- Each pad is labeled **stem + chop** (Drums · Beat 1, Bass 1, C, Am…)
+  and tinted by stem family.
+- Empty state when the song has no chops.
+
+### Clip behavior (Session-view)
+- **Tap / Latch** toggle (persisted). Latch = tap on / tap off (loops);
+  Tap = plays while held.
+- **Launch quantization.** Clips wait for the next bar so multiple pads
+  start together on the downbeat — driven by the ONE transport clock, so
+  clips sync to each other AND to the song when it plays. Section/phrase
+  chops loop (`loopPointSec = 0`); chord chops are one-shot stabs.
+- **Sample jam ≠ song.** Launching a clip while stopped rolls the CLOCK
+  (for sync + loop) but NOT the song stems — a synced sample jam with no
+  song. The song starts independently via the transport play button; its
+  stems join the already-rolling clock, aligned. Stop halts the clock.
+- **First launch is immediate** — the transport starts at that launch, so
+  the first clip is beat 1 (no bar wait); later launches quantize.
+- **Armed / playing indicators.** Pads show an hourglass + orange border
+  while queued for the downbeat, flipping to ↻ + bright fill when playing
+  (`SampleVoicePool.pendingPadKeys` / `ringingPadKeys`).
+
+### Launchpad
+- Hardware pads trigger the clips (`ModeCoordinator` maps bus pad events
+  onto the flat chop list when the Jam surface is in Samples mode).
+- LEDs mirror clip state: dim = idle, amber = armed, bright = playing.
+
+### Scheduler policy
+- Launch quantization now honors the grid for one-shots too (was forced
+  immediate) when a quantize grid is set and the transport runs — applies
+  to Jam Samples, Contribute pads, and sequence-pad launches. Quantize
+  `.off` keeps the instant drum-machine feel.
+- Buffers decode on song load (not lazily on first tap) so the first hit
+  isn't a silent `padNotFound` racing an in-flight decode.
+
+### Related fixes
+- Master compressor bypassed when neutral (it was hard-limiting at
+  -20 dB, squashing the whole mix — quiet master + samples ducking).
+- Demo v2: 16 s / 8 bars with drums/bass/other loop packs so Samples
+  shows real loops; chord chops feed the Chords tab.
+- Chords tab marks the song's actual progression (green dot) so the
+  diatonic palette reflects the specific song, not just the key.
+
+### Deferred
+- Sample-jam UI when no song (playhead/chord readout stay parked).
+- Per-clip length / warp; stutter/beat-repeat perf FX (spec 1 v1.1).
