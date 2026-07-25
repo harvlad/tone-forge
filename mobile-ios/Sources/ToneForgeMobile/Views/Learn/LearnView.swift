@@ -130,7 +130,11 @@ struct LearnView: View {
                 )
             }
 
+            // The chord cards grow to fill the surface so the music
+            // (NOW/NEXT + fretboards) dominates instead of leaving a
+            // dead gap where the old mastery card sat.
             chordCards
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, TFTheme.Spacing.md)
 
             practiceButton
@@ -139,10 +143,9 @@ struct LearnView: View {
             secondaryControls
                 .padding(.horizontal, TFTheme.Spacing.md)
 
-            Spacer(minLength: 0)
-
             compactStats
                 .padding(.horizontal, TFTheme.Spacing.md)
+                .padding(.top, TFTheme.Spacing.xs)
                 .padding(.bottom, TFTheme.Spacing.xs)
         }
     }

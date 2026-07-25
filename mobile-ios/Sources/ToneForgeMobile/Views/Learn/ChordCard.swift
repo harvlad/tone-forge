@@ -42,7 +42,8 @@ struct ChordCard: View {
 
                 if let shape = GuitarVoicing.shape(symbol: symbol) {
                     FretboardDiagram(shape: shape)
-                        .frame(height: 96)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(minHeight: 96)
                 } else {
                     Spacer(minLength: 0)
                 }
@@ -53,10 +54,10 @@ struct ChordCard: View {
                 Spacer(minLength: 0)
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 10)
         .padding(.horizontal, 8)
-        .frame(height: 160)
+        .frame(minHeight: 160)
         .tfCard()
         .overlay(
             RoundedRectangle(cornerRadius: 14)
