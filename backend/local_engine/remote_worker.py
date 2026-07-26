@@ -219,6 +219,44 @@ class RemoteWorker:
                 tmp.write(chunk)
             return Path(tmp.name)
 
+    @staticmethod
+    def local_source_if_valid(job: dict) -> Optional[Path]:
+        """Same-machine shortcut: when the uploader (the desktop app on
+        THIS Mac) supplied a local path + sha256, verify the hash and
+        use the file directly instead of pulling the upload back down
+        from the backend. The hash check is the authorization: only a
+        submitter who already had the file's exact bytes can name it.
+        Any mismatch falls back to the normal download."""
+        path_str = job.get("source_local_path") or ""
+        want_hash = (job.get("source_sha256") or "").lower()
+        if not path_str or len(want_hash) != 64:
+            return None
+        path = Path(path_str)
+        if not path.is_file():
+            return None
+        import hashlib
+        h = hashlib.sha256()
+        try:
+            with path.open("rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError:
+            return None
+        if h.hexdigest().lower() != want_hash:
+            logger.warning("local source hash mismatch for %s — downloading", path)
+            return None
+        logger.info("using local source %s (hash verified) — skipping download", path)
+        # Copy to a temp file so the shared cleanup path (unlink in
+        # run_job's finally) never deletes the user's original.
+        suffix = path.suffix or ".wav"
+        with tempfile.NamedTemporaryFile(
+            suffix=suffix, prefix="toneforge_local_", delete=False
+        ) as tmp:
+            with path.open("rb") as src:
+                import shutil as _shutil
+                _shutil.copyfileobj(src, tmp)
+            return Path(tmp.name)
+
     def upload_stems(self, job_id: str, stems_paths: dict) -> None:
         """Push each separated stem file to the backend."""
         roles = list(stems_paths.keys())
@@ -293,7 +331,8 @@ class RemoteWorker:
         source: Optional[Path] = None
         try:
             self.post_progress(job_id, 3, "Starting analysis…")
-            source = self.download_source(job_id, filename)
+            source = self.local_source_if_valid(job) \
+                or self.download_source(job_id, filename)
 
             queue: multiprocessing.Queue = multiprocessing.Queue()
             process = multiprocessing.Process(

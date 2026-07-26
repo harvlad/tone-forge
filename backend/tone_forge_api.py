@@ -2185,6 +2185,11 @@ async def analyze_upload_endpoint(
     license_url: str = Form(""),
     source_url: str = Form(""),
     attribution: str = Form(""),
+    # Same-machine shortcut (desktop app running on the worker's Mac):
+    # local path + sha256 of the source so the worker can hash-verify
+    # and skip re-downloading a file it can already read.
+    source_local_path: str = Form(""),
+    source_sha256: str = Form(""),
 ) -> JSONResponse:
     """Queue an uploaded song for deep analysis on a remote GPU engine.
 
@@ -2219,6 +2224,10 @@ async def analyze_upload_endpoint(
             "extract_midi": extract_midi.lower() not in ("false", "0", "no"),
             "source_name": file.filename or "Uploaded file",
             "stems": {},
+            # Same-machine worker shortcut (empty strings dropped).
+            **({"source_local_path": source_local_path}
+               if source_local_path else {}),
+            **({"source_sha256": source_sha256} if source_sha256 else {}),
         },
     )
     upload_path = _UPLOADS_DIR / f"{job.id}{suffix}"
@@ -2396,6 +2405,12 @@ async def engine_claim_endpoint(request: Request) -> JSONResponse:
                 "filename": job.filename,
                 "extract_midi": bool(payload.get("extract_midi", True)),
                 "source_name": payload.get("source_name") or job.filename,
+                # Same-machine shortcut (desktop app + worker on one
+                # Mac): if the uploader supplied a local path + content
+                # hash, the worker can hash-verify and skip pulling the
+                # file back down from this server.
+                "source_local_path": payload.get("source_local_path"),
+                "source_sha256": payload.get("source_sha256"),
             })
         if time.time() >= deadline:
             # 204 must carry no body. JSONResponse({}) serialised a

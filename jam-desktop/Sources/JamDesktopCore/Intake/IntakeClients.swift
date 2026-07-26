@@ -13,6 +13,7 @@
 //   data: {"type":"error","message":"…"}
 // and maps onto ToneForgeEngine.AnalyzeEvent.
 
+import CryptoKit
 import Foundation
 import ToneForgeEngine
 
@@ -97,6 +98,18 @@ public struct UploadClient: UploadSubmitting {
         ("extract_midi", "true"),
     ]
 
+    /// Streaming sha256 of a file (1 MB chunks — audio files are big).
+    /// Nil on read failure; the upload then simply omits the shortcut.
+    static func sha256Hex(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     private let session: URLSession
 
     public init(session: URLSession = .shared) {
@@ -107,12 +120,22 @@ public struct UploadClient: UploadSubmitting {
         baseURL: URL, fileURL: URL, filename: String
     ) async throws -> UploadStart {
         let boundary = "tfjam-\(UUID().uuidString)"
+        // Same-machine shortcut: this Mac usually also runs the GPU
+        // worker, so send the file's local path + sha256 with the
+        // upload. The worker hash-verifies and skips pulling the file
+        // back down from the server (upload still happens — the server
+        // copy backs retention + non-local workers).
+        var fields = Self.formFields
+        if let digest = Self.sha256Hex(of: fileURL) {
+            fields.append(("source_local_path", fileURL.path))
+            fields.append(("source_sha256", digest))
+        }
         // Streamed body file (audio uploads can be large).
         let bodyFile = try AnalyzeClient.writeMultipartBodyFile(
             fileURL: fileURL,
             filename: filename,
             contentType: "application/octet-stream",
-            fields: Self.formFields,
+            fields: fields,
             boundary: boundary
         )
         defer { try? FileManager.default.removeItem(at: bodyFile) }
