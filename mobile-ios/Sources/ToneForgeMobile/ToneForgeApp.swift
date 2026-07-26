@@ -1648,6 +1648,17 @@ public final class AppState: ObservableObject {
         await downloadAndLoad(bundle: bundle)
     }
 
+    /// Re-attempt the stem download for the loaded song ("Audio
+    /// unavailable — tap to retry"). Transient failures (LTE drop,
+    /// app backgrounded mid-download) shouldn't strand a song; already
+    /// -cached stems are skipped by BundleStore.
+    public func retryStemDownload() {
+        guard let bundle = currentBundle, !isDownloading else { return }
+        stemsUnavailable = false
+        loadingError = nil
+        Task { await downloadAndLoad(bundle: bundle) }
+    }
+
     private func downloadAndLoad(bundle: SongBundle) async {
         isDownloading = true
         downloadExpectedStems = bundle.stems.count

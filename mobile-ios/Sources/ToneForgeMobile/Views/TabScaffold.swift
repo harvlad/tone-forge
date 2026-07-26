@@ -48,6 +48,7 @@ struct TabScaffold<Content: View, Accessory: View>: View {
                     creditLine: Self.creditLine(for: appState.currentBundle?.meta),
                     creditURL: Self.creditURL(for: appState.currentBundle?.meta),
                     stemsUnavailable: appState.stemsUnavailable,
+                    onRetryAudio: { appState.retryStemDownload() },
                     accessory: accessory
                 )
             }

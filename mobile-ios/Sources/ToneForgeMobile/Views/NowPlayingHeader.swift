@@ -34,6 +34,10 @@ struct NowPlayingHeader<Accessory: View>: View {
     /// When true, the song's stems couldn't be downloaded — show a
     /// "no audio" note so silence isn't a mystery.
     var stemsUnavailable: Bool = false
+    /// Tapping the "Audio unavailable" note retries the stem download
+    /// (transient network failures shouldn't strand a song). Nil makes
+    /// the note display-only.
+    var onRetryAudio: (() -> Void)? = nil
     /// Optional accessory view (e.g., pack picker) displayed before
     /// the settings button.
     @ViewBuilder var accessory: () -> Accessory
@@ -59,11 +63,22 @@ struct NowPlayingHeader<Accessory: View>: View {
                     .lineLimit(1)
 
                 if stemsUnavailable {
-                    Label("Audio unavailable", systemImage: "exclamationmark.triangle.fill")
+                    Button {
+                        onRetryAudio?()
+                    } label: {
+                        Label(
+                            onRetryAudio == nil
+                                ? "Audio unavailable"
+                                : "Audio unavailable — tap to retry",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
                         .font(.caption2)
                         .foregroundStyle(.orange)
                         .lineLimit(1)
-                        .accessibilityIdentifier("nowplaying.noaudio")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(onRetryAudio == nil)
+                    .accessibilityIdentifier("nowplaying.noaudio")
                 }
 
                 if let creditLine, !creditLine.isEmpty {
