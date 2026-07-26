@@ -2527,6 +2527,17 @@ async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONRes
     # verbatim, so a raw filesystem path would never be fetchable, while
     # every consumer (R2 lazy upload, deep delete, chops, transcode)
     # unwraps /api/admin/serve-file?path=... already.
+    if not uploaded_stems and result.get("stems_paths"):
+        # The pipeline separated stems but NONE arrived via /stem
+        # (e.g. a 502 storm during a deploy). Completing now would
+        # persist worker-local stem URLs that no client can fetch —
+        # the "Audio unavailable" zombie song. Refuse; the worker's
+        # complete-retry either lands after uploads succeed on a
+        # retry, or the job fails visibly and can be re-run.
+        raise HTTPException(
+            status_code=409,
+            detail="Result contains stems but none were uploaded",
+        )
     result["stems_paths"] = {
         role: f"/api/admin/serve-file?path={path}"
         for role, path in uploaded_stems.items()

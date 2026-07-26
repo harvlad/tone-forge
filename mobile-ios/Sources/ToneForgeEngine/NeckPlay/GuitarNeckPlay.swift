@@ -1,38 +1,47 @@
-// HandSilhouette.swift
+// GuitarNeckPlay.swift  (ToneForgeEngine)
 //
-// The fretting-hand silhouette for the Learn tab's guitar-neck play
-// view (the "Show hand" mode): a HORIZONTAL neck with a hand playing
-// the song, per the approved sample design — dark wood board, fingers
-// arching up from below the neck, numbered fingertips landing on the
-// current chord, animating naturally to the next chord.
-//
-// No image assets: the hand is parametric (fingertips are the
-// Animatable data), so it fits any chord shape at any fret window.
+// Shared guitar-neck play surface: a horizontal neck (nut RIGHT, per
+// the sample design) with an anatomical silhouette hand playing the
+// current chord — used by the iOS Learn tab and the desktop Rehearsal
+// screen. Pure SwiftUI + Canvas, no assets, dark-theme palette.
 
 import SwiftUI
-import ToneForgeEngine
+
+/// Dark-mode palette for the neck surface (both apps are dark-only).
+enum NeckPalette {
+    static let textPrimary = Color.white
+    static let textSecondary = Color(red: 0.63, green: 0.63, blue: 0.67)
+}
+
+
 
 // MARK: - Fingering (pure, geometry-free)
 
 /// Standard chord-chart finger assignment: barre = finger 1 across the
 /// window's lowest fret; remaining notes get fingers in (fret, string)
 /// order. 1 = index … 4 = pinky.
-enum ChordFingering {
-    struct Note: Equatable {
-        let string: Int   // 0 = low E … 5 = high e
-        let fret: Int     // absolute fret
-        let finger: Int   // 1…4
+public enum ChordFingering {
+    public struct Note: Equatable {
+        public let string: Int   // 0 = low E … 5 = high e
+        public let fret: Int     // absolute fret
+        public let finger: Int   // 1…4
     }
 
-    struct Result: Equatable {
-        var notes: [Note]
+    public struct Result: Equatable {
+        public var notes: [Note]
         /// Strings covered by a finger-1 barre (at the window's lowest
         /// fret). Nil = no barre.
-        var barreStrings: ClosedRange<Int>?
-        var barreFret: Int?
+        public var barreStrings: ClosedRange<Int>?
+        public var barreFret: Int?
+
+        public init(notes: [Note], barreStrings: ClosedRange<Int>?, barreFret: Int?) {
+            self.notes = notes
+            self.barreStrings = barreStrings
+            self.barreFret = barreFret
+        }
     }
 
-    static func assign(shape: GuitarChordShape, window: Int = 4) -> Result {
+    public static func assign(shape: GuitarChordShape, window: Int = 4) -> Result {
         var fretted: [(string: Int, fret: Int)] = []
         for (s, state) in shape.strings.enumerated() {
             if case .fretted(let f) = state,
@@ -83,14 +92,14 @@ enum ChordFingering {
 /// Pixel geometry of the horizontal neck: nut at the LEFT, frets
 /// increasing right, strings horizontal with low E at the BOTTOM
 /// (player-mirror view — the hand reaches up from below the neck).
-struct NeckGeometry: Equatable {
-    let neck: CGRect
-    let stringGap: CGFloat
-    let fretW: CGFloat
-    let baseFret: Int
-    let window: Int
+public struct NeckGeometry: Equatable {
+    public let neck: CGRect
+    public let stringGap: CGFloat
+    public let fretW: CGFloat
+    public let baseFret: Int
+    public let window: Int
 
-    init(size: CGSize, baseFret: Int, window: Int = 4) {
+    public init(size: CGSize, baseFret: Int, window: Int = 4) {
         // Right gutter for the x/o markers beside the nut (+ "3fr"
         // label); room below the neck for the hand's palm.
         let left: CGFloat = 10
@@ -108,38 +117,40 @@ struct NeckGeometry: Equatable {
         self.window = window
     }
 
-    /// String row center. 0 = low E → BOTTOM row; 5 = high e → top.
-    func stringY(_ s: Int) -> CGFloat {
-        neck.minY + (CGFloat(5 - s) + 0.5) * stringGap
+    /// String row center. 0 = low E → TOP row; 5 = high e → bottom
+    /// (audience view of a right-handed guitar, matching the nut-right
+    /// orientation).
+    public func stringY(_ s: Int) -> CGFloat {
+        neck.minY + (CGFloat(s) + 0.5) * stringGap
     }
 
     /// Dot center x for an absolute fret. Nut is at the RIGHT (sample
     /// design: headstock right), frets increase leftward.
-    func fretX(_ fret: Int) -> CGFloat {
+    public func fretX(_ fret: Int) -> CGFloat {
         neck.maxX - (CGFloat(fret - baseFret) + 0.5) * fretW
     }
 
     /// X of fret wire f (0 = nut at the right edge).
-    func wireX(_ f: Int) -> CGFloat {
+    public func wireX(_ f: Int) -> CGFloat {
         neck.maxX - CGFloat(f) * fretW
     }
 }
 
 // MARK: - Hand plan (tips in neck coordinates)
 
-struct HandPlan: Equatable {
+public struct HandPlan: Equatable {
     /// Fingertips, index 0…3 = fingers 1…4 (unused fingers rest curled
     /// below the neck).
-    var tips: [CGPoint]
+    public var tips: [CGPoint]
     /// Barre: finger 1 lies flat across strings — a vertical bar.
-    var barreRect: CGRect?
+    public var barreRect: CGRect?
     /// Bottom edge of the neck: the hand's anatomy anchors here.
-    var neckBottom: CGFloat
+    public var neckBottom: CGFloat
     /// String spacing — the anatomical unit (finger width ≈ one string
     /// gap, like a real hand on a real neck).
-    var fingerScale: CGFloat = 12
+    public var fingerScale: CGFloat = 12
 
-    static func plan(
+    public static func plan(
         fingering: ChordFingering.Result, geo: NeckGeometry
     ) -> HandPlan {
         var tipByFinger: [Int: CGPoint] = [:]
@@ -183,14 +194,16 @@ struct HandPlan: Equatable {
 
 /// The hand. `Animatable` over the four fingertips: a chord change
 /// animates each finger to its new spot like a hand moving.
-struct HandSilhouetteView: View, Animatable {
-    var plan: HandPlan
+public struct HandSilhouetteView: View, Animatable {
+    public var plan: HandPlan
 
-    typealias TipPair = AnimatablePair<CGFloat, CGFloat>
-    typealias Tips4 = AnimatablePair<
+    public init(plan: HandPlan) { self.plan = plan }
+
+    public typealias TipPair = AnimatablePair<CGFloat, CGFloat>
+    public typealias Tips4 = AnimatablePair<
         AnimatablePair<TipPair, TipPair>, AnimatablePair<TipPair, TipPair>
     >
-    var animatableData: Tips4 {
+    public var animatableData: Tips4 {
         get {
             let t = paddedTips
             return AnimatablePair(
@@ -214,7 +227,7 @@ struct HandSilhouetteView: View, Animatable {
         return t
     }
 
-    var body: some View {
+    public var body: some View {
         Canvas { ctx, size in
             let tips = paddedTips
             guard tips.contains(where: { $0 != .zero }) else { return }
@@ -303,5 +316,177 @@ struct HandSilhouetteView: View, Animatable {
         line.move(to: a)
         line.addLine(to: b)
         return line.strokedPath(StrokeStyle(lineWidth: width, lineCap: .round))
+    }
+}
+
+
+// MARK: - Composite surface (board + hand + dots)
+
+/// The complete neck-play surface: wood board, animated hand, numbered
+/// dots. Hosts add their own chord header/chrome around it.
+public struct GuitarNeckPlaySurface: View {
+    let current: String?
+
+    public init(current: String?) {
+        self.current = current
+    }
+
+    public var body: some View {
+        GeometryReader { g in
+            let shape = current.flatMap { GuitarVoicing.shape(symbol: $0) }
+            let geo = NeckGeometry(size: g.size, baseFret: shape?.baseFret ?? 1)
+            let fingering = shape.map { ChordFingering.assign(shape: $0) }
+                ?? ChordFingering.Result(notes: [], barreStrings: nil, barreFret: nil)
+            let plan = HandPlan.plan(fingering: fingering, geo: geo)
+
+            ZStack {
+                NeckBoardCanvas(shape: shape, geo: geo)
+                HandSilhouetteView(plan: plan)
+                    .animation(.easeInOut(duration: 0.45), value: plan)
+                NeckDotsCanvas(shape: shape, geo: geo, fingering: fingering)
+            }
+            .clipped()
+        }
+    }
+}
+
+// MARK: - Board (wood, frets, strings, inlays, markers)
+
+
+private struct NeckBoardCanvas: View {
+    let shape: GuitarChordShape?
+    let geo: NeckGeometry
+
+    var body: some View {
+        Canvas { ctx, _ in
+            let neck = geo.neck
+
+            // Wood board.
+            ctx.fill(
+                Path(roundedRect: neck, cornerRadius: 4),
+                with: .linearGradient(
+                    Gradient(colors: [
+                        Color(red: 0.12, green: 0.082, blue: 0.055),
+                        Color(red: 0.06, green: 0.042, blue: 0.032),
+                    ]),
+                    startPoint: neck.origin,
+                    endPoint: CGPoint(x: neck.minX, y: neck.maxY)
+                )
+            )
+
+            // Inlays at real fret markers.
+            for col in 0..<geo.window {
+                let absFret = geo.baseFret + col
+                let cx = geo.fretX(geo.baseFret + col)
+                let r = geo.stringGap * 0.22
+                let inlay = Color.white.opacity(0.10)
+                if [3, 5, 7, 9, 15, 17].contains(absFret) {
+                    ctx.fill(Path(ellipseIn: CGRect(
+                        x: cx - r, y: neck.midY - r, width: r * 2, height: r * 2)),
+                        with: .color(inlay))
+                } else if absFret == 12 {
+                    for dy in [-geo.stringGap, geo.stringGap] {
+                        ctx.fill(Path(ellipseIn: CGRect(
+                            x: cx - r, y: neck.midY + dy - r,
+                            width: r * 2, height: r * 2)),
+                            with: .color(inlay))
+                    }
+                }
+            }
+
+            // Nut (RIGHT, thick when open position) + fret wires —
+            // headstock-right orientation per the sample design.
+            for f in 0...geo.window {
+                let x = geo.wireX(f)
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: neck.minY))
+                line.addLine(to: CGPoint(x: x, y: neck.maxY))
+                let isNut = f == 0 && geo.baseFret == 1
+                ctx.stroke(
+                    line,
+                    with: .color(isNut
+                        ? Color(white: 0.92)
+                        : Color(white: 0.72).opacity(0.55)),
+                    lineWidth: isNut ? 5 : 2
+                )
+            }
+
+            // Strings: low E (bottom) thickest.
+            for s in 0..<6 {
+                let y = geo.stringY(s)
+                var line = Path()
+                line.move(to: CGPoint(x: neck.minX, y: y))
+                line.addLine(to: CGPoint(x: neck.maxX, y: y))
+                let gauge = 2.4 - CGFloat(s) * 0.28
+                ctx.stroke(
+                    line,
+                    with: .color(Color(white: 0.80).opacity(0.55)),
+                    lineWidth: max(0.9, gauge)
+                )
+            }
+
+            // x / o markers left of the nut, per string.
+            if let shape {
+                for (s, state) in shape.strings.enumerated() {
+                    let at = CGPoint(x: neck.maxX + 13, y: geo.stringY(s))
+                    switch state {
+                    case .muted:
+                        ctx.draw(
+                            Text("×").font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(NeckPalette.textSecondary),
+                            at: at)
+                    case .open:
+                        let r: CGFloat = 3.6
+                        ctx.stroke(
+                            Path(ellipseIn: CGRect(
+                                x: at.x - r, y: at.y - r, width: r * 2, height: r * 2)),
+                            with: .color(NeckPalette.textPrimary.opacity(0.8)),
+                            lineWidth: 1.2)
+                    case .fretted:
+                        break
+                    }
+                }
+                // Position label under the first fret column.
+                if shape.baseFret > 1 {
+                    ctx.draw(
+                        Text("\(shape.baseFret)fr")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(NeckPalette.textSecondary),
+                        at: CGPoint(
+                            x: geo.fretX(shape.baseFret),
+                            y: neck.maxY + 10))
+                }
+            }
+        }
+    }
+}
+
+
+// MARK: - Numbered dots (drawn above the hand)
+
+
+private struct NeckDotsCanvas: View {
+    let shape: GuitarChordShape?
+    let geo: NeckGeometry
+    let fingering: ChordFingering.Result
+
+    var body: some View {
+        Canvas { ctx, _ in
+            guard shape != nil else { return }
+            let r = geo.stringGap * 0.42
+            for n in fingering.notes {
+                let c = CGPoint(x: geo.fretX(n.fret), y: geo.stringY(n.string))
+                ctx.fill(
+                    Path(ellipseIn: CGRect(
+                        x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
+                    with: .color(Color.accentColor))
+                ctx.draw(
+                    Text("\(n.finger)")
+                        .font(.system(size: r * 1.15, weight: .bold))
+                        .foregroundColor(.white),
+                    at: c)
+            }
+        }
+        .allowsHitTesting(false)
     }
 }

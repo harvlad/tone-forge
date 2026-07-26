@@ -167,11 +167,36 @@ struct RehearsalView: View {
         }
     }
 
+    /// Guitar-neck hand view (shared with iOS Learn): a horizontal
+    /// neck with a silhouette hand playing the current chord.
+    @AppStorage("rehearsal.showHand") private var showHand = true
+
     @ViewBuilder
     private func practiceContent(_ item: RehearsalSectionItem) -> some View {
         let currentPos = session.transport.positionSeconds
         let currentChord = session.ribbon?.currentChord(at: currentPos)
         VStack(spacing: 16) {
+            if showHand {
+                HStack {
+                    Text(currentChord?.symbol ?? "—")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(Color.accentColor)
+                    Spacer()
+                    Toggle("Hand", isOn: $showHand)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                GuitarNeckPlaySurface(current: currentChord?.symbol)
+                    .frame(height: 230)
+            } else {
+                HStack {
+                    Spacer()
+                    Toggle("Hand", isOn: $showHand)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+            }
+
             // Countdown bar
             ChordCountdownBar(
                 prediction: session.learn.prediction(
