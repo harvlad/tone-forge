@@ -128,6 +128,16 @@ public final class SampleVoicePool: ObservableObject {
         var isActive: Bool
         var isLooping: Bool
         var startedAtHostTime: UInt64
+        /// Host time playback becomes AUDIBLE (the quantize target for
+        /// future-gated triggers, allocation time otherwise). Loop-end
+        /// math must use this, not `startedAtHostTime`, or an armed
+        /// clip's wait would count as elapsed loop time.
+        var audibleStartHostTime: UInt64
+        /// One loop pass of the scheduled buffer, in seconds.
+        var bufferDurationSec: Double
+        /// A scheduled "complete the current loop pass, then stop"
+        /// (releaseAtLoopEnd). Cancelled on retrigger/release.
+        var pendingStopItem: DispatchWorkItem?
         var fadeTask: Task<Void, Never>?
         /// The DispatchWorkItem for a future-time `player.play()` call.
         /// Non-nil between allocation and the moment the workitem
@@ -207,6 +217,9 @@ public final class SampleVoicePool: ObservableObject {
                 isActive: false,
                 isLooping: false,
                 startedAtHostTime: 0,
+                audibleStartHostTime: 0,
+                bufferDurationSec: 0,
+                pendingStopItem: nil,
                 fadeTask: nil,
                 pendingPlayItem: nil
             ))
@@ -278,6 +291,8 @@ public final class SampleVoicePool: ObservableObject {
         slot.fadeTask = nil
         slot.pendingPlayItem?.cancel()
         slot.pendingPlayItem = nil
+        slot.pendingStopItem?.cancel()
+        slot.pendingStopItem = nil
         slot.player.stop()
 
         slot.padKey = req.padKey
@@ -285,6 +300,12 @@ public final class SampleVoicePool: ObservableObject {
         slot.isActive = true
         slot.isLooping = req.loop
         slot.startedAtHostTime = mach_absolute_time()
+        // Loop-end release math (releaseAtLoopEnd) needs when audio
+        // actually starts and how long one pass is.
+        slot.audibleStartHostTime = time?.hostTime ?? slot.startedAtHostTime
+        slot.bufferDurationSec = buffer.format.sampleRate > 0
+            ? Double(buffer.frameLength) / buffer.format.sampleRate
+            : 0
 
         let options: AVAudioPlayerNodeBufferOptions = req.loop
             ? [.interrupts, .loops]
@@ -441,6 +462,51 @@ public final class SampleVoicePool: ObservableObject {
         #endif
     }
 
+    /// Musical stop for latched clips: let the CURRENT loop pass finish,
+    /// then release. Ableton-style — toggling a clip off mid-bar doesn't
+    /// chop the audio, it completes the phrase.
+    ///
+    /// Non-looping voices, unknown durations, and still-armed voices
+    /// (quantize wait, nothing audible yet) release immediately — an
+    /// armed clip toggled off should simply un-arm.
+    public func releaseAtLoopEnd(padKey: SamplePadKey) {
+        #if canImport(AVFoundation)
+        for i in slots.indices where slots[i].isActive && slots[i].padKey == padKey {
+            let slot = slots[i]
+            let duration = slot.bufferDurationSec
+            guard slot.isLooping, duration > 0.01, slot.pendingPlayItem == nil else {
+                releaseSlot(i)
+                continue
+            }
+            // Time until the current pass completes.
+            let now = mach_absolute_time()
+            let start = slot.audibleStartHostTime
+            let elapsed = now > start
+                ? Double(now - start) / TransportClock.ticksPerSecond()
+                : 0
+            let remainder = duration - elapsed.truncatingRemainder(dividingBy: duration)
+
+            // Identity token: if the slot is stolen/retriggered before
+            // the deadline, the stale stop must not kill the new voice.
+            let token = slot.startedAtHostTime
+            let item = DispatchWorkItem { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self, self.slots.indices.contains(i) else { return }
+                    guard self.slots[i].isActive,
+                          self.slots[i].padKey == padKey,
+                          self.slots[i].startedAtHostTime == token else { return }
+                    self.slots[i].pendingStopItem = nil
+                    self.releaseSlot(i)
+                }
+            }
+            slots[i].pendingStopItem?.cancel()
+            slots[i].pendingStopItem = item
+            DispatchQueue.global(qos: .userInteractive)
+                .asyncAfter(deadline: .now() + max(0.01, remainder), execute: item)
+        }
+        #endif
+    }
+
     /// True iff at least one voice is currently active for `padKey`.
     /// Consulted by SampleScheduler for toggle-mode "already playing?"
     /// decisions.
@@ -532,6 +598,8 @@ public final class SampleVoicePool: ObservableObject {
         slots[idx].isActive = false
         slots[idx].padKey = nil
         slots[idx].chokeGroup = nil
+        slots[idx].pendingStopItem?.cancel()
+        slots[idx].pendingStopItem = nil
         refreshRingingPadKeys()
 
         // Fast path: quantize-deferred play() hasn't fired yet. Cancel

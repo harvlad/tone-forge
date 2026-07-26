@@ -506,9 +506,11 @@ public final class SampleScheduler: ObservableObject {
 
         let padKey = SamplePadKey(packId: pid, padIdx: padIdx)
 
-        // Toggle mode: if already playing, second tap stops.
+        // Toggle mode: if already playing, second tap stops — but a
+        // LOOPING clip completes its current pass first (musical stop);
+        // armed/non-looping voices release immediately.
         if holdMode == .toggle, pool.isActive(padKey: padKey) {
-            pool.release(padKey: padKey)
+            pool.releaseAtLoopEnd(padKey: padKey)
             onEvent?(LayerEvent(
                 kind: .sampleOff,
                 songTimeSec: nowSongSeconds(),
@@ -606,7 +608,8 @@ public final class SampleScheduler: ObservableObject {
         let padKey = SamplePadKey(packId: Self.localPackId, padIdx: padIdx)
 
         if holdMode == .toggle, pool.isActive(padKey: padKey) {
-            pool.release(padKey: padKey)
+            // Looping voices complete the current pass (musical stop).
+            pool.releaseAtLoopEnd(padKey: padKey)
             onEvent?(LayerEvent(
                 kind: .sampleOff,
                 songTimeSec: nowSongSeconds(),
