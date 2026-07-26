@@ -173,7 +173,11 @@ struct FretboardDiagram: View {
 
         guard layer != .board else { return }
 
-        // Markers + dots.
+        // Markers + dots. In neck mode the dots carry their finger
+        // number (1 = index … 4 = pinky), from the SAME assignment
+        // that poses the hand silhouette.
+        let plan: HandPlan? = style == .neck
+            ? HandPlan.plan(shape: shape, size: size) : nil
         let dotRadius = min(stringGap, fretGap) * 0.32
         for (s, state) in shape.strings.enumerated() {
             let markerCenter = CGPoint(
@@ -208,6 +212,17 @@ struct FretboardDiagram: View {
                         width: dotRadius * 2, height: dotRadius * 2)),
                     with: .color(Color.accentColor)
                 )
+                if let finger = plan?.assignments.first(where: {
+                    $0.string == s && $0.fret == fret
+                })?.finger {
+                    context.draw(
+                        Text("\(finger)")
+                            .font(.system(size: dotRadius * 1.25,
+                                          weight: .bold))
+                            .foregroundColor(.white),
+                        at: center
+                    )
+                }
             }
         }
     }

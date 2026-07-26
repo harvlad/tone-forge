@@ -28,6 +28,17 @@ struct HandPlan: Equatable {
     /// Bottom edge of the fret grid — the hand's anatomy anchors here
     /// (knuckles just below the board), not to the deepest fingertip.
     var gridBottom: CGFloat = 0
+    /// Per-note finger numbers (1 = index … 4 = pinky), the SAME
+    /// assignment that drives the silhouette — so numbered dots and
+    /// the hand always agree. Barres list finger 1 on every barred
+    /// string.
+    var assignments: [Assignment] = []
+
+    struct Assignment: Equatable {
+        let string: Int
+        let fret: Int
+        let finger: Int
+    }
 
     /// Diagram geometry duplicated from FretboardDiagram (markerHeight
     /// 14, side insets, 4 fret rows) — keep in sync.
@@ -72,17 +83,23 @@ struct HandPlan: Equatable {
         var barre: ClosedRange<CGFloat>? = nil
         var remaining: [(string: Int, fret: Int)]
 
+        var assignments: [Assignment] = []
         if atMin.count >= 2 && !others.isEmpty {
             let lo = stringX(atMin.map(\.string).min()!)
             let hi = stringX(atMin.map(\.string).max()!)
             barre = lo...hi
             tips.append(CGPoint(x: (lo + hi) / 2, y: dotY(minFret)))
+            for n in atMin {
+                assignments.append(Assignment(string: n.string, fret: n.fret, finger: 1))
+            }
             remaining = others
         } else {
             remaining = notes
         }
         remaining.sort { ($0.fret, $0.string) < ($1.fret, $1.string) }
         for n in remaining.prefix(4 - tips.count) {
+            assignments.append(Assignment(
+                string: n.string, fret: n.fret, finger: tips.count + 1))
             tips.append(CGPoint(x: stringX(n.string), y: dotY(n.fret)))
         }
         // Unused fingers rest curled just above the knuckle line
@@ -94,7 +111,8 @@ struct HandPlan: Equatable {
             tips.append(CGPoint(x: min(restX, gridRect.maxX + stringGap * 0.4),
                                 y: restY))
         }
-        return HandPlan(tips: tips, barre: barre, gridBottom: gridRect.maxY)
+        return HandPlan(tips: tips, barre: barre, gridBottom: gridRect.maxY,
+                        assignments: assignments)
     }
 }
 
@@ -166,9 +184,18 @@ struct HandSilhouetteView: View, Animatable {
         var fingers = Path()
 
         // Fingers: knuckle → mid → tip, tapered round-cap strokes with
-        // a slight outward bow (curl).
+        // a slight outward bow (curl). Knuckles are RANK-MATCHED to the
+        // tips' left-to-right order so fingers stay parallel and never
+        // cross the board diagonally (finger NUMBERS live on the dots;
+        // the silhouette optimizes for readability).
+        let rankOf: [Int: Int] = {
+            let order = tips.indices.sorted { tips[$0].x < tips[$1].x }
+            var r: [Int: Int] = [:]
+            for (rank, idx) in order.enumerated() { r[idx] = rank }
+            return r
+        }()
         for (i, tip) in tips.enumerated() {
-            let spread = CGFloat(i) - 1.5
+            let spread = CGFloat(rankOf[i] ?? i) - 1.5
             let knuckle = CGPoint(
                 x: handCenterX + spread * unit * 0.16,
                 y: knuckleY + abs(spread) * unit * 0.03
