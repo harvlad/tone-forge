@@ -1,0 +1,36 @@
+{
+  "models": {
+    "basic_pitch": {
+      "adapter": "lab.adapters.basic_pitch_adapter.BasicPitchAdapter",
+      "added_at": "2026-07-25T23:10:59.402507+00:00",
+      "architecture": "CNN (onset/frame/contour heads)",
+      "checkpoint": "icassp_2022",
+      "display_name": "Basic Pitch (ICASSP 2022)",
+      "gpu_required": false,
+      "license": "Apache-2.0",
+      "model_id": "basic_pitch",
+      "notes": "Validated: F1 0.313 / recall 42.3% / octave err 16.3% @100ms on validated100.",
+      "polyphonic": true,
+      "source": "https://github.com/spotify/basic-pitch",
+      "status": "incumbent",
+      "supported_instruments": "general (weak low register)",
+      "updated_at": "2026-07-25T23:10:59.405471+00:00"
+    },
+    "mt3": {
+      "adapter": "lab.adapters.mt3_adapter.MT3Adapter",
+      "added_at": "2026-07-25T23:10:59.408232+00:00",
+      "architecture": "T5 encoder-decoder seq2seq",
+      "checkpoint": "mt3_pytorch",
+      "display_name": "MT3 (mt3-infer PyTorch port)",
+      "gpu_required": false,
+      "license": "Apache-2.0 (checkpoint via MR-MT3 HF mirror \u2014 verify)",
+      "model_id": "mt3",
+      "notes": "Validated: recall 11.0% global, 42.7% Bass, octave err 3.5% @100ms on validated100.",
+      "polyphonic": true,
+      "source": "https://github.com/magenta/mt3 (via mt3-infer)",
+      "status": "specialist",
+      "supported_instruments": "multi-instrument; strong Bass, coarse timing (~60ms)",
+      "updated_at": "2026-07-25T23:10:59.408241+00:00"
+    }
+  }
+}

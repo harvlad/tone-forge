@@ -1,0 +1,11 @@
+# Heavy caches stay out of git; registries/experiment metadata stay in.
+corpus/
+gt/
+predictions/
+matches/
+features/
+jobs/
+legacy/*.json
+!legacy/MANIFEST.json
+reports/
+models/checkpoint_hashes.json

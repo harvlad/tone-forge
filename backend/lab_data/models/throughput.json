@@ -1,0 +1,24 @@
+{
+ "basic_pitch": {
+  "local": {
+   "audio_sec_per_sec": 50.2564949493123,
+   "audio_seconds": 50918.20263038547,
+   "n": 194,
+   "runtime_seconds": 1013.1666102409363
+  }
+ },
+ "mt3": {
+  "local": {
+   "audio_sec_per_sec": 4.2672806216693715,
+   "audio_seconds": 8798.493605442178,
+   "n": 33,
+   "runtime_seconds": 2061.8502473831177
+  },
+  "local_cpu": {
+   "audio_sec_per_sec": 5.443415078823273,
+   "audio_seconds": 122.48526077097506,
+   "n": 1,
+   "runtime_seconds": 22.50154709815979
+  }
+ }
+}
