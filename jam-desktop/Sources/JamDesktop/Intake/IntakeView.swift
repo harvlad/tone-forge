@@ -23,7 +23,7 @@ struct IntakeView: View {
             VStack(spacing: 40) {
                 // Hero headline
                 VStack(spacing: 8) {
-                    Text("Make music together.")
+                    Text("What are we playing?")
                         .font(.system(size: 42, weight: .bold))
                         .foregroundStyle(.white)
 
