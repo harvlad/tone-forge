@@ -22,6 +22,16 @@ struct JamSettingsSheet: View {
     @ObservedObject var chordPadController: ChordPadController
     @Environment(\.dismiss) private var dismiss
 
+    /// Key editing moved here from the Jam toolbar (grid gets the room).
+    @State private var showKeySheet = false
+
+    private var isMinorFamilyKey: Bool {
+        switch controller.effectiveKey?.scale {
+        case .minor, .harmonicMinor, .melodicMinor: return true
+        default: return false
+        }
+    }
+
     private var octaveShift: Int {
         jamSettings.padMode == .chords
             ? chordPadController.octaveShift
@@ -39,6 +49,33 @@ struct JamSettingsSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("Key") {
+                    Button {
+                        showKeySheet = true
+                    } label: {
+                        HStack {
+                            Text("Key")
+                                .foregroundStyle(TFTheme.textPrimary)
+                            Spacer()
+                            Text(controller.keyDisplayName)
+                                .foregroundStyle(TFTheme.textSecondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(TFTheme.textSecondary)
+                        }
+                    }
+                    if isMinorFamilyKey {
+                        Picker("Scale", selection: Binding(
+                            get: { jamSettings.scaleVariant },
+                            set: { controller.setScaleVariant($0) }
+                        )) {
+                            ForEach(JamScaleVariant.allCases, id: \.rawValue) { v in
+                                Text(v.displayName).tag(v)
+                            }
+                        }
+                    }
+                }
+
                 Section("Sound") {
                     ForEach(SynthPresetCatalog.all) { preset in
                         Button {
@@ -77,6 +114,9 @@ struct JamSettingsSheet: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .sheet(isPresented: $showKeySheet) {
+                ScaleWheelSheet(controller: controller, jamSettings: jamSettings)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }

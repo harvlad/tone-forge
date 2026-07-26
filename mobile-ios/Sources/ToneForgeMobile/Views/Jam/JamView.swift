@@ -28,7 +28,6 @@ struct JamView: View {
     @ObservedObject var chordPadController: ChordPadController
     @EnvironmentObject private var appState: AppState
 
-    @State private var showKeySheet = false
     @State private var showSettingsSheet = false
     @State private var showMetronomeSheet = false
     @State private var showChordSheet = false
@@ -52,14 +51,10 @@ struct JamView: View {
         VStack(spacing: TFTheme.Spacing.sm) {
             sectionStrip
 
-            keyBar
-
-            ChordContext(
-                current: controller.currentChordSymbol,
-                next: controller.suggestedChords.map(\.symbol),
-                onSelectNext: { controller.trigger(symbol: $0) }
-            )
-
+            // Key editing + harmonic detail moved off the primary
+            // surface (gear sheet / chord-detail sheet) — the grid gets
+            // the vertical room instead. The two compact affordances
+            // (chord detail, FX reveal) ride on the mode row.
             padModeRow
 
             if jamSettings.padMode == .pads {
@@ -83,9 +78,6 @@ struct JamView: View {
         }
         .frame(maxWidth: .infinity)
         .onAppear { Haptics.prepare() }
-        .sheet(isPresented: $showKeySheet) {
-            ScaleWheelSheet(controller: controller, jamSettings: jamSettings)
-        }
         .sheet(isPresented: $showSettingsSheet) {
             JamSettingsSheet(
                 controller: controller,
@@ -126,93 +118,37 @@ struct JamView: View {
         return sections.firstIndex { $0.start <= t && t < $0.end }
     }
 
-    // MARK: - Key bar
+    // MARK: - Compact affordances (chord detail + FX reveal)
 
-    /// Compact harmonic-context toolbar above the ChordContext strip:
-    /// editable jam key, the minor scale variant (when relevant), and
-    /// the two secondary affordances — chord detail and the FX reveal
-    /// (progressive disclosure of the DJ FX row).
-    private var keyBar: some View {
-        HStack(spacing: TFTheme.Spacing.sm) {
-            Button {
-                showKeySheet = true
-            } label: {
-                HStack(spacing: 6) {
-                    Text("Key: \(controller.keyDisplayName)")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(TFTheme.textPrimary)
-                    Image(systemName: "pencil")
-                        .font(.caption)
-                        .foregroundStyle(TFTheme.textSecondary)
-                }
-                .tfChip(active: false)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Edit key")
-
-            // Minor-family scale variant. Hidden for major/modal keys
-            // where the variant has no effect.
-            if isMinorFamilyKey {
-                Menu {
-                    ForEach(JamScaleVariant.allCases, id: \.rawValue) { v in
-                        Button {
-                            controller.setScaleVariant(v)
-                        } label: {
-                            if jamSettings.scaleVariant == v {
-                                Label(v.displayName, systemImage: "checkmark")
-                            } else {
-                                Text(v.displayName)
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(jamSettings.scaleVariant.displayName)
-                            .font(TFTheme.chipFont)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption2)
-                    }
-                    .tfChip(active: false)
-                }
-                .accessibilityLabel(
-                    "Scale: \(jamSettings.scaleVariant.displayName)"
-                )
-            }
-
-            Spacer()
-
-            Button {
-                showChordSheet = true
-            } label: {
-                Image(systemName: "music.note.list")
-                    .font(.callout)
-                    .foregroundStyle(TFTheme.textSecondary)
-                    .frame(width: TFTheme.minTouchTarget, height: 32)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Chord detail")
-
-            Button {
-                Haptics.selectionChanged()
-                showFX.toggle()
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.callout)
-                    .foregroundStyle(showFX ? TFTheme.accent : TFTheme.textSecondary)
-                    .frame(width: TFTheme.minTouchTarget, height: 32)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(showFX ? "Hide performance effects" : "Show performance effects")
+    /// The two icons that survived the key-bar removal — everything
+    /// else (key edit, scale variant, chord context) lives in the gear
+    /// sheet / chord-detail sheet now so the grid gets the room.
+    @ViewBuilder
+    private var compactAffordances: some View {
+        Button {
+            showChordSheet = true
+        } label: {
+            Image(systemName: "music.note.list")
+                .font(.callout)
+                .foregroundStyle(TFTheme.textSecondary)
+                .frame(width: 36, height: 32)
         }
-        .padding(.horizontal, TFTheme.Spacing.md)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Chord detail")
+
+        Button {
+            Haptics.selectionChanged()
+            showFX.toggle()
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.callout)
+                .foregroundStyle(showFX ? TFTheme.accent : TFTheme.textSecondary)
+                .frame(width: 36, height: 32)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(showFX ? "Hide performance effects" : "Show performance effects")
     }
 
-    private var isMinorFamilyKey: Bool {
-        switch controller.effectiveKey?.scale {
-        case .minor, .harmonicMinor, .melodicMinor: return true
-        default: return false
-        }
-    }
 
     // MARK: - Pad mode row
 
@@ -248,6 +184,8 @@ struct JamView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Sample trigger mode: \(jamSettings.sampleLatch ? "Latch" : "Tap"), tap to toggle")
             }
+
+            compactAffordances
         }
         .padding(.horizontal, 12)
     }
