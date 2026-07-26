@@ -1,0 +1,347 @@
+{
+  "basic_pitch": {
+    "global": {
+      "n_gt": 34803.0,
+      "n_pred": 59231.0,
+      "n_correct": 14721.0,
+      "n_octave": 5656.0,
+      "octave_up": 2454.0,
+      "octave_down": 3202.0,
+      "recall": 0.4229807775191794,
+      "octave_error_rate": 0.16251472574203374,
+      "precision": 0.24853539531664162,
+      "f1": 0.3130995171959079
+    },
+    "per_class": {
+      "Piano": {
+        "n_gt": 9883.0,
+        "n_pred": 13781.0,
+        "n_correct": 5699.0,
+        "n_octave": 1285.0,
+        "octave_up": 939.0,
+        "octave_down": 346.0,
+        "recall": 0.5766467671759588,
+        "octave_error_rate": 0.13002124860872205,
+        "precision": 0.4135403816849285,
+        "f1": 0.48165990534144687
+      },
+      "Bass": {
+        "n_gt": 3821.0,
+        "n_pred": 6031.0,
+        "n_correct": 718.0,
+        "n_octave": 1623.0,
+        "octave_up": 144.0,
+        "octave_down": 1479.0,
+        "recall": 0.1879089243653494,
+        "octave_error_rate": 0.4247579167757132,
+        "precision": 0.11905156690432764,
+        "f1": 0.1457572066585465
+      },
+      "Guitar": {
+        "n_gt": 12185.0,
+        "n_pred": 14054.0,
+        "n_correct": 6110.0,
+        "n_octave": 1551.0,
+        "octave_up": 1015.0,
+        "octave_down": 536.0,
+        "recall": 0.5014361920393927,
+        "octave_error_rate": 0.1272876487484612,
+        "precision": 0.43475167212181587,
+        "f1": 0.46571896794847367
+      },
+      "Ensemble": {
+        "n_gt": 4455.0,
+        "n_pred": 13411.0,
+        "n_correct": 1207.0,
+        "n_octave": 259.0,
+        "octave_up": 153.0,
+        "octave_down": 106.0,
+        "recall": 0.27093153759820426,
+        "octave_error_rate": 0.05813692480359147,
+        "precision": 0.0900007456565506,
+        "f1": 0.13511698197693944
+      },
+      "Brass": {
+        "n_gt": 963.0,
+        "n_pred": 926.0,
+        "n_correct": 329.0,
+        "n_octave": 308.0,
+        "octave_up": 159.0,
+        "octave_down": 149.0,
+        "recall": 0.34164070612668745,
+        "octave_error_rate": 0.31983385254413293,
+        "precision": 0.35529157667386607,
+        "f1": 0.3483324510322922
+      },
+      "Pipe": {
+        "n_gt": 552.0,
+        "n_pred": 588.0,
+        "n_correct": 150.0,
+        "n_octave": 1.0,
+        "octave_up": 0.0,
+        "octave_down": 1.0,
+        "recall": 0.2717391304347826,
+        "octave_error_rate": 0.0018115942028985507,
+        "precision": 0.25510204081632654,
+        "f1": 0.2631578947368421
+      },
+      "Synth Pad": {
+        "n_gt": 1580.0,
+        "n_pred": 7769.0,
+        "n_correct": 149.0,
+        "n_octave": 115.0,
+        "octave_up": 18.0,
+        "octave_down": 97.0,
+        "recall": 0.09430379746835443,
+        "octave_error_rate": 0.07278481012658228,
+        "precision": 0.01917878748873729,
+        "f1": 0.03187506685206974
+      },
+      "Synth Lead": {
+        "n_gt": 532.0,
+        "n_pred": 1489.0,
+        "n_correct": 5.0,
+        "n_octave": 339.0,
+        "octave_up": 0.0,
+        "octave_down": 339.0,
+        "recall": 0.009398496240601503,
+        "octave_error_rate": 0.6372180451127819,
+        "precision": 0.0033579583613163196,
+        "f1": 0.004948045522018802
+      },
+      "Organ": {
+        "n_gt": 325.0,
+        "n_pred": 686.0,
+        "n_correct": 66.0,
+        "n_octave": 175.0,
+        "octave_up": 26.0,
+        "octave_down": 149.0,
+        "recall": 0.20307692307692307,
+        "octave_error_rate": 0.5384615384615384,
+        "precision": 0.09620991253644315,
+        "f1": 0.13056379821958455
+      },
+      "Reed": {
+        "n_gt": 507.0,
+        "n_pred": 496.0,
+        "n_correct": 288.0,
+        "n_octave": 0.0,
+        "octave_up": 0.0,
+        "octave_down": 0.0,
+        "recall": 0.5680473372781065,
+        "octave_error_rate": 0.0,
+        "precision": 0.5806451612903226,
+        "f1": 0.5742771684945165
+      }
+    }
+  },
+  "mt3": {
+    "global": {
+      "n_gt": 34797.0,
+      "n_pred": 23223.0,
+      "n_correct": 3827.0,
+      "n_octave": 1203.0,
+      "octave_up": 776.0,
+      "octave_down": 427.0,
+      "recall": 0.10998074546656321,
+      "octave_error_rate": 0.0345719458574015,
+      "precision": 0.16479352366188693,
+      "f1": 0.13192002757669768
+    },
+    "per_class": {
+      "Piano": {
+        "n_gt": 9883.0,
+        "n_pred": 7311.0,
+        "n_correct": 962.0,
+        "n_octave": 566.0,
+        "octave_up": 450.0,
+        "octave_down": 116.0,
+        "recall": 0.09733886471719114,
+        "octave_error_rate": 0.057270059698472126,
+        "precision": 0.1315825468472165,
+        "f1": 0.11189949982552054
+      },
+      "Bass": {
+        "n_gt": 3821.0,
+        "n_pred": 3459.0,
+        "n_correct": 1631.0,
+        "n_octave": 97.0,
+        "octave_up": 50.0,
+        "octave_down": 47.0,
+        "recall": 0.426851609526302,
+        "octave_error_rate": 0.02538602460088982,
+        "precision": 0.47152356172304133,
+        "f1": 0.4480769230769231
+      },
+      "Guitar": {
+        "n_gt": 12185.0,
+        "n_pred": 7859.0,
+        "n_correct": 991.0,
+        "n_octave": 440.0,
+        "octave_up": 226.0,
+        "octave_down": 214.0,
+        "recall": 0.08132950348789496,
+        "octave_error_rate": 0.03610997127615921,
+        "precision": 0.12609746787123044,
+        "f1": 0.09888245859109959
+      },
+      "Ensemble": {
+        "n_gt": 4455.0,
+        "n_pred": 1918.0,
+        "n_correct": 72.0,
+        "n_octave": 8.0,
+        "octave_up": 5.0,
+        "octave_down": 3.0,
+        "recall": 0.01616161616161616,
+        "octave_error_rate": 0.0017957351290684624,
+        "precision": 0.03753910323253389,
+        "f1": 0.022595324023222972
+      },
+      "Brass": {
+        "n_gt": 963.0,
+        "n_pred": 660.0,
+        "n_correct": 55.0,
+        "n_octave": 35.0,
+        "octave_up": 32.0,
+        "octave_down": 3.0,
+        "recall": 0.05711318795430945,
+        "octave_error_rate": 0.036344755970924195,
+        "precision": 0.08333333333333333,
+        "f1": 0.06777572396796055
+      },
+      "Pipe": {
+        "n_gt": 552.0,
+        "n_pred": 109.0,
+        "n_correct": 3.0,
+        "n_octave": 0.0,
+        "octave_up": 0.0,
+        "octave_down": 0.0,
+        "recall": 0.005434782608695652,
+        "octave_error_rate": 0.0,
+        "precision": 0.027522935779816515,
+        "f1": 0.009077155824508321
+      },
+      "Synth Pad": {
+        "n_gt": 1574.0,
+        "n_pred": 1201.0,
+        "n_correct": 10.0,
+        "n_octave": 3.0,
+        "octave_up": 1.0,
+        "octave_down": 2.0,
+        "recall": 0.0063532401524777635,
+        "octave_error_rate": 0.0019059720457433292,
+        "precision": 0.00832639467110741,
+        "f1": 0.007207207207207207
+      },
+      "Synth Lead": {
+        "n_gt": 532.0,
+        "n_pred": 472.0,
+        "n_correct": 56.0,
+        "n_octave": 49.0,
+        "octave_up": 7.0,
+        "octave_down": 42.0,
+        "recall": 0.10526315789473684,
+        "octave_error_rate": 0.09210526315789473,
+        "precision": 0.11864406779661017,
+        "f1": 0.11155378486055777
+      },
+      "Organ": {
+        "n_gt": 325.0,
+        "n_pred": 117.0,
+        "n_correct": 42.0,
+        "n_octave": 3.0,
+        "octave_up": 3.0,
+        "octave_down": 0.0,
+        "recall": 0.12923076923076923,
+        "octave_error_rate": 0.009230769230769232,
+        "precision": 0.358974358974359,
+        "f1": 0.1900452488687783
+      },
+      "Reed": {
+        "n_gt": 507.0,
+        "n_pred": 117.0,
+        "n_correct": 5.0,
+        "n_octave": 2.0,
+        "octave_up": 2.0,
+        "octave_down": 0.0,
+        "recall": 0.009861932938856016,
+        "octave_error_rate": 0.0039447731755424065,
+        "precision": 0.042735042735042736,
+        "f1": 0.016025641025641028
+      }
+    }
+  },
+  "head_to_head": {
+    "global": {
+      "both_correct": 2128,
+      "bp_only": 12591,
+      "mt3_only": 1699,
+      "both_wrong": 18379,
+      "oracle_recall": 0.4718222835301894,
+      "bp_unique_contribution": 0.3618415380636262,
+      "mt3_unique_contribution": 0.04882604822254792
+    },
+    "per_class": {
+      "Piano": {
+        "both_correct": 773,
+        "bp_only": 4926,
+        "mt3_only": 189,
+        "both_wrong": 3995
+      },
+      "Bass": {
+        "both_correct": 543,
+        "bp_only": 175,
+        "mt3_only": 1088,
+        "both_wrong": 2015
+      },
+      "Guitar": {
+        "both_correct": 755,
+        "bp_only": 5356,
+        "mt3_only": 236,
+        "both_wrong": 5838
+      },
+      "Ensemble": {
+        "both_correct": 30,
+        "bp_only": 1177,
+        "mt3_only": 42,
+        "both_wrong": 3206
+      },
+      "Brass": {
+        "both_correct": 12,
+        "bp_only": 317,
+        "mt3_only": 43,
+        "both_wrong": 591
+      },
+      "Pipe": {
+        "both_correct": 1,
+        "bp_only": 149,
+        "mt3_only": 2,
+        "both_wrong": 400
+      },
+      "Synth Pad": {
+        "both_correct": 0,
+        "bp_only": 146,
+        "mt3_only": 10,
+        "both_wrong": 1418
+      },
+      "Synth Lead": {
+        "both_correct": 0,
+        "bp_only": 5,
+        "mt3_only": 56,
+        "both_wrong": 471
+      },
+      "Organ": {
+        "both_correct": 10,
+        "bp_only": 56,
+        "mt3_only": 32,
+        "both_wrong": 227
+      },
+      "Reed": {
+        "both_correct": 4,
+        "bp_only": 284,
+        "mt3_only": 1,
+        "both_wrong": 218
+      }
+    }
+  }
+}
