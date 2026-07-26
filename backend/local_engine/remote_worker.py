@@ -335,9 +335,16 @@ class RemoteWorker:
                 or self.download_source(job_id, filename)
 
             queue: multiprocessing.Queue = multiprocessing.Queue()
+            # Engine selection (INTERNAL): job payload wins, then this
+            # worker's env, then "current". Lets a dev machine force the
+            # experimental specialist engine without any client change.
+            _engine = (job.get("analysis_engine")
+                       or os.environ.get("TONEFORGE_ANALYSIS_ENGINE") or "current")
+            _family = (job.get("target_family")
+                       or os.environ.get("TONEFORGE_TARGET_FAMILY") or "")
             process = multiprocessing.Process(
                 target=run_file_analysis,
-                args=(str(source), queue, None, filename),
+                args=(str(source), queue, None, filename, _engine, _family),
                 daemon=True,
             )
             process.start()

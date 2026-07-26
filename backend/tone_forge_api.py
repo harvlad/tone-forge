@@ -2190,6 +2190,11 @@ async def analyze_upload_endpoint(
     # and skip re-downloading a file it can already read.
     source_local_path: str = Form(""),
     source_sha256: str = Form(""),
+    # INTERNAL (experimental specialist integration): analysis engine
+    # variant + the family the musician is playing. Additive multipart
+    # fields — absent/empty means current production behavior.
+    engine: str = Form(""),
+    target_family: str = Form(""),
 ) -> JSONResponse:
     """Queue an uploaded song for deep analysis on a remote GPU engine.
 
@@ -2228,6 +2233,9 @@ async def analyze_upload_endpoint(
             **({"source_local_path": source_local_path}
                if source_local_path else {}),
             **({"source_sha256": source_sha256} if source_sha256 else {}),
+            # INTERNAL experimental-engine selection (empty = current).
+            **({"analysis_engine": engine} if engine else {}),
+            **({"target_family": target_family} if target_family else {}),
         },
     )
     upload_path = _UPLOADS_DIR / f"{job.id}{suffix}"
@@ -2411,6 +2419,9 @@ async def engine_claim_endpoint(request: Request) -> JSONResponse:
                 # file back down from this server.
                 "source_local_path": payload.get("source_local_path"),
                 "source_sha256": payload.get("source_sha256"),
+                # INTERNAL experimental-engine selection (absent = current).
+                "analysis_engine": payload.get("analysis_engine"),
+                "target_family": payload.get("target_family"),
             })
         if time.time() >= deadline:
             # 204 must carry no body. JSONResponse({}) serialised a
@@ -4182,6 +4193,66 @@ async def post_debug_jam_log(request: Request) -> JSONResponse:
         text = f"<decode error: {e!r}>"
     logger.warning(f"[JAM-DEBUG] {text}")
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/debug/specialist-feedback")
+async def post_specialist_feedback(request: Request) -> JSONResponse:
+    """INTERNAL: record pairwise musician feedback for experimental
+    specialist testing (BETTER/SAME/WORSE + optional problem tags).
+    Admin-guarded via the /api/debug/ prefix. See
+    tone_forge/specialist/feedback.py for the schema."""
+    from tone_forge.specialist import feedback as _fb
+    try:
+        body = await request.json()
+        rec = _fb.record(
+            verdict=body["verdict"],
+            song_hash=body.get("song_hash", ""),
+            target_family=body.get("target_family", ""),
+            engine=body.get("engine", "experimental_specialist"),
+            registry_version=body.get("registry_version", ""),
+            part=body.get("part"),
+            section=body.get("section"),
+            time_range=body.get("time_range"),
+            tags=body.get("tags"),
+            note=body.get("note", ""),
+            history_id=body.get("history_id", ""),
+            config_hash=body.get("config_hash", ""),
+        )
+        return JSONResponse({"ok": True, "record": rec})
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.get("/api/debug/specialist-feedback")
+async def get_specialist_feedback() -> JSONResponse:
+    """INTERNAL: list captured specialist feedback records."""
+    from tone_forge.specialist import feedback as _fb
+    return JSONResponse({"records": _fb.load_all()})
+
+
+@app.get("/api/debug/specialist-provenance/{history_id}")
+async def get_specialist_provenance(history_id: str) -> JSONResponse:
+    """INTERNAL: inspect what generated a session's artifacts
+    (engine, router registry version, separator/transcriber/normalization
+    versions, config hash, timings, failures). Step-10 observability:
+    the separated target stem itself is auditable via the session's stem
+    URLs; this endpoint answers 'bad separation or bad transcription?'
+    attribution questions."""
+    item = _get_history_item(history_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="history item not found")
+    result = item.get("result") or item
+    return JSONResponse({
+        "history_id": history_id,
+        "analysis_engine": result.get("analysis_engine", "current"),
+        "specialist_provenance": result.get("specialist_provenance"),
+        "profiling": result.get("profiling"),
+        "midi_methods": {
+            name: (m or {}).get("method")
+            for name, m in (result.get("midi_stems") or {}).items()
+        },
+        "stems": list((result.get("stems_paths") or {}).keys()) or None,
+    })
 
 
 @app.get("/api/debug/corpus")
