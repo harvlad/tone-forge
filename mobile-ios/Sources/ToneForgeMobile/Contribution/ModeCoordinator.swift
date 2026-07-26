@@ -160,22 +160,60 @@ public final class ModeCoordinator: ObservableObject {
             app.audioEngine.clock.play()
         }
         let s = app.sampleScheduler
-        let savedHold = s.holdMode, savedQ = s.quantize
+        let savedHold = s.holdMode, savedQ = s.quantize, savedLoop = s.loopOverride
         s.holdMode = latch ? .toggle : .hold
+        // Latch = session-view clip: ring + LOOP until toggled off.
+        // Song chops carry no loopPointSec, so without this override a
+        // latched clip played one pass and went silent.
+        s.loopOverride = latch
+        let result: SampleScheduler.TriggerResult
         if wasStopped {
             // First launch (transport just started or a plain tap):
             // fire immediately — this clip IS beat 1, no bar wait. Use
             // triggerRaw to bypass the pad's bar-quantize for this hit.
-            _ = s.triggerRaw(padIdx: padIdx, packId: packId)
+            result = s.triggerRaw(padIdx: padIdx, packId: packId)
         } else {
             // Clock already rolling: quantize to the next bar so this
             // clip locks in with the ones already playing.
             s.quantize = .bar
-            _ = s.trigger(padIdx: padIdx, packId: packId)
+            result = s.trigger(padIdx: padIdx, packId: packId)
         }
         s.holdMode = savedHold
         s.quantize = savedQ
+        s.loopOverride = savedLoop
+        // Freshly imported songs decode their chop buffers async — a
+        // press during that window returns .padNotFound and used to be
+        // swallowed (the "tap twice to play" bug). Kick the preload and
+        // retry this press once the pack's buffers are resident.
+        if case .padNotFound = result {
+            retryJamSampleWhenLoaded(padIdx: padIdx, packId: packId, latch: latch)
+        }
     }
+
+    /// One retry for a Jam-sample press that raced the async chop
+    /// preload: poll until the pad's buffer lands (bounded), then
+    /// re-fire the original press. The in-flight set stops a pad whose
+    /// buffer never materializes from spawning retry chains.
+    private func retryJamSampleWhenLoaded(padIdx: Int, packId: String, latch: Bool) {
+        let key = "\(packId)#\(padIdx)"
+        guard !jamSampleRetries.contains(key) else { return }
+        jamSampleRetries.insert(key)
+        app.preloadAllSongDnaPacks()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.jamSampleRetries.remove(key) }
+            for _ in 0..<40 {  // ≤ ~6s
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                if self.app.sampleScheduler.isPadLoaded(packId: packId, padIdx: padIdx) {
+                    self.triggerJamSample(padIdx: padIdx, packId: packId, latch: latch)
+                    return
+                }
+            }
+        }
+    }
+
+    /// Jam-sample retries currently in flight ("packId#padIdx").
+    private var jamSampleRetries: Set<String> = []
 
     /// Release a held (Tap-mode) Jam sample on finger-up.
     public func releaseJamSample(padIdx: Int, packId: String) {

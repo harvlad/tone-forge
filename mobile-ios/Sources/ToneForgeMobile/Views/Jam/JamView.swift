@@ -668,6 +668,9 @@ struct JamSamplesGrid: View {
                     }
                 }
                 .padding(.horizontal, 12)
+                // Breathing room so the last row scrolls fully clear of
+                // the controls strip instead of sitting clipped under it.
+                .padding(.bottom, TFTheme.Spacing.xl)
             }
         }
     }
