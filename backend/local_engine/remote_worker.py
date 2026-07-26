@@ -56,6 +56,14 @@ _UPLOAD_RETRY_SLEEP_SEC = 10.0
 # for _JOB_STALL_SEC, or exceeds _JOB_MAX_SEC wall clock outright.
 _JOB_STALL_SEC = 15 * 60
 _JOB_MAX_SEC = 60 * 60
+# Self-restart watchdog. A long-lived worker can wedge in a way that
+# keeps the claim heartbeat alive while every claimed job fails
+# instantly (seen after ~13 days uptime: "online" engine, every job
+# dead at the download step). A fresh interpreter cures it, so after
+# this many consecutive job failures the worker exits non-zero and
+# lets its supervisor (launchd KeepAlive) relaunch it clean.
+_MAX_CONSECUTIVE_FAILURES = 3
+_WATCHDOG_EXIT_CODE = 86
 # The engine's serve-file wrapper — stems_paths values arrive wrapped
 # in this; strip it to recover the on-disk path.
 _SERVE_PREFIXES = (
@@ -150,6 +158,7 @@ class RemoteWorker:
         self.worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
         self.device = detect_device()
         self._stop = False
+        self._consecutive_failures = 0
 
     # -- backend I/O ------------------------------------------------------
 
@@ -358,9 +367,11 @@ class RemoteWorker:
             self.post_progress(job_id, 99, "Saving analysis…")
             self.post_complete(job_id, sanitize_for_json(result_data))
             logger.info("job %s complete", job_id)
+            self._consecutive_failures = 0
         except Exception as e:  # noqa: BLE001
             logger.exception("job %s failed", job_id)
             self.post_fail(job_id, str(e))
+            self._consecutive_failures += 1
         finally:
             if source is not None:
                 source.unlink(missing_ok=True)
@@ -384,6 +395,14 @@ class RemoteWorker:
                 continue
             if job is not None:
                 self.run_job(job)
+                if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    # Wedged-worker watchdog: die and let the supervisor
+                    # relaunch a fresh interpreter (see constant above).
+                    logger.error(
+                        "%d consecutive job failures — exiting for a "
+                        "clean restart", self._consecutive_failures,
+                    )
+                    raise SystemExit(_WATCHDOG_EXIT_CODE)
 
     def stop(self) -> None:
         self._stop = True
