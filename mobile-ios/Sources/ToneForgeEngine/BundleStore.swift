@@ -468,7 +468,14 @@ public final class BundleStore: @unchecked Sendable {
         }
 
         var request = URLRequest(url: remote)
-        AuthContext.shared.apply(to: &request)
+        // Auth headers go ONLY to our own backend. Presigned R2/S3 URLs
+        // carry their auth in the query string and 400 any request that
+        // ALSO has an Authorization header ("InvalidRequest") — signing
+        // in used to break every stem download this way ("Audio
+        // unavailable" on freshly imported songs).
+        if let base = baseURL, remote.host == base.host {
+            AuthContext.shared.apply(to: &request)
+        }
         let (tempURL, response) = try await session.download(for: request)
         defer { try? fileManager.removeItem(at: tempURL) }
 
