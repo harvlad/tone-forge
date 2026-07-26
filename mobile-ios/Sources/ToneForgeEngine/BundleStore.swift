@@ -70,9 +70,21 @@ public final class BundleStore: @unchecked Sendable {
     /// into a normal error the caller can surface and recover from.
     public static func makeStemSession() -> URLSession {
         let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 30    // gap between data packets
-        cfg.timeoutIntervalForResource = 300  // whole-stem ceiling
+        // Stall detection lives in the DATA-GAP timeout: 30s with no
+        // bytes at all = a dead transfer, error out and recover.
+        cfg.timeoutIntervalForRequest = 30
+        // The whole-stem ceiling exists only as a last-resort backstop
+        // and must accommodate slow links. Stems are ~40 MB each and
+        // several download concurrently; a 300s ceiling required
+        // ~145 KB/s per stream and killed HEALTHY transfers mid-body
+        // on congested home uplinks ("analysis completed, doesn't
+        // open" — every stem died at exactly 300s with 200 OK). A
+        // trickling-but-alive transfer is progress, not a stall.
+        cfg.timeoutIntervalForResource = 1800
         cfg.waitsForConnectivity = false
+        // Keep per-stream throughput high enough to visibly progress:
+        // don't open a connection per stem all at once.
+        cfg.httpMaximumConnectionsPerHost = 3
         return URLSession(configuration: cfg)
     }
 
