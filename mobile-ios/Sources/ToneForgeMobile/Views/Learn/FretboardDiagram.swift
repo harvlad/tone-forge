@@ -11,6 +11,11 @@ import ToneForgeEngine
 
 struct FretboardDiagram: View {
     let shape: GuitarChordShape
+    /// Layer selection so a host can sandwich the hand silhouette
+    /// between the board and the dots: grid → hand → dots.
+    var layer: Layer = .full
+
+    enum Layer { case full, board, dots }
 
     /// Frets drawn in the window (matches GuitarVoicing's search
     /// window).
@@ -44,6 +49,7 @@ struct FretboardDiagram: View {
             gridRect.minX + CGFloat(s) * stringGap
         }
 
+        if layer != .dots {
         // Nut (thick when open position) + fret wires.
         for f in 0...fretRows {
             let y = gridRect.minY + CGFloat(f) * fretGap
@@ -82,6 +88,10 @@ struct FretboardDiagram: View {
                 )
             )
         }
+
+        }  // layer != .dots
+
+        guard layer != .board else { return }
 
         // Markers + dots.
         let dotRadius = min(stringGap, fretGap) * 0.32

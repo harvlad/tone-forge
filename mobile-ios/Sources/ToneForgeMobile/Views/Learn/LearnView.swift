@@ -27,6 +27,9 @@ struct LearnView: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var showOverview = false
+    /// Fretting-hand silhouette on the chord cards (shared with
+    /// ChordCard via AppStorage).
+    @AppStorage("learn.showHand") private var showHand = true
 
     var body: some View {
         Group {
@@ -225,6 +228,16 @@ struct LearnView: View {
             .accessibilityLabel("Show song structure")
 
             Spacer(minLength: 0)
+
+            Button {
+                showHand.toggle()
+            } label: {
+                Image(systemName: "hand.raised.fingers.spread")
+                    .padding(.horizontal, 2)
+                    .tfChip(active: showHand)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(showHand ? "Hide hand overlay" : "Show hand overlay")
 
             Button {
                 cycleSpeed()
