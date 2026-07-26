@@ -53,8 +53,13 @@ enum ChordFingering {
         var barreFret: Int? = nil
         var remaining: [(string: Int, fret: Int)]
 
-        if atMin.count >= 2 && !others.isEmpty {
-            barreStrings = atMin.map(\.string).min()!...atMin.map(\.string).max()!
+        let atMinLo = atMin.map(\.string).min() ?? 0
+        let atMinHi = atMin.map(\.string).max() ?? 0
+        // A real barre SPANS the neck (>=3 strings apart). Two stray
+        // notes on the same fret (D major's G+e at fret 2) are separate
+        // fingers, not a barre.
+        if atMin.count >= 2 && (atMinHi - atMinLo) >= 3 && !others.isEmpty {
+            barreStrings = atMinLo...atMinHi
             barreFret = minFret
             for n in atMin {
                 notes.append(Note(string: n.string, fret: n.fret, finger: 1))
@@ -86,10 +91,10 @@ struct NeckGeometry: Equatable {
     let window: Int
 
     init(size: CGSize, baseFret: Int, window: Int = 4) {
-        // Left gutter for the x/o markers (+ "3fr" label); room below
-        // the neck for the hand's palm.
-        let left: CGFloat = 30
-        let right: CGFloat = 10
+        // Right gutter for the x/o markers beside the nut (+ "3fr"
+        // label); room below the neck for the hand's palm.
+        let left: CGFloat = 10
+        let right: CGFloat = 30
         let top: CGFloat = 8
         // Real-neck proportions: wide, not square — cap the height so
         // a tall host card yields a slim board with hand room below.
@@ -108,9 +113,15 @@ struct NeckGeometry: Equatable {
         neck.minY + (CGFloat(5 - s) + 0.5) * stringGap
     }
 
-    /// Dot center x for an absolute fret.
+    /// Dot center x for an absolute fret. Nut is at the RIGHT (sample
+    /// design: headstock right), frets increase leftward.
     func fretX(_ fret: Int) -> CGFloat {
-        neck.minX + (CGFloat(fret - baseFret) + 0.5) * fretW
+        neck.maxX - (CGFloat(fret - baseFret) + 0.5) * fretW
+    }
+
+    /// X of fret wire f (0 = nut at the right edge).
+    func wireX(_ f: Int) -> CGFloat {
+        neck.maxX - CGFloat(f) * fretW
     }
 }
 
@@ -124,6 +135,9 @@ struct HandPlan: Equatable {
     var barreRect: CGRect?
     /// Bottom edge of the neck: the hand's anatomy anchors here.
     var neckBottom: CGFloat
+    /// String spacing — the anatomical unit (finger width ≈ one string
+    /// gap, like a real hand on a real neck).
+    var fingerScale: CGFloat = 12
 
     static func plan(
         fingering: ChordFingering.Result, geo: NeckGeometry
@@ -160,7 +174,8 @@ struct HandPlan: Equatable {
                     y: geo.neck.maxY - geo.stringGap * 0.4))
             }
         }
-        return HandPlan(tips: tips, barreRect: barreRect, neckBottom: geo.neck.maxY)
+        return HandPlan(tips: tips, barreRect: barreRect,
+                        neckBottom: geo.neck.maxY, fingerScale: geo.stringGap)
     }
 }
 
@@ -210,15 +225,17 @@ struct HandSilhouetteView: View, Animatable {
 
     private func draw(ctx: GraphicsContext, size: CGSize, tips: [CGPoint]) {
         let fill = Color(red: 0.13, green: 0.13, blue: 0.17).opacity(0.95)
-        let fingerFill = Color(red: 0.20, green: 0.20, blue: 0.26).opacity(0.96)
-        let rim = Color.white.opacity(0.22)
+        let fingerFill = Color(red: 0.19, green: 0.19, blue: 0.25).opacity(0.96)
+        let rim = Color.white.opacity(0.20)
 
-        // Metrics scale with the space below the board.
-        let unit = min(size.width * 0.5, size.height)
+        // Anatomical unit: one string gap ≈ one finger width, exactly
+        // like a real hand on a real neck. Everything scales off it.
+        let g = max(6, plan.fingerScale)
 
-        let knuckleY = plan.neckBottom + unit * 0.16
+        // Knuckles sit about two string-gaps below the board.
+        let knuckleY = plan.neckBottom + g * 2.0
         let xs = tips.map(\.x).sorted()
-        let handCenterX = (xs[1] + xs[2]) / 2 + unit * 0.04
+        let handCenterX = (xs[1] + xs[2]) / 2 + g * 0.3
 
         var hand = Path()
         var fingers = Path()
@@ -232,42 +249,48 @@ struct HandSilhouetteView: View, Animatable {
         for (i, tip) in tips.enumerated() {
             let spread = CGFloat(rankOf[i] ?? i) - 1.5
             let knuckle = CGPoint(
-                x: handCenterX + spread * unit * 0.22,
-                y: knuckleY + abs(spread) * unit * 0.03
+                x: handCenterX + spread * g * 1.15,
+                y: knuckleY + abs(spread) * g * 0.25
             )
-            let mid = CGPoint(
-                x: (knuckle.x + tip.x) / 2 + (tip.x - knuckle.x) * 0.10,
-                y: (knuckle.y + tip.y) / 2 + unit * 0.02
-            )
-            let wProx = unit * 0.16
-            let wDist = unit * 0.12
-            fingers.addPath(segment(from: knuckle, to: mid, width: wProx))
-            fingers.addPath(segment(from: mid, to: tip, width: wDist))
-            fingers.addEllipse(in: CGRect(
-                x: tip.x - wDist / 2, y: tip.y - wDist / 2,
-                width: wDist, height: wDist))
+            // Three phalanges along a gentle bow — near-constant width
+            // (real fingers barely taper), round fingertip.
+            let bow = g * 0.35
+            let j1 = CGPoint(
+                x: knuckle.x + (tip.x - knuckle.x) * 0.38 + bow * 0.6,
+                y: knuckle.y + (tip.y - knuckle.y) * 0.38 + bow * 0.3)
+            let j2 = CGPoint(
+                x: knuckle.x + (tip.x - knuckle.x) * 0.72 + bow * 0.35,
+                y: knuckle.y + (tip.y - knuckle.y) * 0.72)
+            let wA = g * 0.92
+            let wB = g * 0.84
+            let wC = g * 0.76
+            fingers.addPath(segment(from: knuckle, to: j1, width: wA))
+            fingers.addPath(segment(from: j1, to: j2, width: wB))
+            fingers.addPath(segment(from: j2, to: tip, width: wC))
         }
 
         // Barre: finger 1 flat across the strings (vertical bar).
         if let b = plan.barreRect {
             fingers.addRoundedRect(
-                in: b, cornerSize: CGSize(width: b.width / 2, height: b.width / 2))
+                in: b.insetBy(dx: -g * 0.05, dy: 0),
+                cornerSize: CGSize(width: b.width / 2, height: b.width / 2))
         }
 
-        // Palm below the neck + wrist running off the bottom.
-        let palmW = unit * 0.85
-        let palmH = unit * 0.72
+        // Palm: hand-sized (≈ 3.4 fingers wide), mostly below the neck.
+        let palmW = g * 3.9
+        let palmH = g * 3.4
         hand.addEllipse(in: CGRect(
-            x: handCenterX - palmW / 2, y: knuckleY - palmH * 0.16,
+            x: handCenterX - palmW / 2, y: knuckleY - g * 0.5,
             width: palmW, height: palmH))
-        let wristW = palmW * 0.7
-        hand.addRoundedRect(
-            in: CGRect(
-                x: handCenterX - wristW / 2 + unit * 0.06,
-                y: knuckleY + palmH * 0.25,
-                width: wristW,
-                height: max(unit, size.height - knuckleY)),
-            cornerSize: CGSize(width: wristW * 0.25, height: wristW * 0.25))
+        // Wrist: angled column off the bottom-right (forearm).
+        var wrist = Path()
+        let wTop = knuckleY + palmH * 0.55
+        wrist.move(to: CGPoint(x: handCenterX - palmW * 0.30, y: wTop))
+        wrist.addLine(to: CGPoint(x: handCenterX + palmW * 0.38, y: wTop - g * 0.3))
+        wrist.addLine(to: CGPoint(x: handCenterX + palmW * 0.70, y: size.height + g))
+        wrist.addLine(to: CGPoint(x: handCenterX + palmW * 0.02, y: size.height + g))
+        wrist.closeSubpath()
+        hand.addPath(wrist)
 
         var glow = ctx
         glow.addFilter(.shadow(color: rim, radius: 2))

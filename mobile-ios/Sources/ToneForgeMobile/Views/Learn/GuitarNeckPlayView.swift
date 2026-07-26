@@ -101,7 +101,7 @@ private struct NeckBoardCanvas: View {
             // Inlays at real fret markers.
             for col in 0..<geo.window {
                 let absFret = geo.baseFret + col
-                let cx = neck.minX + (CGFloat(col) + 0.5) * geo.fretW
+                let cx = geo.fretX(geo.baseFret + col)
                 let r = geo.stringGap * 0.22
                 let inlay = Color.white.opacity(0.10)
                 if [3, 5, 7, 9, 15, 17].contains(absFret) {
@@ -118,9 +118,10 @@ private struct NeckBoardCanvas: View {
                 }
             }
 
-            // Nut (left, thick when open position) + fret wires.
+            // Nut (RIGHT, thick when open position) + fret wires —
+            // headstock-right orientation per the sample design.
             for f in 0...geo.window {
-                let x = neck.minX + CGFloat(f) * geo.fretW
+                let x = geo.wireX(f)
                 var line = Path()
                 line.move(to: CGPoint(x: x, y: neck.minY))
                 line.addLine(to: CGPoint(x: x, y: neck.maxY))
@@ -151,7 +152,7 @@ private struct NeckBoardCanvas: View {
             // x / o markers left of the nut, per string.
             if let shape {
                 for (s, state) in shape.strings.enumerated() {
-                    let at = CGPoint(x: neck.minX - 13, y: geo.stringY(s))
+                    let at = CGPoint(x: neck.maxX + 13, y: geo.stringY(s))
                     switch state {
                     case .muted:
                         ctx.draw(
@@ -176,7 +177,7 @@ private struct NeckBoardCanvas: View {
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(TFTheme.textSecondary),
                         at: CGPoint(
-                            x: neck.minX + geo.fretW * 0.5,
+                            x: geo.fretX(shape.baseFret),
                             y: neck.maxY + 10))
                 }
             }
