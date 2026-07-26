@@ -230,7 +230,7 @@ class RemoteWorker:
                 continue
             self.post_progress(
                 job_id, 95 + 4 * (i / max(1, len(roles))),
-                f"Uploading stem {i + 1}/{len(roles)} ({role})…",
+                f"Saving stems {i + 1}/{len(roles)} ({role})…",
             )
             self._upload_stem_with_retry(job_id, role, local)
 
@@ -292,7 +292,7 @@ class RemoteWorker:
 
         source: Optional[Path] = None
         try:
-            self.post_progress(job_id, 3, "Downloading source…")
+            self.post_progress(job_id, 3, "Starting analysis…")
             source = self.download_source(job_id, filename)
 
             queue: multiprocessing.Queue = multiprocessing.Queue()

@@ -2228,7 +2228,7 @@ async def analyze_upload_endpoint(
     # write (the job id names the file, so the job must exist first).
     await _JOBS.update(
         job.id,
-        message="Waiting for GPU engine…" if not _engine_online() else "Queued",
+        message="Waiting for the analysis engine…" if not _engine_online() else "Queued for analysis…",
         payload={**(job.payload or {}), "upload_path": str(upload_path)},
         meta=_resolve_attribution_meta(
             {"title": title, "artist": artist, "license": license,
@@ -2300,7 +2300,7 @@ async def _create_job_from_local_path(
     shutil.copyfile(src, upload_path)
     await _JOBS.update(
         job.id,
-        message="Waiting for GPU engine…" if not _engine_online() else "Queued",
+        message="Waiting for the analysis engine…" if not _engine_online() else "Queued for analysis…",
         payload={**(job.payload or {}), "upload_path": str(upload_path)},
     )
     return job
@@ -2388,7 +2388,7 @@ async def engine_claim_endpoint(request: Request) -> JSONResponse:
         if job is not None:
             await _JOBS.update(
                 job.id, status="running", percent=2,
-                message="Claimed by GPU engine",
+                message="Analysing…",
             )
             payload = job.payload or {}
             return JSONResponse({
