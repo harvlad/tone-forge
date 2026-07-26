@@ -1,129 +1,176 @@
 // HandSilhouette.swift
 //
-// Optional fretting-hand silhouette over the Learn chord diagrams:
-// the photoreal pose (hand reaching up from below the neck, fingers
-// arched over the strings, wrist dropping off the card) rendered as a
-// dark parametric silhouette — no image assets, so it fits ANY chord
-// shape at any fret window and animates naturally from chord to chord
-// (fingertips are the animatable data; the hand re-solves each frame).
+// The fretting-hand silhouette for the Learn tab's guitar-neck play
+// view (the "Show hand" mode): a HORIZONTAL neck with a hand playing
+// the song, per the approved sample design — dark wood board, fingers
+// arching up from below the neck, numbered fingertips landing on the
+// current chord, animating naturally to the next chord.
 //
-// Geometry mirrors FretboardDiagram exactly so fingertips land on the
-// finger dots. Layering: grid → hand → dots (host composes).
+// No image assets: the hand is parametric (fingertips are the
+// Animatable data), so it fits any chord shape at any fret window.
 
 import SwiftUI
 import ToneForgeEngine
 
-// MARK: - Finger assignment
+// MARK: - Fingering (pure, geometry-free)
 
-/// Which fingertip goes where for a chord shape. Heuristic matching
-/// standard chord-chart fingering: barre = finger 1 across the lowest
-/// fret; otherwise fingers 1…4 in (fret, string) order.
-struct HandPlan: Equatable {
-    /// Fingertip targets in diagram coordinates, index 0…3 = fingers
-    /// 1…4. Fingers without a job rest curled below the grid.
-    var tips: [CGPoint]
-    /// X-span of a barre at tips[0]'s y (finger 1 laid flat). Nil = no
-    /// barre.
-    var barre: ClosedRange<CGFloat>?
-    /// Bottom edge of the fret grid — the hand's anatomy anchors here
-    /// (knuckles just below the board), not to the deepest fingertip.
-    var gridBottom: CGFloat = 0
-    /// Per-note finger numbers (1 = index … 4 = pinky), the SAME
-    /// assignment that drives the silhouette — so numbered dots and
-    /// the hand always agree. Barres list finger 1 on every barred
-    /// string.
-    var assignments: [Assignment] = []
-
-    struct Assignment: Equatable {
-        let string: Int
-        let fret: Int
-        let finger: Int
+/// Standard chord-chart finger assignment: barre = finger 1 across the
+/// window's lowest fret; remaining notes get fingers in (fret, string)
+/// order. 1 = index … 4 = pinky.
+enum ChordFingering {
+    struct Note: Equatable {
+        let string: Int   // 0 = low E … 5 = high e
+        let fret: Int     // absolute fret
+        let finger: Int   // 1…4
     }
 
-    /// Diagram geometry duplicated from FretboardDiagram (markerHeight
-    /// 14, side insets, 4 fret rows) — keep in sync.
-    static func plan(shape: GuitarChordShape, size: CGSize) -> HandPlan {
-        let fretRows = 4
-        let markerHeight: CGFloat = 14
-        let sideInset: CGFloat = shape.baseFret > 1 ? 20 : 6
-        let gridRect = CGRect(
-            x: sideInset, y: markerHeight,
-            width: size.width - sideInset - 6,
-            height: size.height - markerHeight - 4
-        )
-        guard gridRect.width > 0, gridRect.height > 0 else {
-            return HandPlan(tips: [], barre: nil, gridBottom: 0)
-        }
-        let stringCount = shape.strings.count
-        let stringGap = gridRect.width / CGFloat(max(1, stringCount - 1))
-        let fretGap = gridRect.height / CGFloat(fretRows)
-        func stringX(_ s: Int) -> CGFloat { gridRect.minX + CGFloat(s) * stringGap }
-        func dotY(_ fret: Int) -> CGFloat {
-            gridRect.minY + (CGFloat(fret - shape.baseFret) + 0.5) * fretGap
-        }
+    struct Result: Equatable {
+        var notes: [Note]
+        /// Strings covered by a finger-1 barre (at the window's lowest
+        /// fret). Nil = no barre.
+        var barreStrings: ClosedRange<Int>?
+        var barreFret: Int?
+    }
 
-        // Fretted notes inside the window.
-        var notes: [(string: Int, fret: Int)] = []
+    static func assign(shape: GuitarChordShape, window: Int = 4) -> Result {
+        var fretted: [(string: Int, fret: Int)] = []
         for (s, state) in shape.strings.enumerated() {
             if case .fretted(let f) = state,
-               f >= shape.baseFret, f < shape.baseFret + fretRows {
-                notes.append((s, f))
+               f >= shape.baseFret, f < shape.baseFret + window {
+                fretted.append((s, f))
             }
         }
-        guard !notes.isEmpty else {
-            return HandPlan(tips: [], barre: nil, gridBottom: gridRect.maxY)
+        guard !fretted.isEmpty else {
+            return Result(notes: [], barreStrings: nil, barreFret: nil)
         }
+        let minFret = fretted.map(\.fret).min()!
+        let atMin = fretted.filter { $0.fret == minFret }
+        let others = fretted.filter { $0.fret != minFret }
 
-        // Barre: ≥2 strings on the window's lowest fret spanning to the
-        // highest played string → finger 1 lies flat across them.
-        let minFret = notes.map(\.fret).min()!
-        let atMin = notes.filter { $0.fret == minFret }
-        let others = notes.filter { $0.fret != minFret }
-        var tips: [CGPoint] = []
-        var barre: ClosedRange<CGFloat>? = nil
+        var notes: [Note] = []
+        var nextFinger = 1
+        var barreStrings: ClosedRange<Int>? = nil
+        var barreFret: Int? = nil
         var remaining: [(string: Int, fret: Int)]
 
-        var assignments: [Assignment] = []
         if atMin.count >= 2 && !others.isEmpty {
-            let lo = stringX(atMin.map(\.string).min()!)
-            let hi = stringX(atMin.map(\.string).max()!)
-            barre = lo...hi
-            tips.append(CGPoint(x: (lo + hi) / 2, y: dotY(minFret)))
+            barreStrings = atMin.map(\.string).min()!...atMin.map(\.string).max()!
+            barreFret = minFret
             for n in atMin {
-                assignments.append(Assignment(string: n.string, fret: n.fret, finger: 1))
+                notes.append(Note(string: n.string, fret: n.fret, finger: 1))
             }
+            nextFinger = 2
             remaining = others
         } else {
-            remaining = notes
+            remaining = fretted
         }
         remaining.sort { ($0.fret, $0.string) < ($1.fret, $1.string) }
-        for n in remaining.prefix(4 - tips.count) {
-            assignments.append(Assignment(
-                string: n.string, fret: n.fret, finger: tips.count + 1))
-            tips.append(CGPoint(x: stringX(n.string), y: dotY(n.fret)))
+        for n in remaining where nextFinger <= 4 {
+            notes.append(Note(string: n.string, fret: n.fret, finger: nextFinger))
+            nextFinger += 1
         }
-        // Unused fingers rest curled just above the knuckle line
-        // (short stubs beside the last active finger).
-        let restY = gridRect.maxY - size.width * 0.06
-        var restX = (tips.last?.x ?? gridRect.midX)
-        while tips.count < 4 {
-            restX += stringGap * 0.9
-            tips.append(CGPoint(x: min(restX, gridRect.maxX + stringGap * 0.4),
-                                y: restY))
+        return Result(notes: notes, barreStrings: barreStrings, barreFret: barreFret)
+    }
+}
+
+// MARK: - Horizontal neck geometry
+
+/// Pixel geometry of the horizontal neck: nut at the LEFT, frets
+/// increasing right, strings horizontal with low E at the BOTTOM
+/// (player-mirror view — the hand reaches up from below the neck).
+struct NeckGeometry: Equatable {
+    let neck: CGRect
+    let stringGap: CGFloat
+    let fretW: CGFloat
+    let baseFret: Int
+    let window: Int
+
+    init(size: CGSize, baseFret: Int, window: Int = 4) {
+        // Left gutter for the x/o markers (+ "3fr" label); room below
+        // the neck for the hand's palm.
+        let left: CGFloat = 30
+        let right: CGFloat = 10
+        let top: CGFloat = 8
+        // Real-neck proportions: wide, not square — cap the height so
+        // a tall host card yields a slim board with hand room below.
+        let neckH = min(size.height * 0.60, size.width * 0.44)
+        self.neck = CGRect(
+            x: left, y: top,
+            width: max(1, size.width - left - right), height: max(1, neckH))
+        self.stringGap = neck.height / 6
+        self.fretW = neck.width / CGFloat(window)
+        self.baseFret = baseFret
+        self.window = window
+    }
+
+    /// String row center. 0 = low E → BOTTOM row; 5 = high e → top.
+    func stringY(_ s: Int) -> CGFloat {
+        neck.minY + (CGFloat(5 - s) + 0.5) * stringGap
+    }
+
+    /// Dot center x for an absolute fret.
+    func fretX(_ fret: Int) -> CGFloat {
+        neck.minX + (CGFloat(fret - baseFret) + 0.5) * fretW
+    }
+}
+
+// MARK: - Hand plan (tips in neck coordinates)
+
+struct HandPlan: Equatable {
+    /// Fingertips, index 0…3 = fingers 1…4 (unused fingers rest curled
+    /// below the neck).
+    var tips: [CGPoint]
+    /// Barre: finger 1 lies flat across strings — a vertical bar.
+    var barreRect: CGRect?
+    /// Bottom edge of the neck: the hand's anatomy anchors here.
+    var neckBottom: CGFloat
+
+    static func plan(
+        fingering: ChordFingering.Result, geo: NeckGeometry
+    ) -> HandPlan {
+        var tipByFinger: [Int: CGPoint] = [:]
+        var barreRect: CGRect? = nil
+
+        if let bs = fingering.barreStrings, let bf = fingering.barreFret {
+            let x = geo.fretX(bf)
+            let yTop = geo.stringY(bs.upperBound) - geo.stringGap * 0.4
+            let yBot = geo.stringY(bs.lowerBound) + geo.stringGap * 0.4
+            let w = geo.fretW * 0.30
+            barreRect = CGRect(x: x - w / 2, y: yTop, width: w, height: yBot - yTop)
+            // Finger 1's tip = top of the barre (it lies flat downward).
+            tipByFinger[1] = CGPoint(x: x, y: yTop + geo.stringGap * 0.3)
         }
-        return HandPlan(tips: tips, barre: barre, gridBottom: gridRect.maxY,
-                        assignments: assignments)
+        for n in fingering.notes where tipByFinger[n.finger] == nil {
+            tipByFinger[n.finger] = CGPoint(
+                x: geo.fretX(n.fret), y: geo.stringY(n.string))
+        }
+
+        // Rest positions: curled just under the neck, spread rightward
+        // from the used fingers.
+        var tips: [CGPoint] = []
+        let usedXs = tipByFinger.values.map(\.x)
+        var restX = (usedXs.max() ?? geo.neck.midX)
+        for finger in 1...4 {
+            if let t = tipByFinger[finger] {
+                tips.append(t)
+            } else {
+                restX += geo.fretW * 0.4
+                tips.append(CGPoint(
+                    x: min(restX, geo.neck.maxX - 4),
+                    y: geo.neck.maxY - geo.stringGap * 0.4))
+            }
+        }
+        return HandPlan(tips: tips, barreRect: barreRect, neckBottom: geo.neck.maxY)
     }
 }
 
 // MARK: - Animatable silhouette
 
-/// The silhouette itself. `Animatable` over the four fingertips, so a
-/// chord change animates each finger sliding/curling to its new spot.
+/// The hand. `Animatable` over the four fingertips: a chord change
+/// animates each finger to its new spot like a hand moving.
 struct HandSilhouetteView: View, Animatable {
     var plan: HandPlan
 
-    // Animatable data = 4 fingertips (8 scalars) as nested pairs.
     typealias TipPair = AnimatablePair<CGFloat, CGFloat>
     typealias Tips4 = AnimatablePair<
         AnimatablePair<TipPair, TipPair>, AnimatablePair<TipPair, TipPair>
@@ -162,94 +209,73 @@ struct HandSilhouetteView: View, Animatable {
     }
 
     private func draw(ctx: GraphicsContext, size: CGSize, tips: [CGPoint]) {
-        // Dark gray with a visible rim — pure black vanished into the
-        // card background.
         let fill = Color(red: 0.13, green: 0.13, blue: 0.17).opacity(0.95)
-        let rim = Color.white.opacity(0.25)
+        let fingerFill = Color(red: 0.20, green: 0.20, blue: 0.26).opacity(0.96)
+        let rim = Color.white.opacity(0.22)
 
-        // Hand metrics scale with WIDTH (the board's musical geometry),
-        // never card height — the Learn cards flex tall and a
-        // height-based hand stretched into spaghetti.
-        let unit = size.width
+        // Metrics scale with the space below the board.
+        let unit = min(size.width * 0.5, size.height)
 
-        // Knuckle baseline pinned just below the BOARD — real fretting
-        // anatomy: the palm never floats up into the strings; fingers
-        // are long and reach from under the neck to their frets.
-        let gridBottom = plan.gridBottom > 0 ? plan.gridBottom : size.height * 0.9
-        let knuckleY = gridBottom + unit * 0.09
+        let knuckleY = plan.neckBottom + unit * 0.16
         let xs = tips.map(\.x).sorted()
-        let handCenterX = (xs[1] + xs[2]) / 2 + unit * 0.05
+        let handCenterX = (xs[1] + xs[2]) / 2 + unit * 0.04
 
         var hand = Path()
         var fingers = Path()
 
-        // Fingers: knuckle → mid → tip, tapered round-cap strokes with
-        // a slight outward bow (curl). Knuckles are RANK-MATCHED to the
-        // tips' left-to-right order so fingers stay parallel and never
-        // cross the board diagonally (finger NUMBERS live on the dots;
-        // the silhouette optimizes for readability).
-        let rankOf: [Int: Int] = {
-            let order = tips.indices.sorted { tips[$0].x < tips[$1].x }
-            var r: [Int: Int] = [:]
-            for (rank, idx) in order.enumerated() { r[idx] = rank }
-            return r
-        }()
+        // Knuckles rank-matched to tip order: parallel fingers, no
+        // crossings (finger identity lives on the numbered dots).
+        let order = tips.indices.sorted { tips[$0].x < tips[$1].x }
+        var rankOf: [Int: Int] = [:]
+        for (rank, idx) in order.enumerated() { rankOf[idx] = rank }
+
         for (i, tip) in tips.enumerated() {
             let spread = CGFloat(rankOf[i] ?? i) - 1.5
             let knuckle = CGPoint(
-                x: handCenterX + spread * unit * 0.16,
+                x: handCenterX + spread * unit * 0.22,
                 y: knuckleY + abs(spread) * unit * 0.03
             )
             let mid = CGPoint(
-                x: (knuckle.x + tip.x) / 2 + (tip.x - knuckle.x) * 0.12 + unit * 0.02,
-                y: (knuckle.y + tip.y) / 2 + unit * 0.03
+                x: (knuckle.x + tip.x) / 2 + (tip.x - knuckle.x) * 0.10,
+                y: (knuckle.y + tip.y) / 2 + unit * 0.02
             )
-            let wProx = unit * 0.095
-            let wDist = unit * 0.072
-            fingers.addPath(strokeSegment(from: knuckle, to: mid, width: wProx))
-            fingers.addPath(strokeSegment(from: mid, to: tip, width: wDist))
+            let wProx = unit * 0.16
+            let wDist = unit * 0.12
+            fingers.addPath(segment(from: knuckle, to: mid, width: wProx))
+            fingers.addPath(segment(from: mid, to: tip, width: wDist))
             fingers.addEllipse(in: CGRect(
                 x: tip.x - wDist / 2, y: tip.y - wDist / 2,
                 width: wDist, height: wDist))
         }
 
-        // Barre: finger 1 flattens into a bar across the strings.
-        if let barre = plan.barre, let tip1 = tips.first {
-            let w = unit * 0.10
+        // Barre: finger 1 flat across the strings (vertical bar).
+        if let b = plan.barreRect {
             fingers.addRoundedRect(
-                in: CGRect(
-                    x: barre.lowerBound - w / 2, y: tip1.y - w / 2,
-                    width: barre.upperBound - barre.lowerBound + w, height: w),
-                cornerSize: CGSize(width: w / 2, height: w / 2))
+                in: b, cornerSize: CGSize(width: b.width / 2, height: b.width / 2))
         }
 
-        // Palm: rounded mass at the knuckles; a straight wrist column
-        // drops off the bottom, slightly right of palm center.
-        let palmW = unit * 0.60
-        let palmH = unit * 0.55
+        // Palm below the neck + wrist running off the bottom.
+        let palmW = unit * 0.85
+        let palmH = unit * 0.72
         hand.addEllipse(in: CGRect(
-            x: handCenterX - palmW / 2, y: knuckleY - palmH * 0.22,
+            x: handCenterX - palmW / 2, y: knuckleY - palmH * 0.16,
             width: palmW, height: palmH))
-        let wristW = palmW * 0.72
+        let wristW = palmW * 0.7
         hand.addRoundedRect(
             in: CGRect(
-                x: handCenterX - wristW / 2 + unit * 0.05,
-                y: knuckleY + palmH * 0.10,
+                x: handCenterX - wristW / 2 + unit * 0.06,
+                y: knuckleY + palmH * 0.25,
                 width: wristW,
-                height: max(unit * 0.6, size.height - knuckleY)),
+                height: max(unit, size.height - knuckleY)),
             cornerSize: CGSize(width: wristW * 0.25, height: wristW * 0.25))
 
-        // Palm dark, fingers a shade lighter — the fingers must read
-        // against the dark board while the palm recedes.
         var glow = ctx
         glow.addFilter(.shadow(color: rim, radius: 2))
         glow.fill(hand, with: .color(fill))
-        glow.fill(fingers, with: .color(
-            Color(red: 0.20, green: 0.20, blue: 0.26).opacity(0.96)))
+        glow.fill(fingers, with: .color(fingerFill))
     }
 
-    /// A finger segment as a filled round-capped stroke path.
-    private func strokeSegment(from a: CGPoint, to b: CGPoint, width: CGFloat) -> Path {
+    private func segment(from a: CGPoint, to b: CGPoint, width: CGFloat) -> Path {
         var line = Path()
         line.move(to: a)
         line.addLine(to: b)

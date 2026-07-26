@@ -11,17 +11,6 @@ import ToneForgeEngine
 
 struct FretboardDiagram: View {
     let shape: GuitarChordShape
-    /// Layer selection so a host can sandwich the hand silhouette
-    /// between the board and the dots: grid → hand → dots.
-    var layer: Layer = .full
-    /// Visual style: .chart = the classic thin-line chord chart;
-    /// .neck = realistic dark fretboard (used by the hand-overlay
-    /// mode). The chart is NEVER restyled — the neck is a separate,
-    /// toggleable view.
-    var style: Style = .chart
-
-    enum Layer { case full, board, dots }
-    enum Style { case chart, neck }
 
     /// Frets drawn in the window (matches GuitarVoicing's search
     /// window).
@@ -55,106 +44,31 @@ struct FretboardDiagram: View {
             gridRect.minX + CGFloat(s) * stringGap
         }
 
-        if layer != .dots {
-        switch style {
-        case .chart:
-            // Classic chord chart: thin lines, no board.
-            for f in 0...fretRows {
-                let y = gridRect.minY + CGFloat(f) * fretGap
-                var line = Path()
-                line.move(to: CGPoint(x: gridRect.minX, y: y))
-                line.addLine(to: CGPoint(x: gridRect.maxX, y: y))
-                let isNut = f == 0 && shape.baseFret == 1
-                context.stroke(
-                    line,
-                    with: .color(TFTheme.textPrimary.opacity(isNut ? 0.9 : 0.35)),
-                    lineWidth: isNut ? 3 : 1
-                )
-            }
-            for s in 0..<stringCount {
-                var line = Path()
-                line.move(to: CGPoint(x: stringX(s), y: gridRect.minY))
-                line.addLine(to: CGPoint(x: stringX(s), y: gridRect.maxY))
-                context.stroke(
-                    line,
-                    with: .color(TFTheme.textPrimary.opacity(0.35)),
-                    lineWidth: 1
-                )
-            }
-
-        case .neck:
-        // Neck: a dark wood-black board behind the grid (the mock's
-        // realistic fretboard), extending a little past the outer
-        // strings.
-        let boardInset = stringGap * 0.45
-        let board = CGRect(
-            x: gridRect.minX - boardInset, y: gridRect.minY,
-            width: gridRect.width + boardInset * 2,
-            height: gridRect.height
-        )
-        context.fill(
-            Path(roundedRect: board, cornerRadius: 3),
-            with: .linearGradient(
-                Gradient(colors: [
-                    Color(red: 0.11, green: 0.075, blue: 0.05),
-                    Color(red: 0.055, green: 0.04, blue: 0.03),
-                ]),
-                startPoint: board.origin,
-                endPoint: CGPoint(x: board.minX, y: board.maxY)
-            )
-        )
-
-        // Inlay dots (3/5/7/9/15/17 single, 12 double) at real fret
-        // positions inside the window.
-        for row in 0..<fretRows {
-            let absFret = shape.baseFret + row
-            let cy = gridRect.minY + (CGFloat(row) + 0.5) * fretGap
-            let r = min(stringGap, fretGap) * 0.13
-            let inlay = Color.white.opacity(0.10)
-            if [3, 5, 7, 9, 15, 17].contains(absFret) {
-                context.fill(Path(ellipseIn: CGRect(
-                    x: gridRect.midX - r, y: cy - r, width: r * 2, height: r * 2)),
-                    with: .color(inlay))
-            } else if absFret == 12 {
-                for dx in [-stringGap, stringGap] {
-                    context.fill(Path(ellipseIn: CGRect(
-                        x: gridRect.midX + dx - r, y: cy - r,
-                        width: r * 2, height: r * 2)),
-                        with: .color(inlay))
-                }
-            }
-        }
-
-        // Nut (thick when open position) + metallic fret wires.
+        // Nut (thick when open position) + fret wires.
         for f in 0...fretRows {
             let y = gridRect.minY + CGFloat(f) * fretGap
             var line = Path()
-            line.move(to: CGPoint(x: board.minX, y: y))
-            line.addLine(to: CGPoint(x: board.maxX, y: y))
+            line.move(to: CGPoint(x: gridRect.minX, y: y))
+            line.addLine(to: CGPoint(x: gridRect.maxX, y: y))
             let isNut = f == 0 && shape.baseFret == 1
             context.stroke(
                 line,
-                with: .color(isNut
-                    ? TFTheme.textPrimary.opacity(0.95)
-                    : Color(white: 0.72).opacity(0.55)),
-                lineWidth: isNut ? 4 : 2
+                with: .color(TFTheme.textPrimary.opacity(isNut ? 0.9 : 0.35)),
+                lineWidth: isNut ? 3 : 1
             )
         }
 
-        // Strings: gauged — wound low strings thicker than the plain
-        // high ones, with a metallic sheen.
+        // Strings.
         for s in 0..<stringCount {
             var line = Path()
             line.move(to: CGPoint(x: stringX(s), y: gridRect.minY))
             line.addLine(to: CGPoint(x: stringX(s), y: gridRect.maxY))
-            let gauge = 2.2 - CGFloat(s) * 0.25   // low E → high e
             context.stroke(
                 line,
-                with: .color(Color(white: 0.80).opacity(0.55)),
-                lineWidth: max(0.9, gauge)
+                with: .color(TFTheme.textPrimary.opacity(0.35)),
+                lineWidth: 1
             )
         }
-        }  // switch style
 
         // Position label ("3fr") beside the first fret row.
         if shape.baseFret > 1 {
@@ -169,15 +83,7 @@ struct FretboardDiagram: View {
             )
         }
 
-        }  // layer != .dots
-
-        guard layer != .board else { return }
-
-        // Markers + dots. In neck mode the dots carry their finger
-        // number (1 = index … 4 = pinky), from the SAME assignment
-        // that poses the hand silhouette.
-        let plan: HandPlan? = style == .neck
-            ? HandPlan.plan(shape: shape, size: size) : nil
+        // Markers + dots.
         let dotRadius = min(stringGap, fretGap) * 0.32
         for (s, state) in shape.strings.enumerated() {
             let markerCenter = CGPoint(
@@ -212,17 +118,6 @@ struct FretboardDiagram: View {
                         width: dotRadius * 2, height: dotRadius * 2)),
                     with: .color(Color.accentColor)
                 )
-                if let finger = plan?.assignments.first(where: {
-                    $0.string == s && $0.fret == fret
-                })?.finger {
-                    context.draw(
-                        Text("\(finger)")
-                            .font(.system(size: dotRadius * 1.25,
-                                          weight: .bold))
-                            .foregroundColor(.white),
-                        at: center
-                    )
-                }
             }
         }
     }

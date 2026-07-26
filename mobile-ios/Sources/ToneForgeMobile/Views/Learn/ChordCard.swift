@@ -19,10 +19,6 @@ struct ChordCard: View {
     /// Highlighted treatment for the active (NOW) card.
     var emphasized: Bool = false
 
-    /// Fretting-hand silhouette overlay (Learn setting, shared by both
-    /// cards). The hand animates between chord shapes.
-    @AppStorage("learn.showHand") private var showHand = true
-
     var body: some View {
         VStack(spacing: 6) {
             Text(role)
@@ -45,11 +41,7 @@ struct ChordCard: View {
                 .minimumScaleFactor(0.6)
 
                 if let shape = GuitarVoicing.shape(symbol: symbol) {
-                    // Keep chord-chart proportions: the flexible card
-                    // can be much taller than the diagram wants —
-                    // unconstrained it stretched into spaghetti.
-                    diagram(shape: shape)
-                        .aspectRatio(0.85, contentMode: .fit)
+                    FretboardDiagram(shape: shape)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .frame(minHeight: 96)
                 } else {
@@ -76,27 +68,5 @@ struct ChordCard: View {
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(role): \(symbol ?? "no chord")")
-    }
-
-    /// Board → hand silhouette → dots, so finger numbers stay readable
-    /// on top of the hand. The hand animates to the new chord shape;
-    /// the diagram itself swaps instantly.
-    @ViewBuilder
-    private func diagram(shape: GuitarChordShape) -> some View {
-        if showHand {
-            GeometryReader { geo in
-                ZStack {
-                    FretboardDiagram(shape: shape, layer: .board, style: .neck)
-                    HandSilhouetteView(
-                        plan: HandPlan.plan(shape: shape, size: geo.size)
-                    )
-                    .animation(.easeInOut(duration: 0.45),
-                               value: HandPlan.plan(shape: shape, size: geo.size))
-                    FretboardDiagram(shape: shape, layer: .dots, style: .neck)
-                }
-            }
-        } else {
-            FretboardDiagram(shape: shape)
-        }
     }
 }

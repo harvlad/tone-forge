@@ -135,10 +135,22 @@ struct LearnView: View {
 
             // The chord cards grow to fill the surface so the music
             // (NOW/NEXT + fretboards) dominates instead of leaving a
-            // dead gap where the old mastery card sat.
-            chordCards
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, TFTheme.Spacing.md)
+            // dead gap where the old mastery card sat. Hand mode swaps
+            // the charts for ONE horizontal neck with a hand playing
+            // the song (sample design).
+            Group {
+                if showHand {
+                    GuitarNeckPlayView(
+                        current: appState.currentChord?.symbol,
+                        next: nextChordSymbol,
+                        key: songKey
+                    )
+                } else {
+                    chordCards
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, TFTheme.Spacing.md)
 
             practiceButton
                 .padding(.horizontal, TFTheme.Spacing.md)
