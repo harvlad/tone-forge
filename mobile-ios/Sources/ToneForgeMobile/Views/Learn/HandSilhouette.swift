@@ -25,6 +25,9 @@ struct HandPlan: Equatable {
     /// X-span of a barre at tips[0]'s y (finger 1 laid flat). Nil = no
     /// barre.
     var barre: ClosedRange<CGFloat>?
+    /// Bottom edge of the fret grid — the hand's anatomy anchors here
+    /// (knuckles just below the board), not to the deepest fingertip.
+    var gridBottom: CGFloat = 0
 
     /// Diagram geometry duplicated from FretboardDiagram (markerHeight
     /// 14, side insets, 4 fret rows) — keep in sync.
@@ -38,7 +41,7 @@ struct HandPlan: Equatable {
             height: size.height - markerHeight - 4
         )
         guard gridRect.width > 0, gridRect.height > 0 else {
-            return HandPlan(tips: [], barre: nil)
+            return HandPlan(tips: [], barre: nil, gridBottom: 0)
         }
         let stringCount = shape.strings.count
         let stringGap = gridRect.width / CGFloat(max(1, stringCount - 1))
@@ -56,7 +59,9 @@ struct HandPlan: Equatable {
                 notes.append((s, f))
             }
         }
-        guard !notes.isEmpty else { return HandPlan(tips: [], barre: nil) }
+        guard !notes.isEmpty else {
+            return HandPlan(tips: [], barre: nil, gridBottom: gridRect.maxY)
+        }
 
         // Barre: ≥2 strings on the window's lowest fret spanning to the
         // highest played string → finger 1 lies flat across them.
@@ -80,16 +85,16 @@ struct HandPlan: Equatable {
         for n in remaining.prefix(4 - tips.count) {
             tips.append(CGPoint(x: stringX(n.string), y: dotY(n.fret)))
         }
-        // Unused fingers rest curled just below the grid, continuing
-        // the hand's spread to the right of the last active tip.
-        let restY = gridRect.maxY - fretGap * 0.15
+        // Unused fingers rest curled just above the knuckle line
+        // (short stubs beside the last active finger).
+        let restY = gridRect.maxY - size.width * 0.06
         var restX = (tips.last?.x ?? gridRect.midX)
         while tips.count < 4 {
             restX += stringGap * 0.9
             tips.append(CGPoint(x: min(restX, gridRect.maxX + stringGap * 0.4),
                                 y: restY))
         }
-        return HandPlan(tips: tips, barre: barre)
+        return HandPlan(tips: tips, barre: barre, gridBottom: gridRect.maxY)
     }
 }
 
@@ -149,13 +154,13 @@ struct HandSilhouetteView: View, Animatable {
         // height-based hand stretched into spaghetti.
         let unit = size.width
 
-        // Knuckle baseline: a bit under the lowest fingertip, biased
-        // right — the wrist enters from bottom-right like a real
-        // fretting hand.
-        let maxTipY = tips.map(\.y).max() ?? size.height * 0.5
-        let knuckleY = maxTipY + unit * 0.30
+        // Knuckle baseline pinned just below the BOARD — real fretting
+        // anatomy: the palm never floats up into the strings; fingers
+        // are long and reach from under the neck to their frets.
+        let gridBottom = plan.gridBottom > 0 ? plan.gridBottom : size.height * 0.9
+        let knuckleY = gridBottom + unit * 0.09
         let xs = tips.map(\.x).sorted()
-        let handCenterX = (xs[1] + xs[2]) / 2 + unit * 0.06
+        let handCenterX = (xs[1] + xs[2]) / 2 + unit * 0.05
 
         var hand = Path()
         var fingers = Path()
@@ -165,15 +170,15 @@ struct HandSilhouetteView: View, Animatable {
         for (i, tip) in tips.enumerated() {
             let spread = CGFloat(i) - 1.5
             let knuckle = CGPoint(
-                x: handCenterX + spread * unit * 0.10,
+                x: handCenterX + spread * unit * 0.16,
                 y: knuckleY + abs(spread) * unit * 0.03
             )
             let mid = CGPoint(
                 x: (knuckle.x + tip.x) / 2 + (tip.x - knuckle.x) * 0.12 + unit * 0.02,
                 y: (knuckle.y + tip.y) / 2 + unit * 0.03
             )
-            let wProx = unit * 0.115
-            let wDist = unit * 0.085
+            let wProx = unit * 0.095
+            let wDist = unit * 0.072
             fingers.addPath(strokeSegment(from: knuckle, to: mid, width: wProx))
             fingers.addPath(strokeSegment(from: mid, to: tip, width: wDist))
             fingers.addEllipse(in: CGRect(

@@ -86,13 +86,13 @@ struct ChordCard: View {
         if showHand {
             GeometryReader { geo in
                 ZStack {
-                    FretboardDiagram(shape: shape, layer: .board)
+                    FretboardDiagram(shape: shape, layer: .board, style: .neck)
                     HandSilhouetteView(
                         plan: HandPlan.plan(shape: shape, size: geo.size)
                     )
                     .animation(.easeInOut(duration: 0.45),
                                value: HandPlan.plan(shape: shape, size: geo.size))
-                    FretboardDiagram(shape: shape, layer: .dots)
+                    FretboardDiagram(shape: shape, layer: .dots, style: .neck)
                 }
             }
         } else {
