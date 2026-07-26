@@ -38,6 +38,15 @@ private final class FakeAuthClient: AuthProviding, @unchecked Sendable {
         return try signInResult.get()
     }
 
+    func requestEmailCode(baseURL: URL, email: String) async throws {}
+
+    func verifyEmailCode(
+        baseURL: URL, email: String, code: String, deviceId: String?
+    ) async throws -> AuthSession {
+        lastSignInDeviceId = deviceId
+        return try signInResult.get()
+    }
+
     func session(baseURL: URL, token: String) async throws -> AuthUser? {
         try sessionResult.get()
     }

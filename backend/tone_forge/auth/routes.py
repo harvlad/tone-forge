@@ -101,6 +101,98 @@ async def verify_magic_link(token: str, request: Request):
     return resp
 
 
+# ---------------------------------------------------------------------------
+# Native email-code sign-in
+#
+# Magic links are web-only (the /verify redirect sets a browser cookie),
+# so native apps get a 6-digit emailed code exchanged for a bearer
+# session — the same response shape as /apple. Codes reuse the
+# magic-link store: the stored hash is over "code:{email}:{code}", so a
+# code is only guessable per-email, single-use, and expires with the
+# normal magic-link TTL. Both endpoints share the magic-link rate
+# budget (send AND verify), which caps brute force on the 6-digit
+# space.
+# ---------------------------------------------------------------------------
+
+
+class EmailCodeRequest(BaseModel):
+    email: str
+
+
+class EmailVerifyRequest(BaseModel):
+    email: str
+    code: str
+    device_id: Optional[str] = None
+
+
+def _code_hash(email: str, code: str) -> bytes:
+    return hash_token(f"code:{email}:{code}")
+
+
+@router.post("/email-code", status_code=202)
+async def request_email_code(body: EmailCodeRequest, request: Request):
+    """Always 202 — no account enumeration."""
+    email = body.email.strip().lower()
+    if "@" not in email or "." not in email.split("@")[-1] or len(email) > 254:
+        return JSONResponse({"detail": "Invalid email"}, status_code=422)
+    allowed, retry_after = rate_limit.check_magic_link(
+        email, _client_ip(request)
+    )
+    if not allowed:
+        return JSONResponse(
+            {"detail": "Too many requests"},
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+    import secrets as _secrets
+
+    code = f"{_secrets.randbelow(1_000_000):06d}"
+    await _store(request).create_magic_link(
+        email, _code_hash(email, code), requester_ip=_client_ip(request)
+    )
+    try:
+        await email_sender.send_sign_in_code(email, code)
+    except Exception:  # noqa: BLE001 — don't leak delivery status
+        logger.exception("auth: sign-in code send failed for %s", email)
+    return {"status": "sent"}
+
+
+@router.post("/email-verify")
+async def verify_email_code(body: EmailVerifyRequest, request: Request):
+    from fastapi import HTTPException
+
+    email = body.email.strip().lower()
+    code = body.code.strip()
+    # Verify attempts draw on the same rate budget as sends — a guesser
+    # burns out in a handful of tries.
+    allowed, retry_after = rate_limit.check_magic_link(
+        email, _client_ip(request)
+    )
+    if not allowed:
+        return JSONResponse(
+            {"detail": "Too many requests"},
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+    store = _store(request)
+    consumed = await store.consume_magic_link(_code_hash(email, code))
+    if consumed is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired code")
+    user = await store.upsert_user_by_identity("email", email, email=email)
+    token = new_token()
+    await store.create_session(user.id, hash_token(token), device_label="app")
+    if body.device_id:
+        await store.claim_device(body.device_id, user.id)
+    return {
+        "token": token,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+        },
+    }
+
+
 class AppleSignInRequest(BaseModel):
     identity_token: str
     nonce: Optional[str] = None

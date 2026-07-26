@@ -107,7 +107,8 @@ enum UITestSupport {
 struct StubJobClient: JobSubmitting {
     func submit(
         baseURL: URL, wavFileURL: URL, filename: String,
-        extraFields: [(name: String, value: String)]
+        extraFields: [(name: String, value: String)],
+        onUploadProgress: (@Sendable (Double) -> Void)?
     ) async throws -> String {
         "uitest-stub-job"
     }
@@ -135,6 +136,14 @@ struct StubAuthClient: AuthProviding {
         nonce: String?,
         deviceId: String?,
         fullName: String?
+    ) async throws -> AuthSession {
+        AuthSession(token: "uitest-token", user: Self.user)
+    }
+
+    func requestEmailCode(baseURL: URL, email: String) async throws {}
+
+    func verifyEmailCode(
+        baseURL: URL, email: String, code: String, deviceId: String?
     ) async throws -> AuthSession {
         AuthSession(token: "uitest-token", user: Self.user)
     }

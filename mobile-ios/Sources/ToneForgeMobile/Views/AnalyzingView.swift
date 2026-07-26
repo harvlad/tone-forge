@@ -34,6 +34,9 @@ struct AnalyzingView: View {
         .accessibilityIdentifier("analyzing-view")
     }
 
+    /// Swipe-dismiss stays disabled only while dismissing could lose
+    /// local work (pre-submit). Once .analysing, the job is server-owned
+    /// and closing the sheet is safe.
     private var isWorking: Bool {
         switch importer.phase {
         case .transcoding, .uploading, .loading: return true
@@ -43,7 +46,7 @@ struct AnalyzingView: View {
 
     private var cancelLabel: String {
         switch importer.phase {
-        case .done, .failed: return "Close"
+        case .done, .failed, .analysing: return "Close"
         default: return "Cancel"
         }
     }
@@ -90,6 +93,30 @@ struct AnalyzingView: View {
                 }
                 Text(message)
                     .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+        case .analysing(let message, let percent):
+            VStack(spacing: 12) {
+                // Upload captured — the file never needs re-sending.
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.icloud.fill")
+                        .foregroundStyle(.green)
+                    Text("Upload complete")
+                        .font(.subheadline.weight(.semibold))
+                }
+                if let percent {
+                    ProgressView(value: min(max(percent, 0), 100), total: 100)
+                } else {
+                    ProgressView()
+                }
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Text("Analysis runs on the server — you can close this and keep playing. The song appears in your Library when it's ready.")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }

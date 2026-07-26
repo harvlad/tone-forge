@@ -54,7 +54,13 @@ public final class ImportCoordinator: ObservableObject {
         case idle
         case awaitingAttestation
         case transcoding
+        /// The local upload — bytes still leaving the device.
         case uploading(message: String, percent: Double?)
+        /// The upload is CAPTURED server-side (job accepted): nothing
+        /// more to send, analysis runs on the server and survives this
+        /// sheet closing. Visually distinct from uploading so the user
+        /// knows the file won't need re-uploading.
+        case analysing(message: String, percent: Double?)
         case loading
         case done(historyId: String)
         case failed(String)
@@ -93,7 +99,8 @@ public final class ImportCoordinator: ObservableObject {
     /// True while the progress sheet should be up.
     public var isImporting: Bool {
         switch phase {
-        case .transcoding, .uploading, .loading, .done, .failed: return true
+        case .transcoding, .uploading, .analysing, .loading, .done, .failed:
+            return true
         case .idle, .awaitingAttestation: return false
         }
     }
@@ -122,7 +129,7 @@ public final class ImportCoordinator: ObservableObject {
         pendingSource = nil
         lastSource = nil  // retry() is a no-op: the job is already running
         trackTitle = title
-        phase = .uploading(message: "Analyzing…", percent: nil)
+        phase = .analysing(message: "Analysing…", percent: nil)
         worker = Task {
             do {
                 try await self.followSubmittedJob(jobId: jobId, title: title)
@@ -207,9 +214,23 @@ public final class ImportCoordinator: ObservableObject {
             // finishes it and notifies.
             let jobId = try await jobClient.submit(
                 baseURL: baseURL, wavFileURL: tempWAV, filename: filename,
-                extraFields: attribution
+                extraFields: attribution,
+                onUploadProgress: { fraction in
+                    Task { @MainActor [weak self] in
+                        guard let self, case .uploading = self.phase else { return }
+                        self.phase = .uploading(
+                            message: "Uploading… \(Int(fraction * 100))%",
+                            percent: fraction * 100
+                        )
+                    }
+                }
             )
             try Task.checkCancellation()
+            // The job exists server-side now: the upload is captured
+            // and will never need re-sending, even if this sheet
+            // closes or the app dies. Flip to the analysing phase so
+            // the UI can say so.
+            phase = .analysing(message: "Analysing…", percent: nil)
             try await followSubmittedJob(jobId: jobId, title: source.displayName)
         } catch is CancellationError {
             phase = .idle
@@ -243,7 +264,7 @@ public final class ImportCoordinator: ObservableObject {
                 try Task.checkCancellation()
                 switch event {
                 case .progress(let message, let percent):
-                    phase = .uploading(message: message, percent: percent)
+                    phase = .analysing(message: message, percent: percent)
                 case .completed(let id):
                     historyId = id
                 }
