@@ -123,8 +123,8 @@ public enum HandPoseSolver {
     public static func solve(
         targets: [Target], neckBottom: CGFloat, s: CGFloat, lifted: Bool
     ) -> HandPose {
-        let liftZ: CGFloat = lifted ? 18 : 0     // mm off the strings
-        let liftY: CGFloat = lifted ? 5 : 0
+        let liftZ: CGFloat = lifted ? 12 : 0     // mm off the strings
+        let liftY: CGFloat = lifted ? 4 : 0
 
         // Hand centre from the PRESSING cluster (rest fingers follow).
         // When targets bunch on one fret column the knuckle spread
@@ -186,7 +186,11 @@ public enum HandPoseSolver {
                     z: (14 + liftZ) * s)
             }
             debugTargets.append(t.press ? t.point : nil)
-            let chain = solveFinger(i: i, mcp: m, tip: tip, s: s)
+            // Press fingers land slightly SHORT along the reach ray so
+            // the rounded pad wraps the dot (dot ≈ pad centre) instead
+            // of the pad overshooting past the string.
+            let chain = solveFinger(
+                i: i, mcp: m, tip: tip, s: s, inset: t.press ? 4 * s : 0)
             fingers.append(FingerChain(
                 joints: chain.map(project),
                 widthPx: HandSkeleton.fingerWidth[i] * s,
@@ -214,7 +218,7 @@ public enum HandPoseSolver {
     /// chain at the target. Bisection on c matches the reach — closed,
     /// deterministic, joint-limit safe.
     private static func solveFinger(
-        i: Int, mcp: Joint3, tip: Joint3, s: CGFloat
+        i: Int, mcp: Joint3, tip: Joint3, s: CGFloat, inset: CGFloat = 0
     ) -> [Joint3] {
         let L1 = HandSkeleton.proximal[i] * s
         let L2 = HandSkeleton.middleSeg[i] * s
@@ -227,7 +231,9 @@ public enum HandPoseSolver {
         let r = max(0.001, sqrt(dx * dx + dy * dy))
         let ux = dx / r, uy = dy / r
         let dv = tip.z - mcp.z
-        let dist = min(sqrt(r * r + dv * dv), (L1 + L2 + L3) * 0.995)
+        let dist = min(
+            max(1, sqrt(r * r + dv * dv) - inset),
+            (L1 + L2 + L3) * 0.995)
 
         // Exact two-link IK in the flexion plane (u toward the target
         // in XY, v = +z toward the viewer): link A = proximal, link
@@ -299,14 +305,14 @@ public enum HandPoseRender {
         var pts: [CGPoint] = []
         for k in 0..<(joints.count - 1) {
             let a = joints[k], b = joints[k + 1]
-            for step in 0..<3 {
-                let t = CGFloat(step) / 3
+            for step in 0..<4 {
+                let t = CGFloat(step) / 4
                 pts.append(CGPoint(x: a.x + (b.x - a.x) * t,
                                    y: a.y + (b.y - a.y) * t))
             }
         }
         pts.append(joints[joints.count - 1])
-        for _ in 0..<2 {   // Chaikin passes
+        for _ in 0..<3 {   // Chaikin passes
             var next: [CGPoint] = [pts[0]]
             for k in 0..<(pts.count - 1) {
                 let a = pts[k], b = pts[k + 1]
@@ -393,24 +399,25 @@ public enum HandPoseRender {
         let forearmY = canvasHeight + 10
         let halfW = 17 * s   // wrist half-width mm
         var p = Path()
+        // Cubic joins — no corner kinks at the wrist. Index side gets
+        // a thenar bulge (base-of-thumb mass).
         p.move(to: CGPoint(x: wrist.x - halfW, y: forearmY))
+        p.addCurve(
+            to: CGPoint(x: pky.x - 8 * s, y: pky.y + 14 * s),
+            control1: CGPoint(x: wrist.x - halfW - 2 * s, y: wrist.y + 16 * s),
+            control2: CGPoint(x: pky.x - 11 * s, y: pky.y + 30 * s))
         p.addQuadCurve(
-            to: CGPoint(x: pky.x - 10 * s, y: pky.y + 26 * s),
-            control: CGPoint(x: wrist.x - halfW - 6 * s, y: wrist.y + 8 * s))
-        p.addQuadCurve(
-            to: CGPoint(x: pky.x - 7 * s, y: pky.y - 2 * s),
-            control: CGPoint(x: pky.x - 12 * s, y: pky.y + 8 * s))
+            to: CGPoint(x: pky.x - 6 * s, y: pky.y - 2 * s),
+            control: CGPoint(x: pky.x - 10 * s, y: pky.y + 4 * s))
         // Knuckle arch across the MCP row.
         p.addQuadCurve(
-            to: CGPoint(x: idx.x + 8 * s, y: idx.y - 1 * s),
+            to: CGPoint(x: idx.x + 7 * s, y: idx.y - 1 * s),
             control: CGPoint(
                 x: (idx.x + pky.x) / 2, y: min(mcps[1].y, mcps[2].y) - 7 * s))
-        p.addQuadCurve(
-            to: CGPoint(x: idx.x + 11 * s, y: idx.y + 28 * s),
-            control: CGPoint(x: idx.x + 13 * s, y: idx.y + 10 * s))
-        p.addQuadCurve(
-            to: CGPoint(x: wrist.x + halfW * 0.9, y: forearmY),
-            control: CGPoint(x: wrist.x + halfW + 8 * s, y: wrist.y + 10 * s))
+        p.addCurve(
+            to: CGPoint(x: wrist.x + halfW * 0.95, y: forearmY),
+            control1: CGPoint(x: idx.x + 16 * s, y: idx.y + 20 * s),
+            control2: CGPoint(x: wrist.x + halfW + 4 * s, y: wrist.y + 18 * s))
         p.closeSubpath()
         return p
     }

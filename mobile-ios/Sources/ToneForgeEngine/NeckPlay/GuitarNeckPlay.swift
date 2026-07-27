@@ -173,10 +173,11 @@ public struct NeckGeometry: Equatable {
         let hiMM = GuitarPhysical.wire(baseFret - 1 + window)
         let spanMM = hiMM - loMM
         let gapMM = GuitarPhysical.stringGapMM(atX: (loMM + hiMM) / 2)
-        // px/mm from whichever axis constrains (board ≤ 55% height).
+        // px/mm from whichever axis constrains (board ≤ 45% height —
+        // the mock gives the hand the majority of the panel).
         let s = max(0.4, min(
             (size.width - gutter - 10) / spanMM,
-            size.height * 0.55 / (6 * gapMM)))
+            size.height * 0.45 / (6 * gapMM)))
         let neckW = spanMM * s
         let gap = gapMM * s
         let x = max(10, (size.width - gutter - neckW) / 2)
