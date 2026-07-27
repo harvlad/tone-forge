@@ -2591,18 +2591,20 @@ async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONRes
     # uploading every float32 stem to R2 inline and routinely timed out
     # client-side. Best-effort background thread; never blocks or fails
     # the complete response.
-    async def _warm_r2(entry_id: str) -> None:
-        try:
-            fresh = _get_history_item(entry_id)
-            if fresh and await asyncio.to_thread(
-                    _maybe_upload_stems_to_r2, entry_id, fresh):
-                _update_history_item(entry_id, fresh)
-                logger.info("eager R2 stem push done for %s", entry_id)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("eager R2 stem push failed for %s: %s", entry_id, e)
-
-    asyncio.create_task(_warm_r2(history_entry["id"]))
+    asyncio.create_task(_eager_r2_push(history_entry["id"]))
     return JSONResponse({"ok": True, "history_id": history_entry["id"]})
+
+
+async def _eager_r2_push(entry_id: str) -> None:
+    """Warm the stem CDN right after analysis-complete (see call site)."""
+    try:
+        fresh = _get_history_item(entry_id)
+        if fresh and await asyncio.to_thread(
+                _maybe_upload_stems_to_r2, entry_id, fresh):
+            _update_history_item(entry_id, fresh)
+            logger.info("eager R2 stem push done for %s", entry_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("eager R2 stem push failed for %s: %s", entry_id, e)
 
 
 @app.post("/api/engine/job/{job_id}/fail")
