@@ -46,6 +46,40 @@ public enum ChordFingering {
         }
     }
 
+    /// Curated fingerings for common OPEN shapes where the heuristic's
+    /// (fret, string) ordering deviates from the canonical lesson
+    /// fingering. Keyed by the absolute shape pattern (x = muted,
+    /// 0 = open, digit = fret); value = finger per string (nil for
+    /// unfretted). Movable barre shapes already come out right from
+    /// the heuristic, so they're not listed — same-shape transposition
+    /// keeps this table tiny.
+    static let curated: [String: [Int?]] = [
+        // Em: canonical 2-3 anchor fingers (heuristic said 1-2).
+        "022000": [nil, 2, 3, nil, nil, nil],
+        // Em7 (single-finger form): middle finger, not index.
+        "020000": [nil, 2, nil, nil, nil, nil],
+        // A major: index-middle-ring across fret 2.
+        "x02220": [nil, nil, 1, 2, 3, nil],
+        // Asus2: canonical 2-3.
+        "x02200": [nil, nil, 2, 3, nil, nil],
+        // Cadd9: 2-1 low pair + 3-4 anchors.
+        "x32033": [nil, 3, 2, nil, 4, 4],
+        // Dsus4: 1-3-4 (pinky adds the sus note).
+        "xx0233": [nil, nil, nil, 1, 3, 4],
+        // G "rock" 4-finger form: 2-1 + 3-4 anchors.
+        "320033": [2, 1, nil, nil, 3, 4],
+    ]
+
+    static func patternKey(_ shape: GuitarChordShape) -> String {
+        shape.strings.map { state in
+            switch state {
+            case .muted: return "x"
+            case .open: return "0"
+            case .fretted(let f): return String(f)
+            }
+        }.joined()
+    }
+
     public static func assign(shape: GuitarChordShape, window: Int = 4) -> Result {
         var fretted: [(string: Int, fret: Int)] = []
         for (s, state) in shape.strings.enumerated() {
@@ -56,6 +90,20 @@ public enum ChordFingering {
         }
         guard !fretted.isEmpty else {
             return Result(notes: [], barreStrings: nil, barreFret: nil)
+        }
+
+        // Curated override first — the canonical lesson fingering for
+        // shapes where convention differs from the heuristic.
+        if let fingers = curated[patternKey(shape)] {
+            var notes: [Note] = []
+            for n in fretted {
+                if let finger = fingers[n.string] {
+                    notes.append(Note(string: n.string, fret: n.fret, finger: finger))
+                }
+            }
+            if !notes.isEmpty {
+                return Result(notes: notes, barreStrings: nil, barreFret: nil)
+            }
         }
         let minFret = fretted.map(\.fret).min()!
         let atMin = fretted.filter { $0.fret == minFret }
