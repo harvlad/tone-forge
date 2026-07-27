@@ -118,7 +118,7 @@ public final class PresetBridge {
     private let connectStateLock = NSLock()
     private var connectStateFlushWorkItem: DispatchWorkItem?
 
-    public init(serverURL: URL = URL(string: "ws://127.0.0.1:8000/ws/connect-bridge")!,
+    public init(serverURL: URL = URL(string: "ws://127.0.0.1:8300/ws/connect-bridge")!,
                 sessionId: String = "default") {
         self.serverURL = serverURL
         self.sessionId = sessionId
