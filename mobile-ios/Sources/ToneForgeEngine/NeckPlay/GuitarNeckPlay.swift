@@ -107,7 +107,9 @@ public struct NeckGeometry: Equatable {
         let top: CGFloat = 8
         // Real-neck proportions: wide, not square — cap the height so
         // a tall host card yields a slim board with hand room below.
-        let neckH = min(size.height * 0.60, size.width * 0.44)
+        // Design proportions: a slim, wide board (sample mock is
+        // roughly 1 : 3.3 width-to-height for the visible window).
+        let neckH = min(size.height * 0.55, size.width * 0.30)
         self.neck = CGRect(
             x: left, y: top,
             width: max(1, size.width - left - right), height: max(1, neckH))
@@ -171,7 +173,10 @@ public struct HandPlan: Equatable {
         }
 
         // Rest positions: curled just under the neck, spread rightward
-        // from the used fingers.
+        // from the used fingers. Reach differs per finger — the pinky
+        // barely clears the board edge, the middle finger hovers
+        // deepest (real relative finger lengths).
+        let restReach: [CGFloat] = [0.45, 0.70, 0.55, 0.05]  // fingers 1…4
         var tips: [CGPoint] = []
         let usedXs = tipByFinger.values.map(\.x)
         var restX = (usedXs.max() ?? geo.neck.midX)
@@ -182,7 +187,7 @@ public struct HandPlan: Equatable {
                 restX += geo.fretW * 0.4
                 tips.append(CGPoint(
                     x: min(restX, geo.neck.maxX - 4),
-                    y: geo.neck.maxY - geo.stringGap * 0.4))
+                    y: geo.neck.maxY - geo.stringGap * restReach[finger - 1]))
             }
         }
         return HandPlan(tips: tips, barreRect: barreRect,
@@ -259,14 +264,21 @@ public struct HandSilhouetteView: View, Animatable {
         var rankOf: [Int: Int] = [:]
         for (rank, idx) in order.enumerated() { rankOf[idx] = rank }
 
+        // Real relative finger builds (index, middle, ring, pinky):
+        // middle widest/longest, pinky clearly slighter.
+        let baseWidth: [CGFloat] = [0.90, 0.95, 0.86, 0.70]
+        var knucklePoints: [CGPoint] = []
         for (i, tip) in tips.enumerated() {
-            let spread = CGFloat(rankOf[i] ?? i) - 1.5
+            let rank = CGFloat(rankOf[i] ?? i)
+            let spread = rank - 1.5
+            // Knuckle ARC: middle knuckles ride higher (closer to the
+            // board) than the index/pinky edges — a real knuckle ridge.
+            let arcLift = g * 0.45 * sin(.pi * (rank + 0.5) / 4)
             let knuckle = CGPoint(
                 x: handCenterX + spread * g * 1.15,
-                y: knuckleY + abs(spread) * g * 0.25
+                y: knuckleY - arcLift + g * 0.25
             )
-            // Three phalanges along a gentle bow — near-constant width
-            // (real fingers barely taper), round fingertip.
+            knucklePoints.append(knuckle)
             let bow = g * 0.35
             let j1 = CGPoint(
                 x: knuckle.x + (tip.x - knuckle.x) * 0.38 + bow * 0.6,
@@ -274,12 +286,10 @@ public struct HandSilhouetteView: View, Animatable {
             let j2 = CGPoint(
                 x: knuckle.x + (tip.x - knuckle.x) * 0.72 + bow * 0.35,
                 y: knuckle.y + (tip.y - knuckle.y) * 0.72)
-            let wA = g * 0.92
-            let wB = g * 0.84
-            let wC = g * 0.76
-            fingers.addPath(segment(from: knuckle, to: j1, width: wA))
-            fingers.addPath(segment(from: j1, to: j2, width: wB))
-            fingers.addPath(segment(from: j2, to: tip, width: wC))
+            let w = g * baseWidth[i]
+            fingers.addPath(segment(from: knuckle, to: j1, width: w))
+            fingers.addPath(segment(from: j1, to: j2, width: w * 0.92))
+            fingers.addPath(segment(from: j2, to: tip, width: w * 0.84))
         }
 
         // Barre: finger 1 flat across the strings (vertical bar).
@@ -289,12 +299,24 @@ public struct HandSilhouetteView: View, Animatable {
                 cornerSize: CGSize(width: b.width / 2, height: b.width / 2))
         }
 
-        // Palm: hand-sized (≈ 3.4 fingers wide), mostly below the neck.
-        let palmW = g * 3.9
-        let palmH = g * 3.4
+        // Palm: rounded mass hanging from the knuckle ridge, with
+        // knuckle bumps blended in and a thenar (thumb-side) bulge on
+        // the right — the thumb itself stays behind the neck.
+        let palmW = g * 4.1
+        let palmH = g * 3.3
+        for k in knucklePoints {
+            hand.addEllipse(in: CGRect(
+                x: k.x - g * 0.55, y: k.y - g * 0.35,
+                width: g * 1.1, height: g * 1.1))
+        }
+        hand.addRoundedRect(
+            in: CGRect(
+                x: handCenterX - palmW / 2, y: knuckleY - g * 0.1,
+                width: palmW, height: palmH),
+            cornerSize: CGSize(width: g * 1.3, height: g * 1.3))
         hand.addEllipse(in: CGRect(
-            x: handCenterX - palmW / 2, y: knuckleY - g * 0.5,
-            width: palmW, height: palmH))
+            x: handCenterX + palmW * 0.28, y: knuckleY + g * 0.6,
+            width: g * 1.8, height: g * 2.2))
         // Wrist: angled column off the bottom-right (forearm).
         var wrist = Path()
         let wTop = knuckleY + palmH * 0.55
