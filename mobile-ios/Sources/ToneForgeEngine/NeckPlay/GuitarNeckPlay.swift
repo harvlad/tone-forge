@@ -373,7 +373,7 @@ public struct HandSilhouetteView: View, Animatable {
                 let t = CGFloat(k) / CGFloat(n - 1)
                 for i in 1..<fingers.count {
                     let sep = (fingers[i - 1].width + fingers[i].width)
-                        * (0.48 - 0.26 * t)
+                        * (0.50 - 0.12 * t)
                     let needed = fingers[i - 1].spine[k].x + sep
                     if fingers[i].spine[k].x < needed {
                         fingers[i].spine[k].x = needed
@@ -410,7 +410,7 @@ public struct HandSilhouetteView: View, Animatable {
         let palmL = (kXs.min() ?? centerX) - g * 1.7
         let palmR = (kXs.max() ?? centerX) + g * 1.6
         let palmMid = (palmL + palmR) / 2
-        let palmBottomY = knuckleBaseY + g * 3.6
+        let palmBottomY = knuckleBaseY + g * 3.2
         let forearmY = size.height + g * 2
         let firstL = side(fingers[0], emerge, -1)
         hand.move(to: CGPoint(x: palmMid - g * 2.4, y: forearmY))
@@ -448,7 +448,7 @@ public struct HandSilhouetteView: View, Animatable {
                 let hereR = side(f, emerge, +1)
                 let valley = CGPoint(
                     x: (hereR.x + nextL.x) / 2,
-                    y: max(hereR.y, nextL.y) + g * 0.45)
+                    y: max(hereR.y, nextL.y) + g * 0.30)
                 hand.addQuadCurve(to: nextL, control: valley)
             }
         }
