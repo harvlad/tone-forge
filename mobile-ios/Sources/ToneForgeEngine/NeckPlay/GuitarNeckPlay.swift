@@ -309,29 +309,31 @@ public struct HandSilhouetteView: View, Animatable {
     }
 
     private func draw(ctx: GraphicsContext, size: CGSize, tips: [CGPoint]) {
-        // Naturally animating VECTOR hand, styled like the mockup:
-        // dark silhouette with a bright rim, one smooth contour (palm,
-        // webbing, four fingers with rounded tips). Fingertips are the
-        // animatable inputs, so each finger independently reaches its
-        // dot and the whole hand re-solves every frame. Thumb is
-        // behind the neck (hidden).
+        // Naturally animating VECTOR hand, styled like the mockup.
+        // Layered composition (like the design's rim-lit photo hand):
+        // palm/forearm silhouette behind, then each finger as its OWN
+        // filled+stroked shape drawn over it, so fingers can stack,
+        // converge on one fret column, or cross without any contour
+        // self-intersection — the overlap just reads as one finger in
+        // front of another. Fingertips are the animatable inputs; every
+        // finger keeps its tip exactly on its dot. Thumb is behind the
+        // neck (hidden).
         let g = max(4, plan.fingerScale)
 
         var lift: CGFloat = 0
         if lifted { lift = g * 2.4 }
 
-        // Rank fingers left→right for the contour walk; identity (for
-        // width) stays with the finger number.
+        // Rank fingers left→right; identity (width) stays with the
+        // finger number.
         let order = tips.indices.sorted { tips[$0].x < tips[$1].x }
         // Mock-measured finger widths (× string gap).
-        let widthByFinger: [CGFloat] = [2.2, 2.3, 2.1, 1.75]
+        let widthByFinger: [CGFloat] = [1.9, 2.0, 1.85, 1.5]
 
-        // Knuckle ridge: arched, below the board. Center on the SPAN
-        // (barre chords put one tip frets away from the cluster).
+        // Knuckle ridge: arched, close under the board — short free
+        // fingers, most mass in the palm (mock proportions). Center on
+        // the SPAN (barre chords put one tip frets away from cluster).
         let xs = tips.map(\.x).sorted()
         let centerX = (xs[0] + xs[3]) / 2
-        // Mock: knuckle ridge sits close under the board — short free
-        // finger length, most mass in the palm.
         let knuckleBaseY = plan.neckBottom + g * 2.9 + lift
 
         struct Finger {
@@ -347,44 +349,38 @@ public struct HandSilhouetteView: View, Animatable {
             // center) so wide chords fan the whole hand instead of
             // stretching one finger into a tentacle.
             let idealX = centerX + spread * g * 1.6
+            // Clamp the knuckle under its tip: a finger never leans
+            // more than ~2 gaps sideways (stops near-horizontal planks
+            // on wide chords where the span center is frets away).
+            let blendX = tip.x * 0.62 + idealX * 0.38
+            // Spine base is BURIED under the palm ridge (arc keeps the
+            // visible emergence arched) so the fill's base cap never
+            // peeks past the palm edge.
             let knuckle = CGPoint(
-                x: tip.x * 0.62 + idealX * 0.38,
-                y: knuckleBaseY - arc)
-            // Gentle bow toward the nut side.
-            let ctrl = CGPoint(
-                x: (knuckle.x + tip.x) / 2 + (tip.x - knuckle.x) * 0.10 + g * 0.55,
-                y: (knuckle.y + tip.y) / 2 + g * 0.30)
+                x: min(max(blendX, tip.x - g * 2.0), tip.x + g * 2.0),
+                y: knuckleBaseY + g * 1.0 - arc)
+            // Cubic spine: launch upward off the knuckle, bow gently
+            // toward the nut, then drop the pad onto the string — the
+            // mock's soft C-curve rather than a straight strut.
+            let bow = g * 0.7
+            let c1 = CGPoint(
+                x: knuckle.x + (tip.x - knuckle.x) * 0.15 + bow * 0.45,
+                y: knuckle.y + (tip.y - knuckle.y) * 0.38)
+            let c2 = CGPoint(
+                x: knuckle.x + (tip.x - knuckle.x) * 0.72 + bow,
+                y: knuckle.y + (tip.y - knuckle.y) * 0.78)
             var spine: [CGPoint] = []
-            let n = 12
+            let n = 14
             for k in 0...n {
                 let t = CGFloat(k) / CGFloat(n)
                 let mt = 1 - t
-                spine.append(CGPoint(
-                    x: mt*mt*knuckle.x + 2*mt*t*ctrl.x + t*t*tip.x,
-                    y: mt*mt*knuckle.y + 2*mt*t*ctrl.y + t*t*tip.y))
+                let x = mt*mt*mt*knuckle.x + 3*mt*mt*t*c1.x
+                    + 3*mt*t*t*c2.x + t*t*t*tip.x
+                let y = mt*mt*mt*knuckle.y + 3*mt*mt*t*c1.y
+                    + 3*mt*t*t*c2.y + t*t*t*tip.y
+                spine.append(CGPoint(x: x, y: y))
             }
             fingers.append(Finger(spine: spine, width: g * widthByFinger[idx]))
-        }
-
-        // Enforce left→right order along the whole finger length:
-        // neighbours may touch but never cross. Separation relaxes
-        // toward the tips (fingers bunch when fretting one column).
-        if fingers.count > 1 {
-            let n = fingers[0].spine.count
-            for k in 0..<n {
-                let t = CGFloat(k) / CGFloat(n - 1)
-                for i in 1..<fingers.count {
-                    // Keep sep ≥ the two half-widths so the offset
-                    // EDGES touch but never cross (crossing edges
-                    // stroke seams inside the silhouette).
-                    let sep = (fingers[i - 1].width + fingers[i].width)
-                        * (0.54 - 0.115 * t)
-                    let needed = fingers[i - 1].spine[k].x + sep
-                    if fingers[i].spine[k].x < needed {
-                        fingers[i].spine[k].x = needed
-                    }
-                }
-            }
         }
 
         func normal(_ s: [CGPoint], _ k: Int) -> CGPoint {
@@ -393,106 +389,113 @@ public struct HandSilhouetteView: View, Animatable {
             let len = max(0.001, sqrt(dx*dx + dy*dy))
             return CGPoint(x: -dy / len, y: dx / len)
         }
-        // Offset point on side sgn (-1 = left, +1 = right), tapering
-        // toward a slightly slimmer tip.
+        // Offset point on side sgn (-1 = left, +1 = right). Width
+        // profile: broad base, steady taper, tiny bulge at the middle
+        // joint, slimmer rounded pad at the tip.
         func side(_ f: Finger, _ k: Int, _ sgn: CGFloat) -> CGPoint {
             let t = CGFloat(k) / CGFloat(f.spine.count - 1)
-            let w = f.width * (0.52 - 0.10 * t)
+            var w = f.width * (0.55 - 0.15 * t)
+            w *= 1 + 0.05 * sin(.pi * min(1, t / 0.9))   // joint fullness
             let nrm = normal(f.spine, k)
             return CGPoint(
                 x: f.spine[k].x + nrm.x * w * sgn,
                 y: f.spine[k].y + nrm.y * w * sgn)
         }
+        // A finger as its own closed capsule: up the left side, round
+        // the tip, back down the right side. The closed FILL runs from
+        // the base (buried in the palm); the RIM stroke starts above
+        // the palm edge so no hard base line cuts across the palm.
+        func fingerPath(_ f: Finger, from start: Int) -> Path {
+            var p = Path()
+            let last = f.spine.count - 1
+            p.move(to: side(f, start, -1))
+            for k in (start + 1)...last { p.addLine(to: side(f, k, -1)) }
+            let tip = f.spine[last], prev = f.spine[last - 1]
+            let capOut = CGPoint(
+                x: tip.x + (tip.x - prev.x) * 0.45,
+                y: tip.y + (tip.y - prev.y) * 0.45)
+            p.addQuadCurve(to: side(f, last, +1), control: capOut)
+            for k in stride(from: last - 1, through: start, by: -1) {
+                p.addLine(to: side(f, k, +1))
+            }
+            return p
+        }
 
-        let emerge = 4        // spine index where fingers separate
-        var hand = Path()
-
-        // Wrist left, up the palm's index-side edge.
-        // Palm ends ~4.5 gaps under the knuckles, tapering into a
-        // narrower forearm that runs off-canvas. Palm width follows
-        // the knuckle span (wide chords widen the hand).
+        // Palm/forearm silhouette: knuckle-arched top edge, sides down
+        // to the palm bottom, tapering into a forearm that runs
+        // off-canvas angled toward the pinky side (mock forearm).
         let kXs = fingers.map { $0.spine[0].x }
         let palmL = (kXs.min() ?? centerX) - g * 1.2
         let palmR = (kXs.max() ?? centerX) + g * 1.1
         let palmMid = (palmL + palmR) / 2
+        let palmTopY = knuckleBaseY - g * 0.5
         let palmBottomY = knuckleBaseY + g * 2.6
         let forearmY = size.height + g * 2
-        // Wrist exits angled toward the pinky side (mock: forearm runs
-        // off bottom-right, not straight down).
         let wristX = palmMid + g * 2.2
-        let firstL = side(fingers[0], emerge, -1)
-        hand.move(to: CGPoint(x: wristX - g * 1.9, y: forearmY))
-        hand.addQuadCurve(
+        var palm = Path()
+        palm.move(to: CGPoint(x: wristX - g * 1.9, y: forearmY))
+        palm.addQuadCurve(
             to: CGPoint(x: palmL, y: palmBottomY),
             control: CGPoint(x: palmMid - g * 3.2, y: palmBottomY + g * 1.6))
-        hand.addQuadCurve(
-            to: firstL,
-            control: CGPoint(x: palmL - g * 1.1, y: knuckleBaseY + g * 0.4))
-
-        for (i, f) in fingers.enumerated() {
-            // Left edge up.
-            if i > 0 { }
-            for k in stride(from: emerge, through: f.spine.count - 1, by: 1)
-            where k > emerge {
-                hand.addLine(to: side(f, k, -1))
-            }
-            // Rounded tip.
-            let tipL = side(f, f.spine.count - 1, -1)
-            let tipR = side(f, f.spine.count - 1, +1)
-            let tip = f.spine[f.spine.count - 1]
-            let nrm = normal(f.spine, f.spine.count - 1)
-            let capOut = CGPoint(
-                x: tip.x + (tip.x - f.spine[f.spine.count - 2].x) * 0.55,
-                y: tip.y + (tip.y - f.spine[f.spine.count - 2].y) * 0.55)
-            _ = nrm; _ = tipL
-            hand.addQuadCurve(to: tipR, control: capOut)
-            // Right edge down.
-            for k in stride(from: f.spine.count - 2, through: emerge, by: -1) {
-                hand.addLine(to: side(f, k, +1))
-            }
-            // Webbing valley to the next finger.
-            if i < fingers.count - 1 {
-                let nextL = side(fingers[i + 1], emerge, -1)
-                let hereR = side(f, emerge, +1)
-                // Web depth scales with the horizontal gap: adjacent
-                // fingers share a shallow web, spread fingers open
-                // into a deeper V (no flat shelf).
-                let gapX = max(0, nextL.x - hereR.x)
-                let valley = CGPoint(
-                    x: (hereR.x + nextL.x) / 2,
-                    y: max(hereR.y, nextL.y) + g * 0.35
-                        + min(gapX * 0.30, g * 1.6))
-                hand.addQuadCurve(to: nextL, control: valley)
-            }
-        }
-
-        // Pinky-side palm edge, then taper into the forearm.
-        hand.addQuadCurve(
+        palm.addQuadCurve(
+            to: CGPoint(x: palmL + g * 0.5, y: palmTopY),
+            control: CGPoint(x: palmL - g * 0.5, y: knuckleBaseY + g * 0.7))
+        // Knuckle ridge arch across the top.
+        palm.addQuadCurve(
+            to: CGPoint(x: palmR - g * 0.5, y: palmTopY),
+            control: CGPoint(x: palmMid, y: palmTopY - g * 1.0))
+        palm.addQuadCurve(
             to: CGPoint(x: palmR, y: palmBottomY),
-            control: CGPoint(x: palmR + g * 1.3, y: knuckleBaseY + g * 1.0))
-        hand.addQuadCurve(
+            control: CGPoint(x: palmR + g * 0.6, y: knuckleBaseY + g * 0.9))
+        palm.addQuadCurve(
             to: CGPoint(x: wristX + g * 1.8, y: forearmY),
             control: CGPoint(x: palmMid + g * 3.4, y: palmBottomY + g * 1.6))
-        hand.addLine(to: CGPoint(x: wristX - g * 1.9, y: forearmY))
-        hand.closeSubpath()
+        palm.closeSubpath()
 
-        // Barre: finger 1 lies flat — a capsule under the main contour.
+        // Opaque: layered shapes must not darken where they overlap.
+        let skin = Color(red: 0.085, green: 0.085, blue: 0.12)
+        let rim = Color.white.opacity(0.32)
+        let rimStyle = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
+
+        // Fills are PLAIN (a fill with a shadow filter would halo onto
+        // shapes behind it); only rim strokes glow.
+        var glow = ctx
+        glow.addFilter(.shadow(color: .white.opacity(0.18), radius: 2.5))
+        ctx.fill(palm, with: .color(skin))
+        glow.stroke(palm, with: .color(rim), style: rimStyle)
+
+        // Barre: finger 1 lies flat — a capsule behind the fingers.
         if let b = plan.barreRect {
             var bar = Path()
             bar.addRoundedRect(
                 in: b.insetBy(dx: -g * 0.2, dy: 0).offsetBy(dx: 0, dy: lift),
                 cornerSize: CGSize(width: b.width / 2, height: b.width / 2))
-            var glowB = ctx
-            glowB.addFilter(.shadow(color: .white.opacity(0.20), radius: 1.5))
-            glowB.fill(bar, with: .color(Color(red: 0.10, green: 0.10, blue: 0.14).opacity(0.96)))
-            glowB.stroke(bar, with: .color(.white.opacity(0.30)), lineWidth: 1.2)
+            ctx.fill(bar, with: .color(skin))
+            glow.stroke(bar, with: .color(rim), lineWidth: 1.2)
         }
 
-        var glow = ctx
-        glow.addFilter(.shadow(color: .white.opacity(0.18), radius: 2.5))
-        glow.fill(hand, with: .color(Color(red: 0.085, green: 0.085, blue: 0.12).opacity(0.96)))
-        glow.stroke(hand, with: .color(.white.opacity(0.32)),
-                    style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
+        // Fingers back-to-front: higher (top-string) tips first, so a
+        // finger on a lower string draws in front — matching the real
+        // player's-eye overlap. Each fill covers the rim lines of what
+        // lies behind, leaving natural finger-over-finger edges.
+        let palmEdgeY = palmTopY - g * 0.25
+        for f in fingers.sorted(by: {
+            $0.spine[$0.spine.count - 1].y < $1.spine[$1.spine.count - 1].y
+        }) {
+            var fill = fingerPath(f, from: 0)
+            fill.closeSubpath()
+            ctx.fill(fill, with: .color(skin))
+            // Rim starts where the finger clears the palm edge — no
+            // stroke ends dangling inside the palm.
+            var start = 1
+            for (k, p) in f.spine.enumerated() where p.y < palmEdgeY {
+                start = max(1, k); break
+            }
+            if start < f.spine.count - 2 {
+                glow.stroke(fingerPath(f, from: start),
+                            with: .color(rim), style: rimStyle)
+            }
+        }
     }
 
     private func segment(from a: CGPoint, to b: CGPoint, width: CGFloat) -> Path {

@@ -26,6 +26,8 @@ final class NeckHandRenderHarness: XCTestCase {
             ("Fsharp", "F#", Optional("Bm")),
             ("C", "C", Optional("G")),
             ("Am", "Am", nil),
+            ("G", "G", Optional("Gm")),
+            ("Gm", "Gm", Optional("A#")),
         ] {
             let view = GuitarNeckPlaySurface(current: current, transitionTo: next)
                 .frame(width: 720, height: 420)
