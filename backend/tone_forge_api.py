@@ -10,7 +10,10 @@ Run:
   cd backend
   uvicorn tone_forge_api:app --reload --port 8000
 
-Then open http://localhost:8000 in a browser.
+Then open http://localhost:8300 in a browser.
+(Port 8300 is deliberate: 8000 is occupied by another local project
+on this machine; ToneForge binds 8300 so loopback + Bonjour routing
+always reach ToneForge regardless of which network the Mac is on.)
 """
 from __future__ import annotations
 
