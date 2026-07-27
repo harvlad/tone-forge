@@ -2574,11 +2574,34 @@ async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONRes
     history_entry = _add_to_history(
         entry, full_result=_convert_numpy_types(result),
         device_id=job.device_id, owner_id=job.owner_id)
+    # Preserve the worker's engine self-report in the terminal message
+    # (a non-default engine announces itself; see analysis_worker).
+    _engine = result.get("analysis_engine") or "current"
+    _done_msg = ("Analysis complete" if _engine == "current"
+                 else f"Analysis complete · {_engine.replace('_', ' ')}")
     await _JOBS.update(
         job_id, status="done", percent=100,
-        message="Analysis complete", history_id=history_entry["id"],
+        message=_done_msg, history_id=history_entry["id"],
     )
     _on_job_complete(_JOBS.get(job_id))
+    # Eager R2 push: warm the stem CDN at analysis-complete instead of on
+    # the first bundle fetch. The lazy path in get_session_bundle stays as
+    # the fallback (idempotent — _maybe_upload_stems_to_r2 skips roles
+    # that already have R2 URLs). Without this, the first "Open" paid for
+    # uploading every float32 stem to R2 inline and routinely timed out
+    # client-side. Best-effort background thread; never blocks or fails
+    # the complete response.
+    async def _warm_r2(entry_id: str) -> None:
+        try:
+            fresh = _get_history_item(entry_id)
+            if fresh and await asyncio.to_thread(
+                    _maybe_upload_stems_to_r2, entry_id, fresh):
+                _update_history_item(entry_id, fresh)
+                logger.info("eager R2 stem push done for %s", entry_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("eager R2 stem push failed for %s: %s", entry_id, e)
+
+    asyncio.create_task(_warm_r2(history_entry["id"]))
     return JSONResponse({"ok": True, "history_id": history_entry["id"]})
 
 
