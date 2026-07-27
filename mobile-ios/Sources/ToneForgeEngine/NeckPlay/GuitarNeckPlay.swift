@@ -276,11 +276,13 @@ public struct HandSilhouetteView: View, Animatable {
             let ay: CGFloat = plan.neckBottom - g * 3.4
             anchor = CGPoint(x: ax, y: ay)
         } else {
+            // X: fingertip-cluster centroid. Y: the TOPMOST dot — the
+            // fingers reach the highest fretted string; anchoring to
+            // the mean sank the hand below the board.
             var sx: CGFloat = 0
-            var sy: CGFloat = 0
-            for t in active { sx += t.x; sy += t.y }
-            let n = CGFloat(active.count)
-            anchor = CGPoint(x: sx / n, y: sy / n)
+            var minY = CGFloat.greatestFiniteMagnitude
+            for t in active { sx += t.x; minY = min(minY, t.y) }
+            anchor = CGPoint(x: sx / CGFloat(active.count), y: minY)
         }
 
         let handW = g * 9.6
@@ -289,9 +291,9 @@ public struct HandSilhouetteView: View, Animatable {
         // the chord's dot row so the hand reads as fretting the notes,
         // thumb tucked low behind the neck line.
         var liftOffset: CGFloat = 0
-        if lifted { liftOffset = g * 1.6 }
+        if lifted { liftOffset = g * 2.4 }
         let handRect = CGRect(
-            x: anchor.x - handW * 0.58,
+            x: anchor.x - handW * 0.52,
             y: anchor.y - g * 0.55 + liftOffset,
             width: handW, height: handH)
 
