@@ -148,6 +148,10 @@ public final class LearnSessionModel {
     }
 
     /// Every distinct chord in the song, first-appearance order.
+    /// Full chord symbol sequence in song order (for transition-pair
+    /// extraction).
+    public var chordSequence: [String] { chords.map(\.symbol) }
+
     public var songChords: [String] {
         var seen = Set<String>()
         return chords.map(\.symbol).filter { seen.insert($0).inserted }
