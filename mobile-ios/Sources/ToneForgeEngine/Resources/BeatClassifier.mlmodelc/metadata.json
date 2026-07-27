@@ -19,7 +19,7 @@
         "shortDescription" : ""
       }
     ],
-    "version" : "2026-07-20T08:55:40Z",
+    "version" : "2026-07-27T09:47:01Z",
     "modelParameters" : [
 
     ],
@@ -50,27 +50,6 @@
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
-        "name" : "durationSec",
-        "shortDescription" : ""
-      },
-      {
-        "isOptional" : "0",
-        "formattedType" : "Double",
-        "type" : "Double",
-        "name" : "pitchedness",
-        "shortDescription" : ""
-      },
-      {
-        "isOptional" : "0",
-        "formattedType" : "Double",
-        "type" : "Double",
-        "name" : "attackSec",
-        "shortDescription" : ""
-      },
-      {
-        "isOptional" : "0",
-        "formattedType" : "Double",
-        "type" : "Double",
         "name" : "lowBandRatio",
         "shortDescription" : ""
       },
@@ -85,7 +64,28 @@
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
+        "name" : "attackSec",
+        "shortDescription" : ""
+      },
+      {
+        "isOptional" : "0",
+        "formattedType" : "Double",
+        "type" : "Double",
+        "name" : "durationSec",
+        "shortDescription" : ""
+      },
+      {
+        "isOptional" : "0",
+        "formattedType" : "Double",
+        "type" : "Double",
         "name" : "zcr",
+        "shortDescription" : ""
+      },
+      {
+        "isOptional" : "0",
+        "formattedType" : "Double",
+        "type" : "Double",
+        "name" : "pitchedness",
         "shortDescription" : ""
       },
       {
