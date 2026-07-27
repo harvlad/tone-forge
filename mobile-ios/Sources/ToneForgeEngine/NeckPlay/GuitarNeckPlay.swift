@@ -352,10 +352,19 @@ public struct GuitarNeckPlaySurface: View {
     /// Stay/Move/Lift role and draws the movement overlay toward this
     /// chord. Nil = plain play surface.
     let transitionTo: String?
+    /// Optional separate target for the HAND (looper choreography:
+    /// the hand animates to this chord first, the host then updates
+    /// `current` so the dots follow once the hand lands). Nil = hand
+    /// plays `current`.
+    let handTarget: String?
 
-    public init(current: String?, transitionTo: String? = nil) {
+    public init(
+        current: String?, transitionTo: String? = nil,
+        handTarget: String? = nil
+    ) {
         self.current = current
         self.transitionTo = transitionTo
+        self.handTarget = handTarget
     }
 
     public var body: some View {
@@ -364,7 +373,11 @@ public struct GuitarNeckPlaySurface: View {
             let geo = NeckGeometry(size: g.size, baseFret: shape?.baseFret ?? 1)
             let fingering = shape.map { ChordFingering.assign(shape: $0) }
                 ?? ChordFingering.Result(notes: [], barreStrings: nil, barreFret: nil)
-            let plan = HandPlan.plan(fingering: fingering, geo: geo)
+            let handShape = (handTarget ?? current)
+                .flatMap { GuitarVoicing.shape(symbol: $0) } ?? shape
+            let handFingering = handShape.map { ChordFingering.assign(shape: $0) }
+                ?? fingering
+            let plan = HandPlan.plan(fingering: handFingering, geo: geo)
             // Transition analysis only when both shapes live in the
             // same fret window (open-position pairs — the common case).
             let nextFingering: ChordFingering.Result? = transitionTo
@@ -380,7 +393,7 @@ public struct GuitarNeckPlaySurface: View {
             ZStack {
                 NeckBoardCanvas(shape: shape, geo: geo)
                 HandSilhouetteView(plan: plan)
-                    .animation(.easeInOut(duration: 0.45), value: plan)
+                    .animation(.easeInOut(duration: 0.32), value: plan)
                 NeckDotsCanvas(
                     shape: shape, geo: geo, fingering: fingering,
                     roles: transition?.rolesByFinger ?? [:])

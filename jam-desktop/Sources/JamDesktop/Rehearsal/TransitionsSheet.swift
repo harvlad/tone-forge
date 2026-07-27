@@ -14,6 +14,7 @@ struct TransitionsSheet: View {
 
     @State private var selected = 0
     @State private var showingNext = false
+    @State private var handNext = false
     @State private var isLooping = false
     @State private var bpm: Double = 90
     @State private var loopTask: Task<Void, Never>? = nil
@@ -41,7 +42,8 @@ struct TransitionsSheet: View {
             if let pair {
                 GuitarNeckPlaySurface(
                     current: showingNext ? pair.to : pair.from,
-                    transitionTo: showingNext ? nil : pair.to
+                    transitionTo: showingNext ? nil : pair.to,
+                    handTarget: handNext ? pair.to : pair.from
                 )
                 .frame(minHeight: 260)
 
@@ -101,8 +103,12 @@ struct TransitionsSheet: View {
         loopTask = Task { @MainActor in
             while !Task.isCancelled {
                 let interval = UInt64((60.0 / bpm) * 2 * 1_000_000_000)
-                withAnimation(.easeInOut(duration: 0.45)) { showingNext.toggle() }
-                try? await Task.sleep(nanoseconds: interval)
+                // Hand first; dots follow when it lands.
+                withAnimation(.easeInOut(duration: 0.32)) { handNext.toggle() }
+                try? await Task.sleep(nanoseconds: 340_000_000)
+                showingNext = handNext
+                try? await Task.sleep(nanoseconds:
+                    interval > 340_000_000 ? interval - 340_000_000 : interval)
             }
         }
     }
@@ -111,7 +117,10 @@ struct TransitionsSheet: View {
         loopTask?.cancel()
         loopTask = nil
         isLooping = false
-        withAnimation(.easeInOut(duration: 0.3)) { showingNext = false }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            handNext = false
+            showingNext = false
+        }
     }
 }
 
