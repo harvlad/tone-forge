@@ -50,6 +50,9 @@ struct StudioView: View {
                     if !studio.midiStemRows.isEmpty {
                         midiCard
                     }
+                    DerivedAudioSection()
+                        .environmentObject(model)
+                        .environmentObject(studio)
                     if !studio.stageRows.isEmpty {
                         profilingCard
                     }

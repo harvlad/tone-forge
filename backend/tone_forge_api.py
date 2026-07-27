@@ -4305,6 +4305,23 @@ async def get_specialist_provenance(history_id: str) -> JSONResponse:
     })
 
 
+@app.get("/api/debug/derived-audio/{history_id}")
+async def get_derived_audio(history_id: str, role: str = "") -> JSONResponse:
+    """INTERNAL: a session's transcribed notes + chord voicings as
+    playable event lists (no original audio). Consumed by the Jamn
+    desktop Studio "Derived Audio" section for audible evaluation of
+    transcription/harmony quality."""
+    from tone_forge.derived_audio import derived_audio_payload
+    item = _get_history_item(history_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="history item not found")
+    result = item.get("result") or {}
+    payload = derived_audio_payload(result, role=role or None)
+    payload["history_id"] = history_id
+    payload["analysis_engine"] = result.get("analysis_engine", "current")
+    return JSONResponse(payload)
+
+
 @app.get("/api/debug/corpus")
 async def get_debug_corpus() -> JSONResponse:
     """Return the trial corpus (ground-truth labels) for the Corpus tab."""
