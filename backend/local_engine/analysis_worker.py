@@ -1895,7 +1895,16 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 **_specialist_provenance,
             }
 
-        send_progress(queue, "complete", 1.0, "Analysis complete")
+        # Self-reporting completion message: non-default engines announce
+        # themselves so a session's provenance is visible at a glance in
+        # the app's final status line (worker-hygiene guard — a stale
+        # worker silently running "current" once cost a test session).
+        # No model names — just the engine variant.
+        if _engine == "current":
+            send_progress(queue, "complete", 1.0, "Analysis complete")
+        else:
+            _label = _engine.replace("_", " ")
+            send_progress(queue, "complete", 1.0, f"Analysis complete · {_label}")
 
         if midi_stems:
             result["midi_stems"] = {}
