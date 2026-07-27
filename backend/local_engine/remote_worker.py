@@ -424,11 +424,26 @@ class RemoteWorker:
 
     # -- main loop --------------------------------------------------------
 
+    def _heartbeat_loop(self) -> None:
+        """Presence pings while the main thread is busy with a job —
+        otherwise the engine flaps to "offline" mid-analysis."""
+        import threading
+        def beat():
+            while not self._stop:
+                try:
+                    self.session.post(
+                        self._url("/api/engine/heartbeat"), timeout=10)
+                except requests.RequestException:
+                    pass
+                time.sleep(20)
+        threading.Thread(target=beat, daemon=True).start()
+
     def run_forever(self) -> None:
         logger.info(
             "worker %s (%s) polling %s",
             self.worker_id, self.device, self.backend_url,
         )
+        self._heartbeat_loop()
         while not self._stop:
             try:
                 job = self.claim()

@@ -2373,6 +2373,17 @@ async def import_cc_track_endpoint(track_id: str, request: Request) -> JSONRespo
     return JSONResponse({"job_id": job.id, "engine_online": _engine_online()})
 
 
+@app.post("/api/engine/heartbeat")
+async def engine_heartbeat_endpoint(request: Request) -> JSONResponse:
+    """Presence ping from a BUSY worker (analyzing / uploading stems).
+    The claim long-poll doubles as the heartbeat while idle, but a
+    single-threaded worker goes silent for minutes mid-job and the
+    engine flapped to "offline" while actually working."""
+    _require_engine_auth(request)
+    _mark_engine_seen()
+    return JSONResponse({"ok": True})
+
+
 @app.get("/api/engine/status")
 async def engine_status_endpoint() -> JSONResponse:
     """Public presence probe — the jam page's banner on non-localhost
