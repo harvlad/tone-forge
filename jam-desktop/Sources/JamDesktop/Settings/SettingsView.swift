@@ -21,7 +21,7 @@ struct SettingsView: View {
             Section("Backend") {
                 TextField("Base URL", text: $backendText)
                     .onSubmit(commitBackend)
-                Text("Hosted: https://jamn.app — local: http://127.0.0.1:8000")
+                Text("Hosted: https://jamn.app — local: http://127.0.0.1:8300")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
