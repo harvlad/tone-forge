@@ -132,6 +132,13 @@ public enum ChordFingering {
             remaining = fretted
         }
         remaining.sort { ($0.fret, $0.string) < ($1.fret, $1.string) }
+        // E-shape minor barre (Gm/F#m…): the two stacked notes above
+        // the barre are ring+pinky by convention, not middle+ring.
+        if barreFret != nil, remaining.count == 2,
+           remaining[0].fret == remaining[1].fret,
+           abs(remaining[0].string - remaining[1].string) == 1 {
+            nextFinger = 3
+        }
         for n in remaining where nextFinger <= 4 {
             notes.append(Note(string: n.string, fret: n.fret, finger: nextFinger))
             nextFinger += 1
@@ -219,9 +226,11 @@ public struct HandPlan: Equatable {
 
         if let bs = fingering.barreStrings, let bf = fingering.barreFret {
             let x = geo.fretX(bf)
-            let yTop = geo.stringY(bs.upperBound) - geo.stringGap * 0.4
-            let yBot = geo.stringY(bs.lowerBound) + geo.stringGap * 0.4
-            let w = geo.fretW * 0.30
+            // Low string index = TOP row (audience view): lowerBound
+            // is the top of the capsule, upperBound the bottom.
+            let yTop = geo.stringY(bs.lowerBound) - geo.stringGap * 0.4
+            let yBot = geo.stringY(bs.upperBound) + geo.stringGap * 0.4
+            let w = geo.stringGap * 2.1   // one finger wide
             barreRect = CGRect(x: x - w / 2, y: yTop, width: w, height: yBot - yTop)
             // Finger 1's tip = top of the barre (it lies flat downward).
             tipByFinger[1] = CGPoint(x: x, y: yTop + geo.stringGap * 0.3)
@@ -433,7 +442,7 @@ public struct HandSilhouetteView: View, Animatable {
         let forearmY = size.height + g * 2
         let wristX = palmMid + g * 2.2
         var palm = Path()
-        palm.move(to: CGPoint(x: wristX - g * 1.9, y: forearmY))
+        palm.move(to: CGPoint(x: wristX - g * 1.4, y: forearmY))
         palm.addQuadCurve(
             to: CGPoint(x: palmL, y: palmBottomY),
             control: CGPoint(x: palmMid - g * 3.2, y: palmBottomY + g * 1.6))
@@ -448,7 +457,7 @@ public struct HandSilhouetteView: View, Animatable {
             to: CGPoint(x: palmR, y: palmBottomY),
             control: CGPoint(x: palmR + g * 0.6, y: knuckleBaseY + g * 0.9))
         palm.addQuadCurve(
-            to: CGPoint(x: wristX + g * 1.8, y: forearmY),
+            to: CGPoint(x: wristX + g * 1.3, y: forearmY),
             control: CGPoint(x: palmMid + g * 3.4, y: palmBottomY + g * 1.6))
         palm.closeSubpath()
 
@@ -479,22 +488,63 @@ public struct HandSilhouetteView: View, Animatable {
         // player's-eye overlap. Each fill covers the rim lines of what
         // lies behind, leaving natural finger-over-finger edges.
         let palmEdgeY = palmTopY - g * 0.25
-        for f in fingers.sorted(by: {
+        let ordered = fingers.sorted {
             $0.spine[$0.spine.count - 1].y < $1.spine[$1.spine.count - 1].y
-        }) {
-            var fill = fingerPath(f, from: 0)
-            fill.closeSubpath()
-            ctx.fill(fill, with: .color(skin))
-            // Rim starts where the finger clears the palm edge — no
-            // stroke ends dangling inside the palm.
+        }
+        let fillPaths: [Path] = ordered.map { f in
+            var p = fingerPath(f, from: 0)
+            p.closeSubpath()
+            return p
+        }
+        for (i, f) in ordered.enumerated() {
+            ctx.fill(fillPaths[i], with: .color(skin))
+
+            // Rim: starts where the finger clears the palm edge, and
+            // skips any stretch hidden under a finger drawn in front —
+            // bunched fingers keep ONE clean edge between them instead
+            // of double crease lines.
             var start = 1
             for (k, p) in f.spine.enumerated() where p.y < palmEdgeY {
                 start = max(1, k); break
             }
-            if start < f.spine.count - 2 {
-                glow.stroke(fingerPath(f, from: start),
-                            with: .color(rim), style: rimStyle)
+            let last = f.spine.count - 1
+            guard start < last - 1 else { continue }
+            let fronts = fillPaths[(i + 1)...]
+            func visible(_ p: CGPoint) -> Bool {
+                !fronts.contains { $0.contains(p) }
             }
+            // Rim polyline: left side up, sampled tip cap, right side
+            // down — then stroke only the visible runs.
+            var pts: [CGPoint] = []
+            for k in start...last { pts.append(side(f, k, -1)) }
+            let tip = f.spine[last], prev = f.spine[last - 1]
+            let capOut = CGPoint(
+                x: tip.x + (tip.x - prev.x) * 0.45,
+                y: tip.y + (tip.y - prev.y) * 0.45)
+            let tipL = side(f, last, -1), tipR = side(f, last, +1)
+            for s in 1...3 {
+                let t = CGFloat(s) / 4, mt = 1 - t
+                pts.append(CGPoint(
+                    x: mt*mt*tipL.x + 2*mt*t*capOut.x + t*t*tipR.x,
+                    y: mt*mt*tipL.y + 2*mt*t*capOut.y + t*t*tipR.y))
+            }
+            for k in stride(from: last, through: start, by: -1) {
+                pts.append(side(f, k, +1))
+            }
+            var rimPath = Path()
+            var run: [CGPoint] = []
+            func flush() {
+                if run.count > 1 {
+                    rimPath.move(to: run[0])
+                    for p in run.dropFirst() { rimPath.addLine(to: p) }
+                }
+                run.removeAll()
+            }
+            for p in pts {
+                if visible(p) { run.append(p) } else { flush() }
+            }
+            flush()
+            glow.stroke(rimPath, with: .color(rim), style: rimStyle)
         }
     }
 

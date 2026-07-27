@@ -58,7 +58,44 @@ public enum GuitarVoicing {
         return shape(for: parsed)
     }
 
+    /// Canonical barre forms for plain major/minor roots with no open
+    /// shape. The window search happily returns exotic nut voicings
+    /// (F# → 21x322) with full tone coverage; players expect the
+    /// E-shape/A-shape barre, so pin those.
+    private static let barreForms: [String: GuitarChordShape] = {
+        func e(_ f: Int, minor: Bool) -> GuitarChordShape {
+            GuitarChordShape(baseFret: f, strings: [
+                .fretted(f), .fretted(f + 2), .fretted(f + 2),
+                .fretted(minor ? f : f + 1), .fretted(f), .fretted(f)])
+        }
+        func a(_ f: Int, minor: Bool) -> GuitarChordShape {
+            GuitarChordShape(baseFret: f, strings: [
+                .muted, .fretted(f), .fretted(f + 2), .fretted(f + 2),
+                .fretted(minor ? f + 1 : f + 2), .fretted(f)])
+        }
+        // canonicalKey = "<rootPC>:<quality raw>"
+        return [
+            "5:maj": e(1, minor: false),    // F
+            "6:maj": e(2, minor: false),    // F#/Gb
+            "8:maj": e(4, minor: false),    // G#/Ab
+            "10:maj": a(1, minor: false),   // A#/Bb
+            "1:maj": a(4, minor: false),    // C#/Db
+            "3:maj": a(6, minor: false),    // D#/Eb
+            "5:min": e(1, minor: true),     // Fm
+            "6:min": e(2, minor: true),     // F#m
+            "7:min": e(3, minor: true),     // Gm
+            "8:min": e(4, minor: true),     // G#m
+            "10:min": a(1, minor: true),    // A#m/Bbm
+            "0:min": a(3, minor: true),     // Cm
+            "1:min": a(4, minor: true),     // C#m
+            "3:min": a(6, minor: true),     // D#m/Ebm
+            "11:maj": a(2, minor: false),   // B
+            "11:min": a(2, minor: true),    // Bm
+        ]
+    }()
+
     public static func shape(for chord: ParsedChord) -> GuitarChordShape? {
+        if let barre = barreForms[chord.canonicalKey] { return barre }
         let rootPC = chord.root.rawValue
         let tones = Set(ChordVoicing.chordTones(for: chord).map {
             (rootPC + $0) % 12
