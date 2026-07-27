@@ -143,9 +143,23 @@ public enum HandPoseSolver {
 
         var mcpRowY = neckBottom + HandSkeleton.mcpBelowBoard * s + liftY * s
 
+        // Pull each knuckle toward ITS OWN target so same-fret-column
+        // chords don't make neighbouring fingers lean across each
+        // other, then re-enforce anatomical knuckle order (index →
+        // pinky strictly decreasing x, ≥10mm apart).
+        var mcpXs: [CGFloat] = (0..<4).map {
+            centerX + HandSkeleton.mcpOffset[$0] * s * spread
+        }
+        for i in 0..<4 where targets[i].press {
+            mcpXs[i] = mcpXs[i] * 0.55 + targets[i].point.x * 0.45
+        }
+        for i in 1..<4 {
+            mcpXs[i] = min(mcpXs[i], mcpXs[i - 1] - 10 * s)
+        }
+
         func mcp3(_ i: Int, rowY: CGFloat) -> Joint3 {
             Joint3(
-                x: centerX + HandSkeleton.mcpOffset[i] * s * spread,
+                x: mcpXs[i],
                 y: rowY - HandSkeleton.mcpArch[i] * s,
                 z: (HandSkeleton.mcpHeight + liftZ) * s)
         }

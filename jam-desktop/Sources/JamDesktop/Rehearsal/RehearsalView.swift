@@ -190,7 +190,7 @@ struct RehearsalView: View {
                         .controlSize(.small)
                 }
                 GuitarNeckPlaySurface(current: currentChord?.symbol)
-                    .frame(height: 230)
+                    .frame(minHeight: 260, maxHeight: 460)
                     .sheet(isPresented: $showTransitions) {
                         TransitionsSheet(pairs: TransitionsSheet.pairs(
                             from: session.learn.chordSequence))
