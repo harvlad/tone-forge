@@ -41,6 +41,11 @@ final class DerivedPlaybackController: ObservableObject {
     func play(_ mode: Mode, derived: DerivedAudio, from startSec: Double = 0) {
         stop()
         guard let session else { return }
+        // Studio can be the first surface the user touches — the audio
+        // engine (and the synth's attach) only happens on engine start,
+        // so a cold app played derived audio into an unattached synth:
+        // silence. Start it on demand.
+        session.ensureEngineStarted()
 
         // Merge into (time, isOn, pitch, velocity) events.
         var events: [(t: Double, on: Bool, pitch: Int, vel: Float)] = []
