@@ -351,7 +351,11 @@ public struct HandSilhouetteView: View, Animatable {
         }
         var fingers: [Finger] = []
         for (rank, idx) in order.enumerated() {
-            let tip = CGPoint(x: tips[idx].x, y: tips[idx].y + lift)
+            // The DOT sits on the fingertip pad's center: retract the
+            // spine end so the rounded cap wraps around the dot
+            // instead of the pad overshooting past it.
+            let dot = CGPoint(x: tips[idx].x, y: tips[idx].y + lift)
+            let tip = CGPoint(x: dot.x, y: dot.y + g * 0.30)
             let spread = CGFloat(rank) - 1.5
             let arc = g * 0.55 * sin(.pi * (CGFloat(rank) + 0.5) / 4)
             // Knuckles FOLLOW their tips (with a pull toward the palm
