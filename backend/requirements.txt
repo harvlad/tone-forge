@@ -61,3 +61,6 @@ MIDIUtil>=1.2.1
 
 # Dev
 pytest>=7.4
+
+# MIDI file parsing (derived-audio endpoint + analysis artifacts)
+mido>=1.3
