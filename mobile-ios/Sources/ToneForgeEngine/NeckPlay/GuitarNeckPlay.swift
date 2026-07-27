@@ -235,7 +235,7 @@ public struct HandPlan: Equatable {
         // from the used fingers. Reach differs per finger — the pinky
         // barely clears the board edge, the middle finger hovers
         // deepest (real relative finger lengths).
-        let restReach: [CGFloat] = [4.2, 5.0, 4.5, 3.0]  // fingers 1…4
+        let restReach: [CGFloat] = [3.2, 4.0, 3.5, 2.0]  // fingers 1…4
         var tips: [CGPoint] = []
         let usedXs = tipByFinger.values.map(\.x)
         var restX = (usedXs.max() ?? geo.neck.midX)
@@ -324,13 +324,13 @@ public struct HandSilhouetteView: View, Animatable {
         // width) stays with the finger number.
         let order = tips.indices.sorted { tips[$0].x < tips[$1].x }
         // Mock-measured finger widths (× string gap).
-        let widthByFinger: [CGFloat] = [3.0, 3.2, 2.9, 2.4]
+        let widthByFinger: [CGFloat] = [2.2, 2.3, 2.1, 1.75]
 
         // Knuckle ridge: arched, below the board. Center on the SPAN
         // (barre chords put one tip frets away from the cluster).
         let xs = tips.map(\.x).sorted()
         let centerX = (xs[0] + xs[3]) / 2
-        let knuckleBaseY = plan.neckBottom + g * 2.7 + lift
+        let knuckleBaseY = plan.neckBottom + g * 4.6 + lift
 
         struct Finger {
             var spine: [CGPoint]   // sampled base→tip
@@ -344,14 +344,14 @@ public struct HandSilhouetteView: View, Animatable {
             // Knuckles FOLLOW their tips (with a pull toward the palm
             // center) so wide chords fan the whole hand instead of
             // stretching one finger into a tentacle.
-            let idealX = centerX + spread * g * 2.6
+            let idealX = centerX + spread * g * 2.4
             let knuckle = CGPoint(
                 x: tip.x * 0.62 + idealX * 0.38,
                 y: knuckleBaseY - arc)
             // Gentle bow toward the nut side.
             let ctrl = CGPoint(
-                x: (knuckle.x + tip.x) / 2 + (tip.x - knuckle.x) * 0.10 + g * 0.35,
-                y: (knuckle.y + tip.y) / 2 + g * 0.25)
+                x: (knuckle.x + tip.x) / 2 + (tip.x - knuckle.x) * 0.10 + g * 0.55,
+                y: (knuckle.y + tip.y) / 2 + g * 0.30)
             var spine: [CGPoint] = []
             let n = 12
             for k in 0...n {
@@ -372,8 +372,11 @@ public struct HandSilhouetteView: View, Animatable {
             for k in 0..<n {
                 let t = CGFloat(k) / CGFloat(n - 1)
                 for i in 1..<fingers.count {
+                    // Keep sep ≥ the two half-widths so the offset
+                    // EDGES touch but never cross (crossing edges
+                    // stroke seams inside the silhouette).
                     let sep = (fingers[i - 1].width + fingers[i].width)
-                        * (0.50 - 0.12 * t)
+                        * (0.54 - 0.115 * t)
                     let needed = fingers[i - 1].spine[k].x + sep
                     if fingers[i].spine[k].x < needed {
                         fingers[i].spine[k].x = needed
@@ -407,13 +410,13 @@ public struct HandSilhouetteView: View, Animatable {
         // narrower forearm that runs off-canvas. Palm width follows
         // the knuckle span (wide chords widen the hand).
         let kXs = fingers.map { $0.spine[0].x }
-        let palmL = (kXs.min() ?? centerX) - g * 1.7
-        let palmR = (kXs.max() ?? centerX) + g * 1.6
+        let palmL = (kXs.min() ?? centerX) - g * 1.2
+        let palmR = (kXs.max() ?? centerX) + g * 1.1
         let palmMid = (palmL + palmR) / 2
-        let palmBottomY = knuckleBaseY + g * 3.2
+        let palmBottomY = knuckleBaseY + g * 2.8
         let forearmY = size.height + g * 2
         let firstL = side(fingers[0], emerge, -1)
-        hand.move(to: CGPoint(x: palmMid - g * 2.4, y: forearmY))
+        hand.move(to: CGPoint(x: palmMid - g * 1.9, y: forearmY))
         hand.addQuadCurve(
             to: CGPoint(x: palmL, y: palmBottomY),
             control: CGPoint(x: palmMid - g * 3.6, y: palmBottomY + g * 1.6))
@@ -448,7 +451,7 @@ public struct HandSilhouetteView: View, Animatable {
                 let hereR = side(f, emerge, +1)
                 let valley = CGPoint(
                     x: (hereR.x + nextL.x) / 2,
-                    y: max(hereR.y, nextL.y) + g * 0.30)
+                    y: max(hereR.y, nextL.y) + g * 0.55)
                 hand.addQuadCurve(to: nextL, control: valley)
             }
         }
@@ -458,9 +461,9 @@ public struct HandSilhouetteView: View, Animatable {
             to: CGPoint(x: palmR, y: palmBottomY),
             control: CGPoint(x: palmR + g * 1.3, y: knuckleBaseY + g * 1.0))
         hand.addQuadCurve(
-            to: CGPoint(x: palmMid + g * 2.3, y: forearmY),
+            to: CGPoint(x: palmMid + g * 1.8, y: forearmY),
             control: CGPoint(x: palmMid + g * 3.4, y: palmBottomY + g * 1.6))
-        hand.addLine(to: CGPoint(x: palmMid - g * 2.4, y: forearmY))
+        hand.addLine(to: CGPoint(x: palmMid - g * 1.9, y: forearmY))
         hand.closeSubpath()
 
         // Barre: finger 1 lies flat — a capsule under the main contour.
@@ -478,7 +481,8 @@ public struct HandSilhouetteView: View, Animatable {
         var glow = ctx
         glow.addFilter(.shadow(color: .white.opacity(0.18), radius: 2.5))
         glow.fill(hand, with: .color(Color(red: 0.085, green: 0.085, blue: 0.12).opacity(0.96)))
-        glow.stroke(hand, with: .color(.white.opacity(0.32)), lineWidth: 1.3)
+        glow.stroke(hand, with: .color(.white.opacity(0.32)),
+                    style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
     }
 
     private func segment(from a: CGPoint, to b: CGPoint, width: CGFloat) -> Path {
