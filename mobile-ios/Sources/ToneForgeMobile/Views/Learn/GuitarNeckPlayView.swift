@@ -18,7 +18,11 @@ struct GuitarNeckPlayView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: TFTheme.Spacing.sm) {
             header
+            // Mock-panel aspect: the tall Learn card must not stretch
+            // the hand/forearm to fill it.
             GuitarNeckPlaySurface(current: current)
+                .aspectRatio(1.75, contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .padding(TFTheme.Spacing.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

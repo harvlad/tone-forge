@@ -43,7 +43,6 @@ let package = Package(
                 // it at runtime (see BeatModelStore). Compiled by the
                 // BeatModelTrainer tool, committed as a .mlmodelc dir.
                 .copy("Resources/BeatClassifier.mlmodelc"),
-                .copy("Resources/NeckHand.png"),
             ]
         ),
         .target(
