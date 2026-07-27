@@ -209,8 +209,14 @@ public struct HandPlan: Equatable {
 /// animates each finger to its new spot like a hand moving.
 public struct HandSilhouetteView: View, Animatable {
     public var plan: HandPlan
+    /// Looper choreography: true while the hand is lifted off the
+    /// strings mid-transition (drops back down on landing).
+    public var lifted: Bool = false
 
-    public init(plan: HandPlan) { self.plan = plan }
+    public init(plan: HandPlan, lifted: Bool = false) {
+        self.plan = plan
+        self.lifted = lifted
+    }
 
     public typealias TipPair = AnimatablePair<CGFloat, CGFloat>
     public typealias Tips4 = AnimatablePair<
@@ -267,7 +273,7 @@ public struct HandSilhouetteView: View, Animatable {
         let anchor: CGPoint
         if active.isEmpty {
             let ax: CGFloat = size.width * 0.62
-            let ay: CGFloat = plan.neckBottom - g * 0.6
+            let ay: CGFloat = plan.neckBottom - g * 3.4
             anchor = CGPoint(x: ax, y: ay)
         } else {
             var sx: CGFloat = 0
@@ -277,11 +283,16 @@ public struct HandSilhouetteView: View, Animatable {
             anchor = CGPoint(x: sx / n, y: sy / n)
         }
 
-        let handW = g * 11.5
-        let handH = handW * 243.0 / 383.0
+        let handW = g * 9.6
+        let handH = handW * 337.0 / 343.0
+        // Fingertips live at the asset's top edge — park them right at
+        // the chord's dot row so the hand reads as fretting the notes,
+        // thumb tucked low behind the neck line.
+        var liftOffset: CGFloat = 0
+        if lifted { liftOffset = g * 1.6 }
         let handRect = CGRect(
-            x: anchor.x - handW * 0.62,
-            y: anchor.y - g * 0.25,
+            x: anchor.x - handW * 0.58,
+            y: anchor.y - g * 0.55 + liftOffset,
             width: handW, height: handH)
 
         // Wrist/forearm continuation below the asset's cut edge.
@@ -342,14 +353,17 @@ public struct GuitarNeckPlaySurface: View {
     /// `current` so the dots follow once the hand lands). Nil = hand
     /// plays `current`.
     let handTarget: String?
+    /// True while the hand is lifted off the strings (mid-transition).
+    let handLifted: Bool
 
     public init(
         current: String?, transitionTo: String? = nil,
-        handTarget: String? = nil
+        handTarget: String? = nil, handLifted: Bool = false
     ) {
         self.current = current
         self.transitionTo = transitionTo
         self.handTarget = handTarget
+        self.handLifted = handLifted
     }
 
     public var body: some View {
@@ -376,9 +390,14 @@ public struct GuitarNeckPlaySurface: View {
             }
 
             ZStack {
-                NeckBoardCanvas(shape: shape, geo: geo)
-                HandSilhouetteView(plan: plan)
+                // Real fretting-hand layering: wood, then the hand,
+                // then strings/wires OVER the fingers (a hand sits
+                // behind the strings), then dots + arrows on top.
+                NeckBoardCanvas(shape: shape, geo: geo, layer: .wood)
+                HandSilhouetteView(plan: plan, lifted: handLifted)
                     .animation(.easeInOut(duration: 0.32), value: plan)
+                    .animation(.easeInOut(duration: 0.16), value: handLifted)
+                NeckBoardCanvas(shape: shape, geo: geo, layer: .hardware)
                 NeckDotsCanvas(
                     shape: shape, geo: geo, fingering: fingering,
                     roles: transition?.rolesByFinger ?? [:])
@@ -397,10 +416,18 @@ public struct GuitarNeckPlaySurface: View {
 private struct NeckBoardCanvas: View {
     let shape: GuitarChordShape?
     let geo: NeckGeometry
+    var layer: Layer = .wood
+
+    enum Layer { case wood, hardware }
 
     var body: some View {
         Canvas { ctx, _ in
             let neck = geo.neck
+
+            if layer == .hardware {
+                drawHardware(ctx: ctx, neck: neck)
+                return
+            }
 
             // Wood board.
             ctx.fill(
@@ -435,6 +462,12 @@ private struct NeckBoardCanvas: View {
                 }
             }
 
+        }
+    }
+
+    /// Strings, fret wires, nut, markers — drawn OVER the hand so the
+    /// fingers sit behind the strings like a real fretting hand.
+    private func drawHardware(ctx: GraphicsContext, neck: CGRect) {
             // Nut (RIGHT, thick when open position) + fret wires —
             // headstock-right orientation per the sample design.
             for f in 0...geo.window {
@@ -452,7 +485,7 @@ private struct NeckBoardCanvas: View {
                 )
             }
 
-            // Strings: low E (bottom) thickest.
+            // Strings: low E (top) thickest.
             for s in 0..<6 {
                 let y = geo.stringY(s)
                 var line = Path()
@@ -466,7 +499,7 @@ private struct NeckBoardCanvas: View {
                 )
             }
 
-            // x / o markers left of the nut, per string.
+            // x / o markers beside the nut, per string.
             if let shape {
                 for (s, state) in shape.strings.enumerated() {
                     let at = CGPoint(x: neck.maxX + 13, y: geo.stringY(s))
@@ -498,7 +531,6 @@ private struct NeckBoardCanvas: View {
                             y: neck.maxY + 10))
                 }
             }
-        }
     }
 }
 

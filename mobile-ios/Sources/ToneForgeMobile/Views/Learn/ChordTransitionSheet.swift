@@ -20,6 +20,7 @@ struct ChordTransitionSheet: View {
     @State private var selected: Int = 0
     @State private var showingNext = false     // looper phase (dots)
     @State private var handNext = false        // hand leads the dots
+    @State private var handLifted = false      // lift-move-drop
     @State private var isLooping = false
     @State private var bpm: Double = 90
     @State private var loopTask: Task<Void, Never>? = nil
@@ -37,7 +38,8 @@ struct ChordTransitionSheet: View {
                     GuitarNeckPlaySurface(
                         current: showingNext ? pair.to : pair.from,
                         transitionTo: showingNext ? nil : pair.to,
-                        handTarget: handNext ? pair.to : pair.from
+                        handTarget: handNext ? pair.to : pair.from,
+                        handLifted: handLifted
                     )
                     .frame(maxHeight: .infinity)
 
@@ -149,16 +151,19 @@ struct ChordTransitionSheet: View {
             while !Task.isCancelled {
                 // Two beats per chord.
                 let interval = UInt64((60.0 / bpm) * 2 * 1_000_000_000)
-                // Hand moves first; dots follow once it lands.
+                // Lift → move → drop; dots follow once it lands.
+                handLifted = true
                 withAnimation(.easeInOut(duration: 0.32)) {
                     handNext.toggle()
                 }
+                try? await Task.sleep(nanoseconds: 260_000_000)
+                handLifted = false
                 Haptics.padTrigger()
                 onPlayChord?(handNext ? pair.to : pair.from)
-                try? await Task.sleep(nanoseconds: 340_000_000)
+                try? await Task.sleep(nanoseconds: 120_000_000)
                 showingNext = handNext
                 try? await Task.sleep(nanoseconds:
-                    interval > 340_000_000 ? interval - 340_000_000 : interval)
+                    interval > 380_000_000 ? interval - 380_000_000 : interval)
             }
         }
     }
@@ -167,6 +172,7 @@ struct ChordTransitionSheet: View {
         loopTask?.cancel()
         loopTask = nil
         isLooping = false
+        handLifted = false
         withAnimation(.easeInOut(duration: 0.3)) {
             handNext = false
             showingNext = false
