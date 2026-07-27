@@ -24,8 +24,26 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    raw = json.loads(HISTORY.read_text())
-    items = raw if isinstance(raw, list) else raw.get("history", [])
+    # R2 is the authoritative store when configured — the service loads
+    # from it at startup and would clobber a file-only edit. Source from
+    # R2 first, fall back to the local file.
+    import sys as _sys
+    _sys.path.insert(0, str(HISTORY.parent.parent))
+    r2_items = None
+    try:
+        from tone_forge import r2_storage
+        if r2_storage.is_configured():
+            r2_items = r2_storage.load_history()
+    except Exception as e:  # noqa: BLE001
+        print(f"R2 load failed: {e}")
+    if r2_items is not None:
+        print(f"source: R2 ({len(r2_items)} entries)")
+        raw = r2_items
+        items = r2_items
+    else:
+        print("source: local file")
+        raw = json.loads(HISTORY.read_text())
+        items = raw if isinstance(raw, list) else raw.get("history", [])
     changed = 0
     for it in items:
         name = it.get("name") or ""
@@ -40,10 +58,6 @@ def main() -> None:
     if changed and not args.dry_run:
         HISTORY.write_text(json.dumps(raw, indent=2))
         print(f"written: {HISTORY}")
-        # R2 is authoritative-on-read: without this push the service
-        # clobbers the local edit with the R2 copy on next start.
-        import sys as _sys
-        _sys.path.insert(0, str(HISTORY.parent.parent))
         try:
             from tone_forge import r2_storage
             if r2_storage.is_configured() and r2_storage.save_history(items):
