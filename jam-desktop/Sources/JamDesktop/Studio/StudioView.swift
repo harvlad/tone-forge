@@ -82,8 +82,13 @@ struct StudioView: View {
             }
         }
         .task {
-            // Auto-load current session's analysis if none loaded yet
-            if studio.detail == nil, !studio.isLoading,
+            // Auto-load current session's analysis if NOTHING has been
+            // loaded or requested. Guard on loadedHistoryID (set
+            // synchronously at load start), not detail — detail is still
+            // nil while an explicit "Open in Studio" load is in flight,
+            // and this task used to race it and clobber the requested
+            // song with the playing session's.
+            if studio.loadedHistoryID == nil, !studio.isLoading,
                let analysisId = model.session?.bundle.analysisId {
                 await studio.load(
                     baseURL: model.backendBaseURL, id: analysisId)

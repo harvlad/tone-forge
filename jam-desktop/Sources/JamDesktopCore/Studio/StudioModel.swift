@@ -85,7 +85,11 @@ public final class StudioModel: ObservableObject {
         error = nil
         loadedHistoryID = id
         do {
-            detail = try await client.fetchHistoryDetail(baseURL: baseURL, id: id)
+            let fetched = try await client.fetchHistoryDetail(baseURL: baseURL, id: id)
+            // A newer load may have started while this one was in
+            // flight — never let a stale response overwrite it.
+            guard loadedHistoryID == id else { return }
+            detail = fetched
         } catch let decodingError as DecodingError {
             // Provide more detail for JSON decoding failures
             switch decodingError {
