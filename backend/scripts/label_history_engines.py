@@ -40,6 +40,18 @@ def main() -> None:
     if changed and not args.dry_run:
         HISTORY.write_text(json.dumps(raw, indent=2))
         print(f"written: {HISTORY}")
+        # R2 is authoritative-on-read: without this push the service
+        # clobbers the local edit with the R2 copy on next start.
+        import sys as _sys
+        _sys.path.insert(0, str(HISTORY.parent.parent))
+        try:
+            from tone_forge import r2_storage
+            if r2_storage.is_configured() and r2_storage.save_history(items):
+                print("pushed to R2")
+            else:
+                print("R2 not configured/push failed — local file only")
+        except Exception as e:  # noqa: BLE001
+            print(f"R2 push failed: {e}")
 
 
 if __name__ == "__main__":
