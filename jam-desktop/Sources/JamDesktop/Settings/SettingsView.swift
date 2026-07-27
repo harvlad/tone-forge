@@ -8,6 +8,41 @@
 import SwiftUI
 import JamDesktopCore
 
+/// One-tap backend endpoint presets. `custom` is inferred for any URL
+/// that isn't one of the known endpoints and never overwrites the field.
+enum BackendPreset: String, CaseIterable, Identifiable {
+    case hosted
+    case local
+    case custom
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .hosted: return "Hosted (jamn.app)"
+        case .local: return "This Mac"
+        case .custom: return "Custom"
+        }
+    }
+
+    var url: String? {
+        switch self {
+        case .hosted: return "https://jamn.app"
+        case .local: return "http://127.0.0.1:8300"
+        case .custom: return nil
+        }
+    }
+
+    init(url: String) {
+        switch url.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "https://jamn.app", "https://jamn.app/": self = .hosted
+        case "http://127.0.0.1:8300", "http://127.0.0.1:8300/",
+             "http://localhost:8300", "http://localhost:8300/": self = .local
+        default: self = .custom
+        }
+    }
+}
+
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var session: SessionController
@@ -19,6 +54,14 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Backend") {
+                // One-tap endpoint presets — no typing. The text field
+                // stays for ad-hoc URLs (e.g. another machine on the LAN).
+                Picker("Endpoint", selection: endpointPresetBinding) {
+                    ForEach(BackendPreset.allCases) { preset in
+                        Text(preset.label).tag(preset)
+                    }
+                }
+                .pickerStyle(.segmented)
                 TextField("Base URL", text: $backendText)
                     .onSubmit(commitBackend)
                 Text("Hosted: https://jamn.app — local: http://127.0.0.1:8300")
@@ -103,6 +146,17 @@ struct SettingsView: View {
         Binding(
             get: { session.monitor.ampSimEnabled },
             set: { session.monitor.ampSimEnabled = $0 }
+        )
+    }
+
+    private var endpointPresetBinding: Binding<BackendPreset> {
+        Binding(
+            get: { BackendPreset(url: model.backendBaseURL.absoluteString) },
+            set: { preset in
+                guard let url = preset.url else { return }  // .custom: keep field
+                backendText = url
+                commitBackend()
+            }
         )
     }
 
