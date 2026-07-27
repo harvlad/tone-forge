@@ -2560,8 +2560,13 @@ async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONRes
     result.setdefault("filename", job.filename)
     result.setdefault("source_name", payload.get("source_name") or job.filename)
 
+    # Engine tag in the session name ("· exp" / "· std") so every list
+    # row self-reports which pipeline built it (A/B evaluation aid).
+    _name_engine = result.get("analysis_engine") or "current"
+    _name_tag = " · exp" if _name_engine == "experimental_specialist" else " · std"
+    _base_name = payload.get("source_name") or job.filename or "Uploaded file"
     entry = {
-        "name": payload.get("source_name") or job.filename or "Uploaded file",
+        "name": f"{_base_name}{_name_tag}",
         "detected_type": result.get("detected_type", "guitar"),
         "summary": result.get("detection", {}).get("summary", ""),
         "duration": result.get("duration_sec"),
