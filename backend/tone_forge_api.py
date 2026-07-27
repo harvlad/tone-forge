@@ -4305,12 +4305,13 @@ async def get_specialist_provenance(history_id: str) -> JSONResponse:
     })
 
 
-@app.get("/api/debug/derived-audio/{history_id}")
+@app.get("/api/session/{history_id}/derived-audio")
 async def get_derived_audio(history_id: str, role: str = "") -> JSONResponse:
-    """INTERNAL: a session's transcribed notes + chord voicings as
-    playable event lists (no original audio). Consumed by the Jamn
-    desktop Studio "Derived Audio" section for audible evaluation of
-    transcription/harmony quality."""
+    """A session's transcribed notes + chord voicings as playable event
+    lists (no original audio). Consumed by the Jamn desktop Studio
+    "Derived Audio" section. Deliberately UNGUARDED: it derives from the
+    same per-session data /api/session/{id} already serves publicly by
+    id (chords/stems/timeline) — no admin token needed."""
     from tone_forge.derived_audio import derived_audio_payload
     item = _get_history_item(history_id)
     if item is None:

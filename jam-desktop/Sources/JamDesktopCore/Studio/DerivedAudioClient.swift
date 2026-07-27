@@ -54,13 +54,14 @@ public struct DerivedAudioClient: Sendable {
         baseURL: URL, historyId: String, role: String? = nil
     ) async throws -> DerivedAudio {
         var comps = URLComponents(
-            url: baseURL.appendingPathComponent("api/debug/derived-audio/\(historyId)"),
+            url: baseURL.appendingPathComponent("api/session/\(historyId)/derived-audio"),
             resolvingAgainstBaseURL: false)!
         if let role, !role.isEmpty {
             comps.queryItems = [URLQueryItem(name: "role", value: role)]
         }
-        var request = URLRequest(url: comps.url!)
-        AdminCredentials.apply(to: &request)
+        // Unguarded endpoint (same exposure as /api/session/{id}); no
+        // admin token required — Derived Audio works out of the box.
+        let request = URLRequest(url: comps.url!)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw URLError(.badServerResponse)
