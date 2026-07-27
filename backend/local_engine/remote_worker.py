@@ -46,8 +46,8 @@ _RETRY_SLEEP_SEC = 5.0
 # uploads a long timeout and retry transient network failures instead
 # of throwing away a finished GPU job.
 _UPLOAD_TIMEOUT_SEC = 600
-_UPLOAD_ATTEMPTS = 3
-_UPLOAD_RETRY_SLEEP_SEC = 10.0
+_UPLOAD_ATTEMPTS = 6
+_UPLOAD_RETRY_SLEEP_SEC = 20.0
 # Watchdog for the analysis subprocess. A healthy pipeline emits queue
 # events (progress/result/done) continuously; a deadlocked child sits
 # at 0% CPU emitting nothing while staying alive, which used to hang
