@@ -326,9 +326,14 @@ public struct HandSilhouetteView: View, Animatable {
 /// dots. Hosts add their own chord header/chrome around it.
 public struct GuitarNeckPlaySurface: View {
     let current: String?
+    /// Optional transition target (Phase 2): colors the dots by the
+    /// Stay/Move/Lift role and draws the movement overlay toward this
+    /// chord. Nil = plain play surface.
+    let transitionTo: String?
 
-    public init(current: String?) {
+    public init(current: String?, transitionTo: String? = nil) {
         self.current = current
+        self.transitionTo = transitionTo
     }
 
     public var body: some View {
@@ -338,12 +343,28 @@ public struct GuitarNeckPlaySurface: View {
             let fingering = shape.map { ChordFingering.assign(shape: $0) }
                 ?? ChordFingering.Result(notes: [], barreStrings: nil, barreFret: nil)
             let plan = HandPlan.plan(fingering: fingering, geo: geo)
+            // Transition analysis only when both shapes live in the
+            // same fret window (open-position pairs — the common case).
+            let nextFingering: ChordFingering.Result? = transitionTo
+                .flatMap { GuitarVoicing.shape(symbol: $0) }
+                .flatMap { ns in
+                    ns.baseFret == (shape?.baseFret ?? 1)
+                        ? ChordFingering.assign(shape: ns) : nil
+                }
+            let transition = nextFingering.map {
+                ChordTransition.analyze(from: fingering, to: $0)
+            }
 
             ZStack {
                 NeckBoardCanvas(shape: shape, geo: geo)
                 HandSilhouetteView(plan: plan)
                     .animation(.easeInOut(duration: 0.45), value: plan)
-                NeckDotsCanvas(shape: shape, geo: geo, fingering: fingering)
+                NeckDotsCanvas(
+                    shape: shape, geo: geo, fingering: fingering,
+                    roles: transition?.rolesByFinger ?? [:])
+                if let transition {
+                    TransitionOverlayCanvas(transition: transition, geo: geo)
+                }
             }
             .clipped()
         }
@@ -469,6 +490,9 @@ private struct NeckDotsCanvas: View {
     let shape: GuitarChordShape?
     let geo: NeckGeometry
     let fingering: ChordFingering.Result
+    /// Transition roles per finger — colors the dots (Stay purple,
+    /// Move blue, Lift green). Empty = plain accent dots.
+    var roles: [Int: FingerRole] = [:]
 
     var body: some View {
         Canvas { ctx, _ in
@@ -479,7 +503,7 @@ private struct NeckDotsCanvas: View {
                 ctx.fill(
                     Path(ellipseIn: CGRect(
                         x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                    with: .color(Color.accentColor))
+                    with: .color(roles[n.finger]?.color ?? Color.accentColor))
                 ctx.draw(
                     Text("\(n.finger)")
                         .font(.system(size: r * 1.15, weight: .bold))

@@ -27,6 +27,9 @@ struct LearnView: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var showOverview = false
+    /// Phase 2: the chord-transition practice sheet (tap the chord
+    /// area to open).
+    @State private var showTransitions = false
     /// Fretting-hand silhouette on the chord cards (shared with
     /// ChordCard via AppStorage).
     @AppStorage("learn.showHand") private var showHand = true
@@ -48,6 +51,13 @@ struct LearnView: View {
         .animation(nil, value: controller.phase)
         .sheet(isPresented: $showOverview) {
             SectionOverviewSheet(controller: controller)
+        }
+        .sheet(isPresented: $showTransitions) {
+            ChordTransitionSheet(
+                pairs: ChordTransitionSheet.pairs(
+                    from: appState.currentBundle?.timeline.chords.map(\.symbol) ?? []),
+                onPlayChord: { appState.jamController.trigger(symbol: $0) }
+            )
         }
     }
 
@@ -151,6 +161,9 @@ struct LearnView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, TFTheme.Spacing.md)
+            // Tap the chord area → transition practice (Phase 2).
+            .contentShape(Rectangle())
+            .onTapGesture { showTransitions = true }
 
             practiceButton
                 .padding(.horizontal, TFTheme.Spacing.md)
