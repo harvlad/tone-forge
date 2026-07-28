@@ -346,11 +346,12 @@ public struct HandSilhouetteView: View, Animatable {
         let s = max(0.4, plan.pxPerMM)
 
         // Canonical anatomical pose from the Blender/MPFB library when
-        // this chord has one; the procedural solver is the fallback
-        // (barres, exotic voicings). Gated OFF by default until the
-        // joint-chain projection matches the mock quality — enable via
-        // UserDefaults bool "neck.libraryHand" (or env for harness).
-        let libraryEnabled = UserDefaults.standard.bool(forKey: "neck.libraryHand")
+        // this chord has one (mesh-silhouette contours — the exact
+        // Blender render); the procedural solver is the fallback
+        // (barres, exotic voicings). Default ON; opt out via
+        // UserDefaults bool "neck.libraryHand" = false.
+        let libraryEnabled = (UserDefaults.standard.object(forKey: "neck.libraryHand")
+            as? Bool ?? true)
             || ProcessInfo.processInfo.environment["TONEFORGE_LIBRARY_HAND"] == "1"
         if libraryEnabled,
            let entry = HandPoseLibrary.shared.entry(for: plan.symbol),
@@ -419,6 +420,20 @@ public struct HandSilhouetteView: View, Animatable {
         var liveTips: [CGPoint] = [.zero, .zero, .zero, .zero]
         for fi in 1...4 where active.contains(fi) {
             liveTips[fi - 1] = tips[fi - 1]
+        }
+        // Preferred: the projected MESH silhouette — the exact Blender
+        // render outline, no capsule approximation.
+        if let path = HandPoseLibrary.outlinePath(
+            entry: entry, anchorX: anchorX, boardBottomY: plan.neckBottom,
+            pxPerMM: s, lifted: lifted) {
+            let skin = Color(red: 0.085, green: 0.085, blue: 0.12)
+            let rim = Color.white.opacity(0.32)
+            var glow = ctx
+            glow.addFilter(.shadow(color: .white.opacity(0.18), radius: 2.5))
+            ctx.fill(path, with: .color(skin), style: FillStyle(eoFill: true))
+            glow.stroke(path, with: .color(rim),
+                        style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
+            return
         }
         let (fingers, wrist) = HandPoseLibrary.chains(
             entry: entry, anchorX: anchorX, boardBottomY: plan.neckBottom,

@@ -25,6 +25,32 @@ public struct HandPoseLibrary {
         public let clusterX: Double
         /// z of the board's low (high-e) edge in the authoring scene.
         public let boardBottomZ: Double
+        /// Projected 2D silhouette contour(s) of the posed MPFB mesh,
+        /// rings of [x, z] in metres — the exact rendered outline.
+        public let outline: [[[Double]]]?
+    }
+
+    /// Build a filled silhouette Path from a pose's mesh contour,
+    /// re-anchored into the UI fret window.
+    public static func outlinePath(
+        entry: Entry, anchorX: CGFloat, boardBottomY: CGFloat,
+        pxPerMM: CGFloat, lifted: Bool
+    ) -> Path? {
+        guard let rings = entry.outline, !rings.isEmpty else { return nil }
+        let s = pxPerMM * 1000
+        let liftY: CGFloat = lifted ? -10 * pxPerMM : 0
+        var p = Path()
+        for ring in rings where ring.count > 2 {
+            let pts = ring.map { pt in
+                CGPoint(
+                    x: anchorX + (pt[0] - entry.clusterX) * s,
+                    y: boardBottomY + (entry.boardBottomZ - pt[1]) * s + liftY)
+            }
+            p.move(to: pts[0])
+            for q in pts.dropFirst() { p.addLine(to: q) }
+            p.closeSubpath()
+        }
+        return p
     }
 
     public let entries: [String: Entry]

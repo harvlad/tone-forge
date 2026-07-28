@@ -400,6 +400,131 @@ def main():
         with open(f"{OUT}/handposes.json", "w") as fjson:
             json.dump(LIBRARY, fjson, indent=1)
 
+    # --- Silhouette contour export -------------------------------
+    # Per chord: render a hand-only mask and trace its contours into
+    # guitar-space polygon rings — the app fills these directly, so
+    # the in-app hand IS the projected MPFB mesh, not an approximation.
+    def render_mask(chord):
+        f = frame_of[chord]
+        bpy.context.scene.frame_set(f)
+        bpy.context.view_layer.update()
+        scene = bpy.context.scene
+        hidden = []
+        board = bpy.data.objects.get("Cube")
+        for o in bpy.data.objects:
+            if o.type in ("MESH",) and o is not basemesh and o is not board \
+               and not o.hide_render:
+                hidden.append(o)
+                o.hide_render = True
+        # Board stays as a HOLDOUT: it cuts the thumb (behind the neck)
+        # out of the alpha mask exactly as it occludes it in render.
+        if board:
+            board.is_holdout = True
+        old_fs = scene.render.use_freestyle
+        scene.render.use_freestyle = False
+        scene.render.film_transparent = True
+        path = f"{OUT}/mask-{chord}.png"
+        scene.render.filepath = path
+        bpy.ops.render.render(write_still=True)
+        for o in hidden:
+            o.hide_render = False
+        if board:
+            board.is_holdout = False
+        scene.render.use_freestyle = old_fs
+        scene.render.film_transparent = False
+        return path
+
+    def trace_contours(path):
+        img = bpy.data.images.load(path)
+        w, h = img.size
+        px = list(img.pixels)  # RGBA float rows bottom-up
+        def solid(x, y):
+            if x < 0 or y < 0 or x >= w or y >= h: return False
+            return px[(y * w + x) * 4 + 3] > 0.5
+        # Marching-squares boundary walk on cell corners.
+        visited = set()
+        rings = []
+        for yy in range(h - 1):
+            for xx in range(w - 1):
+                a, bcell = solid(xx, yy), solid(xx + 1, yy)
+                if a == bcell or (xx, yy) in visited:
+                    continue
+                # Trace boundary starting between (xx,yy) and (xx+1,yy)
+                ring = []
+                # Simple pixel-boundary follow (Moore tracing).
+                start = None
+                sx, sy = (xx + 1, yy) if bcell else (xx, yy)
+                if not solid(sx, sy):
+                    continue
+                start = (sx, sy)
+                cur = start
+                back = (sx - 1, sy)
+                moore = [(-1,-1),(0,-1),(1,-1),(1,0),(1,1),(0,1),(-1,1),(-1,0)]
+                for _ in range(w * h):
+                    if cur in visited and cur == start and ring:
+                        break
+                    visited.add(cur)
+                    ring.append(cur)
+                    bi = moore.index((back[0]-cur[0], back[1]-cur[1]))
+                    nxt = None
+                    for k in range(1, 9):
+                        d = moore[(bi + k) % 8]
+                        cand = (cur[0] + d[0], cur[1] + d[1])
+                        if solid(*cand):
+                            nxt = cand
+                            back = (cur[0] + moore[(bi + k - 1) % 8][0],
+                                    cur[1] + moore[(bi + k - 1) % 8][1])
+                            break
+                    if nxt is None or (nxt == start and len(ring) > 2):
+                        break
+                    cur = nxt
+                if len(ring) > 40:
+                    rings.append(ring)
+        bpy.data.images.remove(img)
+        # Largest ring only (outer silhouette); RDP simplify.
+        rings.sort(key=len, reverse=True)
+        out = []
+        for ring in rings[:1]:
+            out.append(rdp([(float(x), float(y)) for x, y in ring], 0.9))
+        return out, w, h
+
+    def rdp(pts, eps):
+        if len(pts) < 3: return pts
+        def simplify(lo, hi):
+            dmax, idx = 0.0, lo
+            ax, ay = pts[lo]; bx, by = pts[hi]
+            dx, dy = bx - ax, by - ay
+            norm = max(1e-9, (dx*dx + dy*dy) ** 0.5)
+            for i in range(lo + 1, hi):
+                pxx, pyy = pts[i]
+                d = abs(dy*pxx - dx*pyy + bx*ay - by*ax) / norm
+                if d > dmax: dmax, idx = d, i
+            if dmax > eps:
+                return simplify(lo, idx)[:-1] + simplify(idx, hi)
+            return [pts[lo], pts[hi]]
+        import sys as _s
+        _s.setrecursionlimit(10000)
+        return simplify(0, len(pts) - 1)
+
+    cam = bpy.context.scene.camera
+    ortho = cam.data.ortho_scale
+    rx, ry = 1440, 840
+    for chord in order:
+        path = render_mask(chord)
+        rings, w, h = trace_contours(path)
+        world_rings = []
+        for ring in rings:
+            wr = []
+            for (pxx, pyy) in ring:
+                xm = cam.location.x + (pxx / w - 0.5) * ortho
+                zm = cam.location.z + (pyy / h - 0.5) * ortho * (ry / rx)
+                wr.append([round(xm, 5), round(zm, 5)])
+            world_rings.append(wr)
+        LIBRARY[chord]["outline"] = world_rings
+        print(f"OUTLINE {chord}: rings={[len(r) for r in world_rings]}")
+    with open(f"{OUT}/handposes.json", "w") as fjson:
+        json.dump(LIBRARY, fjson, indent=1)
+
     for f in (13, 37, 62):
         bpy.context.scene.frame_set(f)
         bpy.context.view_layer.update()
