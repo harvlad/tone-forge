@@ -17,6 +17,9 @@ struct DerivedAudioSection: View {
 
     @State private var derivedByRole: [String: DerivedAudio] = [:]
     @State private var roles: [String] = []
+    /// Layers included in the All ensemble (evaluation instrument:
+    /// un-tick a broken layer while listening). Defaults to all melodic.
+    @State private var includedRoles: Set<String> = []
     @State private var chordCount: Int = 0
     @State private var engine: String = ""
     @State private var isLoading = false
@@ -68,24 +71,42 @@ struct DerivedAudioSection: View {
         .onAppear { playback.bind(session: session) }
     }
 
-    @ViewBuilder
-    private func allRow() -> some View {
-        let melodic = derivedByRole.filter {
+    private var melodicRoles: [String: DerivedAudio] {
+        derivedByRole.filter {
             DerivedPlaybackController.ensembleRoles.contains($0.key)
             && !$0.value.notes.isEmpty
         }
+    }
+
+    @ViewBuilder
+    private func allRow() -> some View {
+        let melodic = melodicRoles
+        let selected = melodic.filter { includedRoles.contains($0.key) }
         if melodic.count >= 2, let any = melodic.values.first {
-            HStack {
-                Text("All").frame(width: 70, alignment: .leading).bold()
-                Text(melodic.keys.sorted().joined(separator: " + "))
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                playButton("Play", active: playback.playingMode == .all) {
-                    playback.play(.all, derived: any, ensemble: melodic)
-                }
-                if chordCount > 0 {
-                    playButton("+ Chords", active: playback.playingMode == .allWithChords) {
-                        playback.play(.allWithChords, derived: any, ensemble: melodic)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("All").frame(width: 70, alignment: .leading).bold()
+                    // Layer toggles: hear any subset (bass only, all minus
+                    // guitar, …) — cross-stem failures become audible.
+                    ForEach(melodic.keys.sorted(), id: \.self) { role in
+                        Toggle(role.capitalized, isOn: Binding(
+                            get: { includedRoles.contains(role) },
+                            set: { on in
+                                if on { includedRoles.insert(role) }
+                                else { includedRoles.remove(role) }
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+                    }
+                    Spacer()
+                    playButton("Play", active: playback.playingMode == .all) {
+                        playback.play(.all, derived: any, ensemble: selected)
+                    }
+                    if chordCount > 0 {
+                        playButton("+ Chords", active: playback.playingMode == .allWithChords) {
+                            playback.play(.allWithChords, derived: any, ensemble: selected)
+                        }
                     }
                 }
             }
@@ -154,6 +175,9 @@ struct DerivedAudioSection: View {
             }
             derivedByRole = byRole
             roles = first.availableRoles.sorted()
+            includedRoles = Set(byRole.keys.filter {
+                DerivedPlaybackController.ensembleRoles.contains($0)
+            })
         } catch {
             self.error = "Derived audio unavailable: \(error.localizedDescription)"
         }
