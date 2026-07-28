@@ -72,6 +72,9 @@ def keep_only_hand():
         hand.data.transform(Matrix.Rotation(math.pi, 4, "X"))
         z_lo2 = min(v.co.z for v in vs)
         hand.data.transform(Matrix.Translation((0, 0, -z_lo2)))
+    # Mirror X → LEFT hand. Combined with the 180° yaw at placement
+    # (net: palm flip toward the board) the anatomical index lands on
+    # the nut side, matching a real fretting hand seen from the front.
     hand.scale.x = -1
     bpy.ops.object.transform_apply(scale=True)
     return hand
@@ -133,12 +136,19 @@ def build_armature(hand):
         prev = wrist
         p0 = mcp
         d = tip - mcp
+        # Slight DORSAL pre-bend at the interior joints: a perfectly
+        # collinear chain is singular for the IK solver (it aims but
+        # never bends — measured err == chain − need). The bow tells
+        # the solver which way the finger hinges.
+        def joint(t):
+            bow = -0.005 * math.sin(math.pi * t)
+            return p0 + d * t + Vector((0, bow, 0))
         acc = 0.0
         for si, frac in enumerate(segs):
             b = eb.new(f"{name}.{si}")
-            b.head = p0 + d * acc
+            b.head = joint(acc)
             acc += frac
-            b.tail = p0 + d * min(1.0, acc)
+            b.tail = joint(min(1.0, acc))
             b.parent = prev
             b.use_connect = si > 0
             prev = b
@@ -192,12 +202,9 @@ def build_armature(hand):
     mod = hand.modifiers.new("Armature", "ARMATURE")
     mod.object = arm
     mod.use_deform_preserve_volume = True
-    cs = hand.modifiers.new("CorrectiveSmooth", "CORRECTIVE_SMOOTH")
-    cs.factor = 0.6
-    cs.iterations = 8
     sub = hand.modifiers.new("Subsurf", "SUBSURF")
     sub.levels = 2
-    sub.render_levels = 2
+    sub.render_levels = 3
     hand.parent = arm
     return arm, chains
 
@@ -236,13 +243,21 @@ def build_neck():
         bpy.context.object.data.materials.append(smat)
 
 # ------------------------------------------------------------- posing
-CHORDS = {
-    # (finger 1-4 -> (string 0=lowE, fret) or None)
-    "G":  {1: (4, 2), 2: (5, 3), 3: (0, 3), 4: None},
-    "D":  {1: (3, 2), 2: (5, 2), 3: (4, 3), 4: None},
-    "Em": {1: None, 2: (1, 2), 3: (2, 2), 4: None},
-    "C":  {1: (4, 1), 2: (3, 2), 3: (1, 3), 4: None},
-}
+# Fingerings come from the APP (GuitarVoicing/ChordFingering export —
+# see ChordFingeringExportHarness). Never hand-typed here.
+def load_chords(path):
+    with open(path) as f:
+        raw = json.load(f)
+    chords = {}
+    for symbol, entry in raw.items():
+        m = {1: None, 2: None, 3: None, 4: None}
+        for n in entry["notes"]:
+            m[n["finger"]] = (n["string"], n["fret"])
+        chords[symbol] = m
+    return chords
+
+CHORDS_PATH = sys.argv[sys.argv.index("--") + 2] if "--" in sys.argv else "chords.json"
+CHORDS = load_chords(CHORDS_PATH)
 FINGERS = {1: "index", 2: "middle", 3: "ring", 4: "pinky"}
 
 def add_ik(arm, chains):
@@ -262,7 +277,7 @@ def add_ik(arm, chains):
         con.pole_target = pole
         con.chain_count = 3
         con.use_stretch = False
-        targets[fi] = (em, pole)
+        targets[name] = (em, pole)
     # Thumb: no chord target — damped-track it to a point BEHIND the
     # neck so it opposes the fingers and the board occludes it.
     tem = bpy.data.objects.new("tgt.thumb", None)
@@ -273,14 +288,26 @@ def add_ik(arm, chains):
     targets["thumb"] = tem
     return targets
 
+def finger_bone_map(arm):
+    """Musical finger 1 (index) = digit whose MCP sits nearest the NUT
+    (largest world x) after placement - robust to mesh mirroring/yaw."""
+    xs = []
+    for name in ("index", "middle", "ring", "pinky"):
+        w = arm.matrix_world @ arm.data.bones[f"{name}.0"].head_local
+        xs.append((w.x, name))
+    xs.sort(reverse=True)
+    return {fi + 1: name for fi, (_, name) in enumerate(xs)}
+
 def pose_chord(arm, targets, chord, rest_curl):
     _ = rest_curl
     press = [t for t in CHORDS[chord].values() if t]
     cx = sum(finger_x(f) for _, f in press) / len(press)
-    targets["thumb"].location = (cx + 0.015, 0.030, -0.015)
-    for fi, name in FINGERS.items():
+    targets["thumb"].location = (cx + 0.018, 0.032, -0.020)
+    fmap = finger_bone_map(arm)
+    for fi in (1, 2, 3, 4):
+        name = fmap[fi]
         tgt = CHORDS[chord].get(fi)
-        em, pole = targets[fi]
+        em, pole = targets[name]
         con = arm.pose.bones[f"{name}.2"].constraints[0]
         if tgt:
             s, fret = tgt
@@ -298,8 +325,27 @@ def place_hand(arm, hand, chord):
     """Position the hand so the MIDDLE-finger MCP sits a few cm below
     the board's low edge, centred on the pressed cluster — the IK then
     bends fingers up onto the strings."""
-    press = [t for t in CHORDS[chord].values() if t]
-    cx = sum(finger_x(f) for _, f in press) / len(press)
+    # Anchor so each pressing finger's LATERAL stretch is minimal:
+    # cx = mean(target_x − that finger's own MCP offset from middle).
+    # (A plain cluster mean forces the index to reach sideways on wide
+    # chords like C.)
+    from mathutils import Matrix
+    rotZ = Matrix.Rotation(math.pi, 4, "Z")
+    fmap = {}
+    offs = {}
+    mid_local = arm.data.bones["middle.0"].head_local
+    for name in ("index", "middle", "ring", "pinky"):
+        d = arm.data.bones[f"{name}.0"].head_local - mid_local
+        offs[name] = (rotZ @ d.to_4d()).to_3d().x
+    ordered = sorted(offs.items(), key=lambda kv: -kv[1])
+    for fi, (name, _) in enumerate(ordered):
+        fmap[fi + 1] = name
+    terms = []
+    for fi in (1, 2, 3, 4):
+        tgt = CHORDS[chord].get(fi)
+        if tgt:
+            terms.append(finger_x(tgt[1]) - offs[fmap[fi]])
+    cx = sum(terms) / len(terms)
     mcp = arm.data.bones["middle.0"].head_local
     want = Vector((cx, 0.012, -BOARD_W / 2 - 0.058))
     # Dorsal side to the camera, palm to the board, thumb swings behind
@@ -355,16 +401,35 @@ def setup_render():
     nt.links.new(em.outputs[0], out.inputs[0])
     return hmat
 
+LIBRARY = {}
+
 def export_pose(arm, chord, out):
-    data = {}
-    for pb in arm.pose.bones:
-        m = arm.matrix_world @ pb.matrix
-        data[pb.name] = {
-            "head": list(m.translation),
-            "quat": list(pb.matrix.to_quaternion()),
-        }
-    with open(f"{out}/pose-{chord}.json", "w") as f:
-        json.dump(data, f, indent=1)
+    """Canonical pose entry for the app: WORLD joint chains (metres,
+    guitar space — x along neck from the nut, z up from board centre,
+    y depth away from viewer), plus the pressed-cluster centre so the
+    app can re-anchor the pose at any fret window."""
+    def world(v):
+        return list(arm.matrix_world @ v)
+    fingers = {}
+    for name in ("index", "middle", "ring", "pinky"):
+        pbs = [arm.pose.bones[f"{name}.{s}"] for s in range(3)]
+        joints = [world(pb.matrix.translation) for pb in pbs]
+        tail = arm.matrix_world @ pbs[2].matrix @ Vector((0, pbs[2].length, 0))
+        joints.append(list(tail))
+        fingers[name] = joints
+    press = [t for t in CHORDS[chord].values() if t]
+    cx = sum(finger_x(f) for _, f in press) / len(press)
+    thumb_pb = arm.pose.bones["thumb.1"]
+    LIBRARY[chord] = {
+        "fingers": fingers,
+        "wrist": world(arm.pose.bones["wrist"].matrix.translation),
+        "thumb": world(thumb_pb.matrix.translation),
+        "clusterX": cx,
+        "boardBottomZ": -BOARD_W / 2,
+        "press": {str(fi): bool(CHORDS[chord][fi]) for fi in (1, 2, 3, 4)},
+    }
+    with open(f"{out}/handposes.json", "w") as f:
+        json.dump(LIBRARY, f, indent=1)
 
 def main():
     hand = keep_only_hand()
@@ -376,11 +441,73 @@ def main():
     targets = add_ik(arm, chains)
     import os
     os.makedirs(OUT, exist_ok=True)
+    # Debug dot spheres: bright emissive markers at every target
+    # contact point, toggled per render to VERIFY chord correctness.
+    dotmat = bpy.data.materials.new("dotmat")
+    dotmat.use_nodes = True
+    dnt = dotmat.node_tree
+    dnt.nodes.clear()
+    dout = dnt.nodes.new("ShaderNodeOutputMaterial")
+    dem = dnt.nodes.new("ShaderNodeEmission")
+    dem.inputs["Color"].default_value = (0.1, 0.6, 1.0, 1)
+    dem.inputs["Strength"].default_value = 4
+    dnt.links.new(dem.outputs[0], dout.inputs[0])
+    # Per-finger fingertip (bone tail) markers: green=index,
+    # yellow=middle, orange=ring, red=pinky.
+    tailmats = {}
+    for name, col in (("index", (0, 1, 0.2)), ("middle", (1, 1, 0)),
+                      ("ring", (1, 0.5, 0)), ("pinky", (1, 0, 0))):
+        m = bpy.data.materials.new(f"tm.{name}")
+        m.use_nodes = True
+        nt2 = m.node_tree
+        nt2.nodes.clear()
+        o2 = nt2.nodes.new("ShaderNodeOutputMaterial")
+        e2 = nt2.nodes.new("ShaderNodeEmission")
+        e2.inputs["Color"].default_value = (*col, 1)
+        e2.inputs["Strength"].default_value = 5
+        nt2.links.new(e2.outputs[0], o2.inputs[0])
+        tailmats[name] = m
+    tailmarkers = {}
+    for name in ("index", "middle", "ring", "pinky"):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.0025)
+        tm = bpy.context.object
+        tm.data.materials.append(tailmats[name])
+        tm.hide_render = True
+        tailmarkers[name] = tm
+
+    def show_tails(on):
+        for name, tm in tailmarkers.items():
+            if on:
+                pb = arm.pose.bones[f"{name}.2"]
+                tail = arm.matrix_world @ pb.matrix @ Vector((0, pb.length, 0))
+                tm.location = (tail.x, -0.006, tail.z)
+            tm.hide_render = not on
+
+    dots = []
+    for _ in range(4):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.004)
+        d = bpy.context.object
+        d.data.materials.append(dotmat)
+        d.hide_render = True
+        dots.append(d)
+
+    def show_dots(chord, on):
+        i = 0
+        for fi in (1, 2, 3, 4):
+            tgt = CHORDS[chord].get(fi)
+            if not tgt: continue
+            s, fret = tgt
+            x = finger_x(fret)
+            dots[i].location = (x, -0.004, string_z(s, abs(x)))
+            dots[i].hide_render = not on
+            i += 1
+        for j in range(i, 4):
+            dots[j].hide_render = True
+
     # Rest-pose sanity render: skinning must reproduce the mesh intact.
     place_hand(arm, hand, "G")
-    for fi in FINGERS:
-        targets[fi][0].location = (0, 0, -1)
-        arm.pose.bones[f"{FINGERS[fi]}.2"].constraints[0].influence = 0.0
+    for name in ("index", "middle", "ring", "pinky"):
+        arm.pose.bones[f"{name}.2"].constraints[0].influence = 0.0
     bpy.context.view_layer.update()
     bpy.context.scene.render.filepath = f"{OUT}/rig-REST.png"
     bpy.ops.render.render(write_still=True)
@@ -388,23 +515,53 @@ def main():
     # Chord stills + keyframes for the transition animation: the IK
     # target empties and the armature location carry the animation —
     # the SKELETON moves, the silhouette follows.
-    frame_of = {"G": 1, "D": 25, "Em": 50, "C": 75}
-    for chord in ("G", "D", "Em", "C"):
+    order = ["G", "D", "Em", "C", "A", "Am", "E", "Dm"]
+    order = [c for c in order if c in CHORDS]
+    frame_of = {c: 1 + 25 * i for i, c in enumerate(order)}
+    for chord in order:
+        # Jump to this chord's frame FIRST: once keyframes exist, the
+        # animation system overrides manual values at the current
+        # frame — posing must happen on the frame we keyframe.
+        bpy.context.scene.frame_set(frame_of[chord])
         place_hand(arm, hand, chord)
         pose_chord(arm, targets, chord, rest_curl=(0.01, 0.02))
-        bpy.context.view_layer.update()
-        bpy.context.scene.render.filepath = f"{OUT}/rig-{chord}.png"
-        bpy.ops.render.render(write_still=True)
-        export_pose(arm, chord, OUT)
+        # Keyframe FIRST: once curves exist, evaluation overrides
+        # manual values — rendering before keyframing shows STALE
+        # interpolated poses from neighbouring chords.
         f = frame_of[chord]
         arm.keyframe_insert("location", frame=f)
         for key, val in targets.items():
             obs = val if isinstance(val, tuple) else (val,)
             for ob in obs:
                 ob.keyframe_insert("location", frame=f)
-        for fi in FINGERS:
-            con = arm.pose.bones[f"{FINGERS[fi]}.2"].constraints[0]
-            con.keyframe_insert("influence", frame=f)
+        for name2 in ("index", "middle", "ring", "pinky"):
+            con2 = arm.pose.bones[f"{name2}.2"].constraints[0]
+            con2.keyframe_insert("influence", frame=f)
+        bpy.context.scene.frame_set(f)
+        bpy.context.view_layer.update()
+        fmap = finger_bone_map(arm)
+        for fi in (1, 2, 3, 4):
+            tgt = CHORDS[chord].get(fi)
+            if not tgt: continue
+            name = fmap[fi]
+            pb = arm.pose.bones[f"{name}.2"]
+            tail = arm.matrix_world @ pb.matrix @ Vector((0, pb.length, 0))
+            em = targets[name][0]
+            err = (Vector(em.location) - tail).length
+            mcp_w = arm.matrix_world @ arm.data.bones[f"{name}.0"].head_local
+            need = (Vector(em.location) - mcp_w).length
+            chain = sum(arm.pose.bones[f"{name}.{s}"].length for s in range(3))
+            print(f"TIPERR {chord} f{fi}({name}): {err*1000:.1f}mm tail=({tail.x*1000:.0f},{tail.y*1000:.0f},{tail.z*1000:.0f}) tgt=({em.location.x*1000:.0f},{em.location.y*1000:.0f},{em.location.z*1000:.0f})")
+        show_dots(chord, False)
+        bpy.context.scene.render.filepath = f"{OUT}/rig-{chord}.png"
+        bpy.ops.render.render(write_still=True)
+        show_dots(chord, True)
+        show_tails(True)
+        bpy.context.scene.render.filepath = f"{OUT}/debug-{chord}.png"
+        bpy.ops.render.render(write_still=True)
+        show_dots(chord, False)
+        show_tails(False)
+        export_pose(arm, chord, OUT)
     # Mid-transition frames: skeletal interpolation between poses.
     for f in (13, 37, 62):
         bpy.context.scene.frame_set(f)
