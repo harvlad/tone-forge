@@ -151,10 +151,10 @@ public enum HandPoseSolver {
             centerX + HandSkeleton.mcpOffset[$0] * s * spread
         }
         for i in 0..<4 where targets[i].press {
-            mcpXs[i] = mcpXs[i] * 0.55 + targets[i].point.x * 0.45
+            mcpXs[i] = mcpXs[i] * 0.25 + targets[i].point.x * 0.75
         }
         for i in 1..<4 {
-            mcpXs[i] = min(mcpXs[i], mcpXs[i - 1] - 10 * s)
+            mcpXs[i] = min(mcpXs[i], mcpXs[i - 1] - 9 * s)
         }
 
         func mcp3(_ i: Int, rowY: CGFloat) -> Joint3 {
