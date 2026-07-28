@@ -19,6 +19,8 @@ final class DerivedPlaybackController: ObservableObject {
         case notes(role: String)
         case chords
         case both(role: String)
+        case all            // every melodic stem together (no drums)
+        case allWithChords
     }
 
     @Published private(set) var playingMode: Mode?
@@ -38,7 +40,13 @@ final class DerivedPlaybackController: ObservableObject {
         session?.synthNode.allNotesOff()
     }
 
-    func play(_ mode: Mode, derived: DerivedAudio, from startSec: Double = 0) {
+    /// Roles merged by .all — GM drum-map pitches through a melodic
+    /// synth are noise, so drums stay out of the ensemble.
+    static let ensembleRoles: Set<String> = ["bass", "guitar", "piano",
+                                             "other", "vocals", "keys"]
+
+    func play(_ mode: Mode, derived: DerivedAudio, from startSec: Double = 0,
+              ensemble: [String: DerivedAudio] = [:]) {
         stop()
         guard let session else { return }
         // Studio can be the first surface the user touches — the audio
@@ -72,6 +80,14 @@ final class DerivedPlaybackController: ObservableObject {
         case .both:
             addNotes(derived.notes, velocityScale: 1.0)
             addChords(derived.chords, velocityScale: 0.6)  // pads behind the part
+        case .all, .allWithChords:
+            for (role, d) in ensemble
+            where Self.ensembleRoles.contains(role) {
+                addNotes(d.notes, velocityScale: 0.8)
+            }
+            if case .allWithChords = mode {
+                addChords(derived.chords, velocityScale: 0.5)
+            }
         }
         guard !events.isEmpty else {
             status = "nothing to play"

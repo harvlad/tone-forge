@@ -50,6 +50,7 @@ struct DerivedAudioSection: View {
                 Text("No derived music stored for this session.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
+                allRow()
                 ForEach(roles, id: \.self) { role in
                     if let d = derivedByRole[role] {
                         stemRow(role: role, derived: d)
@@ -65,6 +66,31 @@ struct DerivedAudioSection: View {
         .task(id: studio.loadedHistoryID) { await loadAll() }
         .onDisappear { playback.stop() }
         .onAppear { playback.bind(session: session) }
+    }
+
+    @ViewBuilder
+    private func allRow() -> some View {
+        let melodic = derivedByRole.filter {
+            DerivedPlaybackController.ensembleRoles.contains($0.key)
+            && !$0.value.notes.isEmpty
+        }
+        if melodic.count >= 2, let any = melodic.values.first {
+            HStack {
+                Text("All").frame(width: 70, alignment: .leading).bold()
+                Text(melodic.keys.sorted().joined(separator: " + "))
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                playButton("Play", active: playback.playingMode == .all) {
+                    playback.play(.all, derived: any, ensemble: melodic)
+                }
+                if chordCount > 0 {
+                    playButton("+ Chords", active: playback.playingMode == .allWithChords) {
+                        playback.play(.allWithChords, derived: any, ensemble: melodic)
+                    }
+                }
+            }
+            Divider()
+        }
     }
 
     private func stemRow(role: String, derived: DerivedAudio) -> some View {
