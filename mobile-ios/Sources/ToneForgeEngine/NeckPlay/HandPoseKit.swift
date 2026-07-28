@@ -369,16 +369,25 @@ public enum HandPoseRender {
             return CGPoint(x: spine[k].x + nr.x * r * sgn,
                            y: spine[k].y + nr.y * r * sgn)
         }
+        // Side polylines stop where the spine enters the fingertip cap
+        // circle — otherwise the tapering sides fold past the cap on
+        // strongly curled fingers and stroke a V inside the pad.
+        let tip = spine[n]
+        let r = radius(n)
+        var nCut = n - 1
+        while nCut > start + 1 {
+            let d = hypot(spine[nCut].x - tip.x, spine[nCut].y - tip.y)
+            if d >= r * 0.9 { break }
+            nCut -= 1
+        }
         var p = Path()
         p.move(to: side(start, -1))
-        for k in (start + 1)...n { p.addLine(to: side(k, -1)) }
+        for k in (start + 1)...nCut { p.addLine(to: side(k, -1)) }
         // Rounded fingertip pad: sampled semicircle around the tip,
         // swept through the outward tangent so it always bulges past
         // the tip (no arc-API direction surprises).
-        let tip = spine[n]
-        let prevPt = spine[n - 1]
-        let nrmT = normal(n)
-        let r = radius(n)
+        let prevPt = spine[nCut]
+        let nrmT = normal(nCut)
         let aL = atan2(-nrmT.y, -nrmT.x)
         let tangent = atan2(tip.y - prevPt.y, tip.x - prevPt.x)
         // Sweep direction: the semicircle's midpoint must equal the
@@ -396,7 +405,7 @@ public enum HandPoseRender {
             let a = aL + sweep * CGFloat(k) / 8
             p.addLine(to: CGPoint(x: tip.x + cos(a) * r, y: tip.y + sin(a) * r))
         }
-        for k in stride(from: n - 1, through: start, by: -1) {
+        for k in stride(from: nCut, through: start, by: -1) {
             p.addLine(to: side(k, +1))
         }
         if close { p.closeSubpath() }
