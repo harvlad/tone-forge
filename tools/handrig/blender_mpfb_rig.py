@@ -120,7 +120,13 @@ def add_ik(arm):
 def build_neck():
     smat = bpy.data.materials.new("stringmat")
     smat.use_nodes = True
-    smat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.7, 0.7, 0.7, 1)
+    nt = smat.node_tree
+    nt.nodes.clear()
+    o = nt.nodes.new("ShaderNodeOutputMaterial")
+    e = nt.nodes.new("ShaderNodeEmission")
+    e.inputs["Color"].default_value = (0.55, 0.55, 0.6, 1)
+    e.inputs["Strength"].default_value = 1.0
+    nt.links.new(e.outputs[0], o.inputs[0])
     nmat = bpy.data.materials.new("neckmat")
     nmat.use_nodes = True
     nmat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.05, 0.035, 0.025, 1)
@@ -172,7 +178,7 @@ def fretting_rotation(arm):
     assert abs(R3.determinant() - 1.0) < 1e-3, f"improper rotation det={R3.determinant()}"
     return R3.to_4x4()
 
-def place_hand(arm, chord, rot_euler):
+def place_hand(arm, chord, rot_euler, lift=0.0):
     _ = rot_euler
     rot = fretting_rotation(arm)
     offs = mcp_offsets(arm, rot)
@@ -183,7 +189,7 @@ def place_hand(arm, chord, rot_euler):
             terms.append(finger_x(tgt[1]) - offs[fi])
     cx = sum(terms) / len(terms)
     mcp = arm.data.bones["finger3-1.L"].head_local
-    want = Vector((cx, -0.024, -BOARD_W / 2 - 0.058))
+    want = Vector((cx, -0.024, -BOARD_W / 2 - 0.058 + lift))
     loc = want - (rot @ mcp.to_4d()).to_3d()
     arm.rotation_euler = rot.to_euler()
     arm.location = loc
@@ -317,12 +323,7 @@ def main():
     frame_of = {c: 1 + 25 * i for i, c in enumerate(order)}
     LIBRARY = {}
 
-    for chord in order:
-        f = frame_of[chord]
-        bpy.context.scene.frame_set(f)
-        place_hand(arm, chord, ROT)
-        pose_chord(arm, targets, chord)
-        # Keyframe BEFORE rendering (curves override manual values).
+    def keyframe_all(f):
         arm.keyframe_insert("location", frame=f)
         arm.keyframe_insert("rotation_euler", frame=f)
         for val in targets.values():
@@ -332,17 +333,38 @@ def main():
         for fi in (1, 2, 3, 4):
             con = arm.pose.bones[f"{FINGER_BONE[fi]}-3.L"].constraints[-1]
             con.keyframe_insert("influence", frame=f)
-        bpy.context.scene.frame_set(f)
-        bpy.context.view_layer.update()
 
-        # Tip-error metric (evaluated state).
+    def tip_errors(chord):
+        errs = {}
         for fi in (1, 2, 3, 4):
             tgt = CHORDS[chord].get(fi)
             if not tgt: continue
             pb = arm.pose.bones[f"{FINGER_BONE[fi]}-3.L"]
             tail = arm.matrix_world @ pb.matrix @ Vector((0, pb.length, 0))
             em = targets[fi][0]
-            err = (Vector(em.location) - tail).length
+            errs[fi] = (Vector(em.location) - tail).length
+        return errs
+
+    for chord in order:
+        f = frame_of[chord]
+        bpy.context.scene.frame_set(f)
+        # Adaptive convergence: residual tip error means the knuckle
+        # row sits too deep for this chord's reach — raise the hand by
+        # the worst error and re-solve (keyframes rewritten in place;
+        # keyframe BEFORE evaluating or curves override the pose).
+        lift = 0.0
+        for _ in range(4):
+            place_hand(arm, chord, ROT, lift=lift)
+            pose_chord(arm, targets, chord)
+            keyframe_all(f)
+            bpy.context.scene.frame_set(f)
+            bpy.context.view_layer.update()
+            errs = tip_errors(chord)
+            worst = max(errs.values()) if errs else 0.0
+            if worst < 0.0015:
+                break
+            lift += worst * 0.85
+        for fi, err in tip_errors(chord).items():
             print(f"TIPERR {chord} f{fi}: {err*1000:.1f}mm")
 
         show_dots(chord, False)

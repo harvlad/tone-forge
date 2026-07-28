@@ -231,9 +231,13 @@ public struct HandPlan: Equatable {
     public var fretWidth: CGFloat = 40
     /// px per mm — scales the hand skeleton to the physical neck.
     public var pxPerMM: CGFloat = 1
+    /// Chord symbol the hand is playing — keys into HandPoseLibrary
+    /// for the canonical anatomical pose (nil/unknown → procedural).
+    public var symbol: String? = nil
 
     public static func plan(
-        fingering: ChordFingering.Result, geo: NeckGeometry
+        fingering: ChordFingering.Result, geo: NeckGeometry,
+        symbol: String? = nil
     ) -> HandPlan {
         var tipByFinger: [Int: CGPoint] = [:]
         var barreRect: CGRect? = nil
@@ -275,7 +279,8 @@ public struct HandPlan: Equatable {
         return HandPlan(tips: tips, barreRect: barreRect,
                         neckBottom: geo.neck.maxY, fingerScale: geo.stringGap,
                         activeFingers: Set(tipByFinger.keys),
-                        fretWidth: geo.fretW, pxPerMM: geo.pxPerMM)
+                        fretWidth: geo.fretW, pxPerMM: geo.pxPerMM,
+                        symbol: symbol)
     }
 }
 
@@ -340,6 +345,20 @@ public struct HandSilhouetteView: View, Animatable {
         // posed behind the neck (occluded).
         let s = max(0.4, plan.pxPerMM)
 
+        // Canonical anatomical pose from the Blender/MPFB library when
+        // this chord has one; the procedural solver is the fallback
+        // (barres, exotic voicings). Gated OFF by default until the
+        // joint-chain projection matches the mock quality — enable via
+        // UserDefaults bool "neck.libraryHand" (or env for harness).
+        let libraryEnabled = UserDefaults.standard.bool(forKey: "neck.libraryHand")
+            || ProcessInfo.processInfo.environment["TONEFORGE_LIBRARY_HAND"] == "1"
+        if libraryEnabled,
+           let entry = HandPoseLibrary.shared.entry(for: plan.symbol),
+           plan.barreRect == nil {
+            drawLibraryPose(ctx: ctx, size: size, tips: tips, entry: entry, s: s)
+            return
+        }
+
         var targets: [HandPoseSolver.Target] = []
         for i in 0..<4 {
             let press = plan.activeFingers.contains(i + 1)
@@ -378,6 +397,65 @@ public struct HandSilhouetteView: View, Animatable {
             glow.stroke(rimPath, with: .color(rim), style: rimStyle)
         }
 
+        if ProcessInfo.processInfo.environment["TONEFORGE_HAND_DEBUG"] == "1" {
+            HandPoseRender.drawDebug(ctx, pose: pose, s: s)
+        }
+    }
+
+    private func drawLibraryPose(
+        ctx: GraphicsContext, size: CGSize, tips: [CGPoint],
+        entry: HandPoseLibrary.Entry, s: CGFloat
+    ) {
+        // Anchor: mean UI x of the PRESSING fingertips (same semantics
+        // as the authoring scene's cluster centre).
+        let active = plan.activeFingers
+        let pressTips = (1...4).filter { active.contains($0) }
+            .map { tips[$0 - 1] }
+        let anchorX = pressTips.isEmpty
+            ? tips.map(\.x).reduce(0, +) / 4
+            : pressTips.map(\.x).reduce(0, +) / CGFloat(pressTips.count)
+        // Tip correction only for pressing fingers — rest fingers keep
+        // the pose's natural relaxed curl.
+        var liveTips: [CGPoint] = [.zero, .zero, .zero, .zero]
+        for fi in 1...4 where active.contains(fi) {
+            liveTips[fi - 1] = tips[fi - 1]
+        }
+        let (fingers, wrist) = HandPoseLibrary.chains(
+            entry: entry, anchorX: anchorX, boardBottomY: plan.neckBottom,
+            pxPerMM: s, liveTips: liveTips, lifted: lifted)
+        let pose = HandPose(
+            fingers: fingers, wrist: wrist, thumb: wrist, targets: [])
+        renderHand(ctx: ctx, size: size, pose: pose, s: s)
+    }
+
+    /// Shared silhouette finishing: palm hull + back-to-front finger
+    /// capsules with hidden-rim trimming (used by both the library and
+    /// procedural paths).
+    private func renderHand(
+        ctx: GraphicsContext, size: CGSize, pose: HandPose, s: CGFloat
+    ) {
+        let skin = Color(red: 0.085, green: 0.085, blue: 0.12)
+        let rim = Color.white.opacity(0.32)
+        let rimStyle = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
+        var glow = ctx
+        glow.addFilter(.shadow(color: .white.opacity(0.18), radius: 2.5))
+
+        let palm = HandPoseRender.palmPath(pose, canvasHeight: size.height, s: s)
+        ctx.fill(palm, with: .color(skin))
+        glow.stroke(palm, with: .color(rim), style: rimStyle)
+
+        let ordered = pose.fingers.sorted {
+            ($0.joints.last?.y ?? 0) < ($1.joints.last?.y ?? 0)
+        }
+        let fills = ordered.map { HandPoseRender.fingerPath($0) }
+        for (i, chain) in ordered.enumerated() {
+            ctx.fill(fills[i], with: .color(skin))
+            var rimPath = HandPoseRender.fingerPath(chain, from: 0.18, close: false)
+            if i + 1 < ordered.count {
+                rimPath = trimmed(rimPath, hiddenBy: Array(fills[(i + 1)...]))
+            }
+            glow.stroke(rimPath, with: .color(rim), style: rimStyle)
+        }
         if ProcessInfo.processInfo.environment["TONEFORGE_HAND_DEBUG"] == "1" {
             HandPoseRender.drawDebug(ctx, pose: pose, s: s)
         }
@@ -459,7 +537,9 @@ public struct GuitarNeckPlaySurface: View {
                 .flatMap { GuitarVoicing.shape(symbol: $0) } ?? shape
             let handFingering = handShape.map { ChordFingering.assign(shape: $0) }
                 ?? fingering
-            let plan = HandPlan.plan(fingering: handFingering, geo: geo)
+            let plan = HandPlan.plan(
+                fingering: handFingering, geo: geo,
+                symbol: handTarget ?? current)
             // Transition analysis only when both shapes live in the
             // same fret window (open-position pairs — the common case).
             let nextFingering: ChordFingering.Result? = transitionTo
