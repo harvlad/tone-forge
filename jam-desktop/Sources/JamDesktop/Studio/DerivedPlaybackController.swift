@@ -98,18 +98,32 @@ final class DerivedPlaybackController: ObservableObject {
         playingMode = mode
         status = "playing \(events.count / 2) events"
         let origin = ContinuousClock.now
-        task = Task { [weak self] in
+        let synthNode = session.synthNode
+        // DETACHED, not Task {}: a child task here inherits MainActor, which
+        // put every sleep+noteOn on the UI thread — any main-thread hitch
+        // stalled the loop, then all past-deadline events fired back-to-back
+        // (the intermittent "machine-gun burst" heard in Derived Audio).
+        // The timing loop must never share the UI thread. Tolerance .zero
+        // opts out of system timer coalescing (default tolerance permits
+        // tens of ms of lateness for power savings). Each note event is
+        // dispatched fire-and-forget to the MainActor synth wrapper — a UI
+        // hitch can then delay emission by at most the hitch itself, and
+        // late events no longer cascade.
+        task = Task.detached(priority: .userInitiated) { [weak self] in
             for e in events {
+                if Task.isCancelled { break }
                 let deadline = origin.advanced(
                     by: .seconds(max(0, e.t - startSec)))
                 do {
-                    try await Task.sleep(until: deadline, clock: .continuous)
+                    try await Task.sleep(until: deadline, tolerance: .zero,
+                                         clock: .continuous)
                 } catch { break }  // cancelled
-                guard let self, let session = self.session else { break }
-                if e.on {
-                    session.synthNode.noteOn(midi: e.pitch, velocity: e.vel)
-                } else {
-                    session.synthNode.noteOff(midi: e.pitch)
+                Task { @MainActor in
+                    if e.on {
+                        synthNode.noteOn(midi: e.pitch, velocity: e.vel)
+                    } else {
+                        synthNode.noteOff(midi: e.pitch)
+                    }
                 }
             }
             await MainActor.run { [weak self] in
