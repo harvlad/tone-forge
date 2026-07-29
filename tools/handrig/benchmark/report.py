@@ -56,7 +56,8 @@ def build_report(phrase_id, planner_name="naive", config=None):
 
     planner = get_planner(planner_name)
     traj = planner.plan(phrase, reference, solver, config)
-    result = EV.evaluate_trajectory(traj, phrase, reference, solver)
+    result = EV.evaluate_trajectory(traj, phrase, reference, solver,
+                                    weights=suite.weights)
 
     meta = dict(
         benchmark_version=suite.version,
@@ -93,11 +94,39 @@ def build_suite_report(planner_name="naive", config=None):
     return merged
 
 
+def diff_reports(baseline, current):
+    """Regression comparator: per-phrase Movement Score delta vs a pinned
+    baseline. A phrase REGRESSED if its score dropped (beyond a tiny epsilon)."""
+    EPS = 1e-6
+    rows = []
+    for pid, cur in current["phrases"].items():
+        base = baseline["phrases"].get(pid)
+        b = base["score"] if base else None
+        c = cur["score"]
+        delta = None if b is None else round(c - b, 6)
+        rows.append(dict(phrase=pid, baseline=b, current=c, delta=delta,
+                         regressed=bool(delta is not None and delta < -EPS),
+                         improved=bool(delta is not None and delta > EPS)))
+    any_reg = any(r["regressed"] for r in rows)
+    return dict(rows=rows, any_regressed=any_reg,
+                baseline_planner=baseline["metadata"]["planner"],
+                current_planner=current["metadata"]["planner"])
+
+
 def write_report(report, path):
     # sort_keys + fixed separators => byte-identical for identical content.
     with open(path, "w") as f:
         json.dump(report, f, indent=1, sort_keys=True)
         f.write("\n")
+
+
+def print_report(rep):
+    for pid, r in rep["phrases"].items():
+        gate = "PASS" if r["hard_gate_pass"] else "FAIL"
+        tags = ",".join(f["tag"] for f in r["failures"]) or "-"
+        print(f"{pid:16s} gate={gate} score={r['score']:.3f} "
+              f"(T2={r['scoring']['tier2_score']} T3={r['scoring']['tier3_score']}) "
+              f"failures=[{tags}]")
 
 
 if __name__ == "__main__":
@@ -106,21 +135,30 @@ if __name__ == "__main__":
     ap.add_argument("phrase", nargs="?", default="ALL",
                     help="phrase id, or ALL for the whole suite (default)")
     ap.add_argument("--planner", default="naive")
+    ap.add_argument("--out", default="movement_report.json")
+    ap.add_argument("--pin", metavar="PATH",
+                    help="also write the report to PATH as a pinned baseline")
+    ap.add_argument("--diff", metavar="BASELINE",
+                    help="diff this run's scores against a pinned baseline report")
     a = ap.parse_args()
     if a.phrase == "ALL":
         rep = build_suite_report(planner_name=a.planner)
     else:
         rep = build_report(a.phrase, planner_name=a.planner)
-    out = os.path.join(HERE, "results", "movement_report.json")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
+    out = os.path.join(HERE, "results", a.out)
     write_report(rep, out)
-    for pid, r in rep["phrases"].items():
-        gate = "PASS" if r["hard_gate_pass"] else "FAIL"
-        m = r["metrics"]
-        print(f"{pid:16s} gate={gate} "
-              f"shift={m['shift_count']['count']} "
-              f"reuse={m['finger_reuse']['reuse']} "
-              f"tip={m['fingertip_travel']['total_mm']}mm "
-              f"root={m['root_travel']['total_mm']}mm "
-              f"worst={m['contact_fidelity']['worst_contact_mm']}mm")
+    print_report(rep)
     print(f"config_hash={rep['metadata']['config_hash']}  wrote {out}")
+    if a.pin:
+        write_report(rep, a.pin)
+        print(f"pinned baseline -> {a.pin}")
+    if a.diff:
+        base = json.load(open(a.diff))
+        d = diff_reports(base, rep)
+        print(f"\nDIFF {d['current_planner']} vs baseline {d['baseline_planner']}:")
+        for r in d["rows"]:
+            flag = "REGRESSED" if r["regressed"] else ("improved" if r["improved"] else "same")
+            print(f"  {r['phrase']:16s} {r['baseline']} -> {r['current']} "
+                  f"(delta {r['delta']}) {flag}")
+        print(f"any_regressed={d['any_regressed']}")

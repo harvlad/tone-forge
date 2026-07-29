@@ -119,9 +119,119 @@ METRICS = {
 }
 
 
-def evaluate_trajectory(trajectory, phrase, reference, solver, metric_names=None):
-    """Run the selected metrics. Hard gates multiply into a {0,1} correctness
-    factor; soft metrics are reported (tiered scoring is M5). Deterministic."""
+# ---------------- scoring (M5) ----------------
+# A metric's raw value becomes a QUALITY in [0,1] measured against the phrase's
+# reference (economy is meaningless in the absolute — only vs the acceptance
+# region). Weights are DATA (suite.json) and provisional per the review; the
+# scorer only guarantees monotonicity, not a calibrated absolute number.
+
+def _clamp01(x):
+    return max(0.0, min(1.0, x))
+
+
+def _low_is_good(value, ideal, tol):
+    """Quality for 'lower is better': 1 at/below ideal, 0 at ideal+tol."""
+    return _clamp01(1.0 - max(0.0, value - ideal) / max(tol, 1e-9))
+
+
+def _band(value, lo, hi, soft):
+    """Quality for a two-sided acceptance band: 1 inside [lo,hi], decaying to
+    0 `soft` units outside either edge."""
+    if value < lo:
+        return _clamp01(1.0 - (lo - value) / max(soft, 1e-9))
+    if value > hi:
+        return _clamp01(1.0 - (value - hi) / max(soft, 1e-9))
+    return 1.0
+
+
+def _quality(name, results, reference):
+    """Map one soft metric to [0,1] against the reference. Missing reference
+    fields fall back to lenient defaults so unlabelled phrases still score."""
+    A = reference.A.get("expected", {})
+    C = reference.B.get("constraints", {})
+    if name == "shift_count":
+        ideal = A.get("shift_count", 0)
+        return _low_is_good(results["shift_count"]["count"], ideal, tol=3.0)
+    if name == "fingertip_travel":
+        hi = C.get("economy_band_fingertip_mm", [0, 120])[1]
+        return _band(results["fingertip_travel"]["total_mm"], 0, hi, soft=hi)
+    if name == "root_travel":
+        lo, hi = C.get("economy_band_root_mm", [0, 12])
+        return _band(results["root_travel"]["total_mm"], lo, hi, soft=max(hi - lo, 20.0))
+    if name == "finger_reuse":
+        lo, hi = C.get("finger_reuse_band", [0.0, 1.0])
+        return _band(results["finger_reuse"]["reuse"], lo, hi, soft=0.3)
+    return 1.0
+
+
+def movement_score(results, hard_gate_pass, reference, weights):
+    """Movement Score = hard-gate multiplier {0,1} × weighted soft quality.
+    Tiers reported separately. Only IMPLEMENTED soft metrics contribute; future
+    metrics in the weight table are ignored until they exist."""
+    gate = 1.0 if hard_gate_pass else 0.0
+    tiers = {"tier2": weights.get("tier2", {}), "tier3": weights.get("tier3", {})}
+    per_q, tier_scores = {}, {}
+    all_wq, all_w = 0.0, 0.0
+    for tier, wmap in tiers.items():
+        wq = w = 0.0
+        for name, wt in wmap.items():
+            if name not in results or wt <= 0:
+                continue
+            q = _quality(name, results, reference)
+            per_q[name] = round(q, 3)
+            wq += wt * q; w += wt
+        tier_scores[tier] = round(wq / w, 3) if w > 0 else None
+        all_wq += wq; all_w += w
+    soft = (all_wq / all_w) if all_w > 0 else 0.0
+    return dict(movement_score=round(gate * soft, 3),
+                hard_gate_multiplier=gate, soft_score=round(soft, 3),
+                tier2_score=tier_scores["tier2"], tier3_score=tier_scores["tier3"],
+                per_metric_quality=per_q)
+
+
+# ---------------- failure taxonomy (M5) ----------------
+def classify_failures(results, hard_gate_pass, reference):
+    """Emit taxonomy tags. Each tag is a named, checkable defect — never a
+    vague 'looks bad'. Order = severity (gate failure first)."""
+    tags = []
+    A = reference.A.get("expected", {})
+    C = reference.B.get("constraints", {})
+    if not hard_gate_pass:
+        cf = results.get("contact_fidelity", {})
+        tags.append(dict(tag="infeasible_contact", severity="hard",
+                         detail=f"worst {cf.get('worst_contact_mm')}mm > tol {cf.get('tol_mm')}mm"))
+    sc = results.get("shift_count", {})
+    if sc and sc["count"] > A.get("shift_count", 0) + 1:
+        tags.append(dict(tag="excess_shifts", severity="soft",
+                         detail=f"{sc['count']} shifts vs ideal {A.get('shift_count', 0)}"))
+    ft = results.get("fingertip_travel", {})
+    hi_ft = C.get("economy_band_fingertip_mm", [0, 1e9])[1]
+    if ft and ft["total_mm"] > hi_ft:
+        tags.append(dict(tag="over_travel", severity="soft",
+                         detail=f"tip {ft['total_mm']}mm > band {hi_ft}mm"))
+    rt = results.get("root_travel", {})
+    if rt:
+        lo_rt, hi_rt = C.get("economy_band_root_mm", [0, 1e9])
+        if rt["total_mm"] > hi_rt:
+            tags.append(dict(tag="position_wander", severity="soft",
+                             detail=f"root {rt['total_mm']}mm > band {hi_rt}mm"))
+        elif lo_rt > 0 and rt["total_mm"] < lo_rt:
+            tags.append(dict(tag="missed_shift", severity="soft",
+                             detail=f"root {rt['total_mm']}mm < required {lo_rt}mm"))
+    fr = results.get("finger_reuse", {})
+    if fr and "reuse" in fr:
+        lo_r, hi_r = C.get("finger_reuse_band", [0.0, 1.0])
+        anchored = bool(C.get("anchor_holds"))
+        if fr["reuse"] < lo_r:
+            tags.append(dict(tag="anchor_released" if anchored else "under_reuse",
+                             severity="soft",
+                             detail=f"reuse {fr['reuse']} < band {lo_r}"))
+    return tags
+
+
+def evaluate_trajectory(trajectory, phrase, reference, solver, metric_names=None,
+                        weights=None):
+    """Run metrics -> hard gate -> Movement Score + failure tags. Deterministic."""
     names = metric_names or list(METRICS)
     results, hard_gate_pass = {}, True
     for n in names:
@@ -130,6 +240,8 @@ def evaluate_trajectory(trajectory, phrase, reference, solver, metric_names=None
         results[n] = r
         if kind == "hard_gate":
             hard_gate_pass = hard_gate_pass and r["pass"]
-    score = 1.0 if hard_gate_pass else 0.0     # score stub until M5
+    scoring = movement_score(results, hard_gate_pass, reference, weights or {})
+    failures = classify_failures(results, hard_gate_pass, reference)
     return dict(phrase_id=phrase.id, hard_gate_pass=bool(hard_gate_pass),
-                score=score, metrics=results)
+                score=scoring["movement_score"], scoring=scoring,
+                failures=failures, metrics=results)

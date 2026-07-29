@@ -1,0 +1,470 @@
+{
+ "metadata": {
+  "planner": "naive"
+ },
+ "phrases": {
+  "one_shift_scale": {
+   "failures": [
+    {
+     "detail": "tip 889.31mm > band 300mm",
+     "severity": "soft",
+     "tag": "over_travel"
+    }
+   ],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 0.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 0.5,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 3.734,
+       "n_contacts": 1,
+       "t": 1.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.062,
+       "n_contacts": 1,
+       "t": 1.5,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 3.734
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "per_transition": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "reuse": 0.0,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 239.0,
+      "middle": 216.41,
+      "pinky": 218.4,
+      "ring": 215.5
+     },
+     "tier": 2,
+     "total_mm": 889.31
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 4,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 91.62
+    },
+    "shift_count": {
+     "count": 2,
+     "deltas_mm": [
+      0.02,
+      23.26,
+      30.81
+     ],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    }
+   },
+   "phrase_id": "one_shift_scale",
+   "score": 0.661,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 0.661,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 0.0,
+     "root_travel": 1.0,
+     "shift_count": 0.667
+    },
+    "soft_score": 0.661,
+    "tier2_score": 0.533,
+    "tier3_score": 1.0
+   }
+  },
+  "repeated_note": {
+   "failures": [],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.001,
+       "n_contacts": 1,
+       "t": 0.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 0.5,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 1.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.001,
+       "n_contacts": 1,
+       "t": 1.5,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 0.001
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "per_transition": [
+      1.0,
+      1.0,
+      1.0
+     ],
+     "reuse": 1.0,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 3.84,
+      "middle": 1.6,
+      "pinky": 4.72,
+      "ring": 4.14
+     },
+     "tier": 2,
+     "total_mm": 14.3
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 4,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 0.01
+    },
+    "shift_count": {
+     "count": 0,
+     "deltas_mm": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    }
+   },
+   "phrase_id": "repeated_note",
+   "score": 1.0,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 1.0,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 1.0,
+     "root_travel": 1.0,
+     "shift_count": 1.0
+    },
+    "soft_score": 1.0,
+    "tier2_score": 1.0,
+    "tier3_score": 1.0
+   }
+  },
+  "single": {
+   "failures": [],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.001,
+       "n_contacts": 1,
+       "t": 0.0,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 0.001
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "note": "single moment; trivially 1.0",
+     "reuse": 1.0,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 0,
+      "middle": 0,
+      "pinky": 0,
+      "ring": 0
+     },
+     "tier": 2,
+     "total_mm": 0
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 1,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 0
+    },
+    "shift_count": {
+     "count": 0,
+     "deltas_mm": [],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    }
+   },
+   "phrase_id": "single",
+   "score": 1.0,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 1.0,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 1.0,
+     "root_travel": 1.0,
+     "shift_count": 1.0
+    },
+    "soft_score": 1.0,
+    "tier2_score": 1.0,
+    "tier3_score": 1.0
+   }
+  },
+  "string_crossing": {
+   "failures": [
+    {
+     "detail": "tip 253.41mm > band 120mm",
+     "severity": "soft",
+     "tag": "over_travel"
+    }
+   ],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 0.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.007,
+       "n_contacts": 1,
+       "t": 0.5,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.005,
+       "n_contacts": 1,
+       "t": 1.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.012,
+       "n_contacts": 1,
+       "t": 1.5,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 0.012
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "per_transition": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "reuse": 0.0,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 65.28,
+      "middle": 77.06,
+      "pinky": 53.96,
+      "ring": 57.11
+     },
+     "tier": 2,
+     "total_mm": 253.41
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 4,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 0.52
+    },
+    "shift_count": {
+     "count": 0,
+     "deltas_mm": [
+      0.12,
+      0.08,
+      0.0
+     ],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    }
+   },
+   "phrase_id": "string_crossing",
+   "score": 0.782,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 0.782,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 0.0,
+     "root_travel": 1.0,
+     "shift_count": 1.0
+    },
+    "soft_score": 0.782,
+    "tier2_score": 0.7,
+    "tier3_score": 1.0
+   }
+  },
+  "sustained_anchor": {
+   "failures": [],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.002,
+       "n_contacts": 2,
+       "t": 0.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.01,
+       "n_contacts": 2,
+       "t": 0.5,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.002,
+       "n_contacts": 2,
+       "t": 1.0,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 0.01
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "per_transition": [
+      0.5,
+      0.5
+     ],
+     "reuse": 0.5,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 10.24,
+      "middle": 10.62,
+      "pinky": 15.33,
+      "ring": 15.89
+     },
+     "tier": 2,
+     "total_mm": 52.08
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 3,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 0.29
+    },
+    "shift_count": {
+     "count": 0,
+     "deltas_mm": [
+      0.1,
+      0.01
+     ],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    }
+   },
+   "phrase_id": "sustained_anchor",
+   "score": 1.0,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 1.0,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 1.0,
+     "root_travel": 1.0,
+     "shift_count": 1.0
+    },
+    "soft_score": 1.0,
+    "tier2_score": 1.0,
+    "tier3_score": 1.0
+   }
+  }
+ }
+}
