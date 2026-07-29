@@ -607,4 +607,6 @@ def main():
     bpy.ops.wm.save_as_mainfile(filepath=f"{OUT}/mpfbrig.blend")
     print("DONE_MPFB_PIPELINE")
 
-main()
+
+if __name__ == "__main__":
+    main()
