@@ -27,6 +27,25 @@ paid here. Pairs with `SEPARATOR_TIER2_PROPOSAL.md`. T2 addendum below §0.
 
 ---
 
+## Data integrity audit (across the whole T0→T2 effort)
+
+**One permanent loss, fully recovered; nothing else lost.**
+- **Lost:** the v1 T0/T1 run's artifacts (checkpoints, loss curves, separated stems)
+  — destroyed by the retrieval race (stale `rm remote` fired on a truncated download,
+  killing the pristine VPS copy; only a corrupt checkpoint survived). **Superseded by
+  the v2 rerun** ($0.34), which reproduced everything. Net: ~$6 GPU + time, **zero
+  knowledge/capability lost**.
+- **Never lost:** source data (Slakh 2100), lab prediction cache, derived mixes,
+  code, configs, provenance registry, experiment records, memory, docs, all prior
+  research (discovery waves, reconciliation, tax scorecards). None were ever at risk —
+  they live in the repo / lab_data, not in the ephemeral pod/VPS scratch path.
+- **T2 artifacts:** redundantly stored — full checkpoint bundles + log + separated
+  stems on the VPS AND best checkpoints local + md5-verified.
+- **Rule going forward:** trained checkpoints are provenance-sensitive assets →
+  archive to R2 (durable, versioned) immediately after retrieval, don't leave them
+  only in VPS scratch. Verify (md5) before any delete; never chain `rm` to an
+  unverified transfer.
+
 ## T2 addendum (2026-07-29, full-corpus run)
 
 - **Dead-host failure mode:** first T2 pod (A40 secure) reported `uptimeInSeconds: -11`
