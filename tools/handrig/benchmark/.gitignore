@@ -1,0 +1,6 @@
+# Regenerable render artifacts (large PNGs / embedded HTML). Rebuild with:
+#   python3 build_render_states.py && blender --background --python ../mpfb_render.py \
+#     -- results/render_states.json results/renders && python3 build_html.py
+results/renders/
+results/render_states.json
+results/report.html

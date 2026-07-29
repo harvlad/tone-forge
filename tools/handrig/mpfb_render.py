@@ -17,6 +17,10 @@ argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 STATES = argv[0]; OUT = argv[1] if len(argv) > 1 else "/tmp/mpfb_render"
 os.makedirs(OUT, exist_ok=True)
 states = json.load(open(STATES))
+# Optional PHRASE camera: a single fixed viewpoint for all frames of a phrase
+# so the hand's position along the neck is comparable frame-to-frame (motion
+# contact sheets). Default Camera A (per-contact tracking) is unchanged.
+PHRASE_CAM = states.pop("__phrase_camera__", None)
 
 FMAP = {"index": "finger2", "middle": "finger3", "ring": "finger4",
         "pinky": "finger5"}
@@ -67,17 +71,32 @@ def apply(state):
     bpy.context.view_layer.update()
 
 
+def _phrase_cam_center():
+    """Shared centre = centroid of EVERY frame's contacts, so one fixed camera
+    frames the whole phrase and the hand visibly moves across it."""
+    allc = [c for st in states.values() for c in st["contacts"]]
+    cx = sum(R.finger_x(c["fret"]) for c in allc) / len(allc)
+    cz = sum(R.string_z(c["string"], abs(R.finger_x(c["fret"]))) for c in allc) / len(allc)
+    return cx, cz
+
+
 def cam_A(state):
     global cam
-    press = state["contacts"]
-    cx = sum(R.finger_x(c["fret"]) for c in press) / len(press)
-    cz = sum(R.string_z(c["string"], abs(R.finger_x(c["fret"]))) for c in press) / len(press)
+    if PHRASE_CAM:
+        cx, cz = _phrase_cam_center()
+        ortho = float(PHRASE_CAM.get("ortho", 0.34)) if isinstance(PHRASE_CAM, dict) else 0.34
+    else:
+        press = state["contacts"]
+        cx = sum(R.finger_x(c["fret"]) for c in press) / len(press)
+        cz = sum(R.string_z(c["string"], abs(R.finger_x(c["fret"]))) for c in press) / len(press)
+        ortho = 0.17
     tgt_empty.location = Vector((cx, 0.004, cz - 0.02))
     if cam is None:
-        cd = bpy.data.cameras.new("A"); cd.type = "ORTHO"; cd.ortho_scale = 0.17
+        cd = bpy.data.cameras.new("A"); cd.type = "ORTHO"; cd.ortho_scale = ortho
         cam = bpy.data.objects.new("A", cd); scene.collection.objects.link(cam)
         c = cam.constraints.new("TRACK_TO"); c.target = tgt_empty
         c.track_axis = "TRACK_NEGATIVE_Z"; c.up_axis = "UP_Y"; scene.camera = cam
+    cam.data.ortho_scale = ortho
     cam.location = tgt_empty.location + Vector((0.0, -0.45, 0.30))
 
 
