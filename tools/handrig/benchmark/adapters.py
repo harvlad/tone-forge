@@ -58,16 +58,29 @@ class SolverAdapter:
         self._s = M.MPFBSolver(rig_path)
         self.state_n = M.STATE_N
 
-    def _contacts(self, events):
-        """A note is a physical PointContact. No chord/pitch logic — the
-        contact carries only geometry (string, fret, assigned finger)."""
-        return [CN.PointContact(string=e.string, fret=e.fret, finger=e.finger,
-                                articulation=e.articulation) for e in events]
+    @staticmethod
+    def _spec(c):
+        """Normalize a contact spec: an Event, or a dict with string/fret/
+        finger[/articulation]."""
+        if isinstance(c, dict):
+            return c["string"], c["fret"], c["finger"], c.get("articulation", "fret")
+        return c.string, c.fret, c.finger, getattr(c, "articulation", "fret")
 
-    def solve_pose(self, events, prev_state=None, config=None):
+    def _contacts(self, specs):
+        """A note is a physical PointContact. No chord/pitch logic — the
+        contact carries only geometry (string, fret, assigned finger).
+        Accepts Events or dicts; a list is one simultaneous MOMENT."""
+        out = []
+        for c in specs:
+            s, fr, fg, art = self._spec(c)
+            out.append(CN.PointContact(string=s, fret=fr, finger=fg, articulation=art))
+        return out
+
+    def solve_pose(self, specs, prev_state=None, config=None):
+        """Solve one MOMENT: `specs` is a list of simultaneous contacts."""
         cfg = config or {}
         pv = np.array(prev_state) if prev_state is not None else None
-        r = self._s.solve(self._contacts(events), prev=pv,
+        r = self._s.solve(self._contacts(specs), prev=pv,
                            restarts=cfg.get("restarts", 5))
         return r["state"], (r["status"] == "OK"), r["max_contact_mm"], r
 
@@ -87,14 +100,16 @@ class SolverAdapter:
         return dict(fingers=fingers, thumb=[p.tolist() for p in thumb_js],
                     root=v[M.RLOC].tolist())
 
-    def contact_error_mm(self, state, events):
-        """Worst required-contact miss recomputed purely from fk(state)."""
+    def contact_error_mm(self, state, specs):
+        """Worst required-contact miss recomputed purely from fk(state).
+        `specs`: Events or dicts (one moment)."""
         fkr = self.fk(state)
         worst = 0.0
-        for e in events:
-            tip = np.array(fkr["fingers"][e.finger][-1])
-            c = CN.PointContact(string=e.string, fret=e.fret, finger=e.finger)
-            miss = c.error_mm(type("fk", (), {"tip": tip}))
+        for c in specs:
+            s, fr, fg, _ = self._spec(c)
+            tip = np.array(fkr["fingers"][fg][-1])
+            prim = CN.PointContact(string=s, fret=fr, finger=fg)
+            miss = prim.error_mm(type("fk", (), {"tip": tip}))
             worst = max(worst, miss)
         return worst
 

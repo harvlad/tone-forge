@@ -30,18 +30,33 @@ class Planner:
         raise NotImplementedError
 
 
+def group_moments(events):
+    """Group events by timestamp into MOMENTS (simultaneous contacts). A
+    single note is a one-contact moment; a chord or a held-anchor+moving-note
+    is a multi-contact moment. Deterministic order (sorted by t)."""
+    by_t = {}
+    for e in events:
+        by_t.setdefault(round(e.t, 6), []).append(e)
+    return [(t, by_t[t]) for t in sorted(by_t)]
+
+
 class NaivePlanner(Planner):
-    """Per-note baseline: solve each event independently, warm-started from the
-    previous knot. No look-ahead, no reference awareness. One knot per event."""
+    """Per-moment baseline: solve each moment independently, warm-started from
+    the previous knot. No look-ahead across moments, no reference awareness —
+    it cannot choose to HOLD a note between moments (that is what the phrase
+    planner will exploit). One knot per moment."""
     name = "naive"
 
     def plan(self, phrase, references, solver, config):
         cfg = config or {}
         knots, prev = [], None
-        for e in phrase.events:
-            state, feasible, cmm, _ = solver.solve_pose([e], prev_state=prev, config=cfg)
-            knots.append(Knot(t=e.t, mpfb_state=state,
-                              meta=dict(feasible=feasible, contact_mm=cmm)))
+        for t, evs in group_moments(phrase.events):
+            specs = [dict(string=e.string, fret=e.fret, finger=e.finger,
+                          articulation=e.articulation) for e in evs]
+            state, feasible, cmm, _ = solver.solve_pose(specs, prev_state=prev, config=cfg)
+            knots.append(Knot(t=t, mpfb_state=state,
+                              meta=dict(feasible=feasible, contact_mm=cmm,
+                                        contacts=specs)))
             prev = state
         sched = [dict(t=e.t, string=e.string, fret=e.fret, finger=e.finger,
                       articulation=e.articulation) for e in phrase.events]

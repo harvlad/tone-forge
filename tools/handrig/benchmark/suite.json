@@ -10,7 +10,7 @@
     "board_width_mm": 52.0,
     "neck_thickness_mm": 21.0
   },
-  "phrases": ["single"],
+  "phrases": ["single", "repeated_note", "string_crossing", "one_shift_scale", "sustained_anchor"],
   "demonstration_phrase": null,
   "metric_weights": {
     "note": "provisional; the review flagged metric coupling — weights are data, revisit after a correlation study, not now.",

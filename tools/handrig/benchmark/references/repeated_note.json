@@ -1,0 +1,29 @@
+{
+  "id": "repeated_note",
+  "style": "neutral",
+  "labeller": "harness-author (single labeller — inter-rater validation deferred to V2)",
+  "reference_A_mechanical": {
+    "description": "Economy lower bound: the finger is placed once and stays; re-articulation needs no travel. Zero shifts, near-zero fingertip travel.",
+    "expected": {"shift_count": 0, "fingertip_travel_mm_max": 15, "root_travel_mm_max": 5}
+  },
+  "reference_B_human": {
+    "description": "Acceptance REGION for a repeated single note: the finger stays planted and ready; the hand does not wander.",
+    "constraints": {
+      "min_practical_shifts": 0,
+      "required_finger_reuse": [{"finger": "middle", "across_moments": [0, 1, 2, 3]}],
+      "guide_finger_events": [],
+      "anchor_holds": [],
+      "max_unnecessary_lifts": 0,
+      "preparation": {"note_index": 0, "ready_within_mm": 20, "lead_ms": 0},
+      "position_stability": {"max_position_changes": 0},
+      "economy_band_fingertip_mm": [0, 25],
+      "economy_band_root_mm": [0, 10],
+      "finger_reuse_band": [0.9, 1.0],
+      "unused_fingers": "compact and ready near the board"
+    },
+    "acceptable_fingerings": [
+      {"note_index": 0, "finger": "middle"}, {"note_index": 1, "finger": "middle"},
+      {"note_index": 2, "finger": "middle"}, {"note_index": 3, "finger": "middle"}
+    ]
+  }
+}

@@ -79,6 +79,20 @@ def build_report(phrase_id, planner_name="naive", config=None):
                 trajectories={phrase_id: _traj_json(traj)})
 
 
+def build_suite_report(planner_name="naive", config=None):
+    """Run every phrase in the suite under one planner into one report."""
+    suite = load_suite(HERE)
+    merged = None
+    for pid in suite.phrases:
+        rep = build_report(pid, planner_name=planner_name, config=config)
+        if merged is None:
+            merged = rep
+        else:
+            merged["phrases"].update(rep["phrases"])
+            merged["trajectories"].update(rep["trajectories"])
+    return merged
+
+
 def write_report(report, path):
     # sort_keys + fixed separators => byte-identical for identical content.
     with open(path, "w") as f:
@@ -89,17 +103,24 @@ def write_report(report, path):
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("phrase", nargs="?", default="single")
+    ap.add_argument("phrase", nargs="?", default="ALL",
+                    help="phrase id, or ALL for the whole suite (default)")
     ap.add_argument("--planner", default="naive")
     a = ap.parse_args()
-    pid = a.phrase
-    rep = build_report(pid, planner_name=a.planner)
+    if a.phrase == "ALL":
+        rep = build_suite_report(planner_name=a.planner)
+    else:
+        rep = build_report(a.phrase, planner_name=a.planner)
     out = os.path.join(HERE, "results", "movement_report.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     write_report(rep, out)
-    r = rep["phrases"][pid]
-    gate = "PASS" if r["hard_gate_pass"] else "FAIL"
-    cf = r["metrics"]["contact_fidelity"]
-    print(f"phrase={pid}  hard_gate={gate}  score={r['score']}  "
-          f"worst_contact={cf['worst_contact_mm']}mm  config_hash={rep['metadata']['config_hash']}")
-    print(f"wrote {out}")
+    for pid, r in rep["phrases"].items():
+        gate = "PASS" if r["hard_gate_pass"] else "FAIL"
+        m = r["metrics"]
+        print(f"{pid:16s} gate={gate} "
+              f"shift={m['shift_count']['count']} "
+              f"reuse={m['finger_reuse']['reuse']} "
+              f"tip={m['fingertip_travel']['total_mm']}mm "
+              f"root={m['root_travel']['total_mm']}mm "
+              f"worst={m['contact_fidelity']['worst_contact_mm']}mm")
+    print(f"config_hash={rep['metadata']['config_hash']}  wrote {out}")
