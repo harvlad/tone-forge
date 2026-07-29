@@ -5,10 +5,9 @@
    "mpfb_rig": "unification/mpfb_rig.json"
   },
   "config": {
-   "planner": "naive",
    "restarts": 5
   },
-  "config_hash": "5671935c112eb6f5",
+  "config_hash": "60cd525378da9d73",
   "deps": {
    "blender": "render-only (M8)",
    "mpfb": "render-only (M8)",
@@ -24,9 +23,9 @@
   },
   "metric_version": "0.0.0",
   "planner": "naive",
-  "planner_version": "4e0efa6",
+  "planner_version": "522e549",
   "seed": 0,
-  "solver_version": "4e0efa6"
+  "solver_version": "522e549"
  },
  "phrases": {
   "single": {
@@ -108,7 +107,7 @@
    ],
    "phrase_id": "single",
    "planner": "naive",
-   "solver_version": "4e0efa6"
+   "solver_version": "522e549"
   }
  }
 }

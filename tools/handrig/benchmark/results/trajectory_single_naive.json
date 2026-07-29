@@ -1,7 +1,7 @@
 {
  "phrase_id": "single",
  "planner": "naive",
- "solver_version": "32efdfd",
+ "solver_version": "522e549",
  "contact_schedule": [
   {
    "t": 0.0,

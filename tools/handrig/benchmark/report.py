@@ -18,7 +18,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from loader import load_suite, load_phrase, load_reference
-from adapters import SolverAdapter, naive_trajectory, _traj_json
+from adapters import SolverAdapter, _traj_json
+from planners import get_planner
 import evaluate as EV
 
 
@@ -36,30 +37,32 @@ def _dep_versions():
     return v
 
 
-def _config_hash(config, benchmark_version, metric_version, solver_version):
-    """Hash only the inputs that change the result. Excludes wall-clock."""
+def _config_hash(config, benchmark_version, metric_version, solver_version, planner):
+    """Hash only the inputs that change the result. Excludes wall-clock.
+    Planner is a first-class input (different planners => different result)."""
     canon = json.dumps(dict(config=config, benchmark_version=benchmark_version,
                             metric_version=metric_version,
-                            solver_version=solver_version),
+                            solver_version=solver_version, planner=planner),
                        sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canon.encode()).hexdigest()[:16]
 
 
-def build_report(phrase_id, config=None):
-    config = config or {"restarts": 5, "planner": "naive"}
+def build_report(phrase_id, planner_name="naive", config=None):
+    config = config or {"restarts": 5}
     suite = load_suite(HERE)
     phrase = load_phrase(HERE, phrase_id)
     reference = load_reference(HERE, phrase_id)
     solver = SolverAdapter()
 
-    traj = naive_trajectory(phrase, solver, config)
+    planner = get_planner(planner_name)
+    traj = planner.plan(phrase, reference, solver, config)
     result = EV.evaluate_trajectory(traj, phrase, reference, solver)
 
     meta = dict(
         benchmark_version=suite.version,
         metric_version=suite.metric_version,
-        planner="naive",
-        planner_version=solver.version(),   # planner is inline; == repo commit
+        planner=planner_name,
+        planner_version=solver.version(),   # planners are in-repo; == repo commit
         solver_version=solver.version(),
         seed=0,
         deps=_dep_versions(),
@@ -69,7 +72,8 @@ def build_report(phrase_id, config=None):
         cc0_assets=dict(mpfb_rig="unification/mpfb_rig.json"),
     )
     meta["config_hash"] = _config_hash(config, suite.version,
-                                       suite.metric_version, solver.version())
+                                       suite.metric_version, solver.version(),
+                                       planner_name)
 
     return dict(metadata=meta, phrases={phrase_id: result},
                 trajectories={phrase_id: _traj_json(traj)})
@@ -83,8 +87,13 @@ def write_report(report, path):
 
 
 if __name__ == "__main__":
-    pid = sys.argv[1] if len(sys.argv) > 1 else "single"
-    rep = build_report(pid)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("phrase", nargs="?", default="single")
+    ap.add_argument("--planner", default="naive")
+    a = ap.parse_args()
+    pid = a.phrase
+    rep = build_report(pid, planner_name=a.planner)
     out = os.path.join(HERE, "results", "movement_report.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     write_report(rep, out)

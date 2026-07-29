@@ -109,18 +109,10 @@ class SolverAdapter:
 
 
 def naive_trajectory(phrase, solver: SolverAdapter, config=None):
-    """Per-note baseline: solve each event in order, warm-starting from the
-    previous knot. One knot per event (M1 minimum; densification is M2+)."""
-    knots, prev = [], None
-    for e in phrase.events:
-        state, feasible, cmm, _ = solver.solve_pose([e], prev_state=prev, config=config)
-        knots.append(Knot(t=e.t, mpfb_state=state,
-                          meta=dict(feasible=feasible, contact_mm=cmm)))
-        prev = state
-    sched = [dict(t=e.t, string=e.string, fret=e.fret, finger=e.finger,
-                  articulation=e.articulation) for e in phrase.events]
-    return Trajectory(phrase_id=phrase.id, knots=knots, contact_schedule=sched,
-                      planner="naive", solver_version=solver.version())
+    """Thin shim kept for the M1 self-test. Since M3 the naive loop lives in
+    the registered `NaivePlanner` plugin; this delegates to it."""
+    from planners import NaivePlanner
+    return NaivePlanner().plan(phrase, None, solver, config or {})
 
 
 def _traj_json(tr: Trajectory):
