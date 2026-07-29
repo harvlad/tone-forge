@@ -45,10 +45,15 @@ RLOC = slice(0, 3)
 RROT = slice(3, 6)
 FING = slice(6, 22)          # 4 fingers × 4
 THUMB = slice(22, 26)
-STATE_N = 26
+META = slice(26, 30)         # metacarpal cupping (index..pinky), rx each
+STATE_N = 30
 
-W = dict(contact=8.0, board=40.0, collision=30.0, strain=2.6, splay=2.0,
-         coupling=2.0, thumb=2.0, wrist=0.4, manifold=3.0, move=0.5, root=0.02)
+# Metacarpal→finger and the metacarpal bone names.
+META_BONE = ["metacarpal1.L", "metacarpal2.L", "metacarpal3.L", "metacarpal4.L"]
+
+W = dict(contact=8.0, board=40.0, collision=30.0, strain=2.4, splay=2.0,
+         coupling=1.4, thumb=2.0, wrist=0.4, manifold=2.2, move=0.5, root=0.02,
+         arch=2.5, conform=1.5, individ=0.8)
 
 
 def _euler_m(rx, ry, rz):
@@ -77,10 +82,13 @@ class MPFBSolver:
         return M
 
     # ---- FK: finger tips + full joint chains in guitar-mm space ----
-    def finger_joints_mm(self, digit_name, four_dof, AW):
+    def finger_joints_mm(self, digit_name, four_dof, AW, meta_cup=0.0):
         mcpF, mcpA, pip, dip = four_dof
         angles = [(mcpF, 0.0, mcpA), (pip, 0.0, 0.0), (dip, 0.0, 0.0)]
-        js = self.hand.finger_fk(FMAP[digit_name], angles, AW)  # metres
+        idx = ["index", "middle", "ring", "pinky"].index(digit_name)
+        js = self.hand.finger_fk(FMAP[digit_name], angles, AW,
+                                 meta_name=META_BONE[idx],
+                                 meta_angle=(meta_cup, 0.0, 0.0))
         return [np.array(p) * M2MM for p in js]
 
     def thumb_tip_mm(self, thumb_dof, AW):
@@ -93,10 +101,11 @@ class MPFBSolver:
     def evaluate(self, v, contact_list, prev):
         root_loc = v[RLOC]; root_rot = v[RROT]
         AW = self.armature_world(root_loc, root_rot)
-        fvec = v[FING]
+        fvec = v[FING]; meta = v[META]
         fingers = {}
         for i, f in enumerate(FINGERS):
-            fingers[f] = self.finger_joints_mm(f, fvec[i*4:i*4+4], AW)
+            fingers[f] = self.finger_joints_mm(f, fvec[i*4:i*4+4], AW,
+                                               meta_cup=meta[i])
         thumb_tip, thumb_js = self.thumb_tip_mm(v[THUMB], AW)
 
         cb = {}
@@ -135,6 +144,32 @@ class MPFBSolver:
         short = G.NECK_THICK - thumb_tip[1]
         if short > 0: cb["thumb"] += (short / 10.0) ** 2 * 1.5
         cb["wrist"] = root_rot[2] ** 2 * 0.5
+
+        # --- PALM / METACARPAL PASS ---
+        meta = v[META]
+        # Transverse metacarpal arch (documented): the ulnar metacarpals
+        # (ring, pinky) are mobile and cup more than the fixed radial
+        # ones (index, middle). Reward a graded arch cup + palm cupping,
+        # scaled up when the hand must wrap (fingers flexed). This makes
+        # the palm non-flat and the MCP row non-rigid.
+        flexavg = np.mean([v[FING][i*4] for i in range(4)])
+        cupwant = np.array([0.05, 0.09, 0.20, 0.30]) * max(0.4, flexavg / 0.7)
+        cb["arch"] = float(np.sum((meta - cupwant) ** 2))
+        # Finger individuality: index most independent, ring↔pinky most
+        # coupled (shared musculature). Penalise index for MATCHING its
+        # neighbour's flex, and ring/pinky for DIVERGING from each other.
+        mcp = [v[FING][i*4] for i in range(4)]
+        cb["individ"] = ((mcp[3] - mcp[2]) ** 2 * 1.5      # pinky follows ring
+                         - min(0.0, (mcp[0] - mcp[1]) ** 2) )  # (index free)
+        cb["individ"] = (mcp[3] - mcp[2]) ** 2 * 1.5
+        # Neck conformity: the MCP heads (base joints) across the four
+        # fingers should WRAP the neck cylinder — outer fingers (index,
+        # pinky) sit deeper behind the board (+y) than the middle pair,
+        # so the palm cups around the neck instead of lying flat.
+        base_y = [fingers[f][0][1] for f in FINGERS]   # index..pinky MCP y (mm)
+        # Convex arc: middle pair nearer the board (smaller y), ends back.
+        arc = (base_y[0] + base_y[3]) / 2 - (base_y[1] + base_y[2]) / 2
+        cb["conform"] = max(0.0, -arc + 4.0) ** 2 * 0.02   # want ends ≥ ~4mm back
         # Root motion regulariser (prefer small hand moves over stretch —
         # cheap so the hand relocates rather than contorting).
         cb["root"] = 0.0
@@ -172,8 +207,9 @@ class MPFBSolver:
         for i in range(4):
             seed[6 + i*4:6 + i*4 + 4] = neutral
         seed[THUMB] = np.array([25, 15, 20, 0]) * A.D2R
+        seed[META] = np.array([3, 6, 12, 18]) * A.D2R    # gentle rest arch
         if prev is not None:
-            seed[FING] = prev[FING]; seed[THUMB] = prev[THUMB]
+            seed[FING] = prev[FING]; seed[THUMB] = prev[THUMB]; seed[META] = prev[META]
 
         lo = seed - 0.0; hi = seed + 0.0    # placeholder, set below
         lo = np.full(STATE_N, -np.inf); hi = np.full(STATE_N, np.inf)
@@ -188,6 +224,9 @@ class MPFBSolver:
             lo[base+3] = L["dip_flex"].lo; hi[base+3] = L["dip_flex"].hi
         lo[THUMB] = np.array([-10, -10, -15, -30]) * A.D2R
         hi[THUMB] = np.array([55, 40, 80, 30]) * A.D2R
+        # Metacarpal cupping ROM: ulnar (ring/pinky) mobile, radial fixed.
+        lo[META] = np.array([-2, -2, -2, -2]) * A.D2R
+        hi[META] = np.array([14, 12, 26, 36]) * A.D2R
 
         def obj(v):
             return self.evaluate(v, contact_list, prev)[0]

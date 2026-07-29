@@ -24,6 +24,8 @@ for d in DIGITS:
     for s in (1, 2, 3):
         want.add(f"{d}-{s}.L")
 want.add("wrist.L")
+for i in (1, 2, 3, 4):          # palm metacarpals (index..pinky)
+    want.add(f"metacarpal{i}.L")
 
 def m2list(m):
     return [list(row) for row in m]  # 4x4 row-major

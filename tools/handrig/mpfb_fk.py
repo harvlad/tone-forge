@@ -51,29 +51,33 @@ class MPFBHand:
     def chain(self, digit):
         return [f"{digit}-1.L", f"{digit}-2.L", f"{digit}-3.L"]
 
-    def finger_fk(self, digit, angles, armature_world):
-        """angles: list of three (rx,ry,rz) tuples for the 3 phalanges.
-        Returns armature-world joint positions [base, pip, dip, tip] (m).
-        """
+    def finger_fk(self, digit, angles, armature_world, meta_name=None,
+                  meta_angle=None):
+        """angles: three (rx,ry,rz) tuples for the phalanges. If meta_name
+        is given (the finger's metacarpal), meta_angle poses it and it is
+        prepended to the chain (palm cupping/spread). The metacarpal's
+        parent (wrist) is at rest, so it reduces to M_local[meta] @ B_meta.
+        Returns armature-world joints [base, pip, dip, tip] (m)."""
         names = self.chain(digit)
-        # First phalanx: parent (metacarpal) at rest → M_pose = M_local @ B.
-        b0 = self.bones[names[0]]
-        Mp = b0["M"] @ _basis(*angles[0])
-        joints_local = [Mp[:3, 3].copy()]
+        if meta_name is not None:
+            bm = self.bones[meta_name]
+            Mprev = bm["M"] @ _basis(*(meta_angle or (0, 0, 0)))
+            prev_name = meta_name
+            # First phalanx off the posed metacarpal.
+            b0 = self.bones[names[0]]
+            Mprev = Mprev @ bm["Minv"] @ b0["M"] @ _basis(*angles[0])
+        else:
+            b0 = self.bones[names[0]]
+            Mprev = b0["M"] @ _basis(*angles[0])
         prev_name = names[0]
-        Mprev = Mp
+        joints_local = [Mprev[:3, 3].copy()]
         for i in (1, 2):
             b = self.bones[names[i]]
             bp = self.bones[prev_name]
             Mprev = Mprev @ bp["Minv"] @ b["M"] @ _basis(*angles[i])
             joints_local.append(Mprev[:3, 3].copy())
             prev_name = names[i]
-        # Tip: distal bone origin + length along its local +Y.
         tip_local = (Mprev @ np.array([0, self.bones[names[2]]["length"], 0, 1]))[:3]
         joints_local.append(tip_local)
-        # To world.
         AW = np.array(armature_world)
-        out = []
-        for p in joints_local:
-            out.append((AW @ np.array([*p, 1.0]))[:3])
-        return out
+        return [(AW @ np.array([*p, 1.0]))[:3] for p in joints_local]

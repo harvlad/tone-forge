@@ -48,9 +48,13 @@ def apply(state):
     M = fret_rot @ R_off
     arm.location = root_loc
     arm.rotation_euler = M.to_euler()
+    META_BONE = ["metacarpal1.L", "metacarpal2.L", "metacarpal3.L", "metacarpal4.L"]
+    meta = v[26:30] if len(v) >= 30 else [0, 0, 0, 0]
     for i, f in enumerate(("index", "middle", "ring", "pinky")):
         mcpF, mcpA, pip, dip = v[6 + i*4:6 + i*4 + 4]
         d = FMAP[f]
+        mb = arm.pose.bones[META_BONE[i]]; mb.rotation_mode = "XYZ"
+        mb.rotation_euler = Euler((meta[i], 0, 0), "XYZ")
         for bn, e in ((f"{d}-1.L", (mcpF, 0, mcpA)), (f"{d}-2.L", (pip, 0, 0)),
                       (f"{d}-3.L", (dip, 0, 0))):
             pb = arm.pose.bones[bn]; pb.rotation_mode = "XYZ"
