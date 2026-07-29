@@ -20,7 +20,11 @@ final class ChordFingeringExportHarness: XCTestCase {
               !dir.isEmpty else {
             throw XCTSkip("TONEFORGE_CHORD_EXPORT_DIR not set")
         }
-        let symbols = ["G", "D", "Em", "C", "A", "Am", "E", "Dm"]
+        let symbols = [
+            "G", "D", "Em", "C", "A", "Am", "E", "Dm",
+            // Barre/moveable forms (E-shape / A-shape).
+            "F", "F#", "Gm", "G#", "A#", "B", "Bm", "Cm", "C#", "Fm", "F#m",
+        ]
         var out: [String: Any] = [:]
         for symbol in symbols {
             guard let shape = GuitarVoicing.shape(symbol: symbol) else {

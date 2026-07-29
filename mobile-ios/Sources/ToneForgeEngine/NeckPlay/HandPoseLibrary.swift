@@ -13,6 +13,11 @@
 // exact dot landing and chord-transition motion come from the app.
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 public struct HandPoseLibrary {
     public struct Entry: Decodable {
@@ -28,6 +33,57 @@ public struct HandPoseLibrary {
         /// Projected 2D silhouette contour(s) of the posed MPFB mesh,
         /// rings of [x, z] in metres — the exact rendered outline.
         public let outline: [[[Double]]]?
+        public struct Sprite: Decodable {
+            public let camX: Double, camZ: Double
+            public let ortho: Double
+            public let w: Double, h: Double
+        }
+        /// Baked transparent render of the posed hand (Freestyle lines
+        /// + fill, thumb clipped by the neck) with camera metadata for
+        /// re-projection.
+        public let sprite: Sprite?
+    }
+
+    /// Sprite image cache (per chord).
+    private static var spriteCache: [String: Image] = [:]
+
+    /// "#" is illegal in a bundled resource lookup — sprite files use
+    /// "-sharp" (see the export pipeline). Keep this in sync.
+    private static func spriteSlug(_ symbol: String) -> String {
+        symbol.replacingOccurrences(of: "#", with: "-sharp")
+    }
+
+    public static func spriteImage(for symbol: String) -> Image? {
+        if let img = spriteCache[symbol] { return img }
+        guard let url = Bundle.module.url(
+            forResource: "sprite-\(spriteSlug(symbol))", withExtension: "png",
+            subdirectory: "HandSprites") else { return nil }
+        #if canImport(UIKit)
+        guard let ui = UIImage(contentsOfFile: url.path) else { return nil }
+        let img = Image(uiImage: ui)
+        #else
+        guard let ns = NSImage(contentsOf: url) else { return nil }
+        let img = Image(nsImage: ns)
+        #endif
+        spriteCache[symbol] = img
+        return img
+    }
+
+    /// UI rect covering the sprite's full camera frame, re-anchored
+    /// into the fret window.
+    public static func spriteRect(
+        entry: Entry, anchorX: CGFloat, boardBottomY: CGFloat,
+        pxPerMM: CGFloat, lifted: Bool
+    ) -> CGRect? {
+        guard let sp = entry.sprite else { return nil }
+        let s = pxPerMM * 1000
+        let liftY: CGFloat = lifted ? -10 * pxPerMM : 0
+        let orthoV = sp.ortho * sp.h / sp.w
+        let leftM = sp.camX - sp.ortho / 2
+        let topM = sp.camZ + orthoV / 2
+        let x = anchorX + (leftM - entry.clusterX) * s
+        let y = boardBottomY + (entry.boardBottomZ - topM) * s + liftY
+        return CGRect(x: x, y: y, width: sp.ortho * s, height: orthoV * s)
     }
 
     /// Build a filled silhouette Path from a pose's mesh contour,

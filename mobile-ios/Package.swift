@@ -46,6 +46,7 @@ let package = Package(
                 // Canonical fretting-hand poses generated offline by the
                 // Blender/MPFB reference pipeline (tools/handrig).
                 .copy("Resources/HandPoses.json"),
+                .copy("Resources/HandSprites"),
             ]
         ),
         .target(

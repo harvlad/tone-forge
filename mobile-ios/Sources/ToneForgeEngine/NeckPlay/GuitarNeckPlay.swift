@@ -345,17 +345,18 @@ public struct HandSilhouetteView: View, Animatable {
         // posed behind the neck (occluded).
         let s = max(0.4, plan.pxPerMM)
 
-        // Canonical anatomical pose from the Blender/MPFB library when
-        // this chord has one (mesh-silhouette contours — the exact
-        // Blender render); the procedural solver is the fallback
-        // (barres, exotic voicings). Default ON; opt out via
-        // UserDefaults bool "neck.libraryHand" = false.
+        // Baked Blender/MPFB render of the posed hand when this chord
+        // has a library entry (open shapes AND barres now); the
+        // procedural solver is the fallback for uncovered voicings.
+        // Default ON; opt out via UserDefaults "neck.libraryHand".
         let libraryEnabled = (UserDefaults.standard.object(forKey: "neck.libraryHand")
             as? Bool ?? true)
             || ProcessInfo.processInfo.environment["TONEFORGE_LIBRARY_HAND"] == "1"
-        if libraryEnabled,
-           let entry = HandPoseLibrary.shared.entry(for: plan.symbol),
-           plan.barreRect == nil {
+        // Barres are excluded: the flat-index barre pose isn't solved
+        // in the reference rig yet, so those fall through to the
+        // procedural hand (a plausible barre shape) until it is.
+        if libraryEnabled, plan.barreRect == nil,
+           let entry = HandPoseLibrary.shared.entry(for: plan.symbol) {
             drawLibraryPose(ctx: ctx, size: size, tips: tips, entry: entry, s: s)
             return
         }
@@ -421,8 +422,16 @@ public struct HandSilhouetteView: View, Animatable {
         for fi in 1...4 where active.contains(fi) {
             liveTips[fi - 1] = tips[fi - 1]
         }
-        // Preferred: the projected MESH silhouette — the exact Blender
-        // render outline, no capsule approximation.
+        // Preferred: the baked Blender render of the posed hand —
+        // exact mesh silhouette WITH interior contour lines.
+        if let img = HandPoseLibrary.spriteImage(for: plan.symbol ?? ""),
+           let rect = HandPoseLibrary.spriteRect(
+               entry: entry, anchorX: anchorX, boardBottomY: plan.neckBottom,
+               pxPerMM: s, lifted: lifted) {
+            ctx.draw(img, in: rect)
+            return
+        }
+        // Fallback: filled outline contour.
         if let path = HandPoseLibrary.outlinePath(
             entry: entry, anchorX: anchorX, boardBottomY: plan.neckBottom,
             pxPerMM: s, lifted: lifted) {

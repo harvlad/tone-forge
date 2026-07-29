@@ -27,7 +27,7 @@ NECK_THICK = 0.021
 STRING_SPAN_NUT = 0.035
 STRING_SPAN_12 = 0.0435
 BOARD_W = 0.052
-WINDOW = 5
+WINDOW = 7
 
 def wire(n):
     return SCALE_LEN * (1 - 2 ** (-n / 12))
@@ -45,14 +45,21 @@ def load_chords(path):
     with open(path) as f:
         raw = json.load(f)
     chords = {}
+    barres = {}
     for symbol, entry in raw.items():
         m = {1: None, 2: None, 3: None, 4: None}
         for n in entry["notes"]:
             m[n["finger"]] = (n["string"], n["fret"])
+        if "barre" in entry:
+            b = entry["barre"]
+            # Index lies flat across the strings: tip at the TOP
+            # (lowest-index) barred string.
+            m[1] = (b["loString"], b["fret"])
+            barres[symbol] = b
         chords[symbol] = m
-    return chords
+    return chords, barres
 
-CHORDS = load_chords(CHORDS_PATH)
+CHORDS, BARRES = load_chords(CHORDS_PATH)
 
 # Musical finger → MakeHuman digit (fixed anatomy, left hand).
 FINGER_BONE = {1: "finger2", 2: "finger3", 3: "finger4", 4: "finger5"}
@@ -319,7 +326,7 @@ def main():
             tm.hide_render = not on
 
     order = ["G", "D", "Em", "C", "A", "Am", "E", "Dm"]
-    order = [c for c in order if c in CHORDS]
+    order += sorted(c for c in CHORDS if c not in order)
     frame_of = {c: 1 + 25 * i for i, c in enumerate(order)}
     LIBRARY = {}
 
@@ -506,10 +513,53 @@ def main():
         _s.setrecursionlimit(10000)
         return simplify(0, len(pts) - 1)
 
+    # Hand SPRITE per chord: transparent render of ONLY the hand with
+    # Freestyle rim + interior lines, board as holdout (thumb clipped
+    # by the neck exactly as occluded). This is the exact Blender look
+    # the app composites, with anchor metadata for re-projection.
+    # Occluder slab: everything BEHIND the neck (thumb) is clipped
+    # from sprites; fingers in front of the board stay visible (the
+    # app layers wood -> hand -> strings).
+    bpy.ops.mesh.primitive_cube_add()
+    slab = bpy.context.object
+    slab.name = "jamn_slab"
+    slab.scale = (2, 0.5, 1)
+    slab.location = (0, 0.5 + 0.024, 0)
+    bpy.ops.object.transform_apply(scale=True)
+    slab.hide_render = True
+
+    def render_sprite(chord):
+        f = frame_of[chord]
+        bpy.context.scene.frame_set(f)
+        bpy.context.view_layer.update()
+        scene = bpy.context.scene
+        board = bpy.data.objects.get("Cube")
+        hidden = []
+        for o in bpy.data.objects:
+            if o.type == "MESH" and o is not basemesh and o.name != "jamn_slab" \
+               and not o.hide_render:
+                hidden.append(o)
+                o.hide_render = True
+        slab.hide_render = False
+        slab.is_holdout = True
+        scene.render.film_transparent = True
+        scene.render.filepath = f"{OUT}/sprite-{chord}.png"
+        bpy.ops.render.render(write_still=True)
+        for o in hidden:
+            o.hide_render = False
+        slab.hide_render = True
+        slab.is_holdout = False
+        scene.render.film_transparent = False
+
     cam = bpy.context.scene.camera
     ortho = cam.data.ortho_scale
     rx, ry = 1440, 840
     for chord in order:
+        render_sprite(chord)
+        LIBRARY[chord]["sprite"] = {
+            "camX": cam.location.x, "camZ": cam.location.z,
+            "ortho": ortho, "w": rx, "h": ry,
+        }
         path = render_mask(chord)
         rings, w, h = trace_contours(path)
         world_rings = []
