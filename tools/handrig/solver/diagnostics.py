@@ -33,7 +33,7 @@ def _draw_neck_front(ax):
         ax.plot([x0, x1], [z, z], color="#bbb", lw=0.8, zorder=1)
 
 
-def render(result, contacts, barre, title, path):
+def render(result, contact_list, title, path):
     fig, (axf, axs) = plt.subplots(1, 2, figsize=(15, 7))
     fig.patch.set_facecolor("#0b0b10")
 
@@ -52,13 +52,10 @@ def render(result, contacts, barre, title, path):
     tj = thumb.joints()
     axf.plot([p[0] for p in tj], [p[2] for p in tj], "--o",
              color="#8f8", lw=1.5, ms=3, alpha=0.6, zorder=2)
-    # Contact targets.
-    for c in contacts:
-        t = c.target()
-        axf.plot(t[0], t[2], "x", color="#fff", ms=12, mew=2, zorder=4)
-    if barre is not None:
-        for t in barre.targets():
-            axf.plot(t[0], t[2], "x", color="#fff", ms=10, mew=2, zorder=4)
+    # Contact targets (any primitive exposes .targets()).
+    for c in contact_list:
+        for t in c.targets():
+            axf.plot(t[0], t[2], "x", color="#fff", ms=11, mew=2, zorder=4)
     axf.set_title(f"{title} — FRONT (JAMN view)", color="#ddd")
     axf.set_xlabel("x (along neck, mm)", color="#999")
     axf.set_ylabel("z (across strings, mm)", color="#999")

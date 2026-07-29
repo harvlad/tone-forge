@@ -1,0 +1,455 @@
+{
+  "test1_single": {
+    "status": "OK",
+    "max_contact_mm": 0.02,
+    "contact_accuracy": {
+      "point:middle": 0.02
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.673,
+    "manifold_cost": 0.87,
+    "solve_time_s": 10.785,
+    "iterations": 127,
+    "reasons": []
+  },
+  "test2_two": {
+    "status": "OK",
+    "max_contact_mm": 1.02,
+    "contact_accuracy": {
+      "point:index": 0.94,
+      "point:middle": 1.02
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.19,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": false,
+    "naturalness": 5.104,
+    "manifold_cost": 1.214,
+    "solve_time_s": 11.559,
+    "iterations": 300,
+    "reasons": []
+  },
+  "fixture_G": {
+    "status": "OK",
+    "max_contact_mm": 0.05,
+    "contact_accuracy": {
+      "point:index": 0.03,
+      "point:middle": 0.03,
+      "point:ring": 0.05
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 8.202,
+    "manifold_cost": 1.222,
+    "solve_time_s": 8.583,
+    "iterations": 169,
+    "reasons": []
+  },
+  "fixture_C": {
+    "status": "OK",
+    "max_contact_mm": 0.05,
+    "contact_accuracy": {
+      "point:index": 0.05,
+      "point:middle": 0.01,
+      "point:ring": 0.03
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 6.152,
+    "manifold_cost": 1.952,
+    "solve_time_s": 9.409,
+    "iterations": 300,
+    "reasons": []
+  },
+  "fixture_D": {
+    "status": "OK",
+    "max_contact_mm": 0.34,
+    "contact_accuracy": {
+      "point:index": 0.34,
+      "point:middle": 0.29,
+      "point:ring": 0.04
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 9.988,
+    "manifold_cost": 1.323,
+    "solve_time_s": 11.154,
+    "iterations": 300,
+    "reasons": []
+  },
+  "fixture_Em": {
+    "status": "OK",
+    "max_contact_mm": 0.85,
+    "contact_accuracy": {
+      "point:middle": 0.85,
+      "point:ring": 0.72
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.15,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 7.405,
+    "manifold_cost": 1.637,
+    "solve_time_s": 7.065,
+    "iterations": 192,
+    "reasons": []
+  },
+  "fixture_A": {
+    "status": "OK",
+    "max_contact_mm": 3.1,
+    "contact_accuracy": {
+      "point:index": 3.1,
+      "point:middle": 0.02,
+      "point:ring": 2.36
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 10.708,
+    "manifold_cost": 1.78,
+    "solve_time_s": 10.365,
+    "iterations": 147,
+    "reasons": []
+  },
+  "fixture_Am": {
+    "status": "OK",
+    "max_contact_mm": 1.78,
+    "contact_accuracy": {
+      "point:index": 0.0,
+      "point:middle": 1.75,
+      "point:ring": 1.78
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.15,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": false,
+    "naturalness": 8.475,
+    "manifold_cost": 1.449,
+    "solve_time_s": 10.909,
+    "iterations": 300,
+    "reasons": []
+  },
+  "fixture_E": {
+    "status": "OK",
+    "max_contact_mm": 1.83,
+    "contact_accuracy": {
+      "point:index": 0.08,
+      "point:middle": 1.68,
+      "point:ring": 1.83
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.14,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 9.268,
+    "manifold_cost": 1.387,
+    "solve_time_s": 9.723,
+    "iterations": 300,
+    "reasons": []
+  },
+  "fixture_Dm": {
+    "status": "OK",
+    "max_contact_mm": 0.03,
+    "contact_accuracy": {
+      "point:index": 0.03,
+      "point:middle": 0.02,
+      "point:ring": 0.01
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 6.798,
+    "manifold_cost": 1.749,
+    "solve_time_s": 10.576,
+    "iterations": 300,
+    "reasons": []
+  },
+  "test6_G_then_C": {
+    "status": "OK",
+    "max_contact_mm": 0.05,
+    "contact_accuracy": {
+      "point:index": 0.05,
+      "point:middle": 0.01,
+      "point:ring": 0.03
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 6.165,
+    "manifold_cost": 1.629,
+    "solve_time_s": 15.414,
+    "iterations": 300,
+    "reasons": []
+  },
+  "test7_phrase_0": {
+    "status": "OK",
+    "max_contact_mm": 0.03,
+    "contact_accuracy": {
+      "point:index": 0.03
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.436,
+    "manifold_cost": 0.588,
+    "solve_time_s": 12.585,
+    "iterations": 247,
+    "reasons": []
+  },
+  "test7_phrase_1": {
+    "status": "OK",
+    "max_contact_mm": 0.47,
+    "contact_accuracy": {
+      "point:ring": 0.47
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 5.19,
+    "manifold_cost": 1.209,
+    "solve_time_s": 9.097,
+    "iterations": 300,
+    "reasons": []
+  },
+  "test7_phrase_2": {
+    "status": "OK",
+    "max_contact_mm": 0.04,
+    "contact_accuracy": {
+      "point:index": 0.04
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.721,
+    "manifold_cost": 1.235,
+    "solve_time_s": 9.789,
+    "iterations": 300,
+    "reasons": []
+  },
+  "test7_phrase_3": {
+    "status": "OK",
+    "max_contact_mm": 0.0,
+    "contact_accuracy": {
+      "point:ring": 0.0
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.759,
+    "manifold_cost": 0.363,
+    "solve_time_s": 14.701,
+    "iterations": 300,
+    "reasons": []
+  },
+  "test7_phrase_4": {
+    "status": "OK",
+    "max_contact_mm": 0.04,
+    "contact_accuracy": {
+      "point:index": 0.04
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.849,
+    "manifold_cost": 1.436,
+    "solve_time_s": 10.947,
+    "iterations": 300,
+    "reasons": []
+  },
+  "test7_phrase_5": {
+    "status": "OK",
+    "max_contact_mm": 0.01,
+    "contact_accuracy": {
+      "point:ring": 0.01
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.758,
+    "manifold_cost": 0.553,
+    "solve_time_s": 12.474,
+    "iterations": 300,
+    "reasons": []
+  },
+  "test7_phrase_6": {
+    "status": "OK",
+    "max_contact_mm": 0.09,
+    "contact_accuracy": {
+      "point:middle": 0.09
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": false,
+    "naturalness": 2.928,
+    "manifold_cost": 0.976,
+    "solve_time_s": 8.219,
+    "iterations": 300,
+    "reasons": []
+  },
+  "test7_phrase_7": {
+    "status": "OK",
+    "max_contact_mm": 2.03,
+    "contact_accuracy": {
+      "point:middle": 2.03
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.15,
+    "thumb_behind_neck": false,
+    "naturalness": 4.402,
+    "manifold_cost": 0.236,
+    "solve_time_s": 6.279,
+    "iterations": 37,
+    "reasons": []
+  },
+  "test7_summary": {
+    "notes": 8,
+    "ok": 8
+  },
+  "test8_impossible": {
+    "status": "INFEASIBLE",
+    "max_contact_mm": 71.72,
+    "contact_accuracy": {
+      "point:pinky": 69.41,
+      "point:index": 71.72
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 6.2,
+    "thumb_behind_neck": true,
+    "naturalness": 4.143,
+    "manifold_cost": 1.292,
+    "solve_time_s": 13.458,
+    "iterations": 86,
+    "reasons": [
+      "contact 71.7mm",
+      "board 6.2mm"
+    ]
+  },
+  "test9_Fsharp_barre": {
+    "status": "INFEASIBLE",
+    "max_contact_mm": 13.85,
+    "contact_accuracy": {
+      "line:index": 11.33,
+      "point:middle": 13.85,
+      "point:ring": 1.49,
+      "point:pinky": 1.45
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.54,
+    "board_penetration_mm": 1.3,
+    "thumb_behind_neck": false,
+    "naturalness": 14.04,
+    "manifold_cost": 2.732,
+    "solve_time_s": 12.965,
+    "iterations": 137,
+    "reasons": [
+      "contact 13.9mm"
+    ]
+  },
+  "test10_transposed_barre": {
+    "status": "INFEASIBLE",
+    "max_contact_mm": 21.97,
+    "contact_accuracy": {
+      "line:index": 10.79,
+      "point:middle": 21.97,
+      "point:ring": 0.39,
+      "point:pinky": 4.06
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.99,
+    "thumb_behind_neck": false,
+    "naturalness": 13.089,
+    "manifold_cost": 0.503,
+    "solve_time_s": 15.726,
+    "iterations": 300,
+    "reasons": [
+      "contact 22.0mm"
+    ]
+  },
+  "test11_Ashape_barre": {
+    "status": "INFEASIBLE",
+    "max_contact_mm": 9.63,
+    "contact_accuracy": {
+      "line:index": 2.13,
+      "point:middle": 5.91,
+      "point:ring": 0.03,
+      "point:pinky": 9.63
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 1.06,
+    "thumb_behind_neck": false,
+    "naturalness": 9.961,
+    "manifold_cost": 3.143,
+    "solve_time_s": 15.295,
+    "iterations": 300,
+    "reasons": [
+      "contact 9.6mm"
+    ]
+  },
+  "test12_partial_barre": {
+    "status": "OK",
+    "max_contact_mm": 3.22,
+    "contact_accuracy": {
+      "line:index": 3.22,
+      "point:ring": 0.21,
+      "point:middle": 1.35
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.11,
+    "thumb_behind_neck": true,
+    "naturalness": 8.146,
+    "manifold_cost": 0.988,
+    "solve_time_s": 9.779,
+    "iterations": 237,
+    "reasons": []
+  },
+  "test14_impossible_line": {
+    "status": "INFEASIBLE",
+    "max_contact_mm": 29.24,
+    "contact_accuracy": {
+      "line:index": 27.47,
+      "line:middle": 29.24
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": false,
+    "naturalness": 3.122,
+    "manifold_cost": 1.257,
+    "solve_time_s": 12.983,
+    "iterations": 196,
+    "reasons": [
+      "contact 29.2mm"
+    ]
+  },
+  "timing": {
+    "n": 25,
+    "median": 10.91,
+    "p95": 15.41,
+    "worst": 15.73,
+    "total": 279.8
+  }
+}
