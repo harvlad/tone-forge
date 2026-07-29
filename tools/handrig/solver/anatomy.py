@@ -368,10 +368,14 @@ def coupling_penalty(state: HandState) -> float:
 
 
 def strain_penalty(state: HandState) -> float:
-    """Deviation from a neutral relaxed pose, per joint. Neutral finger:
-    a gentle curl (MCP 15°, PIP 20°, DIP 13°), MCP abduction 0."""
-    neutral = np.array([15.0, 0.0, 20.0, 13.0]) * D2R
-    weights = np.array([1.0, 1.4, 0.8, 0.6])  # abduction strains most
+    """Deviation from a FRETTING-READY resting pose, per joint. Once a
+    hand approaches a neck it does not relax flat — it assumes a compact
+    ready curl (MCP flexed, fingers curled toward the strings, abduction
+    near zero). Unused fingers pull to THIS, so they stay compact and
+    available instead of splaying open. Provenance: general fretting
+    posture (MCP ~28°, PIP ~45°, DIP ~30° ≈ ⅔·PIP; near-zero splay)."""
+    neutral = np.array([28.0, 0.0, 45.0, 30.0]) * D2R
+    weights = np.array([1.0, 2.0, 0.9, 0.6])  # abduction strains most
     total = 0.0
     for f in FINGERS:
         d = state.finger[f] - neutral
@@ -382,7 +386,7 @@ def strain_penalty(state: HandState) -> float:
 def splay_penalty(state: HandState) -> float:
     """Excess MCP abduction beyond a comfortable ±8°, and abduction
     that disagrees with the neighbour (adjacent-finger coupling)."""
-    comfort = 8.0 * D2R
+    comfort = 4.0 * D2R
     total = 0.0
     abds = [state.finger[f][1] for f in FINGERS]
     for a in abds:
@@ -391,5 +395,5 @@ def splay_penalty(state: HandState) -> float:
             total += e * e
     # Neighbour coupling: ring can't splay far without pinky following.
     for i in range(len(abds) - 1):
-        total += 0.3 * (abds[i] - abds[i + 1]) ** 2
+        total += 0.5 * (abds[i] - abds[i + 1]) ** 2
     return total

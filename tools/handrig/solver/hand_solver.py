@@ -68,9 +68,13 @@ class SolveResult:
     reasons: list = field(default_factory=list)
 
 
+# Contact is now a REGION penalty (0 inside the valid fret area), so a
+# high contact weight only pulls the tip INTO the region; once there it
+# costs nothing and the naturalness terms (strain toward a fretting-ready
+# curl, synergy manifold, splay, coupling) shape the whole hand freely.
 W = dict(
-    contact=6.0, board=40.0, collision=30.0, strain=0.35, splay=0.9,
-    coupling=1.5, thumb=2.5, wrist=0.6, crossing=20.0, manifold=1.2, move=0.5,
+    contact=8.0, board=40.0, collision=30.0, strain=2.6, splay=2.0,
+    coupling=2.0, thumb=2.5, wrist=0.6, crossing=20.0, manifold=3.0, move=0.5,
 )
 
 

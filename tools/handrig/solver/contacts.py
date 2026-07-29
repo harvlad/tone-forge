@@ -68,11 +68,47 @@ class PointContact(ContactPrimitive):
     def targets(self):
         return [self._target()]
 
+    def _region(self):
+        """Physically-valid fretting AREA (min, max) per axis, mm:
+        - x: anywhere in the fret SLOT behind the wire (between wire F-1
+             and wire F), with a small margin off each wire.
+        - z: within ±40% of a string gap of the target string (on the
+             correct string, clear of the neighbours).
+        - y: pad touching the string within a shallow press band.
+        The tip may sit ANYWHERE in this box at zero cost, giving the
+        whole-hand optimiser spatial freedom."""
+        lo_wire, hi_wire = G.wire(self.fret - 1), G.wire(self.fret)
+        xr = (-(hi_wire) + 1.5, -(lo_wire) - 1.5)          # slot interior
+        x_mid = G.finger_x(self.fret)
+        gap = abs(G.string_z(0, abs(x_mid)) - G.string_z(1, abs(x_mid)))
+        z0 = G.string_z(self.string, abs(x_mid))
+        zr = (z0 - 0.40 * gap, z0 + 0.40 * gap)
+        yr = (-3.0, 2.0)
+        return (min(xr), max(xr)), zr, yr
+
+    @staticmethod
+    def _axis_miss(v, lo, hi):
+        if v < lo:
+            return lo - v
+        if v > hi:
+            return v - hi
+        return 0.0
+
     def residual(self, fk) -> float:
-        return float(np.sum((fk.tip - self._target()) ** 2))
+        (xl, xh), (zl, zh), (yl, yh) = self._region()
+        t = fk.tip
+        dx = self._axis_miss(t[0], xl, xh)
+        dy = self._axis_miss(t[1], yl, yh)
+        dz = self._axis_miss(t[2], zl, zh)
+        return float(dx * dx + dy * dy + dz * dz)
 
     def error_mm(self, fk) -> float:
-        return float(np.linalg.norm(fk.tip - self._target()))
+        (xl, xh), (zl, zh), (yl, yh) = self._region()
+        t = fk.tip
+        dx = self._axis_miss(t[0], xl, xh)
+        dy = self._axis_miss(t[1], yl, yh)
+        dz = self._axis_miss(t[2], zl, zh)
+        return float(np.sqrt(dx * dx + dy * dy + dz * dz))
 
 
 @dataclass

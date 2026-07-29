@@ -59,7 +59,10 @@ def load_chords(path):
         chords[symbol] = m
     return chords, barres
 
-CHORDS, BARRES = load_chords(CHORDS_PATH)
+try:
+    CHORDS, BARRES = load_chords(CHORDS_PATH)
+except (FileNotFoundError, IsADirectoryError, OSError):
+    CHORDS, BARRES = {}, {}   # importable without a chords arg (bridge reuse)
 
 # Musical finger → MakeHuman digit (fixed anatomy, left hand).
 FINGER_BONE = {1: "finger2", 2: "finger3", 3: "finger4", 4: "finger5"}
