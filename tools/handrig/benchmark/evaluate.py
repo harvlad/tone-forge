@@ -110,12 +110,65 @@ def finger_reuse(trajectory, phrase, reference, solver):
                 reuse=round(reuse, 3), per_transition=[round(r, 3) for r in ratios])
 
 
+# timing tolerances are GROUNDED in perception + tempo, not arbitrary:
+#   PERFECT_MS  perceptual onset-asynchrony tolerance (~30 ms) -> quality 1
+#   decay end   one 16th-note at the phrase tempo -> quality 0 (clearly off-beat)
+TIMING_PERFECT_MS = 30.0
+
+
+def timing(trajectory, phrase, reference, solver):
+    """On-beat ARRIVAL + hold. For each note the responsible fingertip must be
+    in its contact region BY the onset (early/held is fine — a ready finger);
+    LATE arrival is the defect (buzzed/muted attack). Also checks the finger
+    holds the region until the note end. Grounded window: perfect within
+    ~30 ms, zero one 16th-note late.
+
+    Naive places every pose exactly at its onset, so arrival==onset and this is
+    VACUOUSLY perfect — reported honestly as 1.0 (nothing to grade until a
+    planner produces approach dynamics). The metric scans whatever knots exist,
+    so it upgrades automatically when M7 emits dense trajectories."""
+    bpm = phrase.tempo_bpm or 90
+    beat_ms = 60000.0 / bpm
+    decay_ms = max(beat_ms / 4.0, TIMING_PERFECT_MS * 2)      # a 16th-note
+    knots = sorted(trajectory.knots, key=lambda k: k.t)
+    per_note, qualities = [], []
+    for e in phrase.events:
+        spec = dict(string=e.string, fret=e.fret, finger=e.finger)
+        in_region = [k.t for k in knots
+                     if solver.contact_error_mm(k.mpfb_state, [spec]) <= CONTACT_TOL_MM]
+        if not in_region:
+            per_note.append(dict(t=e.t, finger=e.finger, arrival=None,
+                                 late_ms=None, quality=0.0, note="never in region"))
+            qualities.append(0.0)
+            continue
+        arrival = min(in_region)
+        departure = max(in_region)
+        late_ms = max(0.0, (arrival - e.t) * 1000.0)
+        end = e.t + e.dur
+        early_release_ms = max(0.0, (end - departure) * 1000.0)
+        # onset lateness dominates; a short-held note is a lesser fault.
+        # Score on onset LATENESS only. Release/hold needs a DENSE trajectory to
+        # measure (a missing knot at note-end is not a release); it is reported
+        # informationally and folded in only once M7 emits approach dynamics.
+        q = round(_low_is_good(late_ms, TIMING_PERFECT_MS,
+                               decay_ms - TIMING_PERFECT_MS), 3)
+        qualities.append(q)
+        per_note.append(dict(t=e.t, finger=e.finger, arrival=round(arrival, 4),
+                             late_ms=round(late_ms, 1),
+                             early_release_ms=round(early_release_ms, 1), quality=q))
+    score = round(float(np.mean(qualities)), 3) if qualities else 1.0
+    return dict(name="timing", kind="soft", tier=3, timing_score=score,
+                perfect_ms=TIMING_PERFECT_MS, decay_ms=round(decay_ms, 1),
+                per_note=per_note)
+
+
 METRICS = {
     "contact_fidelity": (contact_fidelity, "hard_gate"),
     "shift_count": (shift_count, "soft"),
     "fingertip_travel": (fingertip_travel, "soft"),
     "root_travel": (root_travel, "soft"),
     "finger_reuse": (finger_reuse, "soft"),
+    "timing": (timing, "soft"),
 }
 
 
@@ -161,6 +214,8 @@ def _quality(name, results, reference):
     if name == "finger_reuse":
         lo, hi = C.get("finger_reuse_band", [0.0, 1.0])
         return _band(results["finger_reuse"]["reuse"], lo, hi, soft=0.3)
+    if name == "timing":
+        return results["timing"]["timing_score"]     # already [0,1]
     return 1.0
 
 
