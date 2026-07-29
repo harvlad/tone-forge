@@ -20,6 +20,8 @@ whole-phrase signature proves it will fit the hard case (caught here, cheaply,
 before a real trajectory planner exists — the M3 risk).
 """
 from __future__ import annotations
+import numpy as np
+from scipy.optimize import minimize
 from adapters import Trajectory, Knot
 
 
@@ -87,7 +89,82 @@ class RecenterPlanner(NaivePlanner):
                           planner=self.name, solver_version=solver.version())
 
 
-PLANNERS = {NaivePlanner.name: NaivePlanner, RecenterPlanner.name: RecenterPlanner}
+class TrajoptPlanner(Planner):
+    """First REAL planner: whole-phrase kinematic trajectory optimization.
+
+    Naive solves each moment MEMORYLESSLY — it re-centres the hand on every note
+    and so shifts/travels more than needed. Trajopt optimizes ALL moment states
+    JOINTLY: per-knot the frozen solver cost still demands feasible contacts, but
+    two cross-knot terms are added over the whole phrase:
+      - positional commitment: penalize inter-moment ROOT motion (keep the hand
+        in one place unless a note is geometrically out of reach);
+      - smoothness: penalize inter-moment finger/thumb ANGLE change (minimum-
+        jerk-like; no thrashing between poses).
+    Because it sees every note at once, it can commit to a hand position that
+    covers them all — the mechanism that should beat memoryless solving.
+
+    Hyperparameters are set ONCE from reasoning (economy), NOT tuned to pass:
+      W_ROOT   large so a 5 cm hand move (0.0025 m^2) is comparable to the
+               contact term (~8); 300 -> 0.05 m costs ~0.75.
+      W_SMOOTH modest angle-smoothness in radians^2.
+    """
+    name = "trajopt"
+    W_ROOT = 300.0
+    W_SMOOTH = 1.5
+
+    def plan(self, phrase, references, solver, config):
+        cfg = config or {}
+        moments = group_moments(phrase.events)
+        specs_per = [[dict(string=e.string, fret=e.fret, finger=e.finger,
+                           articulation=e.articulation) for e in evs]
+                     for _, evs in moments]
+        N = len(moments)
+
+        # Warm start from the naive per-moment solutions (each feasible).
+        naive = NaivePlanner().plan(phrase, references, solver, cfg)
+        init = [np.asarray(k.mpfb_state, float) for k in naive.knots]
+        S = init[0].shape[0]
+
+        if N == 1:                      # nothing to couple; naive == optimum
+            k = naive.knots[0]
+            k.meta["planner_note"] = "single moment; trajopt == naive"
+            return Trajectory(phrase.id, naive.knots, naive.contact_schedule,
+                              self.name, solver.version())
+
+        # Shared committed root centre = centroid of the naive roots, so every
+        # knot's root box surrounds one position (enables commitment).
+        centre = np.mean([solver.root_of(s) for s in init], axis=0)
+        los, his = zip(*[solver.knot_bounds(centre, root_pad=0.15) for _ in range(N)])
+        lo = np.concatenate(los); hi = np.concatenate(his)
+        x0 = np.clip(np.concatenate(init), lo, hi)
+
+        def objective(x):
+            states = [x[i*S:(i+1)*S] for i in range(N)]
+            total = sum(solver.evaluate_state(states[i], specs_per[i]) for i in range(N))
+            for i in range(1, N):
+                dr = states[i][:3] - states[i-1][:3]
+                dq = states[i][6:] - states[i-1][6:]
+                total += self.W_ROOT * float(dr @ dr)
+                total += self.W_SMOOTH * float(dq @ dq)
+            return total
+
+        res = minimize(objective, x0, method="L-BFGS-B", bounds=list(zip(lo, hi)),
+                       options=dict(maxiter=cfg.get("maxiter", 600), ftol=1e-9))
+        xopt = res.x
+        knots = []
+        for i, (t, _) in enumerate(moments):
+            state = xopt[i*S:(i+1)*S]
+            cmm = solver.contact_error_mm(state.tolist(), specs_per[i])
+            knots.append(Knot(t=t, mpfb_state=state.tolist(),
+                              meta=dict(feasible=bool(cmm <= 6.0), contact_mm=round(cmm, 3),
+                                        contacts=specs_per[i])))
+        return Trajectory(phrase.id, knots, naive.contact_schedule,
+                          self.name, solver.version())
+
+
+PLANNERS = {NaivePlanner.name: NaivePlanner,
+            RecenterPlanner.name: RecenterPlanner,
+            TrajoptPlanner.name: TrajoptPlanner}
 
 
 def get_planner(name):

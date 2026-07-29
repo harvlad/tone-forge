@@ -113,6 +113,39 @@ class SolverAdapter:
             worst = max(worst, miss)
         return worst
 
+    def evaluate_state(self, state, specs, prev=None):
+        """Frozen per-knot cost (contact+strain+manifold+board+collision+...)
+        for one moment. `prev` optional (kept None in trajopt; cross-knot
+        coupling is added by the planner, not double-counted here)."""
+        v = np.asarray(state, float)
+        pv = np.asarray(prev, float) if prev is not None else None
+        return float(self._s.evaluate(v, self._contacts(specs), pv)[0])
+
+    def knot_bounds(self, root_center, root_pad=0.15):
+        """Per-DoF box bounds for one knot, replicating the frozen solver's
+        limits, but with the root centred on a SHARED committed position (so a
+        whole-phrase planner can keep the hand in one place)."""
+        A = M.A
+        lo = np.full(M.STATE_N, -np.inf); hi = np.full(M.STATE_N, np.inf)
+        rc = np.asarray(root_center, float)
+        lo[M.RLOC] = rc - root_pad; hi[M.RLOC] = rc + root_pad
+        lo[M.RROT] = -0.6; hi[M.RROT] = 0.6
+        for i, f in enumerate(M.FINGERS):
+            L = A.HandModel.default().finger_limits[f]
+            b = 6 + i * 4
+            lo[b] = L["mcp_flex"].lo; hi[b] = L["mcp_flex"].hi
+            lo[b+1] = L["mcp_abd"].lo; hi[b+1] = L["mcp_abd"].hi
+            lo[b+2] = L["pip_flex"].lo; hi[b+2] = L["pip_flex"].hi
+            lo[b+3] = L["dip_flex"].lo; hi[b+3] = L["dip_flex"].hi
+        lo[M.THUMB] = np.array([-10, -10, -15, -30]) * A.D2R
+        hi[M.THUMB] = np.array([55, 40, 80, 30]) * A.D2R
+        lo[M.META] = np.array([-2, -2, -2, -2]) * A.D2R
+        hi[M.META] = np.array([14, 12, 26, 36]) * A.D2R
+        return lo, hi
+
+    def root_of(self, state):
+        return np.asarray(state, float)[M.RLOC]
+
     def version(self):
         try:
             h = subprocess.check_output(
