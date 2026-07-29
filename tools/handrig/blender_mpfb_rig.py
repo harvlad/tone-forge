@@ -189,20 +189,28 @@ def place_hand(arm, chord, rot_euler, lift=0.0):
     _ = rot_euler
     rot = fretting_rotation(arm)
     offs = mcp_offsets(arm, rot)
+    barre = chord in BARRES
     terms = []
     for fi in (1, 2, 3, 4):
         tgt = CHORDS[chord].get(fi)
-        if tgt:
+        # Anchor a barre on the ARCHING fingers (2..4) only; the index
+        # lies flat and shouldn't drag the cluster centre.
+        if tgt and not (barre and fi == 1):
             terms.append(finger_x(tgt[1]) - offs[fi])
     cx = sum(terms) / len(terms)
     mcp = arm.data.bones["finger3-1.L"].head_local
-    want = Vector((cx, -0.024, -BOARD_W / 2 - 0.058 + lift))
+    # Barre: the hand sits deeper/lower so fingers 2..4 arch steeply
+    # over the flat index onto the higher frets.
+    depthY = -0.030 if barre else -0.024
+    dropZ = -0.070 if barre else -0.058
+    want = Vector((cx, depthY, -BOARD_W / 2 + dropZ + lift))
     loc = want - (rot @ mcp.to_4d()).to_3d()
     arm.rotation_euler = rot.to_euler()
     arm.location = loc
 
 def pose_chord(arm, targets, chord):
-    press = [t for t in CHORDS[chord].values() if t]
+    barre = chord in BARRES
+    press = [t for fi, t in CHORDS[chord].items() if t and not (barre and fi == 1)]
     cx = sum(finger_x(f) for _, f in press) / len(press)
     targets["thumb"].location = (cx + 0.018, 0.032, -0.020)
     for fi in (1, 2, 3, 4):
@@ -210,13 +218,28 @@ def pose_chord(arm, targets, chord):
         tgt = CHORDS[chord].get(fi)
         em, pole = targets[fi]
         con = arm.pose.bones[f"{digit}-3.L"].constraints[-1]
-        if tgt:
+        if barre and fi == 1:
+            # Flat barre index: lies ACROSS the strings at the barre
+            # fret. Target the LOW-E (top) string so the extended
+            # finger reaches full length (near-straight), pole pushed
+            # in FRONT so the slight bend bows toward the viewer, never
+            # sideways into the other fingers.
+            b = BARRES[chord]
+            x = finger_x(b["fret"])
+            z = string_z(b["loString"], abs(x))
+            em.location = (x, 0.002, z)
+            pole.location = (x, -0.12, z + 0.02)
+            con.influence = 1.0
+        elif tgt:
             s, fret = tgt
             x = finger_x(fret)
             z = string_z(s, abs(x))
             em.location = (x, 0.0015, z)
             mcp_w = arm.matrix_world @ arm.data.bones[f"{digit}-1.L"].head_local
-            pole.location = (x, -0.06, (mcp_w.z + z) / 2)
+            # Pole consistently in FRONT and BELOW the MCP so every
+            # finger bends the same way (toward the viewer / down) —
+            # prevents the elbow-flip that crossed fingers on barres.
+            pole.location = (x, -0.08, mcp_w.z - 0.02)
             con.influence = 1.0
         else:
             con.influence = 0.0
