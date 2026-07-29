@@ -1,0 +1,22 @@
+{
+  "benchmark_version": "0.1.0",
+  "description": "Phrase-motion benchmark. Fretted, style-conditioned. V1 fixes fingering per phrase (isolation experiment). Contacts keyed on (string, fret), never pitch.",
+  "instrument_default": {
+    "type": "guitar",
+    "n_strings": 6,
+    "scale_len_mm": 648.0,
+    "string_span_nut_mm": 35.0,
+    "string_span_12_mm": 43.5,
+    "board_width_mm": 52.0,
+    "neck_thickness_mm": 21.0
+  },
+  "phrases": ["single"],
+  "demonstration_phrase": null,
+  "metric_weights": {
+    "note": "provisional; the review flagged metric coupling — weights are data, revisit after a correlation study, not now.",
+    "tier2": {"shift_count": 0.20, "fingertip_travel": 0.12, "root_travel": 0.08, "smoothness": 0.00},
+    "tier3": {"finger_reuse": 0.15, "positional_commitment": 0.15, "planning_horizon": 0.10, "quiet_hand": 0.10, "anchor_retention": 0.10, "timing": 0.00}
+  },
+  "metric_version": "0.0.0",
+  "styles": []
+}
