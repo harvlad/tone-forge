@@ -86,8 +86,12 @@ class MPFBSolver:
         mcpF, mcpA, pip, dip = four_dof
         angles = [(mcpF, 0.0, mcpA), (pip, 0.0, 0.0), (dip, 0.0, 0.0)]
         idx = ["index", "middle", "ring", "pinky"].index(digit_name)
+        # Metacarpal cupping only applies if the rig actually carries the
+        # metacarpal bones. Rigs dumped before the palm pass have finger
+        # phalanges only; there the cupping DoF is inert (meta_name=None).
+        mname = META_BONE[idx] if META_BONE[idx] in self.hand.bones else None
         js = self.hand.finger_fk(FMAP[digit_name], angles, AW,
-                                 meta_name=META_BONE[idx],
+                                 meta_name=mname,
                                  meta_angle=(meta_cup, 0.0, 0.0))
         return [np.array(p) * M2MM for p in js]
 
