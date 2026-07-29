@@ -1,12 +1,12 @@
 # GPU Pod Runbook — RunPod + ZFTurbo MSST training
 
-Operational findings from the T0/T1 separator recipe experiment (2026-07-28/29).
-Four pod runs, ~$6.8 total spend. Written so the next GPU job costs a fraction
-of the learning tax paid here. Pairs with `SEPARATOR_TIER2_PROPOSAL.md`.
+Operational findings from the T0/T1 recipe experiment + T2 full-corpus run
+(2026-07-28/29). Written so the next GPU job costs a fraction of the learning tax
+paid here. Pairs with `SEPARATOR_TIER2_PROPOSAL.md`. T2 addendum below §0.
 
 ---
 
-## 0. TL;DR — the five rules that would have saved ~$5
+## 0. TL;DR — the rules that would have saved ~$5
 
 1. **Dry-run the FULL train loop locally first ($0).** Every recipe bug (deps,
    stereo, EMA, config) is reproducible on CPU with 2 steps. Never debug on rented GPU.
@@ -18,6 +18,39 @@ of the learning tax paid here. Pairs with `SEPARATOR_TIER2_PROPOSAL.md`.
 4. **Verify (md5) BEFORE any delete.** Never chain `rm remote` after an unverified `scp`.
 5. **Put the kill-switch on an always-on host (the VPS), not this Mac.** Local
    background watchdogs get killed with the session; a VPS cron does not.
+6. **Ship a setup HEARTBEAT.** Without it you're blind until phase 1 (~1-2h). A tiny
+   marker file scp'd at each setup stage (bundle_ready, deps_ready) confirms progress
+   in ~2min AND is how you tell a working pod from a dead host.
+7. **A pod with negative/zero `uptimeInSeconds` + 0% GPU/CPU for >10min is a DEAD HOST.**
+   RunPod-side container-init failure, not your bug (nginx will still show the bundle
+   fetched). Kill and relaunch — it lands on a different host. Do not wait it out.
+
+---
+
+## T2 addendum (2026-07-29, full-corpus run)
+
+- **Dead-host failure mode:** first T2 pod (A40 secure) reported `uptimeInSeconds: -11`
+  and 0% GPU/CPU/mem for 10+ min while `desiredStatus: RUNNING`. nginx confirmed the
+  bundle was fetched, so the entrypoint started — but the container never truly ran.
+  Negative uptime is the tell. Terminated + relaunched → fresh host trained fine
+  (GPU 100%, uptime positive, heartbeat in 2min). Cost of the dead host: ~$0.20.
+- **Heartbeat pattern (added to pod_entry + run script):** `HB(){ touch /tmp/hb_$1; scp
+  ... :/root/<job>_artifacts/; }` called at `setup_start`, `deps_ready`, `bundle_ready`.
+  Markers appear on the VPS within minutes → instant health signal, no pod SSH needed.
+- **Update the runner without re-uploading the big bundle:** have `pod_entry.sh` curl
+  `run_<job>.sh` from the VPS static dir AFTER `tar xzf bundle.tgz` (overrides the
+  bundled copy). Bundle (dataset+configs, GBs) stays put; iterate the ~3KB runner freely.
+- **Home-uplink is the real staging bottleneck:** 1GB Mac→VPS took ~50min at ~0.3MB/s.
+  GPU is NOT running during upload ($0), so background it and launch on completion.
+  For bigger T3 datasets, stage via R2 (already configured, bucket `toneforge`) instead
+  of routing through the home Mac, OR build smaller: FLAC + a per-track length cap
+  (90s) took the 160-track set to **1.0GB** (vs ~24GB for full-length WAV).
+- **A40 48GB SECURE $0.44/hr remained the only reliably-available card** across all
+  T2 relaunches (community A40 and all 4090s: SUPPLY_CONSTRAINT). Batch 8 fits easily.
+- **T2 measured:** heartbeat→GPU-100% within ~2min of a healthy host; setup (pip + demucs
+  + 1GB bundle pull VPS→pod) ~2min (datacenter link fast, unlike home uplink).
+
+---
 
 ---
 
