@@ -220,16 +220,11 @@ struct HandNeckView: View {
                 ctx.stroke(Path(ellipseIn: CGRect(x: tx-(13+CGFloat(k)*12), y: ty-(13+CGFloat(k)*12), width: 2*(13+CGFloat(k)*12), height: 2*(13+CGFloat(k)*12))),
                            with: .color(c.opacity(s.arrive*0.45)), lineWidth: 2)
             }
-            // plant squash
-            var rx: CGFloat = 1, ry: CGFloat = 1
-            if s.arrive > 0 { rx = 1 + 0.22*CGFloat(s.arrive); ry = 1 - 0.18*CGFloat(s.arrive) }
-
-            // fingertip
+            // fingertip — always a circle (no squash; it read as distortion on landing)
             let r: CGFloat = state == "move" ? 19 : state == "plant" ? 17 : 12
             var tip = ctx
             if state == "move" { tip.addFilter(.shadow(color: c.opacity(0.7), radius: 9)) }
-            else if state == "plant" { }
-            let rect = CGRect(x: tx - r*rx, y: ty - r*ry, width: 2*r*rx, height: 2*r*ry)
+            let rect = CGRect(x: tx - r, y: ty - r, width: 2*r, height: 2*r)
             tip.opacity = state == "lift" ? 0.34 : 1
             tip.fill(Path(ellipseIn: rect), with: .color(c))
             if state == "move" {
