@@ -7,7 +7,7 @@
   "config": {
    "restarts": 5
   },
-  "config_hash": "c22f99dfa5fb6ce1",
+  "config_hash": "c5b4b41d83822a24",
   "deps": {
    "blender": "render-only (M8)",
    "mpfb": "render-only (M8)",
@@ -23,9 +23,9 @@
   },
   "metric_version": "0.0.0",
   "planner": "trajopt",
-  "planner_version": "b2d2182",
+  "planner_version": "29afb7e",
   "seed": 0,
-  "solver_version": "b2d2182"
+  "solver_version": "29afb7e"
  },
  "phrases": {
   "one_shift_scale": {
@@ -918,7 +918,7 @@
    ],
    "phrase_id": "one_shift_scale",
    "planner": "trajopt",
-   "solver_version": "b2d2182"
+   "solver_version": "29afb7e"
   },
   "repeated_note": {
    "contact_schedule": [
@@ -1143,7 +1143,7 @@
    ],
    "phrase_id": "repeated_note",
    "planner": "trajopt",
-   "solver_version": "b2d2182"
+   "solver_version": "29afb7e"
   },
   "single": {
    "contact_schedule": [
@@ -1207,7 +1207,7 @@
    ],
    "phrase_id": "single",
    "planner": "trajopt",
-   "solver_version": "b2d2182"
+   "solver_version": "29afb7e"
   },
   "string_crossing": {
    "contact_schedule": [
@@ -1432,7 +1432,7 @@
    ],
    "phrase_id": "string_crossing",
    "planner": "trajopt",
-   "solver_version": "b2d2182"
+   "solver_version": "29afb7e"
   },
   "sustained_anchor": {
    "contact_schedule": [
@@ -1642,7 +1642,7 @@
    ],
    "phrase_id": "sustained_anchor",
    "planner": "trajopt",
-   "solver_version": "b2d2182"
+   "solver_version": "29afb7e"
   }
  }
 }
