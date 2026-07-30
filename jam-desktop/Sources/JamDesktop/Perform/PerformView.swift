@@ -20,6 +20,9 @@ struct PerformView: View {
 
     @State private var tabLane = TabLaneModel()
     @State private var toneCardDismissed = false
+    /// Perform-tab view mode for the current chord: its DIAGRAM or its
+    /// fretting-HAND pose. A pure view swap over the same chord state.
+    @State private var showHand = false
 
     private let displayTimer = Timer.publish(
         every: 1.0 / 30.0, on: .main, in: .common
@@ -138,9 +141,8 @@ struct PerformView: View {
             at: session.transport.positionSeconds)?.symbol
         if !tabLane.notes.isEmpty || symbol != nil {
             HStack(alignment: .center, spacing: 24) {
-                if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
-                    ChordDiagramView(diagram: diagram)
-                        .frame(width: 280, height: 340)
+                if let symbol {
+                    chordOrHandColumn(symbol: symbol)
                 }
                 if !tabLane.notes.isEmpty {
                     VStack(alignment: .trailing, spacing: 4) {
@@ -160,6 +162,34 @@ struct PerformView: View {
                 }
             }
             .frame(minHeight: 340)
+        }
+    }
+
+    /// Current-chord column: a Chord/Hand toggle over one shared slot.
+    /// "Chord" = fingering diagram; "Hand" = baked fretting-hand sprite for
+    /// the same chord symbol. No motion — advances chord-by-chord with the
+    /// ribbon, exactly like the diagram.
+    @ViewBuilder
+    private func chordOrHandColumn(symbol: String) -> some View {
+        VStack(spacing: 10) {
+            Picker("Current-chord view", selection: $showHand) {
+                Text("Chord").tag(false)
+                Text("Hand").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 160)
+
+            Group {
+                if showHand {
+                    HandChordView(symbol: symbol)
+                } else if let diagram = ChordDiagram.make(symbol: symbol) {
+                    ChordDiagramView(diagram: diagram)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: 280, height: 340)
         }
     }
 
