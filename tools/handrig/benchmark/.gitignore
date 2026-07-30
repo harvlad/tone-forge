@@ -4,3 +4,7 @@
 results/renders/
 results/render_states.json
 results/report.html
+# Animation intermediates (regenerable); the GIFs themselves ARE committed.
+results/anim_frames/
+results/anim_states.json
+results/anim_meta.json
