@@ -103,3 +103,36 @@ Granular continuity-fill of stock guitar holes: blind A/B recon 0 win / 1 equal 
   (artificial). The missing guitar is absorbed into the VOCALS stem — unrecoverable by
   interpolation. The 87%-hole advantage needs actual CONTENT RECOVERY = a clean decorrelated
   SEPARATOR, not post-hoc DSP repair. Cheap-repair path ARCHIVED.
+
+---
+
+## Acquisition survey (mid-2026) — how to obtain a clean decorrelated guitar separator
+Research→acquisition. **No fully-clean, self-hostable, decorrelated guitar-stem model exists.**
+Every open guitar-capable RoFormer fails on weights-license or data-provenance. Options, ranked:
+
+**Commercial APIs (return a guitar stem under commercial terms) — the realistic clean unblock:**
+- **AudioShake** — guitar stem; API + real-time SDK + **on-prem enterprise** deploy (a licensed
+  "self-host" middle ground); already powers third-party products (LANDR Stems, djay Pro) so
+  product-embedding is a proven path. **Price UNKNOWN (enterprise/custom, contact
+  info@audioshake.ai).** Data-provenance not public → pin in contract. Strongest rights pedigree.
+- **Music.AI / Moises** — explicit guitar stems (acoustic/electric) & parts (rhythm/solo).
+  **~$0.10/min ($0.095 Pro)**, published rate. Marketed as licensed-data B2B API. Turnkey.
+- **LALAL.ai** — guitar stems, ~$0.15/stem/min; **product-embedding rights UNVERIFIED** — check ToS.
+
+**Private license (self-host, needs negotiation):**
+- **becruily MelBand-RoFormer Guitar** — architecturally ideal (RoFormer, decorrelated, purpose-built
+  guitar). MIT code, but **weights non-commercial by default** ("DM on Discord" for other terms;
+  no published price; training data undisclosed). Only self-hostable decorrelated guitar model,
+  but not clean without a signed private license + data warranty.
+
+**No path:** BS-RoFormer-SW (ByteDance never released official weights; community mirrors
+unlicensed; no contact/licensing channel). Do not ship self-hosted.
+
+**Train own (last resort):** no 2025-26 academic release pairs a general guitar separator with
+clean data + permissive weights; would require the Tier-2 clean-data plan.
+
+**Recommendation:** pursue an **API provider (AudioShake or Music.AI) as the first production
+provider** — plugs straight into the SeparatorProvider interface (`api:audioshake`/`api:moises`),
+blind-A/B-gated per regime on quality × cost. AudioShake's on-prem SDK is the best "licensed but
+self-hosted" fit. Parallel: probe becruily for a private commercial license (self-host path).
+Sources: music.ai/pricing, audioshake.ai, lalal.ai, HF becruily discussion #9.
