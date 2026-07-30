@@ -1,4 +1,17 @@
-# Planner V2 — clean-sheet architecture design (review draft)
+# Planner V2 — clean-sheet architecture design (reference architecture)
+
+> **STATUS (adopted).**
+> - Research program: **COMPLETE**.
+> - Planner V2: **REFERENCE ARCHITECTURE** — adopted as the long-term architectural target,
+>   NOT an engineering commitment or schedule.
+> - Optimizer migration: **ACTIVE** — the current engineering priority; benefits V1, V2, and
+>   all future planners, so it runs decoupled from planner work.
+> - Current planner (V1): **FROZEN**.
+>
+> Reference architecture ≠ implementation commitment. V2 implementation timing is reconsidered
+> only after: optimizer migration complete, optimizer validation complete, external
+> human-motion validation available, and a conscious decision to begin V2. Do not merge the
+> optimizer and planner tracks.
 
 Architecture only. No code, no implementation effort, no migration, no backward
 compatibility. Assumes nothing about the current planner except the empirical findings from
@@ -179,11 +192,19 @@ continuous within the null-space objective.
 | **D hybrid (hard contacts + null-space comfort + persistent anchor)** | strong | high | high | medium–high | high | medium | medium | hard/soft boundary, role membership |
 
 ## 9. Recommendation
-**B in the prompt's lettering = "Build Planner V2 around explicit task hierarchy" — specifically
-the hybrid form (Option D): hard/high-priority constraints for currently-sounding contacts and
-persistent anchors, with comfort and smoothness resolved strictly in their null space.**
+**Planner V2 — an explicit task-hierarchy architecture, specifically the hybrid form (Option D):
+hard/high-priority constraints for currently-sounding contacts and persistent anchors, with
+comfort and smoothness resolved strictly in their null space — is ADOPTED as the long-term
+REFERENCE ARCHITECTURE.**
 
-Justification, from the investigations rather than novelty:
+**This is an architectural conclusion, not an implementation commitment or schedule.**
+Implementation timing will be reconsidered only after the optimizer migration and its validation
+are complete and external human-motion validation is available, at which point a conscious
+engineering decision to begin V2 may be made. The current engineering priority is the optimizer
+migration, which is decoupled because it benefits V1, V2, and all future planners equally.
+
+Justification for adopting this architecture as the target, from the investigations rather than
+novelty:
 - **A (retain V1, fix only the optimizer) is ruled out by evidence.** The falsification showed
   the optimizer is approximately faithful and the drifted state is genuinely lower-cost (P3);
   the comfort study located the cause in the MODEL's lack of task/comfort separation (P4/P5).
@@ -205,14 +226,30 @@ Justification, from the investigations rather than novelty:
 **Caveat, stated plainly:** the CURRENT magnitude of the defect is small (one_shift win 2→1;
 anchor drift sub-centimetre, partly numerical). The justification for V2 is STRUCTURAL, not the
 size of today's symptom — the soft-sum formulation will bite harder as phrases add real anchors,
-barres, chords, and slides, where comfort moving the task becomes a first-order error. If the
-project's near-term scope stays at single notes and simple lines, V1 is adequate and V2 can wait;
-if it moves toward the richer phrase behaviour the roadmap targets, V2 (hierarchy/hybrid) is
-scientifically justified to design now.
+barres, chords, and slides, where comfort moving the task becomes a first-order error. This is
+why V2 is adopted as the reference architecture now (so future planner work targets it) while V1
+stays frozen and adequate for the current single-note / simple-line scope — the adoption fixes
+the DIRECTION, not the timing.
 
 **One evidence gap that should run in parallel regardless of choice:** an external human-motion
 validation set. Without it, "realistic" remains judged against single-labeller references, which
-bounds how strongly any V2 can be validated for believability.
+bounds how strongly any V2 can be validated for believability. This gap is one of the explicit
+preconditions above for reconsidering V2 implementation timing.
 
-STOP — design document only. No implementation, no migration, no planner/optimizer/objective
-change. For architectural review.
+## 10. Status of the tracks and foundational references
+Planner V2 is the frozen reference design. The optimizer migration proceeds independently as the
+active engineering track (it benefits V1, V2, and all future planners); the two are
+intentionally not merged. Future work should REFERENCE the following foundational documents
+rather than re-deriving their conclusions:
+- Benchmark design — `docs/PHRASE_MOTION_BENCHMARK.md`, `..._V2.md`, `..._REVIEW.md`;
+  harness/roadmap `..._HARNESS.md`, `..._ROADMAP.md`; per-milestone `tools/handrig/benchmark/FINDINGS_M0..M8.md`.
+- Trajectory-optimization investigation — `tools/handrig/benchmark/FINDINGS_M7.md` +
+  `FINDINGS_ABLATION_RESIST.md`.
+- Optimizer audit + falsification — `tools/handrig/benchmark/FINDINGS_ANCHOR_MECHANISM.md`,
+  `FINDINGS_ANCHOR_FALSIFY.md`.
+- Comfort-model investigation — `tools/handrig/benchmark/FINDINGS_COMFORT_MODEL.md`.
+- Task-relevance literature review — `tools/handrig/benchmark/FINDINGS_TASK_RELEVANCE_LITERATURE.md`.
+- Planner V2 architecture — this document.
+
+STOP — reference-architecture design document. No implementation, no migration, no
+planner/optimizer/objective change. Engineering returns to the optimizer-migration roadmap.
