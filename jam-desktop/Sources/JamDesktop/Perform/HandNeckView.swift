@@ -100,8 +100,17 @@ struct HandNeckView: View {
     // smootherstep: zero 1st AND 2nd derivative at both ends — no jerk.
     private func easeIO(_ x: Double) -> Double { let c = min(1, max(0, x)); return c*c*c*(c*(c*6-15)+10) }
 
+    /// On-board rest spot for an UNUSED finger — hovering near the chord's fret
+    /// cluster, never fret 0 (which projects off-screen past the nut).
+    private func anchorFret(_ idx: Int) -> Double {
+        guard idx >= 0, idx < fings.count else { return 2 }
+        let fs = fings[idx].map { Double($0.fret) }
+        return fs.isEmpty ? 2 : max(1, fs.reduce(0, +) / Double(fs.count))
+    }
+    private func restString(_ fi: Int) -> Double { 1.4 + Double(fi - 1) * 0.7 }
+
     private func sample(_ fi: Int, _ t: Double) -> FState {
-        guard !chords.isEmpty else { return FState(s: 2.5, f: 0, press: 0, moving: false, arrive: 0) }
+        guard !chords.isEmpty else { return FState(s: restString(fi), f: 2, press: 0, moving: false, arrive: 0) }
         let i = activeIndex(t)
         let cur = contact(fi, i)
         let j = min(i + 1, chords.count - 1)
@@ -110,6 +119,7 @@ struct HandNeckView: View {
         // chord (short chords stay legible). Fingers prepare into the next chord.
         let dur = chords[i].end - chords[i].start
         let trans = min(0.34, max(0.12, dur * 0.5))
+        let restF = anchorFret(i), restS = restString(fi)
         // arrival pulse: this finger newly pressing at chord i's start
         var arrive = 0.0
         if let c = cur {
@@ -121,13 +131,15 @@ struct HandNeckView: View {
         }
         if j == i || t < boundary - trans {           // holding
             if let c = cur { return FState(s: Double(c.string), f: Double(c.fret), press: 1, moving: false, arrive: arrive) }
-            return FState(s: 2.5, f: 0, press: 0, moving: false, arrive: 0)
+            return FState(s: restS, f: restF, press: 0, moving: false, arrive: 0)   // parked on-board
         }
         // transition into the next chord
         let nxt = contact(fi, j)
         let k = easeIO(min(1, max(0, (t - (boundary - trans)) / trans)))
-        let fromS = Double(cur?.string ?? nxt?.string ?? 2), fromF = Double(cur?.fret ?? nxt?.fret ?? 0)
-        let toS = Double(nxt?.string ?? cur?.string ?? 2), toF = Double(nxt?.fret ?? cur?.fret ?? 0)
+        let fromS = cur.map { Double($0.string) } ?? nxt.map { Double($0.string) } ?? restS
+        let fromF = cur.map { Double($0.fret) } ?? nxt.map { Double($0.fret) } ?? restF
+        let toS = nxt.map { Double($0.string) } ?? cur.map { Double($0.string) } ?? restS
+        let toF = nxt.map { Double($0.fret) } ?? cur.map { Double($0.fret) } ?? restF
         let press = (cur != nil ? 1.0 : 0.0) * (1 - k) + (nxt != nil ? 1.0 : 0.0) * k
         return FState(s: fromS + (toS-fromS)*k, f: fromF + (toF-fromF)*k, press: press, moving: true, arrive: 0)
     }
@@ -143,11 +155,10 @@ struct HandNeckView: View {
         func sy(_ s: Double) -> CGFloat { top + boardH * CGFloat(s / 5.0) }
 
         // fretboard
-        var slab = Path(roundedRect: CGRect(x: left-4, y: top-14, width: (right-left)+16, height: boardH+28), cornerRadius: 8)
+        let slab = Path(roundedRect: CGRect(x: left-4, y: top-14, width: (right-left)+16, height: boardH+28), cornerRadius: 8)
         ctx.fill(slab, with: .linearGradient(Gradient(colors: [
             Color(red:0.235,green:0.168,blue:0.128), Color(red:0.16,green:0.108,blue:0.078),
             Color(red:0.12,green:0.075,blue:0.055)]), startPoint: CGPoint(x:0,y:top-14), endPoint: CGPoint(x:0,y:bot+14)))
-        _ = slab
         // inlays
         for f in [3,5,7,9,12] where f <= maxFret {
             let x = (fx(Double(f)) + fx(Double(f-1))) / 2
