@@ -162,9 +162,92 @@ class TrajoptPlanner(Planner):
                           self.name, solver.version())
 
 
+class ResistTrajoptPlanner(TrajoptPlanner):
+    """ABLATION of TrajoptPlanner: resist-only root movement (one mechanism
+    changed, nothing else).
+
+    Original trajopt's root term Sum ||r_i - r_{i-1}||^2 is translation-
+    INVARIANT, so the whole rigid chain drifts, at zero root cost, toward the
+    per-knot comfort optimum inside a CENTROID-centred bounds box — an implicit
+    'move toward the geometrically preferred position' that relocates the hand
+    even when the current position is already feasible (the string_crossing /
+    sustained_anchor regressions).
+
+    Resist-only removes that. The absolute position is anchored to the
+    ESTABLISHED incumbent r_est (the naive root at moment 0 — where the hand
+    already is), via a displacement penalty, and the centroid is dropped from
+    the bounds/seed entirely:
+
+        J = Sum_i E(s_i, C_i)
+          + W_ROOT [ ||r_0 - r_est||^2 + Sum_{i>=1} ||r_i - r_{i-1}||^2 ]
+          + W_SMOOTH Sum_{i>=1} ||q_i - q_{i-1}||^2
+
+    Staying at the established position costs 0; any root movement costs > 0; the
+    contact term in E forces motion only when a note is out of reach. There is NO
+    preferred root location — only inertia against displacement. Same weights as
+    trajopt (W_ROOT=300, W_SMOOTH=1.5); NOT retuned.
+    """
+    name = "trajopt_resist"
+
+    def plan(self, phrase, references, solver, config):
+        cfg = config or {}
+        moments = group_moments(phrase.events)
+        specs_per = [[dict(string=e.string, fret=e.fret, finger=e.finger,
+                           articulation=e.articulation) for e in evs]
+                     for _, evs in moments]
+        N = len(moments)
+
+        naive = NaivePlanner().plan(phrase, references, solver, cfg)
+        init = [np.asarray(k.mpfb_state, float) for k in naive.knots]
+        S = init[0].shape[0]
+
+        if N == 1:
+            k = naive.knots[0]
+            k.meta["planner_note"] = "single moment; trajopt_resist == naive"
+            return Trajectory(phrase.id, naive.knots, naive.contact_schedule,
+                              self.name, solver.version())
+
+        # Established incumbent = the hand's position at moment 0 (naive root_0).
+        # Bounds are centred on it (NOT the centroid), padded wide enough to keep
+        # every necessary shift reachable, so the box encodes no preference.
+        r_est = solver.root_of(init[0])
+        maxd = max(float(np.linalg.norm(solver.root_of(s) - r_est)) for s in init)
+        pad = max(0.15, maxd + 0.05)
+        los, his = zip(*[solver.knot_bounds(r_est, root_pad=pad) for _ in range(N)])
+        lo = np.concatenate(los); hi = np.concatenate(his)
+        x0 = np.clip(np.concatenate(init), lo, hi)
+
+        def objective(x):
+            states = [x[i*S:(i+1)*S] for i in range(N)]
+            total = sum(solver.evaluate_state(states[i], specs_per[i]) for i in range(N))
+            # anchor absolute position to the established incumbent (inertia)
+            dr0 = states[0][:3] - r_est
+            total += self.W_ROOT * float(dr0 @ dr0)
+            for i in range(1, N):
+                dr = states[i][:3] - states[i-1][:3]
+                dq = states[i][6:] - states[i-1][6:]
+                total += self.W_ROOT * float(dr @ dr)
+                total += self.W_SMOOTH * float(dq @ dq)
+            return total
+
+        res = minimize(objective, x0, method="L-BFGS-B", bounds=list(zip(lo, hi)),
+                       options=dict(maxiter=cfg.get("maxiter", 600), ftol=1e-9))
+        xopt = res.x
+        knots = []
+        for i, (t, _) in enumerate(moments):
+            state = xopt[i*S:(i+1)*S]
+            cmm = solver.contact_error_mm(state.tolist(), specs_per[i])
+            knots.append(Knot(t=t, mpfb_state=state.tolist(),
+                              meta=dict(feasible=bool(cmm <= 6.0), contact_mm=round(cmm, 3),
+                                        contacts=specs_per[i])))
+        return Trajectory(phrase.id, knots, naive.contact_schedule,
+                          self.name, solver.version())
+
+
 PLANNERS = {NaivePlanner.name: NaivePlanner,
             RecenterPlanner.name: RecenterPlanner,
-            TrajoptPlanner.name: TrajoptPlanner}
+            TrajoptPlanner.name: TrajoptPlanner,
+            ResistTrajoptPlanner.name: ResistTrajoptPlanner}
 
 
 def get_planner(name):
