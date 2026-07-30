@@ -21,25 +21,20 @@ import ToneForgeEngine
 struct FingerContact: Equatable { let finger: Int; let string: Int; let fret: Int }
 
 enum HandFingering {
-    /// Fretted dots -> finger numbers. Barre fret -> finger 1 across its span;
-    /// remaining fretted notes get 2,3,4 by ascending fret then string. Open /
-    /// muted strings carry no finger. Deterministic; not claimed optimal.
+    /// Fretted dots -> finger numbers: distinct fingers 1..4 by ascending fret
+    /// then string. Open / muted strings carry no finger. Deliberately the
+    /// simplest deterministic mapping — NOT solving pedagogy.
+    ///
+    /// Note: we do NOT use ChordDiagram.barre here. That flag is a cosmetic
+    /// diagram heuristic that fires whenever >=3 notes share the lowest fret —
+    /// e.g. A major (D/G/B all at fret 2), which is three fingers, not a barre.
+    /// Limitation (recorded): true barre chords and chords with >4 fretted notes
+    /// get an approximate mapping; acceptable for validating the visualization.
     static func contacts(for d: ChordDiagram) -> [FingerContact] {
         let dots = d.dots.sorted { $0.fret != $1.fret ? $0.fret < $1.fret : $0.string < $1.string }
         var out: [FingerContact] = []
-        if let barre = d.barre {
-            var next = 2
-            for dot in dots {
-                if dot.fret == barre.fret {
-                    out.append(FingerContact(finger: 1, string: dot.string, fret: dot.fret))
-                } else {
-                    out.append(FingerContact(finger: min(4, next), string: dot.string, fret: dot.fret)); next += 1
-                }
-            }
-        } else {
-            var f = 1
-            for dot in dots { out.append(FingerContact(finger: min(4, f), string: dot.string, fret: dot.fret)); f += 1 }
-        }
+        var f = 1
+        for dot in dots { out.append(FingerContact(finger: min(4, f), string: dot.string, fret: dot.fret)); f += 1 }
         return out
     }
 }
