@@ -14,15 +14,16 @@ import SwiftUI
 import JamDesktopCore
 import ToneForgeEngine
 
+enum PerfViewMode: Hashable { case hand, tab, both }
+
 struct PerformView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var session: SessionController
 
     @State private var tabLane = TabLaneModel()
     @State private var toneCardDismissed = false
-    /// Perform-tab view mode for the current chord: its DIAGRAM or its
-    /// fretting-HAND pose. A pure view swap over the same chord state.
-    @State private var showHand = false
+    /// Perform visualization: Hand (default), TAB, or Both.
+    @State private var perfView: PerfViewMode = .hand
 
     private let displayTimer = Timer.publish(
         every: 1.0 / 30.0, on: .main, in: .common
@@ -135,61 +136,58 @@ struct PerformView: View {
     }
 
     /// Current-chord diagram beside the scrolling lead tab lane.
+    /// Perform visualization surface: Hand (default), TAB, or Both.
     @ViewBuilder
     private func diagramAndTabRow(ribbon: ChordRibbonModel) -> some View {
-        let symbol = ribbon.currentChord(
-            at: session.transport.positionSeconds)?.symbol
-        if !tabLane.notes.isEmpty || symbol != nil {
-            HStack(alignment: .center, spacing: 24) {
-                if let symbol {
-                    chordOrHandColumn(symbol: symbol)
-                }
-                if !tabLane.notes.isEmpty {
-                    VStack(alignment: .trailing, spacing: 4) {
-                        TabLaneView(
-                            model: tabLane,
-                            positionSeconds: session.transport.positionSeconds
-                        )
-                        Picker("Glyph", selection: $tabLane.glyph) {
-                            ForEach(TabLaneGlyph.allCases, id: \.self) {
-                                Text($0.rawValue.capitalized).tag($0)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 180)
-                    }
-                }
-            }
-            .frame(minHeight: 340)
-        }
-    }
-
-    /// Current-chord column: a Chord/Hand toggle over one shared slot.
-    /// "Chord" = fingering diagram; "Hand" = baked fretting-hand sprite for
-    /// the same chord symbol. No motion — advances chord-by-chord with the
-    /// ribbon, exactly like the diagram.
-    @ViewBuilder
-    private func chordOrHandColumn(symbol: String) -> some View {
-        VStack(spacing: 10) {
-            Picker("Current-chord view", selection: $showHand) {
-                Text("Chord").tag(false)
-                Text("Hand").tag(true)
+        let pos = session.transport.positionSeconds
+        let symbol = ribbon.currentChord(at: pos)?.symbol
+        VStack(spacing: 12) {
+            Picker("Visualization", selection: $perfView) {
+                Text("Hand").tag(PerfViewMode.hand)
+                Text("TAB").tag(PerfViewMode.tab)
+                Text("Both").tag(PerfViewMode.both)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 160)
+            .frame(width: 240)
 
-            Group {
-                if showHand {
-                    HandChordView(symbol: symbol)
-                } else if let diagram = ChordDiagram.make(symbol: symbol) {
-                    ChordDiagramView(diagram: diagram)
-                } else {
-                    Color.clear
+            switch perfView {
+            case .hand:
+                HandNeckView(chords: ribbon.chords, positionSeconds: pos)
+                    .frame(maxWidth: .infinity, minHeight: 300)
+            case .tab:
+                tabColumn(symbol: symbol)
+            case .both:
+                VStack(spacing: 14) {
+                    HandNeckView(chords: ribbon.chords, positionSeconds: pos)
+                        .frame(maxWidth: .infinity, minHeight: 230)
+                    if !tabLane.notes.isEmpty { tabLaneBlock() }
                 }
             }
-            .frame(width: 280, height: 340)
+        }
+        .frame(minHeight: 340)
+    }
+
+    /// TAB view: the current-chord diagram beside the scrolling lead lane
+    /// (the original Perform layout, kept available).
+    @ViewBuilder
+    private func tabColumn(symbol: String?) -> some View {
+        HStack(alignment: .center, spacing: 24) {
+            if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
+                ChordDiagramView(diagram: diagram).frame(width: 280, height: 340)
+            }
+            if !tabLane.notes.isEmpty { tabLaneBlock() }
+        }
+    }
+
+    @ViewBuilder
+    private func tabLaneBlock() -> some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            TabLaneView(model: tabLane, positionSeconds: session.transport.positionSeconds)
+            Picker("Glyph", selection: $tabLane.glyph) {
+                ForEach(TabLaneGlyph.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 180)
         }
     }
 
