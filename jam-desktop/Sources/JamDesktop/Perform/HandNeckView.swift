@@ -97,15 +97,19 @@ struct HandNeckView: View {
             if chords[m].start <= t { cand = m; lo = m + 1 } else { hi = m - 1 } }
         return cand
     }
-    private func easeIO(_ x: Double) -> Double { x < 0.5 ? 4*x*x*x : 1 - pow(-2*x+2, 3)/2 }
+    // smootherstep: zero 1st AND 2nd derivative at both ends — no jerk.
+    private func easeIO(_ x: Double) -> Double { let c = min(1, max(0, x)); return c*c*c*(c*(c*6-15)+10) }
 
     private func sample(_ fi: Int, _ t: Double) -> FState {
         guard !chords.isEmpty else { return FState(s: 2.5, f: 0, press: 0, moving: false, arrive: 0) }
         let i = activeIndex(t)
         let cur = contact(fi, i)
-        let trans = 0.22
         let j = min(i + 1, chords.count - 1)
         let boundary = chords[i].end
+        // tempo-aware transition: longer = smoother, but never more than half the
+        // chord (short chords stay legible). Fingers prepare into the next chord.
+        let dur = chords[i].end - chords[i].start
+        let trans = min(0.34, max(0.12, dur * 0.5))
         // arrival pulse: this finger newly pressing at chord i's start
         var arrive = 0.0
         if let c = cur {
