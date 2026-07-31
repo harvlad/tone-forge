@@ -92,6 +92,29 @@ struct HandNeckView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
+    /// Keep only path runs NOT covered by a front fill — kills double crease lines
+    /// where fingers overlap (port of the mobile renderer's `trimmed`).
+    private func trimmedPath(_ path: Path, hiddenBy fronts: [Path]) -> Path {
+        var out = Path(); var run: [CGPoint] = []
+        func flush() {
+            if run.count > 1 { out.move(to: run[0]); for p in run.dropFirst() { out.addLine(to: p) } }
+            run.removeAll()
+        }
+        path.forEach { el in
+            let p: CGPoint?
+            switch el {
+            case .move(let to), .line(let to): p = to
+            case .quadCurve(let to, _): p = to
+            case .curve(let to, _, _): p = to
+            case .closeSubpath: p = nil
+            }
+            guard let pt = p else { return }
+            if fronts.contains(where: { $0.contains(pt) }) { flush() } else { run.append(pt) }
+        }
+        flush()
+        return out
+    }
+
     // MARK: sample a finger's state at time t
     // sLo..sHi is the string SPAN a finger covers: equal for a normal fingertip,
     // a range for the index barre (finger 1). f is the (possibly fractional) fret.
@@ -231,7 +254,6 @@ struct HandNeckView: View {
         for fi in 1...4 { let w = 0.2 + 0.8*CGFloat(st[fi]!.press); sx += cx(st[fi]!.f)*w; sw += w }
         let baseX = sw > 0 ? sx/sw : (left+right)/2
         let kY = bot + 30            // knuckle row, just below the board (visible)
-        let baseY = bot + 54         // palm centre
         func kX(_ fi: Int) -> CGFloat { baseX + (CGFloat(fi) - 2.5) * 22 }
 
         // per-finger geometry shared by every on-neck layer (finger-tracked)
@@ -242,64 +264,42 @@ struct HandNeckView: View {
             return (cx(s.f), (yLo+yHi)/2, yLo, yHi, CGFloat(s.press), (s.sHi - s.sLo) > 0.5)
         }
 
-        // ANIMATED HAND (priority 3): the REAL baked MPFB render (HandSprites PNG),
-        // placed on the PHYSICAL neck via spriteRect so its fingertips land on the
-        // dots. The bundled sprite is a DARK bake, so recolour it to the light
-        // pose-sheet grey: fill grey masked by the hand's alpha, then add the sprite
-        // back with a lighten blend so its Freestyle outline + interior creases read
-        // over the grey. (A true match = re-baking the sprites light — Step 2.)
-        // Covers the 19 library chords; uncovered voicings → procedural below.
+        // ANIMATED HAND (priority 3): a real posed hand for ANY chord. Feed the dot
+        // positions to the analytic IK solver (HandPoseSolver — the same articulated
+        // method as the Blender rig, run live) as fingertip targets, so the fingers
+        // land on the dots whatever the chord — no per-chord baked asset. Rendered as
+        // palm + back-to-front finger capsules; ghosted so the neck stays hero and
+        // the dots read on top.
         if showHand {
-            let sym = currentSymbol(positionSeconds)
-            var drewLibrary = false
-            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
-               let img = HandPoseLibrary.spriteImage(for: sym) {
-                var xs: [CGFloat] = []
-                for fi in 1...4 { let g = geom(fi); if g.press > 0.5 || g.barre { xs.append(g.x) } }
-                let anchorX = xs.isEmpty ? (left + right) / 2 : xs.reduce(0, +) / CGFloat(xs.count)
-                if let rect = HandPoseLibrary.spriteRect(
-                    entry: entry, anchorX: anchorX, boardBottomY: bot,
-                    pxPerMM: pxPerMM, lifted: false), rect.width > 1, rect.height > 1 {
-                    var base = ctx; base.opacity = 0.9
-                    base.clipToLayer { m in m.draw(img, in: rect) }        // mask = hand alpha
-                    base.fill(Path(rect), with: .color(Color(red: 0.50, green: 0.52, blue: 0.60)))
-                    var det = ctx; det.blendMode = .plusLighter; det.opacity = 0.85
-                    det.draw(img, in: rect)                                // interior creases + outline
-                    drewLibrary = true
-                }
-            }
-            if !drewLibrary {
-            let skin = Color(red: 0.87, green: 0.67, blue: 0.53)
-            // palm slab — kept below the strings so it never hides the dots
-            let palm = Path(roundedRect: CGRect(x: kX(1)-22, y: kY-2,
-                        width: (kX(4)-kX(1))+44, height: (baseY+48)-(kY-2)), cornerRadius: 30)
-            ctx.fill(palm, with: .color(skin.opacity(0.22)))
-            ctx.stroke(palm, with: .color(skin.opacity(0.34)), lineWidth: 1.5)
-            // ALL four fingers: pressed fingers reach their dot, idle fingers rest
-            // on-board near the cluster — so the silhouette always reads as a hand.
+            var targets: [HandPoseSolver.Target] = []
             for fi in 1...4 {
                 let g = geom(fi)
-                let alpha = 0.18 + 0.14 * Double(g.press)
-                let mx = (kX(fi)+g.x)/2, my = (kY+g.yc)/2 - 16*g.press - abs(g.x-kX(fi))*0.05
-                var finger = Path()
-                finger.move(to: CGPoint(x: kX(fi), y: kY+6))
-                finger.addQuadCurve(to: CGPoint(x: g.x, y: g.yc), control: CGPoint(x: mx, y: my))
-                ctx.stroke(finger, with: .color(skin.opacity(alpha)), style: StrokeStyle(lineWidth: 22, lineCap: .round))
-                ctx.stroke(finger, with: .color(skin.opacity(alpha*0.6)), style: StrokeStyle(lineWidth: 11, lineCap: .round))
-                // knuckle bump where the finger meets the palm
-                ctx.fill(Path(ellipseIn: CGRect(x: kX(fi)-7, y: kY+2, width: 14, height: 14)),
-                         with: .color(skin.opacity(alpha + 0.05)))
-                // fingertip (a bar for the index barre)
-                if g.barre {
-                    let rB: CGFloat = 15
-                    ctx.fill(Path(roundedRect: CGRect(x: g.x-rB, y: g.yLo-rB, width: 2*rB, height: (g.yHi-g.yLo)+2*rB), cornerRadius: rB),
-                             with: .color(skin.opacity(alpha + 0.06)))
-                } else {
-                    let rT: CGFloat = 12 + 3*g.press
-                    ctx.fill(Path(ellipseIn: CGRect(x: g.x-rT, y: g.yc-rT, width: 2*rT, height: 2*rT)),
-                             with: .color(skin.opacity(alpha + 0.08)))
-                }
+                let pressing = g.press > 0.5 || g.barre
+                let pt = CGPoint(x: g.x, y: g.barre ? g.yLo : g.yc)   // barre tip = top string
+                targets.append(HandPoseSolver.Target(
+                    point: pt, zMM: pressing ? 0 : 12, press: pressing, barre: g.barre))
             }
+            let pose = HandPoseSolver.solve(targets: targets, neckBottom: bot, s: pxPerMM, lifted: false)
+            var hand = ctx; hand.opacity = 0.8
+            let skin = Color(red: 0.42, green: 0.44, blue: 0.52)
+            let rim = Color.white.opacity(0.5)
+            let rimStyle = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
+            var glow = hand; glow.addFilter(.shadow(color: .white.opacity(0.16), radius: 2.5))
+            let palm = HandPoseRender.palmPath(pose, canvasHeight: size.height, s: pxPerMM)
+            hand.fill(palm, with: .color(skin))
+            glow.stroke(palm, with: .color(rim), style: rimStyle)
+            // fingers back-to-front (lower-string tips draw in front)
+            let ordered = pose.fingers.sorted { a, b in
+                let ay = a.joints.last?.y ?? 0
+                let by = b.joints.last?.y ?? 0
+                return ay < by
+            }
+            let fills = ordered.map { HandPoseRender.fingerPath($0) }
+            for (i, chain) in ordered.enumerated() {
+                hand.fill(fills[i], with: .color(skin))
+                var rimPath = HandPoseRender.fingerPath(chain, from: 0.18, close: false)
+                if i + 1 < ordered.count { rimPath = trimmedPath(rimPath, hiddenBy: Array(fills[(i+1)...])) }
+                glow.stroke(rimPath, with: .color(rim), style: rimStyle)
             }
         }
 
