@@ -159,3 +159,111 @@ provider** — plugs straight into the SeparatorProvider interface (`api:audiosh
 blind-A/B-gated per regime on quality × cost. AudioShake's on-prem SDK is the best "licensed but
 self-hosted" fit. Parallel: probe becruily for a private commercial license (self-host path).
 Sources: music.ai/pricing, audioshake.ai, lalal.ai, HF becruily discussion #9.
+
+> **Post-script (superseded by the retrospective below).** This survey framed the remaining work
+> as *acquisition* — obtain a decorrelated model and route to it. Subsequent blind evaluation
+> (AudioShake, Milestones 3→5) showed that obtaining a decorrelated model is necessary but NOT
+> sufficient: it must also survive cross-regime confirmation. AudioShake was acquired, wired, and
+> still failed the gate. The recommendation to "add a provider" stands only for providers that
+> represent a genuinely new technical approach — see the final conclusion.
+
+---
+
+## Promotion Gates Matured During the Research
+
+One of the most valuable outcomes of this project was **not** discovering a better separator. It
+was discovering a **better standard for accepting one**. That methodological improvement is itself
+a significant engineering result — arguably more durable than any single model comparison, because
+it governs every future comparison.
+
+**How the standard evolved (stated honestly).**
+
+Early in the project the bar was low and the mood was optimistic:
+- small listening sets (often a single song, a handful of windows);
+- specialists that looked promising on those narrow sets;
+- genuine enthusiasm for routing and multi-model portfolios, on the assumption that a model which
+  clearly won a small blind test had earned a place.
+
+At that stage a result like **7–1 on one or two songs looked convincing enough to justify
+adoption.** It was not.
+
+Later in the project the evaluation methodology itself became the object of engineering:
+- broader genre coverage (electric, acoustic, ambient, deathcore, synth-pop) chosen to span the
+  acoustic regimes Riley must actually support;
+- blind listening across those diverse regimes, loudness-neutralized so level could not cue;
+- explicit **confirmation passes** at **pre-registered** windows (not windows chosen after the
+  fact to flatter a model);
+- **promotion gates** that a candidate must clear before it can be selected in production.
+
+**The broader-confirmation stage repeatedly prevented false promotions.** Both **B1** and
+**AudioShake** looked strong on narrow datasets and then failed broader validation:
+- **B1** — synthetic F1 +0.072 and a distorted-verse blind win, then 7 stock / 1 B1 across the
+  diverse set (T2.2).
+- **AudioShake** — 7–1 on lithium + prism (M3), then 8 stock / 1 AudioShake / 1 equal on the
+  diverse set (M5), i.e. a wash overall.
+
+In both cases the methodology **correctly rejected the candidate.** The narrow win was real; it
+simply did not generalize, and the gate was what made that distinction visible before anything
+shipped.
+
+**The new promotion standard, stated explicitly:**
+
+> A separator is **not** promoted because it wins a benchmark or a small listening test. It is
+> promoted only after surviving **diverse, cross-regime blind evaluation without introducing
+> meaningful regressions.**
+
+The burden of proof shifted from:
+
+- ❌ *"Can this model beat Stock?"* (a narrow, easy-to-satisfy question)
+
+to:
+
+- ✅ *"Can this model **consistently** outperform Stock **without unacceptable regressions across
+  the full range of material** Riley must support?"*
+
+This is methodological progress, not merely a separator-evaluation detail. It is the standard every
+future candidate is now measured against, and it is encoded in practice by the
+`confidence` / `regimes_strong` / `regimes_weak` fields on `ProviderCapabilities` and by the
+requirement that `regimes_strong` be populated only from pre-registered cross-regime blind wins.
+
+---
+
+## Final status
+
+**Research conclusions:**
+- Portfolio / multi-specialist architecture investigated.
+- `SeparatorProvider` provider abstraction designed and implemented.
+- Multiple specialist candidates evaluated (B1 fine-tune, BS-RoFormer-SW, AudioShake API).
+- Promotion methodology established (diverse cross-regime blind confirmation; no-regression bar).
+- **No production-worthy complementary separator identified.**
+
+**Production state:**
+- **`local:htdemucs_6s` remains the production default.**
+- The **`SeparatorProvider` architecture remains in place** — the socket is ready for any future
+  model, at zero cost above the interface.
+- **AudioShake remains available only as a manually selectable comparison provider** — wired,
+  credential-gated, never auto-selected.
+- **Routing remains intentionally disabled** because no candidate demonstrated reliable
+  cross-regime superiority.
+
+---
+
+## Final conclusion
+
+The project **successfully reduced uncertainty.** It demonstrated that the limiting factor is **no
+longer architecture or orchestration** — the interface, the routing seam, the blind-A/B harness,
+the win-predictor features, and the promotion gate all exist and work. The limiting factor is the
+**availability of a genuinely complementary, production-safe separator**, and no such model
+currently exists.
+
+Until one does, the correct engineering decision is to **preserve the abstraction, keep the default
+implementation, and stop repeatedly evaluating providers that do not represent a genuinely new
+technical approach.** Every provider tested so far (a Demucs fine-tune, a RoFormer, and a
+proprietary API) either correlates with Stock or fails cross-regime confirmation; evaluating
+another provider built on the same underlying assumptions would only re-derive the same result at
+additional cost.
+
+**The separator research is therefore considered complete and archived.** Future work should resume
+only when **new technology materially changes the solution space** — a fundamentally different
+separation approach, or a clean-licensed model with demonstrably different failure modes — rather
+than simply introducing another provider built on the same assumptions.
