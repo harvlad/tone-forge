@@ -199,7 +199,7 @@ class MPFBSolver:
     def solve(self, contact_list, prev=None, restarts=5):
         t0 = time.time()
         # Seed: place middle-MCP below the pressed cluster (metres).
-        press = [(c.string, c.fret) for c in contact_list]
+        press = [(getattr(c, "string", getattr(c, "lo_string", 0)), c.fret) for c in contact_list]
         cx = np.mean([G.finger_x(fr) for _, fr in press]) / M2MM
         cz = np.mean([G.string_z(s, abs(G.finger_x(fr))) for s, fr in press]) / M2MM
         # Solve root_loc so the middle-MCP world ~ (cx, small, cz-below).

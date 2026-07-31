@@ -16,11 +16,16 @@
 # BEHIND the neck (y>0) and is occluded.
 
 import bpy, json, math, sys
-from mathutils import Vector, Matrix
+from mathutils import Vector, Matrix, Euler
 
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 OUT = argv[0] if len(argv) > 0 else "/tmp/mpfbrig"
 CHORDS_PATH = argv[1] if len(argv) > 1 else "chords.json"
+# Optional pre-solved states (from solver/solve_chords.py). When given, each
+# chord is POSED by applying its solved joint angles (natural comfort/strain
+# solver) instead of this file's naive Blender IK — then exported as usual.
+STATES_PATH = argv[2] if len(argv) > 2 else None
+STATES = json.load(open(STATES_PATH)) if STATES_PATH else {}
 
 SCALE_LEN = 0.648
 NECK_THICK = 0.021
@@ -247,6 +252,31 @@ def pose_chord(arm, targets, chord):
         else:
             con.influence = 0.0
 
+def apply_state(arm, state, f):
+    """Apply a pre-solved MPFB state vector (joint angles + root xform) to the
+    rig 1:1 (like mpfb_render.apply) and keyframe it at frame f. Bypasses the
+    naive IK entirely — the pose is whatever the comfort/strain solver produced."""
+    v = state["state"]
+    fret_rot = fretting_rotation(arm)
+    M = fret_rot @ Euler(tuple(v[3:6]), "XYZ").to_matrix().to_4x4()
+    arm.location = Vector(v[0:3])
+    arm.rotation_euler = M.to_euler()
+    arm.keyframe_insert("location", frame=f)
+    arm.keyframe_insert("rotation_euler", frame=f)
+    META_BONE = ["metacarpal1.L", "metacarpal2.L", "metacarpal3.L", "metacarpal4.L"]
+    meta = v[26:30] if len(v) >= 30 else [0, 0, 0, 0]
+    def setkey(bn, e):
+        pb = arm.pose.bones[bn]; pb.rotation_mode = "XYZ"
+        pb.rotation_euler = Euler(e, "XYZ"); pb.keyframe_insert("rotation_euler", frame=f)
+    for i in range(4):
+        mcpF, mcpA, pip, dip = v[6 + i*4:6 + i*4 + 4]
+        d = FINGER_BONE[i + 1]
+        setkey(META_BONE[i], (meta[i], 0, 0))
+        setkey(f"{d}-1.L", (mcpF, 0, mcpA)); setkey(f"{d}-2.L", (pip, 0, 0)); setkey(f"{d}-3.L", (dip, 0, 0))
+    mcpF, mcpA, ip, _ = v[22:26]
+    setkey("finger1-1.L", (mcpF, 0, mcpA)); setkey("finger1-2.L", (ip, 0, 0)); setkey("finger1-3.L", (ip * 0.6, 0, 0))
+
+
 # ------------------------------------------------------------- render
 def setup_render(basemesh):
     scene = bpy.context.scene
@@ -386,24 +416,35 @@ def main():
     for chord in order:
         f = frame_of[chord]
         bpy.context.scene.frame_set(f)
-        # Adaptive convergence: residual tip error means the knuckle
-        # row sits too deep for this chord's reach — raise the hand by
-        # the worst error and re-solve (keyframes rewritten in place;
-        # keyframe BEFORE evaluating or curves override the pose).
-        lift = 0.0
-        for _ in range(4):
-            place_hand(arm, chord, ROT, lift=lift)
-            pose_chord(arm, targets, chord)
+        if chord in STATES:
+            # Natural pose from the comfort/strain solver — disable IK, apply the
+            # solved joint angles, keyframe. No adaptive re-solve needed.
+            for fi in (1, 2, 3, 4):
+                arm.pose.bones[f"{FINGER_BONE[fi]}-3.L"].constraints[-1].influence = 0.0
+            apply_state(arm, STATES[chord], f)
             keyframe_all(f)
             bpy.context.scene.frame_set(f)
             bpy.context.view_layer.update()
-            errs = tip_errors(chord)
-            worst = max(errs.values()) if errs else 0.0
-            if worst < 0.0015:
-                break
-            lift += worst * 0.85
-        for fi, err in tip_errors(chord).items():
-            print(f"TIPERR {chord} f{fi}: {err*1000:.1f}mm")
+            print(f"STATE {chord} applied")
+        else:
+            # Adaptive convergence: residual tip error means the knuckle
+            # row sits too deep for this chord's reach — raise the hand by
+            # the worst error and re-solve (keyframes rewritten in place;
+            # keyframe BEFORE evaluating or curves override the pose).
+            lift = 0.0
+            for _ in range(4):
+                place_hand(arm, chord, ROT, lift=lift)
+                pose_chord(arm, targets, chord)
+                keyframe_all(f)
+                bpy.context.scene.frame_set(f)
+                bpy.context.view_layer.update()
+                errs = tip_errors(chord)
+                worst = max(errs.values()) if errs else 0.0
+                if worst < 0.0015:
+                    break
+                lift += worst * 0.85
+            for fi, err in tip_errors(chord).items():
+                print(f"TIPERR {chord} f{fi}: {err*1000:.1f}mm")
 
         show_dots(chord, False)
         show_tails(False)
