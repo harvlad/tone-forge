@@ -19,6 +19,9 @@ struct StaticHandPoseView: View {
         Group {
             if let symbol, let image = HandPoseLibrary.spriteImage(for: symbol) {
                 image.resizable().scaledToFit()
+                    .padding(10)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.9)))
                     .accessibilityLabel(Text("Reference hand shape for \(symbol)"))
             } else {
                 VStack(spacing: 8) {

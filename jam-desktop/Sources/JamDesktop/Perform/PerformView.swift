@@ -14,12 +14,12 @@ import SwiftUI
 import JamDesktopCore
 import ToneForgeEngine
 
-/// The learning stack: three layers that teach different things, shown together
-/// and synchronized to the current chord — motion (how the hand moves),
-/// orientation (what it should look like now), precision (exact frets/strings).
-enum PerfLayer: String, CaseIterable, Hashable {
-    case motion = "Motion", pose = "Pose", chord = "Chord", tab = "TAB"
-}
+/// Perform = four INDEPENDENT learning layers over one shared chord/playhead:
+///   Motion — the animated hand on the neck (how the hand moves)
+///   Pose   — a static rendered hand pose (what the hand should look like)
+///   Chord  — the chord diagram (exact frets/strings)
+///   TAB    — tablature
+/// Toggled independently; the neck is always the hero. No layer knows another.
 private let jamAccent = Color(red: 0.545, green: 0.427, blue: 1.0)
 
 struct PerformView: View {
@@ -28,10 +28,13 @@ struct PerformView: View {
 
     @State private var tabLane = TabLaneModel()
     @State private var toneCardDismissed = false
-    /// Perform visualization: Hand (default), TAB, or Both.
-    // All layers on by default — beginners live on Pose, intermediates on Motion,
-    // advanced on Chord; anyone can hide layers they don't want.
-    @State private var layers: Set<PerfLayer> = [.motion, .pose, .chord, .tab]
+    // Four independent learning layers — persisted per user, all on by default;
+    // at least one must always stay on. No layer knows whether another is on.
+    @AppStorage("perf.layer.motion") private var showMotion = true   // animated hand on the neck
+    @AppStorage("perf.layer.pose") private var showPose = true       // static rendered pose
+    @AppStorage("perf.layer.chord") private var showChord = true     // chord diagram
+    @AppStorage("perf.layer.tab") private var showTab = true         // tablature
+    private var layersOn: Int { (showMotion ?1:0) + (showPose ?1:0) + (showChord ?1:0) + (showTab ?1:0) }
 
     private let displayTimer = Timer.publish(
         every: 1.0 / 30.0, on: .main, in: .common
@@ -61,7 +64,7 @@ struct PerformView: View {
 
     private func content(for loaded: LoadedSession) -> some View {
         HStack(spacing: 0) {
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 NowPlayingHeaderView(meta: loaded.bundle.meta)
 
                 if let tone = model.sidecar?.tone, !toneCardDismissed {
@@ -74,10 +77,17 @@ struct PerformView: View {
                 }
 
                 if let ribbon = session.ribbon {
-                    // Primary: chord label + diagram
-                    chordLabelRow(ribbon: ribbon)
-                    diagramAndTabRow(ribbon: ribbon)
-                        .frame(maxHeight: .infinity)
+                    // Performance toolbar (independent layer toggles)
+                    performanceToolbar
+
+                    // Neck / fretboard — the hero, most vertical space
+                    HandNeckView(chords: ribbon.chords,
+                                 positionSeconds: session.transport.positionSeconds,
+                                 showContacts: showMotion)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    // Lower reference row — Pose / Chord / TAB (Motion lives on the neck)
+                    lowerPanel(ribbon: ribbon)
 
                     // Secondary: ribbon strip + section strip
                     ChordRibbonStripView(
@@ -117,104 +127,90 @@ struct PerformView: View {
         }
     }
 
-    /// Big current/next chord labels (Am → Em).
-    private func chordLabelRow(ribbon: ChordRibbonModel) -> some View {
-        let window = ribbon.window(at: session.transport.positionSeconds, count: 2)
-        let current = ribbon.currentChord(at: session.transport.positionSeconds)
-        let next: ChordEvent? = {
-            guard let first = window.first else { return nil }
-            if current != nil {
-                return window.count > 1 ? window[1] : nil
+    // MARK: performance toolbar (independent layer toggles)
+    private var performanceToolbar: some View {
+        HStack(spacing: 10) {
+            Text("Display Layers")
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+            layerPill("Motion", systemImage: "waveform", on: showMotion) {
+                if !(showMotion && layersOn == 1) { showMotion.toggle() }
             }
-            return first
-        }()
-
-        return HStack(alignment: .firstTextBaseline, spacing: 24) {
-            Text(current?.symbol ?? "—")
-                .font(.system(size: 72, weight: .bold, design: .rounded))
-                .monospacedDigit()
-            if let next {
-                Text("→ \(next.symbol)")
-                    .font(.system(size: 32, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
+            layerPill("Pose", systemImage: "hand.raised.fill", on: showPose) {
+                if !(showPose && layersOn == 1) { showPose.toggle() }
             }
+            layerPill("Chord", systemImage: "tablecells", on: showChord) {
+                if !(showChord && layersOn == 1) { showChord.toggle() }
+            }
+            layerPill("TAB", systemImage: "music.note.list", on: showTab) {
+                if !(showTab && layersOn == 1) { showTab.toggle() }
+            }
+            Spacer()
+            Button { resetLayout() } label: {
+                Label("Reset Layout", systemImage: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity)
-        .animation(nil, value: session.transport.positionSeconds)
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.08)))
     }
 
-    /// Current-chord diagram beside the scrolling lead tab lane.
-    /// Perform visualization surface: Hand (default), TAB, or Both.
-    /// The synchronized learning stack: motion on top, then a row of orientation
-    /// (static pose) + precision (chord diagram) + the lead TAB lane — all driven
-    /// by the same current chord / playhead. Layers are toggled, not exclusive.
+    private func layerPill(_ title: String, systemImage: String, on: Bool,
+                           _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage).font(.system(size: 12, weight: .semibold))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 13).padding(.vertical, 7)
+        .background(on ? jamAccent : Color.gray.opacity(0.18))
+        .foregroundStyle(on ? Color.white : Color.secondary)
+        .clipShape(Capsule())
+    }
+
+    private func resetLayout() { showMotion = true; showPose = true; showChord = true; showTab = true }
+
+    // MARK: lower reference row — the ON subset of {Pose, Chord, TAB}, split evenly.
+    // Motion is the neck above, not a lower panel; if no lower layer is on the row
+    // vanishes and the neck takes maximum height.
     @ViewBuilder
-    private func diagramAndTabRow(ribbon: ChordRibbonModel) -> some View {
-        let pos = session.transport.positionSeconds
-        let symbol = ribbon.currentChord(at: pos)?.symbol
-        VStack(spacing: 14) {
-            layerToolbar
-
-            if layers.contains(.motion) {
-                HandNeckView(chords: ribbon.chords, positionSeconds: pos)
-                    .frame(maxWidth: .infinity, minHeight: 220)
-            }
-
-            let showRow = layers.contains(.pose) || layers.contains(.chord)
-                || (layers.contains(.tab) && !tabLane.notes.isEmpty)
-            if showRow {
-                HStack(alignment: .top, spacing: 16) {
-                    if layers.contains(.pose) {
-                        stackCard(title: "SHAPE") { StaticHandPoseView(symbol: symbol) }
-                            .frame(width: 210, height: 232)
+    private func lowerPanel(ribbon: ChordRibbonModel) -> some View {
+        let symbol = ribbon.currentChord(at: session.transport.positionSeconds)?.symbol
+        if showPose || showChord || showTab {
+            HStack(alignment: .top, spacing: 16) {
+                if showPose {
+                    panelCard("Hand") { StaticHandPoseView(symbol: symbol) }
+                }
+                if showChord {
+                    panelCard("Chord Diagram") {
+                        if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
+                            ChordDiagramView(diagram: diagram)
+                        } else { Color.clear }
                     }
-                    if layers.contains(.chord) {
-                        stackCard(title: "FRETS") {
-                            if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
-                                ChordDiagramView(diagram: diagram)
-                            } else { Color.clear }
-                        }
-                        .frame(width: 210, height: 232)
-                    }
-                    if layers.contains(.tab) && !tabLane.notes.isEmpty {
-                        tabLaneBlock().frame(maxWidth: .infinity)
+                }
+                if showTab {
+                    panelCard("TAB") {
+                        if !tabLane.notes.isEmpty { tabLaneBlock() } else { Color.clear }
                     }
                 }
             }
-        }
-        .frame(minHeight: 320)
-    }
-
-    /// Layer toggles — Motion · Pose · Chord · TAB. All on by default.
-    private var layerToolbar: some View {
-        HStack(spacing: 8) {
-            ForEach(PerfLayer.allCases, id: \.self) { layer in
-                let on = layers.contains(layer)
-                Button(layer.rawValue) {
-                    if on { layers.remove(layer) } else { layers.insert(layer) }
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .semibold))
-                .padding(.horizontal, 13).padding(.vertical, 6)
-                .background(on ? jamAccent : Color.gray.opacity(0.18))
-                .foregroundStyle(on ? Color.white : Color.secondary)
-                .clipShape(Capsule())
-            }
+            .frame(height: 300)   // large — references read as a teacher's held-up hand
         }
     }
 
-    /// A titled reference card for a static stack layer.
+    /// A titled panel card (header dot + title) for a lower-panel layer.
     @ViewBuilder
-    private func stackCard<Content: View>(title: String,
+    private func panelCard<Content: View>(_ title: String,
                                           @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle().fill(jamAccent).frame(width: 8, height: 8)
+                Text(title).font(.system(size: 13, weight: .semibold))
+            }
             content().frame(maxWidth: .infinity, maxHeight: .infinity)
-            Text(title).font(.system(size: 10, design: .monospaced)).tracking(1.5)
-                .foregroundStyle(.tertiary)
         }
-        .padding(10)
-        .background(Color.gray.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.06)))
     }
 
     @ViewBuilder

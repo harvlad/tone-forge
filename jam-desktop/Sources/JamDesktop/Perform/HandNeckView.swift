@@ -55,14 +55,16 @@ enum HandFingering {
 struct HandNeckView: View {
     let chords: [ChordEvent]
     let positionSeconds: Double
+    var showContacts: Bool = true       // the Contacts layer: dots/stems/barre over the neck
 
     // fingering per chord index, computed once per chord list
     private let shapes: [HandShape]
     private let maxFret: Int
 
-    init(chords: [ChordEvent], positionSeconds: Double) {
+    init(chords: [ChordEvent], positionSeconds: Double, showContacts: Bool = true) {
         self.chords = chords
         self.positionSeconds = positionSeconds
+        self.showContacts = showContacts
         let sh = chords.map { ev -> HandShape in
             guard let d = ChordDiagram.make(symbol: ev.symbol) else { return HandShape(barre: nil, fingers: []) }
             return HandFingering.shape(for: d)
@@ -195,6 +197,10 @@ struct HandNeckView: View {
                        startPoint: CGPoint(x:0,y:y-2), endPoint: CGPoint(x:0,y:y+2)),
                        lineWidth: wds[s])
         }
+
+        // Contacts layer: the moving fingers/dots/barre over the neck. When off,
+        // the neck stays as a calm bare fretboard (still the hero surface).
+        guard showContacts else { return }
 
         // states
         var st: [Int: FState] = [:]
