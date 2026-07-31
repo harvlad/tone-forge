@@ -280,7 +280,7 @@ def setup_render(basemesh):
     nt.nodes.clear()
     out = nt.nodes.new("ShaderNodeOutputMaterial")
     em = nt.nodes.new("ShaderNodeEmission")
-    em.inputs["Color"].default_value = (0.012, 0.012, 0.02, 1)
+    em.inputs["Color"].default_value = (0.13, 0.135, 0.17, 1)   # light pose-sheet grey (was 0.012 dark)
     nt.links.new(em.outputs[0], out.inputs[0])
     basemesh.data.materials.clear()
     basemesh.data.materials.append(hmat)

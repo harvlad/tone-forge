@@ -264,13 +264,28 @@ struct HandNeckView: View {
             return (cx(s.f), (yLo+yHi)/2, yLo, yHi, CGFloat(s.press), (s.sHi - s.sLo) > 0.5)
         }
 
-        // ANIMATED HAND (priority 3): a real posed hand for ANY chord. Feed the dot
-        // positions to the analytic IK solver (HandPoseSolver — the same articulated
-        // method as the Blender rig, run live) as fingertip targets, so the fingers
-        // land on the dots whatever the chord — no per-chord baked asset. Rendered as
-        // palm + back-to-front finger capsules; ghosted so the neck stays hero and
-        // the dots read on top.
+        // ANIMATED HAND (priority 3). PREFER the real baked MPFB mesh render for a
+        // covered chord (light sprite, placed on the physical neck via spriteRect so
+        // its fingertips land on the dots). For any chord WITHOUT a baked sprite, fall
+        // back to the live IK solver (HandPoseSolver) posed to the dots — general,
+        // any chord. Ghosted so the neck stays hero and the dots read on top.
         if showHand {
+            let sym = currentSymbol(positionSeconds)
+            var drewLibrary = false
+            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
+               let img = HandPoseLibrary.spriteImage(for: sym) {
+                var xs: [CGFloat] = []
+                for fi in 1...4 { let g = geom(fi); if g.press > 0.5 || g.barre { xs.append(g.x) } }
+                let anchorX = xs.isEmpty ? (left + right) / 2 : xs.reduce(0, +) / CGFloat(xs.count)
+                if let rect = HandPoseLibrary.spriteRect(
+                    entry: entry, anchorX: anchorX, boardBottomY: bot,
+                    pxPerMM: pxPerMM, lifted: false), rect.width > 1, rect.height > 1 {
+                    var layer = ctx; layer.opacity = 0.95
+                    layer.draw(img, in: rect)
+                    drewLibrary = true
+                }
+            }
+            if !drewLibrary {
             var targets: [HandPoseSolver.Target] = []
             for fi in 1...4 {
                 let g = geom(fi)
@@ -306,6 +321,7 @@ struct HandNeckView: View {
                 var rimPath = HandPoseRender.fingerPath(chain, from: 0.18, close: false)
                 if i + 1 < ordered.count { rimPath = trimmedPath(rimPath, hiddenBy: Array(fills[(i+1)...])) }
                 glow.stroke(rimPath, with: .color(rim), style: rimStyle)
+            }
             }
         }
 
