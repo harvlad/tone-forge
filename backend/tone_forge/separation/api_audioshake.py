@@ -1,20 +1,24 @@
-"""api:audioshake — remote SeparatorProvider (Milestone 2, STUB).
+"""api:audioshake — remote SeparatorProvider (Milestone 2/3, WIRED).
 
 Implements the IDENTICAL SeparatorProvider contract as local:htdemucs_6s. AudioShake
-returns a guitar stem under commercial API terms (see acquisition survey in
-RILEY_SEPARATOR_REGISTRY.md). Different architecture (proprietary) → decorrelated
-from Demucs by construction; whether that decorrelation is PERCEPTUALLY complementary
-is decided by the blind-A/B harness (Milestone 3), not assumed here.
+returns a dedicated guitar stem (models: guitar / guitar_electric / guitar_acoustic)
+under commercial API terms. Different architecture (proprietary) → decorrelated from
+Demucs by construction; whether that decorrelation is PERCEPTUALLY complementary is
+decided by the blind-A/B harness (Milestone 3), not asserted here.
 
-STATUS: STUB. The canonical AudioShake flow is upload asset → create stem job →
-poll → download. The exact endpoint paths / field names / auth header live behind
-AudioShake's account-gated docs (developer.audioshake.ai) and are marked
-`# VERIFY:` — fill them in once a Client ID/Secret exists. Until then:
-  - health() is False without credentials (never selected in production).
-  - separate() raises a clear error without credentials, so nothing above the
-    interface can silently depend on an unconfigured provider.
-Set `mock=True` to exercise the contract offline (returns a synthetic result path)
-without hitting the network — used by the contract test.
+API flow (confirmed live against api.audioshake.ai, 2026-07-31):
+  auth:     header  x-api-key: <key>
+  upload:   POST /assets   (multipart field "file")          -> {"id": assetId, ...}
+  create:   POST /tasks    {assetId, targets:[{model,formats}]} -> {"id": taskId, targets:[...]}
+            (a public "url" may be given instead of assetId)
+  poll:     GET  /tasks/{taskId}  -> targets[].status=="completed", targets[].output[].link
+  download: GET  output[].link    (signed CDN URL) -> wav bytes
+
+Pricing: 1 credit / minute / stem for guitar (guitar_electric/guitar_acoustic same;
+other-x-guitar 1.5). Credit→USD depends on the plan; recorded in meta as credits.
+
+Credential-gated: health() is False without AUDIOSHAKE_API_KEY, so an unconfigured
+provider is never selected in production. mock=True exercises the contract offline.
 """
 from __future__ import annotations
 
@@ -36,32 +40,40 @@ try:
 except Exception:
     _HAS_REQUESTS = False
 
-# VERIFY all of these against developer.audioshake.ai once an account exists.
-_BASE_URL = os.environ.get("AUDIOSHAKE_BASE_URL", "https://groovy.audioshake.ai")  # VERIFY
+_BASE_URL = os.environ.get("AUDIOSHAKE_BASE_URL", "https://api.audioshake.ai")
 _POLL_INTERVAL_S = 3.0
 _POLL_TIMEOUT_S = 600.0
-# AudioShake's advertised instrument stems include guitar.
-_STEMS = frozenset({"vocals", "drums", "bass", "guitar", "piano", "other"})
+_CREDITS_PER_MIN = {"guitar": 1.0, "guitar_electric": 1.0, "guitar_acoustic": 1.0,
+                    "other-x-guitar": 1.5}
+# AudioShake exposes dedicated instrument stems, guitar among them.
+_STEMS = frozenset({"vocals", "drums", "bass", "guitar", "piano", "other",
+                    "guitar_electric", "guitar_acoustic"})
+# Riley stem name -> AudioShake model id (identity for the ones that match).
+_MODEL_FOR = {"guitar": "guitar", "vocals": "vocals", "drums": "drums",
+              "bass": "bass", "piano": "piano", "other": "other",
+              "guitar_electric": "guitar_electric", "guitar_acoustic": "guitar_acoustic"}
 
 
 class AudioShakeProvider:
     id = "api:audioshake"
 
     def __init__(self, api_key: str | None = None, out_root: Path = Path("/tmp/riley_sep_api"),
-                 mock: bool = False):
+                 mock: bool = False, guitar_model: str = "guitar"):
         self._key = api_key or os.environ.get("AUDIOSHAKE_API_KEY")
         self._out = Path(out_root)
         self._mock = mock
+        # which AudioShake guitar variant a "guitar" request maps to
+        self._guitar_model = guitar_model
 
     def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
             stems=_STEMS,
             architecture="api",
-            license_status=LICENSE_API_TERMS,           # usable under AudioShake commercial terms
-            decorrelated_from=frozenset({"local:htdemucs_6s"}),  # different arch; PERCEPTUAL test = Milestone 3
-            regimes_strong=frozenset(),                 # UNPROVEN until blind-A/B (Milestone 3)
+            license_status=LICENSE_API_TERMS,
+            decorrelated_from=frozenset({"local:htdemucs_6s"}),  # PERCEPTUAL test = Milestone 3
+            regimes_strong=frozenset(),                 # UNPROVEN until blind-A/B
             regimes_weak=frozenset(),
-            cost_per_track_usd=None,                     # enterprise/custom — set when known
+            cost_per_track_usd=None,                     # priced per credit/min (see meta)
             max_track_seconds=None,
             confidence="unproven",
         )
@@ -83,59 +95,76 @@ class AudioShakeProvider:
             raise RuntimeError(f"{self.id}: `requests` not installed")
         return self._api_flow(req, t0)
 
-    # ---- real API flow (endpoints marked VERIFY; wire when creds land) ----
+    # ---- real API flow (endpoints confirmed live 2026-07-31) ----
     def _api_flow(self, req: SeparationRequest, t0: float) -> SeparationResult:
         import requests
-        h = {"Authorization": f"Bearer {self._key}"}   # VERIFY auth scheme
-        # 1) upload the mixture as an asset
+        h = {"x-api-key": self._key}
+        # 1) upload the mixture -> assetId
         with open(req.audio_path, "rb") as f:
-            up = requests.post(f"{_BASE_URL}/upload",   # VERIFY endpoint
-                               headers=h, files={"file": f}, timeout=120)
+            up = requests.post(f"{_BASE_URL}/assets", headers=h,
+                               files={"file": (Path(req.audio_path).name, f, "audio/wav")},
+                               timeout=180)
         up.raise_for_status()
-        asset_id = up.json()["id"]                       # VERIFY field
-        # 2) create a stem-separation job for the requested stems
-        want = list(req.stems)
-        job = requests.post(f"{_BASE_URL}/job",          # VERIFY endpoint + payload schema
-                            headers=h, json={"assetId": asset_id, "stems": want}, timeout=60)
+        asset_id = up.json()["id"]
+        # 2) create one task with a target per requested stem
+        targets = [{"model": _MODEL_FOR.get(s, s), "formats": ["wav"]} for s in req.stems]
+        # a "guitar" request honours the configured guitar variant
+        for tg in targets:
+            if tg["model"] == "guitar":
+                tg["model"] = self._guitar_model
+        job = requests.post(f"{_BASE_URL}/tasks",
+                            headers={**h, "Content-Type": "application/json"},
+                            json={"assetId": asset_id, "targets": targets}, timeout=60)
         job.raise_for_status()
-        job_id = job.json()["id"]                        # VERIFY field
-        # 3) poll until done
+        task_id = job.json()["id"]
+        # 3) poll until every target completes
         deadline = time.time() + _POLL_TIMEOUT_S
+        data: dict = {}
         while time.time() < deadline:
-            st = requests.get(f"{_BASE_URL}/job/{job_id}", headers=h, timeout=30)  # VERIFY
+            st = requests.get(f"{_BASE_URL}/tasks/{task_id}", headers=h, timeout=30)
             st.raise_for_status()
             data = st.json()
-            if data.get("status") == "completed":        # VERIFY status vocab
+            tgs = data.get("targets", [])
+            states = {t.get("status") for t in tgs}
+            if states & {"failed", "error"}:
+                raise RuntimeError(f"{self.id}: task {task_id} failed: {data}")
+            if tgs and states <= {"completed", "succeeded"}:
                 break
-            if data.get("status") == "failed":
-                raise RuntimeError(f"{self.id}: job failed: {data}")
             time.sleep(_POLL_INTERVAL_S)
         else:
-            raise TimeoutError(f"{self.id}: job {job_id} timed out")
-        # 4) download the requested stems
+            raise TimeoutError(f"{self.id}: task {task_id} timed out")
+        # 4) download each target's output, mapping AudioShake model back to Riley stem name
+        model_to_stem = {_MODEL_FOR.get(s, s): s for s in req.stems}
+        model_to_stem[self._guitar_model] = "guitar"
         stems: dict[str, Path] = {}
-        for out in data.get("outputs", []):              # VERIFY output schema
-            name = out.get("stem")
-            if name in req.stems:
-                dst = self._out / f"{job_id}_{name}.wav"
-                r = requests.get(out["url"], timeout=120); r.raise_for_status()
+        for tg in data.get("targets", []):
+            stem = model_to_stem.get(tg.get("model"), tg.get("model"))
+            for out in tg.get("output", []):
+                link = out.get("link") or out.get("url")
+                if not link:
+                    continue
+                dst = self._out / f"{task_id}_{stem}.wav"
+                r = requests.get(link, timeout=180)
+                r.raise_for_status()
                 dst.write_bytes(r.content)
-                stems[name] = dst
+                stems[stem] = dst
+                break
         return SeparationResult(
-            stems=stems, provider_id=self.id, model_id="audioshake:stems",
+            stems=stems, provider_id=self.id, model_id=f"audioshake:{self._guitar_model}",
             latency_ms=int((time.time() - t0) * 1000),
-            meta={"asset_id": asset_id, "job_id": job_id, "remote": True})
+            meta={"asset_id": asset_id, "task_id": task_id, "remote": True,
+                  "credits_per_min": _CREDITS_PER_MIN.get(self._guitar_model, 1.0)})
 
     def _mock_result(self, req: SeparationRequest, t0: float) -> SeparationResult:
-        # Offline contract exercise: emit an empty placeholder per requested stem.
         stems = {}
         for name in req.stems:
-            dst = self._out / f"MOCK_{name}.wav"; dst.write_bytes(b"")
+            dst = self._out / f"MOCK_{name}.wav"
+            dst.write_bytes(b"")
             stems[name] = dst
         return SeparationResult(
             stems=stems, provider_id=self.id, model_id="audioshake:MOCK",
             latency_ms=int((time.time() - t0) * 1000),
-            meta={"mock": True, "note": "endpoints unverified; wire creds + confirm schema"})
+            meta={"mock": True, "note": "offline contract exercise"})
 
 
 # static contract check — must satisfy the identical interface
