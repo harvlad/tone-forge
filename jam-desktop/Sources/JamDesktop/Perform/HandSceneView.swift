@@ -161,6 +161,12 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
         if let hr = outerHR {
             rootRotBaked = Self.top3(simd_float4x4(hr.worldTransform))   // M0 (baked rest rotation)
         }
+        // Shorten the fingers from the middle knuckle to the tip (~0.8 along the
+        // bone-length axis) — the MPFB fingers are too long / read spidery.
+        for f in ["finger2", "finger3", "finger4", "finger5"] {
+            bones["\(f)_2_L"]?.scale = SCNVector3(1, 0.8, 1)
+            bones["\(f)_3_L"]?.scale = SCNVector3(1, 0.8, 1)
+        }
     }
 
     private func applySkin(_ node: SCNNode) {
@@ -221,11 +227,14 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
 
     // MARK: camera + lights (view the -Y playing face)
     private func setupCamera() {
-        let cam = SCNCamera(); cam.fieldOfView = 52; cam.zNear = 0.001; cam.zFar = 10
-        cam.projectionDirection = .vertical   // wide panel shows more neck, hand stays sized
+        let cam = SCNCamera(); cam.fieldOfView = 18; cam.zNear = 0.001; cam.zFar = 10
+        // Pulled back + narrow fov = near-orthographic → the neck reads LEVEL (not
+        // tilted forward), with a slight right yaw for depth. Vertical fov so the
+        // wide panel just shows more neck.
+        cam.projectionDirection = .vertical
         cameraNode.camera = cam
-        cameraNode.position = SCNVector3(G.fingerX(3.2), -0.24, 0.085)
-        cameraNode.look(at: SCNVector3(G.fingerX(3.4), -0.03, 0), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+        cameraNode.position = SCNVector3(G.fingerX(3.4) + 0.10, -0.90, 0.30)
+        cameraNode.look(at: SCNVector3(G.fingerX(3.6), 0, 0.01), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
         scene.rootNode.addChildNode(cameraNode)
     }
     private func setupLights() {
