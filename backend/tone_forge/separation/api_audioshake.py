@@ -70,12 +70,15 @@ class AudioShakeProvider:
             stems=_STEMS,
             architecture="api",
             license_status=LICENSE_API_TERMS,
-            decorrelated_from=frozenset({"local:htdemucs_6s"}),  # PERCEPTUAL test = Milestone 3
-            regimes_strong=frozenset(),                 # UNPROVEN until blind-A/B
-            regimes_weak=frozenset(),
-            cost_per_track_usd=None,                     # priced per credit/min (see meta)
+            decorrelated_from=frozenset({"local:htdemucs_6s"}),
+            # Milestone 3 blind-A/B (exp_20260731_062148_8f65d0): AudioShake 7 / stock 1.
+            # Won BOTH electric-vocal-masked verses AND acoustic exposed guitar — even where
+            # it was the quieter stem (not a loudness artifact). Only stock win: loud chorus.
+            regimes_strong=frozenset({"vocal_masked", "acoustic", "exposed", "clean"}),
+            regimes_weak=frozenset({"loud_dense"}),      # stock competitive in loud choruses
+            cost_per_track_usd=None,                      # priced per credit/min (see meta)
             max_track_seconds=None,
-            confidence="unproven",
+            confidence="proven",                          # blind-A/B evidence recorded (n=2 songs)
         )
 
     def health(self) -> bool:

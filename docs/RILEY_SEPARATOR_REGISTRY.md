@@ -56,6 +56,30 @@ Legend: license status for PRODUCTION use. Blind-A/B evidence noted per regime.
 - **Verdict:** proves the ensemble thesis (a decorrelated model clearly complements Stock).
   Cannot ship as-is. Next sprint = a CLEAN way to capture this advantage.
 
+## PROVEN + LICENSABLE — AudioShake (`api:audioshake`, guitar model)
+- **Architecture:** proprietary (AudioShake API). **Different from Demucs → decorrelated by
+  construction.** Dedicated `guitar` / `guitar_electric` / `guitar_acoustic` models.
+- **License:** **CLEAN for production under AudioShake commercial API terms** (`api_terms`).
+  Unlike SW (ghost) and becruily (non-commercial default), this is production-usable NOW.
+- **Access:** `x-api-key` on `api.audioshake.ai`; upload `/assets` → `POST /tasks` → poll
+  `/tasks/{id}` → download `output[].link`. Wired live in `api_audioshake.py`. ~1 credit/min/stem;
+  credit→USD is plan-dependent (unresolved — gate routing on cost once known).
+- **Blind A/B (Milestone 3, exp_20260731_062148_8f65d0): AudioShake 7 / stock 1 / 0 equal.**
+  8 matched windows, peak-normalized (loudness neutralized), across TWO songs/regimes:
+  - **Lithium (electric):** won intro riff + both vocal-masked verses (H conf); lost only the
+    loud chorus (M). Fixes exactly Stock's distorted-verse weakness — like SW, but licensable.
+  - **prism (acoustic):** won 3/4 exposed-guitar windows — **and won even where it was the
+    QUIETER stem** (58/76/184s). So the win is cleanliness, not level. Solves Stock's acoustic
+    under-extraction, which SW could NOT (SW routes acoustic into "other"). AudioShake covers
+    both regimes SW/B1 split or missed.
+- **Strengths:** vocal-masked electric verses, exposed/clean guitar, **acoustic** (unique — the
+  one regime nothing else handled). **Weakness:** loud dense chorus (Stock competitive).
+- **Verdict:** first specialist that is decorrelated AND legal. Promote to `confidence="proven"`.
+  Enable routing where blind-win repeats; keep Stock as default for loud/dense and as the free
+  fallback. Confirm on a broader song set + resolve credit cost before flipping any production
+  default. Mirror image of B1's T2.2 loss (7 stock/1 B1) — the difference is a real decorrelated
+  model behind a clean license.
+
 ## CANDIDATE (clean path) — Sprint 6 target: HOLE-FILL + DE-PUMP (NOT de-bleed)
 - **Corrected by Sprint 5.5:** SW's win is separation-hole-filling (87%) + de-pumping (33%),
   NOT vocal-bleed removal (6%). A de-bleed pipeline would target the wrong dimension and fail.
