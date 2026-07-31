@@ -221,7 +221,8 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
 
     // MARK: camera + lights (view the -Y playing face)
     private func setupCamera() {
-        let cam = SCNCamera(); cam.fieldOfView = 42; cam.zNear = 0.001; cam.zFar = 10
+        let cam = SCNCamera(); cam.fieldOfView = 46; cam.zNear = 0.001; cam.zFar = 10
+        cam.projectionDirection = .vertical   // wide panel shows more neck, hand stays sized
         cameraNode.camera = cam
         cameraNode.position = SCNVector3(G.fingerX(3.0), -0.30, 0.12)
         cameraNode.look(at: SCNVector3(G.fingerX(3.2), 0, 0), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
