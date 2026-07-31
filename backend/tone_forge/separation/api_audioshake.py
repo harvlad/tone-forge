@@ -71,14 +71,17 @@ class AudioShakeProvider:
             architecture="api",
             license_status=LICENSE_API_TERMS,
             decorrelated_from=frozenset({"local:htdemucs_6s"}),
-            # Milestone 3 blind-A/B (exp_20260731_062148_8f65d0): AudioShake 7 / stock 1.
-            # Won BOTH electric-vocal-masked verses AND acoustic exposed guitar — even where
-            # it was the quieter stem (not a loudness artifact). Only stock win: loud chorus.
-            regimes_strong=frozenset({"vocal_masked", "acoustic", "exposed", "clean"}),
-            regimes_weak=frozenset({"loud_dense"}),      # stock competitive in loud choruses
+            # DID NOT GENERALIZE. M3 blind-A/B (exp_20260731_062148_8f65d0) looked strong on
+            # lithium+prism (AudioShake 7/1), but the M5 confirmation on diverse genres
+            # (exp_20260731_081712_90f2a7: tycho/lornashore/psb) REVERSED it — stock 8 /
+            # AudioShake 1 / 1 equal, 4 stock high-conf vs 0. Combined = wash (8/9/1). Same
+            # false-positive shape as B1. AudioShake over-extracts in dense/synth/extreme mixes
+            # (louder but judged worse). NOT a repeatable regime win => not auto-selectable.
+            regimes_strong=frozenset(),
+            regimes_weak=frozenset({"dense", "synth_led", "extreme_distortion"}),
             cost_per_track_usd=None,                      # priced per credit/min (see meta)
             max_track_seconds=None,
-            confidence="proven",                          # blind-A/B evidence recorded (n=2 songs)
+            confidence="unproven",                        # promotion walked back after M5
         )
 
     def health(self) -> bool:

@@ -56,29 +56,28 @@ Legend: license status for PRODUCTION use. Blind-A/B evidence noted per regime.
 - **Verdict:** proves the ensemble thesis (a decorrelated model clearly complements Stock).
   Cannot ship as-is. Next sprint = a CLEAN way to capture this advantage.
 
-## PROVEN + LICENSABLE — AudioShake (`api:audioshake`, guitar model)
-- **Architecture:** proprietary (AudioShake API). **Different from Demucs → decorrelated by
-  construction.** Dedicated `guitar` / `guitar_electric` / `guitar_acoustic` models.
-- **License:** **CLEAN for production under AudioShake commercial API terms** (`api_terms`).
-  Unlike SW (ghost) and becruily (non-commercial default), this is production-usable NOW.
+## WIRED but DID-NOT-GENERALIZE — AudioShake (`api:audioshake`, guitar model)
+- **Architecture:** proprietary (AudioShake API). Different from Demucs → decorrelated by
+  construction. Dedicated `guitar` / `guitar_electric` / `guitar_acoustic` models.
+- **License:** CLEAN under AudioShake commercial API terms (`api_terms`) — production-legal,
+  unlike SW (ghost)/becruily (non-commercial). Licensing was never the blocker; QUALITY is.
 - **Access:** `x-api-key` on `api.audioshake.ai`; upload `/assets` → `POST /tasks` → poll
-  `/tasks/{id}` → download `output[].link`. Wired live in `api_audioshake.py`. ~1 credit/min/stem;
-  credit→USD is plan-dependent (unresolved — gate routing on cost once known).
-- **Blind A/B (Milestone 3, exp_20260731_062148_8f65d0): AudioShake 7 / stock 1 / 0 equal.**
-  8 matched windows, peak-normalized (loudness neutralized), across TWO songs/regimes:
-  - **Lithium (electric):** won intro riff + both vocal-masked verses (H conf); lost only the
-    loud chorus (M). Fixes exactly Stock's distorted-verse weakness — like SW, but licensable.
-  - **prism (acoustic):** won 3/4 exposed-guitar windows — **and won even where it was the
-    QUIETER stem** (58/76/184s). So the win is cleanliness, not level. Solves Stock's acoustic
-    under-extraction, which SW could NOT (SW routes acoustic into "other"). AudioShake covers
-    both regimes SW/B1 split or missed.
-- **Strengths:** vocal-masked electric verses, exposed/clean guitar, **acoustic** (unique — the
-  one regime nothing else handled). **Weakness:** loud dense chorus (Stock competitive).
-- **Verdict:** first specialist that is decorrelated AND legal. Promote to `confidence="proven"`.
-  Enable routing where blind-win repeats; keep Stock as default for loud/dense and as the free
-  fallback. Confirm on a broader song set + resolve credit cost before flipping any production
-  default. Mirror image of B1's T2.2 loss (7 stock/1 B1) — the difference is a real decorrelated
-  model behind a clean license.
+  `/tasks/{id}` → download `output[].link`. Wired live in `api_audioshake.py`. ~1 credit/min/stem
+  (credit→USD plan-dependent). Provider stays available for on-demand use; NOT auto-selected.
+- **Milestone 3 (exp_20260731_062148_8f65d0):** looked strong — AudioShake 7 / stock 1 / 0 equal
+  on lithium (electric) + prism (acoustic), 8 windows.
+- **Milestone 5 confirmation (exp_20260731_081712_90f2a7) — REVERSED IT.** Same blind harness, 10
+  pre-registered windows on the T2.2 diverse set (tycho ambient, lornashore deathcore, psb
+  synthpop — where B1 also collapsed): **stock 8 / AudioShake 1 / 1 equal, stock 4 high-conf vs
+  AudioShake 0.** Combined M3+M5 = 8 AudioShake / 9 stock / 1 equal → **a wash.**
+- **Failure mode:** in dense / synth-led / extreme-distortion mixes AudioShake OVER-extracts —
+  its guitar stem is often LOUDER than stock (e.g. psb guitar_under_vocal 7071 vs 4895 RMS) yet
+  judged worse: it pulls non-guitar content / bleed into the stem. Robust only on mainstream
+  guitar-forward material (the M3 songs), which is not enough to route on.
+- **Verdict:** exact same false-positive shape as B1 (great on 2 songs, lost on the diverse set).
+  `confidence="unproven"`, `regimes_strong={}`. **Do NOT enable routing.** Kept wired as an
+  on-demand provider only. Lesson reinforced: a 2-song blind win is NOT a regime win — the
+  broader-confirmation gate is load-bearing and caught this before it shipped.
 
 ## CANDIDATE (clean path) — Sprint 6 target: HOLE-FILL + DE-PUMP (NOT de-bleed)
 - **Corrected by Sprint 5.5:** SW's win is separation-hole-filling (87%) + de-pumping (33%),
