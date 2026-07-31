@@ -25,7 +25,10 @@ CHORDS_PATH = argv[1] if len(argv) > 1 else "chords.json"
 # chord is POSED by applying its solved joint angles (natural comfort/strain
 # solver) instead of this file's naive Blender IK — then exported as usual.
 STATES_PATH = argv[2] if len(argv) > 2 else None
-STATES = json.load(open(STATES_PATH)) if STATES_PATH else {}
+try:
+    STATES = json.load(open(STATES_PATH)) if STATES_PATH else {}
+except Exception:
+    STATES = {}   # e.g. when imported by mpfb_render with an unrelated argv
 
 SCALE_LEN = 0.648
 NECK_THICK = 0.021
