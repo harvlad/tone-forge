@@ -274,25 +274,36 @@ struct HandNeckView: View {
             var drewLibrary = false
             if let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
                let img = HandPoseLibrary.spriteImage(for: sym) {
-                var xs: [CGFloat] = []
-                for fi in 1...4 { let g = geom(fi); if g.press > 0.5 || g.barre { xs.append(g.x) } }
+                var xs: [CGFloat] = [], ys: [CGFloat] = []
+                for fi in 1...4 {
+                    let g = geom(fi)
+                    if g.press > 0.5 || g.barre { xs.append(g.x); ys.append(g.yc) }
+                }
                 let anchorX = xs.isEmpty ? (left + right) / 2 : xs.reduce(0, +) / CGFloat(xs.count)
-                if let rect = HandPoseLibrary.spriteRect(
+                let anchorY = ys.isEmpty ? (top + bot) / 2 : ys.reduce(0, +) / CGFloat(ys.count)
+                if let rect0 = HandPoseLibrary.spriteRect(
                     entry: entry, anchorX: anchorX, boardBottomY: bot,
-                    pxPerMM: pxPerMM, lifted: false), rect.width > 1, rect.height > 1 {
+                    pxPerMM: pxPerMM, lifted: false), rect0.width > 1, rect0.height > 1 {
+                    // The fretboard is the hero — a full-scale physical hand swallows
+                    // it. Shrink the hand around the chord's contact cluster so the
+                    // board reads and the chord shape is legible; the cluster stays put
+                    // so the fingers still sit over their frets.
+                    let k: CGFloat = 0.62
+                    let rect = CGRect(
+                        x: anchorX + (rect0.minX - anchorX) * k,
+                        y: anchorY + (rect0.minY - anchorY) * k,
+                        width: rect0.width * k, height: rect0.height * k)
                     var layer = ctx
-                    layer.opacity = 0.8                       // ghost: neck + dots read through
-                    // Soft vertical fade: hand solid over the board, fading out toward
-                    // the palm below so the big mass doesn't dominate (no hard cut).
-                    // Sprite is NOT rescaled, so fingertips keep landing on the dots.
+                    layer.opacity = 0.72                      // ghost: neck + dots read through
+                    // Soft vertical fade so the palm mass melts away toward the bottom.
                     layer.clipToLayer { m in
                         m.fill(Path(rect), with: .linearGradient(
                             Gradient(stops: [
                                 .init(color: .white, location: 0),
-                                .init(color: .white, location: 0.5),
+                                .init(color: .white, location: 0.55),
                                 .init(color: Color.white.opacity(0), location: 1)]),
-                            startPoint: CGPoint(x: 0, y: top - 20),
-                            endPoint: CGPoint(x: 0, y: bot + gap * 6)))
+                            startPoint: CGPoint(x: 0, y: rect.minY - 6),
+                            endPoint: CGPoint(x: 0, y: rect.maxY)))
                     }
                     layer.draw(img, in: rect)
                     drewLibrary = true
