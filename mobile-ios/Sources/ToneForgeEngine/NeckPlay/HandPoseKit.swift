@@ -94,6 +94,9 @@ public struct HandPose {
     public var wrist: CGPoint
     public var thumb: CGPoint                // behind the neck (occluded)
     public var targets: [CGPoint?]           // debug: fingertip targets
+    public init(fingers: [FingerChain], wrist: CGPoint, thumb: CGPoint, targets: [CGPoint?]) {
+        self.fingers = fingers; self.wrist = wrist; self.thumb = thumb; self.targets = targets
+    }
 }
 
 // MARK: - Solver

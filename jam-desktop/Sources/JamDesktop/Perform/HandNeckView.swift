@@ -92,10 +92,28 @@ struct HandNeckView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    // MARK: geometry (nut on the right)
-    private func ntpos(_ fret: Double) -> Double {
-        let p = { (f: Double) in 1 - pow(2, -f / 12) }
-        return (p(fret) - p(0)) / (p(Double(maxFret)) - p(0))
+    /// Rebuild an open path keeping only runs NOT covered by a front fill —
+    /// kills the double crease lines where fingers overlap (port of the mobile
+    /// renderer's `trimmed`).
+    private func trimmedPath(_ path: Path, hiddenBy fronts: [Path]) -> Path {
+        var out = Path(); var run: [CGPoint] = []
+        func flush() {
+            if run.count > 1 { out.move(to: run[0]); for p in run.dropFirst() { out.addLine(to: p) } }
+            run.removeAll()
+        }
+        path.forEach { el in
+            let p: CGPoint?
+            switch el {
+            case .move(let to), .line(let to): p = to
+            case .quadCurve(let to, _): p = to
+            case .curve(let to, _, _): p = to
+            case .closeSubpath: p = nil
+            }
+            guard let pt = p else { return }
+            if fronts.contains(where: { $0.contains(pt) }) { flush() } else { run.append(pt) }
+        }
+        flush()
+        return out
     }
 
     // MARK: sample a finger's state at time t
@@ -169,12 +187,29 @@ struct HandNeckView: View {
     // MARK: draw
     private func draw(_ ctx: GraphicsContext, _ size: CGSize) {
         let W = size.width, H = size.height
-        let padX: CGFloat = 46, top: CGFloat = 34
-        let boardH = H * 0.5, bot = top + boardH
-        let left = padX, right = W - padX
-        func fx(_ fret: Double) -> CGFloat { right - (right - left) * CGFloat(ntpos(fret)) }
-        func cx(_ fret: Double) -> CGFloat { (fx(fret) + fx(fret - 1)) / 2 }
-        func sy(_ s: Double) -> CGFloat { top + boardH * CGFloat(s / 5.0) }
+        let top: CGFloat = 34
+        let padR: CGFloat = 46, padL: CGFloat = 18
+        // PHYSICAL neck (GuitarPhysical, mm) scaled by ONE px/mm factor, so the
+        // board AND the anatomical hand share proportions by construction — the
+        // same contract the mobile renderer uses. Window = nut..maxFret, nut RIGHT.
+        let loMM = GuitarPhysical.wire(0)
+        let hiMM = GuitarPhysical.wire(maxFret)
+        let spanMM = max(1, hiMM - loMM)
+        let gapMM = GuitarPhysical.stringGapMM(atX: (loMM + hiMM) / 2)
+        let pxPerMM = max(0.3, min((W - padR - padL) / spanMM, (H * 0.42) / (6 * gapMM)))
+        let gap = gapMM * pxPerMM
+        let boardH = 6 * gap
+        let bot = top + boardH
+        let right = W - padR
+        let left = right - spanMM * pxPerMM
+        func cxMM(_ fret: Double) -> CGFloat {      // finger-contact mm for a fractional fret
+            let f0 = max(0, Int(floor(fret))), f1 = f0 + 1
+            let a = GuitarPhysical.fingerX(f0), b = GuitarPhysical.fingerX(f1)
+            return a + (b - a) * CGFloat(fret - Double(f0))
+        }
+        func cx(_ fret: Double) -> CGFloat { right - (cxMM(fret) - loMM) * pxPerMM }
+        func sy(_ s: Double) -> CGFloat { top + (CGFloat(s) + 0.5) * gap }
+        func wireX(_ n: Int) -> CGFloat { right - (GuitarPhysical.wire(n) - loMM) * pxPerMM }
 
         // fretboard
         let slab = Path(roundedRect: CGRect(x: left-4, y: top-14, width: (right-left)+16, height: boardH+28), cornerRadius: 8)
@@ -183,17 +218,17 @@ struct HandNeckView: View {
             Color(red:0.12,green:0.075,blue:0.055)]), startPoint: CGPoint(x:0,y:top-14), endPoint: CGPoint(x:0,y:bot+14)))
         // inlays
         for f in [3,5,7,9,12] where f <= maxFret {
-            let x = (fx(Double(f)) + fx(Double(f-1))) / 2
+            let x = (wireX(f) + wireX(f-1)) / 2
             ctx.fill(Path(ellipseIn: CGRect(x: x-4, y: (top+bot)/2-4, width: 8, height: 8)),
                      with: .color(.white.opacity(0.16)))
         }
         // frets
         for f in 1...maxFret {
-            let x = fx(Double(f))
+            let x = wireX(f)
             ctx.stroke(Path { $0.move(to: CGPoint(x:x,y:top-13)); $0.addLine(to: CGPoint(x:x,y:bot+13)) },
                        with: .color(Color(white:0.5)), lineWidth: 2)
             ctx.draw(Text("\(f)").font(.system(size:11, design:.monospaced)).foregroundColor(Color(white:0.45)),
-                     at: CGPoint(x: (fx(Double(f))+fx(Double(f-1)))/2, y: bot+26))
+                     at: CGPoint(x: (wireX(f)+wireX(f-1))/2, y: bot+26))
         }
         // nut (right)
         ctx.fill(Path(roundedRect: CGRect(x: right+2, y: top-15, width: 6, height: boardH+30), cornerRadius: 2),
@@ -231,41 +266,50 @@ struct HandNeckView: View {
             return (cx(s.f), (yLo+yHi)/2, yLo, yHi, CGFloat(s.press), (s.sHi - s.sLo) > 0.5)
         }
 
-        // ANIMATED HAND (priority 3): a translucent anatomical silhouette built
-        // FROM the contact states — a palm + fingers curving from the wrist up to
-        // each pressed dot. Because it is derived from the same states as the dots,
-        // the fingers ALWAYS align with the dots and it scales with the neck. Low
-        // opacity so strings + dots read on top — anatomical context, never dominant.
-        // Provider-agnostic: this schematic hand is TODAY's provider; a planner-
-        // driven realistic hand can replace it with no layout change.
+        // ANIMATED HAND (priority 3): the REAL anatomical hand — the baked
+        // Blender/MPFB pose for this chord (HandPoseLibrary), projected onto the
+        // PHYSICAL neck and TIP-CORRECTED so each pressing finger's tip lands
+        // EXACTLY on its dot (anatomy from the rig, exact landing from the app).
+        // Covers the 19 library chords; uncovered voicings fall back to the
+        // procedural silhouette below.
         if showHand {
             let sym = currentSymbol(positionSeconds)
             var drewLibrary = false
-            // REAL anatomical hand: the baked Blender/MPFB render for this chord,
-            // re-anchored so its fingertips land on the dots. The board isn't a
-            // physical neck, so map the sprite's metre frame to px independently on
-            // each axis — frets AND strings line up, so the rendered fingertips sit
-            // on the dots. Covers the 19 library chords; uncovered voicings fall
-            // back to the procedural silhouette below.
-            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
-               let sp = entry.sprite, let img = HandPoseLibrary.spriteImage(for: sym) {
+            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym) {
+                // pressing fingers → their dot centre; rest fingers → .zero so the
+                // pose keeps its natural relaxed curl.
+                var liveTips: [CGPoint] = [.zero, .zero, .zero, .zero]
                 var xs: [CGFloat] = []
-                for fi in 1...4 { let g = geom(fi); if g.press > 0.5 || g.barre { xs.append(g.x) } }
+                for fi in 1...4 {
+                    let g = geom(fi)
+                    if g.press > 0.5 || g.barre { liveTips[fi-1] = CGPoint(x: g.x, y: g.yc); xs.append(g.x) }
+                }
                 let anchorX = xs.isEmpty ? (left + right) / 2 : xs.reduce(0, +) / CGFloat(xs.count)
-                let mmLo = GuitarPhysical.fingerX(1), mmHi = GuitarPhysical.fingerX(maxFret)
-                let pxPerMMx = abs(fx(1.0) - fx(Double(maxFret))) / max(1, abs(mmHi - mmLo))
-                let gapMM = GuitarPhysical.stringGapMM(atX: (mmLo + mmHi) / 2)
-                let pxPerMMz = boardH / (5 * max(1, gapMM))
-                let orthoV = sp.ortho * sp.h / sp.w
-                func hx(_ mx: Double) -> CGFloat { anchorX - CGFloat((mx - entry.clusterX) * 1000) * pxPerMMx }
-                func hy(_ mz: Double) -> CGFloat { bot - CGFloat((mz - entry.boardBottomZ) * 1000) * pxPerMMz }
-                let xA = hx(sp.camX + sp.ortho / 2), xB = hx(sp.camX - sp.ortho / 2)
-                let yA = hy(sp.camZ + orthoV / 2), yB = hy(sp.camZ - orthoV / 2)
-                let rect = CGRect(x: min(xA, xB), y: min(yA, yB), width: abs(xB - xA), height: abs(yB - yA))
-                if rect.width > 1, rect.height > 1 {
-                    var layer = ctx
-                    layer.opacity = 0.72
-                    layer.draw(img, in: rect)
+                let (fingers, wrist) = HandPoseLibrary.chains(
+                    entry: entry, anchorX: anchorX, boardBottomY: bot,
+                    pxPerMM: pxPerMM, liveTips: liveTips, lifted: false)
+                if !fingers.isEmpty {
+                    let pose = HandPose(fingers: fingers, wrist: wrist, thumb: wrist, targets: [])
+                    let skin = Color(red: 0.10, green: 0.105, blue: 0.14)
+                    let rim = Color.white.opacity(0.34)
+                    let rimStyle = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
+                    var glow = ctx; glow.addFilter(.shadow(color: .white.opacity(0.16), radius: 2.5))
+                    let palm = HandPoseRender.palmPath(pose, canvasHeight: size.height, s: pxPerMM)
+                    ctx.fill(palm, with: .color(skin))
+                    glow.stroke(palm, with: .color(rim), style: rimStyle)
+                    // fingers back-to-front (lower-string tips draw in front)
+                    let ordered = pose.fingers.sorted { a, b in
+                        let ay = a.joints.last?.y ?? 0
+                        let by = b.joints.last?.y ?? 0
+                        return ay < by
+                    }
+                    let fills = ordered.map { HandPoseRender.fingerPath($0) }
+                    for (i, chain) in ordered.enumerated() {
+                        ctx.fill(fills[i], with: .color(skin))
+                        var rimPath = HandPoseRender.fingerPath(chain, from: 0.18, close: false)
+                        if i + 1 < ordered.count { rimPath = trimmedPath(rimPath, hiddenBy: Array(fills[(i+1)...])) }
+                        glow.stroke(rimPath, with: .color(rim), style: rimStyle)
+                    }
                     drewLibrary = true
                 }
             }
