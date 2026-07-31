@@ -73,8 +73,8 @@ struct PerformView: View {
             rebuildTabLane(sidecar)
         }
         .onAppear { if showChord && showTab { showTab = false } }   // enforce either/or
-        .onChange(of: currentHandSymbol) { _, sym in
-            handScene.targetPose = sym.flatMap { HandStates.pose(for: $0) } ?? [:]
+        .onChange(of: currentHandSymbol, initial: true) { _, sym in
+            handScene.apply(symbol: sym)
         }
     }
 
@@ -102,16 +102,18 @@ struct PerformView: View {
                     performanceToolbar
 
                     // Neck / fretboard — the hero, most vertical space
-                    ZStack {
-                        HandNeckView(chords: ribbon.chords,
-                                     positionSeconds: session.transport.positionSeconds,
-                                     showDots: showDots,
-                                     showMotion: showMotion,
-                                     showHand: showHand,
-                                     useMesh: false)
-                        // Phase 2 proof: runtime 3D rigged hand overlaid on the neck.
+                    Group {
                         if handMesh, let url = handSceneURL {
-                            HandSceneView(sceneURL: url, poseModel: handScene)
+                            // Realistic: the 3D neck + rigid rooted hand (fingers on dots).
+                            HandSceneView(sceneURL: url, poseModel: handScene, showDots: showDots)
+                        } else {
+                            // Abstract: the flat neck + Motion/Dots overlays.
+                            HandNeckView(chords: ribbon.chords,
+                                         positionSeconds: session.transport.positionSeconds,
+                                         showDots: showDots,
+                                         showMotion: showMotion,
+                                         showHand: showHand,
+                                         useMesh: false)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
