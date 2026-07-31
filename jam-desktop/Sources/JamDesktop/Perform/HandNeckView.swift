@@ -274,36 +274,46 @@ struct HandNeckView: View {
             var drewLibrary = false
             if let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
                let img = HandPoseLibrary.spriteImage(for: sym) {
+                // dot cluster (correct positions) + the pose's OWN fingertip cluster
                 var xs: [CGFloat] = [], ys: [CGFloat] = []
+                var pfx: [CGFloat] = [], pfz: [CGFloat] = []
                 for fi in 1...4 {
                     let g = geom(fi)
-                    if g.press > 0.5 || g.barre { xs.append(g.x); ys.append(g.yc) }
+                    if g.press > 0.5 || g.barre {
+                        xs.append(g.x); ys.append(g.yc)
+                        if let j = entry.fingers[String(fi)], j.count >= 4 {
+                            pfx.append(CGFloat(j[3][0])); pfz.append(CGFloat(j[3][2]))
+                        }
+                    }
                 }
-                let anchorX = xs.isEmpty ? (left + right) / 2 : xs.reduce(0, +) / CGFloat(xs.count)
-                let anchorY = ys.isEmpty ? (top + bot) / 2 : ys.reduce(0, +) / CGFloat(ys.count)
+                func mean(_ a: [CGFloat]) -> CGFloat { a.isEmpty ? 0 : a.reduce(0, +) / CGFloat(a.count) }
+                let anchorX = xs.isEmpty ? (left + right) / 2 : mean(xs)
                 if let rect0 = HandPoseLibrary.spriteRect(
                     entry: entry, anchorX: anchorX, boardBottomY: bot,
                     pxPerMM: pxPerMM, lifted: false), rect0.width > 1, rect0.height > 1 {
-                    // The fretboard is the hero — a full-scale physical hand swallows
-                    // it. Shrink the hand around the chord's contact cluster so the
-                    // board reads and the chord shape is legible; the cluster stays put
-                    // so the fingers still sit over their frets.
-                    let k: CGFloat = 0.62
-                    let rect = CGRect(
-                        x: anchorX + (rect0.minX - anchorX) * k,
-                        y: anchorY + (rect0.minY - anchorY) * k,
-                        width: rect0.width * k, height: rect0.height * k)
+                    // Move the HAND onto the (correct) dots: align the pose's own
+                    // fingertip centroid to the dot centroid, cancelling the FK-drift
+                    // offset. Full physical scale so per-finger spacing matches the
+                    // neck; the palm is hard-faded so the fretboard stays the hero.
+                    let s = pxPerMM * 1000
+                    var dx: CGFloat = 0, dy: CGFloat = 0
+                    if !pfx.isEmpty {
+                        let csx = anchorX + (mean(pfx) - CGFloat(entry.clusterX)) * s
+                        let csy = bot + (CGFloat(entry.boardBottomZ) - mean(pfz)) * s
+                        dx = mean(xs) - csx
+                        dy = mean(ys) - csy
+                    }
+                    let rect = rect0.offsetBy(dx: dx, dy: dy)
                     var layer = ctx
-                    layer.opacity = 0.72                      // ghost: neck + dots read through
-                    // Soft vertical fade so the palm mass melts away toward the bottom.
+                    layer.opacity = 0.75
                     layer.clipToLayer { m in
                         m.fill(Path(rect), with: .linearGradient(
                             Gradient(stops: [
                                 .init(color: .white, location: 0),
-                                .init(color: .white, location: 0.55),
-                                .init(color: Color.white.opacity(0), location: 1)]),
-                            startPoint: CGPoint(x: 0, y: rect.minY - 6),
-                            endPoint: CGPoint(x: 0, y: rect.maxY)))
+                                .init(color: .white, location: 0.35),
+                                .init(color: Color.white.opacity(0), location: 0.62)]),
+                            startPoint: CGPoint(x: 0, y: top - 20),
+                            endPoint: CGPoint(x: 0, y: bot + gap * 3)))
                     }
                     layer.draw(img, in: rect)
                     drewLibrary = true
