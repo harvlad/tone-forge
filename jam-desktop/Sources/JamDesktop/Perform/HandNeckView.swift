@@ -280,7 +280,15 @@ struct HandNeckView: View {
                 if let rect = HandPoseLibrary.spriteRect(
                     entry: entry, anchorX: anchorX, boardBottomY: bot,
                     pxPerMM: pxPerMM, lifted: false), rect.width > 1, rect.height > 1 {
-                    var layer = ctx; layer.opacity = 0.95
+                    var layer = ctx
+                    layer.opacity = 0.6                       // ghost: neck + dots read through
+                    // Clip off the oversized palm/forearm below the board so the hand
+                    // doesn't dominate; the sprite is NOT rescaled, so fingertips keep
+                    // landing on the dots.
+                    let clip = CGRect(x: left - 70, y: top - 18,
+                                      width: (right - left) + 140,
+                                      height: (bot + gap * 4) - (top - 18))
+                    layer.clip(to: Path(clip))
                     layer.draw(img, in: rect)
                     drewLibrary = true
                 }
