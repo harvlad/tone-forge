@@ -37,13 +37,14 @@ enum HandStates {
         guard let v = all[symbol], v.count >= 30 else { return nil }
         var p: [String: simd_float3] = [:]
         let FB = ["finger2", "finger3", "finger4", "finger5"]
+        let abd: Float = 0.4   // damp abduction — full spread leaves unnatural finger gaps
         for i in 0..<4 {
             p["metacarpal\(i+1)_L"] = [0, 0, v[26 + i]]
-            p["\(FB[i])_1_L"] = [v[6 + i*4 + 1], 0, v[6 + i*4]]   // X = abduction, Z = flex
+            p["\(FB[i])_1_L"] = [v[6 + i*4 + 1] * abd, 0, v[6 + i*4]]   // X = abduction, Z = flex
             p["\(FB[i])_2_L"] = [0, 0, v[6 + i*4 + 2]]
             p["\(FB[i])_3_L"] = [0, 0, v[6 + i*4 + 3]]
         }
-        p["finger1_1_L"] = [v[23], 0, v[22]]
+        p["finger1_1_L"] = [v[23] * abd, 0, v[22]]
         p["finger1_2_L"] = [0, 0, v[24]]
         p["finger1_3_L"] = [0, 0, v[24] * 0.6]
         return p

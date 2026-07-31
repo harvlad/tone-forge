@@ -47,6 +47,61 @@ basemesh.select_set(True); bpy.context.view_layer.objects.active = basemesh
 if basemesh.data.shape_keys:
     basemesh.shape_key_clear()          # MPFB shape keys block modifier_apply
 bpy.ops.object.modifier_apply(modifier="JamnMask")
+
+# MPFB leaves helper geometry in the base mesh that survives the weight-based
+# mask: 23 free-floating 8-vertex "JointCubes" (one rigidly skinned to each
+# finger-joint bone) plus a "HelperGeometry" tights chunk. At rest they hide
+# at the joints, but each cube rigidly follows its bone and flings out as a
+# floating box when the finger flexes — that is the "cube tear". They are all
+# disconnected islands, so keep ONLY the largest connected island (the hand)
+# and delete everything else. This removes the cubes while preserving the hand
+# mesh, its skeleton and its skin weights.
+def keep_largest_island(obj):
+    import bmesh
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    remaining = set(bm.verts)
+    best = None
+    while remaining:
+        seed = next(iter(remaining))
+        stack = [seed]; comp = set()
+        while stack:
+            v = stack.pop()
+            if v in comp:
+                continue
+            comp.add(v)
+            for e in v.link_edges:
+                ov = e.other_vert(v)
+                if ov not in comp:
+                    stack.append(ov)
+        remaining -= comp
+        if best is None or len(comp) > len(best):
+            best = comp
+    to_delete = [v for v in bm.verts if v not in best]
+    print("keep_largest_island: kept", len(best), "verts, deleted",
+          len(to_delete), "stray verts (JointCubes/HelperGeometry)")
+    bmesh.ops.delete(bm, geom=to_delete, context="VERTS")
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+
+keep_largest_island(basemesh)
+# Normalize skin weights on the remaining hand so LBS is well-behaved after the
+# stray-geometry cull (weights that referenced deleted groups no longer skew).
+bpy.ops.object.select_all(action="DESELECT")
+basemesh.select_set(True); bpy.context.view_layer.objects.active = basemesh
+bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+
+# The MPFB base hand is coarse (~1.8k polys), so hard finger flex collapses the
+# tube cross-section at the joints ("candy-wrapper" LBS pinch). One Catmull-Clark
+# subdivision level densifies the mesh (weights interpolate to the new verts),
+# giving a smooth finger curl at the joints instead of pinched shards.
+subsurf = basemesh.modifiers.new("JamnSubsurf", "SUBSURF")
+subsurf.levels = 1
+subsurf.render_levels = 1
+bpy.ops.object.modifier_apply(modifier="JamnSubsurf")
+
 # Orient into the fretting pose basis so the exported rest pose already faces
 # the way the app expects (same rotation the solver's root uses).
 arm.rotation_euler = R.fretting_rotation(arm).to_euler()
