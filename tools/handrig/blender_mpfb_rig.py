@@ -266,7 +266,7 @@ def setup_render(basemesh):
     cam.rotation_euler = (math.pi / 2, 0, 0)
     scene.camera = cam
     scene.render.use_freestyle = True
-    scene.render.line_thickness = 1.6
+    scene.render.line_thickness = 1.1
     vl = bpy.context.view_layer
     vl.use_freestyle = True
     ls = vl.freestyle_settings.linesets.new("outline")
@@ -284,6 +284,11 @@ def setup_render(basemesh):
     nt.links.new(em.outputs[0], out.inputs[0])
     basemesh.data.materials.clear()
     basemesh.data.materials.append(hmat)
+    # Smooth the mesh like mpfb_render (the clean phrase-sheet look): relaxes the
+    # facets so Freestyle traces a clean silhouette instead of every wrinkle.
+    sm = basemesh.modifiers.new("JamnSmooth", "SMOOTH"); sm.factor = 0.6; sm.iterations = 8
+    for p in basemesh.data.polygons:
+        p.use_smooth = True
 
 def emissive(name, col, strength=4):
     m = bpy.data.materials.new(name)
