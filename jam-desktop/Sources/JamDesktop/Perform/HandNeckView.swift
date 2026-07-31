@@ -264,11 +264,15 @@ struct HandNeckView: View {
             return (cx(s.f), (yLo+yHi)/2, yLo, yHi, CGFloat(s.press), (s.sHi - s.sLo) > 0.5)
         }
 
+        // Fingertip screen positions read from the baked pose (populated when the
+        // library mesh hand is drawn). The dots snap onto these so the dots and the
+        // rendered hand ALWAYS agree (the sprite is rigid; the dots move to it).
+        var poseTip: [Int: CGPoint] = [:]
+
         // ANIMATED HAND (priority 3). PREFER the real baked MPFB mesh render for a
-        // covered chord (light sprite, placed on the physical neck via spriteRect so
-        // its fingertips land on the dots). For any chord WITHOUT a baked sprite, fall
-        // back to the live IK solver (HandPoseSolver) posed to the dots — general,
-        // any chord. Ghosted so the neck stays hero and the dots read on top.
+        // covered chord (light sprite, placed on the physical neck via spriteRect).
+        // For any chord WITHOUT a baked sprite, fall back to the live IK solver
+        // (HandPoseSolver) posed to the dots. Ghosted so the neck stays hero.
         if showHand {
             let sym = currentSymbol(positionSeconds)
             var drewLibrary = false
@@ -304,16 +308,27 @@ struct HandNeckView: View {
                         dy = mean(ys) - csy
                     }
                     let rect = rect0.offsetBy(dx: dx, dy: dy)
+                    // Where each finger's tip actually renders — the dots snap here.
+                    for fi in 1...4 {
+                        if let j = entry.fingers[String(fi)], j.count >= 4 {
+                            poseTip[fi] = CGPoint(
+                                x: anchorX + (CGFloat(j[3][0]) - CGFloat(entry.clusterX)) * s + dx,
+                                y: bot + (CGFloat(entry.boardBottomZ) - CGFloat(j[3][2])) * s + dy)
+                        }
+                    }
                     var layer = ctx
                     layer.opacity = 0.75
+                    // Fade the palm out below the board so the fretboard stays hero,
+                    // but keep the whole finger (fade low enough that fingers don't
+                    // become floating stubs).
                     layer.clipToLayer { m in
                         m.fill(Path(rect), with: .linearGradient(
                             Gradient(stops: [
                                 .init(color: .white, location: 0),
-                                .init(color: .white, location: 0.35),
-                                .init(color: Color.white.opacity(0), location: 0.62)]),
+                                .init(color: .white, location: 0.6),
+                                .init(color: Color.white.opacity(0), location: 0.9)]),
                             startPoint: CGPoint(x: 0, y: top - 20),
-                            endPoint: CGPoint(x: 0, y: bot + gap * 3)))
+                            endPoint: CGPoint(x: 0, y: bot + gap * 6)))
                     }
                     layer.draw(img, in: rect)
                     drewLibrary = true
@@ -372,7 +387,10 @@ struct HandNeckView: View {
             // finger renders as a plain plant/lift dot.
             let state = (s.moving && showMotion) ? "move" : (s.press < 0.5 ? "lift" : "plant")
             let g = geom(fi)
-            let x = g.x, yLo = g.yLo, yHi = g.yHi, yc = g.yc, isBarre = g.barre
+            var x = g.x, yc = g.yc, isBarre = g.barre
+            let yLo = g.yLo, yHi = g.yHi
+            // Snap the dot onto the hand's rendered fingertip so they agree.
+            if let p = poseTip[fi] { x = p.x; yc = p.y; isBarre = false }
 
             if !isBarre && s.press < 0.04 && state != "move" { continue }
 
