@@ -92,30 +92,6 @@ struct HandNeckView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    /// Rebuild an open path keeping only runs NOT covered by a front fill —
-    /// kills the double crease lines where fingers overlap (port of the mobile
-    /// renderer's `trimmed`).
-    private func trimmedPath(_ path: Path, hiddenBy fronts: [Path]) -> Path {
-        var out = Path(); var run: [CGPoint] = []
-        func flush() {
-            if run.count > 1 { out.move(to: run[0]); for p in run.dropFirst() { out.addLine(to: p) } }
-            run.removeAll()
-        }
-        path.forEach { el in
-            let p: CGPoint?
-            switch el {
-            case .move(let to), .line(let to): p = to
-            case .quadCurve(let to, _): p = to
-            case .curve(let to, _, _): p = to
-            case .closeSubpath: p = nil
-            }
-            guard let pt = p else { return }
-            if fronts.contains(where: { $0.contains(pt) }) { flush() } else { run.append(pt) }
-        }
-        flush()
-        return out
-    }
-
     // MARK: sample a finger's state at time t
     // sLo..sHi is the string SPAN a finger covers: equal for a normal fingertip,
     // a range for the index barre (finger 1). f is the (possibly fractional) fret.
@@ -266,53 +242,26 @@ struct HandNeckView: View {
             return (cx(s.f), (yLo+yHi)/2, yLo, yHi, CGFloat(s.press), (s.sHi - s.sLo) > 0.5)
         }
 
-        // ANIMATED HAND (priority 3): the REAL anatomical hand — the baked
-        // Blender/MPFB pose for this chord (HandPoseLibrary), projected onto the
-        // PHYSICAL neck and TIP-CORRECTED so each pressing finger's tip lands
-        // EXACTLY on its dot (anatomy from the rig, exact landing from the app).
-        // Covers the 19 library chords; uncovered voicings fall back to the
-        // procedural silhouette below.
+        // ANIMATED HAND (priority 3): the REAL baked Blender/MPFB render for this
+        // chord (HandSprites PNG — grey mesh + Freestyle outline), placed on the
+        // PHYSICAL neck via the library's spriteRect. The sprite was baked for this
+        // chord's voicing at the same physical geometry, so its fingertips land on
+        // the same frets/strings as the dots. Covers the 19 library chords;
+        // uncovered voicings fall back to the procedural silhouette below.
         if showHand {
             let sym = currentSymbol(positionSeconds)
             var drewLibrary = false
-            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym) {
-                // pressing fingers → their dot centre; rest fingers → .zero so the
-                // pose keeps its natural relaxed curl.
-                var liveTips: [CGPoint] = [.zero, .zero, .zero, .zero]
+            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
+               let img = HandPoseLibrary.spriteImage(for: sym) {
                 var xs: [CGFloat] = []
-                for fi in 1...4 {
-                    let g = geom(fi)
-                    if g.press > 0.5 || g.barre { liveTips[fi-1] = CGPoint(x: g.x, y: g.yc); xs.append(g.x) }
-                }
+                for fi in 1...4 { let g = geom(fi); if g.press > 0.5 || g.barre { xs.append(g.x) } }
                 let anchorX = xs.isEmpty ? (left + right) / 2 : xs.reduce(0, +) / CGFloat(xs.count)
-                let (fingers, wrist) = HandPoseLibrary.chains(
+                if let rect = HandPoseLibrary.spriteRect(
                     entry: entry, anchorX: anchorX, boardBottomY: bot,
-                    pxPerMM: pxPerMM, liveTips: liveTips, lifted: false)
-                if !fingers.isEmpty {
-                    let pose = HandPose(fingers: fingers, wrist: wrist, thumb: wrist, targets: [])
-                    // Ghosted overlay — the neck stays the hero and the dots read on
-                    // top; the hand is anatomical context, never a black cutout.
-                    var hand = ctx; hand.opacity = 0.58
-                    let skin = Color(red: 0.16, green: 0.17, blue: 0.22)
-                    let rim = Color.white.opacity(0.55)
-                    let rimStyle = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
-                    var glow = hand; glow.addFilter(.shadow(color: .white.opacity(0.18), radius: 2.5))
-                    let palm = HandPoseRender.palmPath(pose, canvasHeight: size.height, s: pxPerMM)
-                    hand.fill(palm, with: .color(skin))
-                    glow.stroke(palm, with: .color(rim), style: rimStyle)
-                    // fingers back-to-front (lower-string tips draw in front)
-                    let ordered = pose.fingers.sorted { a, b in
-                        let ay = a.joints.last?.y ?? 0
-                        let by = b.joints.last?.y ?? 0
-                        return ay < by
-                    }
-                    let fills = ordered.map { HandPoseRender.fingerPath($0) }
-                    for (i, chain) in ordered.enumerated() {
-                        hand.fill(fills[i], with: .color(skin))
-                        var rimPath = HandPoseRender.fingerPath(chain, from: 0.18, close: false)
-                        if i + 1 < ordered.count { rimPath = trimmedPath(rimPath, hiddenBy: Array(fills[(i+1)...])) }
-                        glow.stroke(rimPath, with: .color(rim), style: rimStyle)
-                    }
+                    pxPerMM: pxPerMM, lifted: false), rect.width > 1, rect.height > 1 {
+                    var layer = ctx
+                    layer.opacity = 0.92
+                    layer.draw(img, in: rect)
                     drewLibrary = true
                 }
             }
