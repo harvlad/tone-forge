@@ -87,7 +87,10 @@ def build_human():
     keep = {g.index: g.name for g in basemesh.vertex_groups
             if g.name.endswith(".L") and any(
                 g.name.startswith(k) for k in
-                ("finger", "wrist", "hand", "lowerarm", "metacarpal"))}
+                ("finger", "wrist", "hand", "lowerarm", "metacarpal"))
+            and not g.name.startswith("finger1")}   # hide the thumb digit — it's
+            # behind the neck (occluded) so should never render in front; on barres
+            # it otherwise pokes past the neck edge.
     mg = basemesh.vertex_groups.new(name="jamn_handmask")
     idxs = []
     for v in basemesh.data.vertices:
