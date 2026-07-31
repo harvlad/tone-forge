@@ -114,8 +114,12 @@ class JointLimit:
 # Extension is negative (hyperextension), flexion positive.
 # --------------------------------------------------------------------------
 def _finger_limits(finger: str) -> dict[str, JointLimit]:
-    # Index/little abduct more than middle/ring [SPLAY].
-    abduct = {"index": 22.0, "middle": 12.0, "ring": 12.0, "pinky": 24.0}[finger]
+    # Index/little abduct more than middle/ring [SPLAY]. Fretting-hand MCP
+    # abduction is small — a real fretting hand stays compact, fingers close
+    # together, not splayed like a resting relaxed hand. Tight caps
+    # (~±8-10°, i.e. ~±0.14-0.17 rad) keep poses natural while still leaving
+    # enough sideways reach for the tips to land on adjacent-string frets.
+    abduct = {"index": 10.0, "middle": 8.0, "ring": 8.0, "pinky": 10.0}[finger]
     return {
         # MCP flexion: slight hyperextension to ~90° flexion [ROM AAOS].
         "mcp_flex": JointLimit(-20.0, 90.0, "AAOS MCP 0-90, hyperext -20"),

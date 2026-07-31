@@ -51,7 +51,7 @@ STATE_N = 30
 # Metacarpal→finger and the metacarpal bone names.
 META_BONE = ["metacarpal1.L", "metacarpal2.L", "metacarpal3.L", "metacarpal4.L"]
 
-W = dict(contact=8.0, board=40.0, collision=30.0, strain=2.4, splay=2.0,
+W = dict(contact=8.0, board=40.0, collision=30.0, strain=2.4, splay=6.0,
          coupling=1.4, thumb=5.0, wrist=0.4, manifold=2.2, move=0.5, root=0.02,
          arch=4.5, conform=4.0, individ=0.8)
 
