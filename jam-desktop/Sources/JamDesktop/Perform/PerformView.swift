@@ -35,7 +35,7 @@ struct PerformView: View {
     // at least one must always stay on. No layer knows whether another is on.
     @AppStorage("perf.layer.motion") private var showMotion = true   // trajectories/ghosts/pulses (on neck)
     @AppStorage("perf.layer.hand") private var showHand = true       // abstract posed hand (on neck)
-    @AppStorage("perf.hand.mesh") private var handMesh = false       // opt-in: realistic MPFB mesh
+    @AppStorage("perf.hand.mesh") private var handMesh = true        // realistic MPFB mesh is the default beginner view
     @AppStorage("perf.layer.dots") private var showDots = true       // finger contact dots (on neck)
     // Chord and TAB are the two reference cards — mutually exclusive (either/or).
     @AppStorage("perf.layer.chord") private var showChord = true     // chord diagram (reference card)
