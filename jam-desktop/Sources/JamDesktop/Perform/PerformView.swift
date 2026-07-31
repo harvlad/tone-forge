@@ -31,6 +31,10 @@ struct PerformView: View {
 
     @State private var tabLane = TabLaneModel()
     @State private var toneCardDismissed = false
+    @StateObject private var handScene = HandPoseModel()   // runtime 3D hand pose
+    private var handSceneURL: URL? {
+        Bundle.module.url(forResource: "hand", withExtension: "usdz", subdirectory: "Hand")
+    }
     // Five independent display layers — persisted per user, all on by default;
     // at least one must always stay on. No layer knows whether another is on.
     @AppStorage("perf.layer.motion") private var showMotion = true   // trajectories/ghosts/pulses (on neck)
@@ -90,13 +94,19 @@ struct PerformView: View {
                     performanceToolbar
 
                     // Neck / fretboard — the hero, most vertical space
-                    HandNeckView(chords: ribbon.chords,
-                                 positionSeconds: session.transport.positionSeconds,
-                                 showDots: showDots,
-                                 showMotion: showMotion,
-                                 showHand: showHand,
-                                 useMesh: handMesh)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ZStack {
+                        HandNeckView(chords: ribbon.chords,
+                                     positionSeconds: session.transport.positionSeconds,
+                                     showDots: showDots,
+                                     showMotion: showMotion,
+                                     showHand: showHand,
+                                     useMesh: false)
+                        // Phase 2 proof: runtime 3D rigged hand overlaid on the neck.
+                        if handMesh, let url = handSceneURL {
+                            HandSceneView(sceneURL: url, poseModel: handScene, debugCurl: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     // Supporting reference cards beneath the neck — Chord / TAB only.
                     lowerPanel(ribbon: ribbon)
