@@ -290,12 +290,15 @@ struct HandNeckView: View {
                     pxPerMM: pxPerMM, liveTips: liveTips, lifted: false)
                 if !fingers.isEmpty {
                     let pose = HandPose(fingers: fingers, wrist: wrist, thumb: wrist, targets: [])
-                    let skin = Color(red: 0.10, green: 0.105, blue: 0.14)
-                    let rim = Color.white.opacity(0.34)
+                    // Ghosted overlay — the neck stays the hero and the dots read on
+                    // top; the hand is anatomical context, never a black cutout.
+                    var hand = ctx; hand.opacity = 0.58
+                    let skin = Color(red: 0.16, green: 0.17, blue: 0.22)
+                    let rim = Color.white.opacity(0.55)
                     let rimStyle = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
-                    var glow = ctx; glow.addFilter(.shadow(color: .white.opacity(0.16), radius: 2.5))
+                    var glow = hand; glow.addFilter(.shadow(color: .white.opacity(0.18), radius: 2.5))
                     let palm = HandPoseRender.palmPath(pose, canvasHeight: size.height, s: pxPerMM)
-                    ctx.fill(palm, with: .color(skin))
+                    hand.fill(palm, with: .color(skin))
                     glow.stroke(palm, with: .color(rim), style: rimStyle)
                     // fingers back-to-front (lower-string tips draw in front)
                     let ordered = pose.fingers.sorted { a, b in
@@ -305,7 +308,7 @@ struct HandNeckView: View {
                     }
                     let fills = ordered.map { HandPoseRender.fingerPath($0) }
                     for (i, chain) in ordered.enumerated() {
-                        ctx.fill(fills[i], with: .color(skin))
+                        hand.fill(fills[i], with: .color(skin))
                         var rimPath = HandPoseRender.fingerPath(chain, from: 0.18, close: false)
                         if i + 1 < ordered.count { rimPath = trimmedPath(rimPath, hiddenBy: Array(fills[(i+1)...])) }
                         glow.stroke(rimPath, with: .color(rim), style: rimStyle)
