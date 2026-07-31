@@ -280,13 +280,19 @@ struct HandNeckView: View {
                     point: pt, zMM: pressing ? 0 : 12, press: pressing, barre: g.barre))
             }
             let pose = HandPoseSolver.solve(targets: targets, neckBottom: bot, s: pxPerMM, lifted: false)
-            var hand = ctx; hand.opacity = 0.8
-            let skin = Color(red: 0.42, green: 0.44, blue: 0.52)
-            let rim = Color.white.opacity(0.5)
-            let rimStyle = StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
-            var glow = hand; glow.addFilter(.shadow(color: .white.opacity(0.16), radius: 2.5))
+            var hand = ctx; hand.opacity = 0.9
+            // Shade like the MPFB render: light blue-grey, top-lit (lighter at the
+            // fingertips, darker toward the palm) for volume, with a clean thin rim.
+            let grad = GraphicsContext.Shading.linearGradient(
+                Gradient(colors: [Color(red: 0.66, green: 0.68, blue: 0.75),
+                                  Color(red: 0.33, green: 0.35, blue: 0.43)]),
+                startPoint: CGPoint(x: 0, y: top - 12),
+                endPoint: CGPoint(x: 0, y: bot + boardH * 1.4))
+            let rim = Color.white.opacity(0.55)
+            let rimStyle = StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round)
+            var glow = hand; glow.addFilter(.shadow(color: .white.opacity(0.18), radius: 2))
             let palm = HandPoseRender.palmPath(pose, canvasHeight: size.height, s: pxPerMM)
-            hand.fill(palm, with: .color(skin))
+            hand.fill(palm, with: grad)
             glow.stroke(palm, with: .color(rim), style: rimStyle)
             // fingers back-to-front (lower-string tips draw in front)
             let ordered = pose.fingers.sorted { a, b in
@@ -296,7 +302,7 @@ struct HandNeckView: View {
             }
             let fills = ordered.map { HandPoseRender.fingerPath($0) }
             for (i, chain) in ordered.enumerated() {
-                hand.fill(fills[i], with: .color(skin))
+                hand.fill(fills[i], with: grad)
                 var rimPath = HandPoseRender.fingerPath(chain, from: 0.18, close: false)
                 if i + 1 < ordered.count { rimPath = trimmedPath(rimPath, hiddenBy: Array(fills[(i+1)...])) }
                 glow.stroke(rimPath, with: .color(rim), style: rimStyle)
