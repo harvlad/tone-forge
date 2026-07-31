@@ -73,6 +73,14 @@ struct PerformView: View {
             rebuildTabLane(sidecar)
         }
         .onAppear { if showChord && showTab { showTab = false } }   // enforce either/or
+        .onChange(of: currentHandSymbol) { _, sym in
+            handScene.targetPose = sym.flatMap { HandStates.pose(for: $0) } ?? [:]
+        }
+    }
+
+    /// Chord symbol under the playhead — drives the 3D hand pose target.
+    private var currentHandSymbol: String? {
+        session.ribbon?.currentChord(at: session.transport.positionSeconds)?.symbol
     }
 
     private func content(for loaded: LoadedSession) -> some View {
@@ -103,7 +111,7 @@ struct PerformView: View {
                                      useMesh: false)
                         // Phase 2 proof: runtime 3D rigged hand overlaid on the neck.
                         if handMesh, let url = handSceneURL {
-                            HandSceneView(sceneURL: url, poseModel: handScene, debugCurl: true)
+                            HandSceneView(sceneURL: url, poseModel: handScene)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

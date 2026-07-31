@@ -21,7 +21,7 @@ def build_hand_with_thumb():
     addon_utils.enable("bl_ext.user_default.mpfb", default_set=True)
     from bl_ext.user_default.mpfb.services.humanservice import HumanService
     HS = HumanService
-    basemesh = HS.create_human(mask_helpers=True)
+    basemesh = HS.create_human(mask_helpers=False)   # no joint helper cubes in the export
     arm = HS.add_builtin_rig(basemesh, "default", import_weights=True)
     keep = {g.index for g in basemesh.vertex_groups
             if g.name.endswith(".L") and any(g.name.startswith(k) for k in

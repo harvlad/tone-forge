@@ -19,6 +19,37 @@ final class HandPoseModel: ObservableObject {
     @Published var targetPose: [String: simd_float3] = [:]
 }
 
+/// Per-chord solved joint angles (from the MPFB comfort solver), mapped to the
+/// SceneKit skeleton. Bone-local axes: flex = Z, abduction = X (USD swapped
+/// Blender's X/Z on the Y-up conversion). state vector layout (30 floats):
+/// [0:3] root loc, [3:6] root rot, [6:22] 4 fingers × (mcpFlex,mcpAbd,pip,dip),
+/// [22:26] thumb, [26:30] metacarpal cup.
+enum HandStates {
+    static let all: [String: [Float]] = {
+        guard let url = Bundle.module.url(forResource: "hand_states", withExtension: "json", subdirectory: "Hand"),
+              let d = try? Data(contentsOf: url),
+              let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: [Double]]
+        else { return [:] }
+        return j.mapValues { $0.map { Float($0) } }
+    }()
+
+    static func pose(for symbol: String) -> [String: simd_float3]? {
+        guard let v = all[symbol], v.count >= 30 else { return nil }
+        var p: [String: simd_float3] = [:]
+        let FB = ["finger2", "finger3", "finger4", "finger5"]
+        for i in 0..<4 {
+            p["metacarpal\(i+1)_L"] = [0, 0, v[26 + i]]
+            p["\(FB[i])_1_L"] = [v[6 + i*4 + 1], 0, v[6 + i*4]]   // X = abduction, Z = flex
+            p["\(FB[i])_2_L"] = [0, 0, v[6 + i*4 + 2]]
+            p["\(FB[i])_3_L"] = [0, 0, v[6 + i*4 + 3]]
+        }
+        p["finger1_1_L"] = [v[23], 0, v[22]]
+        p["finger1_2_L"] = [0, 0, v[24]]
+        p["finger1_3_L"] = [0, 0, v[24] * 0.6]
+        return p
+    }
+}
+
 struct HandSceneView: NSViewRepresentable {
     let sceneURL: URL
     @ObservedObject var poseModel: HandPoseModel
