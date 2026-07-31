@@ -281,14 +281,19 @@ struct HandNeckView: View {
                     entry: entry, anchorX: anchorX, boardBottomY: bot,
                     pxPerMM: pxPerMM, lifted: false), rect.width > 1, rect.height > 1 {
                     var layer = ctx
-                    layer.opacity = 0.6                       // ghost: neck + dots read through
-                    // Clip off the oversized palm/forearm below the board so the hand
-                    // doesn't dominate; the sprite is NOT rescaled, so fingertips keep
-                    // landing on the dots.
-                    let clip = CGRect(x: left - 70, y: top - 18,
-                                      width: (right - left) + 140,
-                                      height: (bot + gap * 4) - (top - 18))
-                    layer.clip(to: Path(clip))
+                    layer.opacity = 0.8                       // ghost: neck + dots read through
+                    // Soft vertical fade: hand solid over the board, fading out toward
+                    // the palm below so the big mass doesn't dominate (no hard cut).
+                    // Sprite is NOT rescaled, so fingertips keep landing on the dots.
+                    layer.clipToLayer { m in
+                        m.fill(Path(rect), with: .linearGradient(
+                            Gradient(stops: [
+                                .init(color: .white, location: 0),
+                                .init(color: .white, location: 0.5),
+                                .init(color: Color.white.opacity(0), location: 1)]),
+                            startPoint: CGPoint(x: 0, y: top - 20),
+                            endPoint: CGPoint(x: 0, y: bot + gap * 6)))
+                    }
                     layer.draw(img, in: rect)
                     drewLibrary = true
                 }
