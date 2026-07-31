@@ -214,9 +214,10 @@ struct HandNeckView: View {
         // hand base (glides with the shift)
         var sx: CGFloat = 0, sw: CGFloat = 0
         for fi in 1...4 { let w = 0.2 + 0.8*CGFloat(st[fi]!.press); sx += cx(st[fi]!.f)*w; sw += w }
-        let baseX = sw > 0 ? sx/sw : (left+right)/2, baseY = bot + boardH*0.7
-        func kX(_ fi: Int) -> CGFloat { baseX + CGFloat(fi-2)*15 - 7 }
-        let kY = baseY - 10
+        let baseX = sw > 0 ? sx/sw : (left+right)/2
+        let kY = bot + 30            // knuckle row, just below the board (visible)
+        let baseY = bot + 54         // palm centre
+        func kX(_ fi: Int) -> CGFloat { baseX + (CGFloat(fi) - 2.5) * 22 }
 
         // per-finger geometry shared by every on-neck layer (finger-tracked)
         func geom(_ fi: Int) -> (x: CGFloat, yc: CGFloat, yLo: CGFloat, yHi: CGFloat, press: CGFloat, barre: Bool) {
@@ -234,27 +235,35 @@ struct HandNeckView: View {
         // Provider-agnostic: this schematic hand is TODAY's provider; a planner-
         // driven realistic hand can replace it with no layout change.
         if showHand {
-            let skin = Color(red: 0.96, green: 0.80, blue: 0.66)
-            let palm = Path(roundedRect: CGRect(x: kX(1)-18, y: kY-4,
-                        width: (kX(4)-kX(1))+36, height: (baseY+40)-(kY-4)), cornerRadius: 24)
-            ctx.fill(palm, with: .color(skin.opacity(0.20)))
-            ctx.stroke(palm, with: .color(skin.opacity(0.30)), lineWidth: 1.5)
+            let skin = Color(red: 0.87, green: 0.67, blue: 0.53)
+            // palm slab — kept below the strings so it never hides the dots
+            let palm = Path(roundedRect: CGRect(x: kX(1)-22, y: kY-2,
+                        width: (kX(4)-kX(1))+44, height: (baseY+48)-(kY-2)), cornerRadius: 30)
+            ctx.fill(palm, with: .color(skin.opacity(0.22)))
+            ctx.stroke(palm, with: .color(skin.opacity(0.34)), lineWidth: 1.5)
+            // ALL four fingers: pressed fingers reach their dot, idle fingers rest
+            // on-board near the cluster — so the silhouette always reads as a hand.
             for fi in 1...4 {
                 let g = geom(fi)
-                if g.press < 0.04 && !g.barre { continue }
-                let mx = (kX(fi)+g.x)/2, my = (kY+g.yc)/2 - 18*g.press - abs(g.x-kX(fi))*0.06
+                let alpha = 0.18 + 0.14 * Double(g.press)
+                let mx = (kX(fi)+g.x)/2, my = (kY+g.yc)/2 - 16*g.press - abs(g.x-kX(fi))*0.05
                 var finger = Path()
-                finger.move(to: CGPoint(x: kX(fi), y: kY))
+                finger.move(to: CGPoint(x: kX(fi), y: kY+6))
                 finger.addQuadCurve(to: CGPoint(x: g.x, y: g.yc), control: CGPoint(x: mx, y: my))
-                ctx.stroke(finger, with: .color(skin.opacity(0.24)), style: StrokeStyle(lineWidth: 20, lineCap: .round))
-                ctx.stroke(finger, with: .color(skin.opacity(0.16)), style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                ctx.stroke(finger, with: .color(skin.opacity(alpha)), style: StrokeStyle(lineWidth: 22, lineCap: .round))
+                ctx.stroke(finger, with: .color(skin.opacity(alpha*0.6)), style: StrokeStyle(lineWidth: 11, lineCap: .round))
+                // knuckle bump where the finger meets the palm
+                ctx.fill(Path(ellipseIn: CGRect(x: kX(fi)-7, y: kY+2, width: 14, height: 14)),
+                         with: .color(skin.opacity(alpha + 0.05)))
+                // fingertip (a bar for the index barre)
                 if g.barre {
                     let rB: CGFloat = 15
                     ctx.fill(Path(roundedRect: CGRect(x: g.x-rB, y: g.yLo-rB, width: 2*rB, height: (g.yHi-g.yLo)+2*rB), cornerRadius: rB),
-                             with: .color(skin.opacity(0.26)))
+                             with: .color(skin.opacity(alpha + 0.06)))
                 } else {
-                    ctx.fill(Path(ellipseIn: CGRect(x: g.x-14, y: g.yc-14, width: 28, height: 28)),
-                             with: .color(skin.opacity(0.28)))
+                    let rT: CGFloat = 12 + 3*g.press
+                    ctx.fill(Path(ellipseIn: CGRect(x: g.x-rT, y: g.yc-rT, width: 2*rT, height: 2*rT)),
+                             with: .color(skin.opacity(alpha + 0.08)))
                 }
             }
         }
