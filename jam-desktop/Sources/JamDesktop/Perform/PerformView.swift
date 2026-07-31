@@ -14,7 +14,13 @@ import SwiftUI
 import JamDesktopCore
 import ToneForgeEngine
 
-enum PerfViewMode: Hashable { case hand, tab, both }
+/// The learning stack: three layers that teach different things, shown together
+/// and synchronized to the current chord — motion (how the hand moves),
+/// orientation (what it should look like now), precision (exact frets/strings).
+enum PerfLayer: String, CaseIterable, Hashable {
+    case motion = "Motion", pose = "Pose", chord = "Chord", tab = "TAB"
+}
+private let jamAccent = Color(red: 0.545, green: 0.427, blue: 1.0)
 
 struct PerformView: View {
     @EnvironmentObject private var model: AppModel
@@ -23,7 +29,9 @@ struct PerformView: View {
     @State private var tabLane = TabLaneModel()
     @State private var toneCardDismissed = false
     /// Perform visualization: Hand (default), TAB, or Both.
-    @State private var perfView: PerfViewMode = .hand
+    // All layers on by default — beginners live on Pose, intermediates on Motion,
+    // advanced on Chord; anyone can hide layers they don't want.
+    @State private var layers: Set<PerfLayer> = [.motion, .pose, .chord, .tab]
 
     private let displayTimer = Timer.publish(
         every: 1.0 / 30.0, on: .main, in: .common
@@ -137,47 +145,76 @@ struct PerformView: View {
 
     /// Current-chord diagram beside the scrolling lead tab lane.
     /// Perform visualization surface: Hand (default), TAB, or Both.
+    /// The synchronized learning stack: motion on top, then a row of orientation
+    /// (static pose) + precision (chord diagram) + the lead TAB lane — all driven
+    /// by the same current chord / playhead. Layers are toggled, not exclusive.
     @ViewBuilder
     private func diagramAndTabRow(ribbon: ChordRibbonModel) -> some View {
         let pos = session.transport.positionSeconds
         let symbol = ribbon.currentChord(at: pos)?.symbol
-        VStack(spacing: 12) {
-            Picker("Visualization", selection: $perfView) {
-                Text("Hand").tag(PerfViewMode.hand)
-                Text("TAB").tag(PerfViewMode.tab)
-                Text("Both").tag(PerfViewMode.both)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 240)
+        VStack(spacing: 14) {
+            layerToolbar
 
-            switch perfView {
-            case .hand:
+            if layers.contains(.motion) {
                 HandNeckView(chords: ribbon.chords, positionSeconds: pos)
-                    .frame(maxWidth: .infinity, minHeight: 300)
-            case .tab:
-                tabColumn(symbol: symbol)
-            case .both:
-                VStack(spacing: 14) {
-                    HandNeckView(chords: ribbon.chords, positionSeconds: pos)
-                        .frame(maxWidth: .infinity, minHeight: 230)
-                    if !tabLane.notes.isEmpty { tabLaneBlock() }
+                    .frame(maxWidth: .infinity, minHeight: 220)
+            }
+
+            let showRow = layers.contains(.pose) || layers.contains(.chord)
+                || (layers.contains(.tab) && !tabLane.notes.isEmpty)
+            if showRow {
+                HStack(alignment: .top, spacing: 16) {
+                    if layers.contains(.pose) {
+                        stackCard(title: "SHAPE") { StaticHandPoseView(symbol: symbol) }
+                            .frame(width: 210, height: 232)
+                    }
+                    if layers.contains(.chord) {
+                        stackCard(title: "FRETS") {
+                            if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
+                                ChordDiagramView(diagram: diagram)
+                            } else { Color.clear }
+                        }
+                        .frame(width: 210, height: 232)
+                    }
+                    if layers.contains(.tab) && !tabLane.notes.isEmpty {
+                        tabLaneBlock().frame(maxWidth: .infinity)
+                    }
                 }
             }
         }
-        .frame(minHeight: 340)
+        .frame(minHeight: 320)
     }
 
-    /// TAB view: the current-chord diagram beside the scrolling lead lane
-    /// (the original Perform layout, kept available).
-    @ViewBuilder
-    private func tabColumn(symbol: String?) -> some View {
-        HStack(alignment: .center, spacing: 24) {
-            if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
-                ChordDiagramView(diagram: diagram).frame(width: 280, height: 340)
+    /// Layer toggles — Motion · Pose · Chord · TAB. All on by default.
+    private var layerToolbar: some View {
+        HStack(spacing: 8) {
+            ForEach(PerfLayer.allCases, id: \.self) { layer in
+                let on = layers.contains(layer)
+                Button(layer.rawValue) {
+                    if on { layers.remove(layer) } else { layers.insert(layer) }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 13).padding(.vertical, 6)
+                .background(on ? jamAccent : Color.gray.opacity(0.18))
+                .foregroundStyle(on ? Color.white : Color.secondary)
+                .clipShape(Capsule())
             }
-            if !tabLane.notes.isEmpty { tabLaneBlock() }
         }
+    }
+
+    /// A titled reference card for a static stack layer.
+    @ViewBuilder
+    private func stackCard<Content: View>(title: String,
+                                          @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(spacing: 6) {
+            content().frame(maxWidth: .infinity, maxHeight: .infinity)
+            Text(title).font(.system(size: 10, design: .monospaced)).tracking(1.5)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(10)
+        .background(Color.gray.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     @ViewBuilder
