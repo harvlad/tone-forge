@@ -12,6 +12,9 @@
 import SwiftUI
 import SceneKit
 import simd
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// Live pose source: bone name -> local euler delta (radians). Written by the
 /// posing layer (Phase 3); empty = rest pose.
@@ -113,11 +116,28 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
 
     private func setupLights() {
         let key = SCNNode(); key.light = SCNLight(); key.light!.type = .directional
-        key.light!.intensity = 900; key.eulerAngles = SCNVector3(-Float.pi/4, Float.pi/6, 0)
+        key.light!.intensity = 750; key.light!.color = NSColor(calibratedRed: 1.0, green: 0.96, blue: 0.9, alpha: 1)
+        key.eulerAngles = SCNVector3(-Float.pi/4, Float.pi/6, 0)
         scene.rootNode.addChildNode(key)
+        let fill = SCNNode(); fill.light = SCNLight(); fill.light!.type = .directional
+        fill.light!.intensity = 300; fill.light!.color = NSColor(calibratedRed: 0.8, green: 0.85, blue: 1.0, alpha: 1)
+        fill.eulerAngles = SCNVector3(Float.pi/6, -Float.pi/3, 0)
+        scene.rootNode.addChildNode(fill)
         let amb = SCNNode(); amb.light = SCNLight(); amb.light!.type = .ambient
-        amb.light!.intensity = 350
+        amb.light!.intensity = 250
         scene.rootNode.addChildNode(amb)
+    }
+
+    /// Warm skin material so the hand reads as flesh, not grey plastic.
+    private func applySkin(_ node: SCNNode) {
+        let m = SCNMaterial()
+        m.lightingModel = .physicallyBased
+        m.diffuse.contents = NSColor(calibratedRed: 0.83, green: 0.62, blue: 0.52, alpha: 1)
+        m.roughness.contents = 0.68
+        m.metalness.contents = 0.0
+        // faint warm bounce to fake subsurface flesh
+        m.emission.contents = NSColor(calibratedRed: 0.22, green: 0.07, blue: 0.06, alpha: 1)
+        node.geometry?.materials = [m]
     }
 
     private func findBones() {
@@ -125,6 +145,7 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
         scene.rootNode.enumerateHierarchy { node, _ in
             if let sk = node.skinner, !skinnerFound {
                 skinnerFound = true
+                applySkin(node)
                 for bone in sk.bones {
                     guard let name = bone.name else { continue }
                     bones[name] = bone
