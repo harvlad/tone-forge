@@ -19,23 +19,34 @@ import ToneForgeEngine
 // MARK: - simplest deterministic fingering
 
 struct FingerContact: Equatable { let finger: Int; let string: Int; let fret: Int }
+struct BarreSpan: Equatable { let fret: Int; let lo: Int; let hi: Int }   // index barre: lo..hi strings at `fret`
+/// One chord's fingering: an optional index BARRE + the remaining fingers.
+struct HandShape: Equatable { let barre: BarreSpan?; let fingers: [FingerContact] }
 
 enum HandFingering {
-    /// Fretted dots -> finger numbers: distinct fingers 1..4 by ascending fret
-    /// then string. Open / muted strings carry no finger. Deliberately the
-    /// simplest deterministic mapping — NOT solving pedagogy.
-    ///
-    /// Note: we do NOT use ChordDiagram.barre here. That flag is a cosmetic
-    /// diagram heuristic that fires whenever >=3 notes share the lowest fret —
-    /// e.g. A major (D/G/B all at fret 2), which is three fingers, not a barre.
-    /// Limitation (recorded): true barre chords and chords with >4 fretted notes
-    /// get an approximate mapping; acceptable for validating the visualization.
-    static func contacts(for d: ChordDiagram) -> [FingerContact] {
+    /// Bounded, deterministic fingering — NOT a general engine. Barre chords are
+    /// core guitar vocabulary, so we detect them explicitly:
+    ///   • if >= 2 fretted notes share the LOWEST fret AND notes exist above it,
+    ///     infer an index BARRE across those notes (finger 1); higher notes get
+    ///     fingers 2,3,4 by ascending fret then string.
+    ///   • otherwise assign distinct fingers 1..4 ascending (open chords: A, D…).
+    /// Covers the common barre set (Cm, F, B, F#m) — no alternate voicings, no
+    /// advanced/jazz fingerings.
+    static func shape(for d: ChordDiagram) -> HandShape {
         let dots = d.dots.sorted { $0.fret != $1.fret ? $0.fret < $1.fret : $0.string < $1.string }
-        var out: [FingerContact] = []
-        var f = 1
+        guard let minFret = dots.map(\.fret).min() else { return HandShape(barre: nil, fingers: []) }
+        let atMin = dots.filter { $0.fret == minFret }
+        let higher = dots.filter { $0.fret > minFret }
+        if atMin.count >= 2 && !higher.isEmpty {          // index barre
+            let strings = atMin.map(\.string)
+            let barre = BarreSpan(fret: minFret, lo: strings.min()!, hi: strings.max()!)
+            var out: [FingerContact] = []; var f = 2
+            for dot in higher { out.append(FingerContact(finger: min(4, f), string: dot.string, fret: dot.fret)); f += 1 }
+            return HandShape(barre: barre, fingers: out)
+        }
+        var out: [FingerContact] = []; var f = 1          // distinct fingers (A, D, open)
         for dot in dots { out.append(FingerContact(finger: min(4, f), string: dot.string, fret: dot.fret)); f += 1 }
-        return out
+        return HandShape(barre: nil, fingers: out)
     }
 }
 
@@ -46,18 +57,19 @@ struct HandNeckView: View {
     let positionSeconds: Double
 
     // fingering per chord index, computed once per chord list
-    private let fings: [[FingerContact]]
+    private let shapes: [HandShape]
     private let maxFret: Int
 
     init(chords: [ChordEvent], positionSeconds: Double) {
         self.chords = chords
         self.positionSeconds = positionSeconds
-        let f = chords.map { ev -> [FingerContact] in
-            guard let d = ChordDiagram.make(symbol: ev.symbol) else { return [] }
-            return HandFingering.contacts(for: d)
+        let sh = chords.map { ev -> HandShape in
+            guard let d = ChordDiagram.make(symbol: ev.symbol) else { return HandShape(barre: nil, fingers: []) }
+            return HandFingering.shape(for: d)
         }
-        self.fings = f
-        self.maxFret = max(5, (f.flatMap { $0 }.map(\.fret).max() ?? 4) + 1)
+        self.shapes = sh
+        let frets = sh.flatMap { $0.fingers.map(\.fret) + ($0.barre.map { [$0.fret] } ?? []) }
+        self.maxFret = max(5, (frets.max() ?? 4) + 1)
     }
 
     private let col: [Int: Color] = [
@@ -79,12 +91,10 @@ struct HandNeckView: View {
     }
 
     // MARK: sample a finger's state at time t
-    private struct FState { var s: Double; var f: Double; var press: Double; var moving: Bool; var arrive: Double }
+    // sLo..sHi is the string SPAN a finger covers: equal for a normal fingertip,
+    // a range for the index barre (finger 1). f is the (possibly fractional) fret.
+    private struct FState { var f: Double; var sLo: Double; var sHi: Double; var press: Double; var moving: Bool; var arrive: Double }
 
-    private func contact(_ fi: Int, _ idx: Int) -> FingerContact? {
-        guard idx >= 0, idx < fings.count else { return nil }
-        return fings[idx].first { $0.finger == fi }
-    }
     private func activeIndex(_ t: Double) -> Int {
         guard !chords.isEmpty else { return 0 }
         var lo = 0, hi = chords.count - 1, cand = 0
@@ -94,49 +104,54 @@ struct HandNeckView: View {
     }
     // smootherstep: zero 1st AND 2nd derivative at both ends — no jerk.
     private func easeIO(_ x: Double) -> Double { let c = min(1, max(0, x)); return c*c*c*(c*(c*6-15)+10) }
-
-    /// On-board rest spot for an UNUSED finger — hovering near the chord's fret
-    /// cluster, never fret 0 (which projects off-screen past the nut).
+    private func restString(_ fi: Int) -> Double { 1.4 + Double(fi - 1) * 0.7 }
     private func anchorFret(_ idx: Int) -> Double {
-        guard idx >= 0, idx < fings.count else { return 2 }
-        let fs = fings[idx].map { Double($0.fret) }
+        guard idx >= 0, idx < shapes.count else { return 2 }
+        var fs = shapes[idx].fingers.map { Double($0.fret) }
+        if let b = shapes[idx].barre { fs.append(Double(b.fret)) }
         return fs.isEmpty ? 2 : max(1, fs.reduce(0, +) / Double(fs.count))
     }
-    private func restString(_ fi: Int) -> Double { 1.4 + Double(fi - 1) * 0.7 }
+
+    /// A finger's target in chord `idx`: fret + string SPAN + whether pressed.
+    /// Finger 1 may be an index barre (sLo != sHi); everyone else is a point.
+    private func target(_ fi: Int, _ idx: Int) -> (f: Double, sLo: Double, sHi: Double, pressed: Bool) {
+        guard idx >= 0, idx < shapes.count else { return (2, restString(fi), restString(fi), false) }
+        let sh = shapes[idx]
+        if fi == 1, let b = sh.barre {
+            return (Double(b.fret), Double(b.lo), Double(b.hi), true)
+        }
+        if let c = sh.fingers.first(where: { $0.finger == fi }) {
+            return (Double(c.fret), Double(c.string), Double(c.string), true)
+        }
+        return (anchorFret(idx), restString(fi), restString(fi), false)   // parked on-board
+    }
 
     private func sample(_ fi: Int, _ t: Double) -> FState {
-        guard !chords.isEmpty else { return FState(s: restString(fi), f: 2, press: 0, moving: false, arrive: 0) }
+        guard !chords.isEmpty else { return FState(f: 2, sLo: restString(fi), sHi: restString(fi), press: 0, moving: false, arrive: 0) }
         let i = activeIndex(t)
-        let cur = contact(fi, i)
         let j = min(i + 1, chords.count - 1)
         let boundary = chords[i].end
-        // tempo-aware transition: longer = smoother, but never more than half the
-        // chord (short chords stay legible). Fingers prepare into the next chord.
         let dur = chords[i].end - chords[i].start
         let trans = min(0.34, max(0.12, dur * 0.5))
-        let restF = anchorFret(i), restS = restString(fi)
-        // arrival pulse: this finger newly pressing at chord i's start
+        let a = target(fi, i)
+        // arrival pulse: newly pressing (or changed placement) at chord i's start
         var arrive = 0.0
-        if let c = cur {
-            let prev = contact(fi, i - 1)
-            if prev == nil || prev != c {
+        if a.pressed {
+            let p = target(fi, i - 1)
+            if !p.pressed || p.f != a.f || p.sLo != a.sLo || p.sHi != a.sHi {
                 let dt = t - chords[i].start
                 if dt >= 0 && dt < 0.4 { arrive = 1 - dt / 0.4 }
             }
         }
         if j == i || t < boundary - trans {           // holding
-            if let c = cur { return FState(s: Double(c.string), f: Double(c.fret), press: 1, moving: false, arrive: arrive) }
-            return FState(s: restS, f: restF, press: 0, moving: false, arrive: 0)   // parked on-board
+            return FState(f: a.f, sLo: a.sLo, sHi: a.sHi, press: a.pressed ? 1 : 0, moving: false, arrive: arrive)
         }
         // transition into the next chord
-        let nxt = contact(fi, j)
-        let k = easeIO(min(1, max(0, (t - (boundary - trans)) / trans)))
-        let fromS = cur.map { Double($0.string) } ?? nxt.map { Double($0.string) } ?? restS
-        let fromF = cur.map { Double($0.fret) } ?? nxt.map { Double($0.fret) } ?? restF
-        let toS = nxt.map { Double($0.string) } ?? cur.map { Double($0.string) } ?? restS
-        let toF = nxt.map { Double($0.fret) } ?? cur.map { Double($0.fret) } ?? restF
-        let press = (cur != nil ? 1.0 : 0.0) * (1 - k) + (nxt != nil ? 1.0 : 0.0) * k
-        return FState(s: fromS + (toS-fromS)*k, f: fromF + (toF-fromF)*k, press: press, moving: true, arrive: 0)
+        let b = target(fi, j)
+        let k = easeIO((t - (boundary - trans)) / trans)
+        func lp(_ x: Double, _ y: Double) -> Double { x + (y - x) * k }
+        let press = (a.pressed ? 1.0 : 0.0) * (1 - k) + (b.pressed ? 1.0 : 0.0) * k
+        return FState(f: lp(a.f, b.f), sLo: lp(a.sLo, b.sLo), sHi: lp(a.sHi, b.sHi), press: press, moving: true, arrive: 0)
     }
 
     // MARK: draw
@@ -203,48 +218,68 @@ struct HandNeckView: View {
         let order = (1...4).sorted { (st[$0]!.moving ? 1:0) < (st[$1]!.moving ? 1:0) }
         for fi in order {
             let s = st[fi]!, c = col[fi]!
-            let tx = cx(s.f), ty = sy(s.s) - CGFloat(1 - s.press)*16
             let state = s.moving ? "move" : (s.press < 0.5 ? "lift" : "plant")
             let emph: CGFloat = state == "move" ? 1 : state == "plant" ? 0.62 : 0.28
+            let lift = CGFloat(1 - s.press) * 16
+            let x = cx(s.f)
+            let isBarre = (s.sHi - s.sLo) > 0.5              // finger 1 laid across strings
+            let yLo = sy(s.sLo) - lift, yHi = sy(s.sHi) - lift
+            let yc = (yLo + yHi) / 2                          // token/label centre
 
-            // motion trail + future ring (moving only)
-            if state == "move" {
+            if !isBarre && s.press < 0.04 && state != "move" { continue }
+
+            // motion trail (moving fingertips only)
+            if state == "move" && !isBarre {
                 for g in 1...4 {
                     let gp = sample(fi, positionSeconds - Double(g)*0.05)
-                    ctx.fill(Path(ellipseIn: CGRect(x: cx(gp.f)-CGFloat(9-g), y: sy(gp.s)-CGFloat(9-g), width: CGFloat(2*(9-g)), height: CGFloat(2*(9-g)))),
+                    let gy = sy((gp.sLo+gp.sHi)/2)
+                    ctx.fill(Path(ellipseIn: CGRect(x: cx(gp.f)-CGFloat(9-g), y: gy-CGFloat(9-g), width: CGFloat(2*(9-g)), height: CGFloat(2*(9-g)))),
                              with: .color(c.opacity(0.10*(1-Double(g)/5))))
                 }
             }
-            if s.press < 0.04 && state != "move" { continue }
 
-            // curved tapered stem terminating at the tip
-            let mx = (kX(fi)+tx)/2, my = (kY+ty)/2 - 20*CGFloat(s.press) - abs(tx-kX(fi))*0.06
-            var stem = Path(); stem.move(to: CGPoint(x: kX(fi), y: kY)); stem.addQuadCurve(to: CGPoint(x: tx, y: ty), control: CGPoint(x: mx, y: my))
+            // curved tapered stem from the wrist to the finger centre
+            let mx = (kX(fi)+x)/2, my = (kY+yc)/2 - 20*CGFloat(s.press) - abs(x-kX(fi))*0.06
+            var stem = Path(); stem.move(to: CGPoint(x: kX(fi), y: kY)); stem.addQuadCurve(to: CGPoint(x: x, y: yc), control: CGPoint(x: mx, y: my))
             ctx.stroke(stem, with: .color(c.opacity((0.12+0.30*Double(s.press))*(0.5+0.5*Double(emph)))),
                        style: StrokeStyle(lineWidth: 3+3*CGFloat(s.press), lineCap: .round))
             ctx.stroke(stem, with: .color(c.opacity(0.5*Double(emph))), style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
 
-            // one subtle arrival pulse
+            if isBarre {
+                // one finger, many strings: a rounded bar across yLo..yHi at fret x
+                let rB: CGFloat = 12.5
+                let cap = Path(roundedRect: CGRect(x: x-rB, y: yLo-rB, width: 2*rB, height: (yHi-yLo)+2*rB), cornerRadius: rB)
+                var bar = ctx
+                bar.opacity = state == "lift" ? 0.34 : 1
+                if state != "lift" { bar.addFilter(.shadow(color: c.opacity(0.45), radius: 8)) }
+                bar.fill(cap, with: .color(c))
+                ctx.stroke(cap, with: .color(Color(white:0.06)), lineWidth: 1.5)
+                ctx.draw(Text("\(fi)").font(.system(size: 15, weight: .bold, design: .monospaced)).foregroundColor(Color(white:0.05)),
+                         at: CGPoint(x: x, y: yc))
+                continue
+            }
+
+            // one subtle arrival pulse (fingertips)
             if s.arrive > 0 {
                 let k = 1 - s.arrive
-                ctx.stroke(Path(ellipseIn: CGRect(x: tx-(13+CGFloat(k)*12), y: ty-(13+CGFloat(k)*12), width: 2*(13+CGFloat(k)*12), height: 2*(13+CGFloat(k)*12))),
+                ctx.stroke(Path(ellipseIn: CGRect(x: x-(13+CGFloat(k)*12), y: yc-(13+CGFloat(k)*12), width: 2*(13+CGFloat(k)*12), height: 2*(13+CGFloat(k)*12))),
                            with: .color(c.opacity(s.arrive*0.45)), lineWidth: 2)
             }
-            // fingertip — always a circle (no squash; it read as distortion on landing)
+            // fingertip — always a circle
             let r: CGFloat = state == "move" ? 19 : state == "plant" ? 17 : 12
             var tip = ctx
             if state == "move" { tip.addFilter(.shadow(color: c.opacity(0.7), radius: 9)) }
-            let rect = CGRect(x: tx - r, y: ty - r, width: 2*r, height: 2*r)
+            let rect = CGRect(x: x - r, y: yc - r, width: 2*r, height: 2*r)
             tip.opacity = state == "lift" ? 0.34 : 1
             tip.fill(Path(ellipseIn: rect), with: .color(c))
             if state == "move" {
-                ctx.stroke(Path(ellipseIn: CGRect(x: tx-r-3.5, y: ty-r-3.5, width: 2*(r+3.5), height: 2*(r+3.5))),
+                ctx.stroke(Path(ellipseIn: CGRect(x: x-r-3.5, y: yc-r-3.5, width: 2*(r+3.5), height: 2*(r+3.5))),
                            with: .color(.white.opacity(0.85)), lineWidth: 2)
             }
             ctx.stroke(Path(ellipseIn: rect), with: .color(Color(white:0.06)), lineWidth: 1.5)
             ctx.draw(Text("\(fi)").font(.system(size: state=="move" ? 17:15, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(white:0.05).opacity(state=="lift" ? 0.6:1)),
-                     at: CGPoint(x: tx, y: ty))
+                     at: CGPoint(x: x, y: yc))
         }
     }
 }

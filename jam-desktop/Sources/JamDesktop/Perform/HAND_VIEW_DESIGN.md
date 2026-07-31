@@ -37,9 +37,13 @@ ascending fret/string; documented approximations for barres / >4-note chords).
 ## The data contract (stable)
 ```
 FingerContact { finger: Int(1...4); string: Int(0...5, low E=0); fret: Int(>=1) }
+BarreSpan     { fret: Int; lo: Int; hi: Int }              // finger 1 across lo..hi strings
+HandShape     { barre: BarreSpan?; fingers: [FingerContact] }
 ```
-Per timeline segment: a `[FingerContact]` (fretted notes only; open/muted carry no finger) plus
-the segment's `start`/`end`. Everything downstream is built from this — it is the seam.
+Per timeline segment: a `HandShape` — an optional index **barre** (one finger owning multiple
+strings) plus the remaining `[FingerContact]` (open/muted carry no finger) — with the segment's
+`start`/`end`. Everything downstream is built from this — it is the seam. The renderer draws a
+barre as a real bar spanning its strings, never as duplicated fingers.
 
 ## Swapping the provider (no renderer change)
 Any future provider yields the same `[FingerContact]`-per-segment stream; the animation + renderer
