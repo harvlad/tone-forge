@@ -242,29 +242,29 @@ struct HandNeckView: View {
             return (cx(s.f), (yLo+yHi)/2, yLo, yHi, CGFloat(s.press), (s.sHi - s.sLo) > 0.5)
         }
 
-        // ANIMATED HAND (priority 3): the REAL baked MPFB pose for this chord, drawn
-        // as its PROJECTED MESH OUTLINE (entry.outline — the exact rendered
-        // silhouette) placed on the PHYSICAL neck. Vector, so it's recoloured to the
-        // light-grey render look (the bundled sprite PNG is a darker bake). Baked for
-        // this chord's voicing at the same geometry, so the fingertips land on the
-        // dots. Covers the 19 library chords; uncovered voicings → procedural below.
+        // ANIMATED HAND (priority 3): the REAL baked MPFB render (HandSprites PNG),
+        // placed on the PHYSICAL neck via spriteRect so its fingertips land on the
+        // dots. The bundled sprite is a DARK bake, so recolour it to the light
+        // pose-sheet grey: fill grey masked by the hand's alpha, then add the sprite
+        // back with a lighten blend so its Freestyle outline + interior creases read
+        // over the grey. (A true match = re-baking the sprites light — Step 2.)
+        // Covers the 19 library chords; uncovered voicings → procedural below.
         if showHand {
             let sym = currentSymbol(positionSeconds)
             var drewLibrary = false
-            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym) {
+            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
+               let img = HandPoseLibrary.spriteImage(for: sym) {
                 var xs: [CGFloat] = []
                 for fi in 1...4 { let g = geom(fi); if g.press > 0.5 || g.barre { xs.append(g.x) } }
                 let anchorX = xs.isEmpty ? (left + right) / 2 : xs.reduce(0, +) / CGFloat(xs.count)
-                if let path = HandPoseLibrary.outlinePath(
+                if let rect = HandPoseLibrary.spriteRect(
                     entry: entry, anchorX: anchorX, boardBottomY: bot,
-                    pxPerMM: pxPerMM, lifted: false) {
-                    var hand = ctx; hand.opacity = 0.85
-                    let fill = Color(red: 0.47, green: 0.49, blue: 0.56)   // phrase-sheet grey
-                    let rim = Color.white.opacity(0.5)
-                    var glow = hand; glow.addFilter(.shadow(color: .white.opacity(0.15), radius: 2))
-                    hand.fill(path, with: .color(fill), style: FillStyle(eoFill: true))
-                    glow.stroke(path, with: .color(rim),
-                                style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+                    pxPerMM: pxPerMM, lifted: false), rect.width > 1, rect.height > 1 {
+                    var base = ctx; base.opacity = 0.9
+                    base.clipToLayer { m in m.draw(img, in: rect) }        // mask = hand alpha
+                    base.fill(Path(rect), with: .color(Color(red: 0.50, green: 0.52, blue: 0.60)))
+                    var det = ctx; det.blendMode = .plusLighter; det.opacity = 0.85
+                    det.draw(img, in: rect)                                // interior creases + outline
                     drewLibrary = true
                 }
             }
