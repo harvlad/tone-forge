@@ -61,6 +61,26 @@ inlined for V1. When a second provider lands, lift it out: pass a precomputed
 of raw chords. That is the only change needed to make the provider fully pluggable; the draw/sample
 code stays as-is. Do not do this speculatively — V1 is frozen.
 
+## The overlay architecture (Perform v2)
+The neck is the stage. Five independent display layers sit over one shared chord/playhead —
+three drawn ON the neck, two as small reference cards beneath it:
+
+- **Motion** — trajectories, ghost trail, arrival pulses, movement emphasis (on neck)
+- **Animated Hand** — a realistic pose drawn *directly on the neck* at ~26% opacity; strings and
+  dots stay fully visible on top. Anatomical context (wrist / palm / curvature), never dominant.
+- **Finger Dots** — coloured contacts + finger-number identity; the primary instructional layer.
+- **Chord Diagram** / **TAB** — supporting reference cards below the neck (verify the fingering).
+
+Visual priority is fixed by layout: fretboard > dots+motion > hand > chord/TAB. Each layer is a
+pure boolean into `HandNeckView` (`showDots` / `showMotion` / `showHand`) or a reference card; no
+renderer knows whether another is enabled.
+
+**Hand-overlay provider seam.** The overlay is provider-driven exactly like the fingering seam.
+Today the provider is `HandPoseLibrary.spriteImage(for: symbol)` — a baked static pose per chord,
+"good enough to establish the UX architecture." A future provider can supply planner-animated,
+anatomically-driven hand motion; the renderer draws whatever pose source it's given at the current
+time, so **the UI layout never changes when the hand provider changes.**
+
 ## V1 boundaries (intentional)
 Approximate barre fingering; >4-fretted-note chords approximated; no per-note lead fingering;
 slides / hammer-ons deferred until richer movement data exists. All are provider-side limitations —

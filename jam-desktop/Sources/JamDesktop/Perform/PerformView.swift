@@ -14,12 +14,15 @@ import SwiftUI
 import JamDesktopCore
 import ToneForgeEngine
 
-/// Perform = four INDEPENDENT learning layers over one shared chord/playhead:
-///   Motion — the animated hand on the neck (how the hand moves)
-///   Pose   — a static rendered hand pose (what the hand should look like)
-///   Chord  — the chord diagram (exact frets/strings)
-///   TAB    — tablature
-/// Toggled independently; the neck is always the hero. No layer knows another.
+/// Perform = OVERLAY architecture. The neck is the stage; the eye almost never
+/// leaves it. Five INDEPENDENT layers over one shared chord/playhead — three are
+/// drawn ON the neck, two are small supporting reference cards beneath it:
+///   Motion     — trajectories, ghosts, arrival pulses, movement timing (on neck)
+///   Hand       — realistic pose overlaid on the neck at low opacity (on neck)
+///   Dots       — coloured finger contacts + finger identity, the primary layer (on neck)
+///   Chord      — chord diagram reference card (below neck)
+///   TAB        — tablature reference card (below neck)
+/// Priority: fretboard > dots+motion > hand > chord/TAB. No layer knows another.
 private let jamAccent = Color(red: 0.545, green: 0.427, blue: 1.0)
 
 struct PerformView: View {
@@ -28,13 +31,16 @@ struct PerformView: View {
 
     @State private var tabLane = TabLaneModel()
     @State private var toneCardDismissed = false
-    // Four independent learning layers — persisted per user, all on by default;
+    // Five independent display layers — persisted per user, all on by default;
     // at least one must always stay on. No layer knows whether another is on.
-    @AppStorage("perf.layer.motion") private var showMotion = true   // animated hand on the neck
-    @AppStorage("perf.layer.pose") private var showPose = true       // static rendered pose
-    @AppStorage("perf.layer.chord") private var showChord = true     // chord diagram
-    @AppStorage("perf.layer.tab") private var showTab = true         // tablature
-    private var layersOn: Int { (showMotion ?1:0) + (showPose ?1:0) + (showChord ?1:0) + (showTab ?1:0) }
+    @AppStorage("perf.layer.motion") private var showMotion = true   // trajectories/ghosts/pulses (on neck)
+    @AppStorage("perf.layer.hand") private var showHand = true       // realistic hand overlay (on neck)
+    @AppStorage("perf.layer.dots") private var showDots = true       // finger contact dots (on neck)
+    @AppStorage("perf.layer.chord") private var showChord = true     // chord diagram (reference card)
+    @AppStorage("perf.layer.tab") private var showTab = true         // tablature (reference card)
+    private var layersOn: Int {
+        (showMotion ?1:0) + (showHand ?1:0) + (showDots ?1:0) + (showChord ?1:0) + (showTab ?1:0)
+    }
 
     private let displayTimer = Timer.publish(
         every: 1.0 / 30.0, on: .main, in: .common
@@ -83,10 +89,12 @@ struct PerformView: View {
                     // Neck / fretboard — the hero, most vertical space
                     HandNeckView(chords: ribbon.chords,
                                  positionSeconds: session.transport.positionSeconds,
-                                 showContacts: showMotion)
+                                 showDots: showDots,
+                                 showMotion: showMotion,
+                                 showHand: showHand)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    // Lower reference row — Pose / Chord / TAB (Motion lives on the neck)
+                    // Supporting reference cards beneath the neck — Chord / TAB only.
                     lowerPanel(ribbon: ribbon)
 
                     // Secondary: ribbon strip + section strip
@@ -132,11 +140,14 @@ struct PerformView: View {
         HStack(spacing: 10) {
             Text("Display Layers")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-            layerPill("Motion", systemImage: "waveform", on: showMotion) {
+            layerPill("Motion", systemImage: "waveform.path", on: showMotion) {
                 if !(showMotion && layersOn == 1) { showMotion.toggle() }
             }
-            layerPill("Pose", systemImage: "hand.raised.fill", on: showPose) {
-                if !(showPose && layersOn == 1) { showPose.toggle() }
+            layerPill("Hand", systemImage: "hand.raised.fill", on: showHand) {
+                if !(showHand && layersOn == 1) { showHand.toggle() }
+            }
+            layerPill("Dots", systemImage: "circlebadge.fill", on: showDots) {
+                if !(showDots && layersOn == 1) { showDots.toggle() }
             }
             layerPill("Chord", systemImage: "tablecells", on: showChord) {
                 if !(showChord && layersOn == 1) { showChord.toggle() }
@@ -167,19 +178,19 @@ struct PerformView: View {
         .clipShape(Capsule())
     }
 
-    private func resetLayout() { showMotion = true; showPose = true; showChord = true; showTab = true }
+    private func resetLayout() {
+        showMotion = true; showHand = true; showDots = true; showChord = true; showTab = true
+    }
 
-    // MARK: lower reference row — the ON subset of {Pose, Chord, TAB}, split evenly.
-    // Motion is the neck above, not a lower panel; if no lower layer is on the row
-    // vanishes and the neck takes maximum height.
+    // MARK: supporting reference cards — Chord Diagram / TAB only.
+    // These verify the exact fingering; they never compete with the neck, so they
+    // stay small. When neither is on, the row vanishes and the neck takes all the
+    // height (Motion / Hand / Dots all live on the neck itself).
     @ViewBuilder
     private func lowerPanel(ribbon: ChordRibbonModel) -> some View {
         let symbol = ribbon.currentChord(at: session.transport.positionSeconds)?.symbol
-        if showPose || showChord || showTab {
+        if showChord || showTab {
             HStack(alignment: .top, spacing: 16) {
-                if showPose {
-                    panelCard("Hand") { StaticHandPoseView(symbol: symbol) }
-                }
                 if showChord {
                     panelCard("Chord Diagram") {
                         if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
@@ -193,7 +204,7 @@ struct PerformView: View {
                     }
                 }
             }
-            .frame(height: 300)   // large — references read as a teacher's held-up hand
+            .frame(height: 190)   // small — supporting references, not the hero
         }
     }
 

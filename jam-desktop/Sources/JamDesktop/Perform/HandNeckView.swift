@@ -55,16 +55,22 @@ enum HandFingering {
 struct HandNeckView: View {
     let chords: [ChordEvent]
     let positionSeconds: Double
-    var showContacts: Bool = true       // the Contacts layer: dots/stems/barre over the neck
+    // Three INDEPENDENT overlay layers on the neck. None knows about the others.
+    var showDots: Bool = true       // Finger Dots — exact contacts + finger identity (primary)
+    var showMotion: Bool = true     // Motion — trajectories, ghosts, arrival pulses, movement emphasis
+    var showHand: Bool = true       // Animated Hand — realistic pose drawn over the neck (low opacity)
 
     // fingering per chord index, computed once per chord list
     private let shapes: [HandShape]
     private let maxFret: Int
 
-    init(chords: [ChordEvent], positionSeconds: Double, showContacts: Bool = true) {
+    init(chords: [ChordEvent], positionSeconds: Double,
+         showDots: Bool = true, showMotion: Bool = true, showHand: Bool = true) {
         self.chords = chords
         self.positionSeconds = positionSeconds
-        self.showContacts = showContacts
+        self.showDots = showDots
+        self.showMotion = showMotion
+        self.showHand = showHand
         let sh = chords.map { ev -> HandShape in
             guard let d = ChordDiagram.make(symbol: ev.symbol) else { return HandShape(barre: nil, fingers: []) }
             return HandFingering.shape(for: d)
@@ -103,6 +109,10 @@ struct HandNeckView: View {
         while lo <= hi { let m = (lo + hi) / 2
             if chords[m].start <= t { cand = m; lo = m + 1 } else { hi = m - 1 } }
         return cand
+    }
+    private func currentSymbol(_ t: Double) -> String? {
+        guard !chords.isEmpty else { return nil }
+        return chords[activeIndex(t)].symbol
     }
     // smootherstep: zero 1st AND 2nd derivative at both ends — no jerk.
     private func easeIO(_ x: Double) -> Double { let c = min(1, max(0, x)); return c*c*c*(c*(c*6-15)+10) }
@@ -198,9 +208,31 @@ struct HandNeckView: View {
                        lineWidth: wds[s])
         }
 
-        // Contacts layer: the moving fingers/dots/barre over the neck. When off,
-        // the neck stays as a calm bare fretboard (still the hero surface).
-        guard showContacts else { return }
+        // ANIMATED HAND overlay (priority 3): the realistic pose for the current
+        // chord, drawn directly ON the neck at low opacity so strings + dots stay
+        // fully visible on top. Anatomical context (wrist / palm / curvature) —
+        // never the dominant element. Provider-driven: today a baked static pose,
+        // tomorrow a planner-animated hand. The layout never changes.
+        if showHand, let sym = currentSymbol(positionSeconds),
+           let img = HandPoseLibrary.spriteImage(for: sym) {
+            let resolved = ctx.resolve(img)
+            let sz = resolved.size
+            if sz.width > 1, sz.height > 1 {
+                let region = CGRect(x: left-4, y: top-14, width: (right-left)+16, height: boardH+28)
+                let scale = min(region.width / sz.width, region.height / sz.height)
+                let w = sz.width * scale, h = sz.height * scale
+                let fit = CGRect(x: region.midX - w/2, y: region.midY - h/2, width: w, height: h)
+                var layer = ctx
+                layer.opacity = 0.26
+                layer.draw(resolved, in: fit)
+            }
+        }
+
+        // FINGER DOTS (priority 2, primary) + MOTION (technique) overlays. Both
+        // are independent; draw the finger block if EITHER is on. Motion adds
+        // trajectories / ghosts / arrival pulses / movement emphasis on top of the
+        // plain dots. Dots owns the coloured markers + finger-number identity.
+        guard showDots || showMotion else { return }
 
         // states
         var st: [Int: FState] = [:]
@@ -212,19 +244,23 @@ struct HandNeckView: View {
         func kX(_ fi: Int) -> CGFloat { baseX + CGFloat(fi-2)*15 - 7 }
         let kY = baseY - 10
 
-        // wrist / back-of-hand (subtle)
-        var wrist = Path()
-        wrist.move(to: CGPoint(x: kX(1)-12, y: kY+2))
-        wrist.addQuadCurve(to: CGPoint(x: kX(4)+12, y: kY+2), control: CGPoint(x: baseX, y: kY-9))
-        wrist.addQuadCurve(to: CGPoint(x: kX(1)-12, y: kY+2), control: CGPoint(x: baseX, y: baseY+28))
-        ctx.fill(wrist, with: .color(.white.opacity(0.05)))
-        ctx.stroke(wrist, with: .color(.white.opacity(0.12)), lineWidth: 1.3)
+        // wrist / back-of-hand + stems are the Dots layer's anchoring schematic.
+        if showDots {
+            var wrist = Path()
+            wrist.move(to: CGPoint(x: kX(1)-12, y: kY+2))
+            wrist.addQuadCurve(to: CGPoint(x: kX(4)+12, y: kY+2), control: CGPoint(x: baseX, y: kY-9))
+            wrist.addQuadCurve(to: CGPoint(x: kX(1)-12, y: kY+2), control: CGPoint(x: baseX, y: baseY+28))
+            ctx.fill(wrist, with: .color(.white.opacity(0.05)))
+            ctx.stroke(wrist, with: .color(.white.opacity(0.12)), lineWidth: 1.3)
+        }
 
         // draw non-moving first, moving finger last (on top)
         let order = (1...4).sorted { (st[$0]!.moving ? 1:0) < (st[$1]!.moving ? 1:0) }
         for fi in order {
             let s = st[fi]!, c = col[fi]!
-            let state = s.moving ? "move" : (s.press < 0.5 ? "lift" : "plant")
+            // "move" emphasis is a Motion effect; without Motion a transitioning
+            // finger renders as a plain plant/lift dot.
+            let state = (s.moving && showMotion) ? "move" : (s.press < 0.5 ? "lift" : "plant")
             let emph: CGFloat = state == "move" ? 1 : state == "plant" ? 0.62 : 0.28
             let lift = CGFloat(1 - s.press) * 16
             let x = cx(s.f)
@@ -234,7 +270,7 @@ struct HandNeckView: View {
 
             if !isBarre && s.press < 0.04 && state != "move" { continue }
 
-            // motion trail (moving fingertips only)
+            // MOTION: ghost trail behind a moving fingertip
             if state == "move" && !isBarre {
                 for g in 1...4 {
                     let gp = sample(fi, positionSeconds - Double(g)*0.05)
@@ -244,12 +280,14 @@ struct HandNeckView: View {
                 }
             }
 
-            // curved tapered stem from the wrist to the finger centre
-            let mx = (kX(fi)+x)/2, my = (kY+yc)/2 - 20*CGFloat(s.press) - abs(x-kX(fi))*0.06
-            var stem = Path(); stem.move(to: CGPoint(x: kX(fi), y: kY)); stem.addQuadCurve(to: CGPoint(x: x, y: yc), control: CGPoint(x: mx, y: my))
-            ctx.stroke(stem, with: .color(c.opacity((0.12+0.30*Double(s.press))*(0.5+0.5*Double(emph)))),
-                       style: StrokeStyle(lineWidth: 3+3*CGFloat(s.press), lineCap: .round))
-            ctx.stroke(stem, with: .color(c.opacity(0.5*Double(emph))), style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
+            // DOTS: curved tapered stem from the wrist to the finger centre
+            if showDots {
+                let mx = (kX(fi)+x)/2, my = (kY+yc)/2 - 20*CGFloat(s.press) - abs(x-kX(fi))*0.06
+                var stem = Path(); stem.move(to: CGPoint(x: kX(fi), y: kY)); stem.addQuadCurve(to: CGPoint(x: x, y: yc), control: CGPoint(x: mx, y: my))
+                ctx.stroke(stem, with: .color(c.opacity((0.12+0.30*Double(s.press))*(0.5+0.5*Double(emph)))),
+                           style: StrokeStyle(lineWidth: 3+3*CGFloat(s.press), lineCap: .round))
+                ctx.stroke(stem, with: .color(c.opacity(0.5*Double(emph))), style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
+            }
 
             if isBarre {
                 // one finger, many strings: a rounded bar across yLo..yHi at fret x
@@ -260,13 +298,15 @@ struct HandNeckView: View {
                 if state != "lift" { bar.addFilter(.shadow(color: c.opacity(0.45), radius: 8)) }
                 bar.fill(cap, with: .color(c))
                 ctx.stroke(cap, with: .color(Color(white:0.06)), lineWidth: 1.5)
-                ctx.draw(Text("\(fi)").font(.system(size: 15, weight: .bold, design: .monospaced)).foregroundColor(Color(white:0.05)),
-                         at: CGPoint(x: x, y: yc))
+                if showDots {
+                    ctx.draw(Text("\(fi)").font(.system(size: 15, weight: .bold, design: .monospaced)).foregroundColor(Color(white:0.05)),
+                             at: CGPoint(x: x, y: yc))
+                }
                 continue
             }
 
-            // one subtle arrival pulse (fingertips)
-            if s.arrive > 0 {
+            // MOTION: one subtle arrival pulse (fingertips)
+            if s.arrive > 0 && showMotion {
                 let k = 1 - s.arrive
                 ctx.stroke(Path(ellipseIn: CGRect(x: x-(13+CGFloat(k)*12), y: yc-(13+CGFloat(k)*12), width: 2*(13+CGFloat(k)*12), height: 2*(13+CGFloat(k)*12))),
                            with: .color(c.opacity(s.arrive*0.45)), lineWidth: 2)
@@ -278,14 +318,16 @@ struct HandNeckView: View {
             let rect = CGRect(x: x - r, y: yc - r, width: 2*r, height: 2*r)
             tip.opacity = state == "lift" ? 0.34 : 1
             tip.fill(Path(ellipseIn: rect), with: .color(c))
-            if state == "move" {
+            if state == "move" {   // MOTION: white ring on the moving finger
                 ctx.stroke(Path(ellipseIn: CGRect(x: x-r-3.5, y: yc-r-3.5, width: 2*(r+3.5), height: 2*(r+3.5))),
                            with: .color(.white.opacity(0.85)), lineWidth: 2)
             }
             ctx.stroke(Path(ellipseIn: rect), with: .color(Color(white:0.06)), lineWidth: 1.5)
-            ctx.draw(Text("\(fi)").font(.system(size: state=="move" ? 17:15, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(white:0.05).opacity(state=="lift" ? 0.6:1)),
-                     at: CGPoint(x: x, y: yc))
+            if showDots {   // DOTS: finger-number identity
+                ctx.draw(Text("\(fi)").font(.system(size: state=="move" ? 17:15, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(white:0.05).opacity(state=="lift" ? 0.6:1)),
+                         at: CGPoint(x: x, y: yc))
+            }
         }
     }
 }
