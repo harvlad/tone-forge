@@ -58,19 +58,22 @@ struct HandNeckView: View {
     // Three INDEPENDENT overlay layers on the neck. None knows about the others.
     var showDots: Bool = true       // Finger Dots — exact contacts + finger identity (primary)
     var showMotion: Bool = true     // Motion — trajectories, ghosts, arrival pulses, movement emphasis
-    var showHand: Bool = true       // Animated Hand — realistic pose drawn over the neck (low opacity)
+    var showHand: Bool = true       // Hand — the abstract posed silhouette over the neck
+    var useMesh: Bool = false        // opt-in: draw the baked realistic MPFB mesh instead of the silhouette
 
     // fingering per chord index, computed once per chord list
     private let shapes: [HandShape]
     private let maxFret: Int
 
     init(chords: [ChordEvent], positionSeconds: Double,
-         showDots: Bool = true, showMotion: Bool = true, showHand: Bool = true) {
+         showDots: Bool = true, showMotion: Bool = true, showHand: Bool = true,
+         useMesh: Bool = false) {
         self.chords = chords
         self.positionSeconds = positionSeconds
         self.showDots = showDots
         self.showMotion = showMotion
         self.showHand = showHand
+        self.useMesh = useMesh
         let sh = chords.map { ev -> HandShape in
             guard let d = ChordDiagram.make(symbol: ev.symbol) else { return HandShape(barre: nil, fingers: []) }
             return HandFingering.shape(for: d)
@@ -276,7 +279,10 @@ struct HandNeckView: View {
         if showHand {
             let sym = currentSymbol(positionSeconds)
             var drewLibrary = false
-            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
+            // ABSTRACT by default (the vector silhouette below). The realistic baked
+            // MPFB mesh is opt-in via useMesh — the research's conclusion was that the
+            // abstract representation is the product win, not the photoreal hand.
+            if useMesh, let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
                let img = HandPoseLibrary.spriteImage(for: sym) {
                 // dot cluster (correct positions) + the pose's OWN fingertip cluster
                 var xs: [CGFloat] = [], ys: [CGFloat] = []

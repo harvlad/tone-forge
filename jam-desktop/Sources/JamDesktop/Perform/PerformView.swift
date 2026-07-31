@@ -34,7 +34,8 @@ struct PerformView: View {
     // Five independent display layers — persisted per user, all on by default;
     // at least one must always stay on. No layer knows whether another is on.
     @AppStorage("perf.layer.motion") private var showMotion = true   // trajectories/ghosts/pulses (on neck)
-    @AppStorage("perf.layer.hand") private var showHand = true       // realistic hand overlay (on neck)
+    @AppStorage("perf.layer.hand") private var showHand = true       // abstract posed hand (on neck)
+    @AppStorage("perf.hand.mesh") private var handMesh = false       // opt-in: realistic MPFB mesh
     @AppStorage("perf.layer.dots") private var showDots = true       // finger contact dots (on neck)
     // Chord and TAB are the two reference cards — mutually exclusive (either/or).
     @AppStorage("perf.layer.chord") private var showChord = true     // chord diagram (reference card)
@@ -93,7 +94,8 @@ struct PerformView: View {
                                  positionSeconds: session.transport.positionSeconds,
                                  showDots: showDots,
                                  showMotion: showMotion,
-                                 showHand: showHand)
+                                 showHand: showHand,
+                                 useMesh: handMesh)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     // Supporting reference cards beneath the neck — Chord / TAB only.
@@ -147,6 +149,12 @@ struct PerformView: View {
             }
             layerPill("Hand", systemImage: "hand.raised.fill", on: showHand) {
                 if !(showHand && layersOn == 1) { showHand.toggle() }
+            }
+            // Optional: swap the abstract hand silhouette for the realistic MPFB mesh.
+            if showHand {
+                layerPill("Realistic", systemImage: "cube.transparent", on: handMesh) {
+                    handMesh.toggle()
+                }
             }
             layerPill("Dots", systemImage: "circlebadge.fill", on: showDots) {
                 if !(showDots && layersOn == 1) { showDots.toggle() }
