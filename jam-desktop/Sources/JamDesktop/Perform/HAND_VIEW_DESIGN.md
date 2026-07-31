@@ -66,20 +66,25 @@ The neck is the stage. Five independent display layers sit over one shared chord
 three drawn ON the neck, two as small reference cards beneath it:
 
 - **Motion** — trajectories, ghost trail, arrival pulses, movement emphasis (on neck)
-- **Animated Hand** — a realistic pose drawn *directly on the neck* at ~26% opacity; strings and
-  dots stay fully visible on top. Anatomical context (wrist / palm / curvature), never dominant.
+- **Animated Hand** — a translucent anatomical silhouette drawn *directly on the neck* at low
+  opacity; strings and dots stay fully visible on top. Anatomical context (palm / finger
+  curvature), never dominant.
 - **Finger Dots** — coloured contacts + finger-number identity; the primary instructional layer.
 - **Chord Diagram** / **TAB** — supporting reference cards below the neck (verify the fingering).
+  These two are **mutually exclusive** — only one shows at a time.
 
 Visual priority is fixed by layout: fretboard > dots+motion > hand > chord/TAB. Each layer is a
 pure boolean into `HandNeckView` (`showDots` / `showMotion` / `showHand`) or a reference card; no
 renderer knows whether another is enabled.
 
-**Hand-overlay provider seam.** The overlay is provider-driven exactly like the fingering seam.
-Today the provider is `HandPoseLibrary.spriteImage(for: symbol)` — a baked static pose per chord,
-"good enough to establish the UX architecture." A future provider can supply planner-animated,
-anatomically-driven hand motion; the renderer draws whatever pose source it's given at the current
-time, so **the UI layout never changes when the hand provider changes.**
+**Hand-overlay provider seam.** The hand is *finger-tracked*: it is built FROM the same per-finger
+contact states as the dots — a palm plus fingers curving from the wrist to each pressed dot — so
+its fingers ALWAYS align with the dots and it scales with the neck. Today's provider is this
+schematic hand ("good enough to establish the UX architecture"). A future provider can supply
+planner-animated, anatomically-driven hand motion; because the renderer consumes per-finger
+positions at the current time, **the UI layout never changes when the hand provider changes.**
+(The earlier baked `HandPoseLibrary` sprite could not align to arbitrary dot positions without
+per-pose neck-coordinate metadata, so it is no longer used for the overlay.)
 
 ## V1 boundaries (intentional)
 Approximate barre fingering; >4-fretted-note chords approximated; no per-note lead fingering;

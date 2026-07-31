@@ -36,8 +36,9 @@ struct PerformView: View {
     @AppStorage("perf.layer.motion") private var showMotion = true   // trajectories/ghosts/pulses (on neck)
     @AppStorage("perf.layer.hand") private var showHand = true       // realistic hand overlay (on neck)
     @AppStorage("perf.layer.dots") private var showDots = true       // finger contact dots (on neck)
+    // Chord and TAB are the two reference cards — mutually exclusive (either/or).
     @AppStorage("perf.layer.chord") private var showChord = true     // chord diagram (reference card)
-    @AppStorage("perf.layer.tab") private var showTab = true         // tablature (reference card)
+    @AppStorage("perf.layer.tab") private var showTab = false        // tablature (reference card)
     private var layersOn: Int {
         (showMotion ?1:0) + (showHand ?1:0) + (showDots ?1:0) + (showChord ?1:0) + (showTab ?1:0)
     }
@@ -66,6 +67,7 @@ struct PerformView: View {
         .onChange(of: model.sidecar, initial: true) { _, sidecar in
             rebuildTabLane(sidecar)
         }
+        .onAppear { if showChord && showTab { showTab = false } }   // enforce either/or
     }
 
     private func content(for loaded: LoadedSession) -> some View {
@@ -149,11 +151,14 @@ struct PerformView: View {
             layerPill("Dots", systemImage: "circlebadge.fill", on: showDots) {
                 if !(showDots && layersOn == 1) { showDots.toggle() }
             }
+            // Chord / TAB are mutually exclusive: enabling one disables the other.
             layerPill("Chord", systemImage: "tablecells", on: showChord) {
-                if !(showChord && layersOn == 1) { showChord.toggle() }
+                if showChord { if layersOn > 1 { showChord = false } }
+                else { showChord = true; showTab = false }
             }
             layerPill("TAB", systemImage: "music.note.list", on: showTab) {
-                if !(showTab && layersOn == 1) { showTab.toggle() }
+                if showTab { if layersOn > 1 { showTab = false } }
+                else { showTab = true; showChord = false }
             }
             Spacer()
             Button { resetLayout() } label: {
@@ -179,7 +184,7 @@ struct PerformView: View {
     }
 
     private func resetLayout() {
-        showMotion = true; showHand = true; showDots = true; showChord = true; showTab = true
+        showMotion = true; showHand = true; showDots = true; showChord = true; showTab = false
     }
 
     // MARK: supporting reference cards — Chord Diagram / TAB only.
@@ -189,23 +194,29 @@ struct PerformView: View {
     @ViewBuilder
     private func lowerPanel(ribbon: ChordRibbonModel) -> some View {
         let symbol = ribbon.currentChord(at: session.transport.positionSeconds)?.symbol
-        if showChord || showTab {
-            HStack(alignment: .top, spacing: 16) {
-                if showChord {
-                    panelCard("Chord Diagram") {
-                        if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
-                            ChordDiagramView(diagram: diagram)
-                        } else { Color.clear }
-                    }
-                }
-                if showTab {
-                    panelCard("TAB") {
-                        if !tabLane.notes.isEmpty { tabLaneBlock() } else { Color.clear }
-                    }
+        // Either/or: Chord and TAB never show at once.
+        if showChord {
+            referenceCard {
+                panelCard("Chord Diagram") {
+                    if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
+                        ChordDiagramView(diagram: diagram)
+                    } else { Color.clear }
                 }
             }
-            .frame(height: 190)   // small — supporting references, not the hero
+        } else if showTab {
+            referenceCard {
+                panelCard("TAB") {
+                    if !tabLane.notes.isEmpty { tabLaneBlock() } else { Color.clear }
+                }
+            }
         }
+    }
+
+    /// The single supporting reference card beneath the neck — small, so it never
+    /// competes with the fretboard.
+    @ViewBuilder
+    private func referenceCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content().frame(height: 190)
     }
 
     /// A titled panel card (header dot + title) for a lower-panel layer.
