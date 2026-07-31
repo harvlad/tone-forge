@@ -110,6 +110,10 @@ struct HandNeckView: View {
             if chords[m].start <= t { cand = m; lo = m + 1 } else { hi = m - 1 } }
         return cand
     }
+    private func currentSymbol(_ t: Double) -> String? {
+        guard !chords.isEmpty else { return nil }
+        return chords[activeIndex(t)].symbol
+    }
     // smootherstep: zero 1st AND 2nd derivative at both ends — no jerk.
     private func easeIO(_ x: Double) -> Double { let c = min(1, max(0, x)); return c*c*c*(c*(c*6-15)+10) }
     private func restString(_ fi: Int) -> Double { 1.4 + Double(fi - 1) * 0.7 }
@@ -235,6 +239,37 @@ struct HandNeckView: View {
         // Provider-agnostic: this schematic hand is TODAY's provider; a planner-
         // driven realistic hand can replace it with no layout change.
         if showHand {
+            let sym = currentSymbol(positionSeconds)
+            var drewLibrary = false
+            // REAL anatomical hand: the baked Blender/MPFB render for this chord,
+            // re-anchored so its fingertips land on the dots. The board isn't a
+            // physical neck, so map the sprite's metre frame to px independently on
+            // each axis — frets AND strings line up, so the rendered fingertips sit
+            // on the dots. Covers the 19 library chords; uncovered voicings fall
+            // back to the procedural silhouette below.
+            if let sym, let entry = HandPoseLibrary.shared.entry(for: sym),
+               let sp = entry.sprite, let img = HandPoseLibrary.spriteImage(for: sym) {
+                var xs: [CGFloat] = []
+                for fi in 1...4 { let g = geom(fi); if g.press > 0.5 || g.barre { xs.append(g.x) } }
+                let anchorX = xs.isEmpty ? (left + right) / 2 : xs.reduce(0, +) / CGFloat(xs.count)
+                let mmLo = GuitarPhysical.fingerX(1), mmHi = GuitarPhysical.fingerX(maxFret)
+                let pxPerMMx = abs(fx(1.0) - fx(Double(maxFret))) / max(1, abs(mmHi - mmLo))
+                let gapMM = GuitarPhysical.stringGapMM(atX: (mmLo + mmHi) / 2)
+                let pxPerMMz = boardH / (5 * max(1, gapMM))
+                let orthoV = sp.ortho * sp.h / sp.w
+                func hx(_ mx: Double) -> CGFloat { anchorX - CGFloat((mx - entry.clusterX) * 1000) * pxPerMMx }
+                func hy(_ mz: Double) -> CGFloat { bot - CGFloat((mz - entry.boardBottomZ) * 1000) * pxPerMMz }
+                let xA = hx(sp.camX + sp.ortho / 2), xB = hx(sp.camX - sp.ortho / 2)
+                let yA = hy(sp.camZ + orthoV / 2), yB = hy(sp.camZ - orthoV / 2)
+                let rect = CGRect(x: min(xA, xB), y: min(yA, yB), width: abs(xB - xA), height: abs(yB - yA))
+                if rect.width > 1, rect.height > 1 {
+                    var layer = ctx
+                    layer.opacity = 0.72
+                    layer.draw(img, in: rect)
+                    drewLibrary = true
+                }
+            }
+            if !drewLibrary {
             let skin = Color(red: 0.87, green: 0.67, blue: 0.53)
             // palm slab — kept below the strings so it never hides the dots
             let palm = Path(roundedRect: CGRect(x: kX(1)-22, y: kY-2,
@@ -265,6 +300,7 @@ struct HandNeckView: View {
                     ctx.fill(Path(ellipseIn: CGRect(x: g.x-rT, y: g.yc-rT, width: 2*rT, height: 2*rT)),
                              with: .color(skin.opacity(alpha + 0.08)))
                 }
+            }
             }
         }
 
