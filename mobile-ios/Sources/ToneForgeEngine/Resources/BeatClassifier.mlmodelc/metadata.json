@@ -19,7 +19,7 @@
         "shortDescription" : ""
       }
     ],
-    "version" : "2026-07-27T09:47:01Z",
+    "version" : "2026-08-03T09:40:01Z",
     "modelParameters" : [
 
     ],
@@ -50,21 +50,7 @@
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
-        "name" : "lowBandRatio",
-        "shortDescription" : ""
-      },
-      {
-        "isOptional" : "0",
-        "formattedType" : "Double",
-        "type" : "Double",
-        "name" : "centroidHz",
-        "shortDescription" : ""
-      },
-      {
-        "isOptional" : "0",
-        "formattedType" : "Double",
-        "type" : "Double",
-        "name" : "attackSec",
+        "name" : "peakRMS",
         "shortDescription" : ""
       },
       {
@@ -92,7 +78,21 @@
         "isOptional" : "0",
         "formattedType" : "Double",
         "type" : "Double",
-        "name" : "peakRMS",
+        "name" : "lowBandRatio",
+        "shortDescription" : ""
+      },
+      {
+        "isOptional" : "0",
+        "formattedType" : "Double",
+        "type" : "Double",
+        "name" : "attackSec",
+        "shortDescription" : ""
+      },
+      {
+        "isOptional" : "0",
+        "formattedType" : "Double",
+        "type" : "Double",
+        "name" : "centroidHz",
         "shortDescription" : ""
       }
     ],
