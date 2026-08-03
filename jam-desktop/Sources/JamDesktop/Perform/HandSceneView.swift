@@ -47,10 +47,12 @@ final class HandPoseModel: ObservableObject {
     }
 
     /// Lead mode: a single MIDI pitch → the nearest fretted (string, fret) in
-    /// the window → its baked single-note pose.
+    /// the window → its baked single-note pose. Falls back to a default note so
+    /// the hand is always posed (never vanishes when no note is active yet).
     func applyNote(pitch: Int?) {
-        guard let p = pitch, let e = HandStates.noteEntry(forPitch: p) else { hasPose = false; return }
-        set(e)
+        if let p = pitch, let e = HandStates.noteEntry(forPitch: p) { set(e); return }
+        if let e = HandStates.notes["s2f2"] ?? HandStates.notes.values.first { set(e) }
+        else { hasPose = false }
     }
 
     private func set(_ e: HandStates.Entry) {
@@ -154,6 +156,7 @@ struct HandSceneView: NSViewRepresentable {
 
     func updateNSView(_ nsView: SCNView, context: Context) {
         context.coordinator.setDotsVisible(showDots)
+        context.coordinator.fitCamera(to: nsView.bounds.size)
     }
 }
 
@@ -266,18 +269,41 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     }
     func setDotsVisible(_ on: Bool) { dotRoot.isHidden = !on }
 
+    // Content extent (guitar space, x along neck, z across strings + hand hang).
+    // x: nut(0) .. -wire(7); z: hand hangs to negative, neck top slightly positive.
+    private let contentX: ClosedRange<Float> = -0.42 ... 0.02
+    private let contentZ: ClosedRange<Float> = -0.34 ... 0.05
+    private var contentCenter: SIMD2<Float> {
+        SIMD2((contentX.lowerBound + contentX.upperBound)/2, (contentZ.lowerBound + contentZ.upperBound)/2)
+    }
+
+    /// Fit the orthographic camera to the content box at the live view aspect,
+    /// so neck + hand fill the panel whatever its shape.
+    func fitCamera(to size: CGSize) {
+        guard size.width > 1, size.height > 1, let cam = cameraNode.camera else { return }
+        let w = Float(contentX.upperBound - contentX.lowerBound)
+        let h = Float(contentZ.upperBound - contentZ.lowerBound)
+        let aspect = Float(size.width / size.height)
+        let margin: Float = 1.08
+        // orthographicScale is HALF the horizontal extent (projectionDirection .horizontal).
+        let halfW = max(w, h * aspect) * 0.5 * margin
+        cam.orthographicScale = Double(halfW)
+        cameraNode.position = SCNVector3(contentCenter.x, -0.6, contentCenter.y)
+        cameraNode.look(at: SCNVector3(contentCenter.x, 0, contentCenter.y), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+    }
+
     // MARK: camera + lights (view the -Y playing face)
     private func setupCamera() {
         let cam = SCNCamera(); cam.zNear = 0.001; cam.zFar = 10
-        // Orthographic straight-on → the neck reads LEVEL (no perspective tilt);
-        // orthographicScale (vertical) fits neck + hanging hand; look-at dropped
-        // into the hand so the whole hand stays in frame.
+        // Orthographic straight-on → the neck reads LEVEL (no perspective tilt).
+        // orthographicScale is set per-frame by fitCamera() to the live view size,
+        // so the neck + hanging hand fill the panel at any aspect.
         cam.usesOrthographicProjection = true
-        cam.orthographicScale = 0.20
-        cam.projectionDirection = .vertical
+        cam.projectionDirection = .horizontal   // scale controls WIDTH; we set both via aspect
+        cam.orthographicScale = 0.26
         cameraNode.camera = cam
-        cameraNode.position = SCNVector3(G.fingerX(3.4), -0.6, 0.0)
-        cameraNode.look(at: SCNVector3(G.fingerX(3.4), -0.02, -0.10), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+        cameraNode.position = SCNVector3(contentCenter.x, -0.6, contentCenter.y)
+        cameraNode.look(at: SCNVector3(contentCenter.x, 0, contentCenter.y), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
         scene.rootNode.addChildNode(cameraNode)
     }
     private func setupLights() {
