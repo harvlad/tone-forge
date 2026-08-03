@@ -322,7 +322,10 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     func fitCamera(to size: CGSize) {
         guard size.width > 1, size.height > 1, let cam = cameraNode.camera else { return }
         let aspect = Float(size.width / size.height)
-        let scale = max(Self.contentH * 0.5, Self.contentW / (2 * aspect)) * 1.04
+        // FILL the panel (crop overflow) instead of fitting (letterbox voids):
+        // take the SMALLER scale so content covers the frame. On a wide-short
+        // panel this fills the width (neck big); the lower palm/arm crops off.
+        let scale = min(Self.contentH * 0.5, Self.contentW / (2 * aspect)) * 0.98
         cam.orthographicScale = Double(scale)
         aimCamera()
     }
