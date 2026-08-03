@@ -26,6 +26,7 @@ from .manufacture import manufacture, build_manufactured_manifest, ManufactureRe
 from .scenario import Scenario, RoleSpec, SCENARIOS, all_scenarios
 from .backing import ScenarioProvider, SyntheticBackingProvider, StemPoolBackingProvider
 from .studio import VirtualStudio, StudioReport, build_supervised_manifest
+from .coverage import coverage_report, render_report, DIMENSIONS
 
 __all__ = [
     "Asset", "RawAsset", "LicenseStamp", "Kind", "Role", "Status", "content_hash_file",
@@ -38,4 +39,5 @@ __all__ = [
     "Scenario", "RoleSpec", "SCENARIOS", "all_scenarios",
     "ScenarioProvider", "SyntheticBackingProvider", "StemPoolBackingProvider",
     "VirtualStudio", "StudioReport", "build_supervised_manifest",
+    "coverage_report", "render_report", "DIMENSIONS",
 ]

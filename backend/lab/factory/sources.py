@@ -100,12 +100,33 @@ class GuitarSetSource:
     def health(self) -> bool:
         return self._root.is_dir()
 
+    # GuitarSet genre codes -> readable regime tags
+    _GENRE = {"BN": "bossa_nova", "Funk": "funk", "SS": "singer_songwriter",
+              "Rock": "rock", "Jazz": "jazz"}
+
+    def _parse(self, stem: str) -> dict:
+        """GuitarSet convention: '<player>_<GEN><take>-<tempo>-<key>_<style>_mic'."""
+        tags = {"excerpt": stem, "synthetic_real": "real",
+                "recording_type": "acoustic", "guitar_type": "acoustic"}
+        parts = stem.split("_")
+        if len(parts) >= 2:
+            tags["player"] = parts[0]
+            seg = parts[1].split("-")
+            code = "".join(c for c in seg[0] if c.isalpha())
+            tags["genre"] = self._GENRE.get(code, code.lower() or "unknown")
+            if len(seg) >= 2 and seg[1].isdigit():
+                tags["source_tempo"] = int(seg[1])
+            if len(seg) >= 3:
+                tags["source_key"] = seg[2]
+        if len(parts) >= 3:
+            tags["performance_style"] = parts[2]   # comp | solo
+        return tags
+
     def iter_assets(self) -> Iterable[RawAsset]:
         for p in sorted(self._root.rglob(self._glob)):
             if p.suffix.lower() in _AUDIO_EXTS:
                 yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR,
-                               source_tags={"excerpt": p.stem, "synthetic_real": "real",
-                                            "recording_type": "acoustic", "guitar_type": "acoustic"})
+                               source_tags=self._parse(p.stem))
 
 
 # static contract checks — both must satisfy the identical Protocol
