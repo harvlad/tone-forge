@@ -38,6 +38,17 @@ class SourceProvider(Protocol):
 _AUDIO_EXTS = (".wav", ".flac", ".aiff", ".aif", ".mp3", ".m4a", ".ogg")
 
 
+def _is_junk(p: Path) -> bool:
+    """AppleDouble / macOS-zip resource-fork artifacts — not real audio."""
+    return p.name.startswith("._") or "__MACOSX" in p.parts
+
+
+def _wavs(root: Path, glob: str = "*.wav"):
+    for p in sorted(root.rglob(glob)):
+        if p.suffix.lower() in _AUDIO_EXTS and not _is_junk(p):
+            yield p
+
+
 def _first_existing(dir_path: Path, stem: str) -> Path | None:
     for ext in _AUDIO_EXTS:
         p = dir_path / f"{stem}{ext}"
@@ -123,10 +134,9 @@ class GuitarSetSource:
         return tags
 
     def iter_assets(self) -> Iterable[RawAsset]:
-        for p in sorted(self._root.rglob(self._glob)):
-            if p.suffix.lower() in _AUDIO_EXTS:
-                yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR,
-                               source_tags=self._parse(p.stem))
+        for p in _wavs(self._root, self._glob):
+            yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR,
+                           source_tags=self._parse(p.stem))
 
 
 class GuitarTechsSource:
@@ -135,7 +145,7 @@ class GuitarTechsSource:
     (perspective = micamp | di | mic...). Fills the acoustic->electric gap + real
     playing-technique coverage (bends/harmonics/palm-mute/vibrato/...)."""
     dataset_key = "guitar_techs"
-    _PERSP = {"micamp": "amp_mic", "di": "di", "mic": "room_mic",
+    _PERSP = {"micamp": "amp_mic", "directinput": "di", "di": "di", "mic": "room_mic",
               "ego": "ego_mic", "exo": "exo_mic"}
 
     def __init__(self, root: str | Path, id: str = "guitar_techs"):
@@ -170,9 +180,8 @@ class GuitarTechsSource:
         return tags
 
     def iter_assets(self) -> Iterable[RawAsset]:
-        for p in sorted(self._root.rglob("*.wav")):
-            if p.suffix.lower() in _AUDIO_EXTS:
-                yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR, source_tags=self._parse(p))
+        for p in _wavs(self._root):
+            yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR, source_tags=self._parse(p))
 
 
 class EGFxSetSource:
@@ -207,9 +216,8 @@ class EGFxSetSource:
                 "note": p.stem, "excerpt": f"{effect}_{pickup}_{p.stem}"}
 
     def iter_assets(self) -> Iterable[RawAsset]:
-        for p in sorted(self._root.rglob("*.wav")):
-            if p.suffix.lower() in _AUDIO_EXTS:
-                yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR, source_tags=self._parse(p))
+        for p in _wavs(self._root):
+            yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR, source_tags=self._parse(p))
 
 
 # static contract checks — all must satisfy the identical Protocol

@@ -76,13 +76,19 @@ class PipelineRunner:
     # ---- stage 3+4+5: audit -> metadata + quality ----
     def audit(self, asset: Asset) -> Asset:
         tags = asset.metadata  # source-provided tags override audio proxies where present
-        ta = audit_track(
-            asset.path, dataset=asset.dataset_key, track_id=asset.asset_id,
-            genre=tags.get("genre", "unknown"), pickup=tags.get("pickup", "unknown"),
-            recording_type=tags.get("recording_type", "unknown"),
-            synthetic_real=tags.get("synthetic_real", "unknown"),
-            guitar_type=tags.get("guitar_type"), gain=tags.get("gain"),
-            th=self.th)
+        try:
+            ta = audit_track(
+                asset.path, dataset=asset.dataset_key, track_id=asset.asset_id,
+                genre=tags.get("genre", "unknown"), pickup=tags.get("pickup", "unknown"),
+                recording_type=tags.get("recording_type", "unknown"),
+                synthetic_real=tags.get("synthetic_real", "unknown"),
+                guitar_type=tags.get("guitar_type"), gain=tags.get("gain"),
+                th=self.th)
+        except Exception as e:
+            # a single unreadable/corrupt file must never kill a batch (worker discipline)
+            return asset.evolve(stage="audit:error", audit_status=Status.REJECT,
+                                audit={"reasons": [f"audit error: {type(e).__name__}: {e}"]},
+                                params={"error": str(e)[:200]})
         d = audit_to_dict(ta)
         audit_metrics = {k: d[k] for k in _AUDIT_METRICS if k in d}
         metadata = dict(asset.metadata)
