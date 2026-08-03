@@ -12,6 +12,17 @@ here — identification, pricing, rights, suitability, and outreach order.
 3. Real isolated **guitar** (or real backing for the Virtual Studio) with usable **provenance**.
 4. Passes the **Dataset Auditor** + **license gate** (`training_data` registry) — nothing bypasses the pipeline.
 
+## Status update — Phase 3.1 (pool v2, 564 real assets)
+Green tier substantially harvested. Ingested on Hetzner via the pipeline (all
+commercial-clean, all real): **GuitarSet 360** (acoustic) + **Guitar-TECHS 44**
+(electric DI + amp-mic) + **EGFxSet 160** (electric × 5 pickups × clean/distortion).
+470 usable (298 PASS + 172 REVIEW). Coverage closed the acoustic→electric, pickup,
+and gain gaps (see `backend/lab_data/factory/coverage.txt`). **Remaining green to
+mine (cheap, on Hetzner):** more of Guitar-TECHS (scales/chords/music/other players)
++ EGFxSet (remaining effects/modulation) + Slakh (synthetic pretraining priors → R2).
+After green is exhausted, Priority 2 (licensing) + 3 (commissioning) drive the
+still-open gaps: **tunings, medium/crunch gain, 7-string/baritone, musical-context DI**.
+
 ## Priority 1 — Green (immediately usable, in the registry)
 | Source | Content | License | Pool role | Status |
 |---|---|---|---|---|

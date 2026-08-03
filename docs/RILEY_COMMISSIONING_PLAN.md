@@ -6,6 +6,17 @@ recording generates hundreds of supervised examples through the Transform Engine
 (re-amp × cab × EQ) and the Virtual Studio (× scenarios × masking). Feeds the same
 pipeline as everything else — nothing bypasses license/audit/provenance/catalog.
 
+## Priority update — after green-tier v2 (pool = 564 real assets)
+The green tier already **partially filled** the original electric/pickup/gain gaps:
+Guitar-TECHS added real electric DI + amp-mic; EGFxSet added 5 ground-truth pickup
+positions + clean/distortion. So commissioning should now target **only what the
+free green tier cannot give**, in priority order:
+1. **Tunings** — everything ingested is standard tuning. Commission drop-D/drop-C/DADGAD/open-G.
+2. **Medium / edge-of-breakup / crunch gain** — green tier is bimodal (clean vs high-gain pedals); the middle is empty.
+3. **7-string / baritone / extended-range** — absent entirely.
+4. **Musical-context clean electric DI across many players** — Guitar-TECHS DI is only 2 players / limited material.
+(Difficulty + masking context come from the Virtual Studio + real backing, not commissioning.)
+
 ## Why this campaign, why now (the gap)
 The Phase-3 seed pool is **GuitarSet — 100% real *acoustic*** guitar. Coverage will
 therefore show a large hole in exactly what a modern separator most needs:
