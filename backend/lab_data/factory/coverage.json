@@ -1,5 +1,5 @@
 {
- "n_assets": 564,
+ "n_assets": 724,
  "dimensions": {
   "genre": {
    "bossa_nova": 72,
@@ -7,20 +7,20 @@
    "jazz": 72,
    "rock": 72,
    "singer_songwriter": 72,
-   "unknown": 204
+   "unknown": 364
   },
   "gain": {
-   "low": 444,
+   "low": 604,
    "high": 120
   },
   "guitar_type": {
    "acoustic": 360,
-   "electric": 44,
+   "electric": 204,
    "distorted": 120,
    "clean": 40
   },
   "pickup": {
-   "unknown": 404,
+   "unknown": 564,
    "bridge": 32,
    "bridge-middle": 32,
    "middle": 32,
@@ -28,71 +28,60 @@
    "neck": 32
   },
   "tempo": {
-   "120-150": 296,
-   "90-120": 182,
-   ">=150": 62,
+   "120-150": 427,
+   "90-120": 184,
+   ">=150": 89,
    "<90": 24
   },
   "key": {
-   "D#": 31,
-   "Gm": 55,
-   "F#": 29,
-   "D": 34,
-   "F#m": 15,
+   "D#": 32,
+   "Gm": 57,
+   "F#": 41,
+   "D": 36,
+   "F#m": 18,
    "G#m": 70,
-   "G": 34,
+   "G": 37,
    "G#": 29,
-   "A#m": 9,
-   "C#": 20,
-   "Fm": 20,
+   "A#m": 21,
+   "C#": 23,
+   "Fm": 26,
    "A": 20,
-   "E": 57,
-   "Bm": 8,
-   "C": 9,
+   "E": 60,
+   "Bm": 34,
+   "C": 15,
    "Am": 28,
-   "B": 10,
-   "A#": 6,
-   "Cm": 3,
-   "Em": 12,
-   "F": 41,
-   "C#m": 2,
-   "D#m": 14,
-   "Dm": 8
+   "B": 34,
+   "A#": 23,
+   "Cm": 13,
+   "Em": 23,
+   "F": 46,
+   "C#m": 7,
+   "D#m": 18,
+   "Dm": 13
   },
   "masking_level": {
-   "none": 564
+   "none": 724
   },
   "recording_style": {
    "acoustic": 360,
-   "directinput": 22,
-   "amp_mic": 22,
+   "di": 102,
+   "amp_mic": 102,
    "di_processed": 160
   },
   "acoustic_vs_electric": {
    "acoustic": 360,
-   "electric": 204
+   "electric": 364
   },
   "difficulty": {
-   "low": 564
+   "low": 724
   },
   "synthetic_vs_real": {
-   "real": 564
+   "real": 724
   },
   "license_class": {
-   "commercial": 564
+   "commercial": 724
   }
  },
- "sparse": [
-  {
-   "dimension": "key",
-   "value": "C#m",
-   "count": 2
-  },
-  {
-   "dimension": "key",
-   "value": "Cm",
-   "count": 3
-  }
- ],
+ "sparse": [],
  "sparse_threshold": 5
 }

@@ -1,33 +1,33 @@
-# Coverage Dashboard  (pool = 564 assets)
+# Coverage Dashboard  (pool = 724 assets)
 
 dimension              coverage   assets  diversity confidence
-genre                  ████████████   360       5     0.64
-gain                   ████████....   564       2     1.00
-guitar_type            ████████████   564       4     1.00
-pickup                 ████████████   160       5     0.28
-tempo                  ████████████   564       4     1.00
-key                    ████████████   564      24     1.00
-masking_level          ███.........   564       1     1.00
-recording_style        ████████████   564       4     1.00
-acoustic_vs_electric   ████████████   564       2     1.00
-difficulty             ████████████   564       1     1.00
-synthetic_vs_real      ████████████   564       1     1.00
-license_class          ████████████   564       1     1.00
-amp_family             ............   160       4     0.28
-recording_method       █████████...   564       4     1.00
+genre                  ████████████   360       5     0.50
+gain                   ████████....   724       2     1.00
+guitar_type            ████████████   724       4     1.00
+pickup                 ████████████   160       5     0.22
+tempo                  ████████████   724       4     1.00
+key                    ████████████   724      24     1.00
+masking_level          ███.........   724       1     1.00
+recording_style        ████████████   724       4     1.00
+acoustic_vs_electric   ████████████   724       2     1.00
+difficulty             ████████████   724       1     1.00
+synthetic_vs_real      ████████████   724       1     1.00
+license_class          ████████████   724       1     1.00
+amp_family             ............   160       4     0.22
+recording_method       ████████████   724       4     1.00
 tuning                 ............     0       0     0.00
 string_count           ............     0       0     0.00
 capo                   ████████████     0       0     0.00
-playing_style          ............   404       8     0.72
-articulation           ............   404       8     0.72
-player_identity        ████████████   404       9     0.72
-recording_quality      ████████████   564       3     1.00
-provenance_confidence  ████████████   564       2     1.00
+playing_style          ............   564      10     0.78
+articulation           ............   564      10     0.78
+player_identity        ████████████   564       9     0.78
+recording_quality      ████████████   724       3     1.00
+provenance_confidence  ████████████   724       2     1.00
 
 # Coverage Heatmap (target regimes; . = empty)
 
 ## acoustic_vs_electric
-  electric       ██████....  204  (impact 1.5)
+  electric       ██████████  364  (impact 1.5)
   acoustic       ██████████  360  (impact 1.0)
 
 ## guitar_type
@@ -42,8 +42,8 @@ provenance_confidence  ████████████   564       2     1.
 
 ## gain
   med            ..........    0  (impact 1.6)  GAP
-  high           ███.......  120  (impact 1.4)
-  low            ██████████  444  (impact 1.0)
+  high           ██........  120  (impact 1.4)
+  low            ██████████  604  (impact 1.0)
 
 ## tuning
   baritone       ..........    0  (impact 2.4)  GAP
@@ -71,8 +71,8 @@ provenance_confidence  ████████████   564       2     1.
   fender_clean   ..........    0  (impact 1.0)  GAP
 
 ## recording_method
-  di             ..........    0  (impact 1.8)  GAP
-  amp_mic        █.........   22  (impact 1.2)
+  di             ███.......  102  (impact 1.8)
+  amp_mic        ███.......  102  (impact 1.2)
   di_processed   ████......  160  (impact 1.2)
   acoustic       ██████████  360  (impact 1.0)
 
@@ -100,7 +100,7 @@ provenance_confidence  ████████████   564       2     1.
   high           ..........    0  (impact 2.0)  GAP
   med            ..........    0  (impact 1.6)  GAP
   low            ..........    0  (impact 1.2)  GAP
-  none           ██████████  564  (impact 0.5)
+  none           ██████████  724  (impact 0.5)
 
 
 # Gap Report
@@ -112,7 +112,6 @@ provenance_confidence  ████████████   564       2     1.
 - string_count=7: have 0 (deficit 100%), impact 2.2 -> commission. 7/8-string absent everywhere — commission
 - string_count=8: have 0 (deficit 100%), impact 2.2 -> commission. 7/8-string absent everywhere — commission
 - masking_level=high: have 0 (deficit 100%), impact 2.0 -> virtual_studio. Virtual Studio scenarios (needs REAL backing pool)
-- recording_method=di: have 0 (deficit 100%), impact 1.8 -> green. Guitar-TECHS DI + more green
 - playing_style=metal: have 0 (deficit 100%), impact 1.8 -> license. MoisesDB / SourceAudio genres; or commission metal
 - amp_family=high_gain: have 0 (deficit 100%), impact 1.6 -> green. mine remaining EGFxSet effects / more recipes (free, on Hetzner)
 - articulation=Tapping: have 0 (deficit 100%), impact 1.6 -> green. more of Guitar-TECHS techniques (free) + commission gaps
@@ -156,16 +155,15 @@ provenance_confidence  ████████████   564       2     1.
  5 string_count=7                     commission    high     2.2   0.18 2.20
  6 string_count=8                     commission    high     2.2   0.18 2.20
  7 masking_level=high                 virtual_studio low      2.0   4.00 2.00
- 8 recording_method=di                green         low      1.8   3.60 1.80
- 9 playing_style=metal                license       med      1.8   0.60 1.80
-10 amp_family=high_gain               green         low      1.6   3.20 1.60
-11 articulation=Tapping               green         low      1.6   3.20 1.60
-12 masking_level=med                  virtual_studio low      1.6   3.20 1.60
+ 8 playing_style=metal                license       med      1.8   0.60 1.80
+ 9 amp_family=high_gain               green         low      1.6   3.20 1.60
+10 articulation=Tapping               green         low      1.6   3.20 1.60
+11 masking_level=med                  virtual_studio low      1.6   3.20 1.60
+12 gain=med                           commission    med      1.6   0.53 1.60
 
 # ROI Report (coverage-gain x impact / cost)
 
   ROI   4.00  masking_level=high           (impact 2.0, cost low, virtual_studio)
-  ROI   3.60  recording_method=di             (impact 1.8, cost low, green)
   ROI   3.20  amp_family=high_gain      (impact 1.6, cost low, green)
   ROI   3.20  articulation=Tapping        (impact 1.6, cost low, green)
   ROI   3.20  masking_level=med            (impact 1.6, cost low, virtual_studio)
@@ -174,6 +172,7 @@ provenance_confidence  ████████████   564       2     1.
   ROI   2.80  articulation=fingerstyle    (impact 1.4, cost low, green)
   ROI   2.40  amp_family=blues driver   (impact 1.2, cost low, green)
   ROI   2.40  amp_family=tube screamer  (impact 1.2, cost low, green)
+  ROI   2.40  articulation=Slides         (impact 1.2, cost low, green)
 
 # Commissioning Briefs (auto-generated from gaps)
 
@@ -186,7 +185,6 @@ provenance_confidence  ████████████   564       2     1.
 
 # Licensing Opportunities
 
-- recording_method=di: green — Guitar-TECHS DI + more green (cost~low, impact 1.8)
 - playing_style=metal: license — MoisesDB / SourceAudio genres; or commission metal (cost~med, impact 1.8)
 - amp_family=high_gain: green — mine remaining EGFxSet effects / more recipes (free, on Hetzner) (cost~low, impact 1.6)
 - articulation=Tapping: green — more of Guitar-TECHS techniques (free) + commission gaps (cost~low, impact 1.6)
@@ -213,22 +211,16 @@ provenance_confidence  ████████████   564       2     1.
 
 # Historical Coverage Trend
 
-  amp_family             diversity 0 -> 4  (+4)
-  recording_method       diversity 0 -> 4  (+4)
-  playing_style          diversity 0 -> 8  (+8)
-  articulation           diversity 0 -> 8  (+8)
-  player_identity        diversity 0 -> 9  (+9)
-  recording_quality      diversity 0 -> 3  (+3)
-  provenance_confidence  diversity 0 -> 2  (+2)
+(no prior snapshot — this is the baseline)
 
 # Recommended Next Actions
 
 ## Do first — free / cheap wins (highest $-ROI, exhaust before spending)
 1. GENERATE (Virtual Studio): masking_level=high — ROI 4.00, impact 2.0. Virtual Studio scenarios (needs REAL backing pool)
-2. INGEST (free green): recording_method=di — ROI 3.60, impact 1.8. Guitar-TECHS DI + more green
-3. INGEST (free green): amp_family=high_gain — ROI 3.20, impact 1.6. mine remaining EGFxSet effects / more recipes (free, on Hetzner)
-4. INGEST (free green): articulation=Tapping — ROI 3.20, impact 1.6. more of Guitar-TECHS techniques (free) + commission gaps
-5. GENERATE (Virtual Studio): masking_level=med — ROI 3.20, impact 1.6. Virtual Studio scenarios (needs REAL backing pool)
+2. INGEST (free green): amp_family=high_gain — ROI 3.20, impact 1.6. mine remaining EGFxSet effects / more recipes (free, on Hetzner)
+3. INGEST (free green): articulation=Tapping — ROI 3.20, impact 1.6. more of Guitar-TECHS techniques (free) + commission gaps
+4. GENERATE (Virtual Studio): masking_level=med — ROI 3.20, impact 1.6. Virtual Studio scenarios (needs REAL backing pool)
+5. INGEST (free green): amp_family=british_crunch — ROI 2.80, impact 1.4. mine remaining EGFxSet effects / more recipes (free, on Hetzner)
 
 ## Then invest — highest-impact gaps only $ can fill (rank by strategic priority)
 1. COMMISSION: tuning=baritone — impact 2.4, priority 2.40, cost~high. no dataset has diverse tunings — record DI to spec
