@@ -151,9 +151,12 @@ struct HandSceneView: NSViewRepresentable {
         v.isPlaying = true
         v.delegate = context.coordinator
         v.preferredFramesPerSecond = 60
-        // Drag to orbit the hand 360° (user picks the viewing angle).
+        // Drag to orbit the hand (user picks the viewing angle); double-click resets.
         let pan = NSPanGestureRecognizer(target: context.coordinator, action: #selector(HandCoordinator.handleOrbit(_:)))
         v.addGestureRecognizer(pan)
+        let dbl = NSClickGestureRecognizer(target: context.coordinator, action: #selector(HandCoordinator.resetView))
+        dbl.numberOfClicksRequired = 2
+        v.addGestureRecognizer(dbl)
         return v
     }
 
@@ -315,8 +318,13 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
         let d = g.translation(in: g.view)
         g.setTranslation(.zero, in: g.view)
         azimuth += Float(d.x) * 0.01
-        elevation = max(-1.5, min(1.5, elevation - Float(d.y) * 0.01))
+        // Clamp tilt to front-above … top-down; never swing under the neck.
+        elevation = max(0.05, min(1.25, elevation - Float(d.y) * 0.01))
         aimCamera()
+    }
+
+    @objc func resetView() {
+        azimuth = 0.0; elevation = 0.56; aimCamera()
     }
 
     func fitCamera(to size: CGSize) {
