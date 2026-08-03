@@ -164,14 +164,21 @@ class StemPoolBackingProvider:
         if not paths:
             return np.zeros(n, dtype=np.float32)         # role absent -> silence (honest)
         rng = _rng(seed, role.role + role.voice, scenario.signature())
-        path = paths[int(rng.integers(0, len(paths)))]
-        y, _ = sf.read(str(path), always_2d=True)
-        y = y.mean(axis=1).astype(np.float32)
-        if len(y) >= n:
-            start = int(rng.integers(0, max(1, len(y) - n)))
-            return y[start:start + n]
-        reps = int(np.ceil(n / max(1, len(y))))          # loop to length
-        return np.tile(y, reps)[:n]
+        order = list(rng.permutation(len(paths)))        # deterministic try-order
+        for idx in order:                                 # one bad file never kills the mix
+            try:
+                y, _ = sf.read(str(paths[idx]), always_2d=True)
+            except Exception:
+                continue
+            y = y.mean(axis=1).astype(np.float32)
+            if len(y) < 1:
+                continue
+            if len(y) >= n:
+                start = int(rng.integers(0, max(1, len(y) - n)))
+                return y[start:start + n]
+            reps = int(np.ceil(n / max(1, len(y))))       # loop to length
+            return np.tile(y, reps)[:n]
+        return np.zeros(n, dtype=np.float32)              # all candidates failed -> silence
 
 
 _p: ScenarioProvider = SyntheticBackingProvider()      # type: ignore[assignment]

@@ -248,6 +248,7 @@ def build_manifest(name: str, tracks: List[dict], *, intended_use: str,
     }
     payload = json.dumps(manifest, indent=1, sort_keys=True)
     manifest["manifest_sha256"] = hashlib.sha256(payload.encode()).hexdigest()
+    out_dir = Path(out_dir)                       # accept str or Path
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{name}.manifest.json"
     path.write_text(json.dumps(manifest, indent=1, sort_keys=True))

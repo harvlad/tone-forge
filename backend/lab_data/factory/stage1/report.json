@@ -1,0 +1,28 @@
+{
+ "n_pairs": 14,
+ "rejected": 7,
+ "replay_deterministic": true,
+ "exact_ground_truth": true,
+ "target_rms": 0.0138,
+ "backing_rms": 0.1059,
+ "backing_dataset": "freesound_ccby",
+ "provenance_complete": true,
+ "regimes": [
+  "acoustic_under_vocal",
+  "clean_electric_under_vocal",
+  "heavy_masking"
+ ],
+ "real_backing_roles": {
+  "drums": 14,
+  "bass": 14,
+  "keys": 14,
+  "percussion": 12,
+  "vocals": 37
+ },
+ "manifest_tracks": 14,
+ "manifest_intended_use": "commercial_eligible",
+ "manifest_datasets": [
+  "guitar_techs",
+  "guitarset"
+ ]
+}

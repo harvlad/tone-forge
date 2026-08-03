@@ -1,0 +1,195 @@
+{
+ "created_at": "2026-08-03T22:04:15.234201+00:00",
+ "dataset_lineage": {
+  "guitar_techs": {
+   "attribution": "Guitar-TECHS (Pedroza et al., ICASSP 2025), CC BY 4.0, Zenodo 14963133",
+   "commercial_training_allowed": true,
+   "license": "CC-BY-4.0",
+   "notes": "Real electric guitar: DI + micced-amp + multi-mic, synced per-string MIDI. GREEN tier. Known <=100ms cross-path misalignment \u2014 correct before alignment-sensitive use. No mixture context.",
+   "redistribution_allowed": true,
+   "source": "https://zenodo.org/records/14963133"
+  },
+  "guitarset": {
+   "attribution": "GuitarSet (Xi et al.), CC BY 4.0, Zenodo 3371780",
+   "commercial_training_allowed": true,
+   "license": "CC-BY-4.0",
+   "notes": "Real solo acoustic guitar, per-string hexaphonic isolation + mic mix. Phase-2 GREEN tier: passes both license layers. No mixture context (stem source for synthesis).",
+   "redistribution_allowed": true,
+   "source": "https://zenodo.org/records/3371780"
+  }
+ },
+ "intended_use": "commercial_eligible",
+ "manifest_sha256": "2c8d6fb03334471c40435bd24200fd018016d367f5b2cc08746b31e65ee6f3b1",
+ "n_tracks": 14,
+ "name": "riley_stage1_real",
+ "tracks": [
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "clean_electric_under_vocal",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/classic_rock/c477ba11-29d/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "classic_rock",
+   "target_path": "/root/factory/studio_out/classic_rock/c477ba11-29d/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_f51c0ae20602581c:c477ba11-29db-56be-b7b0-335ff888b814"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "acoustic_under_vocal",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/acoustic_vocal/c477ba11-29d/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "acoustic_vocal",
+   "target_path": "/root/factory/studio_out/acoustic_vocal/c477ba11-29d/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_710dcef98ad6f111:c477ba11-29db-56be-b7b0-335ff888b814"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "heavy_masking",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/modern_metal/c477ba11-29d/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "modern_metal",
+   "target_path": "/root/factory/studio_out/modern_metal/c477ba11-29d/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_3977ac798bd8783a:c477ba11-29db-56be-b7b0-335ff888b814"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "clean_electric_under_vocal",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/classic_rock/2d40cc62-76b/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "classic_rock",
+   "target_path": "/root/factory/studio_out/classic_rock/2d40cc62-76b/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_f51c0ae20602581c:2d40cc62-76bf-55e5-8798-a312afb8f7a7"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "acoustic_under_vocal",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/acoustic_vocal/2d40cc62-76b/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "acoustic_vocal",
+   "target_path": "/root/factory/studio_out/acoustic_vocal/2d40cc62-76b/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_710dcef98ad6f111:2d40cc62-76bf-55e5-8798-a312afb8f7a7"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "heavy_masking",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/modern_metal/2d40cc62-76b/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "modern_metal",
+   "target_path": "/root/factory/studio_out/modern_metal/2d40cc62-76b/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_3977ac798bd8783a:2d40cc62-76bf-55e5-8798-a312afb8f7a7"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "clean_electric_under_vocal",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/classic_rock/74ff6062-19d/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "classic_rock",
+   "target_path": "/root/factory/studio_out/classic_rock/74ff6062-19d/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_f51c0ae20602581c:74ff6062-19d4-59cb-8ce3-0000107de4a6"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "acoustic_under_vocal",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/acoustic_vocal/74ff6062-19d/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "acoustic_vocal",
+   "target_path": "/root/factory/studio_out/acoustic_vocal/74ff6062-19d/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_710dcef98ad6f111:74ff6062-19d4-59cb-8ce3-0000107de4a6"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "heavy_masking",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/modern_metal/74ff6062-19d/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "modern_metal",
+   "target_path": "/root/factory/studio_out/modern_metal/74ff6062-19d/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_3977ac798bd8783a:74ff6062-19d4-59cb-8ce3-0000107de4a6"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "clean_electric_under_vocal",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/classic_rock/e1d7c113-fe6/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "classic_rock",
+   "target_path": "/root/factory/studio_out/classic_rock/e1d7c113-fe6/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_f51c0ae20602581c:e1d7c113-fe63-5dff-9ad3-9b9ee08f16ff"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "acoustic_under_vocal",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/acoustic_vocal/e1d7c113-fe6/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "acoustic_vocal",
+   "target_path": "/root/factory/studio_out/acoustic_vocal/e1d7c113-fe6/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_710dcef98ad6f111:e1d7c113-fe63-5dff-9ad3-9b9ee08f16ff"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "heavy_masking",
+   "dataset": "guitarset",
+   "mixture_path": "/root/factory/studio_out/modern_metal/e1d7c113-fe6/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "modern_metal",
+   "target_path": "/root/factory/studio_out/modern_metal/e1d7c113-fe6/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_3977ac798bd8783a:e1d7c113-fe63-5dff-9ad3-9b9ee08f16ff"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "acoustic_under_vocal",
+   "dataset": "guitar_techs",
+   "mixture_path": "/root/factory/studio_out/acoustic_vocal/90d136d1-58e/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "acoustic_vocal",
+   "target_path": "/root/factory/studio_out/acoustic_vocal/90d136d1-58e/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_710dcef98ad6f111:90d136d1-58ec-5fc9-92f9-e9ff5a4433bb"
+  },
+  {
+   "backing_dataset": "freesound_ccby",
+   "benchmark_regime": "acoustic_under_vocal",
+   "dataset": "guitar_techs",
+   "mixture_path": "/root/factory/studio_out/acoustic_vocal/7c9db98e-a56/mixture.wav",
+   "quality_score": 1.0,
+   "recipe": null,
+   "scenario": "acoustic_vocal",
+   "target_path": "/root/factory/studio_out/acoustic_vocal/7c9db98e-a56/guitar_target.wav",
+   "target_stem": "guitar",
+   "track_id": "scn_710dcef98ad6f111:7c9db98e-a565-51bd-b7d3-b1918f0206ed"
+  }
+ ]
+}
