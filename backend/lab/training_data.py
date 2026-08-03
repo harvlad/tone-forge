@@ -63,6 +63,38 @@ TRAINING_DATA_REGISTRY = {
         "source": "https://zenodo.org/records/3338373",
         "notes": "RESEARCH ONLY. Firewalled from commercial checkpoints.",
     },
+    "medleydb": {
+        "license": "CC-BY-NC-SA-4.0",
+        "commercial_training_allowed": False,
+        "redistribution_allowed": False,
+        "attribution": "MedleyDB (Bittner et al., NYU MARL), CC BY-NC-SA 4.0",
+        "source": "https://medleydb.weebly.com/",
+        "notes": ("RESEARCH ONLY. Real multitrack with per-instrument (incl. guitar) "
+                  "stems, genre-diverse. Firewalled from commercial checkpoints — "
+                  "Phase-2 sourcing survey (2026-08): commercial license negotiable with MARL."),
+    },
+    "cambridge_mt": {
+        "license": "educational-only (custom)",
+        "commercial_training_allowed": False,
+        "redistribution_allowed": False,
+        "attribution": "Cambridge-MT 'Mixing Secrets' Free Multitrack Library",
+        "source": "https://www.cambridge-mt.com/ms/mtk/",
+        "notes": ("RESEARCH ONLY. Large real multitrack library WITH guitar stems, but "
+                  "'educational use only; no commercial without per-contributor permission'. "
+                  "Firewalled. Per-track CC licenses vary — a curated CC-BY subset could be "
+                  "commercial-eligible IF each contributor's license is verified individually."),
+    },
+    "fma_ccby": {
+        "license": "CC-BY-4.0 (subset)",
+        "commercial_training_allowed": True,
+        "redistribution_allowed": True,
+        "attribution": "Free Music Archive — CC-BY / CC-BY-SA subset only (Defferrard et al.)",
+        "source": "https://github.com/mdeff/fma",
+        "notes": ("Commercial-eligible ONLY for the ~10.5% of tracks under CC-BY/CC-BY-SA/"
+                  "OAL/Free-Art. BUT these are MIXED tracks (no isolated guitar stem) -> not "
+                  "directly usable as separation ground truth. Candidate for a build-your-own "
+                  "stem pipeline, not off-the-shelf."),
+    },
 }
 
 
