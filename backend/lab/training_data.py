@@ -44,7 +44,74 @@ TRAINING_DATA_REGISTRY = {
         "redistribution_allowed": True,
         "attribution": "GuitarSet (Xi et al.), CC BY 4.0, Zenodo 3371780",
         "source": "https://zenodo.org/records/3371780",
-        "notes": "Real solo acoustic guitar recordings.",
+        "notes": ("Real solo acoustic guitar, per-string hexaphonic isolation + mic mix. "
+                  "Phase-2 GREEN tier: passes both license layers. No mixture context "
+                  "(stem source for synthesis)."),
+    },
+    "guitar_techs": {
+        "license": "CC-BY-4.0",
+        "commercial_training_allowed": True,
+        "redistribution_allowed": True,
+        "attribution": "Guitar-TECHS (Pedroza et al., ICASSP 2025), CC BY 4.0, Zenodo 14963133",
+        "source": "https://zenodo.org/records/14963133",
+        "notes": ("Real electric guitar: DI + micced-amp + multi-mic, synced per-string MIDI. "
+                  "GREEN tier. Known <=100ms cross-path misalignment — correct before "
+                  "alignment-sensitive use. No mixture context."),
+    },
+    "egfxset": {
+        "license": "CC-BY-4.0",
+        "commercial_training_allowed": True,
+        "redistribution_allowed": True,
+        "attribution": "EGFxSet (Pedroza et al., ISMIR 2022 LBD), CC BY 4.0, Zenodo 7044411",
+        "source": "https://zenodo.org/records/7044411",
+        "notes": ("Real-hardware guitar FX on isolated single notes (12 effects). GREEN tier. "
+                  "Isolated notes only -> distortion/effect TIMBRE bank for augmentation."),
+    },
+    "musan": {
+        "license": "CC-BY-4.0",
+        "commercial_training_allowed": True,
+        "redistribution_allowed": True,
+        "attribution": "MUSAN (Snyder et al.), CC BY 4.0, OpenSLR 17",
+        "source": "https://www.openslr.org/17/",
+        "notes": ("GREEN tier (PD/CC sources). No guitar — noise/interference augmentation "
+                  "to harden the separator. 16kHz ceiling."),
+    },
+    "guitarduets": {
+        "license": "CC-BY-4.0",
+        "commercial_training_allowed": False,   # VERIFY exact CC variant + real-recording provenance on Zenodo
+        "redistribution_allowed": False,
+        "attribution": "GuitarDuets (Glytsos et al., ISMIR 2024), Zenodo 12802440",
+        "source": "https://zenodo.org/records/12802440",
+        "notes": ("AMBER: reported CC-BY but UNVERIFIED variant + real-recording provenance. "
+                  "Only guitar-vs-guitar (same-timbre) separation set — high value. Flip to "
+                  "commercial_training_allowed=True ONLY after confirming CC-BY-4.0 on the record."),
+    },
+    "egdb": {
+        "license": "unknown (no published license)",
+        "commercial_training_allowed": False,
+        "redistribution_allowed": False,
+        "attribution": "EGDB (Chen et al., ICASSP 2022)",
+        "source": "https://ss12f32v.github.io/Guitar-Transcription/",
+        "notes": ("AMBER: real electric DI + amp renders (excellent distortion pairs) but NO "
+                  "published license — must contact author before any use. Firewalled until cleared."),
+    },
+    "goat": {
+        "license": "access-gated / TBD",
+        "commercial_training_allowed": False,
+        "redistribution_allowed": False,
+        "attribution": "GOAT (Loth et al., ISMIR 2025), Zenodo 17706552 (request access)",
+        "source": "https://github.com/JackJamesLoth/GOAT-Dataset",
+        "notes": ("AMBER: largest real electric DI set + amp augmentation, but Zenodo "
+                  "access-gated and license undetailed. Confirm terms before use."),
+    },
+    "idmt_smt_guitar": {
+        "license": "CC-BY-NC-ND-4.0",
+        "commercial_training_allowed": False,
+        "redistribution_allowed": False,
+        "attribution": "IDMT-SMT-Guitar (Kehling et al., Fraunhofer IDMT)",
+        "source": "https://www.idmt.fraunhofer.de/en/publications/datasets/guitar.html",
+        "notes": ("RED: CC-BY-NC-ND — NonCommercial AND NoDerivatives. ND arguably bars a "
+                  "trained model. Research-only; Fraunhofer may relicense commercially by arrangement."),
     },
     # Research-only entries (benchmarking ONLY; never in commercial manifests)
     "moisesdb": {
