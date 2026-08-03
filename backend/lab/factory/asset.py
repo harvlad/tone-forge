@@ -156,11 +156,36 @@ class Asset:
         )
 
     def evolve(self, *, stage: str, params: Optional[dict] = None, **changes) -> "Asset":
-        """Immutable update: append a lineage step and apply field changes.
-        Returns a NEW Asset; self is untouched."""
+        """Immutable in-place-identity update: append a lineage step and apply field
+        changes while KEEPING the same audio (same content_hash/asset_id). Used by
+        stages that annotate an asset (license, audit). Returns a NEW Asset."""
         now = _utcnow()
         step = LineageStep(stage=stage, at=now, parent_asset_id=self.asset_id, params=params or {})
         return replace(self, lineage=self.lineage + (step,), updated_at=now, **changes)
+
+    def derive(self, new_path: str | Path, *, stage: str, params: Optional[dict] = None,
+               kind: Optional[str] = None, role: Optional[str] = None) -> "Asset":
+        """Create a CHILD asset from transformed audio at `new_path`.
+
+        The child has a NEW content identity (hash of the new bytes), inherits the
+        parent's license and descriptive metadata (a re-amp of a CC-BY DI is still a
+        CC-BY derivative; guitar_type/genre carry forward), and RESETS audit/quality
+        (new audio must be re-audited before it can enter a manifest). Lineage gains
+        one step linking back to the parent, so the transform chain is fully
+        replayable. The parent is untouched; the original is always recoverable."""
+        ch = content_hash_file(new_path)
+        aid = asset_id_for(ch)
+        now = _utcnow()
+        step = LineageStep(stage=stage, at=now, parent_asset_id=self.asset_id, params=params or {})
+        prov = {**dict(self.provenance), "derived_from": self.asset_id, "derived_at": now}
+        return replace(
+            self, asset_id=aid, content_hash=ch, path=str(new_path),
+            kind=kind or self.kind, role=role or self.role,
+            provenance=prov, lineage=self.lineage + (step,),
+            audit=None, audit_status=Status.PENDING,
+            quality_status=Status.PENDING, quality_score=None,
+            created_at=now, updated_at=now,
+        )
 
     # ---- serialization (for the catalog) ----
     def to_dict(self) -> dict:

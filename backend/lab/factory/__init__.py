@@ -17,9 +17,15 @@ from .asset import (
 from .sources import SourceProvider, SourceCapabilities, SlakhSource, GuitarSetSource
 from .catalog import AssetCatalog
 from .pipeline import PipelineRunner
+from .transforms import (
+    TransformProvider, GainTransform, EQTransform, IRTransform, NAMTransform,
+)
+from .engine import TransformEngine, EngineStats
 
 __all__ = [
     "Asset", "RawAsset", "LicenseStamp", "Kind", "Role", "Status", "content_hash_file",
     "SourceProvider", "SourceCapabilities", "SlakhSource", "GuitarSetSource",
     "AssetCatalog", "PipelineRunner",
+    "TransformProvider", "GainTransform", "EQTransform", "IRTransform", "NAMTransform",
+    "TransformEngine", "EngineStats",
 ]
