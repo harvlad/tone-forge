@@ -269,14 +269,15 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     // MARK: camera + lights (view the -Y playing face)
     private func setupCamera() {
         let cam = SCNCamera(); cam.zNear = 0.001; cam.zFar = 10
-        // Orthographic → the neck reads LEVEL (no perspective tilt); orthographicScale
-        // sets the zoom to fill the panel. Slight left yaw + above for a 3/4 read.
+        // Orthographic straight-on → the neck reads LEVEL (no perspective tilt);
+        // orthographicScale (vertical) fits neck + hanging hand; look-at dropped
+        // into the hand so the whole hand stays in frame.
         cam.usesOrthographicProjection = true
-        cam.orthographicScale = 0.135
+        cam.orthographicScale = 0.20
         cam.projectionDirection = .vertical
         cameraNode.camera = cam
-        cameraNode.position = SCNVector3(G.fingerX(3.4) - 0.05, -0.5, 0.26)
-        cameraNode.look(at: SCNVector3(G.fingerX(3.3), 0, 0), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+        cameraNode.position = SCNVector3(G.fingerX(3.4), -0.6, 0.0)
+        cameraNode.look(at: SCNVector3(G.fingerX(3.4), -0.02, -0.10), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
         scene.rootNode.addChildNode(cameraNode)
     }
     private func setupLights() {
