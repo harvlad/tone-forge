@@ -22,6 +22,7 @@ EXPERIMENTS_DIR = LAB_DATA / "experiments"
 MODELS_DIR = LAB_DATA / "models"
 TIERS_DIR = LAB_DATA / "tiers"
 JOBS_DIR = LAB_DATA / "jobs"
+FACTORY_DIR = LAB_DATA / "factory"
 LEGACY_DIR = LAB_DATA / "legacy"
 REPORTS_DIR = LAB_DATA / "reports"
 
@@ -37,6 +38,13 @@ THROUGHPUT_PATH = MODELS_DIR / "throughput.json"
 DATASETS = {
     "slakh2100": REPO_ROOT / "datasets" / "slakh2100_flac_redux",
     "babyslakh": REPO_ROOT / "datasets" / "babyslakh_16k",
+    # Derived: htdemucs_6s-separated family stems from full-track mixes
+    # (separation-ceiling experiment, 2026-07).  Same GT MIDI content as
+    # slakh2100 -> GT cache shared via content hashes.
+    "slakh_sep_htdemucs6s": LAB_DATA / "derived" / "slakh_sep_htdemucs6s",
+    # Wave-3 candidate separators (same mixes, same GT):
+    "slakh_sep_bsrofosw": LAB_DATA / "derived" / "slakh_sep_bsrofosw",
+    "slakh_sep_becruily": LAB_DATA / "derived" / "slakh_sep_becruily",
 }
 
 # Slakh native splits.  Convention:
