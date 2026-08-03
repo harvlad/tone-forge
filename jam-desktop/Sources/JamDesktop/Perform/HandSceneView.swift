@@ -403,62 +403,14 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
         if !rootInit { curRootQuat = goalQ; curRootLoc = goalL; rootInit = true }
         curRootQuat = simd_slerp(curRootQuat, goalQ, alpha)
         curRootLoc += (goalL - curRootLoc) * alpha
-        func rootMatrix(_ loc: simd_float3) -> simd_float4x4 {
-            let R = simd_float3x3(curRootQuat)
-            return simd_float4x4(SIMD4(R.columns.0, 0), SIMD4(R.columns.1, 0), SIMD4(R.columns.2, 0), SIMD4(loc, 1))
-        }
-        // First place the whole hand by its solved root, then cluster-shift so the
-        // fingers are roughly on the contacts, then per-finger seat (below).
-        var rootLoc = curRootLoc
-        if !contacts.isEmpty {
-            hr.simdTransform = rootMatrix(rootLoc)
-            var tipC = simd_float3(0,0,0), n: Float = 0
-            for bn in fingerTipBones {
-                if let t = fingertipWorld(bn), abs(t.y) < 0.03, t.x < 0.05, t.x > -0.46 { tipC += t; n += 1 }
-            }
-            if n > 0 {
-                tipC /= n
-                var dotC = simd_float3(0,0,0)
-                for c in contacts { dotC += G.contact(Float(c.x), Float(c.y)) }
-                dotC /= Float(contacts.count)
-                let delta = dotC - tipC
-                if simd_length(delta) < 0.12 { rootLoc += delta }
-            }
-        }
-        hr.simdTransform = rootMatrix(rootLoc)
+        // The poses are FK-EXACT: the offline re-bake (fk_rebake) already seated
+        // every fingertip on its dot via the corrected root loc (state[0:3]) +
+        // joint angles, validated to sub-mm under this exact plain FK. So just
+        // apply the interpolated root — NO runtime cluster-shift / per-finger IK
+        // (those read the lazily-cached world transforms and would only perturb
+        // an already-correct pose).
+        let R = simd_float3x3(curRootQuat)
+        hr.simdTransform = simd_float4x4(SIMD4(R.columns.0, 0), SIMD4(R.columns.1, 0), SIMD4(R.columns.2, 0), SIMD4(curRootLoc, 1))
         SCNTransaction.commit()
-
-        // PER-FINGER SEATING: after the cluster shift, realign each pressing
-        // finger's knuckle so its OWN tip lands on its OWN contact dot — every
-        // finger touches, not just the cluster average.
-        if !contacts.isEmpty {
-            SCNTransaction.begin(); SCNTransaction.animationDuration = 0; SCNTransaction.disableActions = true
-            let names = ["finger2", "finger3", "finger4", "finger5"]
-            for c in contacts {
-                let fi = max(1, min(4, c.z))
-                let d = names[fi - 1]
-                guard let mcp = bones["\(d)_1_L"], let tipW = fingertipWorld("\(d)_3_L") else { continue }
-                let mp = mcp.simdWorldPosition
-                let target = G.contact(Float(c.x), Float(c.y))
-                let a = simd_normalize(tipW - mp)
-                let b = simd_normalize(target - mp)
-                let dot = max(-1, min(1, simd_dot(a, b)))
-                let ang = acos(dot)
-                if ang < 0.001 { continue }
-                let axis = simd_cross(a, b)
-                if simd_length(axis) < 1e-5 { continue }
-                let wr = simd_quatf(angle: min(ang, 0.6), axis: simd_normalize(axis))   // clamp to stay natural
-                let newWO = wr * mcp.simdWorldOrientation
-                mcp.simdWorldTransform = simd_float4x4(orient: newWO, pos: mp)
-            }
-            SCNTransaction.commit()
-        }
-    }
-}
-
-private extension simd_float4x4 {
-    init(orient q: simd_quatf, pos p: simd_float3) {
-        self = simd_float4x4(q)
-        self.columns.3 = SIMD4(p, 1)
     }
 }
