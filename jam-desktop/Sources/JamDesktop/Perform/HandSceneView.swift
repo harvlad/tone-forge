@@ -151,6 +151,9 @@ struct HandSceneView: NSViewRepresentable {
         v.isPlaying = true
         v.delegate = context.coordinator
         v.preferredFramesPerSecond = 60
+        // Drag to orbit the hand 360° (user picks the viewing angle).
+        let pan = NSPanGestureRecognizer(target: context.coordinator, action: #selector(HandCoordinator.handleOrbit(_:)))
+        v.addGestureRecognizer(pan)
         return v
     }
 
@@ -288,22 +291,37 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     // real panel aspect). cx offset from the neck's geometric centre accounts for
     // the hand extending toward the nut side.
     private static let camCX: Float = -0.10
-    private static let camY: Float = -0.35      // in front of the playing face
-    private static let camZ: Float = 0.22       // ABOVE, looking down → fingers wrap OVER the top, palm behind
-    private static let camAimZ: Float = 0.0
     private static let contentW: Float = 0.44   // neck length
-    private static let contentH: Float = 0.30   // neck + wrapping hand (foreshortened by the down angle)
+    private static let contentH: Float = 0.30   // neck + wrapping hand
+    private static let orbitRadius: Float = 0.6
+    // Orbit angles (user-draggable). Defaults = front + slightly above (the wrap view).
+    private var azimuth: Float = 0.0            // spin around vertical
+    private var elevation: Float = 0.56         // ~32° above → look down onto the board
+
+    private var orbitTarget: simd_float3 { SIMD3(Self.camCX, 0, 0) }
 
     private func aimCamera() {
-        cameraNode.position = SCNVector3(Self.camCX, Self.camY, Self.camZ)
-        cameraNode.look(at: SCNVector3(Self.camCX, 0, Self.camAimZ), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+        let t = orbitTarget
+        // Camera on a sphere around the target; az spins horizontally, el tilts.
+        let ce = cos(elevation), se = sin(elevation)
+        let dir = simd_float3(sin(azimuth) * ce, -cos(azimuth) * ce, se)  // target→camera
+        cameraNode.simdPosition = t + dir * Self.orbitRadius
+        // Keep world up +Z until steeply tilted, then flip to avoid gimbal snap.
+        let up = SCNVector3(0, 0, elevation > 1.45 ? -1 : 1)
+        cameraNode.look(at: SCNVector3(t.x, t.y, t.z), up: up, localFront: SCNVector3(0, 0, -1))
+    }
+
+    @objc func handleOrbit(_ g: NSPanGestureRecognizer) {
+        let d = g.translation(in: g.view)
+        g.setTranslation(.zero, in: g.view)
+        azimuth += Float(d.x) * 0.01
+        elevation = max(-1.5, min(1.5, elevation - Float(d.y) * 0.01))
+        aimCamera()
     }
 
     func fitCamera(to size: CGSize) {
         guard size.width > 1, size.height > 1, let cam = cameraNode.camera else { return }
         let aspect = Float(size.width / size.height)
-        // Vertical projection: orthographicScale = half the visible HEIGHT. Fit
-        // BOTH content height and width/aspect so it stays framed at any aspect.
         let scale = max(Self.contentH * 0.5, Self.contentW / (2 * aspect)) * 1.04
         cam.orthographicScale = Double(scale)
         aimCamera()
