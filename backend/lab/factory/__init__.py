@@ -21,6 +21,8 @@ from .transforms import (
     TransformProvider, GainTransform, EQTransform, IRTransform, NAMTransform,
 )
 from .engine import TransformEngine, EngineStats
+from .recipes import DatasetRecipe, RecipeStep, RECIPES, all_recipes, apply_recipe, TRANSFORM_REGISTRY
+from .manufacture import manufacture, build_manufactured_manifest, ManufactureReport
 
 __all__ = [
     "Asset", "RawAsset", "LicenseStamp", "Kind", "Role", "Status", "content_hash_file",
@@ -28,4 +30,6 @@ __all__ = [
     "AssetCatalog", "PipelineRunner",
     "TransformProvider", "GainTransform", "EQTransform", "IRTransform", "NAMTransform",
     "TransformEngine", "EngineStats",
+    "DatasetRecipe", "RecipeStep", "RECIPES", "all_recipes", "apply_recipe", "TRANSFORM_REGISTRY",
+    "manufacture", "build_manufactured_manifest", "ManufactureReport",
 ]
