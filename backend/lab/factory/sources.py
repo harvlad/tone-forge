@@ -129,6 +129,91 @@ class GuitarSetSource:
                                source_tags=self._parse(p.stem))
 
 
-# static contract checks — both must satisfy the identical Protocol
-_p1: SourceProvider = SlakhSource(".")     # type: ignore[assignment]
-_p2: SourceProvider = GuitarSetSource(".")  # type: ignore[assignment]
+class GuitarTechsSource:
+    """Guitar-TECHS: real ELECTRIC guitar. Layout
+    <P#>_<content>/audio/<perspective>/<perspective>_<label>.wav
+    (perspective = micamp | di | mic...). Fills the acoustic->electric gap + real
+    playing-technique coverage (bends/harmonics/palm-mute/vibrato/...)."""
+    dataset_key = "guitar_techs"
+    _PERSP = {"micamp": "amp_mic", "di": "di", "mic": "room_mic",
+              "ego": "ego_mic", "exo": "exo_mic"}
+
+    def __init__(self, root: str | Path, id: str = "guitar_techs"):
+        self.id = id
+        self._root = Path(root)
+
+    def capabilities(self) -> SourceCapabilities:
+        return SourceCapabilities(kinds=frozenset({Kind.STEM}), roles=frozenset({Role.GUITAR}),
+                                  synthetic_real="real", has_mixture=False)
+
+    def health(self) -> bool:
+        return self._root.is_dir()
+
+    def _parse(self, p: Path) -> dict:
+        parts = p.parts
+        tags = {"synthetic_real": "real", "guitar_type": "electric",
+                "recording_type": "electric"}
+        # find "<P#>_<content>" segment + perspective dir
+        for seg in parts:
+            if seg[:1] == "P" and "_" in seg:
+                pl, _, content = seg.partition("_")
+                tags["player"] = pl
+                tags["content"] = content
+        persp = p.parent.name
+        tags["recording_type"] = self._PERSP.get(persp, persp)
+        label = p.stem.split("_", 1)[-1]
+        if tags.get("content") == "techniques":
+            tags["performance_style"] = label      # Bendings/Harmonics/PalmMute/...
+        elif tags.get("content"):
+            tags["performance_style"] = tags["content"]
+        tags["excerpt"] = p.stem
+        return tags
+
+    def iter_assets(self) -> Iterable[RawAsset]:
+        for p in sorted(self._root.rglob("*.wav")):
+            if p.suffix.lower() in _AUDIO_EXTS:
+                yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR, source_tags=self._parse(p))
+
+
+class EGFxSetSource:
+    """EGFxSet: real electric-guitar notes through real hardware, layout
+    <Effect>/<Pickup>/<string>-<fret>.wav. GROUND-TRUTH pickup + effect -> fills the
+    pickup + gain/distortion gaps. Isolated notes (augmentation/timbre bank)."""
+    dataset_key = "egfxset"
+    _DISTORTION = {"rat", "tubescreamer", "tube screamer", "bluesdriver", "blues driver",
+                   "distortion", "overdrive", "fuzz"}
+
+    def __init__(self, root: str | Path, id: str = "egfxset"):
+        self.id = id
+        self._root = Path(root)
+
+    def capabilities(self) -> SourceCapabilities:
+        return SourceCapabilities(kinds=frozenset({Kind.STEM}), roles=frozenset({Role.GUITAR}),
+                                  synthetic_real="real", has_mixture=False)
+
+    def health(self) -> bool:
+        return self._root.is_dir()
+
+    def _parse(self, p: Path) -> dict:
+        # .../<Effect>/<Pickup>/<string>-<fret>.wav
+        pickup = p.parent.name
+        effect = p.parent.parent.name
+        distorted = effect.lower().replace("-", "").replace("_", "") in \
+            {e.replace(" ", "") for e in self._DISTORTION}
+        return {"synthetic_real": "real", "recording_type": "di_processed",
+                "guitar_type": "distorted" if distorted else "clean",
+                "gain": 0.8 if distorted else 0.05,
+                "pickup": pickup.lower(), "effect": effect,
+                "note": p.stem, "excerpt": f"{effect}_{pickup}_{p.stem}"}
+
+    def iter_assets(self) -> Iterable[RawAsset]:
+        for p in sorted(self._root.rglob("*.wav")):
+            if p.suffix.lower() in _AUDIO_EXTS:
+                yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR, source_tags=self._parse(p))
+
+
+# static contract checks — all must satisfy the identical Protocol
+_p1: SourceProvider = SlakhSource(".")      # type: ignore[assignment]
+_p2: SourceProvider = GuitarSetSource(".")   # type: ignore[assignment]
+_p3: SourceProvider = GuitarTechsSource(".")  # type: ignore[assignment]
+_p4: SourceProvider = EGFxSetSource(".")      # type: ignore[assignment]

@@ -25,10 +25,10 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lab.factory import (AssetCatalog, PipelineRunner, GuitarSetSource, Status,  # noqa: E402
-                         coverage_report, render_report)
+from lab.factory import (AssetCatalog, PipelineRunner, GuitarSetSource, GuitarTechsSource,  # noqa: E402
+                         EGFxSetSource, Status, coverage_report, render_report)
 
-SOURCES = {"guitarset": GuitarSetSource}
+SOURCES = {"guitarset": GuitarSetSource, "guitar_techs": GuitarTechsSource, "egfxset": EGFxSetSource}
 
 
 def main() -> int:
@@ -49,10 +49,14 @@ def main() -> int:
     res = runner.ingest(provider)   # Source -> License -> Auditor -> Catalog
     admitted = res.admitted + res.review
 
-    # rewrite each admitted asset's path to the durable canonical URI (audit already ran)
+    # rewrite each admitted asset's path to the durable canonical URI (audit already ran).
+    # preserve the relative path under audio-dir so nested layouts stay unique + re-parseable.
     if args.canonical_prefix:
         for a in list(admitted):
-            rel = Path(a.path).name
+            try:
+                rel = Path(a.path).resolve().relative_to(audio_root.resolve())
+            except ValueError:
+                rel = Path(a.path).name
             durable = f"{args.canonical_prefix.rstrip('/')}/{rel}"
             catalog.add(a.evolve(stage="canonicalize",
                                  params={"canonical_uri": durable, "audited_local": a.path},
