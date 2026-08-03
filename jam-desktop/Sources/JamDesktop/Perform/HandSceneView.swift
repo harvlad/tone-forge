@@ -38,7 +38,7 @@ final class HandPoseModel: ObservableObject {
     @Published var targetPose: [String: simd_float3] = [:]   // bone -> local euler (radians)
     @Published var rootLoc: simd_float3 = [0, 0, 0]
     @Published var rootEuler: simd_float3 = [0, 0, 0]
-    @Published var contacts: [SIMD2<Int>] = []               // (string, fret)
+    @Published var contacts: [SIMD3<Int>] = []               // (string, fret, finger 1..4)
     @Published var hasPose = false
 
     func apply(symbol: String?) {
@@ -59,7 +59,7 @@ final class HandPoseModel: ObservableObject {
         targetPose = HandStates.pose(e.state)
         rootLoc = [e.state[0], e.state[1], e.state[2]]
         rootEuler = [e.state[3], e.state[4], e.state[5]]
-        contacts = e.contacts.map { SIMD2<Int>($0[0], $0[1]) }
+        contacts = e.contacts.map { SIMD3<Int>($0[0], $0[1], $0.count > 2 ? $0[2] : 1) }
         hasPose = true
     }
 }
@@ -180,7 +180,7 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     private var curRootQuat = simd_quatf(angle: 0, axis: [0, 1, 0])
     private var curRootLoc = simd_float3(0, 0, 0)
     private var rootInit = false
-    private var lastContacts: [SIMD2<Int>] = []
+    private var lastContacts: [SIMD3<Int>] = []
     private let dotRoot = SCNNode()
     private var lastTime: TimeInterval = 0
     private static let halfLife: Float = 0.07
@@ -265,14 +265,15 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
 
     private let fingerTipBones = ["finger2_3_L", "finger3_3_L", "finger4_3_L", "finger5_3_L"]
 
-    /// Dots mark the true fret contacts (the reference to press). The hand is
-    /// cluster-corrected (see renderer) so its fingertips land on them.
-    private func rebuildDots(_ contacts: [SIMD2<Int>]) {
+    /// Dots mark the true fret contacts (the reference to press). Each pressing
+    /// finger is realigned (see renderer) so its tip lands on its dot.
+    private func rebuildDots(_ contacts: [SIMD3<Int>]) {
         dotRoot.childNodes.forEach { $0.removeFromParentNode() }
-        for (i, c) in contacts.enumerated() {
+        for c in contacts {
             let ct = G.contact(Float(c.x), Float(c.y))
             let sph = SCNSphere(radius: 0.007)
-            sph.materials = [lineMat(Self.dotColors[i % Self.dotColors.count])]
+            let fi = max(1, min(4, c.z))     // colour by finger identity
+            sph.materials = [lineMat(Self.dotColors[fi - 1])]
             let n = SCNNode(geometry: sph); n.position = SCNVector3(ct.x, ct.y - 0.001, ct.z)
             dotRoot.addChildNode(n)
         }
@@ -406,13 +407,11 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
             let R = simd_float3x3(curRootQuat)
             return simd_float4x4(SIMD4(R.columns.0, 0), SIMD4(R.columns.1, 0), SIMD4(R.columns.2, 0), SIMD4(loc, 1))
         }
-        hr.simdTransform = rootMatrix(curRootLoc)
-        SCNTransaction.commit()
-
-        // CLUSTER CORRECTION: shift the whole hand so the pressing fingertips'
-        // centroid lands on the contacts' centroid — fingers on the dots, no
-        // per-finger distortion. (Cancels the solver-vs-FK drift.)
+        // First place the whole hand by its solved root, then cluster-shift so the
+        // fingers are roughly on the contacts, then per-finger seat (below).
+        var rootLoc = curRootLoc
         if !contacts.isEmpty {
+            hr.simdTransform = rootMatrix(rootLoc)
             var tipC = simd_float3(0,0,0), n: Float = 0
             for bn in fingerTipBones {
                 if let t = fingertipWorld(bn), abs(t.y) < 0.03, t.x < 0.05, t.x > -0.46 { tipC += t; n += 1 }
@@ -423,12 +422,43 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
                 for c in contacts { dotC += G.contact(Float(c.x), Float(c.y)) }
                 dotC /= Float(contacts.count)
                 let delta = dotC - tipC
-                if simd_length(delta) < 0.12 {   // sanity clamp
-                    SCNTransaction.begin(); SCNTransaction.animationDuration = 0; SCNTransaction.disableActions = true
-                    hr.simdTransform = rootMatrix(curRootLoc + delta)
-                    SCNTransaction.commit()
-                }
+                if simd_length(delta) < 0.12 { rootLoc += delta }
             }
         }
+        hr.simdTransform = rootMatrix(rootLoc)
+        SCNTransaction.commit()
+
+        // PER-FINGER SEATING: after the cluster shift, realign each pressing
+        // finger's knuckle so its OWN tip lands on its OWN contact dot — every
+        // finger touches, not just the cluster average.
+        if !contacts.isEmpty {
+            SCNTransaction.begin(); SCNTransaction.animationDuration = 0; SCNTransaction.disableActions = true
+            let names = ["finger2", "finger3", "finger4", "finger5"]
+            for c in contacts {
+                let fi = max(1, min(4, c.z))
+                let d = names[fi - 1]
+                guard let mcp = bones["\(d)_1_L"], let tipW = fingertipWorld("\(d)_3_L") else { continue }
+                let mp = mcp.simdWorldPosition
+                let target = G.contact(Float(c.x), Float(c.y))
+                let a = simd_normalize(tipW - mp)
+                let b = simd_normalize(target - mp)
+                let dot = max(-1, min(1, simd_dot(a, b)))
+                let ang = acos(dot)
+                if ang < 0.001 { continue }
+                let axis = simd_cross(a, b)
+                if simd_length(axis) < 1e-5 { continue }
+                let wr = simd_quatf(angle: min(ang, 0.6), axis: simd_normalize(axis))   // clamp to stay natural
+                let newWO = wr * mcp.simdWorldOrientation
+                mcp.simdWorldTransform = simd_float4x4(orient: newWO, pos: mp)
+            }
+            SCNTransaction.commit()
+        }
+    }
+}
+
+private extension simd_float4x4 {
+    init(orient q: simd_quatf, pos p: simd_float3) {
+        self = simd_float4x4(q)
+        self.columns.3 = SIMD4(p, 1)
     }
 }
