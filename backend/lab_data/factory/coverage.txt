@@ -1,77 +1,85 @@
-# Stem Pool Coverage  (n=360 assets, sparse < 5)
+# Stem Pool Coverage  (n=564 assets, sparse < 5)
 
 ## genre
-  bossa_nova         ████████████████████████ 72
-  funk               ████████████████████████ 72
-  jazz               ████████████████████████ 72
-  rock               ████████████████████████ 72
-  singer_songwriter  ████████████████████████ 72
+  unknown            ████████████████████████ 204
+  bossa_nova         ████████ 72
+  funk               ████████ 72
+  jazz               ████████ 72
+  rock               ████████ 72
+  singer_songwriter  ████████ 72
 
 ## gain
-  low                ████████████████████████ 360
+  low                ████████████████████████ 444
+  high               ██████ 120
 
 ## guitar_type
   acoustic           ████████████████████████ 360
+  distorted          ████████ 120
+  electric           ██ 44
+  clean              ██ 40
 
 ## pickup
-  unknown            ████████████████████████ 360
+  unknown            ████████████████████████ 404
+  bridge             █ 32
+  bridge-middle      █ 32
+  middle             █ 32
+  middle-neck        █ 32
+  neck               █ 32
 
 ## tempo
-  120-150            ████████████████████████ 143
-  90-120             ███████████████████████ 140
-  >=150              ████████ 53
-  <90                ████ 24
+  120-150            ████████████████████████ 296
+  90-120             ██████████████ 182
+  >=150              █████ 62
+  <90                █ 24
 
 ## key
   G#m                ████████████████████████ 70
-  Gm                 ██████████████ 43
+  E                  ███████████████████ 57
+  Gm                 ██████████████████ 55
+  F                  ██████████████ 41
+  D                  ███████████ 34
+  G                  ███████████ 34
+  D#                 ██████████ 31
+  F#                 █████████ 29
   G#                 █████████ 29
-  G                  ████████ 24
-  Am                 ████████ 24
-  D#                 ███████ 22
+  Am                 █████████ 28
   C#                 ██████ 20
-  D                  ██████ 18
-  Fm                 ██████ 18
-  A                  █████ 17
+  Fm                 ██████ 20
+  A                  ██████ 20
   F#m                █████ 15
-  E                  █████ 15
-  F#                 ██ 8
-  C                  ██ 7
-  A#m                ██ 6
-  A#                 █ 5
-  Em                 █ 4  <- SPARSE
+  D#m                ████ 14
+  Em                 ████ 12
+  B                  ███ 10
+  A#m                ███ 9
+  C                  ███ 9
+  Bm                 ██ 8
+  Dm                 ██ 8
+  A#                 ██ 6
   Cm                 █ 3  <- SPARSE
-  F                  █ 3  <- SPARSE
-  Bm                 █ 2  <- SPARSE
-  B                  █ 2  <- SPARSE
   C#m                █ 2  <- SPARSE
-  Dm                 █ 2  <- SPARSE
-  D#m                █ 1  <- SPARSE
 
 ## masking_level
-  none               ████████████████████████ 360
+  none               ████████████████████████ 564
 
 ## recording_style
   acoustic           ████████████████████████ 360
+  di_processed       ██████████ 160
+  directinput        █ 22
+  amp_mic            █ 22
 
 ## acoustic_vs_electric
   acoustic           ████████████████████████ 360
+  electric           █████████████ 204
 
 ## difficulty
-  low                ████████████████████████ 360
+  low                ████████████████████████ 564
 
 ## synthetic_vs_real
-  real               ████████████████████████ 360
+  real               ████████████████████████ 564
 
 ## license_class
-  commercial         ████████████████████████ 360
+  commercial         ████████████████████████ 564
 
 ## GAPS (drive commissioning)
-  key=D#m (only 1)
-  key=Bm (only 2)
-  key=B (only 2)
   key=C#m (only 2)
-  key=Dm (only 2)
   key=Cm (only 3)
-  key=F (only 3)
-  key=Em (only 4)
