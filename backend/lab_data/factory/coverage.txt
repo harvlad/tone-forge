@@ -1,0 +1,77 @@
+# Stem Pool Coverage  (n=360 assets, sparse < 5)
+
+## genre
+  bossa_nova         ████████████████████████ 72
+  funk               ████████████████████████ 72
+  jazz               ████████████████████████ 72
+  rock               ████████████████████████ 72
+  singer_songwriter  ████████████████████████ 72
+
+## gain
+  low                ████████████████████████ 360
+
+## guitar_type
+  acoustic           ████████████████████████ 360
+
+## pickup
+  unknown            ████████████████████████ 360
+
+## tempo
+  120-150            ████████████████████████ 143
+  90-120             ███████████████████████ 140
+  >=150              ████████ 53
+  <90                ████ 24
+
+## key
+  G#m                ████████████████████████ 70
+  Gm                 ██████████████ 43
+  G#                 █████████ 29
+  G                  ████████ 24
+  Am                 ████████ 24
+  D#                 ███████ 22
+  C#                 ██████ 20
+  D                  ██████ 18
+  Fm                 ██████ 18
+  A                  █████ 17
+  F#m                █████ 15
+  E                  █████ 15
+  F#                 ██ 8
+  C                  ██ 7
+  A#m                ██ 6
+  A#                 █ 5
+  Em                 █ 4  <- SPARSE
+  Cm                 █ 3  <- SPARSE
+  F                  █ 3  <- SPARSE
+  Bm                 █ 2  <- SPARSE
+  B                  █ 2  <- SPARSE
+  C#m                █ 2  <- SPARSE
+  Dm                 █ 2  <- SPARSE
+  D#m                █ 1  <- SPARSE
+
+## masking_level
+  none               ████████████████████████ 360
+
+## recording_style
+  acoustic           ████████████████████████ 360
+
+## acoustic_vs_electric
+  acoustic           ████████████████████████ 360
+
+## difficulty
+  low                ████████████████████████ 360
+
+## synthetic_vs_real
+  real               ████████████████████████ 360
+
+## license_class
+  commercial         ████████████████████████ 360
+
+## GAPS (drive commissioning)
+  key=D#m (only 1)
+  key=Bm (only 2)
+  key=B (only 2)
+  key=C#m (only 2)
+  key=Dm (only 2)
+  key=Cm (only 3)
+  key=F (only 3)
+  key=Em (only 4)

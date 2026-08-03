@@ -1,0 +1,114 @@
+{
+ "n_assets": 360,
+ "dimensions": {
+  "genre": {
+   "bossa_nova": 72,
+   "funk": 72,
+   "jazz": 72,
+   "rock": 72,
+   "singer_songwriter": 72
+  },
+  "gain": {
+   "low": 360
+  },
+  "guitar_type": {
+   "acoustic": 360
+  },
+  "pickup": {
+   "unknown": 360
+  },
+  "tempo": {
+   "120-150": 143,
+   "90-120": 140,
+   ">=150": 53,
+   "<90": 24
+  },
+  "key": {
+   "D#": 22,
+   "Gm": 43,
+   "F#": 8,
+   "D": 18,
+   "F#m": 15,
+   "G#m": 70,
+   "G": 24,
+   "G#": 29,
+   "A#m": 6,
+   "C#": 20,
+   "Fm": 18,
+   "A": 17,
+   "E": 15,
+   "Bm": 2,
+   "C": 7,
+   "Am": 24,
+   "B": 2,
+   "A#": 5,
+   "Cm": 3,
+   "Em": 4,
+   "F": 3,
+   "C#m": 2,
+   "D#m": 1,
+   "Dm": 2
+  },
+  "masking_level": {
+   "none": 360
+  },
+  "recording_style": {
+   "acoustic": 360
+  },
+  "acoustic_vs_electric": {
+   "acoustic": 360
+  },
+  "difficulty": {
+   "low": 360
+  },
+  "synthetic_vs_real": {
+   "real": 360
+  },
+  "license_class": {
+   "commercial": 360
+  }
+ },
+ "sparse": [
+  {
+   "dimension": "key",
+   "value": "D#m",
+   "count": 1
+  },
+  {
+   "dimension": "key",
+   "value": "Bm",
+   "count": 2
+  },
+  {
+   "dimension": "key",
+   "value": "B",
+   "count": 2
+  },
+  {
+   "dimension": "key",
+   "value": "C#m",
+   "count": 2
+  },
+  {
+   "dimension": "key",
+   "value": "Dm",
+   "count": 2
+  },
+  {
+   "dimension": "key",
+   "value": "Cm",
+   "count": 3
+  },
+  {
+   "dimension": "key",
+   "value": "F",
+   "count": 3
+  },
+  {
+   "dimension": "key",
+   "value": "Em",
+   "count": 4
+  }
+ ],
+ "sparse_threshold": 5
+}
