@@ -40,6 +40,7 @@ struct PerformView: View {
     @AppStorage("perf.layer.motion") private var showMotion = true   // trajectories/ghosts/pulses (on neck)
     @AppStorage("perf.layer.hand") private var showHand = true       // abstract posed hand (on neck)
     @AppStorage("perf.hand.mesh") private var handMesh = true        // realistic MPFB mesh is the default beginner view
+    @AppStorage("perf.hand.lead") private var leadMode = false       // play single MIDI notes instead of chords
     @AppStorage("perf.layer.dots") private var showDots = true       // finger contact dots (on neck)
     // Chord and TAB are the two reference cards — mutually exclusive (either/or).
     @AppStorage("perf.layer.chord") private var showChord = true     // chord diagram (reference card)
@@ -73,14 +74,24 @@ struct PerformView: View {
             rebuildTabLane(sidecar)
         }
         .onAppear { if showChord && showTab { showTab = false } }   // enforce either/or
-        .onChange(of: currentHandSymbol, initial: true) { _, sym in
-            handScene.apply(symbol: sym)
-        }
+        .onChange(of: currentHandSymbol, initial: true) { _, _ in refreshHandPose() }
+        .onChange(of: currentLeadPitch) { _, _ in if leadMode { refreshHandPose() } }
     }
 
-    /// Chord symbol under the playhead — drives the 3D hand pose target.
+    /// Chord symbol under the playhead — drives the 3D hand pose target (chord mode).
     private var currentHandSymbol: String? {
         session.ribbon?.currentChord(at: session.transport.positionSeconds)?.symbol
+    }
+
+    /// MIDI pitch of the lead note active under the playhead (lead mode).
+    private var currentLeadPitch: Int? {
+        let t = session.transport.positionSeconds
+        return tabLane.notes.last(where: { $0.startS <= t })?.pitch
+    }
+
+    private func refreshHandPose() {
+        if leadMode { handScene.applyNote(pitch: currentLeadPitch) }
+        else { handScene.apply(symbol: currentHandSymbol) }
     }
 
     private func content(for loaded: LoadedSession) -> some View {
@@ -174,6 +185,12 @@ struct PerformView: View {
             if showHand {
                 layerPill("Realistic", systemImage: "cube.transparent", on: handMesh) {
                     handMesh.toggle()
+                }
+            }
+            // Realistic hand: play single MIDI notes (lead) instead of chords.
+            if showHand && handMesh {
+                layerPill("Notes", systemImage: "music.note", on: leadMode) {
+                    leadMode.toggle(); refreshHandPose()
                 }
             }
             layerPill("Dots", systemImage: "circlebadge.fill", on: showDots) {

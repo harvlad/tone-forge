@@ -43,6 +43,17 @@ final class HandPoseModel: ObservableObject {
 
     func apply(symbol: String?) {
         guard let sym = symbol, let e = HandStates.all[sym] else { hasPose = false; return }
+        set(e)
+    }
+
+    /// Lead mode: a single MIDI pitch → the nearest fretted (string, fret) in
+    /// the window → its baked single-note pose.
+    func applyNote(pitch: Int?) {
+        guard let p = pitch, let e = HandStates.noteEntry(forPitch: p) else { hasPose = false; return }
+        set(e)
+    }
+
+    private func set(_ e: HandStates.Entry) {
         targetPose = HandStates.pose(e.state)
         rootLoc = [e.state[0], e.state[1], e.state[2]]
         rootEuler = [e.state[3], e.state[4], e.state[5]]
@@ -67,6 +78,38 @@ enum HandStates {
         }
         return out
     }()
+
+    /// Single-note lead poses, keyed "s{string}f{fret}" (fret 1..7).
+    static let notes: [String: Entry] = {
+        guard let url = Bundle.module.url(forResource: "note_states", withExtension: "json", subdirectory: "Hand"),
+              let d = try? Data(contentsOf: url),
+              let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: [String: Any]]
+        else { return [:] }
+        var out: [String: Entry] = [:]
+        for (k, v) in j {
+            guard let s = v["state"] as? [Double] else { continue }
+            let c = (v["contacts"] as? [[Int]]) ?? []
+            out[k] = Entry(state: s.map { Float($0) }, contacts: c)
+        }
+        return out
+    }()
+
+    /// Standard tuning open-string MIDI (string 0=low E … 5=high e).
+    static let openMidi = [40, 45, 50, 55, 59, 64]
+
+    /// Map a MIDI pitch to the best fretted note in the window (fret 1..7),
+    /// preferring the highest string that keeps a low fret (compact hand).
+    static func noteEntry(forPitch pitch: Int) -> Entry? {
+        var best: (Int, Int)? = nil   // (string, fret)
+        for s in (0..<6).reversed() {
+            let fret = pitch - openMidi[s]
+            if fret >= 1 && fret <= 7 {
+                if best == nil || fret < best!.1 { best = (s, fret) }
+            }
+        }
+        guard let (s, f) = best else { return nil }
+        return notes["s\(s)f\(f)"]
+    }
 
     /// bone -> local euler. flex = X, abduction = Z.
     static func pose(_ v: [Float]) -> [String: simd_float3] {
