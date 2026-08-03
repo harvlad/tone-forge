@@ -282,14 +282,16 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     func fitCamera(to size: CGSize) {
         guard size.width > 1, size.height > 1, let cam = cameraNode.camera else { return }
         let w = Float(contentX.upperBound - contentX.lowerBound)
-        let h = Float(contentZ.upperBound - contentZ.lowerBound)
-        let aspect = Float(size.width / size.height)
-        let margin: Float = 1.08
-        // orthographicScale is HALF the horizontal extent (projectionDirection .horizontal).
-        let halfW = max(w, h * aspect) * 0.5 * margin
-        cam.orthographicScale = Double(halfW)
-        cameraNode.position = SCNVector3(contentCenter.x, -0.6, contentCenter.y)
-        cameraNode.look(at: SCNVector3(contentCenter.x, 0, contentCenter.y), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+        let margin: Float = 1.06
+        // Fit the neck WIDTH (fill horizontally); the long forearm crops below —
+        // that's fine, the wrist/arm carry no info. orthographicScale = half width.
+        cam.orthographicScale = Double(w * 0.5 * margin)
+        // Centre X on the neck; keep the neck near the top of the frame by aiming
+        // slightly below neck level so the fingers/board sit high and the arm falls off.
+        let cx = contentCenter.x
+        let aimZ: Float = -0.06
+        cameraNode.position = SCNVector3(cx, -0.6, aimZ)
+        cameraNode.look(at: SCNVector3(cx, 0, aimZ), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
     }
 
     // MARK: camera + lights (view the -Y playing face)
