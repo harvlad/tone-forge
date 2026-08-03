@@ -269,29 +269,26 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     }
     func setDotsVisible(_ on: Bool) { dotRoot.isHidden = !on }
 
-    // Content extent (guitar space, x along neck, z across strings + hand hang).
-    // x: nut(0) .. -wire(7); z: hand hangs to negative, neck top slightly positive.
-    private let contentX: ClosedRange<Float> = -0.42 ... 0.02
-    private let contentZ: ClosedRange<Float> = -0.34 ... 0.05
-    private var contentCenter: SIMD2<Float> {
-        SIMD2((contentX.lowerBound + contentX.upperBound)/2, (contentZ.lowerBound + contentZ.upperBound)/2)
-    }
-
     /// Fit the orthographic camera to the content box at the live view aspect,
     /// so neck + hand fill the panel whatever its shape.
+    // Centering + framing constants (tuned in the offline harness against the
+    // real panel aspect). cx offset from the neck's geometric centre accounts for
+    // the hand extending toward the nut side.
+    private static let camCX: Float = -0.10
+    private static let camAimZ: Float = -0.02
+    private static let contentW: Float = 0.44   // neck length
+    private static let contentH: Float = 0.23   // neck + fingers + upper palm (arm cropped)
+
     func fitCamera(to size: CGSize) {
         guard size.width > 1, size.height > 1, let cam = cameraNode.camera else { return }
-        let w = Float(contentX.upperBound - contentX.lowerBound)
-        let margin: Float = 1.06
-        // Fit the neck WIDTH (fill horizontally); the long forearm crops below —
-        // that's fine, the wrist/arm carry no info. orthographicScale = half width.
-        cam.orthographicScale = Double(w * 0.5 * margin)
-        // Centre X on the neck; keep the neck near the top of the frame by aiming
-        // slightly below neck level so the fingers/board sit high and the arm falls off.
-        let cx = contentCenter.x
-        let aimZ: Float = -0.06
-        cameraNode.position = SCNVector3(cx, -0.6, aimZ)
-        cameraNode.look(at: SCNVector3(cx, 0, aimZ), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+        let aspect = Float(size.width / size.height)
+        // Vertical projection: orthographicScale = half the visible HEIGHT.
+        // Pick the scale that fits BOTH the content height and (width/aspect), so
+        // it stays framed on a wide strip or a tall box.
+        let scale = max(Self.contentH * 0.5, Self.contentW / (2 * aspect)) * 1.04
+        cam.orthographicScale = Double(scale)
+        cameraNode.position = SCNVector3(Self.camCX, -0.6, Self.camAimZ)
+        cameraNode.look(at: SCNVector3(Self.camCX, 0, Self.camAimZ), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
     }
 
     // MARK: camera + lights (view the -Y playing face)
@@ -301,12 +298,14 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
         // orthographicScale is set per-frame by fitCamera() to the live view size,
         // so the neck + hanging hand fill the panel at any aspect.
         cam.usesOrthographicProjection = true
-        cam.projectionDirection = .horizontal   // scale controls WIDTH; we set both via aspect
-        cam.orthographicScale = 0.26
+        cam.projectionDirection = .vertical     // scale controls HEIGHT
         cameraNode.camera = cam
-        cameraNode.position = SCNVector3(contentCenter.x, -0.6, contentCenter.y)
-        cameraNode.look(at: SCNVector3(contentCenter.x, 0, contentCenter.y), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
         scene.rootNode.addChildNode(cameraNode)
+        // First-frame framing (matches fitCamera at a typical wide aspect) so
+        // there's no forearm-zoom flash before layout runs.
+        cam.orthographicScale = Double(Self.contentH * 0.5 * 1.04)
+        cameraNode.position = SCNVector3(Self.camCX, -0.6, Self.camAimZ)
+        cameraNode.look(at: SCNVector3(Self.camCX, 0, Self.camAimZ), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
     }
     private func setupLights() {
         let k = SCNNode(); k.light = SCNLight(); k.light!.type = .directional; k.light!.intensity = 850
