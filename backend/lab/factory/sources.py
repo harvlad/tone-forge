@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Protocol, runtime_checkable
+from typing import Iterable, Optional, Protocol, runtime_checkable
 
 from .asset import Kind, RawAsset, Role
 
@@ -220,8 +220,45 @@ class EGFxSetSource:
             yield RawAsset(str(p), kind=Kind.STEM, role=Role.GUITAR, source_tags=self._parse(p))
 
 
+class DirectorySource:
+    """Generic role-tagged directory source: every audio file under <root> becomes an
+    asset with the given role + dataset_key (+ optional fixed tags). Used for backing
+    stem pools (drums/bass/vocals/keys/...) and any flat licensed drop. Per-file
+    attribution sidecars (<id>.json with license/user) are folded into source_tags."""
+    def __init__(self, root: str | Path, *, role: str, dataset_key: str, kind: str = Kind.STEM,
+                 id: Optional[str] = None, tags: Optional[dict] = None):
+        self.id = id or f"dir:{dataset_key}:{role}"
+        self.dataset_key = dataset_key
+        self._root = Path(root)
+        self._role = role
+        self._kind = kind
+        self._tags = tags or {}
+
+    def capabilities(self) -> SourceCapabilities:
+        return SourceCapabilities(kinds=frozenset({self._kind}), roles=frozenset({self._role}),
+                                  synthetic_real="real", has_mixture=False)
+
+    def health(self) -> bool:
+        return self._root.is_dir()
+
+    def iter_assets(self) -> Iterable[RawAsset]:
+        import json as _json
+        for p in _wavs(self._root, "*"):
+            tags = {"synthetic_real": "real", "role": self._role, **self._tags}
+            side = p.with_suffix(".json")
+            if side.exists():
+                try:
+                    m = _json.loads(side.read_text())
+                    tags["attribution"] = m.get("user") or m.get("name")
+                    tags["source_license"] = m.get("license")
+                except Exception:
+                    pass
+            yield RawAsset(str(p), kind=self._kind, role=self._role, source_tags=tags)
+
+
 # static contract checks — all must satisfy the identical Protocol
 _p1: SourceProvider = SlakhSource(".")      # type: ignore[assignment]
+_p5: SourceProvider = DirectorySource(".", role=Role.DRUMS, dataset_key="x")  # type: ignore[assignment]
 _p2: SourceProvider = GuitarSetSource(".")   # type: ignore[assignment]
 _p3: SourceProvider = GuitarTechsSource(".")  # type: ignore[assignment]
 _p4: SourceProvider = EGFxSetSource(".")      # type: ignore[assignment]

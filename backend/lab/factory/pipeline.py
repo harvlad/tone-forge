@@ -83,6 +83,7 @@ class PipelineRunner:
                 recording_type=tags.get("recording_type", "unknown"),
                 synthetic_real=tags.get("synthetic_real", "unknown"),
                 guitar_type=tags.get("guitar_type"), gain=tags.get("gain"),
+                expect_guitar=(asset.role == Role.GUITAR),   # backing isn't guitar-shaped
                 th=self.th)
         except Exception as e:
             # a single unreadable/corrupt file must never kill a batch (worker discipline)

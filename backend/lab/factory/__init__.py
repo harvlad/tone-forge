@@ -15,7 +15,7 @@ from .asset import (
     content_hash_file,
 )
 from .sources import (SourceProvider, SourceCapabilities, SlakhSource, GuitarSetSource,
-                     GuitarTechsSource, EGFxSetSource)
+                     GuitarTechsSource, EGFxSetSource, DirectorySource)
 from .catalog import AssetCatalog
 from .pipeline import PipelineRunner
 from .transforms import (
@@ -33,7 +33,7 @@ from . import planner
 __all__ = [
     "Asset", "RawAsset", "LicenseStamp", "Kind", "Role", "Status", "content_hash_file",
     "SourceProvider", "SourceCapabilities", "SlakhSource", "GuitarSetSource",
-    "GuitarTechsSource", "EGFxSetSource",
+    "GuitarTechsSource", "EGFxSetSource", "DirectorySource",
     "AssetCatalog", "PipelineRunner",
     "TransformProvider", "GainTransform", "EQTransform", "IRTransform", "NAMTransform",
     "TransformEngine", "EngineStats",

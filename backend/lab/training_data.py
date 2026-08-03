@@ -67,6 +67,26 @@ TRAINING_DATA_REGISTRY = {
         "notes": ("Real-hardware guitar FX on isolated single notes (12 effects). GREEN tier. "
                   "Isolated notes only -> distortion/effect TIMBRE bank for augmentation."),
     },
+    "freesound_ccby": {
+        "license": "CC0 / CC-BY (per-file, filtered)",
+        "commercial_training_allowed": True,
+        "redistribution_allowed": True,
+        "attribution": "Freesound.org contributors (CC0 or CC-BY per file) — attribution retained per asset",
+        "source": "https://freesound.org/",
+        "notes": ("Isolated instrument BACKING stems (drums/bass/keys/percussion/vocals/synth). "
+                  "Only CC0 + CC-BY (Attribution) admitted; NC/SA filtered at pull. Per-file "
+                  "license+author in asset source_tags. Commercial + AI-training usable."),
+    },
+    "ccmixter_ccby": {
+        "license": "CC-BY-3.0/4.0",
+        "commercial_training_allowed": True,
+        "redistribution_allowed": True,
+        "attribution": "ccMixter contributors (per-track CC-BY / Attribution) — attribution required",
+        "source": "https://ccmixter.org/",
+        "notes": ("Strict CC-BY (Attribution) only — NC/ShareAlike filtered out at ingest. Real "
+                  "isolated acappella VOCALS (backing masker). Per-track attribution must be "
+                  "retained in the asset provenance. Commercial + AI-training usable."),
+    },
     "rnd_backing": {
         "license": "research-only (mixed provenance)",
         "commercial_training_allowed": False,

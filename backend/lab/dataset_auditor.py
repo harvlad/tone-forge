@@ -195,6 +195,7 @@ def audit_track(guitar_path: str | Path, *, dataset: str, track_id: Optional[str
                 genre: str = "unknown", pickup: str = "unknown",
                 recording_type: str = "unknown", synthetic_real: str = "unknown",
                 guitar_type: Optional[str] = None, gain: Optional[float] = None,
+                expect_guitar: bool = True,
                 th: AuditThresholds = AuditThresholds()) -> TrackAudit:
     """Audit one track from its guitar stem (+ optional vocal/other/mix stems).
 
@@ -232,8 +233,11 @@ def audit_track(guitar_path: str | Path, *, dataset: str, track_id: Optional[str
 
     # label sanity: a real guitar stem has broadband harmonic content — not
     # near-silence, not pure sub-bass (bass mislabel), not near-DC (broken/lowpassed).
-    a.label_ok = (a.guitar_rms >= th.min_guitar_rms and a.lf_ratio < 0.85
-                  and a.rolloff_hz >= 1200.0)
+    # For BACKING assets (expect_guitar=False: drums/bass/vocals/keys), the
+    # guitar-shaped-spectrum check does not apply — only the generic quality gates do.
+    a.label_ok = (not expect_guitar) or (
+        a.guitar_rms >= th.min_guitar_rms and a.lf_ratio < 0.85
+        and a.rolloff_hz >= 1200.0)
 
     # ---- regime metadata (audio-derived) ----
     try:
