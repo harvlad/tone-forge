@@ -23,6 +23,9 @@ from .transforms import (
 from .engine import TransformEngine, EngineStats
 from .recipes import DatasetRecipe, RecipeStep, RECIPES, all_recipes, apply_recipe, TRANSFORM_REGISTRY
 from .manufacture import manufacture, build_manufactured_manifest, ManufactureReport
+from .scenario import Scenario, RoleSpec, SCENARIOS, all_scenarios
+from .backing import ScenarioProvider, SyntheticBackingProvider
+from .studio import VirtualStudio, StudioReport, build_supervised_manifest
 
 __all__ = [
     "Asset", "RawAsset", "LicenseStamp", "Kind", "Role", "Status", "content_hash_file",
@@ -32,4 +35,7 @@ __all__ = [
     "TransformEngine", "EngineStats",
     "DatasetRecipe", "RecipeStep", "RECIPES", "all_recipes", "apply_recipe", "TRANSFORM_REGISTRY",
     "manufacture", "build_manufactured_manifest", "ManufactureReport",
+    "Scenario", "RoleSpec", "SCENARIOS", "all_scenarios",
+    "ScenarioProvider", "SyntheticBackingProvider",
+    "VirtualStudio", "StudioReport", "build_supervised_manifest",
 ]

@@ -67,6 +67,16 @@ TRAINING_DATA_REGISTRY = {
         "notes": ("Real-hardware guitar FX on isolated single notes (12 effects). GREEN tier. "
                   "Isolated notes only -> distortion/effect TIMBRE bank for augmentation."),
     },
+    "synthetic_backing": {
+        "license": "CC0 (owned)",
+        "commercial_training_allowed": True,
+        "redistribution_allowed": True,
+        "attribution": "Riley Virtual Studio synthetic backing (generated, owned)",
+        "source": "backend/lab/factory/backing.py",
+        "notes": ("Deterministically generated backing stems (drums/bass/vocal/synth) used "
+                  "by the Virtual Studio. Owned/CC0. Not realistic music — a license-clean, "
+                  "reproducible substrate to validate the studio; real stem pools plug in later."),
+    },
     "musan": {
         "license": "CC-BY-4.0",
         "commercial_training_allowed": True,
