@@ -175,7 +175,6 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     private var curRootLoc = simd_float3(0, 0, 0)
     private var rootInit = false
     private let dotRoot = SCNNode()
-    private var lastContacts: [SIMD2<Int>] = []
     private var lastTime: TimeInterval = 0
     private static let halfLife: Float = 0.07
 
@@ -257,14 +256,34 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
         NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.36, alpha: 1),
         NSColor(calibratedRed: 0.85, green: 0.55, blue: 1.0, alpha: 1)]
 
-    private func rebuildDots(_ contacts: [SIMD2<Int>]) {
-        dotRoot.childNodes.forEach { $0.removeFromParentNode() }
-        for (i, c) in contacts.enumerated() {
-            let ct = G.contact(Float(c.x), Float(c.y))
-            let sph = SCNSphere(radius: 0.006)
+    // One dot node per finger; positioned each frame ON the finger's actual
+    // rendered fingertip (below), so the dots and the hand always coincide.
+    private var dotNodes: [SCNNode] = []
+    private let fingerTipBones = ["finger2_3_L", "finger3_3_L", "finger4_3_L", "finger5_3_L"]
+
+    private func ensureDotNodes() {
+        guard dotNodes.isEmpty else { return }
+        for i in 0..<4 {
+            let sph = SCNSphere(radius: 0.007)
             sph.materials = [lineMat(Self.dotColors[i % Self.dotColors.count])]
-            let n = SCNNode(geometry: sph); n.position = SCNVector3(ct.x, ct.y - 0.001, ct.z)
-            dotRoot.addChildNode(n)
+            let n = SCNNode(geometry: sph); n.isHidden = true
+            dotRoot.addChildNode(n); dotNodes.append(n)
+        }
+    }
+
+    /// Place each finger's dot on its rendered fingertip; show it only when the
+    /// finger is pressing (tip near the string plane, within the neck).
+    private func updateDots() {
+        ensureDotNodes()
+        for (i, bn) in fingerTipBones.enumerated() {
+            guard i < dotNodes.count, let b = bones[bn] else { continue }
+            let wt = simd_float4x4(b.worldTransform)
+            let head = simd_float3(wt.columns.3.x, wt.columns.3.y, wt.columns.3.z)
+            let yAxis = normalize(simd_float3(wt.columns.1.x, wt.columns.1.y, wt.columns.1.z))
+            let tip = head + yAxis * 0.021          // distal length → the pad
+            let pressing = abs(tip.y) < 0.02 && tip.x < 0.03 && tip.x > -0.45
+            dotNodes[i].isHidden = !pressing || dotRoot.isHidden
+            dotNodes[i].simdPosition = SIMD3(tip.x, tip.y - 0.002, tip.z)
         }
     }
     func setDotsVisible(_ on: Bool) { dotRoot.isHidden = !on }
@@ -337,9 +356,6 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
         let dt = Float(lastTime == 0 ? 1.0/60 : max(0, time - lastTime)); lastTime = time
         let alpha = 1 - pow(2, -dt / Self.halfLife)
 
-        // dots when the chord changes
-        let contacts = poseModel.contacts
-        if contacts != lastContacts { lastContacts = contacts; rebuildDots(contacts) }
         guard poseModel.hasPose else { return }
 
         // finger joints
@@ -365,5 +381,6 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
             hr.simdTransform = simd_float4x4(SIMD4(R.columns.0, 0), SIMD4(R.columns.1, 0), SIMD4(R.columns.2, 0), SIMD4(curRootLoc, 1))
         }
         SCNTransaction.commit()
+        updateDots()   // snap dots onto the actual rendered fingertips
     }
 }
