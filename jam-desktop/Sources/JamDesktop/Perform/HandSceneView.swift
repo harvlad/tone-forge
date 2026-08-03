@@ -294,15 +294,19 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     // Centering + framing constants (tuned in the offline harness against the
     // real panel aspect). cx offset from the neck's geometric centre accounts for
     // the hand extending toward the nut side.
+    // Framing tuned in the harness to match tools/handrig palm_pass/phrase_sheet:
+    // neck as a horizontal band across the top, hand rising from the bottom,
+    // fingers curling up over the strings.
     private static let camCX: Float = -0.10
+    private static let camAimZ: Float = -0.04   // aim below the neck → neck rides to the top
     private static let contentW: Float = 0.44   // neck length
-    private static let contentH: Float = 0.30   // neck + wrapping hand
-    private static let orbitRadius: Float = 0.6
-    // Orbit angles (user-draggable). Defaults = front + slightly above (the wrap view).
-    private var azimuth: Float = 0.0            // spin around vertical
-    private var elevation: Float = 0.56         // ~32° above → look down onto the board
+    private static let contentH: Float = 0.31   // neck + rising hand (scale ≈ 0.155)
+    private static let orbitRadius: Float = 0.44
+    // Orbit angles (user-draggable). Default = front + ~18° above (the wrap view).
+    private var azimuth: Float = 0.0
+    private var elevation: Float = 0.32
 
-    private var orbitTarget: simd_float3 { SIMD3(Self.camCX, 0, 0) }
+    private var orbitTarget: simd_float3 { SIMD3(Self.camCX, 0, Self.camAimZ) }
 
     private func aimCamera() {
         let t = orbitTarget
@@ -325,16 +329,16 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     }
 
     @objc func resetView() {
-        azimuth = 0.0; elevation = 0.56; aimCamera()
+        azimuth = 0.0; elevation = 0.32; aimCamera()
     }
 
     func fitCamera(to size: CGSize) {
         guard size.width > 1, size.height > 1, let cam = cameraNode.camera else { return }
         let aspect = Float(size.width / size.height)
-        // FILL the panel (crop overflow) instead of fitting (letterbox voids):
-        // take the SMALLER scale so content covers the frame. On a wide-short
-        // panel this fills the width (neck big); the lower palm/arm crops off.
-        let scale = min(Self.contentH * 0.5, Self.contentW / (2 * aspect)) * 0.98
+        // Fit HEIGHT (neck-top / hand-rising composition, like the phrase sheet):
+        // keep the vertical framing constant; a wider panel just shows more neck.
+        // Clamp so a very tall/narrow panel still fits the neck width.
+        let scale = max(Self.contentH * 0.5, Self.contentW / (2 * aspect))
         cam.orthographicScale = Double(scale)
         aimCamera()
     }
