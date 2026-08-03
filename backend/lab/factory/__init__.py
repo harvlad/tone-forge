@@ -24,7 +24,7 @@ from .engine import TransformEngine, EngineStats
 from .recipes import DatasetRecipe, RecipeStep, RECIPES, all_recipes, apply_recipe, TRANSFORM_REGISTRY
 from .manufacture import manufacture, build_manufactured_manifest, ManufactureReport
 from .scenario import Scenario, RoleSpec, SCENARIOS, all_scenarios
-from .backing import ScenarioProvider, SyntheticBackingProvider
+from .backing import ScenarioProvider, SyntheticBackingProvider, StemPoolBackingProvider
 from .studio import VirtualStudio, StudioReport, build_supervised_manifest
 
 __all__ = [
@@ -36,6 +36,6 @@ __all__ = [
     "DatasetRecipe", "RecipeStep", "RECIPES", "all_recipes", "apply_recipe", "TRANSFORM_REGISTRY",
     "manufacture", "build_manufactured_manifest", "ManufactureReport",
     "Scenario", "RoleSpec", "SCENARIOS", "all_scenarios",
-    "ScenarioProvider", "SyntheticBackingProvider",
+    "ScenarioProvider", "SyntheticBackingProvider", "StemPoolBackingProvider",
     "VirtualStudio", "StudioReport", "build_supervised_manifest",
 ]

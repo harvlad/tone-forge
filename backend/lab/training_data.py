@@ -67,6 +67,16 @@ TRAINING_DATA_REGISTRY = {
         "notes": ("Real-hardware guitar FX on isolated single notes (12 effects). GREEN tier. "
                   "Isolated notes only -> distortion/effect TIMBRE bank for augmentation."),
     },
+    "rnd_backing": {
+        "license": "research-only (mixed provenance)",
+        "commercial_training_allowed": False,
+        "redistribution_allowed": False,
+        "attribution": "R&D backing pool (separated stems from copyrighted material)",
+        "source": "internal R&D",
+        "notes": ("RESEARCH ONLY. Real backing stems for validating the real-backing "
+                  "studio path; firewalled from commercial checkpoints. Commercial runs "
+                  "require CC/licensed backing (a separate pool)."),
+    },
     "synthetic_backing": {
         "license": "CC0 (owned)",
         "commercial_training_allowed": True,

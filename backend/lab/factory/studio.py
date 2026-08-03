@@ -164,6 +164,22 @@ def build_supervised_manifest(catalog: AssetCatalog, name: str, out_dir: Path, *
     """Emit a (mixture, target) training manifest from catalog pairs. Pairs are
     matched by `pair_id`. Reuses training_data.build_manifest (license gate)."""
     from .. import training_data
+
+    def _backing_ds(mixture) -> Optional[str]:
+        for s in mixture.lineage:
+            if s.stage.startswith("scenario:"):
+                return s.params.get("backing_dataset")
+        return None
+
+    # a mixture combines guitar + backing; BOTH datasets must clear the gate.
+    if intended_use == "commercial_eligible":
+        backing_ds = {_backing_ds(a) for a in catalog.all() if a.kind == Kind.MIXTURE}
+        for ds in backing_ds - {None}:
+            facts = training_data.dataset_facts(ds)
+            if not facts["commercial_training_allowed"]:
+                raise training_data.ProvenanceError(
+                    f"backing dataset '{ds}' ({facts['license']}) is NOT commercial-eligible; "
+                    "the mixture inherits its most-restrictive component")
     targets = {a.metadata.get("pair_id"): a for a in catalog.all()
                if a.kind == Kind.STEM and a.metadata.get("pair_id")}
     tracks = []
@@ -175,8 +191,8 @@ def build_supervised_manifest(catalog: AssetCatalog, name: str, out_dir: Path, *
         if tgt is None or tgt.audit_status == Status.REJECT:
             continue
         tracks.append({
-            "dataset": a.dataset_key,                 # guitar source (licensable); backing is owned/clean
-            "backing_dataset": a.provenance.get("backing_dataset"),
+            "dataset": a.dataset_key,                 # guitar source (licensable); backing gated separately
+            "backing_dataset": _backing_ds(a),
             "track_id": pid,
             "target_stem": "guitar",
             "mixture_path": a.path,

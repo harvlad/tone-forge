@@ -9,6 +9,7 @@ with zero downstream change.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -125,4 +126,53 @@ class SyntheticBackingProvider:
         return np.asarray(y)
 
 
-_p: ScenarioProvider = SyntheticBackingProvider()  # type: ignore[assignment]
+import soundfile as sf  # noqa: E402
+
+# roles a pool may lack -> nearest available substitute
+_ROLE_FALLBACK = {"synth": ("keys", "other"), "keys": ("synth", "other"),
+                  "percussion": ("drums",), "other": ("keys",)}
+
+
+class StemPoolBackingProvider:
+    """Draws REAL backing stems (drums/bass/vocals/keys/...) from a pool, by role.
+
+    Same ScenarioProvider Protocol as the synthetic provider — the VirtualStudio is
+    unchanged. `role_paths` maps a role to one or more real stem files; the license
+    of the pool is `dataset_key` (must be registered in training_data), so mixtures
+    made from it are gated correctly. Selection is deterministic per (seed, role).
+    """
+    id = "stem_pool"
+
+    def __init__(self, role_paths: dict, dataset_key: str, id: str = "stem_pool"):
+        self.id = id
+        self.dataset_key = dataset_key
+        self._roles = {r: list(v) for r, v in role_paths.items() if v}
+
+    def health(self) -> bool:
+        return bool(self._roles) and all(Path(p).exists() for v in self._roles.values() for p in v)
+
+    def _resolve(self, role: str) -> list:
+        if role in self._roles:
+            return self._roles[role]
+        for alt in _ROLE_FALLBACK.get(role, ()):  # nearest substitute
+            if alt in self._roles:
+                return self._roles[alt]
+        return []
+
+    def backing_for(self, role: RoleSpec, scenario: Scenario, seed: int, n: int) -> np.ndarray:
+        paths = self._resolve(role.role)
+        if not paths:
+            return np.zeros(n, dtype=np.float32)         # role absent -> silence (honest)
+        rng = _rng(seed, role.role + role.voice, scenario.signature())
+        path = paths[int(rng.integers(0, len(paths)))]
+        y, _ = sf.read(str(path), always_2d=True)
+        y = y.mean(axis=1).astype(np.float32)
+        if len(y) >= n:
+            start = int(rng.integers(0, max(1, len(y) - n)))
+            return y[start:start + n]
+        reps = int(np.ceil(n / max(1, len(y))))          # loop to length
+        return np.tile(y, reps)[:n]
+
+
+_p: ScenarioProvider = SyntheticBackingProvider()      # type: ignore[assignment]
+_p2: ScenarioProvider = StemPoolBackingProvider({"drums": ["x"]}, "rnd_backing")  # type: ignore[assignment]
