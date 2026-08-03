@@ -129,7 +129,7 @@ struct PerformView: View {
                                          useMesh: false)
                         }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 360, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 240, maxHeight: .infinity)
 
                     // Supporting reference cards beneath the neck — Chord / TAB only.
                     lowerPanel(ribbon: ribbon)
