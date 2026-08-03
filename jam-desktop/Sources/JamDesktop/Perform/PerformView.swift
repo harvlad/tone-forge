@@ -90,7 +90,9 @@ struct PerformView: View {
     }
 
     private func refreshHandPose() {
-        if leadMode { handScene.applyNote(pitch: currentLeadPitch) }
+        // Lead mode needs lead-note MIDI; if this song has none, fall back to the
+        // chord pose so the hand still animates rather than freezing on a default.
+        if leadMode, currentLeadPitch != nil { handScene.applyNote(pitch: currentLeadPitch) }
         else { handScene.apply(symbol: currentHandSymbol) }
     }
 

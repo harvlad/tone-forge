@@ -275,20 +275,25 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
     // real panel aspect). cx offset from the neck's geometric centre accounts for
     // the hand extending toward the nut side.
     private static let camCX: Float = -0.10
-    private static let camAimZ: Float = -0.02
+    private static let camY: Float = -0.35      // in front of the playing face
+    private static let camZ: Float = 0.22       // ABOVE, looking down → fingers wrap OVER the top, palm behind
+    private static let camAimZ: Float = 0.0
     private static let contentW: Float = 0.44   // neck length
-    private static let contentH: Float = 0.23   // neck + fingers + upper palm (arm cropped)
+    private static let contentH: Float = 0.30   // neck + wrapping hand (foreshortened by the down angle)
+
+    private func aimCamera() {
+        cameraNode.position = SCNVector3(Self.camCX, Self.camY, Self.camZ)
+        cameraNode.look(at: SCNVector3(Self.camCX, 0, Self.camAimZ), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+    }
 
     func fitCamera(to size: CGSize) {
         guard size.width > 1, size.height > 1, let cam = cameraNode.camera else { return }
         let aspect = Float(size.width / size.height)
-        // Vertical projection: orthographicScale = half the visible HEIGHT.
-        // Pick the scale that fits BOTH the content height and (width/aspect), so
-        // it stays framed on a wide strip or a tall box.
+        // Vertical projection: orthographicScale = half the visible HEIGHT. Fit
+        // BOTH content height and width/aspect so it stays framed at any aspect.
         let scale = max(Self.contentH * 0.5, Self.contentW / (2 * aspect)) * 1.04
         cam.orthographicScale = Double(scale)
-        cameraNode.position = SCNVector3(Self.camCX, -0.6, Self.camAimZ)
-        cameraNode.look(at: SCNVector3(Self.camCX, 0, Self.camAimZ), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+        aimCamera()
     }
 
     // MARK: camera + lights (view the -Y playing face)
@@ -304,8 +309,7 @@ final class HandCoordinator: NSObject, SCNSceneRendererDelegate {
         // First-frame framing (matches fitCamera at a typical wide aspect) so
         // there's no forearm-zoom flash before layout runs.
         cam.orthographicScale = Double(Self.contentH * 0.5 * 1.04)
-        cameraNode.position = SCNVector3(Self.camCX, -0.6, Self.camAimZ)
-        cameraNode.look(at: SCNVector3(Self.camCX, 0, Self.camAimZ), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+        aimCamera()
     }
     private func setupLights() {
         let k = SCNNode(); k.light = SCNLight(); k.light!.type = .directional; k.light!.intensity = 850
