@@ -1,0 +1,28 @@
+{
+ "campaign_id": "riley_campaign_1_data_centric",
+ "durable_location": "hetzner:jamn.app:/mnt/HC_Volume_106533567/factory/campaign1/checkpoints",
+ "durability_note": "Archived to the PERSISTENT block volume (survives pod termination + reboots), NOT /root scratch. Hashes committed here so the checkpoints are findable + verifiable forever. Never leave the only copy in ephemeral/cleanable scratch again.",
+ "trainer": "ZFTurbo MSST htdemucs, config b1_htdemucs_guitar_ft.yaml (6s chunk), 8 epochs x 1500 steps",
+ "checkpoints": {
+  "riley_c1_A_best.ckpt": {
+   "arm": "A_riley", "corpus": "riley_corpus_v1.0",
+   "corpus_hash": "df4167dcd07b059aaaf0a48461424c78ed5f659030de789184b8107f615a9617",
+   "sha256": "a198958c15957a81f85662c35d410f21e9c5e18f896e73c5ea134403a9e98c61",
+   "bytes": 329615398, "final_train_loss": 1.35
+  },
+  "riley_c1_A_latest.ckpt": {
+   "arm": "A_riley", "corpus_hash": "df4167dcd07b059aaaf0a48461424c78ed5f659030de789184b8107f615a9617",
+   "sha256": "c20aa9a4794bc7e3ef891ab034200ece2bcb4f6c26104348ce4c856ef8a642cd", "bytes": 329588262
+  },
+  "riley_c1_B_best.ckpt": {
+   "arm": "B_naive", "corpus": "riley_baseline_naive_v1.0",
+   "corpus_hash": "20c0811ffdbf1a75cbeb4dcb19706ee8d3dc47adeba5bb4639ea25447b600071",
+   "sha256": "f6594b95bc4f644a1aec086567f68c0e3125d6108bd327d71cdbbc967d5b53c6",
+   "bytes": 329615398, "final_train_loss": 1.76
+  },
+  "riley_c1_B_latest.ckpt": {
+   "arm": "B_naive", "corpus_hash": "20c0811ffdbf1a75cbeb4dcb19706ee8d3dc47adeba5bb4639ea25447b600071",
+   "sha256": "2ccbbac397c533bc12717976431ab741586588156ae419f3d75edffed3fe04b0", "bytes": 329601830
+  }
+ }
+}
