@@ -1,0 +1,96 @@
+{
+ "audio_location": {
+  "backing_pool": "hetzner:jamn.app:/root/stempool/src/freesound",
+  "corpus": "hetzner:jamn.app:/mnt/HC_Volume_106533567/factory/scale_out",
+  "guitar_pool": "hetzner:jamn.app:/root/stempool/src/{guitarset,guitar_techs}",
+  "note": "canonical audio stays on Hetzner (index+hashes are the portable identity)"
+ },
+ "corpus_hash": "df4167dcd07b059aaaf0a48461424c78ed5f659030de789184b8107f615a9617",
+ "corpus_hash_algo": "sha256(sorted mixture_hash:target_hash over admitted manifest pairs)",
+ "counts": {
+  "benchmark_regimes": [
+   "acoustic_under_vocal",
+   "clean_electric_under_vocal",
+   "dense_synth_masking",
+   "heavy_masking",
+   "percussive_clean",
+   "sparse_clean"
+  ],
+  "distinct_guitars": 236,
+  "scenarios": 12,
+  "supervised_pairs": 2232
+ },
+ "coverage": {
+  "dimensions_populated": {
+   "acoustic_vs_electric": 2,
+   "difficulty": 1,
+   "gain": 1,
+   "genre": 6,
+   "guitar_type": 2,
+   "key": 24,
+   "license_class": 1,
+   "masking_level": 2,
+   "pickup": 1,
+   "recording_style": 3,
+   "synthetic_vs_real": 1,
+   "tempo": 4
+  },
+  "sparse_cells": 0
+ },
+ "dataset_version": "1.0",
+ "frozen_at": "2026-08-04T09:13:44Z",
+ "git_sha": "fa5966ea216973bc3339a1729e80ae30e883f901",
+ "license_summary": {
+  "backing_datasets": [
+   "freesound_ccby"
+  ],
+  "commercial_training_allowed": true,
+  "guitar_sources": {
+   "guitar_techs": "CC-BY-4.0",
+   "guitarset": "CC-BY-4.0"
+  },
+  "intended_use": "commercial_eligible"
+ },
+ "manifest": {
+  "intended_use": "commercial_eligible",
+  "manifest_sha256": "c83641330116b1b6bb55b87e8227d193f0bacf734aab1eb848865a2da3db4484",
+  "n_tracks": 2232,
+  "repo_path": "backend/lab_data/factory/scale/riley_scale.manifest.json"
+ },
+ "name": "riley_corpus_v1.0",
+ "planner_snapshot": {
+  "top_gaps": [
+   "tuning=baritone (prio 2.4)",
+   "tuning=7-string (prio 2.4)",
+   "tuning=drop_c (prio 2.2)",
+   "tuning=8-string (prio 2.2)",
+   "string_count=7 (prio 2.2)",
+   "string_count=8 (prio 2.2)",
+   "masking_level=high (prio 2.0)",
+   "playing_style=metal (prio 1.8)"
+  ]
+ },
+ "validation": {
+  "balanced": true,
+  "checks": {
+   "clipping": true,
+   "collapsed_pair": true,
+   "duplicate_mixture": true,
+   "duplicate_pair": true,
+   "duplicate_provenance": true,
+   "duplicate_target": true,
+   "invalid_rms": true,
+   "missing_audio": true,
+   "missing_lineage": true,
+   "missing_metadata": true,
+   "orphan_pair": false,
+   "silent_mixture": true,
+   "silent_target": true
+  },
+  "corpus_gate_clean": true,
+  "exact_ground_truth": true,
+  "marked_reject": 2,
+  "marked_review": 0,
+  "replay_deterministic": true
+ }
+}
