@@ -32,7 +32,13 @@ Record picks, THEN reveal the key.
   the AudioShake/B1 retrospective). The gate stays evidence-based.
 - **Partial** (7/12): treat as a wash → do not promote; gather more blind tracks first.
 
-## Decision (fill after blind)
-- blind picks (Riley/total): ____ / 12
-- outcome: [ PROMOTE / DO NOT PROMOTE ]
-- date: ____   notes: ____
+## Decision (recorded after blind)
+- blind picks (Riley/total): **7 / 12** (naive preferred on tracks 01,02,05,06,11)
+- outcome: **DO NOT PROMOTE** — 7/12 is a wash under the pre-registered rule (≥8 required).
+- date: 2026-08-05
+- notes: Blind DISAGREES with the objective metric. SI-SDR ranked Riley ahead on **12/12**
+  tracks (+6.52 dB median); human blind is **7/12 ≈ chance**. Per the pre-registered
+  disagreement branch, the gate is NOT weakened: promotion withheld, disagreement
+  documented, root cause investigated. See `RILEY_CAMPAIGN_2_FINAL_REPORT.md`.
+- statistical note: 7/12 under a fair coin has P(≥7)=0.39 — indistinguishable from chance.
+  No evidence of a perceptible Riley advantage on this eval set.

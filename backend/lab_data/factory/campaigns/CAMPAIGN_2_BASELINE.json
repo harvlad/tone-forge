@@ -3,7 +3,8 @@
  "campaign_id": "riley_campaign_2_validated_finetune",
  "git_sha": "893a920",
  "frozen_at": "2026-08-05",
- "status": "objective gates PASSED; blind-listening gate PENDING (human); promotion recommended pending blind",
+ "status": "objective gates PASSED; blind listening = WASH 7/12 (chance); PROMOTION WITHHELD — SI-SDR advantage perceptually unconfirmed. Metric<->ear disagreement documented in RILEY_CAMPAIGN_2_FINAL_REPORT.md. Recipe validated + hashes still the frozen reference; corpus-quality claim downgraded to numerically-favorable-perceptually-unproven.",
+ "blind_result": {"riley_preferred": 7, "of": 12, "verdict": "wash / do not promote", "listener_note": "many pairs hard to tell apart", "cause": "both arms fine-tuned from same htdemucs backbone (correlated); SI-SDR edge sub-perceptual + inflated by eval-on-own-synthesis; no real-song eval yet"},
 
  "recipe": {
   "trainer": "ZFTurbo MSST htdemucs",

@@ -1,0 +1,68 @@
+# Riley Campaign 2 — Final Report & Promotion Decision
+
+**Decision: DO NOT PROMOTE (this campaign).** Blind listening is a wash (7/12); it
+disagrees with the objective metric. The promotion gate is upheld, not weakened.
+2026-08-05 · git baseline `91dc044`.
+
+## Outcome
+| gate | result |
+|---|---|
+| SI-SDR (objective) | Riley +3.56 vs naive −2.96 dB, **Riley 12/12 tracks**, +6.52 dB |
+| **Blind listening (human)** | **7/12 Riley-preferred — a wash (≈ chance)** |
+| Verdict | **metric ↔ ear DISAGREE → hold, investigate** |
+
+Listener's own words: *"a lot were very hard to tell the difference."* Naive was
+preferred on 5/12 (tracks 01,02,05,06,11). P(≥7 of 12 | fair coin) = 0.39 — no
+statistically detectable perceptual advantage.
+
+## Why they disagree (evidence-based, before any retrain)
+**1. Both arms are near-identical models → outputs perceptually indistinguishable.**
+Both fine-tuned from the SAME stock htdemucs (100% shared backbone) for only 8 epochs.
+Short fine-tunes stay close to the shared prior *and to each other* — the corpus nudges
+weights slightly, not into audibly different solutions. This is the B1 lesson restated:
+*a fine-tune of a shared checkpoint is highly correlated with its sibling.* The
+listener hearing "hard to tell the difference" is direct confirmation.
+
+**2. The SI-SDR gap is real but sub-perceptual, and likely inflated by eval-on-own-synthesis.**
+`eval_real` mixtures were built by Riley's OWN Virtual Studio. SI-SDR rewards precise
+scale/energy reconstruction of *that synthesis* — so the arm trained on the matching
+distribution (Riley) scores a small, consistent numeric edge on all 12. That edge is
+~sub-perceptual (both models make similar artifacts/bleed), so the ear doesn't follow.
+SI-SDR measured "matches my own synthesis," not "cleaner guitar to a human."
+
+**3. No real-commercial-song eval exists.** The T2 held-out real set (mixture + guitar
+GT) was lost to scratch. Both the metric and this blind ran on Riley-synthesized
+mixtures — neither settles deployment quality on real music.
+
+## What is / isn't proven now
+- **Proven:** the validated fine-tune recipe works (both arms went from C1's broken
+  negative SI-SDR to positive). Transfer learning was the dominant fix.
+- **Proven:** on Riley-synthesized held-out mixtures, Riley's corpus yields a consistent
+  SI-SDR edge.
+- **NOT proven:** that edge is *perceptible*, or that it holds on *real songs*. The
+  corpus-quality claim from the C2 post-mortem is **downgraded to: numerically favorable,
+  perceptually unconfirmed.** Campaign 1's "+1.46 dB" and Campaign 2's "+6.52 dB" are
+  both metric-only; neither has cleared blind.
+
+## The methodology win (this is the real result)
+The gate caught a **metric false-positive** for the third time (B1, AudioShake, now C2).
+SI-SDR 12/12 + "+6.52 dB" looked promotion-grade; blind said chance. Had we promoted on
+the metric, Riley would have shipped an unproven corpus as default. **Blind listening
+remains the only reliable judge** (memory: numeric scores don't predict perception).
+
+## Next actions (evidence before change)
+1. **Build a DURABLE real-song eval set** (real commercial/CC mixtures + isolated guitar
+   GT) — the actual deployment test the project has lacked since T2. This is the
+   blocker; do it before any more training. (Coverage/factory unaffected.)
+2. **Re-blind on real songs** with both C2 checkpoints → settles the perceptual question
+   on deployment-relevant audio.
+3. **Make the arms less correlated if a real difference is wanted:** longer fine-tune,
+   or a larger corpus gap (Corpus v2 with genuinely different supervision), so the data
+   effect can exceed the shared-backbone floor. Only after (1)-(2).
+4. Do NOT promote Riley v1.0 as default on current evidence. Do NOT retrain blindly.
+
+## Status of frozen artifacts
+Campaign 2 stays the frozen reference (recipe validated, hashes locked). Its *promotion
+status* is **withheld — perceptually unconfirmed**. The comparison bar for future
+corpora is unchanged, but the target metric must be re-validated against a real-song
+blind set, not synthesis-SI-SDR alone.
