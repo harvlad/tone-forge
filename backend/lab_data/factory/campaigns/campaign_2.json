@@ -1,0 +1,33 @@
+{
+ "campaign_id": "riley_campaign_2_validated_finetune",
+ "title": "Campaign 2 — validated fine-tune (corrects C1's from-init error)",
+ "objective": "Does Riley Corpus v1.0 outperform the naive corpus when BOTH models fine-tune from the validated pretrained htdemucs checkpoint? Corpus is the only variable.",
+ "predecessor": "riley_campaign_1_data_centric",
+ "git_sha": "9d2e79a",
+ "arms": {
+  "A_riley": {"dataset_version": "riley_corpus_v1.0", "corpus_hash": "df4167dcd07b059aaaf0a48461424c78ed5f659030de789184b8107f615a9617", "train_pairs": 2192, "valid": 40},
+  "B_naive": {"dataset_version": "riley_baseline_naive_v1.0", "corpus_hash": "20c0811ffdbf1a75cbeb4dcb19706ee8d3dc47adeba5bb4639ea25447b600071", "train_pairs": 2192, "valid": 40},
+  "note": "SAME frozen datasets + same equal-N cap as Campaign 1 (ds_A/ds_B unchanged)."
+ },
+ "the_only_change_vs_c1": {
+  "pretrained_init": {
+   "checkpoint": "stock htdemucs (demucs 955717e8-8726e21a)",
+   "saved_as": "hetzner:/mnt/HC_Volume_106533567/factory/campaign2/htdemucs_pretrained.ckpt",
+   "sha256": "ac558614...",
+   "transfer_coverage": "100.0% of params (529/533 keys); only the 4-key 2-stem output head reinitializes",
+   "load_path": "MSST load_start_checkpoint(type_=train) -> load_not_compatible_weights (tolerant, load_only_compatible_weights=False)",
+   "verified": "CPU dry-run confirmed weights loaded (transformer norm 26->103) + trains + ckpt saves"
+  },
+  "required_config_change": {
+   "bottom_channels": "0 -> 512",
+   "why": "C1's b1 config (bottom_channels 0) is NON-STANDARD htdemucs -> only 35% of stock weights fit; it could NEVER have loaded stock htdemucs (this is WHY C1 was unavoidably from-init). bottom_channels 512 = standard htdemucs -> 100% backbone transfer. Applied IDENTICALLY to both arms.",
+   "model_params": "27.4M (C1) -> 41.98M (C2, standard htdemucs)"
+  }
+ },
+ "identical_to_c1": ["corpora + hashes", "equal-N cap", "optimizer adam", "lr 9e-5", "num_epochs 8", "num_steps 1500", "batch_size 8", "6s chunk", "augmentations", "dataset_type 1", "eval pipeline", "promotion gate", "watchdog", "checkpointing", "seed 42"],
+ "recipe_config": "c2_htdemucs.yaml (= b1 recipe + bottom_channels 512)",
+ "evaluation": "IDENTICAL to C1 (SI-SDR/SDR + downstream note-F1 + blind), same held-out eval sets -> directly comparable",
+ "promotion_gate": "unchanged/matured (benchmark + blind + cross-regime + no regressions + reproducibility + provenance)",
+ "gpu": {"card": "A40 48GB SECURE", "price_per_hr_usd": 0.44},
+ "comparability_note": "C1 (from-init, non-standard 27M) vs C2 (fine-tune, standard 42M htdemucs). The DATA A/B within C2 is clean (both arms identical). C1<->C2 isolates the effect of pretrained init."
+}
