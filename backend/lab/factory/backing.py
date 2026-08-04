@@ -9,6 +9,7 @@ with zero downstream change.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -27,9 +28,15 @@ class ScenarioProvider(Protocol):
     def health(self) -> bool: ...
 
 
+def _shash(s: str) -> int:
+    # STABLE across processes — Python's builtin hash() is randomized per-process
+    # (PYTHONHASHSEED), which silently breaks cross-run replay of the backing RNG.
+    return int(hashlib.sha256(s.encode()).hexdigest()[:8], 16)
+
+
 def _rng(seed: int, role: str, scen_sig: str) -> np.random.Generator:
-    # deterministic per (seed, role, scenario) -> reproducible backing
-    mix = (seed * 2654435761) ^ (hash(role) & 0xFFFFFFFF) ^ (hash(scen_sig) & 0xFFFFFFFF)
+    # deterministic per (seed, role, scenario) -> reproducible backing (process-stable)
+    mix = (seed * 2654435761) ^ _shash(role) ^ _shash(scen_sig)
     return np.random.default_rng(mix & 0xFFFFFFFF)
 
 
@@ -146,7 +153,10 @@ class StemPoolBackingProvider:
     def __init__(self, role_paths: dict, dataset_key: str, id: str = "stem_pool"):
         self.id = id
         self.dataset_key = dataset_key
-        self._roles = {r: list(v) for r, v in role_paths.items() if v}
+        # CANONICAL order (sorted) so selection is a pure function of (seed, role, scenario)
+        # — replay reproduces byte-identical mixtures regardless of how role_paths was
+        # built (fresh ingest vs catalog reload vs worker pickling).
+        self._roles = {r: sorted(v) for r, v in role_paths.items() if v}
 
     def health(self) -> bool:
         return bool(self._roles) and all(Path(p).exists() for v in self._roles.values() for p in v)

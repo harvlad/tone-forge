@@ -28,6 +28,7 @@ from .scenario import Scenario, RoleSpec, SCENARIOS, all_scenarios
 from .backing import ScenarioProvider, SyntheticBackingProvider, StemPoolBackingProvider
 from .studio import VirtualStudio, StudioReport, build_supervised_manifest
 from .coverage import coverage_report, render_report, DIMENSIONS
+from .corpus_validator import CorpusValidator, CorpusReport, validate_manifest
 from . import planner
 
 __all__ = [
@@ -43,4 +44,5 @@ __all__ = [
     "ScenarioProvider", "SyntheticBackingProvider", "StemPoolBackingProvider",
     "VirtualStudio", "StudioReport", "build_supervised_manifest",
     "coverage_report", "render_report", "DIMENSIONS", "planner",
+    "CorpusValidator", "CorpusReport", "validate_manifest",
 ]

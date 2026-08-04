@@ -20,9 +20,12 @@ from .asset import Asset
 
 
 class AssetCatalog:
-    def __init__(self, path: str | Path | None = None):
+    def __init__(self, path: str | Path | None = None, *, autoflush: bool = True):
         self.path = Path(path) if path is not None else (config.FACTORY_DIR / "catalog.jsonl")
         self._by_id: dict[str, Asset] = {}
+        # autoflush=True keeps the crash-safe per-add persistence used incrementally;
+        # set False (or use extend()) for O(n) bulk loads — one flush instead of n.
+        self._autoflush = autoflush
         self._load()
 
     # ---- persistence ----
@@ -43,11 +46,27 @@ class AssetCatalog:
         tmp.replace(self.path)   # atomic
 
     # ---- write ----
-    def add(self, asset: Asset) -> Asset:
-        """Insert or replace by content id (natural dedup). Returns the stored asset."""
+    def add(self, asset: Asset, *, flush: Optional[bool] = None) -> Asset:
+        """Insert or replace by content id (natural dedup). Returns the stored asset.
+        Rewriting the whole JSONL per add is O(n²) at scale — pass flush=False (or use
+        extend()/flush()) for bulk loads."""
         self._by_id[asset.asset_id] = asset
-        self._flush()
+        if self._autoflush if flush is None else flush:
+            self._flush()
         return asset
+
+    def extend(self, assets: Iterable[Asset]) -> int:
+        """Bulk insert/replace with a SINGLE flush — O(n) instead of O(n²)."""
+        n = 0
+        for a in assets:
+            self._by_id[a.asset_id] = a
+            n += 1
+        self._flush()
+        return n
+
+    def flush(self) -> None:
+        """Persist now (for use with add(flush=False) / autoflush=False loops)."""
+        self._flush()
 
     # ---- lookups ----
     def get(self, asset_id: str) -> Optional[Asset]:

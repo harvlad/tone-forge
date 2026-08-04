@@ -51,20 +51,34 @@ def _softcomp(y: np.ndarray, amount: float) -> np.ndarray:
     return np.tanh(y * drive) / drive
 
 
+def _atomic_write(path: Path, y: np.ndarray, sr: int) -> None:
+    """Write to a temp file then rename — a killed/racing writer can never leave a
+    truncated .wav that the corpus gate would later have to reject."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    sf.write(str(tmp), y, sr, format="WAV")   # .tmp suffix hides the format from soundfile
+    tmp.replace(path)
+
+
 @dataclass
 class StudioReport:
-    pairs: list = field(default_factory=list)      # (mixture_asset, target_asset)
+    pairs: list = field(default_factory=list)      # (mixture_asset, target_asset) — new + cached
     rejected: list = field(default_factory=list)   # (target_asset, reasons)
+    cached: list = field(default_factory=list)      # pairs already in catalog (not regenerated)
     def counts(self):
-        return {"pairs": len(self.pairs), "rejected": len(self.rejected)}
+        return {"pairs": len(self.pairs), "new": len(self.pairs) - len(self.cached),
+                "cached": len(self.cached), "rejected": len(self.rejected)}
 
 
 class VirtualStudio:
     def __init__(self, catalog: AssetCatalog, runner: PipelineRunner,
-                 out_dir: Optional[Path] = None):
+                 out_dir: Optional[Path] = None, segment_seconds: Optional[float] = None):
         self.catalog = catalog
         self.runner = runner
         self.out = Path(out_dir) if out_dir else (config.FACTORY_DIR / "studio")
+        # optional deterministic segmentation: take a seeded fixed-length excerpt of the
+        # guitar (and mix to that length). Controls disk/compute at scale AND adds
+        # excerpt diversity; replay-safe because the offset is derived from the seed.
+        self.segment_seconds = segment_seconds
 
     def _seed(self, guitar: Asset, scenario: Scenario) -> int:
         return (int(guitar.content_hash[:8], 16) ^ int(scenario.signature()[4:12], 16)) & 0x7FFFFFFF
@@ -75,6 +89,15 @@ class VirtualStudio:
         g, sr = sf.read(str(guitar.path), always_2d=True)
         g = g.astype(np.float32)
         n = g.shape[0]
+
+        seg_off = None
+        if self.segment_seconds:
+            seg = int(self.segment_seconds * sr)
+            if n > seg:
+                # deterministic offset from the pair seed -> replayable + diverse excerpt
+                seg_off = int(np.random.default_rng(seed).integers(0, n - seg + 1))
+                g = g[seg_off:seg_off + seg]
+                n = seg
 
         # guitar-in-mix (the exact target): gain -> comp -> pan
         gt = _pan(_softcomp(_to_stereo(g) * _db(scenario.guitar_level_db), scenario.compression),
@@ -103,8 +126,8 @@ class VirtualStudio:
         base.mkdir(parents=True, exist_ok=True)
         mix_path = base / "mixture.wav"
         tgt_path = base / "guitar_target.wav"
-        sf.write(str(mix_path), mix, sr)
-        sf.write(str(tgt_path), gt, sr)
+        _atomic_write(mix_path, mix, sr)      # temp+rename -> no truncated/partial files
+        _atomic_write(tgt_path, gt, sr)
 
         prov = {
             "scenario": scenario.name, "scenario_version": scenario.version,
@@ -114,6 +137,7 @@ class VirtualStudio:
             "guitar_level_db": scenario.guitar_level_db, "guitar_pan": scenario.guitar_pan,
             "masking_db": scenario.masking_db, "compression": scenario.compression,
             "norm_gain": round(norm, 6), "seed": seed,
+            "segment_seconds": self.segment_seconds, "segment_offset": seg_off,
             "dsp": "gain->softcomp->pan->sum->normalize (per-stem, linear sum)",
             "mix_version": _MIX_VERSION, "software": _MIX_VERSION,
         }
@@ -139,18 +163,46 @@ class VirtualStudio:
         target = self.runner.audit(target)
         return mixture, target
 
+    def _pair_index(self) -> dict:
+        """pair_id -> {kind: asset} for pairs already in the catalog (cache lookup)."""
+        idx: dict = {}
+        for a in self.catalog.all():
+            pid = a.metadata.get("pair_id")
+            if pid:
+                idx.setdefault(pid, {})[a.kind] = a
+        return idx
+
     def generate_dataset(self, guitar_assets: list, scenarios: list,
-                         provider: ScenarioProvider) -> StudioReport:
+                         provider: ScenarioProvider, *, flush_every: int = 50) -> StudioReport:
         report = StudioReport()
-        for guitar in guitar_assets:
-            for scenario in scenarios:
-                mixture, target = self.generate(guitar, scenario, provider)
-                if target.audit_status == Status.REJECT:
-                    report.rejected.append((target, target.audit.get("reasons") if target.audit else None))
-                    continue
-                self.catalog.add(target)
-                self.catalog.add(mixture)
-                report.pairs.append((mixture, target))
+        cache = self._pair_index()               # content-addressable: never regenerate an existing pair
+        prev = self.catalog._autoflush
+        self.catalog._autoflush = False          # O(n) writes; periodic flush for crash-safety
+        n = 0
+        try:
+            for guitar in guitar_assets:
+                for scenario in scenarios:
+                    pid = f"{scenario.signature()}:{guitar.asset_id}"
+                    hit = cache.get(pid)
+                    if hit and Kind.MIXTURE in hit and Kind.STEM in hit:
+                        pair = (hit[Kind.MIXTURE], hit[Kind.STEM])
+                        report.cached.append(pair)
+                        report.pairs.append(pair)
+                        continue
+                    mixture, target = self.generate(guitar, scenario, provider)
+                    if target.audit_status == Status.REJECT:
+                        report.rejected.append((target, target.audit.get("reasons") if target.audit else None))
+                        continue
+                    self.catalog.add(target)
+                    self.catalog.add(mixture)
+                    cache.setdefault(pid, {}).update({Kind.MIXTURE: mixture, Kind.STEM: target})
+                    report.pairs.append((mixture, target))
+                    n += 1
+                    if flush_every and n % flush_every == 0:
+                        self.catalog.flush()
+        finally:
+            self.catalog.flush()
+            self.catalog._autoflush = prev
         return report
 
 
