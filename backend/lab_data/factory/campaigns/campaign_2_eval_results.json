@@ -1,0 +1,26 @@
+{
+ "A_riley/real": {
+  "si_sdr_median": 3.557,
+  "si_sdr_mean": 3.096,
+  "sdr_median": 4.52,
+  "n": 12
+ },
+ "A_riley/flat": {
+  "si_sdr_median": 0.185,
+  "si_sdr_mean": -0.772,
+  "sdr_median": 2.848,
+  "n": 12
+ },
+ "B_naive/real": {
+  "si_sdr_median": -2.958,
+  "si_sdr_mean": -2.792,
+  "sdr_median": 1.245,
+  "n": 12
+ },
+ "B_naive/flat": {
+  "si_sdr_median": 1.934,
+  "si_sdr_mean": 1.446,
+  "sdr_median": 4.073,
+  "n": 12
+ }
+}
