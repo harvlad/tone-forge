@@ -75,6 +75,31 @@ Automatically detects whether audio contains guitar, bass, synth, or drums and r
   - `bass_translator.py` — Bass gear
   - `drum_translator.py` — Drum machines
 
+## Riley Data Factory
+
+Riley is Tone Forge's **data-centric R&D line** for guitar source separation: a
+platform that *manufactures* its own training corpus and improves separators by
+improving the **data**, not the architecture.
+
+- **Data Factory** (`backend/lab/factory/`) — content-hash Asset system with immutable
+  lineage, plug-in Source/Transform/Scenario providers, a **Virtual Studio** that
+  synthesises supervised `(mixture, guitar)` pairs with exact ground truth, plus a
+  Dataset Auditor, License Registry, **Coverage Planner**, and a whole-corpus
+  **Corpus Validator**. Everything is deterministic and reproducible.
+- **Proven result** — `riley_corpus_v1.0` is the **promoted default training corpus**
+  (tag `corpus-v1.0-promoted`). In a controlled A/B (validated htdemucs fine-tune,
+  dataset as the only variable), Riley's manufactured corpus beat a naïve corpus from
+  the *same* guitars + backing: **+3.62 dB SI-SDR and 15/15 preferred in a blind
+  listening test on real songs** (MoisesDB, Benchmark v2.0).
+- **Method** — promotion is blind-gated on **real audio**, never a metric alone; every
+  model ties to a frozen `corpus_hash ↔ checkpoint_sha ↔ campaign_id`. See
+  `docs/RILEY_ENGINEERING_PRINCIPLES.md` (P1–P10),
+  `docs/RILEY_CAMPAIGN_2_FINAL_REPORT.md`, and
+  `backend/lab_data/factory/{DEFAULT_CORPUS.json, benchmarks/benchmark_v2.0.json}`.
+
+The loop, now operational: **Benchmark → Coverage Planner → manufacture → frozen corpus
+→ validated fine-tune → real-song blind vs the current default → promote on a blind win.**
+
 ## Repo Layout
 
 ```
@@ -93,6 +118,9 @@ tone-forge/
 │   │   ├── helix_translator.py   # Helix chain builder
 │   │   ├── synth_translator.py   # Synth matcher
 │   │   └── descriptor.py         # Data classes
+│   ├── lab/
+│   │   └── factory/              # Riley Data Factory (Asset/VirtualStudio/Planner/Validator)
+│   ├── lab_data/factory/         # frozen corpora, campaigns, benchmarks (indexes + hashes)
 │   ├── data/
 │   │   ├── helix_blocks.json     # Helix amp/cab/fx catalog
 │   │   ├── hardware_synths.json  # Synth database
