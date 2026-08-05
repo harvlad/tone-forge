@@ -81,6 +81,33 @@ so the eval-on-own-synthesis objection is removed.
 - Methodology payoff: the gate's discipline (reject the metric-only 12/12, demand a
   real-song blind) turned a false-looking promotion into a *correctly earned* one.
 
+## CRITICAL CAVEAT (2026-08-05) — vs stock htdemucs_6s (jamn.app production)
+The A/B was Riley-corpus vs naïve-corpus (both fine-tuned from stock). Scoring the
+**production** separator (stock `htdemucs_6s`, 6-source, what jamn.app runs) on the same
+15 real songs:
+
+| real-song guitar SI-SDR (median) | value |
+|---|---|
+| **stock htdemucs_6s (production)** | **+3.12 dB** |
+| Riley C2 (manufactured corpus) | −2.35 dB |
+| naïve C2 | −5.97 dB |
+
+**Stock beats the Riley model by ~5.5 dB and is positive where both our fine-tunes are
+negative.** Fine-tuning stock htdemucs on our synthesis-only corpus (GuitarSet+Freesound,
+2-stem, 6 s) **regressed** real-song performance below the stock starting point. Riley's
+data regressed it *less* than naïve data (the real +6.52 dB / 15-0 A/B — the factory
+works), but "less damage" is still worse than production.
+
+**Consequences (honest):**
+- The Riley model is **NOT deployable** — shipping it would badly regress jamn.app. Do
+  not wire it as a SeparatorProvider.
+- The corpus promotion stands as a **data-quality** result (Riley data > naïve data),
+  NOT a "we have a better separator" claim.
+- **Root cause is now precise:** the corpus is synthesis-only; stock trained on massive
+  *real* multitrack. To *beat* stock, the factory must add real training data
+  (MoisesDB-style — now accessible via the remotezip range trick) and likely keep the
+  6-source setup / longer clips rather than the narrow 2-stem/6 s recipe.
+
 ## Status of frozen artifacts
 Campaign 2 stays the frozen reference (recipe validated, hashes locked). Its *promotion
 status* is **withheld — perceptually unconfirmed**. The comparison bar for future
