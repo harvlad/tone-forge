@@ -3,8 +3,12 @@
  "campaign_id": "riley_campaign_2_validated_finetune",
  "git_sha": "893a920",
  "frozen_at": "2026-08-05",
- "status": "objective gates PASSED; blind listening = WASH 7/12 (chance); PROMOTION WITHHELD — SI-SDR advantage perceptually unconfirmed. Metric<->ear disagreement documented in RILEY_CAMPAIGN_2_FINAL_REPORT.md. Recipe validated + hashes still the frozen reference; corpus-quality claim downgraded to numerically-favorable-perceptually-unproven.",
- "blind_result": {"riley_preferred": 7, "of": 12, "verdict": "wash / do not promote", "listener_note": "many pairs hard to tell apart", "cause": "both arms fine-tuned from same htdemucs backbone (correlated); SI-SDR edge sub-perceptual + inflated by eval-on-own-synthesis; no real-song eval yet"},
+ "status": "PROMOTED. All six gates cleared. riley_corpus_v1.0 is Riley's DEFAULT training corpus (data-centric decision). Synthetic blind was a wash (7/12) but the DECIDING real-song blind was 15/15 for Riley (P~3e-5), confirming +3.62 dB real-song SI-SDR. See RILEY_PROMOTION_DECISION.md + RILEY_CAMPAIGN_2_FINAL_REPORT.md.",
+ "blind_result": {
+   "round1_synthetic": {"riley_preferred": 7, "of": 12, "verdict": "wash", "note": "corpus advantage inaudible on easy synthetic mixes"},
+   "round2_real_songs": {"riley_preferred": 15, "of": 15, "verdict": "PROMOTE", "p_value": 3.05e-05, "eval": "15 MoisesDB real multitracks", "note": "corpus advantage clearly audible on hard real songs; confirms +3.62 dB / 13-of-15 SI-SDR"}
+ },
+ "promotion": {"decision": "PROMOTE riley_corpus_v1.0 as default training corpus", "scope": "the CORPUS (better data), not a production-grade separator (real-song absolute SI-SDR still negative — domain gap)", "date": "2026-08-05"},
 
  "recipe": {
   "trainer": "ZFTurbo MSST htdemucs",

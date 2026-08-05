@@ -61,6 +61,26 @@ remains the only reliable judge** (memory: numeric scores don't predict percepti
    effect can exceed the shared-backbone floor. Only after (1)-(2).
 4. Do NOT promote Riley v1.0 as default on current evidence. Do NOT retrain blindly.
 
+## UPDATE (2026-08-05) — real-song eval built → PROMOTED
+The missing deployment eval was built: 15 real MoisesDB multitracks (mixture = sum of
+all stems, guitar_GT = sum of guitar stems) — a real mix, not Virtual-Studio synthesis,
+so the eval-on-own-synthesis objection is removed.
+- **Real-song SI-SDR:** Riley −2.35 vs naive −5.97 = **+3.62 dB, 13/15** (corpus
+  advantage reproduces on real audio).
+- **Real-song blind: 15/15 Riley-preferred** (P ≈ 3e-5). DECISIVE, and it *confirms* the
+  metric — metric ↔ ear now agree on the deployment-relevant distribution.
+- Reconciliation with the Round-1 synthetic wash (7/12): the corpus advantage is
+  inaudible on easy synthetic mixes but clearly audible on hard real songs — Riley's
+  realistic-masking supervision generalizes; the naive corpus does not. The synthetic
+  wash was a true-negative *for the synthetic distribution*, not for deployment.
+- **DECISION: PROMOTE `riley_corpus_v1.0` as the default training corpus** (see
+  `RILEY_PROMOTION_DECISION.md`, `lab_data/factory/DEFAULT_CORPUS.json`). Scope: the
+  corpus (better data) — absolute separator quality on real songs is still negative
+  (domain gap; both models trained only on GuitarSet+Freesound), improved next via
+  Corpus v2 + real training data.
+- Methodology payoff: the gate's discipline (reject the metric-only 12/12, demand a
+  real-song blind) turned a false-looking promotion into a *correctly earned* one.
+
 ## Status of frozen artifacts
 Campaign 2 stays the frozen reference (recipe validated, hashes locked). Its *promotion
 status* is **withheld — perceptually unconfirmed**. The comparison bar for future

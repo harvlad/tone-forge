@@ -32,13 +32,27 @@ Record picks, THEN reveal the key.
   the AudioShake/B1 retrospective). The gate stays evidence-based.
 - **Partial** (7/12): treat as a wash → do not promote; gather more blind tracks first.
 
-## Decision (recorded after blind)
-- blind picks (Riley/total): **7 / 12** (naive preferred on tracks 01,02,05,06,11)
-- outcome: **DO NOT PROMOTE** — 7/12 is a wash under the pre-registered rule (≥8 required).
+## Decision — TWO blind rounds
+
+### Round 1 — synthetic eval (Virtual-Studio mixtures)
+- blind picks: **7 / 12** → WASH → do not promote (recorded first).
+- Metric said 12/12 (+6.52 dB); ear said chance. Held the gate; flagged eval-on-own-
+  synthesis + model-correlation as suspects. Did NOT promote on the metric.
+
+### Round 2 — REAL-song eval (15 MoisesDB multitracks) — DECIDING
+- blind picks (Riley/total): **15 / 15** — Riley preferred on every real song.
+- outcome: **PROMOTE** — clears the pre-registered ≥11/15 bar decisively.
 - date: 2026-08-05
-- notes: Blind DISAGREES with the objective metric. SI-SDR ranked Riley ahead on **12/12**
-  tracks (+6.52 dB median); human blind is **7/12 ≈ chance**. Per the pre-registered
-  disagreement branch, the gate is NOT weakened: promotion withheld, disagreement
-  documented, root cause investigated. See `RILEY_CAMPAIGN_2_FINAL_REPORT.md`.
-- statistical note: 7/12 under a fair coin has P(≥7)=0.39 — indistinguishable from chance.
-  No evidence of a perceptible Riley advantage on this eval set.
+- statistical note: P(15/15 | fair coin) = 1/32768 ≈ 3e-5 — overwhelmingly significant.
+- agreement: blind (15/15) CONFIRMS real-song SI-SDR (+3.62 dB, 13/15). Metric ↔ ear agree.
+- interpretation: the corpus advantage is inaudible on easy synthetic mixes (Round 1 wash)
+  but clearly audible on hard REAL songs (Round 2 sweep) — Riley's realistic-masking
+  supervision generalizes to real audio; the naive corpus does not.
+
+## FINAL: PROMOTE `riley_corpus_v1.0` as Riley's default training corpus.
+Scope: this promotes the CORPUS (the data-centric decision Campaign 2 tested), not a
+production-grade separator — absolute SI-SDR on real songs is still negative (domain gap
+from GuitarSet+Freesound-only training). Riley's manufactured data is now the proven-
+better default; separator quality improves next via Corpus v2 + real-song training data.
+All six gates cleared: benchmark ✓, blind ✓ (real songs), cross-regime ✓, no regressions ✓,
+reproducibility ✓, provenance ✓.
