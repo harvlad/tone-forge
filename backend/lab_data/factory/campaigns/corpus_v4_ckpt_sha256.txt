@@ -1,0 +1,2 @@
+af42586298ea63aef0e2ef5ddd0a0a673f9f8119e3cdc4a37b3a77d4d0b1fddd  riley_v4_6src_best.ckpt
+25632344c56c77653deb9b19fd76d3af6a1edcd4d78e17ee917be90e225c9be6  riley_v4_6src_latest.ckpt
