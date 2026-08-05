@@ -1,0 +1,32 @@
+{
+ "_role": "Riley Benchmark v2.0 — the FROZEN real-song guitar-separation evaluation. This is the deciding gate for every future corpus/model: run the validated fine-tune recipe, separate these mixtures, score SI-SDR + real-song BLIND vs the incumbent. Frozen 2026-08-05.",
+ "benchmark_version": "2.0",
+ "supersedes": "Benchmark v1 = synthetic Virtual-Studio held-out eval (eval_real/eval_flat) — retained but NOT trustworthy alone (Campaign 2 synthetic blind was a wash despite 12/12 SI-SDR). v2.0 uses REAL songs.",
+ "frozen_at": "2026-08-05",
+ "dataset": {
+  "source": "MoisesDB (CC-BY-NC-SA-4.0, research/eval-only, no redistribution)",
+  "citation": "Pereira et al., MoisesDB: A dataset for source separation beyond 4-stems, arXiv:2307.15913",
+  "n_tracks": 15,
+  "composition": "15 real full-band songs, guitar-present. Per track: mixture = sum(all stems), guitar_GT = sum(guitar-folder stems), shared-normalized. Most guitar-active 10s window. Real multitrack sum (NOT synthesis) -> no eval-on-own-synthesis bias.",
+  "sr": 44100, "clip_seconds": 10, "channels": 2,
+  "location": "hetzner:/mnt/HC_Volume_106533567/factory/eval_moises/{mix,gt}",
+  "guitar_definition": "the MoisesDB 'guitar' instrument folder only (excludes bass, other, other_plucked)"
+ },
+ "integrity": {
+  "per_file_sha256": "backend/lab_data/factory/benchmarks/benchmark_v2.0_sha256.txt (31 entries: 15 mix + 15 gt + index)",
+  "rollup_sha256": "8a70ed4ccd90f65f3e8f3bb1a8464fe41ff295ad42e4c3f35e0bb595fa075232"
+ },
+ "protocol": {
+  "metric": "SI-SDR (median over tracks) vs guitar_GT; report per-track wins too",
+  "inference": "htdemucs raw input (model normalizes internally — do NOT external-normalize); guitar = output index 0 of ['guitar','other']",
+  "deciding_gate": "REAL-SONG BLIND A/B vs incumbent — the metric is necessary but not sufficient; blind on real audio decides (Riley law).",
+  "promotion_rule": ">=11/15 blind -> promote · 9-10 -> wash · <=8 -> hold (binomial p~0.06 at 11/15)"
+ },
+ "reference_result_campaign_2": {
+  "riley_c2_A": {"si_sdr_median": -2.35, "blind_preferred": 15},
+  "naive_c2_B": {"si_sdr_median": -5.97},
+  "advantage_dB": 3.62, "riley_track_wins": "13/15", "blind": "15/15 (P~3e-5) -> PROMOTE",
+  "note": "absolute negative for both = real full-band domain gap (models trained only on GuitarSet+Freesound synthesis). Relative + blind decisive."
+ },
+ "the_bar": "riley_corpus_v1.0 (hash df4167dc) is the incumbent DEFAULT. A challenger corpus/model is promoted only if it beats v1.0's separator on this benchmark: SI-SDR improvement AND a real-song blind majority preferring the challenger."
+}
