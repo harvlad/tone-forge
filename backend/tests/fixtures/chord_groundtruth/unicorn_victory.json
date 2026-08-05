@@ -1,0 +1,65 @@
+{
+  "song": "Unicorn Victory",
+  "artist": "(local sample)",
+  "source": "midi-derived from UnicornVictory_120bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 120,
+  "duration_s": 37.0,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/unicorn_victory/other.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 5.0,
+      "label": "D7"
+    },
+    {
+      "start": 5.0,
+      "end": 6.0,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 6.0,
+      "end": 7.0,
+      "label": "D7"
+    },
+    {
+      "start": 7.0,
+      "end": 8.0,
+      "label": "Am7"
+    },
+    {
+      "start": 8.0,
+      "end": 9.0,
+      "label": "C7"
+    },
+    {
+      "start": 9.0,
+      "end": 10.0,
+      "label": "A#7"
+    },
+    {
+      "start": 10.0,
+      "end": 11.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 11.0,
+      "end": 13.0,
+      "label": "C7"
+    },
+    {
+      "start": 13.0,
+      "end": 37.0,
+      "label": "D7"
+    }
+  ]
+}

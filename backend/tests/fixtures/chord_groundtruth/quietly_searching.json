@@ -1,0 +1,170 @@
+{
+  "song": "Quietly Searching",
+  "artist": "(local sample)",
+  "source": "midi-derived from SquietlySearching_80bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 80,
+  "duration_s": 96.0,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/quietly_searching/other.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 3.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 3.0,
+      "end": 6.0,
+      "label": "A#7"
+    },
+    {
+      "start": 6.0,
+      "end": 9.0,
+      "label": "F7"
+    },
+    {
+      "start": 9.0,
+      "end": 15.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 15.0,
+      "end": 16.5,
+      "label": "A#7"
+    },
+    {
+      "start": 16.5,
+      "end": 18.0,
+      "label": "F7"
+    },
+    {
+      "start": 18.0,
+      "end": 25.5,
+      "label": "Gm7"
+    },
+    {
+      "start": 25.5,
+      "end": 27.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 27.0,
+      "end": 30.0,
+      "label": "A#7"
+    },
+    {
+      "start": 30.0,
+      "end": 31.5,
+      "label": "Dm7"
+    },
+    {
+      "start": 31.5,
+      "end": 33.0,
+      "label": "F7"
+    },
+    {
+      "start": 33.0,
+      "end": 37.5,
+      "label": "Gm7"
+    },
+    {
+      "start": 37.5,
+      "end": 39.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 39.0,
+      "end": 40.5,
+      "label": "A#7"
+    },
+    {
+      "start": 40.5,
+      "end": 42.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 42.0,
+      "end": 51.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 51.0,
+      "end": 54.0,
+      "label": "A#7"
+    },
+    {
+      "start": 54.0,
+      "end": 57.0,
+      "label": "F7"
+    },
+    {
+      "start": 57.0,
+      "end": 63.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 63.0,
+      "end": 64.5,
+      "label": "A#7"
+    },
+    {
+      "start": 64.5,
+      "end": 66.0,
+      "label": "F7"
+    },
+    {
+      "start": 66.0,
+      "end": 72.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 72.0,
+      "end": 75.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 75.0,
+      "end": 78.0,
+      "label": "A#7"
+    },
+    {
+      "start": 78.0,
+      "end": 81.0,
+      "label": "F7"
+    },
+    {
+      "start": 81.0,
+      "end": 84.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 84.0,
+      "end": 87.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 87.0,
+      "end": 88.5,
+      "label": "A#7"
+    },
+    {
+      "start": 88.5,
+      "end": 90.0,
+      "label": "F7"
+    },
+    {
+      "start": 90.0,
+      "end": 96.0,
+      "label": "Gm7"
+    }
+  ]
+}

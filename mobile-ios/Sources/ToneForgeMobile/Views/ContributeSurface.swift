@@ -11,7 +11,8 @@
 //     (with a grid-icon toggle back to the advanced 8×8), the 8×8
 //     hybrid grid in instrument mode
 //   - quantize chips (+ record pill in the sketch context), sketch
-//     tempo strip (no song), layer fader
+//     tempo strip (no song). The layer LEVEL fader moved to the Mixer
+//     tab (single mix home); the A/B slot toggle stays (recording).
 //
 // Pure composition — all audio still flows grid → bus → ModeRouter →
 // ModeCoordinator; this view owns no engine logic.
@@ -113,8 +114,10 @@ struct ContributeSurface: View {
             )
             .padding(.horizontal, 12)
         }
-
-        LayerFader(dbValue: $sampleSettings.layerFaderDb)
+        // The "Your Layer" level fader lives in the Mixer tab now
+        // (its single mix home) — not duplicated in the editor. The
+        // A/B slot toggle stays: it's a recording-take selector, not
+        // a mix level.
     }
 
     // MARK: - Pad surface
@@ -138,8 +141,11 @@ struct ContributeSurface: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             // 4x4 grid for both Instrument and Sample modes
-            SamplePadGrid4x4(coordinator: coordinator)
-                .padding(.horizontal, 12)
+            SamplePadGrid4x4(
+                coordinator: coordinator,
+                onBeatCapture: { showBeatCapture = true }
+            )
+            .padding(.horizontal, 12)
         }
     }
 

@@ -1,0 +1,726 @@
+{
+  "song": "Mama Squid",
+  "artist": "(local sample)",
+  "source": "midi-derived from MamaSquid_120bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 120,
+  "duration_s": 240.0,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/mama_squid/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/mama_squid/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 1.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 1.0,
+      "end": 2.0,
+      "label": "E7"
+    },
+    {
+      "start": 2.0,
+      "end": 3.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 3.0,
+      "end": 4.0,
+      "label": "E7"
+    },
+    {
+      "start": 4.0,
+      "end": 5.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 5.0,
+      "end": 6.0,
+      "label": "Esus4"
+    },
+    {
+      "start": 6.0,
+      "end": 7.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 7.0,
+      "end": 8.0,
+      "label": "E7"
+    },
+    {
+      "start": 8.0,
+      "end": 9.0,
+      "label": "Cdim"
+    },
+    {
+      "start": 9.0,
+      "end": 10.0,
+      "label": "B7"
+    },
+    {
+      "start": 10.0,
+      "end": 11.0,
+      "label": "Cdim"
+    },
+    {
+      "start": 11.0,
+      "end": 12.0,
+      "label": "B7"
+    },
+    {
+      "start": 12.0,
+      "end": 13.0,
+      "label": "Cdim"
+    },
+    {
+      "start": 13.0,
+      "end": 14.0,
+      "label": "B7"
+    },
+    {
+      "start": 14.0,
+      "end": 15.0,
+      "label": "Cdim"
+    },
+    {
+      "start": 15.0,
+      "end": 16.0,
+      "label": "B7"
+    },
+    {
+      "start": 16.0,
+      "end": 21.0,
+      "label": "E7"
+    },
+    {
+      "start": 21.0,
+      "end": 22.0,
+      "label": "Dsus2"
+    },
+    {
+      "start": 22.0,
+      "end": 24.0,
+      "label": "E7"
+    },
+    {
+      "start": 24.0,
+      "end": 25.0,
+      "label": "D7"
+    },
+    {
+      "start": 25.0,
+      "end": 26.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 26.0,
+      "end": 27.0,
+      "label": "D7"
+    },
+    {
+      "start": 27.0,
+      "end": 28.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 28.0,
+      "end": 29.0,
+      "label": "D7"
+    },
+    {
+      "start": 29.0,
+      "end": 30.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 30.0,
+      "end": 31.0,
+      "label": "D7"
+    },
+    {
+      "start": 31.0,
+      "end": 32.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 32.0,
+      "end": 37.0,
+      "label": "E7"
+    },
+    {
+      "start": 37.0,
+      "end": 38.0,
+      "label": "Dsus2"
+    },
+    {
+      "start": 38.0,
+      "end": 40.0,
+      "label": "E7"
+    },
+    {
+      "start": 40.0,
+      "end": 41.0,
+      "label": "D7"
+    },
+    {
+      "start": 41.0,
+      "end": 42.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 42.0,
+      "end": 43.0,
+      "label": "D7"
+    },
+    {
+      "start": 43.0,
+      "end": 44.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 44.0,
+      "end": 45.0,
+      "label": "D7"
+    },
+    {
+      "start": 45.0,
+      "end": 46.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 46.0,
+      "end": 47.0,
+      "label": "D7"
+    },
+    {
+      "start": 47.0,
+      "end": 48.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 48.0,
+      "end": 52.0,
+      "label": "Em7"
+    },
+    {
+      "start": 52.0,
+      "end": 56.0,
+      "label": "D#7"
+    },
+    {
+      "start": 56.0,
+      "end": 60.0,
+      "label": "Em7"
+    },
+    {
+      "start": 60.0,
+      "end": 64.0,
+      "label": "D#7"
+    },
+    {
+      "start": 64.0,
+      "end": 65.0,
+      "label": "Esus4"
+    },
+    {
+      "start": 65.0,
+      "end": 66.0,
+      "label": "Edim"
+    },
+    {
+      "start": 66.0,
+      "end": 67.0,
+      "label": "Esus4"
+    },
+    {
+      "start": 67.0,
+      "end": 68.0,
+      "label": "Em7"
+    },
+    {
+      "start": 68.0,
+      "end": 70.0,
+      "label": "D#7"
+    },
+    {
+      "start": 70.0,
+      "end": 72.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 72.0,
+      "end": 73.0,
+      "label": "Esus4"
+    },
+    {
+      "start": 73.0,
+      "end": 74.0,
+      "label": "Edim"
+    },
+    {
+      "start": 74.0,
+      "end": 75.0,
+      "label": "Esus4"
+    },
+    {
+      "start": 75.0,
+      "end": 76.0,
+      "label": "Esus2"
+    },
+    {
+      "start": 76.0,
+      "end": 77.0,
+      "label": "Cm7"
+    },
+    {
+      "start": 77.0,
+      "end": 78.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 80.0,
+      "end": 81.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 81.0,
+      "end": 82.0,
+      "label": "D#m7"
+    },
+    {
+      "start": 82.0,
+      "end": 83.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 83.0,
+      "end": 84.0,
+      "label": "D#m7"
+    },
+    {
+      "start": 84.0,
+      "end": 88.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 88.0,
+      "end": 92.0,
+      "label": "B7"
+    },
+    {
+      "start": 92.0,
+      "end": 96.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 97.0,
+      "end": 98.0,
+      "label": "E7"
+    },
+    {
+      "start": 99.0,
+      "end": 100.0,
+      "label": "E7"
+    },
+    {
+      "start": 101.0,
+      "end": 102.0,
+      "label": "Dsus2"
+    },
+    {
+      "start": 103.0,
+      "end": 104.0,
+      "label": "E7"
+    },
+    {
+      "start": 104.0,
+      "end": 105.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 105.0,
+      "end": 106.0,
+      "label": "Bdim"
+    },
+    {
+      "start": 106.0,
+      "end": 107.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 107.0,
+      "end": 108.0,
+      "label": "Bdim"
+    },
+    {
+      "start": 108.0,
+      "end": 111.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 111.0,
+      "end": 112.0,
+      "label": "Bdim"
+    },
+    {
+      "start": 112.0,
+      "end": 117.0,
+      "label": "E7"
+    },
+    {
+      "start": 117.0,
+      "end": 118.0,
+      "label": "Dsus2"
+    },
+    {
+      "start": 118.0,
+      "end": 120.0,
+      "label": "E7"
+    },
+    {
+      "start": 120.0,
+      "end": 123.0,
+      "label": "Asus4"
+    },
+    {
+      "start": 123.0,
+      "end": 124.0,
+      "label": "Asus2"
+    },
+    {
+      "start": 124.0,
+      "end": 128.0,
+      "label": "Asus4"
+    },
+    {
+      "start": 128.0,
+      "end": 129.0,
+      "label": "D7"
+    },
+    {
+      "start": 129.0,
+      "end": 130.0,
+      "label": "Em7"
+    },
+    {
+      "start": 130.0,
+      "end": 132.0,
+      "label": "E7"
+    },
+    {
+      "start": 132.0,
+      "end": 133.0,
+      "label": "D7"
+    },
+    {
+      "start": 133.0,
+      "end": 134.0,
+      "label": "Dsus2"
+    },
+    {
+      "start": 134.0,
+      "end": 135.0,
+      "label": "D7"
+    },
+    {
+      "start": 135.0,
+      "end": 136.0,
+      "label": "E7"
+    },
+    {
+      "start": 136.0,
+      "end": 138.0,
+      "label": "Asus4"
+    },
+    {
+      "start": 139.0,
+      "end": 140.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 140.0,
+      "end": 141.0,
+      "label": "D7"
+    },
+    {
+      "start": 141.0,
+      "end": 143.0,
+      "label": "Asus4"
+    },
+    {
+      "start": 143.0,
+      "end": 144.0,
+      "label": "Bm7"
+    },
+    {
+      "start": 144.0,
+      "end": 145.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 145.0,
+      "end": 146.0,
+      "label": "Em7"
+    },
+    {
+      "start": 146.0,
+      "end": 147.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 147.0,
+      "end": 148.0,
+      "label": "Em7"
+    },
+    {
+      "start": 148.0,
+      "end": 150.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 150.0,
+      "end": 151.0,
+      "label": "Cm7"
+    },
+    {
+      "start": 151.0,
+      "end": 152.0,
+      "label": "D#7"
+    },
+    {
+      "start": 152.0,
+      "end": 153.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 153.0,
+      "end": 154.0,
+      "label": "Em7"
+    },
+    {
+      "start": 154.0,
+      "end": 155.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 155.0,
+      "end": 156.0,
+      "label": "Em7"
+    },
+    {
+      "start": 156.0,
+      "end": 157.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 157.0,
+      "end": 158.0,
+      "label": "D#7"
+    },
+    {
+      "start": 158.0,
+      "end": 160.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 160.0,
+      "end": 161.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 161.0,
+      "end": 162.0,
+      "label": "Em7"
+    },
+    {
+      "start": 162.0,
+      "end": 163.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 163.0,
+      "end": 164.0,
+      "label": "Em7"
+    },
+    {
+      "start": 164.0,
+      "end": 166.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 166.0,
+      "end": 167.0,
+      "label": "Cm7"
+    },
+    {
+      "start": 167.0,
+      "end": 168.0,
+      "label": "D#7"
+    },
+    {
+      "start": 168.0,
+      "end": 169.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 169.0,
+      "end": 170.0,
+      "label": "Em7"
+    },
+    {
+      "start": 170.0,
+      "end": 171.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 171.0,
+      "end": 172.0,
+      "label": "Em7"
+    },
+    {
+      "start": 172.0,
+      "end": 173.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 173.0,
+      "end": 174.0,
+      "label": "D#7"
+    },
+    {
+      "start": 174.0,
+      "end": 176.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 176.0,
+      "end": 177.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 177.0,
+      "end": 178.0,
+      "label": "D#m7"
+    },
+    {
+      "start": 178.0,
+      "end": 179.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 179.0,
+      "end": 180.0,
+      "label": "D#m7"
+    },
+    {
+      "start": 180.0,
+      "end": 184.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 184.0,
+      "end": 188.0,
+      "label": "B7"
+    },
+    {
+      "start": 188.0,
+      "end": 192.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 192.0,
+      "end": 193.0,
+      "label": "Esus4"
+    },
+    {
+      "start": 193.0,
+      "end": 194.0,
+      "label": "Edim"
+    },
+    {
+      "start": 194.0,
+      "end": 195.0,
+      "label": "Esus4"
+    },
+    {
+      "start": 195.0,
+      "end": 196.0,
+      "label": "Em7"
+    },
+    {
+      "start": 196.0,
+      "end": 198.0,
+      "label": "D#7"
+    },
+    {
+      "start": 198.0,
+      "end": 200.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 200.0,
+      "end": 201.0,
+      "label": "Esus4"
+    },
+    {
+      "start": 201.0,
+      "end": 202.0,
+      "label": "Edim"
+    },
+    {
+      "start": 202.0,
+      "end": 203.0,
+      "label": "Esus4"
+    },
+    {
+      "start": 203.0,
+      "end": 204.0,
+      "label": "Esus2"
+    },
+    {
+      "start": 204.0,
+      "end": 205.0,
+      "label": "Cm7"
+    },
+    {
+      "start": 205.0,
+      "end": 206.0,
+      "label": "D#maj7"
+    },
+    {
+      "start": 208.0,
+      "end": 212.0,
+      "label": "D#m7"
+    },
+    {
+      "start": 212.0,
+      "end": 216.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 216.0,
+      "end": 220.0,
+      "label": "B7"
+    },
+    {
+      "start": 220.0,
+      "end": 224.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 224.0,
+      "end": 230.0,
+      "label": "E7"
+    }
+  ]
+}

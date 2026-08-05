@@ -1,0 +1,501 @@
+{
+  "song": "Underwater",
+  "artist": "(local sample)",
+  "source": "midi-derived from Underwater_140bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 140,
+  "duration_s": 137.143,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/underwater/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/underwater/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 1.714,
+      "label": "C7"
+    },
+    {
+      "start": 1.714,
+      "end": 3.429,
+      "label": "Am7"
+    },
+    {
+      "start": 3.429,
+      "end": 5.143,
+      "label": "Dm7"
+    },
+    {
+      "start": 5.143,
+      "end": 6.0,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 6.0,
+      "end": 6.857,
+      "label": "F7"
+    },
+    {
+      "start": 6.857,
+      "end": 8.571,
+      "label": "C7"
+    },
+    {
+      "start": 8.571,
+      "end": 10.286,
+      "label": "G7"
+    },
+    {
+      "start": 10.286,
+      "end": 11.143,
+      "label": "Bdim"
+    },
+    {
+      "start": 12.0,
+      "end": 13.714,
+      "label": "Am7"
+    },
+    {
+      "start": 13.714,
+      "end": 15.429,
+      "label": "C7"
+    },
+    {
+      "start": 15.429,
+      "end": 17.143,
+      "label": "Am7"
+    },
+    {
+      "start": 17.143,
+      "end": 18.857,
+      "label": "Dm7"
+    },
+    {
+      "start": 18.857,
+      "end": 20.571,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 20.571,
+      "end": 21.429,
+      "label": "C7"
+    },
+    {
+      "start": 21.429,
+      "end": 22.286,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 22.286,
+      "end": 23.143,
+      "label": "Em7"
+    },
+    {
+      "start": 23.143,
+      "end": 24.0,
+      "label": "G7"
+    },
+    {
+      "start": 25.714,
+      "end": 27.429,
+      "label": "Am7"
+    },
+    {
+      "start": 27.429,
+      "end": 28.286,
+      "label": "C7"
+    },
+    {
+      "start": 28.286,
+      "end": 29.143,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 29.143,
+      "end": 30.857,
+      "label": "Am7"
+    },
+    {
+      "start": 30.857,
+      "end": 32.571,
+      "label": "Dm7"
+    },
+    {
+      "start": 32.571,
+      "end": 33.429,
+      "label": "F7"
+    },
+    {
+      "start": 33.429,
+      "end": 34.286,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 34.286,
+      "end": 35.143,
+      "label": "C7"
+    },
+    {
+      "start": 35.143,
+      "end": 36.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 36.0,
+      "end": 37.714,
+      "label": "G7"
+    },
+    {
+      "start": 37.714,
+      "end": 38.571,
+      "label": "Fdim"
+    },
+    {
+      "start": 39.429,
+      "end": 41.143,
+      "label": "Am7"
+    },
+    {
+      "start": 41.143,
+      "end": 42.857,
+      "label": "C7"
+    },
+    {
+      "start": 42.857,
+      "end": 44.571,
+      "label": "Am7"
+    },
+    {
+      "start": 44.571,
+      "end": 46.286,
+      "label": "Dm7"
+    },
+    {
+      "start": 46.286,
+      "end": 48.0,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 48.0,
+      "end": 49.714,
+      "label": "C7"
+    },
+    {
+      "start": 49.714,
+      "end": 50.571,
+      "label": "Em7"
+    },
+    {
+      "start": 50.571,
+      "end": 51.429,
+      "label": "G7"
+    },
+    {
+      "start": 53.143,
+      "end": 54.857,
+      "label": "Am7"
+    },
+    {
+      "start": 54.857,
+      "end": 55.714,
+      "label": "C7"
+    },
+    {
+      "start": 55.714,
+      "end": 56.571,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 56.571,
+      "end": 58.286,
+      "label": "Am7"
+    },
+    {
+      "start": 58.286,
+      "end": 60.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 60.0,
+      "end": 61.714,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 61.714,
+      "end": 62.571,
+      "label": "C7"
+    },
+    {
+      "start": 62.571,
+      "end": 63.429,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 63.429,
+      "end": 64.286,
+      "label": "Em7"
+    },
+    {
+      "start": 64.286,
+      "end": 65.143,
+      "label": "G7"
+    },
+    {
+      "start": 65.143,
+      "end": 66.0,
+      "label": "Fdim"
+    },
+    {
+      "start": 66.857,
+      "end": 68.571,
+      "label": "Am7"
+    },
+    {
+      "start": 68.571,
+      "end": 70.286,
+      "label": "C7"
+    },
+    {
+      "start": 70.286,
+      "end": 72.0,
+      "label": "Am7"
+    },
+    {
+      "start": 72.0,
+      "end": 73.714,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 73.714,
+      "end": 77.143,
+      "label": "C7"
+    },
+    {
+      "start": 77.143,
+      "end": 78.857,
+      "label": "Am7"
+    },
+    {
+      "start": 78.857,
+      "end": 79.714,
+      "label": "F7"
+    },
+    {
+      "start": 79.714,
+      "end": 80.571,
+      "label": "Am7"
+    },
+    {
+      "start": 82.286,
+      "end": 83.143,
+      "label": "C7"
+    },
+    {
+      "start": 83.143,
+      "end": 84.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 84.0,
+      "end": 85.714,
+      "label": "Am7"
+    },
+    {
+      "start": 85.714,
+      "end": 87.428,
+      "label": "Dm7"
+    },
+    {
+      "start": 87.428,
+      "end": 89.143,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 89.143,
+      "end": 90.0,
+      "label": "C7"
+    },
+    {
+      "start": 90.0,
+      "end": 90.857,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 90.857,
+      "end": 91.714,
+      "label": "Em7"
+    },
+    {
+      "start": 91.714,
+      "end": 92.571,
+      "label": "G7"
+    },
+    {
+      "start": 92.571,
+      "end": 94.286,
+      "label": "Fdim"
+    },
+    {
+      "start": 94.286,
+      "end": 96.0,
+      "label": "Am7"
+    },
+    {
+      "start": 96.0,
+      "end": 96.857,
+      "label": "C7"
+    },
+    {
+      "start": 96.857,
+      "end": 97.714,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 97.714,
+      "end": 99.428,
+      "label": "Am7"
+    },
+    {
+      "start": 99.428,
+      "end": 101.143,
+      "label": "Dm7"
+    },
+    {
+      "start": 101.143,
+      "end": 102.857,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 102.857,
+      "end": 103.714,
+      "label": "C7"
+    },
+    {
+      "start": 103.714,
+      "end": 104.571,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 104.571,
+      "end": 105.428,
+      "label": "Em7"
+    },
+    {
+      "start": 105.428,
+      "end": 106.286,
+      "label": "G7"
+    },
+    {
+      "start": 106.286,
+      "end": 107.143,
+      "label": "Fdim"
+    },
+    {
+      "start": 108.0,
+      "end": 109.714,
+      "label": "Am7"
+    },
+    {
+      "start": 109.714,
+      "end": 111.428,
+      "label": "C7"
+    },
+    {
+      "start": 111.428,
+      "end": 113.143,
+      "label": "Am7"
+    },
+    {
+      "start": 113.143,
+      "end": 114.857,
+      "label": "Dm7"
+    },
+    {
+      "start": 114.857,
+      "end": 116.571,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 116.571,
+      "end": 117.428,
+      "label": "C7"
+    },
+    {
+      "start": 117.428,
+      "end": 118.286,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 118.286,
+      "end": 120.0,
+      "label": "Em7"
+    },
+    {
+      "start": 120.0,
+      "end": 120.857,
+      "label": "Bdim"
+    },
+    {
+      "start": 120.857,
+      "end": 121.714,
+      "label": "Fdim"
+    },
+    {
+      "start": 121.714,
+      "end": 123.428,
+      "label": "Am7"
+    },
+    {
+      "start": 123.428,
+      "end": 125.143,
+      "label": "C7"
+    },
+    {
+      "start": 125.143,
+      "end": 126.857,
+      "label": "Am7"
+    },
+    {
+      "start": 126.857,
+      "end": 128.571,
+      "label": "Dm7"
+    },
+    {
+      "start": 128.571,
+      "end": 130.286,
+      "label": "F7"
+    },
+    {
+      "start": 130.286,
+      "end": 131.143,
+      "label": "C7"
+    },
+    {
+      "start": 131.143,
+      "end": 132.0,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 132.0,
+      "end": 133.714,
+      "label": "G7"
+    },
+    {
+      "start": 133.714,
+      "end": 134.571,
+      "label": "Fdim"
+    },
+    {
+      "start": 135.428,
+      "end": 137.143,
+      "label": "Am7"
+    }
+  ]
+}

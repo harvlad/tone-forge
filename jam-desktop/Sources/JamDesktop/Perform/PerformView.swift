@@ -14,12 +14,40 @@ import SwiftUI
 import JamDesktopCore
 import ToneForgeEngine
 
+/// Perform = OVERLAY architecture. The neck is the stage; the eye almost never
+/// leaves it. Five INDEPENDENT layers over one shared chord/playhead — three are
+/// drawn ON the neck, two are small supporting reference cards beneath it:
+///   Motion     — trajectories, ghosts, arrival pulses, movement timing (on neck)
+///   Hand       — realistic pose overlaid on the neck at low opacity (on neck)
+///   Dots       — coloured finger contacts + finger identity, the primary layer (on neck)
+///   Chord      — chord diagram reference card (below neck)
+///   TAB        — tablature reference card (below neck)
+/// Priority: fretboard > dots+motion > hand > chord/TAB. No layer knows another.
+private let jamAccent = Color(red: 0.545, green: 0.427, blue: 1.0)
+
 struct PerformView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var session: SessionController
 
     @State private var tabLane = TabLaneModel()
     @State private var toneCardDismissed = false
+    @StateObject private var handScene = HandPoseModel()   // runtime 3D hand pose
+    private var handSceneURL: URL? {
+        Bundle.module.url(forResource: "hand", withExtension: "usdz", subdirectory: "Hand")
+    }
+    // Five independent display layers — persisted per user, all on by default;
+    // at least one must always stay on. No layer knows whether another is on.
+    @AppStorage("perf.layer.motion") private var showMotion = true   // trajectories/ghosts/pulses (on neck)
+    @AppStorage("perf.layer.hand") private var showHand = true       // abstract posed hand (on neck)
+    @AppStorage("perf.hand.mesh") private var handMesh = true        // realistic MPFB mesh is the default beginner view
+    @AppStorage("perf.hand.lead") private var leadMode = false       // play single MIDI notes instead of chords
+    @AppStorage("perf.layer.dots") private var showDots = true       // finger contact dots (on neck)
+    // Chord and TAB are the two reference cards — mutually exclusive (either/or).
+    @AppStorage("perf.layer.chord") private var showChord = true     // chord diagram (reference card)
+    @AppStorage("perf.layer.tab") private var showTab = false        // tablature (reference card)
+    private var layersOn: Int {
+        (showMotion ?1:0) + (showHand ?1:0) + (showDots ?1:0) + (showChord ?1:0) + (showTab ?1:0)
+    }
 
     private let displayTimer = Timer.publish(
         every: 1.0 / 30.0, on: .main, in: .common
@@ -45,11 +73,32 @@ struct PerformView: View {
         .onChange(of: model.sidecar, initial: true) { _, sidecar in
             rebuildTabLane(sidecar)
         }
+        .onAppear { if showChord && showTab { showTab = false } }   // enforce either/or
+        .onChange(of: currentHandSymbol, initial: true) { _, _ in refreshHandPose() }
+        .onChange(of: currentLeadPitch) { _, _ in if leadMode { refreshHandPose() } }
+    }
+
+    /// Chord symbol under the playhead — drives the 3D hand pose target (chord mode).
+    private var currentHandSymbol: String? {
+        session.ribbon?.currentChord(at: session.transport.positionSeconds)?.symbol
+    }
+
+    /// MIDI pitch of the lead note active under the playhead (lead mode).
+    private var currentLeadPitch: Int? {
+        let t = session.transport.positionSeconds
+        return tabLane.notes.last(where: { $0.startS <= t })?.pitch
+    }
+
+    private func refreshHandPose() {
+        // Lead mode needs lead-note MIDI; if this song has none, fall back to the
+        // chord pose so the hand still animates rather than freezing on a default.
+        if leadMode, currentLeadPitch != nil { handScene.applyNote(pitch: currentLeadPitch) }
+        else { handScene.apply(symbol: currentHandSymbol) }
     }
 
     private func content(for loaded: LoadedSession) -> some View {
         HStack(spacing: 0) {
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 NowPlayingHeaderView(meta: loaded.bundle.meta)
 
                 if let tone = model.sidecar?.tone, !toneCardDismissed {
@@ -62,10 +111,28 @@ struct PerformView: View {
                 }
 
                 if let ribbon = session.ribbon {
-                    // Primary: chord label + diagram
-                    chordLabelRow(ribbon: ribbon)
-                    diagramAndTabRow(ribbon: ribbon)
-                        .frame(maxHeight: .infinity)
+                    // Performance toolbar (independent layer toggles)
+                    performanceToolbar
+
+                    // Neck / fretboard — the hero, most vertical space
+                    Group {
+                        if handMesh, let url = handSceneURL {
+                            // Realistic: the 3D neck + rigid rooted hand (fingers on dots).
+                            HandSceneView(sceneURL: url, poseModel: handScene, showDots: showDots)
+                        } else {
+                            // Abstract: the flat neck + Motion/Dots overlays.
+                            HandNeckView(chords: ribbon.chords,
+                                         positionSeconds: session.transport.positionSeconds,
+                                         showDots: showDots,
+                                         showMotion: showMotion,
+                                         showHand: showHand,
+                                         useMesh: false)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 240, maxHeight: .infinity)
+
+                    // Supporting reference cards beneath the neck — Chord / TAB only.
+                    lowerPanel(ribbon: ribbon)
 
                     // Secondary: ribbon strip + section strip
                     ChordRibbonStripView(
@@ -105,61 +172,124 @@ struct PerformView: View {
         }
     }
 
-    /// Big current/next chord labels (Am → Em).
-    private func chordLabelRow(ribbon: ChordRibbonModel) -> some View {
-        let window = ribbon.window(at: session.transport.positionSeconds, count: 2)
-        let current = ribbon.currentChord(at: session.transport.positionSeconds)
-        let next: ChordEvent? = {
-            guard let first = window.first else { return nil }
-            if current != nil {
-                return window.count > 1 ? window[1] : nil
+    // MARK: performance toolbar (independent layer toggles)
+    private var performanceToolbar: some View {
+        HStack(spacing: 10) {
+            Text("Display Layers")
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+            layerPill("Motion", systemImage: "waveform.path", on: showMotion) {
+                if !(showMotion && layersOn == 1) { showMotion.toggle() }
             }
-            return first
-        }()
-
-        return HStack(alignment: .firstTextBaseline, spacing: 24) {
-            Text(current?.symbol ?? "—")
-                .font(.system(size: 72, weight: .bold, design: .rounded))
-                .monospacedDigit()
-            if let next {
-                Text("→ \(next.symbol)")
-                    .font(.system(size: 32, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
+            layerPill("Hand", systemImage: "hand.raised.fill", on: showHand) {
+                if !(showHand && layersOn == 1) { showHand.toggle() }
             }
+            // Optional: swap the abstract hand silhouette for the realistic MPFB mesh.
+            if showHand {
+                layerPill("Realistic", systemImage: "cube.transparent", on: handMesh) {
+                    handMesh.toggle()
+                }
+            }
+            // Realistic hand: play single MIDI notes (lead) instead of chords.
+            if showHand && handMesh {
+                layerPill("Notes", systemImage: "music.note", on: leadMode) {
+                    leadMode.toggle(); refreshHandPose()
+                }
+            }
+            layerPill("Dots", systemImage: "circlebadge.fill", on: showDots) {
+                if !(showDots && layersOn == 1) { showDots.toggle() }
+            }
+            // Chord / TAB are mutually exclusive: enabling one disables the other.
+            layerPill("Chord", systemImage: "tablecells", on: showChord) {
+                if showChord { if layersOn > 1 { showChord = false } }
+                else { showChord = true; showTab = false }
+            }
+            layerPill("TAB", systemImage: "music.note.list", on: showTab) {
+                if showTab { if layersOn > 1 { showTab = false } }
+                else { showTab = true; showChord = false }
+            }
+            Spacer()
+            Button { resetLayout() } label: {
+                Label("Reset Layout", systemImage: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity)
-        .animation(nil, value: session.transport.positionSeconds)
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.08)))
     }
 
-    /// Current-chord diagram beside the scrolling lead tab lane.
+    private func layerPill(_ title: String, systemImage: String, on: Bool,
+                           _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage).font(.system(size: 12, weight: .semibold))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 13).padding(.vertical, 7)
+        .background(on ? jamAccent : Color.gray.opacity(0.18))
+        .foregroundStyle(on ? Color.white : Color.secondary)
+        .clipShape(Capsule())
+    }
+
+    private func resetLayout() {
+        showMotion = true; showHand = true; showDots = true; showChord = true; showTab = false
+    }
+
+    // MARK: supporting reference cards — Chord Diagram / TAB only.
+    // These verify the exact fingering; they never compete with the neck, so they
+    // stay small. When neither is on, the row vanishes and the neck takes all the
+    // height (Motion / Hand / Dots all live on the neck itself).
     @ViewBuilder
-    private func diagramAndTabRow(ribbon: ChordRibbonModel) -> some View {
-        let symbol = ribbon.currentChord(
-            at: session.transport.positionSeconds)?.symbol
-        if !tabLane.notes.isEmpty || symbol != nil {
-            HStack(alignment: .center, spacing: 24) {
-                if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
-                    ChordDiagramView(diagram: diagram)
-                        .frame(width: 280, height: 340)
-                }
-                if !tabLane.notes.isEmpty {
-                    VStack(alignment: .trailing, spacing: 4) {
-                        TabLaneView(
-                            model: tabLane,
-                            positionSeconds: session.transport.positionSeconds
-                        )
-                        Picker("Glyph", selection: $tabLane.glyph) {
-                            ForEach(TabLaneGlyph.allCases, id: \.self) {
-                                Text($0.rawValue.capitalized).tag($0)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 180)
-                    }
+    private func lowerPanel(ribbon: ChordRibbonModel) -> some View {
+        let symbol = ribbon.currentChord(at: session.transport.positionSeconds)?.symbol
+        // Either/or: Chord and TAB never show at once.
+        if showChord {
+            referenceCard {
+                panelCard("Chord Diagram") {
+                    if let symbol, let diagram = ChordDiagram.make(symbol: symbol) {
+                        ChordDiagramView(diagram: diagram)
+                    } else { Color.clear }
                 }
             }
-            .frame(minHeight: 340)
+        } else if showTab {
+            referenceCard {
+                panelCard("TAB") {
+                    if !tabLane.notes.isEmpty { tabLaneBlock() } else { Color.clear }
+                }
+            }
+        }
+    }
+
+    /// The single supporting reference card beneath the neck — small, so it never
+    /// competes with the fretboard.
+    @ViewBuilder
+    private func referenceCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content().frame(height: 190)
+    }
+
+    /// A titled panel card (header dot + title) for a lower-panel layer.
+    @ViewBuilder
+    private func panelCard<Content: View>(_ title: String,
+                                          @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle().fill(jamAccent).frame(width: 8, height: 8)
+                Text(title).font(.system(size: 13, weight: .semibold))
+            }
+            content().frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.06)))
+    }
+
+    @ViewBuilder
+    private func tabLaneBlock() -> some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            TabLaneView(model: tabLane, positionSeconds: session.transport.positionSeconds)
+            Picker("Glyph", selection: $tabLane.glyph) {
+                ForEach(TabLaneGlyph.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 180)
         }
     }
 

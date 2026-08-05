@@ -1,0 +1,15 @@
+{
+ "_role": "Riley's PROMOTED default training corpus. Set by Campaign 2 (2026-08-05). Any future corpus (v2+) must beat this — validated fine-tune recipe, then real-song blind (MoisesDB) must prefer the challenger over v1.0.",
+ "default_corpus": "riley_corpus_v1.0",
+ "corpus_hash": "df4167dcd07b059aaaf0a48461424c78ed5f659030de789184b8107f615a9617",
+ "manifest_sha256": "c83641330116b1b6bb55b87e8227d193f0bacf734aab1eb848865a2da3db4484",
+ "promoted_by": "riley_campaign_2_validated_finetune",
+ "promoted_on": "2026-08-05",
+ "evidence": {
+  "real_song_blind": "15/15 Riley-preferred (MoisesDB, P~3e-5)",
+  "real_song_sisdr": "Riley -2.35 vs naive -5.97 = +3.62 dB median, 13/15 tracks",
+  "recipe": "htdemucs fine-tune from stock (c2_htdemucs.yaml, bottom_channels 512, 100% backbone transfer)"
+ },
+ "the_bar_to_beat": "Future corpus versions: train with the validated fine-tune recipe, then real-song blind (MoisesDB eval_moises) must prefer the new corpus over riley_corpus_v1.0. Objective SI-SDR is necessary but the real-song blind is the deciding gate (synthetic SI-SDR alone is not trustworthy — Campaign 2 synthetic blind was a wash despite 12/12 SI-SDR).",
+ "reference_docs": ["backend/lab_data/factory/campaigns/CAMPAIGN_2_BASELINE.json", "docs/RILEY_PROMOTION_DECISION.md", "docs/RILEY_CAMPAIGN_2_FINAL_REPORT.md", "docs/RILEY_ENGINEERING_PRINCIPLES.md"]
+}

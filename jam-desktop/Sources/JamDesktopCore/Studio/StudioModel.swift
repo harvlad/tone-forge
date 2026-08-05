@@ -13,6 +13,9 @@ import ToneForgeEngine
 @MainActor
 public final class StudioModel: ObservableObject {
     @Published public private(set) var detail: StudioHistoryDetail?
+    /// History id the current `detail` was loaded for (Derived Audio
+    /// section fetches its playable events by this id).
+    @Published public private(set) var loadedHistoryID: String?
     @Published public private(set) var isLoading = false
     @Published public private(set) var error: String?
 
@@ -80,8 +83,13 @@ public final class StudioModel: ObservableObject {
         guard !id.isEmpty else { return }
         isLoading = true
         error = nil
+        loadedHistoryID = id
         do {
-            detail = try await client.fetchHistoryDetail(baseURL: baseURL, id: id)
+            let fetched = try await client.fetchHistoryDetail(baseURL: baseURL, id: id)
+            // A newer load may have started while this one was in
+            // flight — never let a stale response overwrite it.
+            guard loadedHistoryID == id else { return }
+            detail = fetched
         } catch let decodingError as DecodingError {
             // Provide more detail for JSON decoding failures
             switch decodingError {

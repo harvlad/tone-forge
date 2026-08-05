@@ -1,0 +1,571 @@
+{
+  "song": "Final Encounter",
+  "artist": "(local sample)",
+  "source": "midi-derived from FinalEncounter_140bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 140,
+  "duration_s": 240.0,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/final_encounter/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/final_encounter/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 54.857,
+      "end": 56.571,
+      "label": "Dm7"
+    },
+    {
+      "start": 56.571,
+      "end": 57.429,
+      "label": "A#maj7"
+    },
+    {
+      "start": 57.429,
+      "end": 58.286,
+      "label": "A#7"
+    },
+    {
+      "start": 60.0,
+      "end": 61.714,
+      "label": "D7"
+    },
+    {
+      "start": 61.714,
+      "end": 63.429,
+      "label": "Dm7"
+    },
+    {
+      "start": 63.429,
+      "end": 64.286,
+      "label": "A#maj7"
+    },
+    {
+      "start": 64.286,
+      "end": 65.143,
+      "label": "A#7"
+    },
+    {
+      "start": 66.857,
+      "end": 68.571,
+      "label": "D7"
+    },
+    {
+      "start": 68.571,
+      "end": 70.286,
+      "label": "Dm7"
+    },
+    {
+      "start": 70.286,
+      "end": 71.143,
+      "label": "A#maj7"
+    },
+    {
+      "start": 71.143,
+      "end": 72.0,
+      "label": "A#7"
+    },
+    {
+      "start": 73.714,
+      "end": 74.571,
+      "label": "D7"
+    },
+    {
+      "start": 74.571,
+      "end": 77.143,
+      "label": "Dm7"
+    },
+    {
+      "start": 77.143,
+      "end": 78.857,
+      "label": "A#7"
+    },
+    {
+      "start": 80.571,
+      "end": 81.428,
+      "label": "D7"
+    },
+    {
+      "start": 81.428,
+      "end": 84.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 84.0,
+      "end": 85.714,
+      "label": "A#7"
+    },
+    {
+      "start": 87.428,
+      "end": 88.286,
+      "label": "D7"
+    },
+    {
+      "start": 88.286,
+      "end": 90.857,
+      "label": "Dm7"
+    },
+    {
+      "start": 90.857,
+      "end": 92.571,
+      "label": "A#7"
+    },
+    {
+      "start": 94.286,
+      "end": 95.143,
+      "label": "D7"
+    },
+    {
+      "start": 95.143,
+      "end": 96.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 96.0,
+      "end": 99.428,
+      "label": "A#maj7"
+    },
+    {
+      "start": 99.428,
+      "end": 101.143,
+      "label": "C7"
+    },
+    {
+      "start": 101.143,
+      "end": 102.857,
+      "label": "Am7"
+    },
+    {
+      "start": 102.857,
+      "end": 106.286,
+      "label": "A#maj7"
+    },
+    {
+      "start": 106.286,
+      "end": 108.0,
+      "label": "C7"
+    },
+    {
+      "start": 108.0,
+      "end": 109.714,
+      "label": "Am7"
+    },
+    {
+      "start": 109.714,
+      "end": 113.143,
+      "label": "A#maj7"
+    },
+    {
+      "start": 113.143,
+      "end": 114.857,
+      "label": "C7"
+    },
+    {
+      "start": 114.857,
+      "end": 116.571,
+      "label": "Am7"
+    },
+    {
+      "start": 116.571,
+      "end": 119.143,
+      "label": "A#maj7"
+    },
+    {
+      "start": 119.143,
+      "end": 120.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 120.0,
+      "end": 120.857,
+      "label": "Am7"
+    },
+    {
+      "start": 120.857,
+      "end": 121.714,
+      "label": "C7"
+    },
+    {
+      "start": 121.714,
+      "end": 123.428,
+      "label": "Am7"
+    },
+    {
+      "start": 123.428,
+      "end": 125.143,
+      "label": "A#maj7"
+    },
+    {
+      "start": 125.143,
+      "end": 126.857,
+      "label": "Am7"
+    },
+    {
+      "start": 126.857,
+      "end": 130.286,
+      "label": "A7"
+    },
+    {
+      "start": 130.286,
+      "end": 131.143,
+      "label": "Dm7"
+    },
+    {
+      "start": 131.143,
+      "end": 132.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 132.0,
+      "end": 133.714,
+      "label": "Dm7"
+    },
+    {
+      "start": 133.714,
+      "end": 134.571,
+      "label": "Em7"
+    },
+    {
+      "start": 134.571,
+      "end": 135.428,
+      "label": "G7"
+    },
+    {
+      "start": 135.428,
+      "end": 137.143,
+      "label": "A7"
+    },
+    {
+      "start": 137.143,
+      "end": 138.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 138.0,
+      "end": 138.857,
+      "label": "A#maj7"
+    },
+    {
+      "start": 138.857,
+      "end": 139.714,
+      "label": "Dm7"
+    },
+    {
+      "start": 139.714,
+      "end": 140.571,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 140.571,
+      "end": 142.286,
+      "label": "G7"
+    },
+    {
+      "start": 142.286,
+      "end": 144.857,
+      "label": "Dm7"
+    },
+    {
+      "start": 144.857,
+      "end": 145.714,
+      "label": "A#maj7"
+    },
+    {
+      "start": 145.714,
+      "end": 147.428,
+      "label": "F7"
+    },
+    {
+      "start": 147.428,
+      "end": 149.143,
+      "label": "G7"
+    },
+    {
+      "start": 149.143,
+      "end": 150.857,
+      "label": "A7"
+    },
+    {
+      "start": 150.857,
+      "end": 151.714,
+      "label": "Dm7"
+    },
+    {
+      "start": 151.714,
+      "end": 152.571,
+      "label": "A#maj7"
+    },
+    {
+      "start": 152.571,
+      "end": 153.428,
+      "label": "F7"
+    },
+    {
+      "start": 153.428,
+      "end": 154.286,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 154.286,
+      "end": 156.0,
+      "label": "G7"
+    },
+    {
+      "start": 156.0,
+      "end": 160.286,
+      "label": "Dm7"
+    },
+    {
+      "start": 160.286,
+      "end": 161.143,
+      "label": "F7"
+    },
+    {
+      "start": 161.143,
+      "end": 162.857,
+      "label": "G7"
+    },
+    {
+      "start": 162.857,
+      "end": 164.571,
+      "label": "A7"
+    },
+    {
+      "start": 164.571,
+      "end": 167.143,
+      "label": "Dm7"
+    },
+    {
+      "start": 167.143,
+      "end": 168.0,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 168.0,
+      "end": 169.714,
+      "label": "G7"
+    },
+    {
+      "start": 169.714,
+      "end": 172.286,
+      "label": "Dm7"
+    },
+    {
+      "start": 172.286,
+      "end": 173.143,
+      "label": "A#maj7"
+    },
+    {
+      "start": 173.143,
+      "end": 174.857,
+      "label": "Dm7"
+    },
+    {
+      "start": 174.857,
+      "end": 176.571,
+      "label": "G7"
+    },
+    {
+      "start": 176.571,
+      "end": 178.286,
+      "label": "Asus4"
+    },
+    {
+      "start": 178.286,
+      "end": 179.143,
+      "label": "Dm7"
+    },
+    {
+      "start": 179.143,
+      "end": 180.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 180.0,
+      "end": 181.714,
+      "label": "Dm7"
+    },
+    {
+      "start": 181.714,
+      "end": 183.428,
+      "label": "G7"
+    },
+    {
+      "start": 183.428,
+      "end": 185.143,
+      "label": "Dm7"
+    },
+    {
+      "start": 185.143,
+      "end": 186.0,
+      "label": "D7"
+    },
+    {
+      "start": 186.0,
+      "end": 186.857,
+      "label": "Dsus4"
+    },
+    {
+      "start": 186.857,
+      "end": 187.714,
+      "label": "D7"
+    },
+    {
+      "start": 187.714,
+      "end": 189.428,
+      "label": "Dsus4"
+    },
+    {
+      "start": 189.428,
+      "end": 190.286,
+      "label": "Em7"
+    },
+    {
+      "start": 190.286,
+      "end": 191.143,
+      "label": "D7"
+    },
+    {
+      "start": 191.143,
+      "end": 192.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 192.0,
+      "end": 192.857,
+      "label": "D7"
+    },
+    {
+      "start": 192.857,
+      "end": 193.714,
+      "label": "Dsus4"
+    },
+    {
+      "start": 193.714,
+      "end": 194.571,
+      "label": "D7"
+    },
+    {
+      "start": 194.571,
+      "end": 197.143,
+      "label": "Dm7"
+    },
+    {
+      "start": 198.857,
+      "end": 199.714,
+      "label": "D7"
+    },
+    {
+      "start": 199.714,
+      "end": 200.571,
+      "label": "Dsus4"
+    },
+    {
+      "start": 200.571,
+      "end": 201.428,
+      "label": "D7"
+    },
+    {
+      "start": 201.428,
+      "end": 203.143,
+      "label": "Dsus4"
+    },
+    {
+      "start": 203.143,
+      "end": 204.0,
+      "label": "Em7"
+    },
+    {
+      "start": 204.0,
+      "end": 204.857,
+      "label": "D7"
+    },
+    {
+      "start": 204.857,
+      "end": 205.714,
+      "label": "Dm7"
+    },
+    {
+      "start": 205.714,
+      "end": 206.571,
+      "label": "D7"
+    },
+    {
+      "start": 206.571,
+      "end": 207.428,
+      "label": "Dsus4"
+    },
+    {
+      "start": 207.428,
+      "end": 208.286,
+      "label": "D7"
+    },
+    {
+      "start": 208.286,
+      "end": 210.857,
+      "label": "Dm7"
+    },
+    {
+      "start": 212.571,
+      "end": 213.428,
+      "label": "D7"
+    },
+    {
+      "start": 213.428,
+      "end": 214.286,
+      "label": "Dsus4"
+    },
+    {
+      "start": 214.286,
+      "end": 215.143,
+      "label": "D7"
+    },
+    {
+      "start": 215.143,
+      "end": 216.857,
+      "label": "Dsus4"
+    },
+    {
+      "start": 216.857,
+      "end": 217.714,
+      "label": "Em7"
+    },
+    {
+      "start": 217.714,
+      "end": 218.571,
+      "label": "D7"
+    },
+    {
+      "start": 218.571,
+      "end": 219.428,
+      "label": "Dm7"
+    },
+    {
+      "start": 219.428,
+      "end": 220.285,
+      "label": "D7"
+    },
+    {
+      "start": 220.285,
+      "end": 221.143,
+      "label": "Dsus4"
+    },
+    {
+      "start": 221.143,
+      "end": 222.0,
+      "label": "D7"
+    },
+    {
+      "start": 222.0,
+      "end": 224.571,
+      "label": "Dm7"
+    }
+  ]
+}

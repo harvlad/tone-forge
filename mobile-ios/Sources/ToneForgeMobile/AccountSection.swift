@@ -16,6 +16,12 @@ struct AccountSection: View {
     @ObservedObject var account: AccountStore
     let baseURL: URL
 
+    // Email-code flow state (free-team fallback: SIWA needs a paid
+    // Apple developer team; the emailed 6-digit code does not).
+    @State private var email = ""
+    @State private var code = ""
+    @State private var codeSent = false
+
     var body: some View {
         Section {
             if let user = account.profile {
@@ -67,10 +73,60 @@ struct AccountSection: View {
             .frame(height: 44)
             .accessibilityIdentifier("settings-signin-apple")
         }
+        emailCodeFlow
+
         if let error = account.lastError {
             Text(error)
                 .font(.footnote)
                 .foregroundStyle(.red)
+        }
+    }
+
+    /// Email sign-in: address → emailed 6-digit code → session.
+    @ViewBuilder
+    private var emailCodeFlow: some View {
+        if !codeSent {
+            HStack {
+                TextField("Email", text: $email)
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("settings-email-field")
+                Button("Send code") {
+                    Task {
+                        await account.requestEmailCode(
+                            email: email, baseURL: baseURL)
+                        if account.lastError == nil { codeSent = true }
+                    }
+                }
+                .disabled(!email.contains("@") || account.isSigningIn)
+                .accessibilityIdentifier("settings-email-send")
+            }
+        } else {
+            HStack {
+                TextField("6-digit code", text: $code)
+                    .textContentType(.oneTimeCode)
+                    .keyboardType(.numberPad)
+                    .accessibilityIdentifier("settings-email-code")
+                Button("Sign in") {
+                    Task {
+                        await account.signInWithEmailCode(
+                            email: email, code: code, baseURL: baseURL)
+                        if account.profile != nil {
+                            email = ""; code = ""; codeSent = false
+                        }
+                    }
+                }
+                .disabled(code.count < 6 || account.isSigningIn)
+                .accessibilityIdentifier("settings-email-verify")
+            }
+            Button("Use a different email") {
+                codeSent = false
+                code = ""
+                Task { @MainActor in account.clearError() }
+            }
+            .font(.footnote)
         }
     }
 

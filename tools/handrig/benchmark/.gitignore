@@ -1,0 +1,10 @@
+# Regenerable render artifacts (large PNGs / embedded HTML). Rebuild with:
+#   python3 build_render_states.py && blender --background --python ../mpfb_render.py \
+#     -- results/render_states.json results/renders && python3 build_html.py
+results/renders/
+results/render_states.json
+results/report.html
+# Animation intermediates (regenerable); the GIFs themselves ARE committed.
+results/anim_frames/
+results/anim_states.json
+results/anim_meta.json

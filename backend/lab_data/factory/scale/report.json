@@ -1,0 +1,173 @@
+{
+ "n_pairs": 2232,
+ "n_mixtures": 2234,
+ "n_targets": 2232,
+ "shard_reports": [
+  {
+   "shard": 0,
+   "note": "reused existing shard catalog"
+  },
+  {
+   "shard": 1,
+   "note": "reused existing shard catalog"
+  },
+  {
+   "shard": 2,
+   "note": "reused existing shard catalog"
+  },
+  {
+   "shard": 3,
+   "note": "reused existing shard catalog"
+  }
+ ],
+ "corpus_gate": {
+  "n_pairs": 2232,
+  "n_mixtures": 2234,
+  "n_targets": 2232,
+  "checks": {
+   "orphan_pair": {
+    "ok": false,
+    "n_failed": 2,
+    "action": "reject",
+    "examples": [
+     "scn_669cd4e15ee22db5:cb7f1337-1d54-522d-afa6-1bf5f10cc2f8: mixture without target",
+     "scn_669cd4e15ee22db5:03e3bde0-5893-5ed7-8b1e-cfe9be517d7c: mixture without target"
+    ]
+   },
+   "collapsed_pair": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "reject",
+    "examples": []
+   },
+   "missing_audio": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "reject",
+    "examples": []
+   },
+   "silent_mixture": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "reject",
+    "examples": []
+   },
+   "silent_target": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "reject",
+    "examples": []
+   },
+   "invalid_rms": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "reject",
+    "examples": []
+   },
+   "clipping": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "review",
+    "examples": []
+   },
+   "duplicate_pair": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "review",
+    "examples": []
+   },
+   "duplicate_provenance": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "reject",
+    "examples": []
+   },
+   "duplicate_mixture": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "reject",
+    "examples": []
+   },
+   "duplicate_target": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "reject",
+    "examples": []
+   },
+   "missing_metadata": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "review",
+    "examples": []
+   },
+   "missing_lineage": {
+    "ok": true,
+    "n_failed": 0,
+    "action": "review",
+    "examples": []
+   }
+  },
+  "marked_review": 0,
+  "marked_reject": 2,
+  "balanced": true,
+  "imbalance": {
+   "key": 97.0,
+   "recording_style": 71.4
+  },
+  "manifest_ok": true,
+  "manifest_tracks": 2232,
+  "manifest_error": null,
+  "clean": true
+ },
+ "manifest": {
+  "n_tracks": 2232,
+  "sha_ok": true,
+  "license_ok": true,
+  "license_error": null,
+  "intended_use": "commercial_eligible"
+ },
+ "cache_rerun": {
+  "pairs": 169,
+  "new": 0,
+  "cached": 169,
+  "all_cached": true
+ },
+ "replay_deterministic": true,
+ "exact_ground_truth_spotcheck": true,
+ "gt_checked": 20,
+ "coverage_dims": {
+  "genre": 6,
+  "gain": 1,
+  "guitar_type": 2,
+  "pickup": 1,
+  "tempo": 4,
+  "key": 24,
+  "masking_level": 2,
+  "recording_style": 3,
+  "acoustic_vs_electric": 2,
+  "difficulty": 1,
+  "synthetic_vs_real": 1,
+  "license_class": 1
+ },
+ "coverage_sparse_cells": 0,
+ "planner_top_gaps": [
+  "tuning=baritone (prio 2.4)",
+  "tuning=7-string (prio 2.4)",
+  "tuning=drop_c (prio 2.2)",
+  "tuning=8-string (prio 2.2)",
+  "string_count=7 (prio 2.2)",
+  "string_count=8 (prio 2.2)",
+  "masking_level=high (prio 2.0)",
+  "playing_style=metal (prio 1.8)"
+ ],
+ "timings": {
+  "generate_s": 0.0,
+  "merge_s": 1.1,
+  "validate_s": 63.4,
+  "manifest_s": 0.0,
+  "cache_rerun_s": 68.3,
+  "coverage_planner_s": 0.1
+ },
+ "total_s": 135.0,
+ "corpus_bytes_human": "6.0G"
+}

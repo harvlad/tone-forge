@@ -71,6 +71,16 @@ public protocol AuthProviding: Sendable {
         fullName: String?
     ) async throws -> AuthSession
 
+    /// Native email-code sign-in step 1: ask the backend to email a
+    /// 6-digit code. Always succeeds server-side (no enumeration).
+    func requestEmailCode(baseURL: URL, email: String) async throws
+
+    /// Native email-code sign-in step 2: exchange the emailed code for
+    /// a backend session (same shape as the Apple exchange).
+    func verifyEmailCode(
+        baseURL: URL, email: String, code: String, deviceId: String?
+    ) async throws -> AuthSession
+
     /// Fetch the user for a session token; nil when the token is
     /// invalid or the caller is anonymous.
     func session(baseURL: URL, token: String) async throws -> AuthUser?
@@ -112,6 +122,34 @@ public struct BackendAuthClient: AuthProviding {
             request.setValue(deviceId, forHTTPHeaderField: "X-Device-Id")
         }
 
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try Self.checkStatus(response)
+        return try Self.decodeSession(data)
+    }
+
+    public func requestEmailCode(baseURL: URL, email: String) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/auth/email-code"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["email": email])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        try Self.checkStatus(response)
+    }
+
+    public func verifyEmailCode(
+        baseURL: URL, email: String, code: String, deviceId: String?
+    ) async throws -> AuthSession {
+        var body: [String: Any] = ["email": email, "code": code]
+        if let deviceId { body["device_id"] = deviceId }
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/auth/email-verify"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        if let deviceId {
+            request.setValue(deviceId, forHTTPHeaderField: "X-Device-Id")
+        }
         let (data, response) = try await URLSession.shared.data(for: request)
         try Self.checkStatus(response)
         return try Self.decodeSession(data)

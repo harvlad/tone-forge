@@ -1,0 +1,1654 @@
+{
+ "metadata": {
+  "benchmark_version": "0.1.0",
+  "cc0_assets": {
+   "mpfb_rig": "unification/mpfb_rig.json"
+  },
+  "config": {
+   "restarts": 5
+  },
+  "config_hash": "b3363e4a68067c55",
+  "deps": {
+   "blender": "render-only (M8)",
+   "mpfb": "render-only (M8)",
+   "numpy": "1.26.4",
+   "python": "3.10.1",
+   "scipy": "1.15.3"
+  },
+  "machine": {
+   "cpu": "arm64",
+   "os": "Darwin",
+   "py": "3.10.1",
+   "release": "25.3.0"
+  },
+  "metric_version": "0.0.0",
+  "planner": "trajopt_resist",
+  "planner_version": "ed014f8",
+  "seed": 0,
+  "solver_version": "ed014f8"
+ },
+ "phrases": {
+  "one_shift_scale": {
+   "failures": [
+    {
+     "detail": "tip 889.04mm > band 300mm",
+     "severity": "soft",
+     "tag": "over_travel"
+    }
+   ],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.011,
+       "n_contacts": 1,
+       "t": 0.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 0.5,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.019,
+       "n_contacts": 1,
+       "t": 1.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.034,
+       "n_contacts": 1,
+       "t": 1.5,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 0.034
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "per_transition": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "reuse": 0.0,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 244.59,
+      "middle": 217.13,
+      "pinky": 215.97,
+      "ring": 211.35
+     },
+     "tier": 2,
+     "total_mm": 889.04
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 4,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 91.99
+    },
+    "shift_count": {
+     "count": 1,
+     "deltas_mm": [
+      9.11,
+      28.39,
+      14.27
+     ],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    },
+    "timing": {
+     "decay_ms": 166.7,
+     "kind": "soft",
+     "name": "timing",
+     "per_note": [
+      {
+       "arrival": 0.0,
+       "early_release_ms": 0.0,
+       "finger": "index",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.0
+      },
+      {
+       "arrival": 0.5,
+       "early_release_ms": 500.0,
+       "finger": "ring",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.5
+      },
+      {
+       "arrival": 1.0,
+       "early_release_ms": 500.0,
+       "finger": "index",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 1.0
+      },
+      {
+       "arrival": 1.5,
+       "early_release_ms": 500.0,
+       "finger": "ring",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 1.5
+      }
+     ],
+     "perfect_ms": 30.0,
+     "tier": 3,
+     "timing_score": 1.0
+    }
+   },
+   "phrase_id": "one_shift_scale",
+   "score": 0.782,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 0.782,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 0.0,
+     "root_travel": 1.0,
+     "shift_count": 1.0
+    },
+    "soft_score": 0.782,
+    "tier2_score": 0.7,
+    "tier3_score": 1.0
+   }
+  },
+  "repeated_note": {
+   "failures": [],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 0.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 0.5,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 1.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 1.5,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 0.0
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "per_transition": [
+      1.0,
+      1.0,
+      1.0
+     ],
+     "reuse": 1.0,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 3.55,
+      "middle": 2.05,
+      "pinky": 4.89,
+      "ring": 4.0
+     },
+     "tier": 2,
+     "total_mm": 14.49
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 4,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 4.6
+    },
+    "shift_count": {
+     "count": 0,
+     "deltas_mm": [
+      0.0,
+      0.01,
+      0.0
+     ],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    },
+    "timing": {
+     "decay_ms": 166.7,
+     "kind": "soft",
+     "name": "timing",
+     "per_note": [
+      {
+       "arrival": 0.0,
+       "early_release_ms": 0.0,
+       "finger": "middle",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.0
+      },
+      {
+       "arrival": 0.0,
+       "early_release_ms": 0.0,
+       "finger": "middle",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.5
+      },
+      {
+       "arrival": 0.0,
+       "early_release_ms": 0.0,
+       "finger": "middle",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 1.0
+      },
+      {
+       "arrival": 0.0,
+       "early_release_ms": 500.0,
+       "finger": "middle",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 1.5
+      }
+     ],
+     "perfect_ms": 30.0,
+     "tier": 3,
+     "timing_score": 1.0
+    }
+   },
+   "phrase_id": "repeated_note",
+   "score": 1.0,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 1.0,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 1.0,
+     "root_travel": 1.0,
+     "shift_count": 1.0
+    },
+    "soft_score": 1.0,
+    "tier2_score": 1.0,
+    "tier3_score": 1.0
+   }
+  },
+  "single": {
+   "failures": [],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.001,
+       "n_contacts": 1,
+       "t": 0.0,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 0.001
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "note": "single moment; trivially 1.0",
+     "reuse": 1.0,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 0,
+      "middle": 0,
+      "pinky": 0,
+      "ring": 0
+     },
+     "tier": 2,
+     "total_mm": 0
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 1,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 0
+    },
+    "shift_count": {
+     "count": 0,
+     "deltas_mm": [],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    },
+    "timing": {
+     "decay_ms": 166.7,
+     "kind": "soft",
+     "name": "timing",
+     "per_note": [
+      {
+       "arrival": 0.0,
+       "early_release_ms": 1000.0,
+       "finger": "middle",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.0
+      }
+     ],
+     "perfect_ms": 30.0,
+     "tier": 3,
+     "timing_score": 1.0
+    }
+   },
+   "phrase_id": "single",
+   "score": 1.0,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 1.0,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 1.0,
+     "root_travel": 1.0,
+     "shift_count": 1.0
+    },
+    "soft_score": 1.0,
+    "tier2_score": 1.0,
+    "tier3_score": 1.0
+   }
+  },
+  "string_crossing": {
+   "failures": [
+    {
+     "detail": "tip 253.77mm > band 120mm",
+     "severity": "soft",
+     "tag": "over_travel"
+    }
+   ],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 0.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.015,
+       "n_contacts": 1,
+       "t": 0.5,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.0,
+       "n_contacts": 1,
+       "t": 1.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.004,
+       "n_contacts": 1,
+       "t": 1.5,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 0.015
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "per_transition": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "reuse": 0.0,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 65.36,
+      "middle": 77.59,
+      "pinky": 52.97,
+      "ring": 57.85
+     },
+     "tier": 2,
+     "total_mm": 253.77
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 4,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 2.6
+    },
+    "shift_count": {
+     "count": 0,
+     "deltas_mm": [
+      0.21,
+      0.25,
+      0.33
+     ],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    },
+    "timing": {
+     "decay_ms": 166.7,
+     "kind": "soft",
+     "name": "timing",
+     "per_note": [
+      {
+       "arrival": 0.0,
+       "early_release_ms": 500.0,
+       "finger": "index",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.0
+      },
+      {
+       "arrival": 0.5,
+       "early_release_ms": 500.0,
+       "finger": "middle",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.5
+      },
+      {
+       "arrival": 1.0,
+       "early_release_ms": 500.0,
+       "finger": "ring",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 1.0
+      },
+      {
+       "arrival": 1.5,
+       "early_release_ms": 500.0,
+       "finger": "pinky",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 1.5
+      }
+     ],
+     "perfect_ms": 30.0,
+     "tier": 3,
+     "timing_score": 1.0
+    }
+   },
+   "phrase_id": "string_crossing",
+   "score": 0.782,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 0.782,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 0.0,
+     "root_travel": 1.0,
+     "shift_count": 1.0
+    },
+    "soft_score": 0.782,
+    "tier2_score": 0.7,
+    "tier3_score": 1.0
+   }
+  },
+  "sustained_anchor": {
+   "failures": [
+    {
+     "detail": "root 10.24mm > band 10mm",
+     "severity": "soft",
+     "tag": "position_wander"
+    }
+   ],
+   "hard_gate_pass": true,
+   "metrics": {
+    "contact_fidelity": {
+     "kind": "hard_gate",
+     "name": "contact_fidelity",
+     "pass": true,
+     "per_moment": [
+      {
+       "contact_mm": 0.005,
+       "n_contacts": 2,
+       "t": 0.0,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.002,
+       "n_contacts": 2,
+       "t": 0.5,
+       "within_tol": true
+      },
+      {
+       "contact_mm": 0.003,
+       "n_contacts": 2,
+       "t": 1.0,
+       "within_tol": true
+      }
+     ],
+     "tier": 1,
+     "tol_mm": 6.0,
+     "worst_contact_mm": 0.005
+    },
+    "finger_reuse": {
+     "kind": "soft",
+     "name": "finger_reuse",
+     "per_transition": [
+      0.5,
+      0.5
+     ],
+     "reuse": 0.5,
+     "tier": 3
+    },
+    "fingertip_travel": {
+     "kind": "soft",
+     "name": "fingertip_travel",
+     "per_finger_mm": {
+      "index": 10.86,
+      "middle": 11.63,
+      "pinky": 13.57,
+      "ring": 15.31
+     },
+     "tier": 2,
+     "total_mm": 51.37
+    },
+    "root_travel": {
+     "kind": "soft",
+     "n_knots": 3,
+     "name": "root_travel",
+     "tier": 2,
+     "total_mm": 10.24
+    },
+    "shift_count": {
+     "count": 0,
+     "deltas_mm": [
+      5.14,
+      4.8
+     ],
+     "kind": "soft",
+     "name": "shift_count",
+     "threshold_mm": 20.0,
+     "tier": 2
+    },
+    "timing": {
+     "decay_ms": 166.7,
+     "kind": "soft",
+     "name": "timing",
+     "per_note": [
+      {
+       "arrival": 0.0,
+       "early_release_ms": 0.0,
+       "finger": "index",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.0
+      },
+      {
+       "arrival": 0.0,
+       "early_release_ms": 0.0,
+       "finger": "middle",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.0
+      },
+      {
+       "arrival": 0.0,
+       "early_release_ms": 0.0,
+       "finger": "index",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.5
+      },
+      {
+       "arrival": 0.5,
+       "early_release_ms": 500.0,
+       "finger": "ring",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 0.5
+      },
+      {
+       "arrival": 0.0,
+       "early_release_ms": 500.0,
+       "finger": "index",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 1.0
+      },
+      {
+       "arrival": 0.0,
+       "early_release_ms": 500.0,
+       "finger": "middle",
+       "late_ms": 0.0,
+       "quality": 1.0,
+       "t": 1.0
+      }
+     ],
+     "perfect_ms": 30.0,
+     "tier": 3,
+     "timing_score": 1.0
+    }
+   },
+   "phrase_id": "sustained_anchor",
+   "score": 0.998,
+   "scoring": {
+    "hard_gate_multiplier": 1.0,
+    "movement_score": 0.998,
+    "per_metric_quality": {
+     "finger_reuse": 1.0,
+     "fingertip_travel": 1.0,
+     "root_travel": 0.988,
+     "shift_count": 1.0
+    },
+    "soft_score": 0.998,
+    "tier2_score": 0.998,
+    "tier3_score": 1.0
+   }
+  }
+ },
+ "trajectories": {
+  "one_shift_scale": {
+   "contact_schedule": [
+    {
+     "articulation": "fret",
+     "finger": "index",
+     "fret": 2,
+     "string": 3,
+     "t": 0.0
+    },
+    {
+     "articulation": "fret",
+     "finger": "ring",
+     "fret": 4,
+     "string": 3,
+     "t": 0.5
+    },
+    {
+     "articulation": "fret",
+     "finger": "index",
+     "fret": 9,
+     "string": 3,
+     "t": 1.0
+    },
+    {
+     "articulation": "fret",
+     "finger": "ring",
+     "fret": 11,
+     "string": 3,
+     "t": 1.5
+    }
+   ],
+   "knots": [
+    {
+     "meta": {
+      "contact_mm": 0.011,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "index",
+        "fret": 2,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.6170321578613729,
+      0.7307673794095232,
+      0.5285317408000506,
+      0.02698952453898331,
+      -0.04625553249002743,
+      -0.069824973647656,
+      0.5746461606201406,
+      0.02352555990347498,
+      0.8744773786832707,
+      0.578429770627353,
+      0.43807211273973046,
+      0.0046025757668451284,
+      0.7406221435449836,
+      0.5027950363179337,
+      0.5324842986263657,
+      0.0023132155463989395,
+      0.7889617830898665,
+      0.5274839698544361,
+      0.5324849281879365,
+      -0.00042201045887783407,
+      0.7715209065900803,
+      0.5138828404090873,
+      0.3528804140090088,
+      0.4355809351530268,
+      0.31417528192313077,
+      -1.187800993761495e-15,
+      0.04357457988305672,
+      0.08576414614456136,
+      0.17799910683675452,
+      0.2675732793164158
+     ],
+     "t": 0.0
+    },
+    {
+     "meta": {
+      "contact_mm": 0.0,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "ring",
+        "fret": 4,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.6261406275296831,
+      0.7321551526813725,
+      0.5254702056662119,
+      0.20502416102328674,
+      -0.24934393292942172,
+      0.4575970016047224,
+      0.5478489709370656,
+      0.006882170094818841,
+      0.8450333248040891,
+      0.5656612981229404,
+      0.5094866172945317,
+      -0.0006250956181957602,
+      0.7680765169154254,
+      0.44767552718316195,
+      0.48781735813748345,
+      -0.12474877128046384,
+      0.578801063570529,
+      0.314071762810186,
+      0.540291882104706,
+      -0.03484052770733293,
+      0.7736708582406501,
+      0.5051598384065001,
+      0.8353156329502655,
+      0.6981317007977318,
+      -0.020095302286685428,
+      -9.228711769228798e-13,
+      0.04010893410454994,
+      0.07660361130973656,
+      0.16270614375837117,
+      0.24444466815881002
+     ],
+     "t": 0.5
+    },
+    {
+     "meta": {
+      "contact_mm": 0.019,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "index",
+        "fret": 9,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.6545310340295046,
+      0.7824065842244492,
+      0.5599159025359477,
+      0.18009177499959378,
+      -0.15569366867819556,
+      0.5942508422370489,
+      1.1568557112813784,
+      -0.3839693708167323,
+      0.010313497002501696,
+      -0.16878026928191847,
+      0.46696179269148125,
+      -0.10278411046240166,
+      0.71857727319053,
+      0.5196631993852123,
+      0.4038448651058116,
+      0.03268065122167752,
+      0.5999452265186502,
+      0.354880534101807,
+      0.49814226158546104,
+      -0.02596754548642398,
+      0.7698841602922537,
+      0.5114199549399763,
+      0.9520482145161132,
+      0.629441914450912,
+      -0.1749966929867829,
+      -1.0180945010233298e-12,
+      0.041011185559916175,
+      0.07509168100280855,
+      0.16483179086302407,
+      0.24717907882096238
+     ],
+     "t": 1.0
+    },
+    {
+     "meta": {
+      "contact_mm": 0.034,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "ring",
+        "fret": 11,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.6687966095884089,
+      0.7842203420137591,
+      0.5554066654077342,
+      0.20262901639344644,
+      -0.18105808051249023,
+      0.594006666086211,
+      0.40014434493517886,
+      0.014871890252391114,
+      0.3441815326790291,
+      0.09549459789213731,
+      0.4455513187564085,
+      -0.06749950923884815,
+      0.6965785059509637,
+      0.5396654605200939,
+      0.309576946616002,
+      -0.20943945807314984,
+      0.5103781452973704,
+      0.23003085284184138,
+      0.5481787702092838,
+      -0.03211855088361337,
+      0.7631081897491023,
+      0.5064495758223909,
+      0.9477884088192945,
+      0.6981317007977318,
+      -0.06541752766942159,
+      -9.641112509420074e-14,
+      0.04300364509158378,
+      0.0777002853676013,
+      0.17152191110355855,
+      0.2569662352905962
+     ],
+     "t": 1.5
+    }
+   ],
+   "phrase_id": "one_shift_scale",
+   "planner": "trajopt_resist",
+   "solver_version": "878f0ae"
+  },
+  "repeated_note": {
+   "contact_schedule": [
+    {
+     "articulation": "fret",
+     "finger": "middle",
+     "fret": 2,
+     "string": 3,
+     "t": 0.0
+    },
+    {
+     "articulation": "fret",
+     "finger": "middle",
+     "fret": 2,
+     "string": 3,
+     "t": 0.5
+    },
+    {
+     "articulation": "fret",
+     "finger": "middle",
+     "fret": 2,
+     "string": 3,
+     "t": 1.0
+    },
+    {
+     "articulation": "fret",
+     "finger": "middle",
+     "fret": 2,
+     "string": 3,
+     "t": 1.5
+    }
+   ],
+   "knots": [
+    {
+     "meta": {
+      "contact_mm": 0.0,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "middle",
+        "fret": 2,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.6391281298532335,
+      0.7126182033755457,
+      0.5161123746087912,
+      0.07014267063407656,
+      -0.0822794418202085,
+      -0.0391580709482703,
+      0.5403907207511972,
+      -0.001145740257876897,
+      0.7954144012008725,
+      0.5359606278934032,
+      0.6192733614660499,
+      0.011120193654602921,
+      0.8932742730233069,
+      0.6120343109294297,
+      0.5417909642470914,
+      0.0005227721312230583,
+      0.7972681576823687,
+      0.5378519561670834,
+      0.541112483035897,
+      0.0012559788254021525,
+      0.794943923464047,
+      0.5356127579307316,
+      0.3438150238291424,
+      0.4535064125364511,
+      0.30605757999939975,
+      -6.786110570731322e-11,
+      0.042817011111192016,
+      0.07787958736853276,
+      0.1713588284257085,
+      0.2569928653954418
+     ],
+     "t": 0.0
+    },
+    {
+     "meta": {
+      "contact_mm": 0.0,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "middle",
+        "fret": 2,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.6391317788049158,
+      0.7108200090983726,
+      0.5167775437424901,
+      0.07177997214441294,
+      -0.08603320790573155,
+      -0.03524984886274736,
+      0.5280197986938545,
+      0.0007748251523355358,
+      0.7793294023708162,
+      0.5209081523158853,
+      0.6177920058795106,
+      -0.0070757670380245585,
+      0.8973655872461277,
+      0.60509497100232,
+      0.5279717034113435,
+      8.01105362911412e-05,
+      0.7799969475517474,
+      0.5215688571053246,
+      0.528443023184449,
+      5.477524319438261e-05,
+      0.7789215916238682,
+      0.5201433874166682,
+      0.36484978487453484,
+      0.45803779733336086,
+      0.2864707783806804,
+      -1.329769159793781e-10,
+      0.04072176417004859,
+      0.0734993815041255,
+      0.16291123015416967,
+      0.24435554258364842
+     ],
+     "t": 0.5
+    },
+    {
+     "meta": {
+      "contact_mm": 0.0,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "middle",
+        "fret": 2,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.6391257911249983,
+      0.7112295974134426,
+      0.515491033343749,
+      0.08744506840005806,
+      -0.09867421797696141,
+      0.002651659519821154,
+      0.5261748438385531,
+      -0.0011027656935278132,
+      0.7708193095454545,
+      0.513384872357423,
+      0.6093755438055343,
+      -0.014201612891290823,
+      0.8930684193712047,
+      0.5957016196408608,
+      0.5257914503268758,
+      0.009105217909976569,
+      0.7710260751881117,
+      0.5135503148662414,
+      0.5265435052821369,
+      -0.0015397197222680242,
+      0.7706737037308931,
+      0.5131955437899995,
+      0.37500110881743176,
+      0.48020296581942107,
+      0.2878614682561751,
+      -1.147747164959921e-10,
+      0.040329764740453855,
+      0.07260014555526031,
+      0.16132225669668476,
+      0.24198405193691225
+     ],
+     "t": 1.0
+    },
+    {
+     "meta": {
+      "contact_mm": 0.0,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "middle",
+        "fret": 2,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.6391293455857908,
+      0.7107638597318205,
+      0.5167439455224627,
+      0.06942963413790723,
+      -0.08418994938458398,
+      -0.03933575454763005,
+      0.5235514285744823,
+      -0.001790976541754252,
+      0.7720857103712163,
+      0.5139821606663727,
+      0.6180098422704641,
+      -0.0012029851476106572,
+      0.8881880012480292,
+      0.59457476660321,
+      0.522289765492862,
+      -0.0010060912768709688,
+      0.7720076916693597,
+      0.5139505950588996,
+      0.5239084962251654,
+      0.00045849195027279746,
+      0.7701743148697534,
+      0.5120404522016987,
+      0.3806685757717758,
+      0.4608397820829328,
+      0.26525465769366646,
+      -4.92126187538972e-11,
+      0.040040397529627195,
+      0.07207461055074538,
+      0.16016127856357112,
+      0.2402414029031063
+     ],
+     "t": 1.5
+    }
+   ],
+   "phrase_id": "repeated_note",
+   "planner": "trajopt_resist",
+   "solver_version": "ed014f8"
+  },
+  "single": {
+   "contact_schedule": [
+    {
+     "articulation": "fret",
+     "finger": "middle",
+     "fret": 2,
+     "string": 3,
+     "t": 0.0
+    }
+   ],
+   "knots": [
+    {
+     "meta": {
+      "contact_mm": 0.0,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "middle",
+        "fret": 2,
+        "string": 3
+       }
+      ],
+      "feasible": true,
+      "planner_note": "single moment; trajopt_resist == naive"
+     },
+     "mpfb_state": [
+      -0.6391276721129806,
+      0.7116757911090781,
+      0.5163975596293434,
+      0.06894596229117989,
+      -0.08255977998025996,
+      -0.04175571030957347,
+      0.5408938973564273,
+      -0.001392281770690086,
+      0.79608162989609,
+      0.5365947652702908,
+      0.6179585986357823,
+      0.012090996393147426,
+      0.8896253050193902,
+      0.6098887778526793,
+      0.5423464239556262,
+      0.0004382092658757952,
+      0.797979851754635,
+      0.5385340918861937,
+      0.5416419137962817,
+      0.0013121300202859668,
+      0.7955943781419953,
+      0.5362428951105325,
+      0.34194501396293664,
+      0.45663612664195335,
+      0.30827506500303925,
+      0.0,
+      0.04290262316095599,
+      0.07805871249924623,
+      0.17170406190191292,
+      0.257509313028218
+     ],
+     "t": 0.0
+    }
+   ],
+   "phrase_id": "single",
+   "planner": "trajopt_resist",
+   "solver_version": "ed014f8"
+  },
+  "string_crossing": {
+   "contact_schedule": [
+    {
+     "articulation": "fret",
+     "finger": "index",
+     "fret": 4,
+     "string": 5,
+     "t": 0.0
+    },
+    {
+     "articulation": "fret",
+     "finger": "middle",
+     "fret": 4,
+     "string": 4,
+     "t": 0.5
+    },
+    {
+     "articulation": "fret",
+     "finger": "ring",
+     "fret": 4,
+     "string": 3,
+     "t": 1.0
+    },
+    {
+     "articulation": "fret",
+     "finger": "pinky",
+     "fret": 4,
+     "string": 2,
+     "t": 1.5
+    }
+   ],
+   "knots": [
+    {
+     "meta": {
+      "contact_mm": 0.0,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "index",
+        "fret": 4,
+        "string": 5
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.7368056046790107,
+      0.7093002797152771,
+      0.5183642442485896,
+      0.038380230372484773,
+      -0.06963039760863558,
+      -0.11200231303235232,
+      0.7231328976391957,
+      0.002820221283247833,
+      0.9398222261255386,
+      0.585122922225913,
+      0.36254964590983246,
+      -0.0034301906587432267,
+      0.7472624782542066,
+      0.5449065641002929,
+      0.491705608489921,
+      -0.005492990797751513,
+      0.7649700437359643,
+      0.5172869365238586,
+      0.511017576574674,
+      -0.0008837610156371839,
+      0.7765353138693685,
+      0.5175117810103397,
+      0.4121040429116456,
+      0.3311308960655846,
+      0.23364558329670929,
+      -1.3766873936873893e-12,
+      0.046482421466540656,
+      0.09238660772947598,
+      0.18853440990579445,
+      0.2832994040354889
+     ],
+     "t": 0.0
+    },
+    {
+     "meta": {
+      "contact_mm": 0.015,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "middle",
+        "fret": 4,
+        "string": 4
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.7365938562792038,
+      0.70894353426513,
+      0.5187832070706851,
+      0.16478807953949826,
+      -0.18968896024713788,
+      0.19154175391636705,
+      0.6254887506933402,
+      0.07082680232864633,
+      1.146045031712309,
+      0.846649447165744,
+      0.7339158746729924,
+      -0.050803766369799656,
+      1.1146539115298915,
+      0.8387585137927893,
+      0.4474625206213546,
+      0.006811172252997732,
+      0.7839178173450719,
+      0.5481112598745893,
+      0.510813423711929,
+      0.020838303843095058,
+      0.7857609209974233,
+      0.5255906472418874,
+      0.19414891345510585,
+      0.4431338763601702,
+      0.6102843338655677,
+      -1.6251982670543932e-12,
+      0.0458775662608577,
+      0.08390692344243476,
+      0.18460507146317368,
+      0.27690967271446976
+     ],
+     "t": 0.5
+    },
+    {
+     "meta": {
+      "contact_mm": 0.0,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "ring",
+        "fret": 4,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.7363414508781518,
+      0.7083032635133689,
+      0.5178152892301722,
+      0.14985794697069765,
+      -0.15439020314159022,
+      0.08043519735496751,
+      0.6395126797238586,
+      0.018578484682042956,
+      1.096180021868312,
+      0.8118811024352924,
+      0.7395753530888913,
+      0.01030896203881144,
+      1.1431123825330756,
+      0.8617552095496352,
+      0.6482398009158192,
+      -0.05547017343021088,
+      1.0953522924020251,
+      0.8015058388117903,
+      0.5455426196712014,
+      0.010894543605544914,
+      0.7853787541574434,
+      0.5252877570263217,
+      -0.17453292519943295,
+      0.33336951013905086,
+      1.0170447522660133,
+      -9.7927060311456e-13,
+      0.047267730718492454,
+      0.08630118191485553,
+      0.19013341373350787,
+      0.2852128284537512
+     ],
+     "t": 1.0
+    },
+    {
+     "meta": {
+      "contact_mm": 0.004,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "pinky",
+        "fret": 4,
+        "string": 2
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.7366671635832782,
+      0.7089634711335357,
+      0.5181805307872539,
+      0.20691638598287274,
+      -0.22013408461109601,
+      0.21944790167441128,
+      0.5698688768186999,
+      -0.04913950016596838,
+      0.9684985480884509,
+      0.6900748462089358,
+      0.5816075036961409,
+      -0.034205328867218485,
+      1.1622902385999738,
+      0.8935067503538885,
+      0.5220385922700309,
+      -0.035486531994266525,
+      1.0459157164909556,
+      0.7803944492041317,
+      0.7654501125937345,
+      -0.07307832632892279,
+      0.8843853540103173,
+      0.5631683432447517,
+      -0.17453292519943295,
+      0.4666217802516296,
+      1.1596128405645723,
+      -8.914407809117934e-13,
+      0.04703733626963959,
+      0.08530934136920726,
+      0.1877023852376734,
+      0.28156031879780835
+     ],
+     "t": 1.5
+    }
+   ],
+   "phrase_id": "string_crossing",
+   "planner": "trajopt_resist",
+   "solver_version": "ed014f8"
+  },
+  "sustained_anchor": {
+   "contact_schedule": [
+    {
+     "articulation": "fret",
+     "finger": "index",
+     "fret": 5,
+     "string": 5,
+     "t": 0.0
+    },
+    {
+     "articulation": "fret",
+     "finger": "middle",
+     "fret": 6,
+     "string": 4,
+     "t": 0.0
+    },
+    {
+     "articulation": "fret",
+     "finger": "index",
+     "fret": 5,
+     "string": 5,
+     "t": 0.5
+    },
+    {
+     "articulation": "fret",
+     "finger": "ring",
+     "fret": 7,
+     "string": 3,
+     "t": 0.5
+    },
+    {
+     "articulation": "fret",
+     "finger": "index",
+     "fret": 5,
+     "string": 5,
+     "t": 1.0
+    },
+    {
+     "articulation": "fret",
+     "finger": "middle",
+     "fret": 6,
+     "string": 4,
+     "t": 1.0
+    }
+   ],
+   "knots": [
+    {
+     "meta": {
+      "contact_mm": 0.005,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "index",
+        "fret": 5,
+        "string": 5
+       },
+       {
+        "articulation": "fret",
+        "finger": "middle",
+        "fret": 6,
+        "string": 4
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.7406675151674157,
+      0.687368673513117,
+      0.5568621336144277,
+      0.04684528727527241,
+      -0.12884926569907174,
+      0.01452675988009574,
+      0.7074399963636895,
+      0.02481323501581186,
+      0.9443769724335807,
+      0.6175916765984962,
+      0.5607851795866162,
+      -0.02141871652793073,
+      0.9970254206864221,
+      0.7037179246943115,
+      0.4796232797117509,
+      -0.001610853413574173,
+      0.788632961788709,
+      0.5258252715936784,
+      0.479483238095082,
+      -0.0004986284654067307,
+      0.7888353220432532,
+      0.5260906233755714,
+      0.41529428365211307,
+      0.41568570006480915,
+      0.26213182957106257,
+      -2.110088926827239e-12,
+      0.05558063130830869,
+      0.10867964023041153,
+      0.21687347541267682,
+      0.3244031593608796
+     ],
+     "t": 0.0
+    },
+    {
+     "meta": {
+      "contact_mm": 0.002,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "index",
+        "fret": 5,
+        "string": 5
+       },
+       {
+        "articulation": "fret",
+        "finger": "ring",
+        "fret": 7,
+        "string": 3
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.7458092862207261,
+      0.6859200186111312,
+      0.5564521581380428,
+      0.05734988178335876,
+      -0.13980561313987971,
+      0.048662279028490824,
+      0.7005044898322443,
+      0.004510557666148844,
+      0.9256487064244536,
+      0.6043932321495645,
+      0.5656585801212314,
+      -0.012386565140687159,
+      0.9637356063436003,
+      0.6803395653386692,
+      0.5221954871924313,
+      -0.0659455311738966,
+      0.7510716585668561,
+      0.47903543849129354,
+      0.4977525534330665,
+      -0.005895353210865046,
+      0.7833891004409395,
+      0.5224573292691369,
+      0.4728943047985923,
+      0.44070154525280936,
+      0.19551525918506624,
+      -3.9513143932194836e-11,
+      0.05315055319219064,
+      0.10285504915720484,
+      0.20768897417879817,
+      0.3107588157155345
+     ],
+     "t": 0.5
+    },
+    {
+     "meta": {
+      "contact_mm": 0.003,
+      "contacts": [
+       {
+        "articulation": "fret",
+        "finger": "index",
+        "fret": 5,
+        "string": 5
+       },
+       {
+        "articulation": "fret",
+        "finger": "middle",
+        "fret": 6,
+        "string": 4
+       }
+      ],
+      "feasible": true
+     },
+     "mpfb_state": [
+      -0.7410142278281096,
+      0.685254340436203,
+      0.5570624024273628,
+      0.02656086121108949,
+      -0.11318814873185563,
+      -0.039925636388338466,
+      0.6999438530537545,
+      -0.003264289331130384,
+      0.9298055313408293,
+      0.6107011085456663,
+      0.5945582794191487,
+      -0.009360479251577682,
+      0.958882012176753,
+      0.6735432350224684,
+      0.5179455929362211,
+      -0.03316655425743815,
+      0.7523248791967444,
+      0.4844525773863006,
+      0.5090208293921674,
+      -0.009233723308822776,
+      0.7790782387967373,
+      0.5194400036979826,
+      0.4767599670900786,
+      0.41651130058116503,
+      0.1717144256786462,
+      -3.709655748715913e-11,
+      0.051023324805429156,
+      0.09772404979538882,
+      0.2000849020728794,
+      0.2994939291114792
+     ],
+     "t": 1.0
+    }
+   ],
+   "phrase_id": "sustained_anchor",
+   "planner": "trajopt_resist",
+   "solver_version": "878f0ae"
+  }
+ }
+}

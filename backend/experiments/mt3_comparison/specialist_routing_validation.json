@@ -1,0 +1,322 @@
+{
+  "bass_register": {
+    "sub_bass": {},
+    "low": {},
+    "mid_low": {
+      "n_gt": 992.0,
+      "bp_recall": 0.2399193548387097,
+      "mt3_recall": 0.5806451612903226,
+      "bp_precision": 0.041269290792439746,
+      "mt3_precision": 0.17486338797814208,
+      "bp_octave_rate": 0.5100806451612904,
+      "mt3_octave_rate": 0.036290322580645164,
+      "mt3_only": 391
+    },
+    "mid": {
+      "n_gt": 2013.0,
+      "bp_recall": 0.2290114257327372,
+      "mt3_recall": 0.47292598112270245,
+      "bp_precision": 0.0799375758626669,
+      "mt3_precision": 0.28901032179720704,
+      "bp_octave_rate": 0.42126179831097865,
+      "mt3_octave_rate": 0.009935419771485345,
+      "mt3_only": 598
+    },
+    "high": {
+      "n_gt": 816.0,
+      "bp_recall": 0.029411764705882353,
+      "mt3_recall": 0.12377450980392157,
+      "bp_precision": 0.008895478131949592,
+      "mt3_precision": 0.063125,
+      "bp_octave_rate": 0.33088235294117646,
+      "mt3_octave_rate": 0.058823529411764705,
+      "mt3_only": 97
+    }
+  },
+  "bass_octave_direction": {
+    "bp": {
+      "total": 1623,
+      "up": 144,
+      "down": 1479,
+      "exact_12_up": 144,
+      "exact_12_down": 1445,
+      "exact_24_plus": 34,
+      "by_register": {
+        "mid_low": {
+          "up": 17,
+          "down": 489,
+          "total": 506
+        },
+        "mid": {
+          "up": 127,
+          "down": 720,
+          "total": 847
+        },
+        "high": {
+          "up": 0,
+          "down": 270,
+          "total": 270
+        },
+        "sub_bass": {
+          "up": 0,
+          "down": 0,
+          "total": 0
+        },
+        "low": {
+          "up": 0,
+          "down": 0,
+          "total": 0
+        }
+      }
+    },
+    "mt3": {
+      "total": 97,
+      "up": 50,
+      "down": 47,
+      "exact_12_up": 50,
+      "exact_12_down": 47,
+      "exact_24_plus": 0,
+      "by_register": {
+        "mid": {
+          "up": 18,
+          "down": 1,
+          "total": 19
+        },
+        "high": {
+          "up": 2,
+          "down": 46,
+          "total": 48
+        },
+        "mid_low": {
+          "up": 30,
+          "down": 0,
+          "total": 30
+        },
+        "sub_bass": {
+          "up": 0,
+          "down": 0,
+          "total": 0
+        },
+        "low": {
+          "up": 0,
+          "down": 0,
+          "total": 0
+        }
+      }
+    }
+  },
+  "bass_regimes": {
+    "by_duration": {
+      "short": {
+        "n": 3,
+        "bp_recall": 0.17465157240488713,
+        "mt3_recall": 0.5130622234339307
+      },
+      "sustained": {
+        "n": 5,
+        "bp_recall": 0.31911336217651887,
+        "mt3_recall": 0.41694706058482556
+      }
+    },
+    "by_density": {
+      "sparse": {
+        "n": 5,
+        "bp_recall": 0.31911336217651887,
+        "mt3_recall": 0.41694706058482556
+      },
+      "dense": {
+        "n": 3,
+        "bp_recall": 0.17465157240488713,
+        "mt3_recall": 0.5130622234339307
+      }
+    }
+  },
+  "bass_per_stem": {
+    "mt3_wins": 6,
+    "bp_wins": 0,
+    "ties": 2,
+    "total": 8,
+    "improvement_median": 0.14823053589484328,
+    "improvement_mean": 0.1880500556410831,
+    "improvement_std": 0.1866050105224802,
+    "improvement_min": -0.023809523809523808,
+    "improvement_max": 0.5184243964421855,
+    "percentiles": {
+      "10": -0.010989010989010993,
+      "25": 0.03887027606539805,
+      "50": 0.14823053589484328,
+      "75": 0.2900014576100496,
+      "90": 0.44794377137481506
+    }
+  },
+  "bass_oracles": {
+    "bp_only": {
+      "recall": 0.1879089243653494,
+      "precision": 0.11905156690432764,
+      "f1": 0.1457572066585465
+    },
+    "mt3_only": {
+      "recall": 0.426851609526302,
+      "precision": 0.47152356172304133,
+      "f1": 0.4480769230769231
+    },
+    "stem_oracle": {
+      "recall": 0.4286835906830673,
+      "precision": 0.41605283210566424,
+      "f1": 0.42227378190255227
+    },
+    "note_oracle": {
+      "recall": 0.4726511384454331
+    },
+    "n_gt": 3821
+  },
+  "synth_lead": {
+    "n_stems": 3,
+    "n_gt": 532,
+    "bp_recall": 0.009398496240601503,
+    "mt3_recall": 0.10526315789473684,
+    "bp_octave_rate": 0.6372180451127819,
+    "mt3_octave_rate": 0.09210526315789473,
+    "h2h": {
+      "both_correct": 0,
+      "bp_only": 5,
+      "mt3_only": 56,
+      "both_wrong": 471
+    },
+    "per_stem": {
+      "mt3_wins": 1,
+      "bp_wins": 0,
+      "ties": 2
+    }
+  },
+  "organ_control": {
+    "n_gt": 325,
+    "bp": {
+      "recall": 0.20307692307692307,
+      "precision": 0.09620991253644315,
+      "octave_rate": 0.5384615384615384,
+      "n_pred": 686
+    },
+    "mt3": {
+      "recall": 0.12923076923076923,
+      "precision": 0.358974358974359,
+      "octave_rate": 0.009230769230769232,
+      "n_pred": 117
+    },
+    "h2h": {
+      "both_correct": 10,
+      "bp_only": 56,
+      "mt3_only": 32,
+      "both_wrong": 227
+    },
+    "oracle_recall": 0.30153846153846153
+  },
+  "bass_bootstrap_ci": {
+    "recall_diff": {
+      "mean": 0.18951673591156784,
+      "lo": 0.07093660263230576,
+      "hi": 0.32921436643382823
+    },
+    "f1_diff": {
+      "mean": 0.2899578800010123,
+      "lo": 0.13748762811643475,
+      "hi": 0.43496466477174844
+    },
+    "octave_diff": {
+      "mean": -0.44718573128308153,
+      "lo": -0.6070860330705768,
+      "hi": -0.2637798515718979
+    },
+    "n_stems": 8,
+    "n_bootstrap": 1000
+  },
+  "synth_lead_bootstrap_ci": {
+    "recall_diff": {
+      "mean": 0.03435661048689139,
+      "lo": -0.02247191011235955,
+      "hi": 0.1325
+    },
+    "f1_diff": {
+      "mean": 0.044061807604543375,
+      "lo": -0.0132013201320132,
+      "hi": 0.15261505719606278
+    },
+    "octave_diff": {
+      "mean": -0.22515827715355807,
+      "lo": -0.73,
+      "hi": 0.02247191011235955
+    },
+    "n_stems": 3,
+    "n_bootstrap": 1000
+  },
+  "routing_architectures": {
+    "A (BP everywhere)": {
+      "recall": 0.4229807775191794,
+      "precision": 0.24853539531664162,
+      "f1": 0.3130995171959079,
+      "octave_rate": 0.16251472574203374
+    },
+    "B (MT3 Bass)": {
+      "recall": 0.44921414820561445,
+      "precision": 0.27593144954905663,
+      "f1": 0.3418687542367322,
+      "octave_rate": 0.11866793092549494
+    },
+    "C (MT3 Bass+SynthLead)": {
+      "recall": 0.45067953912019076,
+      "precision": 0.281891377017361,
+      "f1": 0.3468406213721046,
+      "octave_rate": 0.11033531592104129
+    },
+    "D (Best per class)": {
+      "recall": 0.45067953912019076,
+      "precision": 0.281891377017361,
+      "f1": 0.3468406213721046,
+      "octave_rate": 0.11033531592104129
+    }
+  },
+  "class_availability": {
+    "bass_source": "demucs_stem_label",
+    "synth_lead_source": "requires_classifier",
+    "recommendation": "Route B (MT3 for Bass only)"
+  },
+  "runtime": {
+    "bp_mean_time": 6.13877813021342,
+    "bp_std_time": 2.6470306475617584,
+    "mt3_mean_time": 168.31321136156717,
+    "mt3_std_time": 81.2664497653508
+  },
+  "oracle_gap": {
+    "total_mt3_only": 1699,
+    "by_class": {
+      "Piano": 189,
+      "Bass": 1088,
+      "Guitar": 236,
+      "Ensemble": 42,
+      "Pipe": 2,
+      "Synth Pad": 10,
+      "Brass": 43,
+      "Synth Lead": 56,
+      "Reed": 1,
+      "Organ": 32
+    },
+    "by_register": {
+      "mid": 1535,
+      "low": 98,
+      "high": 66
+    },
+    "by_duration": {
+      "long": 271,
+      "medium": 583,
+      "short": 845
+    },
+    "bass_fraction": 0.6403766921718658
+  },
+  "decision_gate": {
+    "classification": "A",
+    "description": "SIMPLE BASS SPECIALIST",
+    "rationale": "MT3 wins 75% of Bass stems. Stem oracle adds only 4.6%.",
+    "mt3_win_rate": 0.75,
+    "bass_oracle_gap": 0.04579952891913108
+  }
+}

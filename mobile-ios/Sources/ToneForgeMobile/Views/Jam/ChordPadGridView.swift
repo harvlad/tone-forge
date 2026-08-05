@@ -21,6 +21,10 @@ struct ChordPadGridView: View {
     var nextChordSymbol: String?
     /// Whether follow mode is enabled (highlights current/next pads).
     var followEnabled: Bool = false
+    /// Chord symbols that actually occur in the loaded song's timeline.
+    /// Pads matching one get an "in this song" marker so the diatonic
+    /// palette reflects the specific song, not just the key.
+    var songChordSymbols: [String] = []
 
     var body: some View {
         ZStack {
@@ -77,13 +81,15 @@ struct ChordPadGridView: View {
         let latched = controller.latchedCells.contains(cell.index)
         let isCurrent = followEnabled && symbolMatches(cell.symbol, currentChordSymbol)
         let isNext = followEnabled && symbolMatches(cell.symbol, nextChordSymbol)
+        let inSong = songChordSymbols.contains { symbolMatches(cell.symbol, $0) }
 
         return ChordPadTile(
             cell: cell,
             pressed: pressed,
             latched: latched,
             isCurrent: isCurrent,
-            isNext: isNext
+            isNext: isNext,
+            inSong: inSong
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityLabel("\(cell.symbol) chord pad")
@@ -154,14 +160,24 @@ private struct ChordPadTile: View {
     let latched: Bool
     let isCurrent: Bool
     let isNext: Bool
+    var inSong: Bool = false
 
     @State private var pulsePhase: Bool = false
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             // Background
             RoundedRectangle(cornerRadius: 10)
                 .fill(backgroundColor)
+
+            // "In this song" marker: a small dot so the palette reflects
+            // the loaded song's actual progression, not just the key.
+            if inSong {
+                Circle()
+                    .fill(TFTheme.brandGreenLight)
+                    .frame(width: 7, height: 7)
+                    .padding(6)
+            }
 
             // Content
             VStack(spacing: 2) {

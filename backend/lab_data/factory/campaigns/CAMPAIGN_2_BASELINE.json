@@ -1,0 +1,51 @@
+{
+ "_role": "RILEY PERMANENT REFERENCE BASELINE. Every future corpus version must compare against this. Frozen 2026-08-05. Do not edit — supersede with a new campaign that beats it.",
+ "campaign_id": "riley_campaign_2_validated_finetune",
+ "git_sha": "893a920",
+ "frozen_at": "2026-08-05",
+ "status": "PROMOTED. All six gates cleared. riley_corpus_v1.0 is Riley's DEFAULT training corpus (data-centric decision). Synthetic blind was a wash (7/12) but the DECIDING real-song blind was 15/15 for Riley (P~3e-5), confirming +3.62 dB real-song SI-SDR. See RILEY_PROMOTION_DECISION.md + RILEY_CAMPAIGN_2_FINAL_REPORT.md.",
+ "blind_result": {
+   "round1_synthetic": {"riley_preferred": 7, "of": 12, "verdict": "wash", "note": "corpus advantage inaudible on easy synthetic mixes"},
+   "round2_real_songs": {"riley_preferred": 15, "of": 15, "verdict": "PROMOTE", "p_value": 3.05e-05, "eval": "15 MoisesDB real multitracks", "note": "corpus advantage clearly audible on hard real songs; confirms +3.62 dB / 13-of-15 SI-SDR"}
+ },
+ "promotion": {"decision": "PROMOTE riley_corpus_v1.0 as default training corpus", "scope": "the CORPUS (better data), not a production-grade separator (real-song absolute SI-SDR still negative — domain gap)", "date": "2026-08-05"},
+
+ "recipe": {
+  "trainer": "ZFTurbo MSST htdemucs",
+  "config": "c2_htdemucs.yaml (= b1 recipe + bottom_channels 512 = standard htdemucs 42M)",
+  "init": "fine-tune from stock htdemucs demucs 955717e8, 100% backbone transfer (529/533 keys)",
+  "pretrained_sha256": "ac558614",
+  "num_epochs": 8, "num_steps": 1500, "optimizer": "adam", "lr": 9.0e-05,
+  "batch_size": 8, "chunk_seconds": 6, "seed": 42, "dataset_type": 1
+ },
+
+ "corpora": {
+  "A_riley": {"version": "riley_corpus_v1.0", "corpus_hash": "df4167dcd07b059aaaf0a48461424c78ed5f659030de789184b8107f615a9617", "manifest_sha256": "c83641330116b1b6bb55b87e8227d193f0bacf734aab1eb848865a2da3db4484", "train_pairs": 2192},
+  "B_naive": {"version": "riley_baseline_naive_v1.0", "corpus_hash": "20c0811ffdbf1a75cbeb4dcb19706ee8d3dc47adeba5bb4639ea25447b600071", "train_pairs": 2192}
+ },
+
+ "checkpoints": {
+  "location": "hetzner:/mnt/HC_Volume_106533567/factory/campaign2/checkpoints",
+  "riley_c2_A_best.ckpt": "c5f189e0b3cda94839cdb334fa16ae645a9b79a0159e892fceaa2b32b3059970",
+  "riley_c2_A_latest.ckpt": "2c465d659de5fa96bee2d935ccf6b140b6214e20b5efe684738cc98fadc95f33",
+  "riley_c2_B_best.ckpt": "b6a3aba8a156f04038b3e1ce81dea5489a8a873afaa7969393ff6ef3f28a9be6",
+  "riley_c2_B_latest.ckpt": "a5649283e657e2f02c962b51437ce12f71745e84e5d4db8e6a7dcf91642b7594"
+ },
+
+ "results_reference": {
+  "metric": "held-out SI-SDR median dB (12 tracks/eval set)",
+  "eval_real_deployment": {"riley": 3.56, "naive": -2.96, "riley_advantage": 6.52, "riley_track_wins": "12/12"},
+  "eval_flat": {"riley": 0.19, "naive": 1.93, "note": "naive wins its own training distribution; not deployment-relevant"},
+  "final_train_loss": {"riley": 0.477, "naive": 0.715},
+  "vs_campaign_1": {"c1_riley_advantage": 1.46, "c2_riley_advantage": 6.52, "transfer_learning_abs_gain_dB": 14.4}
+ },
+
+ "eval_sets": {
+  "location": "hetzner:/mnt/HC_Volume_106533567/factory/{eval_real,eval_flat}",
+  "composition": "12 held-out GuitarSet guitars (novel to both models) + held-out backing; eval_real=realistic scenarios, eval_flat=naive flat mix"
+ },
+ "blind_package": "hetzner:/mnt/HC_Volume_106533567/factory/campaign2/blind_package (12 tracks, mixture/guitar_truth/sep_X/sep_Y, X-Y randomized, BLIND_KEY.json sealed)",
+
+ "the_comparison_bar": "Any future corpus (v2+) must beat eval_real riley +3.56 dB / +6.52 advantage using THIS recipe (validated fine-tune) to be promoted over Campaign 2.",
+ "documents": ["docs/RILEY_CAMPAIGN_2_POSTMORTEM.md", "docs/RILEY_CAMPAIGN_1_POSTMORTEM.md", "backend/lab_data/factory/campaigns/campaign_2.json"]
+}

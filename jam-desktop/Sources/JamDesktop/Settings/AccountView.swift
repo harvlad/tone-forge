@@ -18,6 +18,12 @@ struct AccountView: View {
     @State private var busy = false
     @State private var errorMessage: String?
 
+    // Email-code flow (works without the paid-team applesignin
+    // entitlement, which this dev-signed app cannot hold).
+    @State private var email = ""
+    @State private var code = ""
+    @State private var codeSent = false
+
     private let client = BackendAuthClient()
 
     var body: some View {
@@ -37,6 +43,8 @@ struct AccountView: View {
                 }
                 .frame(width: 200, height: 30)
                 .disabled(busy)
+
+                emailCodeFlow
             }
 
             if let errorMessage {
@@ -46,6 +54,84 @@ struct AccountView: View {
             }
         }
         .task { await restoreSession() }
+    }
+
+    // MARK: - Email code UI
+
+    /// Or sign in with an emailed 6-digit code.
+    @ViewBuilder
+    private var emailCodeFlow: some View {
+        Text("or sign in with email")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if !codeSent {
+            HStack {
+                TextField("Email", text: $email)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 200)
+                Button("Send code") { sendCode() }
+                    .disabled(busy || !email.contains("@"))
+            }
+        } else {
+            HStack {
+                TextField("6-digit code", text: $code)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 120)
+                Button("Sign in") { verifyCode() }
+                    .disabled(busy || code.count < 6)
+            }
+            Button("Use a different email") {
+                codeSent = false
+                code = ""
+                errorMessage = nil
+            }
+            .buttonStyle(.link)
+            .font(.caption)
+        }
+    }
+
+    private func sendCode() {
+        busy = true
+        errorMessage = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await client.requestEmailCode(
+                    baseURL: model.backendBaseURL,
+                    email: email.trimmingCharacters(in: .whitespaces)
+                )
+                codeSent = true
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func verifyCode() {
+        busy = true
+        errorMessage = nil
+        Task {
+            defer { busy = false }
+            do {
+                let deviceId = DeviceIdentity.id()
+                let session = try await client.verifyEmailCode(
+                    baseURL: model.backendBaseURL,
+                    email: email.trimmingCharacters(in: .whitespaces),
+                    code: code.trimmingCharacters(in: .whitespaces),
+                    deviceId: deviceId
+                )
+                AuthContext.shared.sessionToken = session.token
+                user = session.user
+                email = ""; code = ""; codeSent = false
+                _ = try? await client.claim(
+                    baseURL: model.backendBaseURL,
+                    token: session.token,
+                    deviceId: deviceId
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     // MARK: - Flows

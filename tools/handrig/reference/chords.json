@@ -1,0 +1,157 @@
+{
+  "A" : {
+    "baseFret" : 1,
+    "notes" : [
+      {
+        "finger" : 1,
+        "fret" : 2,
+        "string" : 2
+      },
+      {
+        "finger" : 2,
+        "fret" : 2,
+        "string" : 3
+      },
+      {
+        "finger" : 3,
+        "fret" : 2,
+        "string" : 4
+      }
+    ]
+  },
+  "Am" : {
+    "baseFret" : 1,
+    "notes" : [
+      {
+        "finger" : 1,
+        "fret" : 1,
+        "string" : 4
+      },
+      {
+        "finger" : 2,
+        "fret" : 2,
+        "string" : 2
+      },
+      {
+        "finger" : 3,
+        "fret" : 2,
+        "string" : 3
+      }
+    ]
+  },
+  "C" : {
+    "baseFret" : 1,
+    "notes" : [
+      {
+        "finger" : 1,
+        "fret" : 1,
+        "string" : 4
+      },
+      {
+        "finger" : 2,
+        "fret" : 2,
+        "string" : 2
+      },
+      {
+        "finger" : 3,
+        "fret" : 3,
+        "string" : 1
+      }
+    ]
+  },
+  "D" : {
+    "baseFret" : 1,
+    "notes" : [
+      {
+        "finger" : 1,
+        "fret" : 2,
+        "string" : 3
+      },
+      {
+        "finger" : 2,
+        "fret" : 2,
+        "string" : 5
+      },
+      {
+        "finger" : 3,
+        "fret" : 3,
+        "string" : 4
+      }
+    ]
+  },
+  "Dm" : {
+    "baseFret" : 1,
+    "notes" : [
+      {
+        "finger" : 1,
+        "fret" : 1,
+        "string" : 5
+      },
+      {
+        "finger" : 2,
+        "fret" : 2,
+        "string" : 3
+      },
+      {
+        "finger" : 3,
+        "fret" : 3,
+        "string" : 4
+      }
+    ]
+  },
+  "E" : {
+    "baseFret" : 1,
+    "notes" : [
+      {
+        "finger" : 1,
+        "fret" : 1,
+        "string" : 3
+      },
+      {
+        "finger" : 2,
+        "fret" : 2,
+        "string" : 1
+      },
+      {
+        "finger" : 3,
+        "fret" : 2,
+        "string" : 2
+      }
+    ]
+  },
+  "Em" : {
+    "baseFret" : 1,
+    "notes" : [
+      {
+        "finger" : 2,
+        "fret" : 2,
+        "string" : 1
+      },
+      {
+        "finger" : 3,
+        "fret" : 2,
+        "string" : 2
+      }
+    ]
+  },
+  "G" : {
+    "baseFret" : 1,
+    "notes" : [
+      {
+        "finger" : 1,
+        "fret" : 2,
+        "string" : 1
+      },
+      {
+        "finger" : 2,
+        "fret" : 3,
+        "string" : 0
+      },
+      {
+        "finger" : 3,
+        "fret" : 3,
+        "string" : 5
+      }
+    ]
+  }
+}

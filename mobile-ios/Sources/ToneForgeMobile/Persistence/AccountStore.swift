@@ -147,6 +147,49 @@ public final class AccountStore: ObservableObject {
         }
     }
 
+    // MARK: - Email-code sign-in (free-team fallback: SIWA requires a
+    // paid Apple developer team, the emailed 6-digit code does not)
+
+    /// Clear a surfaced error (e.g. when the user restarts the email
+    /// flow).
+    public func clearError() {
+        lastError = nil
+    }
+
+    /// Step 1: ask the backend to email a sign-in code. Errors surface
+    /// via `lastError`; success is silent (no enumeration).
+    public func requestEmailCode(email: String, baseURL: URL) async {
+        lastError = nil
+        do {
+            try await client.requestEmailCode(baseURL: baseURL, email: email)
+        } catch {
+            lastError = (error as? LocalizedError)?.errorDescription
+                ?? "Could not send the code."
+        }
+    }
+
+    /// Step 2: exchange the emailed code for a session.
+    public func signInWithEmailCode(
+        email: String, code: String, baseURL: URL
+    ) async {
+        isSigningIn = true
+        lastError = nil
+        defer { isSigningIn = false }
+        do {
+            let session = try await client.verifyEmailCode(
+                baseURL: baseURL,
+                email: email,
+                code: code,
+                deviceId: AuthContext.shared.deviceId
+            )
+            persist(session: session, appleUserId: nil)
+            await claim(baseURL: baseURL)
+        } catch {
+            lastError = (error as? LocalizedError)?.errorDescription
+                ?? "Sign-in failed."
+        }
+    }
+
     // MARK: - Claim
 
     /// Attach this device's anonymous analyses to the account.

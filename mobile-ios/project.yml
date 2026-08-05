@@ -51,12 +51,21 @@ targets:
       - path: App
         excludes:
           - "Resources/Samples"
+          - "Resources/DemoBundles"
       # The bundled sample packs must be added as folder references
       # (type: folder) so `Bundle.main.url(forResource: "Samples", …)`
       # resolves to a real directory inside the .app — otherwise
       # SampleBank.defaultBank can't find it and starter-pack triggers
       # go silent.
       - path: App/Resources/Samples
+        type: folder
+        buildPhase: resources
+      # Pre-analyzed demo songs (PERFORM_PARITY spec 3.1). Same
+      # folder-reference treatment so `Bundle.main.url(forResource:
+      # "DemoBundles", …)` resolves to a real directory — BundleStore
+      # .seedBundledDemos copies these into the local store on first
+      # launch so the Library is never empty.
+      - path: App/Resources/DemoBundles
         type: folder
         buildPhase: resources
     info:

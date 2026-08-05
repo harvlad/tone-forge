@@ -27,6 +27,12 @@ struct LearnView: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var showOverview = false
+    /// Phase 2: the chord-transition practice sheet (tap the chord
+    /// area to open).
+    @State private var showTransitions = false
+    /// Fretting-hand silhouette on the chord cards (shared with
+    /// ChordCard via AppStorage).
+    @AppStorage("learn.showHand") private var showHand = true
 
     var body: some View {
         Group {
@@ -45,6 +51,13 @@ struct LearnView: View {
         .animation(nil, value: controller.phase)
         .sheet(isPresented: $showOverview) {
             SectionOverviewSheet(controller: controller)
+        }
+        .sheet(isPresented: $showTransitions) {
+            ChordTransitionSheet(
+                pairs: ChordTransitionSheet.pairs(
+                    from: appState.currentBundle?.timeline.chords.map(\.symbol) ?? []),
+                onPlayChord: { appState.jamController.trigger(symbol: $0) }
+            )
         }
     }
 
@@ -108,31 +121,60 @@ struct LearnView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var currentSectionIndex: Int? {
+        let t = appState.songSeconds
+        return sections.firstIndex { $0.start <= t && t < $0.end }
+    }
+
     // MARK: - Overview (one screen, no scrolling)
+    //
+    // Music is the UI: sections, the NOW/NEXT chords + fretboards, and
+    // a big Practice button dominate. Mastery stats are demoted to a
+    // compact secondary line at the bottom.
 
     private var overview: some View {
-        VStack(spacing: 10) {
-            SectionChips(
-                sections: sections,
-                nowSongSeconds: appState.songSeconds,
-                allowedLabels: nil,
-                onSeek: { appState.seek(to: $0) },
-                onGateToggle: { _ in }
-            )
+        VStack(spacing: TFTheme.Spacing.md) {
+            if !sections.isEmpty {
+                SectionSelector(
+                    sections: sections,
+                    currentIndex: currentSectionIndex,
+                    style: .compact,
+                    onSelect: { appState.seek(to: $0.start) }
+                )
+            }
 
-            chordCards
-                .padding(.horizontal, 12)
+            // The chord cards grow to fill the surface so the music
+            // (NOW/NEXT + fretboards) dominates instead of leaving a
+            // dead gap where the old mastery card sat. Hand mode swaps
+            // the charts for ONE horizontal neck with a hand playing
+            // the song (sample design).
+            Group {
+                if showHand {
+                    GuitarNeckPlayView(
+                        current: appState.currentChord?.symbol,
+                        next: nextChordSymbol,
+                        key: songKey
+                    )
+                } else {
+                    chordCards
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, TFTheme.Spacing.md)
+            // Tap the chord area → transition practice (Phase 2).
+            .contentShape(Rectangle())
+            .onTapGesture { showTransitions = true }
 
-            masteryRow
-                .padding(.horizontal, 12)
+            practiceButton
+                .padding(.horizontal, TFTheme.Spacing.md)
 
-            controlsRow
-                .padding(.horizontal, 12)
+            secondaryControls
+                .padding(.horizontal, TFTheme.Spacing.md)
 
-            statChips
-                .padding(.horizontal, 12)
-
-            Spacer(minLength: 0)
+            compactStats
+                .padding(.horizontal, TFTheme.Spacing.md)
+                .padding(.top, TFTheme.Spacing.xs)
+                .padding(.bottom, TFTheme.Spacing.xs)
         }
     }
 
@@ -152,50 +194,43 @@ struct LearnView: View {
         }
     }
 
-    private var masteryRow: some View {
-        HStack(spacing: 14) {
-            ProgressRing(
-                value: controller.percentComplete,
-                centerText:
-                    "\(Int((controller.percentComplete * 100).rounded()))%",
-                caption: "learned"
-            )
-            VStack(alignment: .leading, spacing: 6) {
-                masteryLine(
-                    icon: "checkmark.circle",
-                    text: "\(controller.learnedCount)/\(controller.totalSections) sections"
-                )
-                masteryLine(
-                    icon: "target",
-                    text: "\(Int((controller.overallAccuracy * 100).rounded()))% accuracy"
-                )
-                masteryLine(
-                    icon: "flame",
-                    text: "Best streak \(controller.longestStreak)"
-                )
+    // MARK: - Practice (the hero action)
+
+    private var practiceButton: some View {
+        Button {
+            if let target = practiceTarget {
+                controller.startSection(target)
             }
-            Spacer(minLength: 0)
+        } label: {
+            // Stems still downloading: pressing Practice would run the
+            // transport against an empty StemPlayer (silence), so gate
+            // the button until audio is actually loadable.
+            Label(
+                appState.isDownloading ? "Loading…" : "Practice",
+                systemImage: appState.isDownloading
+                    ? "arrow.down.circle" : "play.fill"
+            )
+            .font(.title3.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, TFTheme.Spacing.md)
+            .background(
+                TFTheme.accent,
+                in: RoundedRectangle(cornerRadius: TFTheme.Radius.large)
+            )
+            .foregroundStyle(TFTheme.textPrimary)
+            .opacity(practiceTarget == nil || appState.isDownloading ? 0.5 : 1)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .tfCard()
+        .buttonStyle(.plain)
+        .disabled(practiceTarget == nil || appState.isDownloading)
+        .accessibilityLabel(
+            appState.isDownloading
+                ? "Downloading song audio" : "Start practicing")
     }
 
-    private func masteryLine(icon: String, text: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.caption)
-                .foregroundStyle(Color.accentColor)
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(TFTheme.textPrimary)
-        }
-    }
+    // MARK: - Secondary controls (Loop · Sections · Speed)
 
-    // MARK: - Controls
-
-    private var controlsRow: some View {
-        HStack(spacing: 8) {
+    private var secondaryControls: some View {
+        HStack(spacing: TFTheme.Spacing.sm) {
             Button {
                 toggleLoop()
             } label: {
@@ -209,32 +244,6 @@ struct LearnView: View {
                     ? "Stop looping this section" : "Loop this section")
 
             Button {
-                if let target = practiceTarget {
-                    controller.startSection(target)
-                }
-            } label: {
-                // Stems still downloading: pressing Practice would run
-                // the transport against an empty StemPlayer (silence),
-                // so gate the button until audio is actually loadable.
-                Label(
-                    appState.isDownloading ? "Loading…" : "Practice",
-                    systemImage: appState.isDownloading
-                        ? "arrow.down.circle" : "play.fill"
-                )
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .background(
-                        Color.accentColor, in: RoundedRectangle(cornerRadius: 10))
-                    .foregroundStyle(.black)
-            }
-            .buttonStyle(.plain)
-            .disabled(practiceTarget == nil || appState.isDownloading)
-            .accessibilityLabel(
-                appState.isDownloading
-                    ? "Downloading song audio" : "Start practicing")
-
-            Button {
                 showOverview = true
             } label: {
                 Label("Sections", systemImage: "list.bullet")
@@ -242,6 +251,27 @@ struct LearnView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Show song structure")
+
+            Spacer(minLength: 0)
+
+            Button {
+                showHand.toggle()
+            } label: {
+                Image(systemName: "hand.raised.fingers.spread")
+                    .padding(.horizontal, 2)
+                    .tfChip(active: showHand)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(showHand ? "Hide hand overlay" : "Show hand overlay")
+
+            Button {
+                cycleSpeed()
+            } label: {
+                Label(speedLabel, systemImage: "gauge.with.dots.needle.67percent")
+                    .tfChip(active: appState.playbackRate != 1.0)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Practice speed \(speedLabel)")
         }
     }
 
@@ -254,30 +284,32 @@ struct LearnView: View {
         }
     }
 
-    // MARK: - Stat chips
+    // MARK: - Compact stats (secondary — stats don't dominate)
 
-    private var statChips: some View {
-        HStack(spacing: 8) {
-            if let bpm = appState.currentBundle?.meta.tempoBpm {
-                Text("\(Int(bpm.rounded())) BPM").tfChip(active: false)
-            }
+    private var compactStats: some View {
+        let pct = Int((controller.percentComplete * 100).rounded())
+        let acc = Int((controller.overallAccuracy * 100).rounded())
+        return HStack(spacing: TFTheme.Spacing.md) {
+            ProgressRing(
+                value: controller.percentComplete,
+                centerText: "\(pct)%",
+                caption: "learned"
+            )
+            .frame(width: 44, height: 44)
 
-            Button {
-                cycleSpeed()
-            } label: {
-                Text(speedLabel).tfChip(active: appState.playbackRate != 1.0)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Practice speed \(speedLabel)")
-
-            if let numerator = TimeSigEstimator.numerator(
-                beats: appState.currentBundle?.timeline.beats ?? [],
-                downbeats: appState.currentBundle?.timeline.downbeats ?? []
-            ) {
-                Text("\(numerator)/4").tfChip(active: false)
-            }
+            Text("\(controller.learnedCount)/\(controller.totalSections) sections · \(acc)% acc · streak \(controller.longestStreak)")
+                .font(TFTheme.metadata)
+                .foregroundStyle(TFTheme.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
 
             Spacer(minLength: 0)
+
+            if let bpm = appState.currentBundle?.meta.tempoBpm {
+                Text("\(Int(bpm.rounded())) BPM")
+                    .font(TFTheme.metadata)
+                    .foregroundStyle(TFTheme.textSecondary)
+            }
         }
     }
 

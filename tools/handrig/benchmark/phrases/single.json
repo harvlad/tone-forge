@@ -1,0 +1,20 @@
+{
+  "id": "single",
+  "category": "single_note",
+  "reason": "Simplest fixture: one fretted note. Establishes the schema and the trivial baseline (no shifts, no reuse, no anchors). A hand should press one finger and keep the others compact/ready.",
+  "style": "neutral",
+  "instrument": {
+    "type": "guitar", "n_strings": 6, "scale_len_mm": 648.0,
+    "string_span_nut_mm": 35.0, "string_span_12_mm": 43.5,
+    "board_width_mm": 52.0, "neck_thickness_mm": 21.0
+  },
+  "tempo_bpm": 90,
+  "events": [
+    {
+      "t": 0.0, "dur": 1.0,
+      "string": 3, "fret": 2, "finger": "middle",
+      "articulation": "fret",
+      "target": null
+    }
+  ]
+}

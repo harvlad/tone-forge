@@ -45,11 +45,11 @@ async def send_magic_link(email: str, token: str) -> None:
             _RESEND_URL,
             headers={"Authorization": f"Bearer {api_key}"},
             json={
-                "from": f"ToneForge <{mail_from}>",
+                "from": f"Jamn <{mail_from}>",
                 "to": [email],
-                "subject": "Sign in to ToneForge",
+                "subject": "Sign in to Jamn",
                 "html": (
-                    "<p>Click to sign in to ToneForge:</p>"
+                    "<p>Click to sign in to Jamn:</p>"
                     f'<p><a href="{link}">Sign in</a></p>'
                     "<p>This link expires in 15 minutes. If you didn't "
                     "request it, you can ignore this email.</p>"
@@ -58,3 +58,34 @@ async def send_magic_link(email: str, token: str) -> None:
         )
         resp.raise_for_status()
     logger.info("auth: magic link sent to %s", email)
+
+
+async def send_sign_in_code(email: str, code: str) -> None:
+    """Send (or log, in dev) the native sign-in code. Raises on send
+    failure."""
+    api_key = os.environ.get("RESEND_API_KEY")
+    if not api_key:
+        sent_emails.append({"to": email, "code": code})
+        logger.info("auth: dev sign-in code for %s: %s", email, code)
+        return
+
+    mail_from = os.environ.get("TONEFORGE_MAIL_FROM", "signin@jamn.app")
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            _RESEND_URL,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "from": f"Jamn <{mail_from}>",
+                "to": [email],
+                "subject": f"{code} is your Jamn sign-in code",
+                "html": (
+                    "<p>Your Jamn sign-in code:</p>"
+                    f'<p style="font-size:28px;font-weight:bold;'
+                    f'letter-spacing:4px">{code}</p>'
+                    "<p>It expires in 15 minutes. If you didn't request "
+                    "it, you can ignore this email.</p>"
+                ),
+            },
+        )
+        resp.raise_for_status()
+    logger.info("auth: sign-in code sent to %s", email)

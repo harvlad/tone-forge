@@ -1,0 +1,116 @@
+{
+  "song": "Simulated Life",
+  "artist": "(local sample)",
+  "source": "midi-derived from SimulatedLife_120bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 120,
+  "duration_s": 216.0,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/simulated_life/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/simulated_life/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 56.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 56.0,
+      "end": 62.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 62.0,
+      "end": 68.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 68.0,
+      "end": 76.0,
+      "label": "C#m7"
+    },
+    {
+      "start": 76.0,
+      "end": 100.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 100.0,
+      "end": 106.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 106.0,
+      "end": 112.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 112.0,
+      "end": 120.0,
+      "label": "C#m7"
+    },
+    {
+      "start": 120.0,
+      "end": 136.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 136.0,
+      "end": 144.0,
+      "label": "C#m7"
+    },
+    {
+      "start": 144.0,
+      "end": 152.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 152.0,
+      "end": 160.0,
+      "label": "C#m7"
+    },
+    {
+      "start": 160.0,
+      "end": 168.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 168.0,
+      "end": 174.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 174.0,
+      "end": 180.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 180.0,
+      "end": 186.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 186.0,
+      "end": 192.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 192.0,
+      "end": 200.0,
+      "label": "C#m7"
+    },
+    {
+      "start": 200.0,
+      "end": 216.0,
+      "label": "Cm7"
+    }
+  ]
+}

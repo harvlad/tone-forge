@@ -1,0 +1,14 @@
+{
+ "eval_sets": {"eval_real": "12 held-out GuitarSet guitars, realistic scenarios", "eval_flat": "12 held-out, naive flat mixing"},
+ "metric": "SI-SDR dB vs true guitar (higher better)",
+ "results": {
+  "A_riley":  {"eval_real": {"median": -10.88, "mean": -11.45, "max": 6.3}, "eval_flat": {"median": -17.74, "mean": -13.52, "max": 4.9}},
+  "B_naive":  {"eval_real": {"median": -12.34, "mean": -12.83, "max": 5.2}, "eval_flat": {"median": -8.89,  "mean": -7.33,  "max": 7.7}}
+ },
+ "verdict": {
+  "eval_real_deployment_relevant": "Riley beats naive by +1.46 dB median (both weak)",
+  "eval_flat": "naive beats Riley (each model best on its own training distribution)",
+  "absolute_quality": "poor (negative median SI-SDR) -> both models undertrained",
+  "final_train_loss": {"A_riley": 1.35, "B_naive": 1.76}
+ }
+}

@@ -119,7 +119,8 @@ struct SettingsView: View {
 
                 MIDIControllersSection(
                     settings: appState.sampleSettings,
-                    transport: appState.midiKeyboard
+                    transport: appState.midiKeyboard,
+                    onSetClockOut: { appState.audioEngine.setMIDIClockOutEnabled($0) }
                 )
 
                 Section {
@@ -367,12 +368,26 @@ private struct MIDIControllersSection: View {
     @ObservedObject var settings: SampleSettingsStore
     /// nil until `bootAudio` wires the CoreMIDI transport.
     let transport: MIDIKeyboardTransport?
+    /// Enable/disable the "Tone Forge Jam" virtual MIDI source.
+    var onSetClockOut: (Bool) -> Void
+
+    /// Persisted so the virtual source re-arms on next launch (applied
+    /// in bootAudio).
+    @AppStorage("midiClockOut") private var clockOut = false
 
     var body: some View {
         Section("MIDI controllers") {
             Toggle("Pads play samples", isOn: $settings.midiPadsToSamples)
             Text("When on, an attached MIDI pad box (LPD8/MPD) triggers "
                  + "the active sample pack. When off, pads play the synth.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Toggle("MIDI clock output", isOn: $clockOut)
+                .onChange(of: clockOut) { _, on in onSetClockOut(on) }
+            Text("Publishes a \"Tone Forge Jam\" MIDI source: external "
+                 + "synths, drum machines and DAWs follow the transport "
+                 + "(24 PPQN clock + start/stop) and receive played notes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

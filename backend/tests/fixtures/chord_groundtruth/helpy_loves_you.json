@@ -1,0 +1,571 @@
+{
+  "song": "Helpy Loves You",
+  "artist": "(local sample)",
+  "source": "midi-derived from HelpyLovesYou_130bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 130,
+  "duration_s": 199.384,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/helpy_loves_you/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/helpy_loves_you/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 0.923,
+      "label": "A#maj7"
+    },
+    {
+      "start": 0.923,
+      "end": 1.846,
+      "label": "A#7"
+    },
+    {
+      "start": 1.846,
+      "end": 2.769,
+      "label": "F7"
+    },
+    {
+      "start": 2.769,
+      "end": 3.692,
+      "label": "C#maj7"
+    },
+    {
+      "start": 5.538,
+      "end": 6.462,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 7.385,
+      "end": 8.308,
+      "label": "A#maj7"
+    },
+    {
+      "start": 8.308,
+      "end": 9.231,
+      "label": "A#7"
+    },
+    {
+      "start": 12.923,
+      "end": 13.846,
+      "label": "Dmaj7"
+    },
+    {
+      "start": 13.846,
+      "end": 14.769,
+      "label": "Dm7"
+    },
+    {
+      "start": 14.769,
+      "end": 15.692,
+      "label": "A#maj7"
+    },
+    {
+      "start": 15.692,
+      "end": 16.615,
+      "label": "A#7"
+    },
+    {
+      "start": 16.615,
+      "end": 18.462,
+      "label": "F7"
+    },
+    {
+      "start": 18.462,
+      "end": 19.385,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 19.385,
+      "end": 20.308,
+      "label": "Am7"
+    },
+    {
+      "start": 20.308,
+      "end": 22.154,
+      "label": "Dm7"
+    },
+    {
+      "start": 22.154,
+      "end": 23.077,
+      "label": "A#7"
+    },
+    {
+      "start": 23.077,
+      "end": 24.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 24.0,
+      "end": 24.923,
+      "label": "F7"
+    },
+    {
+      "start": 24.923,
+      "end": 25.846,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 25.846,
+      "end": 26.769,
+      "label": "A7"
+    },
+    {
+      "start": 27.692,
+      "end": 29.538,
+      "label": "Dm7"
+    },
+    {
+      "start": 29.538,
+      "end": 31.385,
+      "label": "A#maj7"
+    },
+    {
+      "start": 31.385,
+      "end": 33.231,
+      "label": "F7"
+    },
+    {
+      "start": 33.231,
+      "end": 35.077,
+      "label": "A7"
+    },
+    {
+      "start": 35.077,
+      "end": 36.923,
+      "label": "Dm7"
+    },
+    {
+      "start": 36.923,
+      "end": 38.769,
+      "label": "A#maj7"
+    },
+    {
+      "start": 38.769,
+      "end": 40.615,
+      "label": "Am7"
+    },
+    {
+      "start": 40.615,
+      "end": 42.461,
+      "label": "A7"
+    },
+    {
+      "start": 42.461,
+      "end": 44.308,
+      "label": "Dm7"
+    },
+    {
+      "start": 44.308,
+      "end": 45.231,
+      "label": "A#maj7"
+    },
+    {
+      "start": 45.231,
+      "end": 46.154,
+      "label": "A#7"
+    },
+    {
+      "start": 46.154,
+      "end": 48.0,
+      "label": "F7"
+    },
+    {
+      "start": 48.0,
+      "end": 49.846,
+      "label": "Am7"
+    },
+    {
+      "start": 49.846,
+      "end": 51.692,
+      "label": "Dm7"
+    },
+    {
+      "start": 51.692,
+      "end": 52.615,
+      "label": "A#maj7"
+    },
+    {
+      "start": 52.615,
+      "end": 53.538,
+      "label": "A#7"
+    },
+    {
+      "start": 53.538,
+      "end": 55.385,
+      "label": "F7"
+    },
+    {
+      "start": 55.385,
+      "end": 57.231,
+      "label": "Am7"
+    },
+    {
+      "start": 57.231,
+      "end": 59.077,
+      "label": "Dm7"
+    },
+    {
+      "start": 59.077,
+      "end": 60.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 60.923,
+      "end": 62.769,
+      "label": "F7"
+    },
+    {
+      "start": 62.769,
+      "end": 63.692,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 63.692,
+      "end": 64.615,
+      "label": "Csus2"
+    },
+    {
+      "start": 64.615,
+      "end": 66.461,
+      "label": "Dm7"
+    },
+    {
+      "start": 66.461,
+      "end": 67.385,
+      "label": "A#maj7"
+    },
+    {
+      "start": 67.385,
+      "end": 68.308,
+      "label": "A#7"
+    },
+    {
+      "start": 68.308,
+      "end": 70.154,
+      "label": "F7"
+    },
+    {
+      "start": 70.154,
+      "end": 71.077,
+      "label": "Am7"
+    },
+    {
+      "start": 71.077,
+      "end": 72.0,
+      "label": "Csus2"
+    },
+    {
+      "start": 72.0,
+      "end": 73.846,
+      "label": "Dm7"
+    },
+    {
+      "start": 73.846,
+      "end": 75.692,
+      "label": "A#maj7"
+    },
+    {
+      "start": 75.692,
+      "end": 77.538,
+      "label": "Am7"
+    },
+    {
+      "start": 77.538,
+      "end": 79.385,
+      "label": "A7"
+    },
+    {
+      "start": 79.385,
+      "end": 81.231,
+      "label": "Dm7"
+    },
+    {
+      "start": 81.231,
+      "end": 83.077,
+      "label": "A#maj7"
+    },
+    {
+      "start": 83.077,
+      "end": 84.923,
+      "label": "G7"
+    },
+    {
+      "start": 84.923,
+      "end": 86.769,
+      "label": "A7"
+    },
+    {
+      "start": 86.769,
+      "end": 87.692,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 87.692,
+      "end": 88.615,
+      "label": "A7"
+    },
+    {
+      "start": 88.615,
+      "end": 89.538,
+      "label": "F7"
+    },
+    {
+      "start": 89.538,
+      "end": 90.461,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 90.461,
+      "end": 91.385,
+      "label": "C7"
+    },
+    {
+      "start": 91.385,
+      "end": 92.308,
+      "label": "Cmaj7"
+    },
+    {
+      "start": 92.308,
+      "end": 94.154,
+      "label": "G7"
+    },
+    {
+      "start": 94.154,
+      "end": 95.077,
+      "label": "Gm7"
+    },
+    {
+      "start": 96.0,
+      "end": 97.846,
+      "label": "C#maj7"
+    },
+    {
+      "start": 97.846,
+      "end": 98.769,
+      "label": "G#7"
+    },
+    {
+      "start": 99.692,
+      "end": 101.538,
+      "label": "D#7"
+    },
+    {
+      "start": 101.538,
+      "end": 103.385,
+      "label": "C#maj7"
+    },
+    {
+      "start": 103.385,
+      "end": 104.308,
+      "label": "C#7"
+    },
+    {
+      "start": 104.308,
+      "end": 106.154,
+      "label": "C#maj7"
+    },
+    {
+      "start": 108.923,
+      "end": 112.615,
+      "label": "C#7"
+    },
+    {
+      "start": 112.615,
+      "end": 113.538,
+      "label": "G#7"
+    },
+    {
+      "start": 113.538,
+      "end": 114.461,
+      "label": "G#maj7"
+    },
+    {
+      "start": 114.461,
+      "end": 116.308,
+      "label": "D#7"
+    },
+    {
+      "start": 116.308,
+      "end": 120.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 120.0,
+      "end": 120.923,
+      "label": "G#7"
+    },
+    {
+      "start": 120.923,
+      "end": 121.846,
+      "label": "G#maj7"
+    },
+    {
+      "start": 121.846,
+      "end": 123.692,
+      "label": "D#7"
+    },
+    {
+      "start": 123.692,
+      "end": 127.384,
+      "label": "C#maj7"
+    },
+    {
+      "start": 127.384,
+      "end": 128.308,
+      "label": "G#7"
+    },
+    {
+      "start": 128.308,
+      "end": 129.231,
+      "label": "G#maj7"
+    },
+    {
+      "start": 129.231,
+      "end": 131.077,
+      "label": "D#7"
+    },
+    {
+      "start": 131.077,
+      "end": 134.769,
+      "label": "C#maj7"
+    },
+    {
+      "start": 134.769,
+      "end": 135.692,
+      "label": "G#7"
+    },
+    {
+      "start": 135.692,
+      "end": 136.615,
+      "label": "G#maj7"
+    },
+    {
+      "start": 136.615,
+      "end": 138.461,
+      "label": "D#7"
+    },
+    {
+      "start": 138.461,
+      "end": 142.154,
+      "label": "C#maj7"
+    },
+    {
+      "start": 142.154,
+      "end": 143.077,
+      "label": "G#7"
+    },
+    {
+      "start": 143.077,
+      "end": 144.0,
+      "label": "G#maj7"
+    },
+    {
+      "start": 144.0,
+      "end": 145.846,
+      "label": "Cm7"
+    },
+    {
+      "start": 145.846,
+      "end": 147.692,
+      "label": "Fm7"
+    },
+    {
+      "start": 147.692,
+      "end": 149.538,
+      "label": "C#maj7"
+    },
+    {
+      "start": 149.538,
+      "end": 151.384,
+      "label": "G#7"
+    },
+    {
+      "start": 151.384,
+      "end": 153.231,
+      "label": "Cm7"
+    },
+    {
+      "start": 153.231,
+      "end": 155.077,
+      "label": "Fm7"
+    },
+    {
+      "start": 155.077,
+      "end": 156.923,
+      "label": "C#maj7"
+    },
+    {
+      "start": 156.923,
+      "end": 158.769,
+      "label": "G#7"
+    },
+    {
+      "start": 158.769,
+      "end": 160.615,
+      "label": "Cm7"
+    },
+    {
+      "start": 160.615,
+      "end": 162.461,
+      "label": "Fm7"
+    },
+    {
+      "start": 162.461,
+      "end": 164.308,
+      "label": "C#maj7"
+    },
+    {
+      "start": 164.308,
+      "end": 166.154,
+      "label": "G#7"
+    },
+    {
+      "start": 166.154,
+      "end": 168.0,
+      "label": "Cm7"
+    },
+    {
+      "start": 168.0,
+      "end": 169.846,
+      "label": "Fm7"
+    },
+    {
+      "start": 169.846,
+      "end": 170.769,
+      "label": "C#maj7"
+    },
+    {
+      "start": 170.769,
+      "end": 171.692,
+      "label": "C#7"
+    },
+    {
+      "start": 173.538,
+      "end": 175.384,
+      "label": "D#7"
+    },
+    {
+      "start": 175.384,
+      "end": 178.154,
+      "label": "C#maj7"
+    },
+    {
+      "start": 178.154,
+      "end": 179.077,
+      "label": "C#7"
+    },
+    {
+      "start": 182.769,
+      "end": 184.615,
+      "label": "F7"
+    }
+  ]
+}

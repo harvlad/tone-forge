@@ -1,0 +1,608 @@
+{
+  "test1_single": {
+    "status": "OK",
+    "max_contact_mm": 0.04,
+    "contact_accuracy": {
+      "middle:3/2": 0.04
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.33,
+    "costs": {
+      "contact_error": 0.001,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 2.245,
+      "splay_cost": 0.021,
+      "coupling_cost": 0.064,
+      "thumb_support_cost": 1.94,
+      "wrist_cost": 3.986,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 7.18
+    },
+    "reasons": []
+  },
+  "test2_two": {
+    "status": "OK",
+    "max_contact_mm": 0.91,
+    "contact_accuracy": {
+      "index:2/2": 0.88,
+      "middle:3/2": 0.91
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.21,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": false,
+    "naturalness": 6.132,
+    "costs": {
+      "contact_error": 1.595,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.043,
+      "board_penetration": 0.0,
+      "strain_cost": 5.532,
+      "splay_cost": 0.177,
+      "coupling_cost": 0.423,
+      "thumb_support_cost": 13.361,
+      "wrist_cost": 0.243,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 40.473
+    },
+    "reasons": []
+  },
+  "fixture_G": {
+    "status": "OK",
+    "max_contact_mm": 0.05,
+    "contact_accuracy": {
+      "index:4/2": 0.04,
+      "middle:5/3": 0.03,
+      "ring:0/3": 0.05
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 6.078,
+    "costs": {
+      "contact_error": 0.005,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 5.898,
+      "splay_cost": 0.141,
+      "coupling_cost": 0.04,
+      "thumb_support_cost": 1.639,
+      "wrist_cost": 0.283,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 5.725
+    },
+    "reasons": []
+  },
+  "fixture_C": {
+    "status": "OK",
+    "max_contact_mm": 0.04,
+    "contact_accuracy": {
+      "index:4/1": 0.04,
+      "middle:3/2": 0.01,
+      "ring:1/3": 0.01
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 6.527,
+    "costs": {
+      "contact_error": 0.002,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 6.279,
+      "splay_cost": 0.063,
+      "coupling_cost": 0.185,
+      "thumb_support_cost": 5.199,
+      "wrist_cost": 0.394,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 13.18
+    },
+    "reasons": []
+  },
+  "fixture_D": {
+    "status": "OK",
+    "max_contact_mm": 0.21,
+    "contact_accuracy": {
+      "index:3/2": 0.11,
+      "middle:5/2": 0.21,
+      "ring:4/3": 0.18
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 8.001,
+    "costs": {
+      "contact_error": 0.087,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 7.574,
+      "splay_cost": 0.237,
+      "coupling_cost": 0.189,
+      "thumb_support_cost": 7.281,
+      "wrist_cost": 4.514,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 20.944
+    },
+    "reasons": []
+  },
+  "fixture_Em": {
+    "status": "OK",
+    "max_contact_mm": 1.35,
+    "contact_accuracy": {
+      "middle:1/2": 1.35,
+      "ring:2/2": 1.11
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.15,
+    "board_penetration_mm": 0.1,
+    "thumb_behind_neck": true,
+    "naturalness": 7.803,
+    "costs": {
+      "contact_error": 3.055,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.021,
+      "board_penetration": 0.011,
+      "strain_cost": 7.672,
+      "splay_cost": 0.053,
+      "coupling_cost": 0.079,
+      "thumb_support_cost": 215.518,
+      "wrist_cost": 0.047,
+      "crossing_cost": 0.007,
+      "previous_pose_movement": 0.0,
+      "total": 453.452
+    },
+    "reasons": []
+  },
+  "fixture_A": {
+    "status": "OK",
+    "max_contact_mm": 2.69,
+    "contact_accuracy": {
+      "index:2/2": 2.69,
+      "middle:3/2": 0.24,
+      "ring:4/2": 2.5
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 11.21,
+    "costs": {
+      "contact_error": 13.565,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 9.982,
+      "splay_cost": 0.13,
+      "coupling_cost": 1.099,
+      "thumb_support_cost": 180.554,
+      "wrist_cost": 0.7,
+      "crossing_cost": 0.013,
+      "previous_pose_movement": 0.0,
+      "total": 448.44
+    },
+    "reasons": []
+  },
+  "fixture_Am": {
+    "status": "OK",
+    "max_contact_mm": 1.04,
+    "contact_accuracy": {
+      "index:4/1": 0.11,
+      "middle:2/2": 1.04,
+      "ring:3/2": 1.03
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.14,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 10.343,
+    "costs": {
+      "contact_error": 2.149,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.018,
+      "board_penetration": 0.0,
+      "strain_cost": 9.291,
+      "splay_cost": 0.106,
+      "coupling_cost": 0.946,
+      "thumb_support_cost": 10.607,
+      "wrist_cost": 0.034,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 39.448
+    },
+    "reasons": []
+  },
+  "fixture_E": {
+    "status": "OK",
+    "max_contact_mm": 1.82,
+    "contact_accuracy": {
+      "index:3/1": 0.11,
+      "middle:1/2": 1.82,
+      "ring:2/2": 1.79
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.14,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 9.563,
+    "costs": {
+      "contact_error": 6.51,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.02,
+      "board_penetration": 0.0,
+      "strain_cost": 8.6,
+      "splay_cost": 0.091,
+      "coupling_cost": 0.872,
+      "thumb_support_cost": 9.105,
+      "wrist_cost": 4.003,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 64.66
+    },
+    "reasons": []
+  },
+  "fixture_Dm": {
+    "status": "OK",
+    "max_contact_mm": 0.03,
+    "contact_accuracy": {
+      "index:5/1": 0.03,
+      "middle:3/2": 0.03,
+      "ring:4/3": 0.01
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 6.721,
+    "costs": {
+      "contact_error": 0.002,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 6.659,
+      "splay_cost": 0.061,
+      "coupling_cost": 0.001,
+      "thumb_support_cost": 2.135,
+      "wrist_cost": 0.385,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 6.9
+    },
+    "reasons": []
+  },
+  "test5_Fsharp_barre": {
+    "status": "INFEASIBLE",
+    "max_contact_mm": 18.89,
+    "contact_accuracy": {
+      "middle:3/3": 0.01,
+      "ring:1/4": 0.96,
+      "pinky:2/4": 0.94,
+      "barre:18": 0.11,
+      "barre:11": 3.84,
+      "barre:4": 7.61,
+      "barre:-4": 11.37,
+      "barre:-11": 15.13,
+      "barre:-18": 18.89
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.16,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 10.629,
+    "costs": {
+      "contact_error": 1.824,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.026,
+      "board_penetration": 0.0,
+      "strain_cost": 9.815,
+      "splay_cost": 0.325,
+      "coupling_cost": 0.489,
+      "thumb_support_cost": 5.465,
+      "wrist_cost": 0.046,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 27.14
+    },
+    "reasons": [
+      "contact 18.9mm > 6.0"
+    ]
+  },
+  "test6_G_then_C": {
+    "status": "OK",
+    "max_contact_mm": 0.11,
+    "contact_accuracy": {
+      "index:4/1": 0.07,
+      "middle:3/2": 0.06,
+      "ring:1/3": 0.11
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 4.354,
+    "costs": {
+      "contact_error": 0.021,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 4.32,
+      "splay_cost": 0.034,
+      "coupling_cost": 0.0,
+      "thumb_support_cost": 7.656,
+      "wrist_cost": 0.395,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 4.254,
+      "total": 19.345
+    },
+    "reasons": [],
+    "movement_from_prev": 4.254,
+    "movement_cold_baseline": 1102.221
+  },
+  "test7_phrase_0_index_5-3": {
+    "status": "OK",
+    "max_contact_mm": 0.01,
+    "contact_accuracy": {
+      "index:5/3": 0.01
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.166,
+    "costs": {
+      "contact_error": 0.0,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 2.155,
+      "splay_cost": 0.011,
+      "coupling_cost": 0.0,
+      "thumb_support_cost": 0.006,
+      "wrist_cost": 0.108,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 0.842
+    },
+    "reasons": []
+  },
+  "test7_phrase_1_ring_5-5": {
+    "status": "OK",
+    "max_contact_mm": 0.09,
+    "contact_accuracy": {
+      "ring:5/5": 0.09
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 4.484,
+    "costs": {
+      "contact_error": 0.008,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 4.095,
+      "splay_cost": 0.007,
+      "coupling_cost": 0.382,
+      "thumb_support_cost": 0.01,
+      "wrist_cost": 0.027,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 5.053,
+      "total": 4.622
+    },
+    "reasons": []
+  },
+  "test7_phrase_2_index_4-2": {
+    "status": "OK",
+    "max_contact_mm": 0.02,
+    "contact_accuracy": {
+      "index:4/2": 0.02
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.929,
+    "costs": {
+      "contact_error": 0.001,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 2.92,
+      "splay_cost": 0.003,
+      "coupling_cost": 0.006,
+      "thumb_support_cost": 0.801,
+      "wrist_cost": 0.198,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 1.883,
+      "total": 3.698
+    },
+    "reasons": []
+  },
+  "test7_phrase_3_ring_4-4": {
+    "status": "OK",
+    "max_contact_mm": 0.0,
+    "contact_accuracy": {
+      "ring:4/4": 0.0
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 3.01,
+    "costs": {
+      "contact_error": 0.0,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 3.008,
+      "splay_cost": 0.002,
+      "coupling_cost": 0.0,
+      "thumb_support_cost": 0.001,
+      "wrist_cost": 0.166,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.679,
+      "total": 1.496
+    },
+    "reasons": []
+  },
+  "test7_phrase_4_index_3-2": {
+    "status": "OK",
+    "max_contact_mm": 0.03,
+    "contact_accuracy": {
+      "index:3/2": 0.03
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.684,
+    "costs": {
+      "contact_error": 0.001,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 2.679,
+      "splay_cost": 0.004,
+      "coupling_cost": 0.0,
+      "thumb_support_cost": 1.75,
+      "wrist_cost": 0.161,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.922,
+      "total": 5.006
+    },
+    "reasons": []
+  },
+  "test7_phrase_5_ring_3-4": {
+    "status": "OK",
+    "max_contact_mm": 0.0,
+    "contact_accuracy": {
+      "ring:3/4": 0.0
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.908,
+    "costs": {
+      "contact_error": 0.0,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 2.907,
+      "splay_cost": 0.0,
+      "coupling_cost": 0.0,
+      "thumb_support_cost": 0.003,
+      "wrist_cost": 0.142,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.818,
+      "total": 1.519
+    },
+    "reasons": []
+  },
+  "test7_phrase_6_middle_2-3": {
+    "status": "OK",
+    "max_contact_mm": 0.15,
+    "contact_accuracy": {
+      "middle:2/3": 0.15
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.0,
+    "thumb_behind_neck": true,
+    "naturalness": 2.939,
+    "costs": {
+      "contact_error": 0.023,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.0,
+      "strain_cost": 2.775,
+      "splay_cost": 0.129,
+      "coupling_cost": 0.034,
+      "thumb_support_cost": 8.737,
+      "wrist_cost": 0.063,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 67.58,
+      "total": 52.578
+    },
+    "reasons": []
+  },
+  "test7_phrase_7_middle_1-3": {
+    "status": "OK",
+    "max_contact_mm": 2.86,
+    "contact_accuracy": {
+      "middle:1/3": 2.86
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 0.32,
+    "thumb_behind_neck": false,
+    "naturalness": 5.789,
+    "costs": {
+      "contact_error": 8.203,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 0.106,
+      "strain_cost": 5.748,
+      "splay_cost": 0.032,
+      "coupling_cost": 0.008,
+      "thumb_support_cost": 79.624,
+      "wrist_cost": 0.518,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 993.96,
+      "total": 712.033
+    },
+    "reasons": []
+  },
+  "test7_summary": {
+    "notes": 8,
+    "ok": 8
+  },
+  "test8_impossible": {
+    "status": "INFEASIBLE",
+    "max_contact_mm": 71.36,
+    "contact_accuracy": {
+      "pinky:0/1": 70.56,
+      "index:5/12": 71.36
+    },
+    "joint_limit_violations": [],
+    "collision_penetration_mm": 0.0,
+    "board_penetration_mm": 5.4,
+    "thumb_behind_neck": true,
+    "naturalness": 3.638,
+    "costs": {
+      "contact_error": 10070.854,
+      "joint_limit_penalty": 0.0,
+      "collision_penalty": 0.0,
+      "board_penetration": 29.156,
+      "strain_cost": 3.387,
+      "splay_cost": 0.183,
+      "coupling_cost": 0.068,
+      "thumb_support_cost": 235.153,
+      "wrist_cost": 0.145,
+      "crossing_cost": 0.0,
+      "previous_pose_movement": 0.0,
+      "total": 62063.201
+    },
+    "reasons": [
+      "contact 71.4mm > 6.0",
+      "board penetration 5.4mm"
+    ],
+    "EXPECTED": "INFEASIBLE"
+  }
+}

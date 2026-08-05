@@ -2263,13 +2263,30 @@ class UnifiedPipeline:
             # records, instead of being computed and dropped on the
             # floor inside chord_detector. Backward-compatible: empty
             # dict on degenerate input.
+            #
+            # 2026-07 engine swap: the BTC-ISMIR19 transformer is the
+            # primary chord engine for the "other" lane (measured
+            # +0.10 mean triad WCSR over chroma+Viterbi on the
+            # midi-derived corpus; see detect_chords_btc_with_key).
+            # Chroma+Viterbi remains the fallback when BTC is
+            # unavailable (missing torch/checkpoint) — same latch
+            # pattern as the allin1 structure model.
             from tone_forge.analysis.chords import (
+                detect_chords_btc_with_key,
                 detect_chords_with_key,
                 snap_chord_boundaries_to_beats,
             )
-            chord_records, key_dict = detect_chords_with_key(
-                y, sr, bass_audio=y_bass, beats_s=None,
-            )
+            _btc = detect_chords_btc_with_key(y, sr, bass_audio=y_bass)
+            if _btc is not None:
+                chord_records, key_dict = _btc
+                logger.info(
+                    f"Chord detection: BTC transformer lane "
+                    f"({len(chord_records)} regions)"
+                )
+            else:
+                chord_records, key_dict = detect_chords_with_key(
+                    y, sr, bass_audio=y_bass, beats_s=None,
+                )
 
             def _to_dicts(records) -> List[Dict[str, Any]]:
                 return [

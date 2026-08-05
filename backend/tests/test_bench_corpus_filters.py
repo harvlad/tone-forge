@@ -2,8 +2,8 @@
 
 Verifies that:
 
-* When all filter kwargs are ``None`` (default), behaviour is
-  identical to M1 (no fixtures dropped).
+* When all filter kwargs are ``None`` (default), returns all corpus
+  fixtures.
 * Each filter (``splits``, ``genres``, ``licenses``) independently
   narrows the returned set.
 * Multiple filters AND together (fixture must satisfy every
@@ -24,34 +24,36 @@ from bench.corpus import iter_corpus_fixtures
 
 
 # ---------------------------------------------------------------------------
-# Real-corpus filters (against the 4 M1 fixtures post-annotation)
+# Real-corpus filters (22 midi-derived fixtures post-M3 expansion)
 # ---------------------------------------------------------------------------
+# Corpus composition: 21 synth (midi-derived) + 1 rock (pub_feed)
+# All split='test', all license='first-party'
 
 
-def test_no_filters_returns_all_four_m1_fixtures() -> None:
+def test_no_filters_returns_all_corpus_fixtures() -> None:
     out = iter_corpus_fixtures(require_audio=False)
-    assert len(out) == 4
+    assert len(out) >= 22  # corpus may grow; never shrink
 
 
-def test_split_test_returns_all_four_m1_fixtures() -> None:
+def test_split_test_returns_all_corpus_fixtures() -> None:
     out = iter_corpus_fixtures(require_audio=False, splits=["test"])
-    assert len(out) == 4  # all four are split=test post-annotation
+    assert len(out) >= 22  # all are split=test
     assert {f.split for f in out} == {"test"}
 
 
-def test_split_train_returns_empty_against_m1_corpus() -> None:
+def test_split_train_returns_empty() -> None:
     out = iter_corpus_fixtures(require_audio=False, splits=["train"])
     assert out == []
 
 
-def test_split_holdout_returns_empty_against_m1_corpus() -> None:
+def test_split_holdout_returns_empty() -> None:
     out = iter_corpus_fixtures(require_audio=False, splits=["holdout"])
     assert out == []
 
 
-def test_split_train_or_test_returns_all_four() -> None:
+def test_split_train_or_test_returns_all() -> None:
     out = iter_corpus_fixtures(require_audio=False, splits=["train", "test"])
-    assert len(out) == 4
+    assert len(out) >= 22
 
 
 def test_genre_rock_returns_pub_feed() -> None:
@@ -59,20 +61,23 @@ def test_genre_rock_returns_pub_feed() -> None:
     assert [f.name for f in out] == ["pub_feed"]
 
 
-def test_genre_punk_returns_three_baseline_fixtures() -> None:
-    out = iter_corpus_fixtures(require_audio=False, genres=["punk"])
+def test_genre_synth_returns_midi_derived_fixtures() -> None:
+    out = iter_corpus_fixtures(require_audio=False, genres=["synth"])
     names = sorted(f.name for f in out)
-    assert names == ["demolition_warning", "jump_and_die", "lets_make_it_pain"]
+    # At minimum contains the baseline fixtures re-derived from MIDI
+    assert "demolition_warning" in names
+    assert "jump_and_die" in names
+    assert len(names) >= 21
 
 
-def test_genre_rock_or_punk_returns_all_four() -> None:
-    out = iter_corpus_fixtures(require_audio=False, genres=["rock", "punk"])
-    assert len(out) == 4
+def test_genre_rock_or_synth_returns_all() -> None:
+    out = iter_corpus_fixtures(require_audio=False, genres=["rock", "synth"])
+    assert len(out) >= 22
 
 
-def test_license_first_party_returns_all_four() -> None:
+def test_license_first_party_returns_all() -> None:
     out = iter_corpus_fixtures(require_audio=False, licenses=["first-party"])
-    assert len(out) == 4
+    assert len(out) >= 22
 
 
 def test_license_other_returns_empty() -> None:

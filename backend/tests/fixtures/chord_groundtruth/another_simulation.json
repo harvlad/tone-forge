@@ -1,0 +1,55 @@
+{
+  "song": "Another Simulation",
+  "artist": "(local sample)",
+  "source": "midi-derived from AnotherSimulation_124bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 124,
+  "duration_s": 16.782,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/another_simulation/other.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.018,
+      "end": 1.954,
+      "label": "Dm7"
+    },
+    {
+      "start": 1.954,
+      "end": 2.921,
+      "label": "A#maj7"
+    },
+    {
+      "start": 2.921,
+      "end": 4.857,
+      "label": "Dm7"
+    },
+    {
+      "start": 4.857,
+      "end": 5.825,
+      "label": "Dsus2"
+    },
+    {
+      "start": 5.825,
+      "end": 7.76,
+      "label": "Asus4"
+    },
+    {
+      "start": 7.76,
+      "end": 16.47,
+      "label": "Am7"
+    },
+    {
+      "start": 16.47,
+      "end": 16.782,
+      "label": "Asus4"
+    }
+  ]
+}

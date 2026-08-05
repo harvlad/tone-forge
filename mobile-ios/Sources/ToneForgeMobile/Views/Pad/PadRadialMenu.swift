@@ -28,15 +28,17 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
     case sequence
     case addSound
     case voiceRecord
+    case beatCapture
 
     /// Actions shown on a pad that already holds a sound. Order fixes
     /// the ring layout: index 0 centers at 0° (right), each +60°.
     public static let assigned: [PadRadialAction] =
         [.delete, .chop, .reset, .effects, .loop, .sequence]
 
-    /// Actions shown on an empty pad — add a sound, record a voice
-    /// sample, or build a sequence.
-    public static let empty: [PadRadialAction] = [.addSound, .voiceRecord, .sequence]
+    /// Actions shown on an empty pad — the create menu: add a sample,
+    /// record a voice, capture a beat, or build a sequence.
+    public static let empty: [PadRadialAction] =
+        [.addSound, .voiceRecord, .beatCapture, .sequence]
 
     var label: String {
         switch self {
@@ -46,8 +48,9 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
         case .reset:       return "Reset"
         case .delete:      return "Delete"
         case .sequence:    return "Sequence"
-        case .addSound:    return "Add Sound"
+        case .addSound:    return "Sample"
         case .voiceRecord: return "Voice"
+        case .beatCapture: return "Beat Capture"
         }
     }
 
@@ -61,6 +64,7 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
         case .sequence:    return "square.grid.3x3.fill"
         case .addSound:    return "plus.circle.fill"
         case .voiceRecord: return "mic.fill"
+        case .beatCapture: return "figure.dance"
         }
     }
 
@@ -276,6 +280,7 @@ public struct PadRadialMenu: View {
         ).opacity(0.6)
         case .addSound: return .green.opacity(0.6)
         case .voiceRecord: return .pink.opacity(0.6)
+        case .beatCapture: return .yellow.opacity(0.6)
         }
     }
 

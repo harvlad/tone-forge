@@ -1,0 +1,20 @@
+{
+  "id": "sustained_anchor",
+  "category": "sustained_anchor",
+  "reason": "An index anchor held on string 5 fret 5 across three moments while a second finger plays a moving upper voice (middle s4f6, ring s3f7, middle s4f6). Each moment is a two-contact chord that RE-STATES the anchor, so the data itself asserts the anchor is down throughout. A hand should keep the index planted; finger_reuse ~0.5 (anchor retained, upper voice changes); shift_count 0; compact position-V shape (strings 3-5, frets 5-7) so it is comfortably feasible.",
+  "style": "neutral",
+  "instrument": {
+    "type": "guitar", "n_strings": 6, "scale_len_mm": 648.0,
+    "string_span_nut_mm": 35.0, "string_span_12_mm": 43.5,
+    "board_width_mm": 52.0, "neck_thickness_mm": 21.0
+  },
+  "tempo_bpm": 90,
+  "events": [
+    {"t": 0.0, "dur": 0.5, "string": 5, "fret": 5, "finger": "index",  "articulation": "fret", "target": null},
+    {"t": 0.0, "dur": 0.5, "string": 4, "fret": 6, "finger": "middle", "articulation": "fret", "target": null},
+    {"t": 0.5, "dur": 0.5, "string": 5, "fret": 5, "finger": "index",  "articulation": "fret", "target": null},
+    {"t": 0.5, "dur": 0.5, "string": 3, "fret": 7, "finger": "ring",   "articulation": "fret", "target": null},
+    {"t": 1.0, "dur": 0.5, "string": 5, "fret": 5, "finger": "index",  "articulation": "fret", "target": null},
+    {"t": 1.0, "dur": 0.5, "string": 4, "fret": 6, "finger": "middle", "articulation": "fret", "target": null}
+  ]
+}

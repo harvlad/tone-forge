@@ -46,8 +46,8 @@ _RETRY_SLEEP_SEC = 5.0
 # uploads a long timeout and retry transient network failures instead
 # of throwing away a finished GPU job.
 _UPLOAD_TIMEOUT_SEC = 600
-_UPLOAD_ATTEMPTS = 3
-_UPLOAD_RETRY_SLEEP_SEC = 10.0
+_UPLOAD_ATTEMPTS = 6
+_UPLOAD_RETRY_SLEEP_SEC = 20.0
 # Watchdog for the analysis subprocess. A healthy pipeline emits queue
 # events (progress/result/done) continuously; a deadlocked child sits
 # at 0% CPU emitting nothing while staying alive, which used to hang
@@ -56,6 +56,14 @@ _UPLOAD_RETRY_SLEEP_SEC = 10.0
 # for _JOB_STALL_SEC, or exceeds _JOB_MAX_SEC wall clock outright.
 _JOB_STALL_SEC = 15 * 60
 _JOB_MAX_SEC = 60 * 60
+# Self-restart watchdog. A long-lived worker can wedge in a way that
+# keeps the claim heartbeat alive while every claimed job fails
+# instantly (seen after ~13 days uptime: "online" engine, every job
+# dead at the download step). A fresh interpreter cures it, so after
+# this many consecutive job failures the worker exits non-zero and
+# lets its supervisor (launchd KeepAlive) relaunch it clean.
+_MAX_CONSECUTIVE_FAILURES = 3
+_WATCHDOG_EXIT_CODE = 86
 # The engine's serve-file wrapper — stems_paths values arrive wrapped
 # in this; strip it to recover the on-disk path.
 _SERVE_PREFIXES = (
@@ -150,6 +158,7 @@ class RemoteWorker:
         self.worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
         self.device = detect_device()
         self._stop = False
+        self._consecutive_failures = 0
 
     # -- backend I/O ------------------------------------------------------
 
@@ -210,6 +219,44 @@ class RemoteWorker:
                 tmp.write(chunk)
             return Path(tmp.name)
 
+    @staticmethod
+    def local_source_if_valid(job: dict) -> Optional[Path]:
+        """Same-machine shortcut: when the uploader (the desktop app on
+        THIS Mac) supplied a local path + sha256, verify the hash and
+        use the file directly instead of pulling the upload back down
+        from the backend. The hash check is the authorization: only a
+        submitter who already had the file's exact bytes can name it.
+        Any mismatch falls back to the normal download."""
+        path_str = job.get("source_local_path") or ""
+        want_hash = (job.get("source_sha256") or "").lower()
+        if not path_str or len(want_hash) != 64:
+            return None
+        path = Path(path_str)
+        if not path.is_file():
+            return None
+        import hashlib
+        h = hashlib.sha256()
+        try:
+            with path.open("rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError:
+            return None
+        if h.hexdigest().lower() != want_hash:
+            logger.warning("local source hash mismatch for %s — downloading", path)
+            return None
+        logger.info("using local source %s (hash verified) — skipping download", path)
+        # Copy to a temp file so the shared cleanup path (unlink in
+        # run_job's finally) never deletes the user's original.
+        suffix = path.suffix or ".wav"
+        with tempfile.NamedTemporaryFile(
+            suffix=suffix, prefix="toneforge_local_", delete=False
+        ) as tmp:
+            with path.open("rb") as src:
+                import shutil as _shutil
+                _shutil.copyfileobj(src, tmp)
+            return Path(tmp.name)
+
     def upload_stems(self, job_id: str, stems_paths: dict) -> None:
         """Push each separated stem file to the backend."""
         roles = list(stems_paths.keys())
@@ -221,7 +268,7 @@ class RemoteWorker:
                 continue
             self.post_progress(
                 job_id, 95 + 4 * (i / max(1, len(roles))),
-                f"Uploading stem {i + 1}/{len(roles)} ({role})…",
+                f"Saving stems {i + 1}/{len(roles)} ({role})…",
             )
             self._upload_stem_with_retry(job_id, role, local)
 
@@ -283,13 +330,21 @@ class RemoteWorker:
 
         source: Optional[Path] = None
         try:
-            self.post_progress(job_id, 3, "Downloading source…")
-            source = self.download_source(job_id, filename)
+            self.post_progress(job_id, 3, "Starting analysis…")
+            source = self.local_source_if_valid(job) \
+                or self.download_source(job_id, filename)
 
             queue: multiprocessing.Queue = multiprocessing.Queue()
+            # Engine selection (INTERNAL): job payload wins, then this
+            # worker's env, then "current". Lets a dev machine force the
+            # experimental specialist engine without any client change.
+            _engine = (job.get("analysis_engine")
+                       or os.environ.get("TONEFORGE_ANALYSIS_ENGINE") or "current")
+            _family = (job.get("target_family")
+                       or os.environ.get("TONEFORGE_TARGET_FAMILY") or "")
             process = multiprocessing.Process(
                 target=run_file_analysis,
-                args=(str(source), queue, None, filename),
+                args=(str(source), queue, None, filename, _engine, _family),
                 daemon=True,
             )
             process.start()
@@ -358,20 +413,37 @@ class RemoteWorker:
             self.post_progress(job_id, 99, "Saving analysis…")
             self.post_complete(job_id, sanitize_for_json(result_data))
             logger.info("job %s complete", job_id)
+            self._consecutive_failures = 0
         except Exception as e:  # noqa: BLE001
             logger.exception("job %s failed", job_id)
             self.post_fail(job_id, str(e))
+            self._consecutive_failures += 1
         finally:
             if source is not None:
                 source.unlink(missing_ok=True)
 
     # -- main loop --------------------------------------------------------
 
+    def _heartbeat_loop(self) -> None:
+        """Presence pings while the main thread is busy with a job —
+        otherwise the engine flaps to "offline" mid-analysis."""
+        import threading
+        def beat():
+            while not self._stop:
+                try:
+                    self.session.post(
+                        self._url("/api/engine/heartbeat"), timeout=10)
+                except requests.RequestException:
+                    pass
+                time.sleep(20)
+        threading.Thread(target=beat, daemon=True).start()
+
     def run_forever(self) -> None:
         logger.info(
             "worker %s (%s) polling %s",
             self.worker_id, self.device, self.backend_url,
         )
+        self._heartbeat_loop()
         while not self._stop:
             try:
                 job = self.claim()
@@ -384,6 +456,14 @@ class RemoteWorker:
                 continue
             if job is not None:
                 self.run_job(job)
+                if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    # Wedged-worker watchdog: die and let the supervisor
+                    # relaunch a fresh interpreter (see constant above).
+                    logger.error(
+                        "%d consecutive job failures — exiting for a "
+                        "clean restart", self._consecutive_failures,
+                    )
+                    raise SystemExit(_WATCHDOG_EXIT_CODE)
 
     def stop(self) -> None:
         self._stop = True

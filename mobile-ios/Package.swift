@@ -43,6 +43,10 @@ let package = Package(
                 // it at runtime (see BeatModelStore). Compiled by the
                 // BeatModelTrainer tool, committed as a .mlmodelc dir.
                 .copy("Resources/BeatClassifier.mlmodelc"),
+                // Canonical fretting-hand poses generated offline by the
+                // Blender/MPFB reference pipeline (tools/handrig).
+                .copy("Resources/HandPoses.json"),
+                .copy("Resources/HandSprites"),
             ]
         ),
         .target(

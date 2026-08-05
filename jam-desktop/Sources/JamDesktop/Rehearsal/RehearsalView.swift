@@ -167,11 +167,43 @@ struct RehearsalView: View {
         }
     }
 
+    /// Guitar-neck hand view (shared with iOS Learn): a horizontal
+    /// neck with a silhouette hand playing the current chord.
+    @AppStorage("rehearsal.showHand") private var showHand = true
+    @State private var showTransitions = false
+
     @ViewBuilder
     private func practiceContent(_ item: RehearsalSectionItem) -> some View {
         let currentPos = session.transport.positionSeconds
         let currentChord = session.ribbon?.currentChord(at: currentPos)
         VStack(spacing: 16) {
+            if showHand {
+                HStack {
+                    Text(currentChord?.symbol ?? "—")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(Color.accentColor)
+                    Spacer()
+                    Button("Transitions") { showTransitions = true }
+                        .controlSize(.small)
+                    Toggle("Hand", isOn: $showHand)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                GuitarNeckPlaySurface(current: currentChord?.symbol)
+                    .frame(minHeight: 260, maxHeight: 460)
+                    .sheet(isPresented: $showTransitions) {
+                        TransitionsSheet(pairs: TransitionsSheet.pairs(
+                            from: session.learn.chordSequence))
+                    }
+            } else {
+                HStack {
+                    Spacer()
+                    Toggle("Hand", isOn: $showHand)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+            }
+
             // Countdown bar
             ChordCountdownBar(
                 prediction: session.learn.prediction(

@@ -1,1052 +1,751 @@
 {
   "song": "Demolition Warning",
   "artist": "(local sample)",
-  "source": "captured-baseline from local sample stems (Stage 0)",
-  "tempo_bpm": 140,
-  "time_signature": "4/4",
-  "duration_s": 192.0,
-  "confidence": "BASELINE-CAPTURED: regions are the current Phase-5 detector output, NOT hand-validated. Floor is set conservatively to catch catastrophic regressions only. Stage 1+ changes will naturally drift below 1.00 by design.",
+  "source": "midi-derived from DemolitionWarning_140bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
   "schema_version": 2,
   "split": "test",
-  "genre": "punk",
+  "genre": "synth",
   "license": "first-party",
-  "tags": ["baseline-captured"],
-  "curated_by": "matt",
-  "source_audio_other_stem": "../samples/08 - Demolition Warning/DemolitionWarning_Lead.wav",
-  "source_audio_bass_stem": "../samples/08 - Demolition Warning/DemolitionWarning_Bass.wav",
-  "regression_floor_triad_relaxed": 0.85,
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 140,
+  "duration_s": 192.0,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/demolition_warning/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/demolition_warning/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
   "regions": [
     {
-      "start": 12.678,
-      "end": 17.16,
-      "label": "Gm",
-      "section": "captured-baseline"
+      "start": 6.857,
+      "end": 10.286,
+      "label": "Ddim"
     },
     {
-      "start": 17.16,
-      "end": 17.16,
-      "label": "Am",
-      "section": "captured-baseline"
+      "start": 10.286,
+      "end": 11.143,
+      "label": "D7"
     },
     {
-      "start": 17.16,
-      "end": 17.16,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 11.143,
+      "end": 12.0,
+      "label": "G7"
     },
     {
-      "start": 17.16,
-      "end": 17.16,
-      "label": "G#m",
-      "section": "captured-baseline"
+      "start": 12.0,
+      "end": 12.857,
+      "label": "D7"
     },
     {
-      "start": 17.16,
-      "end": 17.16,
-      "label": "Gm",
-      "section": "captured-baseline"
+      "start": 12.857,
+      "end": 13.714,
+      "label": "G7"
     },
     {
-      "start": 17.16,
-      "end": 17.16,
-      "label": "Am",
-      "section": "captured-baseline"
+      "start": 13.714,
+      "end": 14.571,
+      "label": "D7"
     },
     {
-      "start": 17.16,
-      "end": 17.16,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 14.571,
+      "end": 15.429,
+      "label": "G7"
     },
     {
-      "start": 17.16,
-      "end": 18.947,
-      "label": "D",
-      "section": "captured-baseline"
+      "start": 15.429,
+      "end": 16.286,
+      "label": "D7"
     },
     {
-      "start": 18.947,
-      "end": 18.947,
-      "label": "Gm",
-      "section": "captured-baseline"
+      "start": 16.286,
+      "end": 17.143,
+      "label": "G7"
     },
     {
-      "start": 18.947,
-      "end": 19.853,
-      "label": "A",
-      "section": "captured-baseline"
+      "start": 17.143,
+      "end": 20.571,
+      "label": "Dm7"
     },
     {
-      "start": 19.853,
-      "end": 19.853,
-      "label": "A5",
-      "section": "captured-baseline"
+      "start": 20.571,
+      "end": 21.429,
+      "label": "A#maj7"
     },
     {
-      "start": 19.853,
-      "end": 20.712,
-      "label": "A",
-      "section": "captured-baseline"
+      "start": 21.429,
+      "end": 22.286,
+      "label": "Gm7"
     },
     {
-      "start": 20.712,
-      "end": 20.712,
-      "label": "A5",
-      "section": "captured-baseline"
+      "start": 22.286,
+      "end": 23.143,
+      "label": "Dsus2"
     },
     {
-      "start": 20.712,
-      "end": 21.571,
-      "label": "A#",
-      "section": "captured-baseline"
+      "start": 23.143,
+      "end": 24.0,
+      "label": "Em7"
     },
     {
-      "start": 21.571,
-      "end": 21.571,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 24.0,
+      "end": 24.857,
+      "label": "Dm7"
     },
     {
-      "start": 21.571,
-      "end": 22.43,
-      "label": "A#",
-      "section": "captured-baseline"
+      "start": 24.857,
+      "end": 25.714,
+      "label": "G7"
     },
     {
-      "start": 22.43,
-      "end": 23.29,
-      "label": "A5",
-      "section": "captured-baseline"
+      "start": 25.714,
+      "end": 26.571,
+      "label": "D7"
     },
     {
-      "start": 23.29,
-      "end": 24.149,
-      "label": "E",
-      "section": "captured-baseline"
+      "start": 26.571,
+      "end": 27.429,
+      "label": "Dsus4"
     },
     {
-      "start": 24.149,
-      "end": 24.149,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 27.429,
+      "end": 28.286,
+      "label": "D7"
     },
     {
-      "start": 24.149,
-      "end": 25.008,
-      "label": "F",
-      "section": "captured-baseline"
+      "start": 28.286,
+      "end": 29.143,
+      "label": "Dsus4"
     },
     {
-      "start": 25.008,
-      "end": 25.008,
-      "label": "G5",
-      "section": "captured-baseline"
+      "start": 29.143,
+      "end": 30.0,
+      "label": "D7"
     },
     {
-      "start": 25.008,
-      "end": 25.844,
-      "label": "G#",
-      "section": "captured-baseline"
+      "start": 30.0,
+      "end": 30.857,
+      "label": "G7"
     },
     {
-      "start": 25.844,
-      "end": 26.61,
-      "label": "A5",
-      "section": "captured-baseline"
+      "start": 30.857,
+      "end": 31.714,
+      "label": "D7"
     },
     {
-      "start": 26.61,
-      "end": 26.61,
-      "label": "A",
-      "section": "captured-baseline"
+      "start": 31.714,
+      "end": 32.571,
+      "label": "G7"
     },
     {
-      "start": 26.61,
-      "end": 27.446,
-      "label": "G#",
-      "section": "captured-baseline"
+      "start": 32.571,
+      "end": 33.429,
+      "label": "D7"
     },
     {
-      "start": 27.446,
-      "end": 28.979,
-      "label": "D",
-      "section": "captured-baseline"
+      "start": 33.429,
+      "end": 34.286,
+      "label": "G7"
     },
     {
-      "start": 28.979,
-      "end": 29.838,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 34.286,
+      "end": 35.143,
+      "label": "A#maj7"
     },
     {
-      "start": 29.838,
-      "end": 29.838,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 35.143,
+      "end": 36.0,
+      "label": "Gm7"
     },
     {
-      "start": 29.838,
-      "end": 31.324,
-      "label": "F",
-      "section": "captured-baseline"
+      "start": 36.0,
+      "end": 36.857,
+      "label": "D7"
     },
     {
-      "start": 31.324,
-      "end": 33.042,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 36.857,
+      "end": 37.714,
+      "label": "G7"
     },
     {
-      "start": 33.042,
-      "end": 33.042,
-      "label": "D",
-      "section": "captured-baseline"
+      "start": 37.714,
+      "end": 38.571,
+      "label": "Dsus2"
     },
     {
-      "start": 33.042,
-      "end": 34.76,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 38.571,
+      "end": 39.429,
+      "label": "Dsus4"
     },
     {
-      "start": 34.76,
-      "end": 34.76,
-      "label": "A#",
-      "section": "captured-baseline"
+      "start": 39.429,
+      "end": 40.286,
+      "label": "D7"
     },
     {
-      "start": 34.76,
-      "end": 35.619,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 40.286,
+      "end": 41.143,
+      "label": "G7"
     },
     {
-      "start": 35.619,
-      "end": 36.479,
-      "label": "A#5",
-      "section": "captured-baseline"
+      "start": 41.143,
+      "end": 42.0,
+      "label": "D7"
     },
     {
-      "start": 36.479,
-      "end": 36.479,
-      "label": "C7",
-      "section": "captured-baseline"
+      "start": 42.0,
+      "end": 42.857,
+      "label": "G7"
     },
     {
-      "start": 36.479,
-      "end": 37.314,
-      "label": "Gm",
-      "section": "captured-baseline"
+      "start": 42.857,
+      "end": 43.714,
+      "label": "D7"
     },
     {
-      "start": 37.314,
-      "end": 38.801,
-      "label": "F",
-      "section": "captured-baseline"
+      "start": 43.714,
+      "end": 44.571,
+      "label": "G7"
     },
     {
-      "start": 38.801,
-      "end": 38.801,
-      "label": "Gm",
-      "section": "captured-baseline"
+      "start": 44.571,
+      "end": 48.0,
+      "label": "Ddim"
     },
     {
-      "start": 38.801,
-      "end": 39.59,
-      "label": "A5",
-      "section": "captured-baseline"
+      "start": 65.143,
+      "end": 68.571,
+      "label": "Ddim"
     },
     {
-      "start": 39.59,
-      "end": 39.59,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 68.571,
+      "end": 69.429,
+      "label": "Dm7"
     },
     {
-      "start": 39.59,
-      "end": 40.426,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 69.429,
+      "end": 70.286,
+      "label": "G7"
     },
     {
-      "start": 40.426,
-      "end": 41.262,
-      "label": "D",
-      "section": "captured-baseline"
+      "start": 70.286,
+      "end": 71.143,
+      "label": "Dm7"
     },
     {
-      "start": 41.262,
-      "end": 42.121,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 71.143,
+      "end": 72.0,
+      "label": "G7"
     },
     {
-      "start": 42.121,
-      "end": 42.98,
-      "label": "Am",
-      "section": "captured-baseline"
+      "start": 72.0,
+      "end": 72.857,
+      "label": "Dm7"
     },
     {
-      "start": 42.98,
-      "end": 42.98,
-      "label": "A",
-      "section": "captured-baseline"
+      "start": 72.857,
+      "end": 73.714,
+      "label": "G7"
     },
     {
-      "start": 42.98,
-      "end": 43.839,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 73.714,
+      "end": 74.571,
+      "label": "D7"
     },
     {
-      "start": 43.839,
-      "end": 44.698,
-      "label": "Am",
-      "section": "captured-baseline"
+      "start": 74.571,
+      "end": 75.428,
+      "label": "G7"
     },
     {
-      "start": 44.698,
-      "end": 45.534,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 75.428,
+      "end": 76.286,
+      "label": "D7"
     },
     {
-      "start": 45.534,
-      "end": 46.37,
-      "label": "Fm",
-      "section": "captured-baseline"
+      "start": 76.286,
+      "end": 77.143,
+      "label": "Gm7"
     },
     {
-      "start": 46.37,
-      "end": 47.206,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 77.143,
+      "end": 78.0,
+      "label": "Dsus2"
     },
     {
-      "start": 47.206,
-      "end": 47.206,
-      "label": "C#m",
-      "section": "captured-baseline"
+      "start": 78.0,
+      "end": 78.857,
+      "label": "Em7"
     },
     {
-      "start": 47.206,
-      "end": 48.042,
-      "label": "C#",
-      "section": "captured-baseline"
+      "start": 78.857,
+      "end": 79.714,
+      "label": "Dm7"
     },
     {
-      "start": 48.042,
-      "end": 51.479,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 79.714,
+      "end": 80.571,
+      "label": "G7"
     },
     {
-      "start": 51.479,
-      "end": 53.174,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 80.571,
+      "end": 81.428,
+      "label": "D7"
     },
     {
-      "start": 53.174,
-      "end": 54.892,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 81.428,
+      "end": 82.286,
+      "label": "Dsus4"
     },
     {
-      "start": 54.892,
-      "end": 56.61,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 82.286,
+      "end": 83.143,
+      "label": "D7"
     },
     {
-      "start": 56.61,
-      "end": 60.047,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 83.143,
+      "end": 84.0,
+      "label": "G7"
     },
     {
-      "start": 60.047,
-      "end": 66.038,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 84.0,
+      "end": 84.857,
+      "label": "D7"
     },
     {
-      "start": 66.038,
-      "end": 66.897,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 84.857,
+      "end": 85.714,
+      "label": "G7"
     },
     {
-      "start": 66.897,
-      "end": 68.615,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 85.714,
+      "end": 86.571,
+      "label": "D7"
     },
     {
-      "start": 68.615,
-      "end": 69.451,
-      "label": "Cm",
-      "section": "captured-baseline"
+      "start": 86.571,
+      "end": 87.428,
+      "label": "G7"
     },
     {
-      "start": 69.451,
-      "end": 71.192,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 87.428,
+      "end": 88.286,
+      "label": "D7"
     },
     {
-      "start": 71.192,
-      "end": 72.028,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 88.286,
+      "end": 89.143,
+      "label": "G7"
     },
     {
-      "start": 72.028,
-      "end": 72.887,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 89.143,
+      "end": 90.0,
+      "label": "D7"
     },
     {
-      "start": 72.887,
-      "end": 72.887,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 90.0,
+      "end": 90.857,
+      "label": "Gm7"
     },
     {
-      "start": 72.887,
-      "end": 73.747,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 90.857,
+      "end": 91.714,
+      "label": "D7"
     },
     {
-      "start": 73.747,
-      "end": 74.606,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 91.714,
+      "end": 92.571,
+      "label": "G7"
     },
     {
-      "start": 74.606,
-      "end": 75.465,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 92.571,
+      "end": 93.428,
+      "label": "Dsus2"
     },
     {
-      "start": 75.465,
-      "end": 76.394,
-      "label": "A#",
-      "section": "captured-baseline"
+      "start": 93.428,
+      "end": 94.286,
+      "label": "Dsus4"
     },
     {
-      "start": 76.394,
-      "end": 76.394,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 94.286,
+      "end": 95.143,
+      "label": "D7"
     },
     {
-      "start": 76.394,
-      "end": 77.276,
-      "label": "Daug",
-      "section": "captured-baseline"
+      "start": 95.143,
+      "end": 96.0,
+      "label": "G7"
     },
     {
-      "start": 77.276,
-      "end": 77.276,
-      "label": "A#",
-      "section": "captured-baseline"
+      "start": 96.0,
+      "end": 96.857,
+      "label": "Dm7"
     },
     {
-      "start": 77.276,
-      "end": 78.135,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 96.857,
+      "end": 97.714,
+      "label": "G7"
     },
     {
-      "start": 78.135,
-      "end": 78.994,
-      "label": "E",
-      "section": "captured-baseline"
+      "start": 97.714,
+      "end": 98.571,
+      "label": "Dm7"
     },
     {
-      "start": 78.994,
-      "end": 79.923,
-      "label": "F",
-      "section": "captured-baseline"
+      "start": 98.571,
+      "end": 99.428,
+      "label": "G7"
     },
     {
-      "start": 79.923,
-      "end": 79.923,
-      "label": "G5",
-      "section": "captured-baseline"
+      "start": 99.428,
+      "end": 100.286,
+      "label": "D7"
     },
     {
-      "start": 79.923,
-      "end": 80.875,
-      "label": "G#",
-      "section": "captured-baseline"
+      "start": 100.286,
+      "end": 101.143,
+      "label": "G7"
     },
     {
-      "start": 80.875,
-      "end": 80.875,
-      "label": "A",
-      "section": "captured-baseline"
+      "start": 101.143,
+      "end": 102.0,
+      "label": "D7"
     },
     {
-      "start": 80.875,
-      "end": 81.827,
-      "label": "A5",
-      "section": "captured-baseline"
+      "start": 102.0,
+      "end": 102.857,
+      "label": "G7"
     },
     {
-      "start": 81.827,
-      "end": 81.827,
-      "label": "A",
-      "section": "captured-baseline"
+      "start": 102.857,
+      "end": 103.714,
+      "label": "D7"
     },
     {
-      "start": 81.827,
-      "end": 82.756,
-      "label": "G#",
-      "section": "captured-baseline"
+      "start": 103.714,
+      "end": 104.571,
+      "label": "G7"
     },
     {
-      "start": 82.756,
-      "end": 82.756,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 104.571,
+      "end": 105.428,
+      "label": "D7"
     },
     {
-      "start": 82.756,
-      "end": 84.474,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 105.428,
+      "end": 106.286,
+      "label": "G7"
     },
     {
-      "start": 84.474,
-      "end": 86.169,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 106.286,
+      "end": 109.714,
+      "label": "Ddim"
     },
     {
-      "start": 86.169,
-      "end": 87.028,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 123.428,
+      "end": 124.286,
+      "label": "D7"
     },
     {
-      "start": 87.028,
-      "end": 87.795,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 124.286,
+      "end": 125.143,
+      "label": "G7"
     },
     {
-      "start": 87.795,
-      "end": 89.606,
-      "label": "Cm",
-      "section": "captured-baseline"
+      "start": 125.143,
+      "end": 126.0,
+      "label": "D7"
     },
     {
-      "start": 89.606,
-      "end": 90.465,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 126.0,
+      "end": 126.857,
+      "label": "G7"
     },
     {
-      "start": 90.465,
-      "end": 90.465,
-      "label": "Daug",
-      "section": "captured-baseline"
+      "start": 126.857,
+      "end": 127.714,
+      "label": "D7"
     },
     {
-      "start": 90.465,
-      "end": 91.324,
-      "label": "C7",
-      "section": "captured-baseline"
+      "start": 127.714,
+      "end": 128.571,
+      "label": "G7"
     },
     {
-      "start": 91.324,
-      "end": 91.324,
-      "label": "A#",
-      "section": "captured-baseline"
+      "start": 128.571,
+      "end": 129.428,
+      "label": "D7"
     },
     {
-      "start": 91.324,
-      "end": 92.183,
-      "label": "Gm",
-      "section": "captured-baseline"
+      "start": 129.428,
+      "end": 130.286,
+      "label": "G7"
     },
     {
-      "start": 92.183,
-      "end": 93.901,
-      "label": "F",
-      "section": "captured-baseline"
+      "start": 130.286,
+      "end": 131.143,
+      "label": "D7"
     },
     {
-      "start": 93.901,
-      "end": 93.901,
-      "label": "Am",
-      "section": "captured-baseline"
+      "start": 131.143,
+      "end": 132.0,
+      "label": "G7"
     },
     {
-      "start": 93.901,
-      "end": 94.714,
-      "label": "A7",
-      "section": "captured-baseline"
+      "start": 132.0,
+      "end": 132.857,
+      "label": "D7"
     },
     {
-      "start": 94.714,
-      "end": 95.573,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 132.857,
+      "end": 133.714,
+      "label": "G7"
     },
     {
-      "start": 95.573,
-      "end": 96.456,
-      "label": "D",
-      "section": "captured-baseline"
+      "start": 133.714,
+      "end": 134.571,
+      "label": "D7"
     },
     {
-      "start": 96.456,
-      "end": 97.338,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 134.571,
+      "end": 135.428,
+      "label": "G7"
     },
     {
-      "start": 97.338,
-      "end": 99.103,
-      "label": "Am",
-      "section": "captured-baseline"
+      "start": 135.428,
+      "end": 136.286,
+      "label": "D7"
     },
     {
-      "start": 99.103,
-      "end": 99.103,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 136.286,
+      "end": 137.143,
+      "label": "G7"
     },
     {
-      "start": 99.103,
-      "end": 100.867,
-      "label": "Gm",
-      "section": "captured-baseline"
+      "start": 137.143,
+      "end": 138.0,
+      "label": "D7"
     },
     {
-      "start": 100.867,
-      "end": 101.75,
-      "label": "D",
-      "section": "captured-baseline"
+      "start": 138.0,
+      "end": 138.857,
+      "label": "G7"
     },
     {
-      "start": 101.75,
-      "end": 102.632,
-      "label": "C#",
-      "section": "captured-baseline"
+      "start": 138.857,
+      "end": 139.714,
+      "label": "D7"
     },
     {
-      "start": 102.632,
-      "end": 119.165,
-      "label": "Gm",
-      "section": "captured-baseline"
+      "start": 139.714,
+      "end": 140.571,
+      "label": "G7"
     },
     {
-      "start": 119.165,
-      "end": 120.024,
-      "label": "A#",
-      "section": "captured-baseline"
+      "start": 140.571,
+      "end": 141.428,
+      "label": "D7"
     },
     {
-      "start": 120.024,
-      "end": 120.024,
-      "label": "F",
-      "section": "captured-baseline"
+      "start": 141.428,
+      "end": 142.286,
+      "label": "G7"
     },
     {
-      "start": 120.024,
-      "end": 120.883,
-      "label": "F7",
-      "section": "captured-baseline"
+      "start": 142.286,
+      "end": 143.143,
+      "label": "D7"
     },
     {
-      "start": 120.883,
-      "end": 121.742,
-      "label": "A",
-      "section": "captured-baseline"
+      "start": 143.143,
+      "end": 144.0,
+      "label": "G7"
     },
     {
-      "start": 121.742,
-      "end": 121.742,
-      "label": "Gm",
-      "section": "captured-baseline"
+      "start": 144.0,
+      "end": 144.857,
+      "label": "D7"
     },
     {
-      "start": 121.742,
-      "end": 122.601,
-      "label": "C#",
-      "section": "captured-baseline"
+      "start": 144.857,
+      "end": 145.714,
+      "label": "G7"
     },
     {
-      "start": 122.601,
-      "end": 123.46,
-      "label": "Cm",
-      "section": "captured-baseline"
+      "start": 145.714,
+      "end": 146.571,
+      "label": "D7"
     },
     {
-      "start": 123.46,
-      "end": 123.46,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 146.571,
+      "end": 147.428,
+      "label": "G7"
     },
     {
-      "start": 123.46,
-      "end": 124.32,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 147.428,
+      "end": 148.286,
+      "label": "Dm7"
     },
     {
-      "start": 124.32,
-      "end": 125.179,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 148.286,
+      "end": 149.143,
+      "label": "G7"
     },
     {
-      "start": 125.179,
-      "end": 126.038,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 149.143,
+      "end": 150.0,
+      "label": "Dm7"
     },
     {
-      "start": 126.038,
-      "end": 128.615,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 150.0,
+      "end": 150.857,
+      "label": "G7"
     },
     {
-      "start": 128.615,
-      "end": 129.474,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 150.857,
+      "end": 151.714,
+      "label": "D7"
     },
     {
-      "start": 129.474,
-      "end": 133.77,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 151.714,
+      "end": 152.571,
+      "label": "G7"
     },
     {
-      "start": 133.77,
-      "end": 134.629,
-      "label": "C#",
-      "section": "captured-baseline"
+      "start": 152.571,
+      "end": 153.428,
+      "label": "D7"
     },
     {
-      "start": 134.629,
-      "end": 135.488,
-      "label": "D",
-      "section": "captured-baseline"
+      "start": 153.428,
+      "end": 154.286,
+      "label": "Dsus4"
     },
     {
-      "start": 135.488,
-      "end": 135.488,
-      "label": "D#7",
-      "section": "captured-baseline"
+      "start": 154.286,
+      "end": 155.143,
+      "label": "A#maj7"
     },
     {
-      "start": 135.488,
-      "end": 137.183,
-      "label": "D",
-      "section": "captured-baseline"
+      "start": 155.143,
+      "end": 156.0,
+      "label": "Gm7"
     },
     {
-      "start": 137.183,
-      "end": 138.043,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 156.0,
+      "end": 156.857,
+      "label": "Dsus2"
     },
     {
-      "start": 138.043,
-      "end": 138.902,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 156.857,
+      "end": 157.714,
+      "label": "Em7"
     },
     {
-      "start": 138.902,
-      "end": 139.761,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 157.714,
+      "end": 158.571,
+      "label": "Dm7"
     },
     {
-      "start": 139.761,
-      "end": 144.033,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 158.571,
+      "end": 159.428,
+      "label": "G7"
     },
     {
-      "start": 144.033,
-      "end": 144.893,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 159.428,
+      "end": 160.286,
+      "label": "D7"
     },
     {
-      "start": 144.893,
-      "end": 145.752,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 160.286,
+      "end": 161.143,
+      "label": "Dsus4"
     },
     {
-      "start": 145.752,
-      "end": 146.611,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 161.143,
+      "end": 162.0,
+      "label": "D7"
     },
     {
-      "start": 146.611,
-      "end": 150.047,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 162.0,
+      "end": 162.857,
+      "label": "G7"
     },
     {
-      "start": 150.047,
-      "end": 150.906,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 162.857,
+      "end": 163.714,
+      "label": "D7"
     },
     {
-      "start": 150.906,
-      "end": 151.766,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 163.714,
+      "end": 164.571,
+      "label": "G7"
     },
     {
-      "start": 151.766,
-      "end": 152.602,
-      "label": "D#",
-      "section": "captured-baseline"
+      "start": 164.571,
+      "end": 165.428,
+      "label": "D7"
     },
     {
-      "start": 152.602,
-      "end": 154.552,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 165.428,
+      "end": 166.286,
+      "label": "G7"
     },
     {
-      "start": 154.552,
-      "end": 154.552,
-      "label": "A#",
-      "section": "captured-baseline"
+      "start": 166.286,
+      "end": 167.143,
+      "label": "D7"
     },
     {
-      "start": 154.552,
-      "end": 155.597,
-      "label": "D5",
-      "section": "captured-baseline"
+      "start": 167.143,
+      "end": 168.0,
+      "label": "G7"
     },
     {
-      "start": 155.597,
-      "end": 156.456,
-      "label": "A#",
-      "section": "captured-baseline"
+      "start": 168.0,
+      "end": 168.857,
+      "label": "A#maj7"
     },
     {
-      "start": 156.456,
-      "end": 156.456,
-      "label": "A5",
-      "section": "captured-baseline"
+      "start": 168.857,
+      "end": 169.714,
+      "label": "Gm7"
     },
     {
-      "start": 156.456,
-      "end": 157.292,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 169.714,
+      "end": 170.571,
+      "label": "D7"
     },
     {
-      "start": 157.292,
-      "end": 157.292,
-      "label": "E",
-      "section": "captured-baseline"
+      "start": 170.571,
+      "end": 171.428,
+      "label": "G7"
     },
     {
-      "start": 157.292,
-      "end": 158.151,
-      "label": "F",
-      "section": "captured-baseline"
+      "start": 171.428,
+      "end": 172.286,
+      "label": "Dsus2"
     },
     {
-      "start": 158.151,
-      "end": 159.033,
-      "label": "G5",
-      "section": "captured-baseline"
+      "start": 172.286,
+      "end": 173.143,
+      "label": "G7"
     },
     {
-      "start": 159.033,
-      "end": 159.033,
-      "label": "G#",
-      "section": "captured-baseline"
+      "start": 173.143,
+      "end": 174.0,
+      "label": "D7"
     },
     {
-      "start": 159.033,
-      "end": 159.893,
-      "label": "A5",
-      "section": "captured-baseline"
+      "start": 174.0,
+      "end": 174.857,
+      "label": "G7"
     },
     {
-      "start": 159.893,
-      "end": 160.729,
-      "label": "A",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 160.729,
-      "end": 160.729,
-      "label": "G#",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 160.729,
-      "end": 161.611,
-      "label": "A#7",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 161.611,
-      "end": 164.188,
-      "label": "D#",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 164.188,
-      "end": 167.602,
-      "label": "D5",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 167.602,
-      "end": 167.602,
-      "label": "Dm",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 167.602,
-      "end": 168.461,
-      "label": "D5",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 168.461,
-      "end": 168.461,
-      "label": "A#",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 168.461,
-      "end": 169.32,
-      "label": "D5",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 169.32,
-      "end": 169.32,
-      "label": "A#",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 169.32,
-      "end": 170.179,
-      "label": "C7",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 170.179,
-      "end": 171.038,
-      "label": "Gm",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 171.038,
-      "end": 172.524,
-      "label": "F",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 172.524,
-      "end": 173.314,
-      "label": "A7",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 173.314,
-      "end": 173.314,
-      "label": "D#",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 173.314,
-      "end": 174.15,
-      "label": "D5",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 174.15,
-      "end": 174.939,
-      "label": "D",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 174.939,
-      "end": 174.939,
-      "label": "D5",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 174.939,
-      "end": 176.611,
-      "label": "D#",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 176.611,
-      "end": 178.329,
-      "label": "D5",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 178.329,
-      "end": 181.766,
-      "label": "D#",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 181.766,
-      "end": 183.461,
-      "label": "D5",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 183.461,
-      "end": 186.038,
-      "label": "D#",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 186.038,
-      "end": 186.897,
-      "label": "D5",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 186.897,
-      "end": 187.757,
-      "label": "D#",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 187.757,
-      "end": 191.983,
-      "label": "D5",
-      "section": "captured-baseline"
-    },
-    {
-      "start": 191.983,
-      "end": 191.983,
-      "label": "Dm",
-      "section": "captured-baseline"
+      "start": 174.857,
+      "end": 178.286,
+      "label": "Dm7"
     }
   ]
 }

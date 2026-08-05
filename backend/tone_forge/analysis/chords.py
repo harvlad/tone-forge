@@ -33,6 +33,7 @@ from tone_forge.analysis import chord_detector as _internal
 __all__ = [
     "detect_chords",
     "detect_chords_with_key",
+    "detect_chords_btc_with_key",
     "snap_chord_boundaries_to_beats",
     "enforce_min_hold",
     "filter_chords_in_monophonic_sections",
@@ -92,27 +93,40 @@ def detect_chords(
 ) -> Tuple[Chord, ...]:
     """Detect chords in ``audio`` and return ``contracts.Chord`` records.
 
+    Primary engine is BTC-ISMIR19 (large_voca vocab); falls back to
+    chroma+Viterbi on import/inference failure. BTC wins 17/22 fixtures
+    on the midi-derived corpus (mean triad-relaxed WCSR 0.620 vs 0.523).
+
     Args:
         audio: Mono audio samples (any range; librosa-compatible).
         sr: Sample rate in Hz.
         min_chord_duration_s: Drop chord regions shorter than this. The
             spike used 0.3s; default here is 0.5s to favor stable
-            regions in the Jam chord lane.
+            regions in the Jam chord lane. Note: only applies to the
+            chroma+Viterbi fallback path; BTC emits its own region
+            lengths.
         bass_audio: Optional mono bass-stem samples at the same sample
-            rate. When supplied, the detector biases its emission
-            scores toward chord templates whose root matches the
-            per-window bass pitch class extracted via pyin. This is the
-            Phase 5 disambiguation pathway for relative-major/minor
-            pairs the chroma matcher alone cannot separate.
+            rate. When supplied, both BTC and the fallback detector use
+            a peak-normalized sum of audio+bass for inference.
         beats_s: Optional beat timestamps in seconds (from
-            ``librosa.beat.beat_track``). When supplied, the detector
-            replaces its fixed-0.5s analysis grid with beat-aligned
-            windows so chord-region boundaries land on musical beats
-            rather than on an arbitrary clock subdivision (Phase 6).
+            ``librosa.beat.beat_track``). When supplied and falling back
+            to chroma+Viterbi, the detector replaces its fixed-0.5s
+            analysis grid with beat-aligned windows so chord-region
+            boundaries land on musical beats rather than on an arbitrary
+            clock subdivision.
 
     Returns:
         A tuple of ``contracts.Chord`` ordered by ``start_s``.
     """
+    # Primary: BTC-ISMIR19 transformer (measured winner on midi corpus)
+    btc_result = detect_chords_btc_with_key(audio, sr, bass_audio=bass_audio)
+    if btc_result is not None:
+        chords, _ = btc_result
+        # BTC can return empty on synthetic/unusual audio; fall back
+        if chords:
+            return chords
+
+    # Fallback: chroma+Viterbi
     raw = _internal.detect_chords_from_audio(
         audio, sr,
         min_chord_duration=min_chord_duration_s,
@@ -224,6 +238,135 @@ def detect_chords_with_key(
     # missing so the max-span guard has no beat scale.
     chords = collapse_same_root_regions(chords, beats_s)
     return chords, key_out
+
+
+# ---------------------------------------------------------------------------
+# BTC transformer chord lane (2026-07 engine swap)
+# ---------------------------------------------------------------------------
+
+# Chord tones per tone-forge suffix, as semitone intervals from the
+# root. Used only for the label-derived key estimate below.
+_SUFFIX_INTERVALS = {
+    "": (0, 4, 7),
+    "m": (0, 3, 7),
+    "5": (0, 7),
+    "sus2": (0, 2, 7),
+    "sus4": (0, 5, 7),
+    "7": (0, 4, 7, 10),
+    "maj7": (0, 4, 7, 11),
+    "m7": (0, 3, 7, 10),
+    "dim": (0, 3, 6),
+    "dim7": (0, 3, 6, 9),
+    "aug": (0, 4, 8),
+}
+
+# Once BTC fails to load/infer (missing torch, missing checkpoint,
+# OOM) it will keep failing — latch and stop retrying per song.
+# Mirrors the allin1 latch in analysis/structure.py.
+_BTC_FAILED = False
+
+
+def _key_from_chords(chords: Tuple[Chord, ...]) -> Dict[str, Any]:
+    """Krumhansl key estimate from duration-weighted chord tones.
+
+    BTC emits no key. Build a pseudo-chroma vector from the chord
+    tones of every region (mass = region duration) and rank it with
+    the same Krumhansl-Schmuckler profiles the production detector
+    uses, so the persisted key dict keeps identical shape and
+    strength semantics. Empty dict when no region parses.
+
+    Chord roots carry double weight: flat chord-tone mass makes the
+    relative-major/minor pair a coin flip (Gm-centric Jump and Die
+    keyed as A# major at 1x; G minor at >=1.5x root weight), and
+    tonic root salience is exactly the information the flat sum
+    throws away.
+    """
+    mass = np.zeros(12, dtype=np.float64)
+    for c in chords:
+        root = _chord_root_pc(c.symbol)
+        if root is None:
+            continue
+        s = c.symbol.strip()
+        suffix = s[2:] if len(s) >= 2 and s[1] in "#b" else s[1:]
+        intervals = _SUFFIX_INTERVALS.get(suffix, (0, 4, 7))
+        dur = max(float(c.end_s) - float(c.start_s), 0.0)
+        for iv in intervals:
+            mass[(root + iv) % 12] += dur * (2.0 if iv == 0 else 1.0)
+    if not mass.any():
+        return {}
+    key_root, mode, strength = _internal._detect_key_from_chroma(
+        mass.reshape(12, 1)
+    )
+    return {
+        "root": int(key_root),
+        "mode": mode,
+        "strength": float(strength),
+        "label": f"{_internal.NOTE_NAMES[key_root]} {mode}",
+    }
+
+
+def detect_chords_btc_with_key(
+    audio: np.ndarray,
+    sr: int,
+    *,
+    bass_audio: Optional[np.ndarray] = None,
+) -> Optional[Tuple[Tuple[Chord, ...], Dict[str, Any]]]:
+    """BTC-ISMIR19 transformer chord lane; None when unavailable.
+
+    Engine swap measured on the midi-derived ground-truth corpus
+    (``scripts.analysis_eval``, 22 fixtures, 2026-07): BTC large_voca
+    on the other+bass stem sum scores mean triad-relaxed WCSR 0.620
+    vs 0.523 for the in-house chroma+Viterbi detector (strict 0.335
+    vs 0.232), winning 17/22 fixtures. Input is the same information
+    set the production lane already loads: the demucs "other" stem
+    plus the bass stem, peak-normalised sum (the exact config the
+    eval measured — raw BTC regions, no post-passes).
+
+    BTC emits no confidence (its head returns argmax + runner-up
+    index only), so regions carry confidence 1.0; downstream weighted
+    passes degrade to duration weighting. Key comes from
+    ``_key_from_chords`` (same Krumhansl profiles as production).
+
+    Returns None on any failure and latches, so callers fall back to
+    ``detect_chords_with_key`` without re-paying the failure per song.
+    """
+    global _BTC_FAILED
+    if _BTC_FAILED:
+        return None
+    try:
+        from tone_forge.analysis.btc_chords import detect_chords_btc
+
+        y = np.asarray(audio, dtype=np.float32)
+        if bass_audio is not None and len(bass_audio):
+            b = np.asarray(bass_audio, dtype=np.float32)
+            n = max(len(y), len(b))
+            mix = np.zeros(n, dtype=np.float32)
+            mix[: len(y)] += y
+            mix[: len(b)] += b
+            peak = float(np.abs(mix).max()) if n else 0.0
+            if peak > 1.0:
+                mix /= peak
+            y = mix
+        regions = detect_chords_btc(y, sr, vocab="large_voca")
+    except Exception:
+        _BTC_FAILED = True
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "BTC chord lane failed; latching to chroma+Viterbi fallback",
+            exc_info=True,
+        )
+        return None
+    chords = tuple(
+        Chord(
+            start_s=float(r["start"]),
+            end_s=float(r["end"]),
+            symbol=str(r["label"]),
+            confidence=1.0,
+        )
+        for r in regions
+    )
+    return chords, _key_from_chords(chords)
 
 
 def snap_chord_boundaries_to_beats(

@@ -1,0 +1,87 @@
+{
+ "n_assets": 724,
+ "dimensions": {
+  "genre": {
+   "bossa_nova": 72,
+   "funk": 72,
+   "jazz": 72,
+   "rock": 72,
+   "singer_songwriter": 72,
+   "unknown": 364
+  },
+  "gain": {
+   "low": 604,
+   "high": 120
+  },
+  "guitar_type": {
+   "acoustic": 360,
+   "electric": 204,
+   "distorted": 120,
+   "clean": 40
+  },
+  "pickup": {
+   "unknown": 564,
+   "bridge": 32,
+   "bridge-middle": 32,
+   "middle": 32,
+   "middle-neck": 32,
+   "neck": 32
+  },
+  "tempo": {
+   "120-150": 427,
+   "90-120": 184,
+   ">=150": 89,
+   "<90": 24
+  },
+  "key": {
+   "D#": 32,
+   "Gm": 57,
+   "F#": 41,
+   "D": 36,
+   "F#m": 18,
+   "G#m": 70,
+   "G": 37,
+   "G#": 29,
+   "A#m": 21,
+   "C#": 23,
+   "Fm": 26,
+   "A": 20,
+   "E": 60,
+   "Bm": 34,
+   "C": 15,
+   "Am": 28,
+   "B": 34,
+   "A#": 23,
+   "Cm": 13,
+   "Em": 23,
+   "F": 46,
+   "C#m": 7,
+   "D#m": 18,
+   "Dm": 13
+  },
+  "masking_level": {
+   "none": 724
+  },
+  "recording_style": {
+   "acoustic": 360,
+   "di": 102,
+   "amp_mic": 102,
+   "di_processed": 160
+  },
+  "acoustic_vs_electric": {
+   "acoustic": 360,
+   "electric": 364
+  },
+  "difficulty": {
+   "low": 724
+  },
+  "synthetic_vs_real": {
+   "real": 724
+  },
+  "license_class": {
+   "commercial": 724
+  }
+ },
+ "sparse": [],
+ "sparse_threshold": 5
+}

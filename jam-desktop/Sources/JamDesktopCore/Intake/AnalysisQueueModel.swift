@@ -98,8 +98,26 @@ public final class AnalysisQueueModel: ObservableObject {
 
     private var watchers: [String: Task<Void, Never>] = [:]
     /// Job IDs the user has explicitly dismissed. Prevents refreshFromServer
-    /// from resurrecting them.
-    private var dismissedJobIds: Set<String> = []
+    /// from resurrecting them. PERSISTED (UserDefaults) — a dismissal
+    /// must survive app relaunch, or every failed job haunts the Band
+    /// Room forever. Capped so the set can't grow unbounded (server
+    /// jobs age out after days anyway).
+    private var dismissedJobIds: Set<String> = [] {
+        didSet { Self.persistDismissed(dismissedJobIds) }
+    }
+
+    private static let dismissedKey = "bandroom.dismissedJobIds"
+    private static let dismissedCap = 300
+
+    private static func loadDismissed() -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: dismissedKey) ?? [])
+    }
+
+    private static func persistDismissed(_ ids: Set<String>) {
+        // Cap: drop arbitrary overflow (ids are opaque; server retention
+        // means anything old is gone from /api/jobs regardless).
+        UserDefaults.standard.set(Array(ids.prefix(dismissedCap)), forKey: dismissedKey)
+    }
 
     public init(
         uploadClient: UploadSubmitting = UploadClient(),
@@ -113,6 +131,7 @@ public final class AnalysisQueueModel: ObservableObject {
         self.jobClient = jobClient
         self.ccClient = ccClient
         self.listClient = listClient
+        self.dismissedJobIds = Self.loadDismissed()
     }
 
     // MARK: - Enqueue (all non-blocking, no busy guard)

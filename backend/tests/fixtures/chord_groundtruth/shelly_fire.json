@@ -1,0 +1,441 @@
+{
+  "song": "Shelly Fire",
+  "artist": "(local sample)",
+  "source": "midi-derived from ShellyFire_130bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 130,
+  "duration_s": 190.154,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/shelly_fire/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/shelly_fire/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 7.385,
+      "end": 8.308,
+      "label": "A#maj7"
+    },
+    {
+      "start": 8.308,
+      "end": 9.231,
+      "label": "Dm7"
+    },
+    {
+      "start": 11.077,
+      "end": 12.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 12.0,
+      "end": 12.923,
+      "label": "C#aug"
+    },
+    {
+      "start": 14.769,
+      "end": 15.692,
+      "label": "A#maj7"
+    },
+    {
+      "start": 15.692,
+      "end": 16.615,
+      "label": "Dm7"
+    },
+    {
+      "start": 18.462,
+      "end": 19.385,
+      "label": "A#m7"
+    },
+    {
+      "start": 19.385,
+      "end": 20.308,
+      "label": "C#aug"
+    },
+    {
+      "start": 25.846,
+      "end": 26.769,
+      "label": "Dm7"
+    },
+    {
+      "start": 26.769,
+      "end": 27.692,
+      "label": "A#maj7"
+    },
+    {
+      "start": 27.692,
+      "end": 28.615,
+      "label": "Dm7"
+    },
+    {
+      "start": 28.615,
+      "end": 31.385,
+      "label": "A#maj7"
+    },
+    {
+      "start": 31.385,
+      "end": 33.231,
+      "label": "A#7"
+    },
+    {
+      "start": 33.231,
+      "end": 36.923,
+      "label": "C7"
+    },
+    {
+      "start": 36.923,
+      "end": 40.615,
+      "label": "Am7"
+    },
+    {
+      "start": 40.615,
+      "end": 41.538,
+      "label": "Dm7"
+    },
+    {
+      "start": 41.538,
+      "end": 42.461,
+      "label": "A#maj7"
+    },
+    {
+      "start": 42.461,
+      "end": 43.385,
+      "label": "Dm7"
+    },
+    {
+      "start": 43.385,
+      "end": 46.154,
+      "label": "A#maj7"
+    },
+    {
+      "start": 46.154,
+      "end": 47.077,
+      "label": "Gm7"
+    },
+    {
+      "start": 47.077,
+      "end": 48.0,
+      "label": "A#7"
+    },
+    {
+      "start": 48.0,
+      "end": 51.692,
+      "label": "C7"
+    },
+    {
+      "start": 51.692,
+      "end": 55.385,
+      "label": "A7"
+    },
+    {
+      "start": 55.385,
+      "end": 57.231,
+      "label": "Dm7"
+    },
+    {
+      "start": 57.231,
+      "end": 58.154,
+      "label": "A#maj7"
+    },
+    {
+      "start": 58.154,
+      "end": 59.077,
+      "label": "A#7"
+    },
+    {
+      "start": 59.077,
+      "end": 60.0,
+      "label": "F7"
+    },
+    {
+      "start": 60.0,
+      "end": 60.923,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 60.923,
+      "end": 62.769,
+      "label": "C7"
+    },
+    {
+      "start": 62.769,
+      "end": 64.615,
+      "label": "Dm7"
+    },
+    {
+      "start": 64.615,
+      "end": 65.538,
+      "label": "A#maj7"
+    },
+    {
+      "start": 65.538,
+      "end": 66.461,
+      "label": "A#7"
+    },
+    {
+      "start": 66.461,
+      "end": 67.385,
+      "label": "F7"
+    },
+    {
+      "start": 67.385,
+      "end": 68.308,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 68.308,
+      "end": 70.154,
+      "label": "C7"
+    },
+    {
+      "start": 70.154,
+      "end": 72.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 72.0,
+      "end": 72.923,
+      "label": "A#maj7"
+    },
+    {
+      "start": 72.923,
+      "end": 73.846,
+      "label": "A#7"
+    },
+    {
+      "start": 73.846,
+      "end": 75.692,
+      "label": "F7"
+    },
+    {
+      "start": 75.692,
+      "end": 77.538,
+      "label": "Am7"
+    },
+    {
+      "start": 77.538,
+      "end": 79.385,
+      "label": "Dm7"
+    },
+    {
+      "start": 79.385,
+      "end": 81.231,
+      "label": "A#maj7"
+    },
+    {
+      "start": 81.231,
+      "end": 82.154,
+      "label": "F7"
+    },
+    {
+      "start": 82.154,
+      "end": 83.077,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 83.077,
+      "end": 84.923,
+      "label": "A7"
+    },
+    {
+      "start": 86.769,
+      "end": 87.692,
+      "label": "A#maj7"
+    },
+    {
+      "start": 92.308,
+      "end": 93.231,
+      "label": "A#maj7"
+    },
+    {
+      "start": 103.385,
+      "end": 104.308,
+      "label": "A#maj7"
+    },
+    {
+      "start": 108.923,
+      "end": 109.846,
+      "label": "A#maj7"
+    },
+    {
+      "start": 123.692,
+      "end": 127.384,
+      "label": "A#maj7"
+    },
+    {
+      "start": 127.384,
+      "end": 128.308,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 129.231,
+      "end": 131.077,
+      "label": "Am7"
+    },
+    {
+      "start": 131.077,
+      "end": 133.846,
+      "label": "A#maj7"
+    },
+    {
+      "start": 133.846,
+      "end": 134.769,
+      "label": "Gm7"
+    },
+    {
+      "start": 134.769,
+      "end": 136.615,
+      "label": "Fmaj7"
+    },
+    {
+      "start": 136.615,
+      "end": 138.461,
+      "label": "A7"
+    },
+    {
+      "start": 138.461,
+      "end": 139.384,
+      "label": "Dm7"
+    },
+    {
+      "start": 139.384,
+      "end": 140.308,
+      "label": "A#maj7"
+    },
+    {
+      "start": 140.308,
+      "end": 141.231,
+      "label": "Dm7"
+    },
+    {
+      "start": 141.231,
+      "end": 144.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 144.0,
+      "end": 144.923,
+      "label": "Gm7"
+    },
+    {
+      "start": 144.923,
+      "end": 145.846,
+      "label": "A#maj7"
+    },
+    {
+      "start": 145.846,
+      "end": 148.615,
+      "label": "C7"
+    },
+    {
+      "start": 149.538,
+      "end": 153.231,
+      "label": "Am7"
+    },
+    {
+      "start": 153.231,
+      "end": 154.154,
+      "label": "Dm7"
+    },
+    {
+      "start": 154.154,
+      "end": 155.077,
+      "label": "A#maj7"
+    },
+    {
+      "start": 155.077,
+      "end": 156.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 156.0,
+      "end": 156.923,
+      "label": "A#maj7"
+    },
+    {
+      "start": 156.923,
+      "end": 157.846,
+      "label": "Dm7"
+    },
+    {
+      "start": 157.846,
+      "end": 158.769,
+      "label": "A#maj7"
+    },
+    {
+      "start": 158.769,
+      "end": 159.692,
+      "label": "Gm7"
+    },
+    {
+      "start": 159.692,
+      "end": 160.615,
+      "label": "A#7"
+    },
+    {
+      "start": 160.615,
+      "end": 161.538,
+      "label": "C7"
+    },
+    {
+      "start": 162.461,
+      "end": 163.384,
+      "label": "Csus4"
+    },
+    {
+      "start": 163.384,
+      "end": 164.308,
+      "label": "C7"
+    },
+    {
+      "start": 165.231,
+      "end": 168.0,
+      "label": "A7"
+    },
+    {
+      "start": 175.384,
+      "end": 176.308,
+      "label": "A#maj7"
+    },
+    {
+      "start": 176.308,
+      "end": 177.231,
+      "label": "Dm7"
+    },
+    {
+      "start": 179.077,
+      "end": 180.0,
+      "label": "A#maj7"
+    },
+    {
+      "start": 180.0,
+      "end": 180.923,
+      "label": "Dm7"
+    },
+    {
+      "start": 182.769,
+      "end": 183.692,
+      "label": "A#m7"
+    },
+    {
+      "start": 183.692,
+      "end": 184.615,
+      "label": "C#aug"
+    },
+    {
+      "start": 186.461,
+      "end": 187.384,
+      "label": "A#m7"
+    },
+    {
+      "start": 187.384,
+      "end": 188.308,
+      "label": "C#aug"
+    }
+  ]
+}

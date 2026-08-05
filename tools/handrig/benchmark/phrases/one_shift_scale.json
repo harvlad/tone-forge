@@ -1,0 +1,18 @@
+{
+  "id": "one_shift_scale",
+  "category": "position_shift",
+  "reason": "Ascending line on string 3 that cannot be played in one position: frets 2 and 4 (position I), then frets 9 and 11 (position VIII). Exactly ONE deliberate shift up the neck. shift_count must equal 1; root_travel large; the shift lands between note 2 and note 3.",
+  "style": "neutral",
+  "instrument": {
+    "type": "guitar", "n_strings": 6, "scale_len_mm": 648.0,
+    "string_span_nut_mm": 35.0, "string_span_12_mm": 43.5,
+    "board_width_mm": 52.0, "neck_thickness_mm": 21.0
+  },
+  "tempo_bpm": 90,
+  "events": [
+    {"t": 0.0, "dur": 0.5, "string": 3, "fret": 2,  "finger": "index", "articulation": "fret", "target": null},
+    {"t": 0.5, "dur": 0.5, "string": 3, "fret": 4,  "finger": "ring",  "articulation": "fret", "target": null},
+    {"t": 1.0, "dur": 0.5, "string": 3, "fret": 9,  "finger": "index", "articulation": "fret", "target": null},
+    {"t": 1.5, "dur": 0.5, "string": 3, "fret": 11, "finger": "ring",  "articulation": "fret", "target": null}
+  ]
+}

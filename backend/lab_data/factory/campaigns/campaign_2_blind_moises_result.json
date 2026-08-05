@@ -1,0 +1,29 @@
+{
+ "_role": "FROZEN real-song blind result — the deciding gate for Campaign 2 promotion.",
+ "eval": "Benchmark v2.0 (15 real MoisesDB songs)",
+ "date": "2026-08-05",
+ "console_artifact": "https://claude.ai/code/artifact/4b4bc5e3-1bd5-4dcc-b429-60bb7e08ba1b",
+ "blind_package": {
+  "location": "hetzner:/mnt/HC_Volume_106533567/factory/campaign2/blind_moises",
+  "per_file_sha256": "campaign_2_blind_moises_sha256.txt (61 entries: 15 tracks x [mixture,guitar_truth,sep_X,sep_Y] + BLIND_KEY)",
+  "rollup_sha256": "245c40ca308cd26a87d687e63c41e2de9f3e90a038d371bdbfb839592e4bea3d",
+  "randomization": "X/Y sealed per track (sha256(track_id)%2); key revealed only after voting"
+ },
+ "result": {
+  "riley_preferred": 15, "of": 15, "verdict": "PROMOTE",
+  "p_value_vs_chance": 3.05e-05,
+  "agrees_with_metric": "yes — real-song SI-SDR +3.62 dB / 13-of-15",
+  "votes": [
+   {"track": "01", "pick": "Y", "was": "riley"}, {"track": "02", "pick": "Y", "was": "riley"},
+   {"track": "03", "pick": "Y", "was": "riley"}, {"track": "04", "pick": "Y", "was": "riley"},
+   {"track": "05", "pick": "X", "was": "riley"}, {"track": "06", "pick": "X", "was": "riley"},
+   {"track": "07", "pick": "X", "was": "riley"}, {"track": "08", "pick": "Y", "was": "riley"},
+   {"track": "09", "pick": "Y", "was": "riley"}, {"track": "10", "pick": "Y", "was": "riley"},
+   {"track": "11", "pick": "X", "was": "riley"}, {"track": "12", "pick": "Y", "was": "riley"},
+   {"track": "13", "pick": "X", "was": "riley"}, {"track": "14", "pick": "X", "was": "riley"},
+   {"track": "15", "pick": "X", "was": "riley"}
+  ]
+ },
+ "round1_synthetic_for_contrast": {"riley_preferred": 7, "of": 12, "verdict": "wash",
+   "reconciliation": "corpus advantage inaudible on easy synthetic mixes, decisive on hard real songs"}
+}

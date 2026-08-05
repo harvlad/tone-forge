@@ -2,7 +2,7 @@
 //
 // Client for the async analysis job API (tone_forge_api.py):
 //
-//   POST {base}/api/analyze-job        -> {"job_id": "..."}   (returns fast)
+//   POST {base}/api/analyze-upload     -> {"job_id": "..."}   (returns fast)
 //   GET  {base}/api/job/{id}/events    -> reconnectable SSE, live percent
 //   GET  {base}/api/job/{id}/result    -> long-poll terminal result
 //
@@ -46,9 +46,13 @@ public protocol JobSubmitting: Sendable {
     /// appended to the multipart form after the default analysis
     /// fields — used for attribution metadata (D-024: title/artist),
     /// since the on-device transcode strips file tags before upload.
+    /// `onUploadProgress` receives the fraction of request bytes sent
+    /// (0…1) so the UI can show a REAL upload bar — stubs may ignore
+    /// it.
     func submit(
         baseURL: URL, wavFileURL: URL, filename: String,
-        extraFields: [(name: String, value: String)]
+        extraFields: [(name: String, value: String)],
+        onUploadProgress: (@Sendable (Double) -> Void)?
     ) async throws -> String
     /// Stream live progress for a job; finishes after a single
     /// `.completed(historyId:)`. Throws on a server-reported error.
@@ -56,11 +60,22 @@ public protocol JobSubmitting: Sendable {
 }
 
 public extension JobSubmitting {
-    /// Convenience overload — protocols can't carry default arguments.
+    /// Convenience overloads — protocols can't carry default arguments.
     func submit(baseURL: URL, wavFileURL: URL, filename: String) async throws -> String {
         try await submit(
             baseURL: baseURL, wavFileURL: wavFileURL,
-            filename: filename, extraFields: []
+            filename: filename, extraFields: [], onUploadProgress: nil
+        )
+    }
+
+    func submit(
+        baseURL: URL, wavFileURL: URL, filename: String,
+        extraFields: [(name: String, value: String)]
+    ) async throws -> String {
+        try await submit(
+            baseURL: baseURL, wavFileURL: wavFileURL,
+            filename: filename, extraFields: extraFields,
+            onUploadProgress: nil
         )
     }
 }
@@ -78,10 +93,17 @@ public struct BackendJobClient: JobSubmitting {
 
     public func submit(
         baseURL: URL, wavFileURL: URL, filename: String,
-        extraFields: [(name: String, value: String)]
+        extraFields: [(name: String, value: String)],
+        onUploadProgress: (@Sendable (Double) -> Void)?
     ) async throws -> String {
         let boundary = "toneforge-\(UUID().uuidString)"
-        var request = URLRequest(url: baseURL.appendingPathComponent("api/analyze-job"))
+        // Engine-job path (/api/analyze-upload), NOT the legacy
+        // /api/analyze-job: the production backend has no GPU — jobs
+        // must go to the remote GPU engine worker, not the VPS CPU
+        // (which crawls/stalls mid-pipeline on real songs). Response
+        // shape is the same {"job_id": ...}; /api/job/{id}/events is
+        // shared by both job kinds.
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/analyze-upload"))
         request.httpMethod = "POST"
         request.timeoutInterval = uploadTimeout
         request.setValue(
@@ -101,7 +123,15 @@ public struct BackendJobClient: JobSubmitting {
         )
         defer { try? FileManager.default.removeItem(at: bodyFile) }
 
-        let (data, response) = try await URLSession.shared.upload(
+        // A dedicated session with a task delegate reports real byte
+        // progress (URLSession.shared can't). Invalidated afterwards so
+        // sessions don't leak across submits.
+        let progressDelegate = UploadProgressDelegate(onProgress: onUploadProgress)
+        let session = URLSession(
+            configuration: .default, delegate: progressDelegate, delegateQueue: nil
+        )
+        defer { session.finishTasksAndInvalidate() }
+        let (data, response) = try await session.upload(
             for: request, fromFile: bodyFile
         )
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
@@ -164,6 +194,31 @@ public struct BackendJobClient: JobSubmitting {
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    // MARK: - Upload progress
+
+    /// Task delegate that forwards multipart-body byte progress to a
+    /// closure as a 0…1 fraction.
+    private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate {
+        private let onProgress: (@Sendable (Double) -> Void)?
+
+        init(onProgress: (@Sendable (Double) -> Void)?) {
+            self.onProgress = onProgress
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            didSendBodyData bytesSent: Int64,
+            totalBytesSent: Int64,
+            totalBytesExpectedToSend: Int64
+        ) {
+            guard totalBytesExpectedToSend > 0 else { return }
+            onProgress?(
+                min(1, Double(totalBytesSent) / Double(totalBytesExpectedToSend))
+            )
         }
     }
 

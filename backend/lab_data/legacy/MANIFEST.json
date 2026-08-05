@@ -1,0 +1,77 @@
+{
+ "rescued_at": "2026-07-25T22:45:58.919978+00:00",
+ "artifacts": [
+  {
+   "dest": "legacy/octave_oracle_data.json",
+   "source": "/tmp/octave_oracle_data.json",
+   "description": "per-note octave oracle dump (production ensemble)",
+   "provenance": "imported_from_legacy_experiment",
+   "trust": "uncertain \u2014 production-ensemble output, config not embedded",
+   "size": 13236090,
+   "source_mtime": 1784871502.1236134
+  },
+  {
+   "dest": "legacy/offset_oracle_data.json",
+   "source": "/tmp/offset_oracle_data.json",
+   "description": "per-note offset oracle dump (production ensemble)",
+   "provenance": "imported_from_legacy_experiment",
+   "trust": "uncertain \u2014 production-ensemble output, config not embedded",
+   "size": 16733254,
+   "source_mtime": 1784840047.0160763
+  },
+  {
+   "dest": "legacy/basic_pitch_internal.json",
+   "source": "/tmp/basic_pitch_internal.json",
+   "description": "per-note BP internal activations dump",
+   "provenance": "imported_from_legacy_experiment",
+   "trust": "uncertain \u2014 production-ensemble output, config not embedded",
+   "size": 19423790,
+   "source_mtime": 1784874680.8937073
+  },
+  {
+   "dest": "legacy/duration_analysis.json",
+   "source": "/tmp/duration_analysis.json",
+   "description": "per-note duration analysis dump",
+   "provenance": "imported_from_legacy_experiment",
+   "trust": "uncertain \u2014 production-ensemble output, config not embedded",
+   "size": 13148700,
+   "source_mtime": 1784828956.0706859
+  },
+  {
+   "dest": "legacy/duration_correction_results.json",
+   "source": "/tmp/duration_correction_results.json",
+   "description": "duration correction simulation results",
+   "provenance": "imported_from_legacy_experiment",
+   "trust": "uncertain \u2014 production-ensemble output, config not embedded",
+   "size": 3032,
+   "source_mtime": 1784829044.224171
+  },
+  {
+   "dest": "legacy/error_taxonomy_full.json",
+   "source": "/tmp/error_taxonomy_full.json",
+   "description": "per-stem error taxonomy results",
+   "provenance": "imported_from_legacy_experiment",
+   "trust": "uncertain \u2014 production-ensemble output, config not embedded",
+   "size": 2373731,
+   "source_mtime": 1784827040.0632327
+  },
+  {
+   "dest": "legacy/taxonomy_checkpoint.json",
+   "source": "/tmp/taxonomy_checkpoint.json",
+   "description": "error taxonomy checkpoint",
+   "provenance": "imported_from_legacy_experiment",
+   "trust": "uncertain \u2014 production-ensemble output, config not embedded",
+   "size": 2072427,
+   "source_mtime": 1784827014.4440167
+  },
+  {
+   "dest": "legacy/audio_offset_results.json",
+   "source": "/tmp/audio_offset_results.json",
+   "description": "audio offset experiment results",
+   "provenance": "imported_from_legacy_experiment",
+   "trust": "uncertain \u2014 production-ensemble output, config not embedded",
+   "size": 38174,
+   "source_mtime": 1784833591.443106
+  }
+ ]
+}

@@ -197,16 +197,21 @@ public final class SampleBank: @unchecked Sendable {
     ) -> ResolvedSamplePack {
         let family = family(forStemRole: preset.stem)
         let pads: [SamplePad] = preset.chops.map { chop in
-            SamplePad(
+            // Session-view clip feel: section/phrase chops loop (restart
+            // at 0) so they sustain like Ableton clips; all song chops
+            // launch on the next bar so triggering several lands them
+            // together on the downbeat. Chord chops stay one-shot stabs.
+            let looping = (chop.kind == "section" || chop.kind == "phrase")
+            return SamplePad(
                 padIdx: chop.idx,
                 name: label(for: chop),
                 family: family,
                 colorHint: chop.colorHint,
                 filename: nil,
                 chokeGroup: nil,
-                loopPointSec: nil,
+                loopPointSec: looping ? 0 : nil,
                 gainDb: 0,
-                defaultQuantize: nil,
+                defaultQuantize: .bar,
                 // `.clamped()` enforces the ≤8 s compliance cap on chop
                 // duration for every song-derived pad (see StemSlice).
                 stemSlice: StemSlice(

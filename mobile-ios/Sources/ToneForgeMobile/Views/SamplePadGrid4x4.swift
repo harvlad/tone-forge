@@ -35,6 +35,8 @@ struct SamplePadGrid4x4: View {
     @ObservedObject var coordinator: ModeCoordinator
     /// Callback to open pack browser for assigning sounds to empty pads.
     var onOpenBrowse: ((Int, Int) -> Void)? = nil
+    /// Callback to open Beat Capture from the empty-pad create radial.
+    var onBeatCapture: (() -> Void)? = nil
     @EnvironmentObject private var appState: AppState
 
     @State private var sheetTarget: PadSheetTarget?
@@ -298,6 +300,11 @@ struct SamplePadGrid4x4: View {
             // Empty pad: open the voice-record interface directly.
             sheetTarget = .source(PadSourceTarget(
                 gridRow: state.gridRow, gridCol: state.gridCol, sample: nil))
+        case .beatCapture:
+            // Empty pad: mic rhythm → drum pattern. Owned by the host
+            // (ContributeSurface) so the captured pattern lands in the
+            // sequencer.
+            onBeatCapture?()
         }
     }
 

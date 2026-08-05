@@ -8,8 +8,11 @@ entry per stem so the JAM UI can let the user pick which lane the
 ribbon follows.
 
 Tests are hermetic — they patch ``detect_chords`` /
-``detect_chords_with_key`` / ``snap_chord_boundaries_to_beats`` and
-``librosa.load`` so no real audio decoding happens. They exercise:
+``detect_chords_with_key`` / ``detect_chords_btc_with_key`` /
+``snap_chord_boundaries_to_beats`` and ``librosa.load`` so no real
+audio decoding or model inference happens. The BTC lane is patched
+to ``None`` (fallback path) except where the BTC-primary contract is
+under test. They exercise:
 
 1. ``UnifiedPipeline._detect_chord_lane`` calls the detector once
    per available stem and returns a ``fixed_by_stem`` dict.
@@ -119,6 +122,9 @@ def test_per_stem_chord_detection_runs_for_each_input_stem(tmp_path: Path):
         "tone_forge.analysis.chords.detect_chords_with_key",
         side_effect=fake_detect_chords_with_key,
     ), patch(
+        "tone_forge.analysis.chords.detect_chords_btc_with_key",
+        return_value=None,
+    ), patch(
         "tone_forge.analysis.chords.snap_chord_boundaries_to_beats",
         side_effect=lambda recs, beats, dur: list(recs),
     ), patch("librosa.load", side_effect=fake_load):
@@ -167,6 +173,9 @@ def test_per_stem_chord_detection_preserves_legacy_other_lane(tmp_path: Path):
     ), patch(
         "tone_forge.analysis.chords.detect_chords_with_key",
         side_effect=fake_detect_chords_with_key,
+    ), patch(
+        "tone_forge.analysis.chords.detect_chords_btc_with_key",
+        return_value=None,
     ), patch("librosa.load", side_effect=fake_load):
         pipeline = UnifiedPipeline()
         chord_lane = asyncio.run(pipeline._detect_chord_lane(
@@ -206,6 +215,9 @@ def test_per_stem_chord_detection_skips_missing_stems(tmp_path: Path):
     ), patch(
         "tone_forge.analysis.chords.detect_chords_with_key",
         side_effect=fake_detect_chords_with_key,
+    ), patch(
+        "tone_forge.analysis.chords.detect_chords_btc_with_key",
+        return_value=None,
     ), patch("librosa.load", side_effect=fake_load):
         pipeline = UnifiedPipeline()
         chord_lane = asyncio.run(pipeline._detect_chord_lane(
@@ -217,6 +229,51 @@ def test_per_stem_chord_detection_skips_missing_stems(tmp_path: Path):
     assert "bass" not in keys
     assert "vocals" not in keys
     assert "drums" not in keys
+
+
+# ---------------------------------------------------------------------------
+# 3.5. BTC transformer is the primary "other" lane engine
+# ---------------------------------------------------------------------------
+
+def test_btc_lane_is_primary_for_other_stem(tmp_path: Path):
+    """When ``detect_chords_btc_with_key`` succeeds, its records feed
+    the "other" lane and its key dict is surfaced; the chroma+Viterbi
+    ``detect_chords_with_key`` fallback must NOT run. The bass lane
+    still uses plain ``detect_chords``.
+    """
+    audio_data = _make_audio_data()
+    stems = _make_stems_dict(tmp_path, ["other", "bass"])
+
+    fake_audio = np.zeros(22050 * 2, dtype=np.float32)
+    btc_key = {"root": 7, "mode": "minor", "strength": 0.9,
+               "label": "G minor"}
+
+    def fake_detect_chords(y, sr_in, **kwargs):
+        return _fake_chord_records("G5")
+
+    def fake_load(path, sr=None, mono=True):
+        return fake_audio, sr or 22050
+
+    with patch(
+        "tone_forge.analysis.detect_chords",
+        side_effect=fake_detect_chords,
+    ), patch(
+        "tone_forge.analysis.chords.detect_chords_with_key",
+        side_effect=AssertionError("fallback must not run"),
+    ), patch(
+        "tone_forge.analysis.chords.detect_chords_btc_with_key",
+        return_value=(tuple(_fake_chord_records("Gm")), btc_key),
+    ), patch("librosa.load", side_effect=fake_load):
+        pipeline = UnifiedPipeline()
+        chord_lane = asyncio.run(pipeline._detect_chord_lane(
+            audio_data, stems=stems, beats_s=None,
+        ))
+
+    assert [c["symbol"] for c in chord_lane["fixed"]] == ["Gm", "Gm"]
+    assert chord_lane["key"] == btc_key
+    assert chord_lane["fixed"] == chord_lane["fixed_by_stem"]["other"]
+    assert [c["symbol"] for c in chord_lane["fixed_by_stem"]["bass"]] \
+        == ["G5", "G5"]
 
 
 # ---------------------------------------------------------------------------

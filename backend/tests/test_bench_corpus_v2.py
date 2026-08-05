@@ -2,7 +2,7 @@
 
 Covers:
 
-* The four annotated M1 fixtures load with their declared metadata.
+* The corpus fixtures load with their declared metadata.
 * Legacy v1 JSON (no v2 fields) yields the documented defaults
   (``schema_version=1, split="test", license="first-party"`` etc).
 * Closed-vocab violations in JSON raise ``ValueError`` at load time
@@ -26,33 +26,34 @@ from bench.corpus import (
 
 
 # ---------------------------------------------------------------------------
-# Annotated M1 fixtures (M2.6)
+# Corpus fixtures (22 midi-derived + pub_feed)
 # ---------------------------------------------------------------------------
 
 
-def test_all_m1_fixtures_are_schema_version_2() -> None:
+def test_all_fixtures_are_schema_version_2() -> None:
     fixtures = iter_corpus_fixtures(require_audio=False)
-    assert len(fixtures) == 4
+    assert len(fixtures) >= 22
     for f in fixtures:
         assert f.schema_version == 2, f.name
 
 
-def test_all_m1_fixtures_have_split_test() -> None:
+def test_all_fixtures_have_split_test() -> None:
     fixtures = iter_corpus_fixtures(require_audio=False)
     for f in fixtures:
         assert f.split == "test", f.name
 
 
-def test_all_m1_fixtures_have_license_first_party() -> None:
+def test_all_fixtures_have_license_first_party() -> None:
     fixtures = iter_corpus_fixtures(require_audio=False)
     for f in fixtures:
         assert f.license == "first-party", f.name
 
 
-def test_all_m1_fixtures_curated_by_matt() -> None:
+def test_midi_derived_fixtures_curated_by_script() -> None:
     fixtures = iter_corpus_fixtures(require_audio=False)
     for f in fixtures:
-        assert f.curated_by == "matt", f.name
+        # Either script-derived or hand-curated (pub_feed)
+        assert f.curated_by in ("scripts.derive_chord_truth", "matt"), f.name
 
 
 def test_pub_feed_annotation() -> None:
@@ -65,19 +66,19 @@ def test_pub_feed_annotation() -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["demolition_warning", "jump_and_die", "lets_make_it_pain"]
+    "name", ["demolition_warning", "jump_and_die", "let_s_make_it_pain"]
 )
-def test_baseline_captured_fixtures_have_baseline_tag(name: str) -> None:
+def test_midi_derived_fixtures_have_midi_derived_tag(name: str) -> None:
     fixtures = {f.name: f for f in iter_corpus_fixtures(require_audio=False)}
-    assert "baseline-captured" in fixtures[name].tags
+    assert "midi-derived" in fixtures[name].tags
 
 
 @pytest.mark.parametrize(
-    "name", ["demolition_warning", "jump_and_die", "lets_make_it_pain"]
+    "name", ["demolition_warning", "jump_and_die", "let_s_make_it_pain"]
 )
-def test_baseline_captured_fixtures_have_punk_genre(name: str) -> None:
+def test_midi_derived_fixtures_have_synth_genre(name: str) -> None:
     fixtures = {f.name: f for f in iter_corpus_fixtures(require_audio=False)}
-    assert fixtures[name].genre == "punk"
+    assert fixtures[name].genre == "synth"
 
 
 # ---------------------------------------------------------------------------

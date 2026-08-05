@@ -25,9 +25,16 @@ final class AppTabTests: XCTestCase {
     func testPerformanceClassification() {
         XCTAssertTrue(AppTab.learn.isPerformance)
         XCTAssertTrue(AppTab.jam.isPerformance)
-        XCTAssertTrue(AppTab.contribute.isPerformance)
+        XCTAssertTrue(AppTab.perform.isPerformance)
         XCTAssertFalse(AppTab.mixer.isPerformance)
         XCTAssertFalse(AppTab.library.isPerformance)
+    }
+
+    func testPerformKeepsContributeRawValue() {
+        // Persisted appTabRaw = "contribute" must still resolve after
+        // Contribute became the lean Perform surface.
+        XCTAssertEqual(AppTab.perform.rawValue, "contribute")
+        XCTAssertEqual(AppTab(rawValue: "contribute"), .perform)
     }
 
     // MARK: - TabModePolicy
@@ -43,28 +50,17 @@ final class AppTabTests: XCTestCase {
         )
     }
 
-    func testContributeAlwaysUsesSampleMode() {
-        // Instrument (.hybrid) retired — Contribute pins .sample
-        // regardless of the persisted grid raw.
+    func testPerformInheritsJamMode() {
+        // Perform reuses the Jam instrument, so it pins .jamInKey
+        // regardless of the persisted grid raw. The deeper .sample
+        // construction grid is entered only via the Instrument Editor.
         XCTAssertEqual(
-            TabModePolicy.mode(for: .contribute, lastContributeModeRaw: "sample"),
-            .sample
+            TabModePolicy.mode(for: .perform, lastContributeModeRaw: "sample"),
+            .jamInKey
         )
         XCTAssertEqual(
-            TabModePolicy.mode(for: .contribute, lastContributeModeRaw: "hybrid"),
-            .sample
-        )
-    }
-
-    func testContributeFallsBackToSampleForNonGridModes() {
-        // Not a contribute-family mode — jam must not leak in.
-        XCTAssertEqual(
-            TabModePolicy.mode(for: .contribute, lastContributeModeRaw: "jamInKey"),
-            .sample
-        )
-        XCTAssertEqual(
-            TabModePolicy.mode(for: .contribute, lastContributeModeRaw: "bogus"),
-            .sample
+            TabModePolicy.mode(for: .perform, lastContributeModeRaw: "bogus"),
+            .jamInKey
         )
     }
 

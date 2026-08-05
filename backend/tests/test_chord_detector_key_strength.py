@@ -48,8 +48,10 @@ def test_key_strength_ambiguous_uniform_chroma_low() -> None:
     """
     chroma = np.ones((12, 1)) * 0.5
     _root, _mode, strength = chord_detector._detect_key_from_chroma(chroma)
-    assert strength == 0.0, (
-        f"uniform chroma should yield zero key_strength, got {strength}"
+    # Allow floating-point noise around zero (correlation of a uniform
+    # vector isn't bit-exactly 0 across BLAS builds — CI saw ~1e-14).
+    assert abs(strength) < 1e-9, (
+        f"uniform chroma should yield ~zero key_strength, got {strength}"
     )
 
 

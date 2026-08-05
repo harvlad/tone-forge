@@ -188,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the web app and surface a waiting hint in the menu so the
         // user knows we're alive and watching for the handoff.
         setStatus("waiting to pair…")
-        NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8000/")!)
+        NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8300/")!)
     }
 
     @objc private func openMicrophoneSettings(_ sender: Any?) {
@@ -254,7 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         let session = query["session"] ?? "default"
-        let wsString = query["ws"] ?? "ws://127.0.0.1:8000/ws/connect-bridge"
+        let wsString = query["ws"] ?? "ws://127.0.0.1:8300/ws/connect-bridge"
         guard let wsURL = URL(string: wsString) else {
             NSLog("[Connect] deep link has invalid ws URL: \(wsString)")
             setStatus("pair failed: bad ws URL")

@@ -1,0 +1,561 @@
+{
+  "song": "Disco Of Doom",
+  "artist": "(local sample)",
+  "source": "midi-derived from DiscoOfDoom_120bpm.mid (composed multitrack MIDI)",
+  "confidence": "MIDI-DERIVED: regions computed deterministically from the composed MIDI note data (scripts.derive_chord_truth), not from any audio detector. Windows with ambiguous harmony are uncovered gaps.",
+  "schema_version": 2,
+  "split": "test",
+  "genre": "synth",
+  "license": "first-party",
+  "tags": [
+    "midi-derived"
+  ],
+  "curated_by": "scripts.derive_chord_truth",
+  "tempo_bpm": 120,
+  "duration_s": 240.0,
+  "source_audio_other_stem": "data/chord_groundtruth_audio/disco_of_doom/other.wav",
+  "source_audio_bass_stem": "data/chord_groundtruth_audio/disco_of_doom/bass.wav",
+  "regression_floor_triad_relaxed": 0.0,
+  "regions": [
+    {
+      "start": 0.0,
+      "end": 2.0,
+      "label": "G#7"
+    },
+    {
+      "start": 2.0,
+      "end": 3.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 4.0,
+      "end": 6.0,
+      "label": "A#7"
+    },
+    {
+      "start": 6.0,
+      "end": 7.0,
+      "label": "F7"
+    },
+    {
+      "start": 7.0,
+      "end": 8.0,
+      "label": "G7"
+    },
+    {
+      "start": 8.0,
+      "end": 10.0,
+      "label": "G#7"
+    },
+    {
+      "start": 10.0,
+      "end": 11.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 11.0,
+      "end": 12.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 12.0,
+      "end": 14.0,
+      "label": "A#7"
+    },
+    {
+      "start": 14.0,
+      "end": 15.0,
+      "label": "F7"
+    },
+    {
+      "start": 15.0,
+      "end": 16.0,
+      "label": "A#7"
+    },
+    {
+      "start": 16.0,
+      "end": 18.0,
+      "label": "G#7"
+    },
+    {
+      "start": 18.0,
+      "end": 20.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 20.0,
+      "end": 22.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 22.0,
+      "end": 24.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 24.0,
+      "end": 26.0,
+      "label": "G#7"
+    },
+    {
+      "start": 26.0,
+      "end": 28.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 28.0,
+      "end": 30.0,
+      "label": "F#maj7"
+    },
+    {
+      "start": 30.0,
+      "end": 33.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 33.0,
+      "end": 36.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 36.0,
+      "end": 38.0,
+      "label": "F#maj7"
+    },
+    {
+      "start": 38.0,
+      "end": 39.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 39.0,
+      "end": 40.0,
+      "label": "Csus4"
+    },
+    {
+      "start": 40.0,
+      "end": 42.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 42.0,
+      "end": 43.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 43.0,
+      "end": 44.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 44.0,
+      "end": 45.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 46.0,
+      "end": 48.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 48.0,
+      "end": 50.0,
+      "label": "G#7"
+    },
+    {
+      "start": 50.0,
+      "end": 52.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 52.0,
+      "end": 54.0,
+      "label": "F#maj7"
+    },
+    {
+      "start": 54.0,
+      "end": 58.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 58.0,
+      "end": 60.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 60.0,
+      "end": 62.0,
+      "label": "A#7"
+    },
+    {
+      "start": 62.0,
+      "end": 65.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 65.0,
+      "end": 66.0,
+      "label": "Caug"
+    },
+    {
+      "start": 67.0,
+      "end": 68.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 68.0,
+      "end": 70.0,
+      "label": "A#7"
+    },
+    {
+      "start": 70.0,
+      "end": 71.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 71.0,
+      "end": 72.0,
+      "label": "Fsus2"
+    },
+    {
+      "start": 73.0,
+      "end": 74.0,
+      "label": "G#maj7"
+    },
+    {
+      "start": 75.0,
+      "end": 76.0,
+      "label": "C#aug"
+    },
+    {
+      "start": 76.0,
+      "end": 78.0,
+      "label": "A#7"
+    },
+    {
+      "start": 78.0,
+      "end": 79.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 79.0,
+      "end": 80.0,
+      "label": "Gm7"
+    },
+    {
+      "start": 80.0,
+      "end": 81.0,
+      "label": "G#7"
+    },
+    {
+      "start": 81.0,
+      "end": 84.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 84.0,
+      "end": 85.0,
+      "label": "A#sus2"
+    },
+    {
+      "start": 85.0,
+      "end": 86.0,
+      "label": "A#7"
+    },
+    {
+      "start": 86.0,
+      "end": 87.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 87.0,
+      "end": 88.0,
+      "label": "Fsus2"
+    },
+    {
+      "start": 88.0,
+      "end": 89.0,
+      "label": "G#7"
+    },
+    {
+      "start": 89.0,
+      "end": 90.0,
+      "label": "G#maj7"
+    },
+    {
+      "start": 90.0,
+      "end": 92.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 92.0,
+      "end": 93.0,
+      "label": "A#sus2"
+    },
+    {
+      "start": 93.0,
+      "end": 94.0,
+      "label": "A#7"
+    },
+    {
+      "start": 94.0,
+      "end": 95.0,
+      "label": "Dm7"
+    },
+    {
+      "start": 95.0,
+      "end": 96.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 96.0,
+      "end": 97.0,
+      "label": "G#7"
+    },
+    {
+      "start": 97.0,
+      "end": 98.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 98.0,
+      "end": 100.0,
+      "label": "C#sus2"
+    },
+    {
+      "start": 100.0,
+      "end": 101.0,
+      "label": "A#sus4"
+    },
+    {
+      "start": 101.0,
+      "end": 102.0,
+      "label": "G#sus2"
+    },
+    {
+      "start": 102.0,
+      "end": 103.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 103.0,
+      "end": 104.0,
+      "label": "D#sus2"
+    },
+    {
+      "start": 104.0,
+      "end": 106.0,
+      "label": "G#7"
+    },
+    {
+      "start": 106.0,
+      "end": 107.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 108.0,
+      "end": 109.0,
+      "label": "D#7"
+    },
+    {
+      "start": 110.0,
+      "end": 114.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 114.0,
+      "end": 116.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 116.0,
+      "end": 117.0,
+      "label": "F#maj7"
+    },
+    {
+      "start": 118.0,
+      "end": 122.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 123.0,
+      "end": 124.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 126.0,
+      "end": 128.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 128.0,
+      "end": 130.0,
+      "label": "G#7"
+    },
+    {
+      "start": 130.0,
+      "end": 132.0,
+      "label": "Cm7"
+    },
+    {
+      "start": 132.0,
+      "end": 134.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 134.0,
+      "end": 136.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 136.0,
+      "end": 138.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 140.0,
+      "end": 144.0,
+      "label": "F#maj7"
+    },
+    {
+      "start": 144.0,
+      "end": 146.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 147.0,
+      "end": 150.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 154.0,
+      "end": 156.0,
+      "label": "F#maj7"
+    },
+    {
+      "start": 156.0,
+      "end": 160.0,
+      "label": "F7"
+    },
+    {
+      "start": 160.0,
+      "end": 161.0,
+      "label": "G#7"
+    },
+    {
+      "start": 166.0,
+      "end": 168.0,
+      "label": "F7"
+    },
+    {
+      "start": 174.0,
+      "end": 176.0,
+      "label": "F7"
+    },
+    {
+      "start": 176.0,
+      "end": 180.0,
+      "label": "G#7"
+    },
+    {
+      "start": 180.0,
+      "end": 184.0,
+      "label": "C#7"
+    },
+    {
+      "start": 184.0,
+      "end": 188.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 188.0,
+      "end": 192.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 192.0,
+      "end": 193.0,
+      "label": "G#maj7"
+    },
+    {
+      "start": 193.0,
+      "end": 196.0,
+      "label": "G#7"
+    },
+    {
+      "start": 196.0,
+      "end": 200.0,
+      "label": "C#7"
+    },
+    {
+      "start": 200.0,
+      "end": 204.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 204.0,
+      "end": 208.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 208.0,
+      "end": 212.0,
+      "label": "G#7"
+    },
+    {
+      "start": 212.0,
+      "end": 214.0,
+      "label": "C#7"
+    },
+    {
+      "start": 214.0,
+      "end": 216.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 216.0,
+      "end": 218.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 218.0,
+      "end": 220.0,
+      "label": "F#maj7"
+    },
+    {
+      "start": 220.0,
+      "end": 224.0,
+      "label": "Fm7"
+    },
+    {
+      "start": 224.0,
+      "end": 228.0,
+      "label": "G#7"
+    },
+    {
+      "start": 228.0,
+      "end": 230.0,
+      "label": "C#7"
+    },
+    {
+      "start": 230.0,
+      "end": 232.0,
+      "label": "C#maj7"
+    },
+    {
+      "start": 232.0,
+      "end": 234.0,
+      "label": "A#m7"
+    },
+    {
+      "start": 234.0,
+      "end": 236.0,
+      "label": "F#maj7"
+    },
+    {
+      "start": 236.0,
+      "end": 240.0,
+      "label": "Fm7"
+    }
+  ]
+}

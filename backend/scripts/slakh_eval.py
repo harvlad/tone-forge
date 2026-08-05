@@ -174,13 +174,15 @@ def _score_role(
 ) -> Dict[str, dict]:
     """Role-appropriate scoring: drums onset-only, pitched otherwise.
 
-    Pitched roles are scored at global octave shifts {-12, 0, +12}
+    Pitched roles are scored at global octave shifts {-24..+24}
     applied to the estimate, keeping the best onset F1. Slakh renders
     some patches (e.g. scarbee Rickenbacker bass) one octave below
     the written MIDI note, so a fixed transposition between GT and
     audio is an instrument convention, not a transcription error —
     verified empirically: Track00001 bass GT note 50 sounds at
-    73.6 Hz (D2, MIDI 38) in the rendered stem. The shift used is
+    73.6 Hz (D2, MIDI 38) in the rendered stem; the samples-corpus
+    HelpyLovesYou bass patch renders TWO octaves below the written
+    note (GT 58 / A#3 sounds at 58 Hz / A#1). The shift used is
     reported so real octave instability still surfaces.
     """
     if role == "drums":
@@ -191,7 +193,7 @@ def _score_role(
         return {"onset": prf.to_dict()}
 
     best: Optional[Dict[str, dict]] = None
-    for shift in (0, -12, 12):
+    for shift in (0, -12, 12, -24, 24):
         shifted = [
             {**n, "pitch": n["pitch"] + shift} for n in est_notes
         ]

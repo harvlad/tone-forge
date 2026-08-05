@@ -64,6 +64,12 @@ public final class SampleScheduler: ObservableObject {
     /// Live user settings mirrored from SampleSettingsStore.
     @Published public var quantize: QuantizeMode = .off
     @Published public var holdMode: HoldMode = .hold
+    /// Session-view latch: force the next trigger(s) to loop their
+    /// buffer regardless of loop points / transforms. Set (and
+    /// restored) around Jam-sample latch launches — song chops have no
+    /// loopPointSec, but a latched clip must ring continuously until
+    /// toggled off, like an Ableton clip.
+    public var loopOverride = false
     @Published public var beatBarMode: BeatBarMode = .beat
     /// Section-label whitelist. `nil` = allow all; empty set = allow none.
     @Published public var allowedSections: Set<String>? = nil
@@ -225,6 +231,16 @@ public final class SampleScheduler: ObservableObject {
     /// pads); the sync `preloadPack` stays for the offline export + tests
     /// where blocking is harmless. No-op if already resident, and
     /// re-checks after the await in case a concurrent call won the race.
+    /// True once `packId`'s pad buffer is resident (preload finished) —
+    /// lets a press that raced the async preload know when to retry.
+    public func isPadLoaded(packId: String, padIdx: Int) -> Bool {
+        #if canImport(AVFoundation)
+        return loadedPacks[packId]?.buffers[padIdx] != nil
+        #else
+        return loadedPacks[packId] != nil
+        #endif
+    }
+
     public func preloadPackAsync(
         _ pack: ResolvedSamplePack,
         stemFiles: [String: URL]
@@ -490,9 +506,11 @@ public final class SampleScheduler: ObservableObject {
 
         let padKey = SamplePadKey(packId: pid, padIdx: padIdx)
 
-        // Toggle mode: if already playing, second tap stops.
+        // Toggle mode: if already playing, second tap stops — but a
+        // LOOPING clip completes its current pass first (musical stop);
+        // armed/non-looping voices release immediately.
         if holdMode == .toggle, pool.isActive(padKey: padKey) {
-            pool.release(padKey: padKey)
+            pool.releaseAtLoopEnd(padKey: padKey)
             onEvent?(LayerEvent(
                 kind: .sampleOff,
                 songTimeSec: nowSongSeconds(),
@@ -518,15 +536,14 @@ public final class SampleScheduler: ObservableObject {
         // manifest-level `defaultQuantize`) being silent while
         // shoegaze-textures pads (no defaultQuantize) played fine.
         let transportRunning = (engine?.clock.state == .playing)
-        // Drum-machine convention: one-shot pads (loopPointSec == nil)
-        // always fire immediately, ignoring quantize. Kicks, snares,
-        // stabs — anything percussive — feels wrong if there's a
-        // 100–250 ms snap wait between finger-down and audio. Only
-        // sustained/looping pads (loopPointSec != nil) honour the
-        // pad's defaultQuantize so a held pad drops in cleanly on the
-        // next beat/bar. This mirrors MPC / Push / Maschine behavior.
         let isOneShot = (pad.loopPointSec == nil)
-        let effectiveQuantize: QuantizeMode = (transportRunning && !isOneShot)
+        // Session-view launch quantization: when a quantize grid is set
+        // (pad default or global) and the transport is running, EVERY
+        // pad — one-shots included — waits for the boundary so triggers
+        // land together. Quantize `.off` (the default) keeps the instant
+        // drum-machine feel, so this only changes behavior when the user
+        // has explicitly asked for a grid.
+        let effectiveQuantize: QuantizeMode = transportRunning
             ? (pad.defaultQuantize ?? quantize)
             : .off
         let targetSong = Quantizer.nextQuantized(
@@ -557,7 +574,7 @@ public final class SampleScheduler: ObservableObject {
             ?? .neutral
         let req = SampleTrigger(
             padKey: padKey,
-            loop: loop || pad.loopPointSec != nil
+            loop: loop || loopOverride || pad.loopPointSec != nil
                 || (loopResolver?(pid, padIdx) ?? false),
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,
@@ -591,7 +608,8 @@ public final class SampleScheduler: ObservableObject {
         let padKey = SamplePadKey(packId: Self.localPackId, padIdx: padIdx)
 
         if holdMode == .toggle, pool.isActive(padKey: padKey) {
-            pool.release(padKey: padKey)
+            // Looping voices complete the current pass (musical stop).
+            pool.releaseAtLoopEnd(padKey: padKey)
             onEvent?(LayerEvent(
                 kind: .sampleOff,
                 songTimeSec: nowSongSeconds(),
@@ -692,7 +710,7 @@ public final class SampleScheduler: ObservableObject {
             ?? .neutral
         let req = SampleTrigger(
             padKey: padKey,
-            loop: pad.loopPointSec != nil
+            loop: loopOverride || pad.loopPointSec != nil
                 || (loopResolver?(pid, padIdx) ?? false),
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,

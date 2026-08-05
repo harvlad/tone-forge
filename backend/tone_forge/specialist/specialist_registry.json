@@ -1,0 +1,88 @@
+{
+  "registry_version": "2026.07.27-1",
+  "promoted_by": "matt",
+  "promoted_from": "Specialist Discovery Waves 1-3 (backend/lab_data/reports/discovery_2026-07/)",
+  "notes": "Production-facing specialist registry per INTENT_DRIVEN_ANALYSIS_ARCHITECTURE.md §21. Human-promoted from Lab results. The Lab NEVER writes this file. Runtime refuses entries whose license_status is not 'cleared_internal' or 'cleared_production'.",
+  "engines": {
+    "current": {
+      "description": "Existing production pipeline, untouched. Default."
+    },
+    "experimental_specialist": {
+      "description": "Wave-3 held-out-validated specialist tree. INTERNAL ONLY. Same separator as current (htdemucs_6s); routing changes transcription only."
+    }
+  },
+  "separators": {
+    "htdemucs_6s": {
+      "impl": "tone_forge.stem_separator.separate_all_stems",
+      "version": "demucs-4.0.1",
+      "license": "MIT (code + weights, Meta)",
+      "license_status": "cleared_production"
+    },
+    "bs_rofo_sw": {
+      "impl": null,
+      "license": "UNKNOWN (anonymous community checkpoint)",
+      "license_status": "BLOCKED_license_unknown",
+      "notes": "Wave-3: recovers ~half separation tax (kong .231->.348, riley .371->.465). DO NOT integrate until license resolved or equivalent self-trained."
+    }
+  },
+  "transcribers": {
+    "riley_bass": {
+      "capability": "TARGET_NOTES",
+      "family": "bass",
+      "impl": "hf_midi_transcription.MidiTranscriptionModel",
+      "impl_config": {"instrument": "bass", "onset_threshold": 0.3, "offset_threshold": 0.3, "frame_threshold": 0.1},
+      "model_version": "filobass_2023",
+      "license": "MIT code + MIT weights (HF tag)",
+      "license_status": "cleared_internal",
+      "ship_caveat": "confirm HF model card explicitly covers weights before public shipping",
+      "lab_evidence": {"heldout_f1": 0.642, "incumbent_f1": 0.408, "ci_pp": [14.8, 39.9], "experiment": "wave3_heldout_oneshot"}
+    },
+    "riley_guitar": {
+      "capability": "TARGET_NOTES",
+      "family": "guitar",
+      "impl": "hf_midi_transcription.MidiTranscriptionModel",
+      "impl_config": {"instrument": "guitar", "onset_threshold": 0.3, "offset_threshold": 0.3, "frame_threshold": 0.1},
+      "model_version": "gaps_2024",
+      "license": "MIT code + MIT weights (HF tag)",
+      "license_status": "cleared_internal",
+      "ship_caveat": "confirm HF model card explicitly covers weights before public shipping",
+      "lab_evidence": {"heldout_f1": 0.635, "incumbent_f1": 0.477, "ci_pp": [3.3, 15.3], "experiment": "wave3_heldout_oneshot"}
+    },
+    "kong_piano": {
+      "capability": "TARGET_NOTES",
+      "family": "keys",
+      "subfamily": "piano",
+      "impl": "piano_transcription_inference.PianoTranscription",
+      "impl_config": {"onset_threshold": 0.3, "offset_threshold": 0.3, "frame_threshold": 0.1},
+      "model_version": "note_pedal_zenodo4034264",
+      "license": "MIT/Apache code + CC-BY-4.0 weights (Zenodo 4034264)",
+      "license_status": "cleared_internal",
+      "ship_caveat": "CC-BY attribution required in shipped product",
+      "lab_evidence": {"heldout_f1": 0.549, "incumbent_f1": 0.453, "ci_pp": [5.2, 14.2], "experiment": "wave3_heldout_oneshot"}
+    },
+    "yourmt3": {
+      "capability": "TARGET_NOTES",
+      "family": "*",
+      "impl": null,
+      "license": "Apache-2.0 headers/author grant; NC-training-data + ownership questions open",
+      "license_status": "BLOCKED_legal_review_Y2",
+      "notes": "Wave-2: Lead .558/Pad .469/Organ .700/Ensemble .541. DO NOT route until legal review completes."
+    }
+  },
+  "normalizations": {
+    "register_passthrough": {
+      "version": "v1",
+      "shift_semitones": 0,
+      "notes": "REAL-AUDIO DEFAULT: preserve model sounding-pitch output. The Slakh +12 rule is a dataset written-pitch convention (Lab-reproducible via riley_bass_p12); the correct universal real-audio rule is UNRESOLVED — do not invent one. Raw output kept; provenance records normalization identity for later comparison."
+    }
+  },
+  "routing": {
+    "experimental_specialist": {
+      "bass": {"separator": "htdemucs_6s", "transcriber": "riley_bass", "normalization": "register_passthrough"},
+      "guitar": {"separator": "htdemucs_6s", "transcriber": "riley_guitar", "normalization": "register_passthrough"},
+      "keys": {"separator": "htdemucs_6s", "transcriber": "kong_piano", "normalization": "register_passthrough",
+               "caveat": "kong is piano-validated; keys family may contain organ/synth where evidence is absent — recorded in provenance"},
+      "*": {"fallback": "current"}
+    }
+  }
+}

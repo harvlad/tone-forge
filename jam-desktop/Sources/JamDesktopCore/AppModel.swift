@@ -32,7 +32,7 @@ public final class AppModel: ObservableObject {
     @Published public var view: JamView = .intake
 
     /// Backend base URL. Defaults to the hosted backend; settings can
-    /// point it at a local uvicorn (http://127.0.0.1:8000).
+    /// point it at a local uvicorn (http://127.0.0.1:8300).
     @Published public var backendBaseURL: URL
 
     /// The loaded session (bundle + local stems); nil until a song

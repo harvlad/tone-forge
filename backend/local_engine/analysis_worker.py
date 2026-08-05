@@ -305,7 +305,8 @@ def _ensure_decodable(audio_path: str) -> tuple[str, Optional[str]]:
     return tmp.name, tmp.name
 
 
-def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] = None, original_filename: Optional[str] = None):
+def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] = None, original_filename: Optional[str] = None,
+                      analysis_engine: Optional[str] = None, target_family: Optional[str] = None):
     """
     Run deep analysis on an audio file.
 
@@ -316,6 +317,11 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         queue: Multiprocessing queue for progress events
         source_url: Optional URL if audio came from YouTube/web
         original_filename: Original filename of the uploaded file (for display)
+        analysis_engine: "current" (default) or "experimental_specialist"
+            (INTERNAL — routes the target family's transcription through the
+            Lab-validated specialist registry; see tone_forge/specialist/).
+        target_family: product family the musician is playing ("bass" |
+            "guitar" | "keys"); only consulted by the experimental engine.
     """
     import os
     import logging
@@ -398,8 +404,58 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 entry["gpu_used"] = True
             stage_timings[name] = entry
 
+        # -- experimental specialist engine resolution (INTERNAL) ----------
+        # Engine precedence: explicit arg > TONEFORGE_ANALYSIS_ENGINE env.
+        # Default is "current": zero behavior change. The routing decision
+        # is resolved ONCE here; failure to resolve (unknown family,
+        # license-blocked registry entry, missing deps) degrades to the
+        # current pipeline and is recorded — never silent, never fatal.
+        _engine = (analysis_engine or os.environ.get("TONEFORGE_ANALYSIS_ENGINE") or "current").strip()
+        _family = (target_family or os.environ.get("TONEFORGE_TARGET_FAMILY") or "").strip().lower()
+        _specialist_decision = None
+        _specialist_provenance: dict = {}
+        if _engine == "experimental_specialist":
+            try:
+                from tone_forge.specialist.router import RoutingRequest, resolve
+                _specialist_decision = resolve(RoutingRequest(engine=_engine, family=_family))
+                if _specialist_decision is None:
+                    _specialist_provenance = {
+                        "engine": _engine, "target_family": _family or None,
+                        "routed": False,
+                        "reason": "no validated route for family; current pipeline used",
+                    }
+                else:
+                    logger.info(
+                        "experimental specialist routed: family=%s stem_role=%s",
+                        _family, _specialist_decision.stem_role)
+                    # Import the specialist's modules on this (main) thread
+                    # before the parallel MIDI stage — see warm_imports doc.
+                    try:
+                        from tone_forge.specialist.runner import warm_imports
+                        warm_imports(_specialist_decision)
+                    except Exception as e:
+                        logger.warning("specialist warm_imports failed: %s", e)
+            except Exception as e:  # license-blocked or registry error
+                logger.warning("specialist routing failed (%s); falling back to current", e)
+                _specialist_provenance = {
+                    "engine": _engine, "target_family": _family or None,
+                    "routed": False, "reason": f"routing_failed: {e}",
+                }
+
         _st = time.perf_counter()
-        stems = separate_all_stems(audio_path)
+        if _specialist_decision is not None:
+            # Experimental engine separates with htdemucs_6s (MIT, already an
+            # approved repo model) so guitar/piano family stems exist; the
+            # current engine's 4-stem behavior is untouched. Fall back to the
+            # default model on failure so analysis never dies here.
+            try:
+                stems = separate_all_stems(audio_path, model_name="htdemucs_6s")
+            except Exception as e:
+                logger.warning("htdemucs_6s failed (%s); falling back to htdemucs", e)
+                _specialist_provenance["separator_fallback"] = str(e)[:200]
+                stems = separate_all_stems(audio_path)
+        else:
+            stems = separate_all_stems(audio_path)
         stem_time = time.time() - start_time
         _record_stage("stem_separation", _st, time.perf_counter())
 
@@ -540,7 +596,37 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             _harm_future = _harm_executor.submit(_compute_harm_ratio)
 
         def _extract_one_stem(stem_name, stem_path):
-            stem_type = stem_types[stem_name]
+            # Experimental specialist path: the routed target family's stem
+            # goes through the specialist runner. Failure is recorded and
+            # falls back to the current extractor — visible, never silent.
+            if (_specialist_decision is not None
+                    and stem_name == _specialist_decision.stem_role):
+                wall_start = time.time()
+                _st = time.perf_counter()
+                try:
+                    from tone_forge.specialist.runner import transcribe_stem
+                    midi_result, prov = transcribe_stem(
+                        _specialist_decision, str(stem_path),
+                        preset_name=stem_name)
+                    _specialist_provenance.update({
+                        "routed": True, "target_family": _family, **prov})
+                    send_progress(
+                        queue, "midi",
+                        stem_progress.get(stem_name, (0.66, 0.76))[1],
+                        f"{stem_name.capitalize()} MIDI done ({midi_result['method']})")
+                    return (stem_name, midi_result, time.time() - wall_start,
+                            _st, time.perf_counter())
+                except Exception as e:
+                    logger.warning(
+                        "specialist transcription failed for %s: %s — "
+                        "falling back to current extractor", stem_name, e)
+                    _specialist_provenance.update({
+                        "routed": True, "target_family": _family,
+                        "specialist_failure": str(e)[:300],
+                        "fallback": "current_extractor",
+                    })
+                    # fall through to the current path below
+            stem_type = stem_types.get(stem_name, "other")
             start_pct, end_pct = stem_progress.get(stem_name, (0.6, 0.7))
             if stem_type in ("bass", "lead", "vocals"):
                 method_hint = "GPU" if torch.backends.mps.is_available() else "CPU"
@@ -582,6 +668,12 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             (name, path) for name, path in stems.items()
             if name in stem_types
         ]
+        # Specialist target stems outside the current stem_types map (e.g.
+        # htdemucs_6s "piano" for the keys family) still need extraction.
+        if _specialist_decision is not None:
+            _role = _specialist_decision.stem_role
+            if _role in stems and all(n != _role for n, _ in midi_tasks):
+                midi_tasks.append((_role, stems[_role]))
 
         _st_midi_wall = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(
@@ -1791,7 +1883,28 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             logger.warning("Tone recommendation failed: %s", exc, exc_info=True)
             result["tone"] = None
 
-        send_progress(queue, "complete", 1.0, "Analysis complete")
+        # Analysis-engine provenance (Step 4 of the experimental
+        # integration): every artifact set answers "what generated this?".
+        # Internal/debug only — SessionBundle builders ignore unknown keys,
+        # so nothing leaks to the consumer UI.
+        result["analysis_engine"] = _engine
+        if _engine != "current" or _specialist_provenance:
+            result["specialist_provenance"] = {
+                "engine": _engine,
+                "target_family": _family or None,
+                **_specialist_provenance,
+            }
+
+        # Self-reporting completion message: non-default engines announce
+        # themselves so a session's provenance is visible at a glance in
+        # the app's final status line (worker-hygiene guard — a stale
+        # worker silently running "current" once cost a test session).
+        # No model names — just the engine variant.
+        if _engine == "current":
+            send_progress(queue, "complete", 1.0, "Analysis complete")
+        else:
+            _label = _engine.replace("_", " ")
+            send_progress(queue, "complete", 1.0, f"Analysis complete · {_label}")
 
         if midi_stems:
             result["midi_stems"] = {}

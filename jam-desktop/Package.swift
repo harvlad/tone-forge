@@ -61,7 +61,8 @@ let package = Package(
                 "JamDesktopAudio",
                 .product(name: "ToneForgeML", package: "mobile-ios"),
             ],
-            path: "Sources/JamDesktop"
+            path: "Sources/JamDesktop",
+            resources: [.copy("Resources/Hand")]
         ),
         .testTarget(
             name: "JamDesktopCoreTests",

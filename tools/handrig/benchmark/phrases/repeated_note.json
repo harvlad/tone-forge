@@ -1,0 +1,18 @@
+{
+  "id": "repeated_note",
+  "category": "repeated_note",
+  "reason": "Same note struck four times with one finger. Highest-signal reuse case: a good hand keeps the finger planted/ready (reuse=1.0), zero shifts, near-zero travel. A naive re-solve that lifts and replaces the finger each time will show travel it should not.",
+  "style": "neutral",
+  "instrument": {
+    "type": "guitar", "n_strings": 6, "scale_len_mm": 648.0,
+    "string_span_nut_mm": 35.0, "string_span_12_mm": 43.5,
+    "board_width_mm": 52.0, "neck_thickness_mm": 21.0
+  },
+  "tempo_bpm": 90,
+  "events": [
+    {"t": 0.0, "dur": 0.5, "string": 3, "fret": 2, "finger": "middle", "articulation": "fret", "target": null},
+    {"t": 0.5, "dur": 0.5, "string": 3, "fret": 2, "finger": "middle", "articulation": "fret", "target": null},
+    {"t": 1.0, "dur": 0.5, "string": 3, "fret": 2, "finger": "middle", "articulation": "fret", "target": null},
+    {"t": 1.5, "dur": 0.5, "string": 3, "fret": 2, "finger": "middle", "articulation": "fret", "target": null}
+  ]
+}

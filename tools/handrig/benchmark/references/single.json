@@ -1,0 +1,31 @@
+{
+  "id": "single",
+  "style": "neutral",
+  "labeller": "harness-author (single labeller — inter-rater validation deferred to V2)",
+  "reference_A_mechanical": {
+    "description": "Objective economy lower bound: one finger presses the contact from a compact rest; zero shifts; minimal travel.",
+    "expected": {
+      "shift_count": 0,
+      "fingertip_travel_mm_max": 60,
+      "root_travel_mm_max": 5
+    }
+  },
+  "reference_B_human": {
+    "description": "Acceptance REGION (behavioural constraints + ranges), not a single trajectory. A believable single-note press.",
+    "constraints": {
+      "min_practical_shifts": 0,
+      "required_finger_reuse": [],
+      "guide_finger_events": [],
+      "anchor_holds": [],
+      "max_unnecessary_lifts": 0,
+      "preparation": {"note_index": 0, "ready_within_mm": 20, "lead_ms": 0},
+      "position_stability": {"max_position_changes": 0},
+      "economy_band_fingertip_mm": [0, 70],
+      "economy_band_root_mm": [0, 10],
+      "unused_fingers": "compact and ready (curled near the board), not splayed, not frozen"
+    },
+    "acceptable_fingerings": [
+      {"note_index": 0, "finger": "middle"}
+    ]
+  }
+}

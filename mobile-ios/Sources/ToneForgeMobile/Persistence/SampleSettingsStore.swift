@@ -158,7 +158,7 @@ public final class SampleSettingsStore: ObservableObject {
 
     /// Built-in defaults, shared by init and the tests.
     nonisolated public static let defaultVoiceGain: Double = 0.9
-    nonisolated public static let defaultChopGain: Double = 0.55
+    nonisolated public static let defaultChopGain: Double = 0.8
     nonisolated public static let defaultVocoderGain: Double = 0.4
     nonisolated public static let defaultAppModeRaw: String = "sample"
     nonisolated public static let defaultAppTabRaw: String = "contribute"

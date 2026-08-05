@@ -1,0 +1,39 @@
+{
+ "control_for": "riley_corpus_v1.0",
+ "corpus_hash": "20c0811ffdbf1a75cbeb4dcb19706ee8d3dc47adeba5bb4639ea25447b600071",
+ "counts": {
+  "naive_scenarios": 12,
+  "supervised_pairs": 2392
+ },
+ "coverage_sparse_cells": 0,
+ "dataset_version": "baseline-naive-1.0",
+ "description": "same guitars+backing as Riley v1.0; NAIVE flat mixing (no masking/comp/scenario realism)",
+ "frozen_at": "2026-08-04T09:28:52Z",
+ "git_sha": "22e53d2",
+ "manifest": {
+  "intended_use": "commercial_eligible",
+  "manifest_sha256": "0bf4b8c2918d6ec11abf14a16044f67321736122676ad0083449f424f25ccb09",
+  "n_tracks": 2392
+ },
+ "name": "riley_baseline_naive_v1.0",
+ "validation": {
+  "balanced": true,
+  "checks": {
+   "clipping": true,
+   "collapsed_pair": true,
+   "duplicate_mixture": true,
+   "duplicate_pair": true,
+   "duplicate_provenance": true,
+   "duplicate_target": true,
+   "invalid_rms": true,
+   "missing_audio": true,
+   "missing_lineage": true,
+   "missing_metadata": true,
+   "orphan_pair": true,
+   "silent_mixture": true,
+   "silent_target": true
+  },
+  "corpus_gate_clean": true,
+  "marked_reject": 0
+ }
+}

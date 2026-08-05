@@ -1,0 +1,15 @@
+{
+ "n_pairs": 2392,
+ "manifest_tracks": 2392,
+ "corpus_hash": "20c0811ffdbf1a75cbeb4dcb19706ee8d3dc47adeba5bb4639ea25447b600071",
+ "gate_clean": true,
+ "marked_reject": 0,
+ "manifest": {
+  "n_tracks": 2392,
+  "sha_ok": true,
+  "license_ok": true,
+  "license_error": null,
+  "intended_use": "commercial_eligible"
+ },
+ "total_s": 720.2
+}

@@ -1,0 +1,59 @@
+{
+ "campaign_id": "riley_campaign_1_data_centric",
+ "title": "First Riley-native training campaign — data-centric A/B",
+ "objective": "Answer with scientific confidence: does Riley's manufactured corpus (realism engineering ON) produce a measurably better guitar separator than a naive corpus built from the EXACT same source material (realism OFF)?",
+ "hypothesis": "Riley Corpus v1.0 (scenario/masking/DSP realism) will train a separator with higher benchmark + blind-listening quality than the naive flat-mixed baseline, because realistic masking/dynamics/backing balance produce supervision closer to real mixtures.",
+ "git_sha": "b499322",
+ "frozen_before_gpu": true,
+ "arms": {
+  "A_riley": {
+   "dataset_version": "riley_corpus_v1.0",
+   "corpus_hash": "df4167dcd07b059aaaf0a48461424c78ed5f659030de789184b8107f615a9617",
+   "manifest_sha256": "c83641330116b1b6bb55b87e8227d193f0bacf734aab1eb848865a2da3db4484",
+   "pairs": 2232,
+   "mixing": "Riley Virtual Studio — 12 realistic scenarios, per-role masking/level/pan, soft-comp, exact ground truth"
+  },
+  "B_naive": {
+   "dataset_version": "riley_baseline_naive_v1.0",
+   "corpus_hash": "20c0811ffdbf1a75cbeb4dcb19706ee8d3dc47adeba5bb4639ea25447b600071",
+   "pairs": 2392,
+   "mixing": "naive flat sum — 12 role-set scenarios, masking_db=0, compression=0, no is_masker; SAME guitars + SAME backing pool"
+  },
+  "cap_to_equal_n": true,
+  "note": "both arms capped to identical sample count (min of the two, deterministic selection) so dataset SIZE cannot influence the result. Mixing realism is the ONLY variable."
+ },
+ "architecture": {
+  "model": "htdemucs",
+  "mode": "fine-tune (T2-validated winner; F1 0.443 > stock 0.371)",
+  "fixed": true,
+  "no_experiments": "no architecture/optimizer/loss/hyperparameter exploration — architecture is fixed, the dataset is the experiment"
+ },
+ "recipe": {
+  "config": "b1_htdemucs_guitar_ft.yaml (T2 B1, unchanged)",
+  "trainer": "ZFTurbo Music-Source-Separation-Training, dataset_type=1",
+  "instruments": ["guitar", "other"],
+  "num_epochs": 8,
+  "num_steps": 1500,
+  "optimizer": "adam",
+  "lr": 9.0e-05,
+  "batch_size": 8,
+  "ema_momentum": 0,
+  "augmentations": "enabled (loudness, mixup, channel_shuffle, polarity) — identical both arms",
+  "adaptation": "chunk_size/segment reduced 11s->6s to match the frozen 6s corpus segment; applied IDENTICALLY to both arms (data-fit necessity, not tuning). Everything else unchanged.",
+  "identical_across_arms": ["epochs", "steps", "optimizer", "lr", "batch_size", "augmentations", "eval schedule", "stopping criteria", "seed"]
+ },
+ "evaluation": {
+  "framework": "Riley evaluation stack",
+  "metrics": ["SDR", "SI-SDR", "F1", "precision", "recall", "loss", "convergence"],
+  "downstream_gate": "frozen sep -> riley_guitar F1 vs GT (T2 gate-eval); training-time validation SDR is silent-reference-contaminated -> descriptive only",
+  "blind_listening": ">=4-5 diverse genres (matured cross-regime gate)",
+  "artifacts": ["training curves", "validation curves", "inference examples", "benchmark package", "blind listening package"]
+ },
+ "promotion_gate": {
+  "version": "matured (post-B1/AudioShake retrospective)",
+  "requires": ["benchmark improvement", "blind listening improvement", "cross-regime consistency", "no unacceptable regressions", "reproducibility", "complete provenance"],
+  "explicitly_not": "a two-song win or a narrow single-regime win is NOT a promotion"
+ },
+ "gpu": {"provider": "RunPod", "card": "A40 48GB SECURE", "price_per_hr_usd": 0.44, "est_total_usd": "10-20"},
+ "reproducibility": "Model checkpoints tie to arm corpus_hash + this campaign_id + git_sha. Reproducible from the two frozen corpora years from now."
+}

@@ -10,7 +10,10 @@ Run:
   cd backend
   uvicorn tone_forge_api:app --reload --port 8000
 
-Then open http://localhost:8000 in a browser.
+Then open http://localhost:8300 in a browser.
+(Port 8300 is deliberate: 8000 is occupied by another local project
+on this machine; ToneForge binds 8300 so loopback + Bonjour routing
+always reach ToneForge regardless of which network the Mac is on.)
 """
 from __future__ import annotations
 
@@ -2185,6 +2188,16 @@ async def analyze_upload_endpoint(
     license_url: str = Form(""),
     source_url: str = Form(""),
     attribution: str = Form(""),
+    # Same-machine shortcut (desktop app running on the worker's Mac):
+    # local path + sha256 of the source so the worker can hash-verify
+    # and skip re-downloading a file it can already read.
+    source_local_path: str = Form(""),
+    source_sha256: str = Form(""),
+    # INTERNAL (experimental specialist integration): analysis engine
+    # variant + the family the musician is playing. Additive multipart
+    # fields — absent/empty means current production behavior.
+    engine: str = Form(""),
+    target_family: str = Form(""),
 ) -> JSONResponse:
     """Queue an uploaded song for deep analysis on a remote GPU engine.
 
@@ -2219,6 +2232,13 @@ async def analyze_upload_endpoint(
             "extract_midi": extract_midi.lower() not in ("false", "0", "no"),
             "source_name": file.filename or "Uploaded file",
             "stems": {},
+            # Same-machine worker shortcut (empty strings dropped).
+            **({"source_local_path": source_local_path}
+               if source_local_path else {}),
+            **({"source_sha256": source_sha256} if source_sha256 else {}),
+            # INTERNAL experimental-engine selection (empty = current).
+            **({"analysis_engine": engine} if engine else {}),
+            **({"target_family": target_family} if target_family else {}),
         },
     )
     upload_path = _UPLOADS_DIR / f"{job.id}{suffix}"
@@ -2228,7 +2248,7 @@ async def analyze_upload_endpoint(
     # write (the job id names the file, so the job must exist first).
     await _JOBS.update(
         job.id,
-        message="Waiting for GPU engine…" if not _engine_online() else "Queued",
+        message="Waiting for the analysis engine…" if not _engine_online() else "Queued for analysis…",
         payload={**(job.payload or {}), "upload_path": str(upload_path)},
         meta=_resolve_attribution_meta(
             {"title": title, "artist": artist, "license": license,
@@ -2300,7 +2320,7 @@ async def _create_job_from_local_path(
     shutil.copyfile(src, upload_path)
     await _JOBS.update(
         job.id,
-        message="Waiting for GPU engine…" if not _engine_online() else "Queued",
+        message="Waiting for the analysis engine…" if not _engine_online() else "Queued for analysis…",
         payload={**(job.payload or {}), "upload_path": str(upload_path)},
     )
     return job
@@ -2356,6 +2376,17 @@ async def import_cc_track_endpoint(track_id: str, request: Request) -> JSONRespo
     return JSONResponse({"job_id": job.id, "engine_online": _engine_online()})
 
 
+@app.post("/api/engine/heartbeat")
+async def engine_heartbeat_endpoint(request: Request) -> JSONResponse:
+    """Presence ping from a BUSY worker (analyzing / uploading stems).
+    The claim long-poll doubles as the heartbeat while idle, but a
+    single-threaded worker goes silent for minutes mid-job and the
+    engine flapped to "offline" while actually working."""
+    _require_engine_auth(request)
+    _mark_engine_seen()
+    return JSONResponse({"ok": True})
+
+
 @app.get("/api/engine/status")
 async def engine_status_endpoint() -> JSONResponse:
     """Public presence probe — the jam page's banner on non-localhost
@@ -2388,7 +2419,7 @@ async def engine_claim_endpoint(request: Request) -> JSONResponse:
         if job is not None:
             await _JOBS.update(
                 job.id, status="running", percent=2,
-                message="Claimed by GPU engine",
+                message="Analysing…",
             )
             payload = job.payload or {}
             return JSONResponse({
@@ -2396,6 +2427,15 @@ async def engine_claim_endpoint(request: Request) -> JSONResponse:
                 "filename": job.filename,
                 "extract_midi": bool(payload.get("extract_midi", True)),
                 "source_name": payload.get("source_name") or job.filename,
+                # Same-machine shortcut (desktop app + worker on one
+                # Mac): if the uploader supplied a local path + content
+                # hash, the worker can hash-verify and skip pulling the
+                # file back down from this server.
+                "source_local_path": payload.get("source_local_path"),
+                "source_sha256": payload.get("source_sha256"),
+                # INTERNAL experimental-engine selection (absent = current).
+                "analysis_engine": payload.get("analysis_engine"),
+                "target_family": payload.get("target_family"),
             })
         if time.time() >= deadline:
             # 204 must carry no body. JSONResponse({}) serialised a
@@ -2501,6 +2541,17 @@ async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONRes
     # verbatim, so a raw filesystem path would never be fetchable, while
     # every consumer (R2 lazy upload, deep delete, chops, transcode)
     # unwraps /api/admin/serve-file?path=... already.
+    if not uploaded_stems and result.get("stems_paths"):
+        # The pipeline separated stems but NONE arrived via /stem
+        # (e.g. a 502 storm during a deploy). Completing now would
+        # persist worker-local stem URLs that no client can fetch —
+        # the "Audio unavailable" zombie song. Refuse; the worker's
+        # complete-retry either lands after uploads succeed on a
+        # retry, or the job fails visibly and can be re-run.
+        raise HTTPException(
+            status_code=409,
+            detail="Result contains stems but none were uploaded",
+        )
     result["stems_paths"] = {
         role: f"/api/admin/serve-file?path={path}"
         for role, path in uploaded_stems.items()
@@ -2509,8 +2560,13 @@ async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONRes
     result.setdefault("filename", job.filename)
     result.setdefault("source_name", payload.get("source_name") or job.filename)
 
+    # Engine tag in the session name ("· exp" / "· std") so every list
+    # row self-reports which pipeline built it (A/B evaluation aid).
+    _name_engine = result.get("analysis_engine") or "current"
+    _name_tag = " · exp" if _name_engine == "experimental_specialist" else " · std"
+    _base_name = payload.get("source_name") or job.filename or "Uploaded file"
     entry = {
-        "name": payload.get("source_name") or job.filename or "Uploaded file",
+        "name": f"{_base_name}{_name_tag}",
         "detected_type": result.get("detected_type", "guitar"),
         "summary": result.get("detection", {}).get("summary", ""),
         "duration": result.get("duration_sec"),
@@ -2523,12 +2579,37 @@ async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONRes
     history_entry = _add_to_history(
         entry, full_result=_convert_numpy_types(result),
         device_id=job.device_id, owner_id=job.owner_id)
+    # Preserve the worker's engine self-report in the terminal message
+    # (a non-default engine announces itself; see analysis_worker).
+    _engine = result.get("analysis_engine") or "current"
+    _done_msg = ("Analysis complete" if _engine == "current"
+                 else f"Analysis complete · {_engine.replace('_', ' ')}")
     await _JOBS.update(
         job_id, status="done", percent=100,
-        message="Analysis complete", history_id=history_entry["id"],
+        message=_done_msg, history_id=history_entry["id"],
     )
     _on_job_complete(_JOBS.get(job_id))
+    # Eager R2 push: warm the stem CDN at analysis-complete instead of on
+    # the first bundle fetch. The lazy path in get_session_bundle stays as
+    # the fallback (idempotent — _maybe_upload_stems_to_r2 skips roles
+    # that already have R2 URLs). Without this, the first "Open" paid for
+    # uploading every float32 stem to R2 inline and routinely timed out
+    # client-side. Best-effort background thread; never blocks or fails
+    # the complete response.
+    asyncio.create_task(_eager_r2_push(history_entry["id"]))
     return JSONResponse({"ok": True, "history_id": history_entry["id"]})
+
+
+async def _eager_r2_push(entry_id: str) -> None:
+    """Warm the stem CDN right after analysis-complete (see call site)."""
+    try:
+        fresh = _get_history_item(entry_id)
+        if fresh and await asyncio.to_thread(
+                _maybe_upload_stems_to_r2, entry_id, fresh):
+            _update_history_item(entry_id, fresh)
+            logger.info("eager R2 stem push done for %s", entry_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("eager R2 stem push failed for %s: %s", entry_id, e)
 
 
 @app.post("/api/engine/job/{job_id}/fail")
@@ -4167,6 +4248,84 @@ async def post_debug_jam_log(request: Request) -> JSONResponse:
         text = f"<decode error: {e!r}>"
     logger.warning(f"[JAM-DEBUG] {text}")
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/debug/specialist-feedback")
+async def post_specialist_feedback(request: Request) -> JSONResponse:
+    """INTERNAL: record pairwise musician feedback for experimental
+    specialist testing (BETTER/SAME/WORSE + optional problem tags).
+    Admin-guarded via the /api/debug/ prefix. See
+    tone_forge/specialist/feedback.py for the schema."""
+    from tone_forge.specialist import feedback as _fb
+    try:
+        body = await request.json()
+        rec = _fb.record(
+            verdict=body["verdict"],
+            song_hash=body.get("song_hash", ""),
+            target_family=body.get("target_family", ""),
+            engine=body.get("engine", "experimental_specialist"),
+            registry_version=body.get("registry_version", ""),
+            part=body.get("part"),
+            section=body.get("section"),
+            time_range=body.get("time_range"),
+            tags=body.get("tags"),
+            note=body.get("note", ""),
+            history_id=body.get("history_id", ""),
+            config_hash=body.get("config_hash", ""),
+        )
+        return JSONResponse({"ok": True, "record": rec})
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.get("/api/debug/specialist-feedback")
+async def get_specialist_feedback() -> JSONResponse:
+    """INTERNAL: list captured specialist feedback records."""
+    from tone_forge.specialist import feedback as _fb
+    return JSONResponse({"records": _fb.load_all()})
+
+
+@app.get("/api/debug/specialist-provenance/{history_id}")
+async def get_specialist_provenance(history_id: str) -> JSONResponse:
+    """INTERNAL: inspect what generated a session's artifacts
+    (engine, router registry version, separator/transcriber/normalization
+    versions, config hash, timings, failures). Step-10 observability:
+    the separated target stem itself is auditable via the session's stem
+    URLs; this endpoint answers 'bad separation or bad transcription?'
+    attribution questions."""
+    item = _get_history_item(history_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="history item not found")
+    result = item.get("result") or item
+    return JSONResponse({
+        "history_id": history_id,
+        "analysis_engine": result.get("analysis_engine", "current"),
+        "specialist_provenance": result.get("specialist_provenance"),
+        "profiling": result.get("profiling"),
+        "midi_methods": {
+            name: (m or {}).get("method")
+            for name, m in (result.get("midi_stems") or {}).items()
+        },
+        "stems": list((result.get("stems_paths") or {}).keys()) or None,
+    })
+
+
+@app.get("/api/session/{history_id}/derived-audio")
+async def get_derived_audio(history_id: str, role: str = "") -> JSONResponse:
+    """A session's transcribed notes + chord voicings as playable event
+    lists (no original audio). Consumed by the Jamn desktop Studio
+    "Derived Audio" section. Deliberately UNGUARDED: it derives from the
+    same per-session data /api/session/{id} already serves publicly by
+    id (chords/stems/timeline) — no admin token needed."""
+    from tone_forge.derived_audio import derived_audio_payload
+    item = _get_history_item(history_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="history item not found")
+    result = item.get("result") or {}
+    payload = derived_audio_payload(result, role=role or None)
+    payload["history_id"] = history_id
+    payload["analysis_engine"] = result.get("analysis_engine", "current")
+    return JSONResponse(payload)
 
 
 @app.get("/api/debug/corpus")

@@ -48,7 +48,7 @@ struct Connect {
             // monitor-gain defaults to 0.0 (muted) so launching the bridge
             // without headphones can't feed laptop mic into laptop speakers.
             let sessionId = args.count > 2 ? args[2] : "default"
-            let server = args.count > 3 ? args[3] : "ws://127.0.0.1:8000/ws/connect-bridge"
+            let server = args.count > 3 ? args[3] : "ws://127.0.0.1:8300/ws/connect-bridge"
             let gain = (args.count > 4 ? Float(args[4]) : nil) ?? 0.0
             startBridge(sessionId: sessionId, serverURL: server, monitorGain: gain)
         case "gui":

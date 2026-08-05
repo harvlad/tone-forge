@@ -1,0 +1,18 @@
+{
+  "id": "string_crossing",
+  "category": "string_crossing",
+  "reason": "Four notes in ONE position (fret region 4-5), one finger per string across strings 5->2. Tests fingertip travel across strings with the hand anchored: shift_count must be 0, root_travel near-zero, fingertip_travel moderate, finger_reuse near 0 (four distinct fingers). Isolates the cross-string axis from position shifts.",
+  "style": "neutral",
+  "instrument": {
+    "type": "guitar", "n_strings": 6, "scale_len_mm": 648.0,
+    "string_span_nut_mm": 35.0, "string_span_12_mm": 43.5,
+    "board_width_mm": 52.0, "neck_thickness_mm": 21.0
+  },
+  "tempo_bpm": 90,
+  "events": [
+    {"t": 0.0, "dur": 0.5, "string": 5, "fret": 4, "finger": "index", "articulation": "fret", "target": null},
+    {"t": 0.5, "dur": 0.5, "string": 4, "fret": 4, "finger": "middle", "articulation": "fret", "target": null},
+    {"t": 1.0, "dur": 0.5, "string": 3, "fret": 4, "finger": "ring", "articulation": "fret", "target": null},
+    {"t": 1.5, "dur": 0.5, "string": 2, "fret": 4, "finger": "pinky", "articulation": "fret", "target": null}
+  ]
+}
