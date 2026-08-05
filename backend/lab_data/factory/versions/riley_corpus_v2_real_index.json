@@ -1,0 +1,360 @@
+{
+ "dataset": "moisesdb_real_nonbenchmark",
+ "license": "CC-BY-NC-SA-4.0 (research-only)",
+ "n_songs": 50,
+ "train": 44,
+ "valid": 6,
+ "total_minutes": 178.2,
+ "tracks": [
+  {
+   "song": "028c6f6a-f4f6-4795-84f2-a81222b38e7e",
+   "split": "train",
+   "secs": 240.4,
+   "n_stems": 15,
+   "n_guitar": 3
+  },
+  {
+   "song": "04204031-4f98-44ba-9c47-98c2f2e6b8fc",
+   "split": "train",
+   "secs": 149.7,
+   "n_stems": 9,
+   "n_guitar": 2
+  },
+  {
+   "song": "045dcfd1-e960-4332-80cc-fdacc4a7c6a7",
+   "split": "train",
+   "secs": 177.4,
+   "n_stems": 9,
+   "n_guitar": 2
+  },
+  {
+   "song": "04798708-6915-4dbc-842e-d394d545d4eb",
+   "split": "train",
+   "secs": 204.9,
+   "n_stems": 8,
+   "n_guitar": 2
+  },
+  {
+   "song": "05b0ab77-2495-438d-8831-e3d81f96c16d",
+   "split": "train",
+   "secs": 225.4,
+   "n_stems": 10,
+   "n_guitar": 3
+  },
+  {
+   "song": "05e7af85-9721-4b42-952a-ccd34feb6033",
+   "split": "train",
+   "secs": 176.9,
+   "n_stems": 8,
+   "n_guitar": 2
+  },
+  {
+   "song": "0d528a19-cb0f-4421-b250-444f9343e51c",
+   "split": "train",
+   "secs": 89.4,
+   "n_stems": 11,
+   "n_guitar": 3
+  },
+  {
+   "song": "13f233aa-a2e5-4683-8533-2f1e344b55b4",
+   "split": "train",
+   "secs": 254.6,
+   "n_stems": 17,
+   "n_guitar": 3
+  },
+  {
+   "song": "152d4f5d-4093-4fa4-a4a4-8a9b3502d89d",
+   "split": "train",
+   "secs": 161.0,
+   "n_stems": 10,
+   "n_guitar": 2
+  },
+  {
+   "song": "174a115f-3688-45dc-8c39-9d05f21758e1",
+   "split": "train",
+   "secs": 240.0,
+   "n_stems": 12,
+   "n_guitar": 3
+  },
+  {
+   "song": "1ade22ad-99bc-4954-b2b9-fb9e8fa06d41",
+   "split": "train",
+   "secs": 207.6,
+   "n_stems": 11,
+   "n_guitar": 3
+  },
+  {
+   "song": "1afe1b3b-3e2e-48d3-b859-f50e222cbaf4",
+   "split": "train",
+   "secs": 236.5,
+   "n_stems": 13,
+   "n_guitar": 3
+  },
+  {
+   "song": "1fc37390-1769-452d-9bea-19025be4c467",
+   "split": "train",
+   "secs": 210.5,
+   "n_stems": 13,
+   "n_guitar": 3
+  },
+  {
+   "song": "22d265ef-ee2b-4aba-8d60-c3430295cd6d",
+   "split": "train",
+   "secs": 204.0,
+   "n_stems": 9,
+   "n_guitar": 3
+  },
+  {
+   "song": "2b4e8304-c92d-4347-b09e-cfb9b3e29bf2",
+   "split": "train",
+   "secs": 186.0,
+   "n_stems": 8,
+   "n_guitar": 2
+  },
+  {
+   "song": "3a047d1a-f56d-4bf4-9910-f4f77206e53d",
+   "split": "train",
+   "secs": 260.0,
+   "n_stems": 16,
+   "n_guitar": 3
+  },
+  {
+   "song": "3a6023c3-4cd8-46c0-a376-d353743648a9",
+   "split": "train",
+   "secs": 244.7,
+   "n_stems": 16,
+   "n_guitar": 3
+  },
+  {
+   "song": "444fcc6d-1ad1-4584-b3e5-bf3f4f613c8f",
+   "split": "train",
+   "secs": 250.7,
+   "n_stems": 15,
+   "n_guitar": 3
+  },
+  {
+   "song": "4cbd6c36-87a2-4d50-86e3-52d39b98fad3",
+   "split": "train",
+   "secs": 201.3,
+   "n_stems": 15,
+   "n_guitar": 3
+  },
+  {
+   "song": "58efddfb-04b3-4951-858e-e7dbcfccfc21",
+   "split": "train",
+   "secs": 195.0,
+   "n_stems": 8,
+   "n_guitar": 2
+  },
+  {
+   "song": "6031b120-f6e2-4999-96ba-a1e31be68ea8",
+   "split": "train",
+   "secs": 248.0,
+   "n_stems": 9,
+   "n_guitar": 3
+  },
+  {
+   "song": "63b68795-0076-476b-a917-dec9e89bf91e",
+   "split": "train",
+   "secs": 274.2,
+   "n_stems": 13,
+   "n_guitar": 3
+  },
+  {
+   "song": "6ce087b4-e571-4472-9be2-04b5340311c6",
+   "split": "train",
+   "secs": 217.5,
+   "n_stems": 14,
+   "n_guitar": 3
+  },
+  {
+   "song": "737356b2-ce9c-448b-877b-e42b3ed94563",
+   "split": "train",
+   "secs": 210.3,
+   "n_stems": 17,
+   "n_guitar": 3
+  },
+  {
+   "song": "765d5131-afd9-4ad7-8786-8bef5705c1c2",
+   "split": "train",
+   "secs": 187.2,
+   "n_stems": 14,
+   "n_guitar": 3
+  },
+  {
+   "song": "7ba734f0-547e-4142-a9b4-01a0c25b9d1f",
+   "split": "train",
+   "secs": 245.5,
+   "n_stems": 12,
+   "n_guitar": 3
+  },
+  {
+   "song": "7bfa233c-24ed-4c7a-9096-11e3aa00c55d",
+   "split": "train",
+   "secs": 312.2,
+   "n_stems": 16,
+   "n_guitar": 3
+  },
+  {
+   "song": "8042b88a-6179-406b-9ec4-b45a4cdd4a71",
+   "split": "train",
+   "secs": 254.9,
+   "n_stems": 17,
+   "n_guitar": 3
+  },
+  {
+   "song": "89c515c9-5e93-4cb4-9806-20432d2d074d",
+   "split": "train",
+   "secs": 260.0,
+   "n_stems": 14,
+   "n_guitar": 3
+  },
+  {
+   "song": "8ba20549-c038-47c0-a808-e38741135911",
+   "split": "train",
+   "secs": 170.0,
+   "n_stems": 8,
+   "n_guitar": 2
+  },
+  {
+   "song": "9653a690-c28c-4e8f-962e-ff7ed18b8ee9",
+   "split": "train",
+   "secs": 273.0,
+   "n_stems": 15,
+   "n_guitar": 3
+  },
+  {
+   "song": "9efa702f-c6b1-40bb-93ef-095b34a5b775",
+   "split": "train",
+   "secs": 221.4,
+   "n_stems": 20,
+   "n_guitar": 3
+  },
+  {
+   "song": "9f581867-9f63-4ec4-8a43-e62c3c4230a6",
+   "split": "train",
+   "secs": 71.4,
+   "n_stems": 13,
+   "n_guitar": 3
+  },
+  {
+   "song": "aaf0fc7b-d7f5-412c-b3b9-313a7c483666",
+   "split": "train",
+   "secs": 126.2,
+   "n_stems": 7,
+   "n_guitar": 2
+  },
+  {
+   "song": "aefc1609-976b-423e-8516-f7d588d64ff7",
+   "split": "train",
+   "secs": 255.9,
+   "n_stems": 11,
+   "n_guitar": 3
+  },
+  {
+   "song": "afca84b2-0277-4b1b-8696-5f14543f338c",
+   "split": "train",
+   "secs": 237.4,
+   "n_stems": 11,
+   "n_guitar": 3
+  },
+  {
+   "song": "bbf40b5a-8ef9-4aec-a6c3-8b8706eb2ba0",
+   "split": "train",
+   "secs": 164.3,
+   "n_stems": 11,
+   "n_guitar": 3
+  },
+  {
+   "song": "c228818e-eabe-434b-9d60-2fb84a6c5b2a",
+   "split": "train",
+   "secs": 276.0,
+   "n_stems": 14,
+   "n_guitar": 3
+  },
+  {
+   "song": "c8752696-4ae5-4e47-b2ad-622496966fa9",
+   "split": "train",
+   "secs": 194.9,
+   "n_stems": 8,
+   "n_guitar": 2
+  },
+  {
+   "song": "d2401d3d-967c-46be-b9a0-3da571105158",
+   "split": "train",
+   "secs": 271.2,
+   "n_stems": 11,
+   "n_guitar": 3
+  },
+  {
+   "song": "dbb07bdc-2706-4e67-8b59-43f98cf1608a",
+   "split": "train",
+   "secs": 206.0,
+   "n_stems": 19,
+   "n_guitar": 3
+  },
+  {
+   "song": "dfb0e076-cb6b-4dcc-9934-c60070ff04d7",
+   "split": "train",
+   "secs": 231.8,
+   "n_stems": 12,
+   "n_guitar": 3
+  },
+  {
+   "song": "e2ccbc17-44bf-431a-af2b-4cf2fbd19a72",
+   "split": "train",
+   "secs": 246.0,
+   "n_stems": 15,
+   "n_guitar": 3
+  },
+  {
+   "song": "e37cdb09-e648-4e9b-bc06-d178a964161c",
+   "split": "train",
+   "secs": 244.2,
+   "n_stems": 11,
+   "n_guitar": 3
+  },
+  {
+   "song": "ea29ab4d-7f72-4331-b2a4-d3945c754211",
+   "split": "valid",
+   "secs": 156.2,
+   "n_stems": 10,
+   "n_guitar": 2
+  },
+  {
+   "song": "ebea0f1d-8e23-469e-8eed-5269a9c684f0",
+   "split": "valid",
+   "secs": 205.1,
+   "n_stems": 11,
+   "n_guitar": 3
+  },
+  {
+   "song": "ed90a89a-bf22-444d-af3d-d9ac3896ebd2",
+   "split": "valid",
+   "secs": 228.9,
+   "n_stems": 13,
+   "n_guitar": 3
+  },
+  {
+   "song": "ef1510e0-ba23-4b59-ba53-14181d73f213",
+   "split": "valid",
+   "secs": 171.1,
+   "n_stems": 9,
+   "n_guitar": 2
+  },
+  {
+   "song": "f0101ed8-7c32-4744-8b2a-1b621cb4833b",
+   "split": "valid",
+   "secs": 206.6,
+   "n_stems": 14,
+   "n_guitar": 3
+  },
+  {
+   "song": "fe3ae408-d35f-4c17-aa33-402238725a9d",
+   "split": "valid",
+   "secs": 208.2,
+   "n_stems": 9,
+   "n_guitar": 3
+  }
+ ]
+}
