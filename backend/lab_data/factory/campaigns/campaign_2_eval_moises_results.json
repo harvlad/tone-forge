@@ -1,0 +1,102 @@
+{
+ "eval": "moisesdb_real_songs",
+ "n": 15,
+ "riley_median": -2.35,
+ "naive_median": -5.97,
+ "riley_mean": -2.3,
+ "naive_mean": -4.96,
+ "advantage_median": 3.62,
+ "riley_track_wins": 13,
+ "per_track": [
+  {
+   "id": "0a589d65-50a",
+   "A": -1.12,
+   "B": -3.35,
+   "riley_win": true
+  },
+  {
+   "id": "1ee489e8-55a",
+   "A": 2.53,
+   "B": 1.61,
+   "riley_win": true
+  },
+  {
+   "id": "2dc237cd-163",
+   "A": -4.13,
+   "B": -6.66,
+   "riley_win": true
+  },
+  {
+   "id": "3e389000-8fd",
+   "A": -5.29,
+   "B": -5.12,
+   "riley_win": false
+  },
+  {
+   "id": "3e656eec-84d",
+   "A": -4.7,
+   "B": -6.75,
+   "riley_win": true
+  },
+  {
+   "id": "6b168ae6-9d8",
+   "A": -4.21,
+   "B": -6.55,
+   "riley_win": true
+  },
+  {
+   "id": "6ceda40a-88b",
+   "A": -2.35,
+   "B": -6.24,
+   "riley_win": true
+  },
+  {
+   "id": "731893c6-67b",
+   "A": -4.19,
+   "B": -15.55,
+   "riley_win": true
+  },
+  {
+   "id": "8804c154-629",
+   "A": -0.29,
+   "B": -1.11,
+   "riley_win": true
+  },
+  {
+   "id": "93dda0e8-dd7",
+   "A": -1.91,
+   "B": -7.4,
+   "riley_win": true
+  },
+  {
+   "id": "97b07e0e-274",
+   "A": -5.88,
+   "B": -7.74,
+   "riley_win": true
+  },
+  {
+   "id": "9eb8bc50-cff",
+   "A": -0.03,
+   "B": -5.23,
+   "riley_win": true
+  },
+  {
+   "id": "c70471f9-9c4",
+   "A": 2.98,
+   "B": -0.58,
+   "riley_win": true
+  },
+  {
+   "id": "d4df499c-e39",
+   "A": -1.04,
+   "B": 2.17,
+   "riley_win": false
+  },
+  {
+   "id": "e62afdcd-0c9",
+   "A": -4.93,
+   "B": -5.97,
+   "riley_win": true
+  }
+ ]
+}

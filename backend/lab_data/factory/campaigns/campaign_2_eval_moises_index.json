@@ -1,0 +1,159 @@
+{
+ "dataset": "moisesdb",
+ "license": "CC-BY-NC-SA-4.0 (research/eval only)",
+ "clip_s": 10.0,
+ "sr": 44100,
+ "n": 15,
+ "tracks": [
+  {
+   "song": "0a589d65-50a3-4999-8f16-b5b6199bceee",
+   "id": "0a589d65-50a",
+   "n_stems": 14,
+   "n_guitar_stems": 7,
+   "offset_s": 120.0,
+   "guitar_rms": 0.0569,
+   "mix_rms": 0.0995,
+   "guitar_frac": 0.572
+  },
+  {
+   "song": "1ee489e8-55ad-4d4a-8277-24051b85c02d",
+   "id": "1ee489e8-55a",
+   "n_stems": 16,
+   "n_guitar_stems": 5,
+   "offset_s": 165.0,
+   "guitar_rms": 0.031,
+   "mix_rms": 0.0778,
+   "guitar_frac": 0.398
+  },
+  {
+   "song": "2dc237cd-1637-46f0-8f58-ca68dc6f6031",
+   "id": "2dc237cd-163",
+   "n_stems": 15,
+   "n_guitar_stems": 7,
+   "offset_s": 160.0,
+   "guitar_rms": 0.0973,
+   "mix_rms": 0.1343,
+   "guitar_frac": 0.724
+  },
+  {
+   "song": "3e389000-8fdc-4b63-b8b8-ab044273790d",
+   "id": "3e389000-8fd",
+   "n_stems": 16,
+   "n_guitar_stems": 5,
+   "offset_s": 175.0,
+   "guitar_rms": 0.0483,
+   "mix_rms": 0.0978,
+   "guitar_frac": 0.494
+  },
+  {
+   "song": "3e656eec-84d4-4a45-b410-d3817d849f92",
+   "id": "3e656eec-84d",
+   "n_stems": 15,
+   "n_guitar_stems": 4,
+   "offset_s": 200.0,
+   "guitar_rms": 0.0452,
+   "mix_rms": 0.1008,
+   "guitar_frac": 0.448
+  },
+  {
+   "song": "6b168ae6-9d8a-4dc2-9d27-898e6871bf8b",
+   "id": "6b168ae6-9d8",
+   "n_stems": 16,
+   "n_guitar_stems": 4,
+   "offset_s": 180.0,
+   "guitar_rms": 0.0628,
+   "mix_rms": 0.1061,
+   "guitar_frac": 0.592
+  },
+  {
+   "song": "6ceda40a-88bc-4e98-87c3-dd5c91725d41",
+   "id": "6ceda40a-88b",
+   "n_stems": 10,
+   "n_guitar_stems": 5,
+   "offset_s": 165.0,
+   "guitar_rms": 0.0516,
+   "mix_rms": 0.0928,
+   "guitar_frac": 0.556
+  },
+  {
+   "song": "731893c6-67b9-42f0-aea6-d1f70c2c9870",
+   "id": "731893c6-67b",
+   "n_stems": 14,
+   "n_guitar_stems": 7,
+   "offset_s": 205.0,
+   "guitar_rms": 0.0865,
+   "mix_rms": 0.1229,
+   "guitar_frac": 0.704
+  },
+  {
+   "song": "8804c154-6294-481a-ad63-bc61162cae2f",
+   "id": "8804c154-629",
+   "n_stems": 17,
+   "n_guitar_stems": 4,
+   "offset_s": 190.0,
+   "guitar_rms": 0.0504,
+   "mix_rms": 0.0936,
+   "guitar_frac": 0.539
+  },
+  {
+   "song": "93dda0e8-dd76-49e4-b08f-54a82387cdf6",
+   "id": "93dda0e8-dd7",
+   "n_stems": 16,
+   "n_guitar_stems": 7,
+   "offset_s": 170.0,
+   "guitar_rms": 0.0682,
+   "mix_rms": 0.1021,
+   "guitar_frac": 0.668
+  },
+  {
+   "song": "97b07e0e-274e-4212-a66b-44210a48724d",
+   "id": "97b07e0e-274",
+   "n_stems": 17,
+   "n_guitar_stems": 4,
+   "offset_s": 190.0,
+   "guitar_rms": 0.0461,
+   "mix_rms": 0.1137,
+   "guitar_frac": 0.406
+  },
+  {
+   "song": "9eb8bc50-cffb-4c19-be0e-d27423e3e102",
+   "id": "9eb8bc50-cff",
+   "n_stems": 10,
+   "n_guitar_stems": 4,
+   "offset_s": 240.0,
+   "guitar_rms": 0.045,
+   "mix_rms": 0.0893,
+   "guitar_frac": 0.504
+  },
+  {
+   "song": "c70471f9-9c4a-41c9-b8f8-20ac38847a8e",
+   "id": "c70471f9-9c4",
+   "n_stems": 16,
+   "n_guitar_stems": 4,
+   "offset_s": 120.0,
+   "guitar_rms": 0.0481,
+   "mix_rms": 0.0877,
+   "guitar_frac": 0.548
+  },
+  {
+   "song": "d4df499c-e394-4753-b459-e167e6a58bad",
+   "id": "d4df499c-e39",
+   "n_stems": 15,
+   "n_guitar_stems": 6,
+   "offset_s": 145.0,
+   "guitar_rms": 0.0563,
+   "mix_rms": 0.0835,
+   "guitar_frac": 0.674
+  },
+  {
+   "song": "e62afdcd-0c96-4bee-80c7-1c17b897a6d7",
+   "id": "e62afdcd-0c9",
+   "n_stems": 14,
+   "n_guitar_stems": 4,
+   "offset_s": 180.0,
+   "guitar_rms": 0.0292,
+   "mix_rms": 0.0713,
+   "guitar_frac": 0.409
+  }
+ ]
+}
