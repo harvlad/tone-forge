@@ -401,6 +401,33 @@ final class SessionController: ObservableObject {
         announce(session)
     }
 
+    // MARK: - Performance-Intelligence auto-kit
+
+    /// Fetch the song's auto-built Launchpad kit (GET /api/song/{id}/kit) and
+    /// register it as a triggerable pack — the Launchpad's ranked, seamlessly-
+    /// loopable performance assets, one tap to load.
+    @Published private(set) var autoKitLoading = false
+    @Published private(set) var autoKitError: String?
+
+    @MainActor
+    func loadAutoKit(skill: String = "intermediate") async {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL else {
+            autoKitError = "No song loaded."
+            return
+        }
+        autoKitLoading = true
+        autoKitError = nil
+        defer { autoKitLoading = false }
+        do {
+            let pack = try await KitClient().fetchKit(baseURL: base, analysisId: analysisId, skill: skill)
+            let resolved = SampleBank.autoKit(pack)
+            packPlayer.register(resolved)          // triggerable immediately
+            packs.onPackActivated?(resolved)       // notify subscribers (grid, etc.)
+        } catch {
+            autoKitError = error.localizedDescription
+        }
+    }
+
     // MARK: - Layer recording (P4)
 
     /// Arm capture for the attached song; the first pad press starts

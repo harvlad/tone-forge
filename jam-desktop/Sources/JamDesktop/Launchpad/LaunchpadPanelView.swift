@@ -377,6 +377,26 @@ struct LaunchpadPanelView: View {
             if launchpad.isFetching {
                 ProgressView().controlSize(.small)
             }
+
+            Spacer()
+
+            // Performance Intelligence: one tap loads the auto-built, seamlessly-
+            // loopable kit for this song (GET /api/song/{id}/kit).
+            Button {
+                Task { await session.loadAutoKit() }
+            } label: {
+                Label("Auto Kit", systemImage: "wand.and.stars")
+            }
+            .disabled(session.autoKitLoading)
+            .help("Load the auto-built Launchpad kit for this song")
+            if session.autoKitLoading {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if let err = session.autoKitError {
+                Text(err).font(.caption2).foregroundStyle(JamTheme.error)
+            }
         }
     }
 
