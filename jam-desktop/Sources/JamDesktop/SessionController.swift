@@ -420,9 +420,23 @@ final class SessionController: ObservableObject {
         defer { autoKitLoading = false }
         do {
             let pack = try await KitClient().fetchKit(baseURL: base, analysisId: analysisId, skill: skill)
-            let resolved = SampleBank.autoKit(pack)
-            packPlayer.register(resolved)          // triggerable immediately
-            packs.onPackActivated?(resolved)       // notify subscribers (grid, etc.)
+            // The kit's pads are stem slices, not files — so drive the chop-based
+            // Launchpad grid: each pad → (Chop, stem). Loopable pads get kind
+            // "phrase" so onTrigger loops them seamlessly (SeamlessLoop crossfade).
+            let pairs: [(chop: Chop, stem: String)] = pack.pads.compactMap { pad in
+                guard let slice = pad.stemSlice else { return nil }
+                let loopable = pad.loopable ?? ((pad.loopScore ?? 0) >= 0.55)
+                let chop = Chop(
+                    idx: pad.padIdx,
+                    startSec: slice.startSec,
+                    endSec: slice.endSec,
+                    durationSec: max(0, slice.endSec - slice.startSec),
+                    kind: loopable ? "phrase" : "chord",
+                    colorHint: pad.colorHint
+                )
+                return (chop, slice.stemRole)
+            }
+            launchpad.adoptAssignments(pairs)
         } catch {
             autoKitError = error.localizedDescription
         }

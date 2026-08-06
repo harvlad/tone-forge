@@ -218,6 +218,20 @@ public final class LaunchpadController {
         repaint()
     }
 
+    /// Adopt a MULTI-STEM assignment set (Performance-Intelligence auto-kit):
+    /// each pad is a (chop, stem) pair spanning different stems, laid out
+    /// row-major. Unlike `loadChops` (one stem), this drives the grid from a
+    /// pre-built kit — the chops carry their own stem + loop `kind`.
+    public func adoptAssignments(_ pairs: [(chop: Chop, stem: String)]) {
+        var next: [LaunchpadPad: PadAssignment] = [:]
+        for (slot, pair) in pairs.prefix(64).enumerated() {
+            let pad = LaunchpadPad(row: slot / 8, col: slot % 8)
+            next[pad] = PadAssignment(chop: pair.chop, stem: pair.stem)
+        }
+        assignments = next
+        repaint()
+    }
+
     /// Fetch and adopt a different (stem, sliceMode) chop set.
     public func loadChops(
         stem: String, sliceMode: String, backend: URL
