@@ -156,6 +156,22 @@ public struct SamplePad: Codable, Sendable, Equatable {
     /// precedence at trigger time. See SamplePadEffects.swift for the
     /// three-tier resolution rule.
     public let effects: SamplePadEffects?
+    // --- Performance-Intelligence auto-kit fields (additive, all optional) ---
+    /// Real loop region [loopStartSec, loopEndSec] (vs `loopPointSec`'s single
+    /// "loop from here to end"). Set for auto-kit pads sourced from scored loops.
+    public let loopStartSec: Double?
+    public let loopEndSec: Double?
+    /// Loop confidence 0..1 from the loop scorer; drives whether/how much to
+    /// crossfade the seam at playback (SeamlessLoop).
+    public let loopScore: Double?
+    /// Whether this pad is meant to loop seamlessly (vs a one-shot).
+    public let loopable: Bool?
+    /// How the pad is meant to be used (rhythm_loop/lead_loop/chord_loop/…).
+    public let contentType: String?
+    /// Playable ranking (0..1) — the Launchpad shows the best material first.
+    public let performanceScore: Double?
+    /// Difficulty (0..1) — for adaptive skill filtering.
+    public let difficulty: Double?
 
     public init(
         padIdx: Int,
@@ -168,7 +184,14 @@ public struct SamplePad: Codable, Sendable, Equatable {
         gainDb: Double = 0,
         defaultQuantize: QuantizeMode? = nil,
         stemSlice: StemSlice? = nil,
-        effects: SamplePadEffects? = nil
+        effects: SamplePadEffects? = nil,
+        loopStartSec: Double? = nil,
+        loopEndSec: Double? = nil,
+        loopScore: Double? = nil,
+        loopable: Bool? = nil,
+        contentType: String? = nil,
+        performanceScore: Double? = nil,
+        difficulty: Double? = nil
     ) {
         self.padIdx = padIdx
         self.name = name
@@ -181,6 +204,13 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.defaultQuantize = defaultQuantize
         self.stemSlice = stemSlice
         self.effects = effects
+        self.loopStartSec = loopStartSec
+        self.loopEndSec = loopEndSec
+        self.loopScore = loopScore
+        self.loopable = loopable
+        self.contentType = contentType
+        self.performanceScore = performanceScore
+        self.difficulty = difficulty
     }
 
     // Custom decoding to default `gainDb` when the key is absent.
@@ -189,7 +219,9 @@ public struct SamplePad: Codable, Sendable, Equatable {
     // doesn't apply during decode.)
     private enum CodingKeys: String, CodingKey {
         case padIdx, name, family, colorHint, filename, chokeGroup,
-             loopPointSec, gainDb, defaultQuantize, stemSlice, effects
+             loopPointSec, gainDb, defaultQuantize, stemSlice, effects,
+             loopStartSec, loopEndSec, loopScore, loopable, contentType,
+             performanceScore, difficulty
     }
 
     public init(from decoder: Decoder) throws {
@@ -205,6 +237,13 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.defaultQuantize = try c.decodeIfPresent(QuantizeMode.self, forKey: .defaultQuantize)
         self.stemSlice = try c.decodeIfPresent(StemSlice.self, forKey: .stemSlice)
         self.effects = try c.decodeIfPresent(SamplePadEffects.self, forKey: .effects)
+        self.loopStartSec = try c.decodeIfPresent(Double.self, forKey: .loopStartSec)
+        self.loopEndSec = try c.decodeIfPresent(Double.self, forKey: .loopEndSec)
+        self.loopScore = try c.decodeIfPresent(Double.self, forKey: .loopScore)
+        self.loopable = try c.decodeIfPresent(Bool.self, forKey: .loopable)
+        self.contentType = try c.decodeIfPresent(String.self, forKey: .contentType)
+        self.performanceScore = try c.decodeIfPresent(Double.self, forKey: .performanceScore)
+        self.difficulty = try c.decodeIfPresent(Double.self, forKey: .difficulty)
     }
 }
 
