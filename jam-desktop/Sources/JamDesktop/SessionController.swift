@@ -234,7 +234,14 @@ final class SessionController: ObservableObject {
             print("[Trigger] pad=\(pad) stem=\(assignment.stem) chopIdx=\(assignment.chop.idx)")
             let rate = max(0.1, self.transport.tempoPct)
             let delay = max(0, fireAt - clock.nowSongSeconds) / rate
-            self.chopPlayer.trigger(assignment, afterSeconds: delay)
+            // Loopable chops (whole musical regions) hold seamlessly — the
+            // ChopPlayer crossfades the seam (SeamlessLoop). Chord/onset stabs
+            // stay one-shot.
+            let loopable = (assignment.chop.kind == "section" || assignment.chop.kind == "phrase")
+            self.chopPlayer.trigger(
+                assignment, afterSeconds: delay,
+                loop: loopable, crossfadeMs: loopable ? 15 : 0
+            )
             // Publish for the session recorder. Timestamp = the
             // quantized fire-at moment (what actually SOUNDED), so
             // replays land on the grid, not the raw press time.
