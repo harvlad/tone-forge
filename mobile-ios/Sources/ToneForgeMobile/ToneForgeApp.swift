@@ -1753,6 +1753,36 @@ public final class AppState: ObservableObject {
         activateSamplePack(entry.pack, stemFiles: currentStemLocalURLs)
     }
 
+    // MARK: - Performance-Intelligence auto-kit
+
+    /// Whether the auto-kit fetch is in flight, and the last error (for UI).
+    @Published public private(set) var autoKitLoading = false
+    @Published public private(set) var autoKitError: String?
+
+    /// Fetch the song's auto-built kit (GET /api/song/{id}/kit) and activate it
+    /// as the sample pack — its stem-slice pads decode via the scheduler and
+    /// loop seamlessly (loopScore → crossfade). One tap, best material first.
+    public func loadAutoKit(skill: String = "intermediate") {
+        guard let analysisId = currentBundle?.analysisId else {
+            autoKitError = "No song loaded."
+            return
+        }
+        autoKitLoading = true
+        autoKitError = nil
+        let base = backendBaseURL
+        let stems = currentStemLocalURLs
+        Task { @MainActor in
+            defer { self.autoKitLoading = false }
+            do {
+                let pack = try await KitClient().fetchKit(
+                    baseURL: base, analysisId: analysisId, skill: skill)
+                self.activateSamplePack(SampleBank.autoKit(pack), stemFiles: stems)
+            } catch {
+                self.autoKitError = error.localizedDescription
+            }
+        }
+    }
+
     /// Load a Song DNA pack's buffers WITHOUT making it the active
     /// Contribute pack — Jam Samples triggers it by explicit packId, so
     /// it must not swap the Contribute grid / hide its tabs (shared
