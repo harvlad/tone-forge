@@ -45,6 +45,7 @@ from tone_forge.contracts import (
     DeviceClass,
     GuidanceTrack,
     InstrumentMIDI,
+    Motif,
     Section,
     SessionBundle,
     SongUnderstanding,
@@ -245,6 +246,36 @@ def _stem_from_path(
     )
 
 
+def _build_motifs(result: Mapping[str, Any]) -> Tuple[Motif, ...]:
+    """Riley's repeated Patterns → frozen Motifs for SongUnderstanding.
+
+    Riley is the single source of musical understanding: the Musical Graph the
+    analysis worker attached under ``performance_graph`` already discovered the
+    song's repeated riffs/motifs, so we surface those instead of leaving the
+    seat empty (it had no producer before). Additive + guarded — a missing or
+    malformed graph yields ``()`` and never breaks the bundle.
+    """
+    if not result.get("performance_graph"):
+        return ()
+    try:
+        from tone_forge.performance import serve as _perf_serve
+
+        motifs = []
+        for m in _perf_serve.motifs_for("", dict(result)):
+            motifs.append(
+                Motif(
+                    start_s=float(m["start_s"]),
+                    end_s=float(m["end_s"]),
+                    fingerprint=str(m.get("fingerprint", "")),
+                    occurrences_s=tuple(float(x) for x in m.get("occurrences_s", ())),
+                    confidence=float(m.get("confidence", 1.0)),
+                )
+            )
+        return tuple(motifs)
+    except Exception:  # noqa: BLE001 - understanding must never fail the bundle
+        return ()
+
+
 def _build_understanding(result: Mapping[str, Any]) -> SongUnderstanding:
     """Extract tempo/key/sections/chords with conservative defaults.
 
@@ -299,6 +330,7 @@ def _build_understanding(result: Mapping[str, Any]) -> SongUnderstanding:
         chords_beat_snapped=chords_beat_snapped,
         chords_by_stem=chords_by_stem,
         chords_beat_snapped_by_stem=chords_beat_snapped_by_stem,
+        motifs=_build_motifs(result),
     )
 
 
