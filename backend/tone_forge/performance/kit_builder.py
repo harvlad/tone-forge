@@ -42,46 +42,73 @@ class AutoKitBuilder:
         pack_name: Optional[str] = None,
     ) -> Dict:
         rule = _SKILL.get(skill, _SKILL["intermediate"])
+        # A pad must be actually usable: loopable OR a decent-scoring one-shot.
+        usable = [a for a in graph.ranked_assets() if a.loop_confidence > 0.2 or a.performance_score > 0.4]
         pool = [
-            a for a in graph.ranked_assets()
-            if a.difficulty <= rule["max_difficulty"]
-            and (a.loopable or not rule["require_loop"])
+            a for a in usable
+            if a.difficulty <= rule["max_difficulty"] and (a.loopable or not rule["require_loop"])
         ]
-        # fall back to the full ranked list if the skill filter starves the kit
-        if len(pool) < pads:
-            pool = graph.ranked_assets()
+        if len(pool) < pads:  # skill filter starved the kit → widen
+            pool = usable or graph.ranked_assets()
+
+        # De-dupe near-identical material: keep the best asset per pattern so a
+        # riff that repeats 15× doesn't take 8 pads.
+        pool = self._one_per_pattern(pool)
 
         chosen: List[PerformanceAsset] = []
-        used = set()
-        # fill role slots best-first, avoiding dup patterns where possible
-        for slot_name, prefs in _KIT_SLOTS[:pads]:
-            pick = self._best_for(pool, prefs, used)
+        used_ids: set = set()
+        used_patterns: set = set()
+        stem_counts: Dict[str, int] = {}
+        for _slot_name, prefs in _KIT_SLOTS[:pads]:
+            pick = self._best_for(pool, prefs, used_ids, used_patterns, stem_counts)
             if pick:
                 chosen.append(pick)
-                used.add(pick.id)
-                if pick.pattern_id:
-                    used.add(pick.pattern_id)
-        # top up any empty slots with the next best unused assets
+                self._mark(pick, used_ids, used_patterns, stem_counts)
+        # top up remaining slots with the next best unused (still diverse) assets
         for a in pool:
             if len(chosen) >= pads:
                 break
-            if a.id not in used:
-                chosen.append(a); used.add(a.id)
+            if a.id in used_ids or (a.pattern_id and a.pattern_id in used_patterns):
+                continue
+            chosen.append(a); self._mark(a, used_ids, used_patterns, stem_counts)
 
         return self._to_sample_pack(graph, chosen, pack_name or f"{graph.song_id} — Auto Kit", skill)
 
-    def _best_for(self, pool, prefs, used) -> Optional[PerformanceAsset]:
-        # prefer an asset of a preferred content type, highest score, unused
+    def _one_per_pattern(self, pool: List[PerformanceAsset]) -> List[PerformanceAsset]:
+        best: Dict[str, PerformanceAsset] = {}
+        loose: List[PerformanceAsset] = []
+        for a in pool:  # pool already ranked best-first
+            if a.pattern_id:
+                if a.pattern_id not in best:
+                    best[a.pattern_id] = a
+            else:
+                loose.append(a)
+        merged = list(best.values()) + loose
+        merged.sort(key=lambda a: a.performance_score, reverse=True)
+        return merged
+
+    def _best_for(self, pool, prefs, used_ids, used_patterns, stem_counts) -> Optional[PerformanceAsset]:
+        # prefer preferred content type, then highest score, penalizing a stem
+        # already used a lot (diversity) and avoiding repeated patterns.
         for ct in prefs:
-            best = None
+            best, best_key = None, -1.0
             for a in pool:
-                if a.id in used or (a.pattern_id and a.pattern_id in used):
+                if a.id in used_ids or (a.pattern_id and a.pattern_id in used_patterns):
                     continue
-                if a.content_type == ct and (best is None or a.performance_score > best.performance_score):
-                    best = a
+                if a.content_type != ct:
+                    continue
+                key = a.performance_score - 0.15 * stem_counts.get(a.stem, 0)
+                if key > best_key:
+                    best, best_key = a, key
             if best:
                 return best
         return None
+
+    def _mark(self, a, used_ids, used_patterns, stem_counts):
+        used_ids.add(a.id)
+        if a.pattern_id:
+            used_patterns.add(a.pattern_id)
+        stem_counts[a.stem] = stem_counts.get(a.stem, 0) + 1
 
     def _to_sample_pack(self, graph, assets, name, skill) -> Dict:
         """Emit the frozen SamplePack manifest shape (SamplePack.swift):

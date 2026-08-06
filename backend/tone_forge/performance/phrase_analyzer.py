@@ -104,7 +104,10 @@ class PhraseAnalyzer:
             if rem >= bpb * bp - 1e-3:
                 pos = grid.make_pos(t, s1, snap="bar")
                 phrases.append(self._phrase(y, sr, pos, stem, pitched, onsets, bp))
-        return phrases
+        # Drop degenerate phrases: a phrase must be at least one beat long. These
+        # arise when a section/track boundary snaps end==start (e.g. past the last
+        # downbeat) and would otherwise become 0-length one-shots.
+        return [p for p in phrases if p.pos.length_beats >= 1 and p.pos.duration_s > 1e-2]
 
     def _pick_phrase_bars(self, span_s: float, beats_per_bar: int, beat_period: float) -> int:
         bar_s = beats_per_bar * beat_period
