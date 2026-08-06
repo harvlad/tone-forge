@@ -5240,6 +5240,47 @@ async def get_song_bundle(entry_id: str) -> JSONResponse:
     return JSONResponse(_convert_numpy_types(payload))
 
 
+@app.get("/api/song/{entry_id}/performance")
+async def get_song_performance(entry_id: str) -> JSONResponse:
+    """Performance Intelligence — the Unified Musical Graph for a persisted
+    analysis (phrases / patterns / variations / loops / performance assets).
+
+    Derived once from the stored analysis, content-addressed + cached. Empty
+    graph if the song's stems aren't local on this box.
+    """
+    from tone_forge.performance import serve as _perf
+
+    entry = _get_history_item(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail="Song has no analysis result")
+    _refresh_r2_stem_urls(result)
+    return JSONResponse(_perf.performance_payload(entry_id, result))
+
+
+@app.get("/api/song/{entry_id}/kit")
+async def get_song_kit(
+    entry_id: str,
+    skill: str = Query("intermediate", description="beginner|intermediate|advanced"),
+    pads: int = Query(8, ge=1, le=16),
+) -> JSONResponse:
+    """Auto-built Launchpad kit for a song — a SamplePack manifest the existing
+    Launchpad UI consumes directly, sourced from the graph's ranked, seamlessly-
+    loopable performance assets."""
+    from tone_forge.performance import serve as _perf
+
+    entry = _get_history_item(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail="Song has no analysis result")
+    _refresh_r2_stem_urls(result)
+    return JSONResponse(_perf.kit_payload(entry_id, result, skill=skill, pads=pads))
+
+
 @app.get("/api/song/{entry_id}/song-dna")
 async def get_song_dna(entry_id: str) -> JSONResponse:
     """Return just the Song-DNA packs for a persisted analysis.
