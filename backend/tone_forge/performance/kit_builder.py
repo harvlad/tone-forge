@@ -140,7 +140,7 @@ class AutoKitBuilder:
             "manifestVersion": 2,
             "packId": f"auto-{graph.song_id}-{skill}",
             "name": name,
-            "family": "song",
+            "family": "mixed",     # valid SampleFamily
             "paletteHint": "song",
             "pads": pads,
             "provenance": {
@@ -153,11 +153,13 @@ class AutoKitBuilder:
 
 
 def _family_for(ct: ContentType) -> str:
+    # Map content type → a valid SampleFamily raw value (SamplePack.swift):
+    # pads/percussion/textures/stabs/bass/fx/vocals/mixed.
     return {
-        ContentType.RHYTHM_LOOP: "drums", ContentType.BASS_GROOVE: "bass",
-        ContentType.LEAD_LOOP: "lead", ContentType.CHORD_LOOP: "chord",
-        ContentType.TEXTURE: "texture", ContentType.DRONE: "texture",
-        ContentType.AMBIENT: "texture", ContentType.ONE_SHOT: "oneshot",
+        ContentType.RHYTHM_LOOP: "percussion", ContentType.BASS_GROOVE: "bass",
+        ContentType.LEAD_LOOP: "stabs", ContentType.CHORD_LOOP: "stabs",
+        ContentType.TEXTURE: "textures", ContentType.DRONE: "textures",
+        ContentType.AMBIENT: "textures", ContentType.ONE_SHOT: "stabs",
         ContentType.IMPACT: "fx", ContentType.TRANSITION: "fx",
         ContentType.PICKUP: "fx", ContentType.ENDING: "fx",
-    }.get(ct, "song")
+    }.get(ct, "mixed")
