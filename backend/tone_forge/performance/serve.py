@@ -41,14 +41,49 @@ def _get_builder() -> PerformanceBuilder:
     return _builder
 
 
+# The GPU analysis worker (where stems are LOCAL) derives the graph at analysis
+# time and attaches it here; the no-GPU prod box then serves it without needing
+# the stem audio. Namespaced so the bundle assembler / other consumers ignore it.
+GRAPH_RESULT_KEY = "performance_graph"
+
+
+def graph_from_result(entry_id: str, result: Dict) -> MusicalGraph:
+    """Prefer the graph the worker already derived (stems were local there);
+    fall back to building it here (needs local stems, degrades to empty)."""
+    stored = result.get(GRAPH_RESULT_KEY)
+    if isinstance(stored, dict) and stored.get("assets") is not None:
+        try:
+            from .builder import _graph_from_dict
+
+            return _graph_from_dict(stored)
+        except Exception:
+            pass
+    return build_graph(entry_id, result)
+
+
 def build_graph(entry_id: str, result: Dict) -> MusicalGraph:
     return _get_builder().build(
         result=result, song_id=entry_id, content_hash=_content_hash(entry_id, result)
     )
 
 
+def derive_and_attach(entry_id: str, result: Dict) -> bool:
+    """Called on the analysis worker after `result` is assembled and stems are
+    LOCAL: derive the Musical Graph and attach it under GRAPH_RESULT_KEY so it
+    persists with the result and the prod box serves it cache-free. Additive +
+    guarded — never fails the analysis. Returns True if a graph was attached."""
+    try:
+        g = build_graph(entry_id, result)
+        if g.assets:
+            result[GRAPH_RESULT_KEY] = g.to_dict()
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def performance_payload(entry_id: str, result: Dict) -> Dict:
-    g = build_graph(entry_id, result)
+    g = graph_from_result(entry_id, result)
     d = g.to_dict()
     return {
         "analysisId": entry_id,
@@ -66,7 +101,7 @@ def performance_payload(entry_id: str, result: Dict) -> Dict:
 
 
 def kit_payload(entry_id: str, result: Dict, skill: str = "intermediate", pads: int = 8) -> Dict:
-    g = build_graph(entry_id, result)
+    g = graph_from_result(entry_id, result)
     kit = AutoKitBuilder().build(g, skill=skill, pads=pads)
     kit["analysisId"] = entry_id
     return kit
@@ -76,6 +111,6 @@ def motifs_for(entry_id: str, result: Dict) -> List[Dict]:
     """Motif dicts for SongUnderstanding.motifs (bundle assembler builds the
     frozen Motif). Empty on failure — additive, never breaks the bundle."""
     try:
-        return to_motifs(build_graph(entry_id, result))
+        return to_motifs(graph_from_result(entry_id, result))
     except Exception:
         return []
