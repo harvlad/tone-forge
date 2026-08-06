@@ -116,7 +116,9 @@ public final class ChopPlayer {
         afterSeconds delaySeconds: Double,
         effects: SamplePadEffects = .neutral,
         velocity: Float = 1,
-        pan: Float = 0
+        pan: Float = 0,
+        loop: Bool = false,
+        crossfadeMs: Double = 0
     ) {
         guard let file = files[assignment.stem] else { return }
         let chop = assignment.chop
@@ -128,7 +130,9 @@ public final class ChopPlayer {
             effects: effects,
             velocity: velocity,
             pan: pan,
-            afterSeconds: delaySeconds
+            afterSeconds: delaySeconds,
+            loop: loop,
+            crossfadeMs: crossfadeMs
         )
     }
 
@@ -165,7 +169,9 @@ public final class ChopPlayer {
         effects: SamplePadEffects,
         velocity: Float,
         pan: Float,
-        afterSeconds delaySeconds: Double
+        afterSeconds delaySeconds: Double,
+        loop: Bool = false,
+        crossfadeMs: Double = 0
     ) {
         guard avEngine.isRunning else {
             print("[ChopPlayer] dropped trigger: engine not running")
@@ -190,16 +196,41 @@ public final class ChopPlayer {
         voice.mixer.outputVolume = min(max(velocity, 0), 1)
         voice.mixer.pan = min(max(pan, -1), 1)
 
-        voice.node.scheduleSegment(
-            file,
-            startingFrame: startFrame,
-            frameCount: AVAudioFrameCount(frameCount),
-            at: nil,
-            completionHandler: nil
-        )
+        if loop, let buffer = loopBuffer(file: file, startFrame: startFrame,
+                                         frameCount: AVAudioFrameCount(frameCount),
+                                         crossfadeMs: crossfadeMs) {
+            // Seamless looping: the [start,end] region is read into a buffer,
+            // crossfaded (SeamlessLoop) and hard-looped so a held pad never clicks.
+            voice.node.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
+        } else {
+            voice.node.scheduleSegment(
+                file,
+                startingFrame: startFrame,
+                frameCount: AVAudioFrameCount(frameCount),
+                at: nil,
+                completionHandler: nil
+            )
+        }
         voice.node.play(at: playTime(afterSeconds: delaySeconds))
         voice.key = key
         voices[index] = voice
+    }
+
+    /// Read a [startFrame, frameCount] region into a PCM buffer and apply the
+    /// seam crossfade for gapless looping. Returns nil on read failure.
+    private func loopBuffer(
+        file: AVAudioFile, startFrame: AVAudioFramePosition,
+        frameCount: AVAudioFrameCount, crossfadeMs: Double
+    ) -> AVAudioPCMBuffer? {
+        guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else { return nil }
+        do {
+            file.framePosition = startFrame
+            try file.read(into: buf, frameCount: frameCount)
+        } catch {
+            print("[ChopPlayer] loop read failed: \(error)")
+            return nil
+        }
+        return crossfadeMs > 0 ? SeamlessLoop.crossfaded(buf, crossfadeMs: crossfadeMs) : buf
     }
 
     private func cachedFile(for url: URL) -> AVAudioFile? {

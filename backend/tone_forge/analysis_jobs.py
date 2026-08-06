@@ -171,6 +171,18 @@ class JobRegistry:
         )
         self._jobs[job.id] = job
         self._persist(job)
+        # Auto-spin-up: a queued engine job wakes a RunPod GPU worker if none is
+        # live (inert unless RUNPOD_AUTOSCALE=1 + key). Non-blocking + guarded.
+        try:
+            from local_engine import runpod_autoscaler as _autoscale
+
+            if _autoscale.enabled():
+                import threading
+
+                _autoscale.note_activity()
+                threading.Thread(target=_autoscale.ensure_worker, daemon=True).start()
+        except Exception:
+            pass
         return job
 
     def next_queued_engine_job(self, stale_after_sec: float = 180.0) -> Optional[JobState]:

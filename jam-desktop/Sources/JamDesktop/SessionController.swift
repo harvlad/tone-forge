@@ -234,7 +234,14 @@ final class SessionController: ObservableObject {
             print("[Trigger] pad=\(pad) stem=\(assignment.stem) chopIdx=\(assignment.chop.idx)")
             let rate = max(0.1, self.transport.tempoPct)
             let delay = max(0, fireAt - clock.nowSongSeconds) / rate
-            self.chopPlayer.trigger(assignment, afterSeconds: delay)
+            // Loopable chops (whole musical regions) hold seamlessly — the
+            // ChopPlayer crossfades the seam (SeamlessLoop). Chord/onset stabs
+            // stay one-shot.
+            let loopable = (assignment.chop.kind == "section" || assignment.chop.kind == "phrase")
+            self.chopPlayer.trigger(
+                assignment, afterSeconds: delay,
+                loop: loopable, crossfadeMs: loopable ? 15 : 0
+            )
             // Publish for the session recorder. Timestamp = the
             // quantized fire-at moment (what actually SOUNDED), so
             // replays land on the grid, not the raw press time.
@@ -392,6 +399,47 @@ final class SessionController: ObservableObject {
         )
         learn.configure(bundle: session.bundle)
         announce(session)
+    }
+
+    // MARK: - Performance-Intelligence auto-kit
+
+    /// Fetch the song's auto-built Launchpad kit (GET /api/song/{id}/kit) and
+    /// register it as a triggerable pack — the Launchpad's ranked, seamlessly-
+    /// loopable performance assets, one tap to load.
+    @Published private(set) var autoKitLoading = false
+    @Published private(set) var autoKitError: String?
+
+    @MainActor
+    func loadAutoKit(skill: String = "intermediate") async {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL else {
+            autoKitError = "No song loaded."
+            return
+        }
+        autoKitLoading = true
+        autoKitError = nil
+        defer { autoKitLoading = false }
+        do {
+            let pack = try await KitClient().fetchKit(baseURL: base, analysisId: analysisId, skill: skill)
+            // The kit's pads are stem slices, not files — so drive the chop-based
+            // Launchpad grid: each pad → (Chop, stem). Loopable pads get kind
+            // "phrase" so onTrigger loops them seamlessly (SeamlessLoop crossfade).
+            let pairs: [(chop: Chop, stem: String)] = pack.pads.compactMap { pad in
+                guard let slice = pad.stemSlice else { return nil }
+                let loopable = pad.loopable ?? ((pad.loopScore ?? 0) >= 0.55)
+                let chop = Chop(
+                    idx: pad.padIdx,
+                    startSec: slice.startSec,
+                    endSec: slice.endSec,
+                    durationSec: max(0, slice.endSec - slice.startSec),
+                    kind: loopable ? "phrase" : "chord",
+                    colorHint: pad.colorHint
+                )
+                return (chop, slice.stemRole)
+            }
+            launchpad.adoptAssignments(pairs)
+        } catch {
+            autoKitError = error.localizedDescription
+        }
     }
 
     // MARK: - Layer recording (P4)

@@ -1932,6 +1932,16 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 else:
                     result["midi_stems"][name] = serialized
 
+        # Performance Intelligence: derive the Musical Graph NOW, while the stems
+        # are LOCAL on this box — attach it to the result so the no-GPU prod box
+        # serves /kit + /performance without re-reading the audio. Additive +
+        # guarded: never blocks or fails the analysis.
+        try:
+            from tone_forge.performance import serve as _perf_serve
+            _perf_serve.derive_and_attach(str(result.get("content_hash") or "pending"), result)
+        except Exception as _perf_err:  # noqa: BLE001
+            logger.info("performance graph derivation skipped: %s", _perf_err)
+
         send_result(queue, result)
 
         # NOTE: Don't cleanup stems - they need to persist for serving via /api/serve-file

@@ -231,6 +231,15 @@ public final class SampleBank: @unchecked Sendable {
         return ResolvedSamplePack(pack: pack, padFileURLs: [:])
     }
 
+    /// Resolve a Performance-Intelligence auto-kit (fetched via ``KitClient``)
+    /// into an activatable pack. Its pads already carry `stemSlice` + loop
+    /// metadata, so — unlike ``songDerived`` — there's no chop→pad mapping; the
+    /// pack is ready to activate and the audio is materialized from the song's
+    /// stems by the scheduler at preload time (same path as song-derived packs).
+    public static func autoKit(_ pack: SamplePack) -> ResolvedSamplePack {
+        ResolvedSamplePack(pack: pack, padFileURLs: [:])
+    }
+
     // MARK: - Private
 
     private func loadFromDirectory(_ dir: URL, packId: String) throws -> ResolvedSamplePack {

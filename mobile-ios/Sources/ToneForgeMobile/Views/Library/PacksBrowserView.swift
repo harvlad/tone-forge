@@ -127,6 +127,7 @@ struct PacksBrowserView: View {
         VStack(spacing: 0) {
             filterChipBar
             List {
+                autoKitSection
                 songDnaSection
                 bundledSection
                 curatedSection
@@ -213,6 +214,32 @@ struct PacksBrowserView: View {
     }
 
     // MARK: - Song DNA
+
+    @ViewBuilder
+    private var autoKitSection: some View {
+        Section {
+            Button {
+                appState.loadAutoKit()
+                onActivated?()
+            } label: {
+                HStack {
+                    Label("Auto Kit", systemImage: "wand.and.stars")
+                    Spacer()
+                    if appState.autoKitLoading { ProgressView() }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.currentBundle == nil || appState.autoKitLoading)
+            .tfLibraryRowChrome()
+            if let err = appState.autoKitError {
+                Text(err).font(.footnote).foregroundStyle(.red)
+            }
+        } header: {
+            Text("Perform")
+        } footer: {
+            Text("An auto-built, seamlessly-loopable kit of this song's best material — one tap to play along.")
+        }
+    }
 
     @ViewBuilder
     private var songDnaSection: some View {

@@ -66,6 +66,11 @@ public struct SampleTrigger: Sendable {
     /// Applied to the per-voice AVAudioUnitDelay + AVAudioUnitEQ on
     /// allocation; values are clamped inside the pool.
     public let effects: SamplePadEffects
+    /// Seam crossfade length (ms) for a looping voice — from the
+    /// Performance-Intelligence loop scorer (`loopScore`/optimized seam).
+    /// 0 = hard loop (legacy behavior). When > 0 and looping, the loop
+    /// buffer is overlap-add crossfaded so the seam is inaudible.
+    public let crossfadeMs: Double
 
     public init(
         padKey: SamplePadKey,
@@ -73,7 +78,8 @@ public struct SampleTrigger: Sendable {
         chokeGroup: Int?,
         gainDb: Double,
         pan: Float = 0,
-        effects: SamplePadEffects = .neutral
+        effects: SamplePadEffects = .neutral,
+        crossfadeMs: Double = 0
     ) {
         self.padKey = padKey
         self.loop = loop
@@ -81,6 +87,7 @@ public struct SampleTrigger: Sendable {
         self.gainDb = gainDb
         self.pan = pan
         self.effects = effects
+        self.crossfadeMs = crossfadeMs
     }
 }
 
@@ -307,6 +314,17 @@ public final class SampleVoicePool: ObservableObject {
             ? Double(buffer.frameLength) / buffer.format.sampleRate
             : 0
 
+        // Seamless looping: when this is a looping voice with a crossfade
+        // length (from the loop scorer), overlap-add the seam so the hard
+        // buffer loop has no audible click. Falls back to the raw buffer.
+        let playBuffer: AVAudioPCMBuffer = (req.loop && req.crossfadeMs > 0)
+            ? SeamlessLoop.crossfaded(buffer, crossfadeMs: req.crossfadeMs)
+            : buffer
+        // One pass length reflects the (possibly shortened) crossfaded buffer.
+        slot.bufferDurationSec = playBuffer.format.sampleRate > 0
+            ? Double(playBuffer.frameLength) / playBuffer.format.sampleRate
+            : slot.bufferDurationSec
+
         let options: AVAudioPlayerNodeBufferOptions = req.loop
             ? [.interrupts, .loops]
             : [.interrupts]
@@ -323,7 +341,7 @@ public final class SampleVoicePool: ObservableObject {
 
         // Schedule the buffer for immediate playback in the player's
         // own timeline.
-        slot.player.scheduleBuffer(buffer, at: nil, options: options, completionHandler: nil)
+        slot.player.scheduleBuffer(playBuffer, at: nil, options: options, completionHandler: nil)
 
         // Future-time gating. Calling `play(at: AVAudioTime(hostTime:))`
         // directly throws NSException from AVAudioPlayerNodeImpl::StartImpl
