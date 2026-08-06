@@ -1,0 +1,217 @@
+{
+ "n_clips": 42,
+ "n_songs": 21,
+ "windows_per_song": 2,
+ "tracks": [
+  {
+   "song": "0a589d65-50a3-4999-8f16-b5b6199bceee",
+   "id": "0a589d65-50a_w0",
+   "offset_s": 120.0
+  },
+  {
+   "song": "0a589d65-50a3-4999-8f16-b5b6199bceee",
+   "id": "0a589d65-50a_w1",
+   "offset_s": 105.0
+  },
+  {
+   "song": "1ee489e8-55ad-4d4a-8277-24051b85c02d",
+   "id": "1ee489e8-55a_w0",
+   "offset_s": 165.0
+  },
+  {
+   "song": "1ee489e8-55ad-4d4a-8277-24051b85c02d",
+   "id": "1ee489e8-55a_w1",
+   "offset_s": 155.0
+  },
+  {
+   "song": "2dc237cd-1637-46f0-8f58-ca68dc6f6031",
+   "id": "2dc237cd-163_w0",
+   "offset_s": 160.0
+  },
+  {
+   "song": "2dc237cd-1637-46f0-8f58-ca68dc6f6031",
+   "id": "2dc237cd-163_w1",
+   "offset_s": 170.0
+  },
+  {
+   "song": "3e389000-8fdc-4b63-b8b8-ab044273790d",
+   "id": "3e389000-8fd_w0",
+   "offset_s": 175.0
+  },
+  {
+   "song": "3e389000-8fdc-4b63-b8b8-ab044273790d",
+   "id": "3e389000-8fd_w1",
+   "offset_s": 185.0
+  },
+  {
+   "song": "3e656eec-84d4-4a45-b410-d3817d849f92",
+   "id": "3e656eec-84d_w0",
+   "offset_s": 200.0
+  },
+  {
+   "song": "3e656eec-84d4-4a45-b410-d3817d849f92",
+   "id": "3e656eec-84d_w1",
+   "offset_s": 210.0
+  },
+  {
+   "song": "6b168ae6-9d8a-4dc2-9d27-898e6871bf8b",
+   "id": "6b168ae6-9d8_w0",
+   "offset_s": 180.0
+  },
+  {
+   "song": "6b168ae6-9d8a-4dc2-9d27-898e6871bf8b",
+   "id": "6b168ae6-9d8_w1",
+   "offset_s": 170.0
+  },
+  {
+   "song": "6ceda40a-88bc-4e98-87c3-dd5c91725d41",
+   "id": "6ceda40a-88b_w0",
+   "offset_s": 165.0
+  },
+  {
+   "song": "6ceda40a-88bc-4e98-87c3-dd5c91725d41",
+   "id": "6ceda40a-88b_w1",
+   "offset_s": 155.0
+  },
+  {
+   "song": "731893c6-67b9-42f0-aea6-d1f70c2c9870",
+   "id": "731893c6-67b_w0",
+   "offset_s": 205.0
+  },
+  {
+   "song": "731893c6-67b9-42f0-aea6-d1f70c2c9870",
+   "id": "731893c6-67b_w1",
+   "offset_s": 115.0
+  },
+  {
+   "song": "8804c154-6294-481a-ad63-bc61162cae2f",
+   "id": "8804c154-629_w0",
+   "offset_s": 190.0
+  },
+  {
+   "song": "8804c154-6294-481a-ad63-bc61162cae2f",
+   "id": "8804c154-629_w1",
+   "offset_s": 170.0
+  },
+  {
+   "song": "93dda0e8-dd76-49e4-b08f-54a82387cdf6",
+   "id": "93dda0e8-dd7_w0",
+   "offset_s": 170.0
+  },
+  {
+   "song": "93dda0e8-dd76-49e4-b08f-54a82387cdf6",
+   "id": "93dda0e8-dd7_w1",
+   "offset_s": 160.0
+  },
+  {
+   "song": "97b07e0e-274e-4212-a66b-44210a48724d",
+   "id": "97b07e0e-274_w0",
+   "offset_s": 190.0
+  },
+  {
+   "song": "97b07e0e-274e-4212-a66b-44210a48724d",
+   "id": "97b07e0e-274_w1",
+   "offset_s": 50.0
+  },
+  {
+   "song": "9eb8bc50-cffb-4c19-be0e-d27423e3e102",
+   "id": "9eb8bc50-cff_w0",
+   "offset_s": 240.0
+  },
+  {
+   "song": "9eb8bc50-cffb-4c19-be0e-d27423e3e102",
+   "id": "9eb8bc50-cff_w1",
+   "offset_s": 260.0
+  },
+  {
+   "song": "c70471f9-9c4a-41c9-b8f8-20ac38847a8e",
+   "id": "c70471f9-9c4_w0",
+   "offset_s": 120.0
+  },
+  {
+   "song": "c70471f9-9c4a-41c9-b8f8-20ac38847a8e",
+   "id": "c70471f9-9c4_w1",
+   "offset_s": 140.0
+  },
+  {
+   "song": "d4df499c-e394-4753-b459-e167e6a58bad",
+   "id": "d4df499c-e39_w0",
+   "offset_s": 145.0
+  },
+  {
+   "song": "d4df499c-e394-4753-b459-e167e6a58bad",
+   "id": "d4df499c-e39_w1",
+   "offset_s": 155.0
+  },
+  {
+   "song": "e62afdcd-0c96-4bee-80c7-1c17b897a6d7",
+   "id": "e62afdcd-0c9_w0",
+   "offset_s": 180.0
+  },
+  {
+   "song": "e62afdcd-0c96-4bee-80c7-1c17b897a6d7",
+   "id": "e62afdcd-0c9_w1",
+   "offset_s": 165.0
+  },
+  {
+   "song": "24f8a652-0168-4702-8725-42f9924e6729",
+   "id": "24f8a652-016_w0",
+   "offset_s": 210.0
+  },
+  {
+   "song": "24f8a652-0168-4702-8725-42f9924e6729",
+   "id": "24f8a652-016_w1",
+   "offset_s": 30.0
+  },
+  {
+   "song": "3c557409-3a34-43c2-9159-5421bbad5ecb",
+   "id": "3c557409-3a3_w0",
+   "offset_s": 470.0
+  },
+  {
+   "song": "3c557409-3a34-43c2-9159-5421bbad5ecb",
+   "id": "3c557409-3a3_w1",
+   "offset_s": 495.0
+  },
+  {
+   "song": "cff5bcde-6a15-4c5b-b529-e1c528c46335",
+   "id": "cff5bcde-6a1_w0",
+   "offset_s": 235.0
+  },
+  {
+   "song": "cff5bcde-6a15-4c5b-b529-e1c528c46335",
+   "id": "cff5bcde-6a1_w1",
+   "offset_s": 220.0
+  },
+  {
+   "song": "d890ff35-300d-49f2-8054-49ab47262987",
+   "id": "d890ff35-300_w0",
+   "offset_s": 220.0
+  },
+  {
+   "song": "d890ff35-300d-49f2-8054-49ab47262987",
+   "id": "d890ff35-300_w1",
+   "offset_s": 230.0
+  },
+  {
+   "song": "dda2c057-6d73-43fa-a130-d7d6562c09ca",
+   "id": "dda2c057-6d7_w0",
+   "offset_s": 350.0
+  },
+  {
+   "song": "dda2c057-6d73-43fa-a130-d7d6562c09ca",
+   "id": "dda2c057-6d7_w1",
+   "offset_s": 320.0
+  },
+  {
+   "song": "f9a1d21b-bfc7-45e1-b744-c57d0a0880c3",
+   "id": "f9a1d21b-bfc_w0",
+   "offset_s": 160.0
+  },
+  {
+   "song": "f9a1d21b-bfc7-45e1-b744-c57d0a0880c3",
+   "id": "f9a1d21b-bfc_w1",
+   "offset_s": 170.0
+  }
+ ]
+}
