@@ -636,6 +636,34 @@ async def _retention_loop() -> None:
         await asyncio.sleep(_RETENTION_INTERVAL_SEC)
 
 
+_AUTOSCALE_TICK_SEC = 60
+
+
+async def _autoscale_loop() -> None:
+    """Scale the RunPod analysis worker to zero when the engine queue drains.
+
+    Ticks every minute so the RUNPOD_IDLE_MINUTES window is honored (the 6h
+    retention loop is far too coarse). Inert unless RUNPOD_AUTOSCALE=1 — the
+    autoscaler's own ``enabled()`` guard makes every call a no-op otherwise, so
+    this loop costs nothing when the feature is off. Terminate happens off-thread
+    (RunPod REST call) so a slow API doesn't block the event loop.
+    """
+    while True:
+        await asyncio.sleep(_AUTOSCALE_TICK_SEC)
+        try:
+            from local_engine import runpod_autoscaler as _autoscale
+
+            if not _autoscale.enabled():
+                continue
+            pending = any(
+                j.kind == "engine" and j.status in ("queued", "running")
+                for j in _JOBS.all()
+            )
+            await asyncio.to_thread(_autoscale.scale_down_if_idle, pending)
+        except Exception:  # noqa: BLE001
+            logger.exception("autoscale scale-down tick failed")
+
+
 # Supported platforms
 SUPPORTED_PLATFORMS = ["helix", "pedals", "synth"]
 
@@ -673,15 +701,19 @@ async def _lifespan(app: FastAPI):
         app.state.auth_store = _MemoryAuthStore()
 
     retention_task: asyncio.Task | None = None
+    autoscale_task: asyncio.Task | None = None
     if not os.environ.get("TONEFORGE_DISABLE_RETENTION"):
         retention_task = asyncio.create_task(_retention_loop())
+        # Scale-to-zero tick for the RunPod worker (no-op unless RUNPOD_AUTOSCALE=1).
+        autoscale_task = asyncio.create_task(_autoscale_loop())
     try:
         yield
     finally:
-        if retention_task is not None:
-            retention_task.cancel()
-            with _suppress(asyncio.CancelledError):
-                await retention_task
+        for _t in (retention_task, autoscale_task):
+            if _t is not None:
+                _t.cancel()
+                with _suppress(asyncio.CancelledError):
+                    await _t
         await _auth_db.close_pool()
 
 
