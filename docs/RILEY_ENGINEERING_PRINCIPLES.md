@@ -88,3 +88,28 @@ Benchmark v2.0 (real songs) → Coverage Planner → acquire/manufacture → Cor
 (frozen + hashed) → validated fine-tune (GPU) → SI-SDR + **real-song blind** vs the
 incumbent default → promote only on a blind win. Every model is tied to a frozen corpus;
 every corpus is judged against the current default (`DEFAULT_CORPUS.json`).
+
+---
+
+## Phase I close-out principles (2026-08-06)
+
+### P11 — Never trust a benchmark of ~15 clips; use ≥40 + full statistics
+A +0.61 dB median "win" on 15 clips (v4 vs stock) evaporated to a coin-flip on 42 clips
+(21/42, mean Δ −0.02, P=0.56). Always: ≥40 clips, and report **mean AND median + paired
+sign-test + per-track wins**. **Mean/median disagreement is a noise warning** (v4 had
+higher median, lower mean → not a real edge).
+
+### P12 — Real data is the dominant lever; synthetic-only is insufficient
+Synthesis-only fine-tuning *regressed* stock (−2.35 dB on real songs). Swapping in real
+data (same recipe) jumped +5-6 dB to parity. Realistic *mixing/interaction* — present
+only in real multitrack — is the payload; the Virtual Studio's synthetic mixes don't
+supply it. Synthetic benchmarks are fine for development; **promotion needs real-song
+eval + blind listening**.
+
+### P13 — When the platform is validated, the bottleneck is data, not engineering
+Architecture, optimizer, recipe, GPU pipeline, evaluation, and infra are all validated
+and frozen. The binding constraint on beating production stock is now **quantity +
+diversity of commercially-usable real guitar multitrack** — the Coverage Planner
+predicted this, the experiments confirmed it. Future gains come from data acquisition,
+not more infrastructure. Change the platform only when benchmark evidence names a real
+bottleneck.

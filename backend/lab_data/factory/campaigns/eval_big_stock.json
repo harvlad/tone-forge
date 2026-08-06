@@ -1,0 +1,176 @@
+{
+ "model": "stock htdemucs_6s (jamn.app production)",
+ "n": 42,
+ "stock_median": 2.74,
+ "stock_mean": 2.87,
+ "per": [
+  {
+   "id": "0a589d65-50a_w0",
+   "stock": 4.65
+  },
+  {
+   "id": "0a589d65-50a_w1",
+   "stock": 5.39
+  },
+  {
+   "id": "1ee489e8-55a_w0",
+   "stock": 8.44
+  },
+  {
+   "id": "1ee489e8-55a_w1",
+   "stock": 3.28
+  },
+  {
+   "id": "24f8a652-016_w0",
+   "stock": 4.97
+  },
+  {
+   "id": "24f8a652-016_w1",
+   "stock": -0.84
+  },
+  {
+   "id": "2dc237cd-163_w0",
+   "stock": 6.58
+  },
+  {
+   "id": "2dc237cd-163_w1",
+   "stock": 6.63
+  },
+  {
+   "id": "3c557409-3a3_w0",
+   "stock": 7.68
+  },
+  {
+   "id": "3c557409-3a3_w1",
+   "stock": 7.45
+  },
+  {
+   "id": "3e389000-8fd_w0",
+   "stock": 2.28
+  },
+  {
+   "id": "3e389000-8fd_w1",
+   "stock": 0.21
+  },
+  {
+   "id": "3e656eec-84d_w0",
+   "stock": -2.8
+  },
+  {
+   "id": "3e656eec-84d_w1",
+   "stock": -1.94
+  },
+  {
+   "id": "6b168ae6-9d8_w0",
+   "stock": -5.12
+  },
+  {
+   "id": "6b168ae6-9d8_w1",
+   "stock": -5.42
+  },
+  {
+   "id": "6ceda40a-88b_w0",
+   "stock": 1.99
+  },
+  {
+   "id": "6ceda40a-88b_w1",
+   "stock": 10.32
+  },
+  {
+   "id": "731893c6-67b_w0",
+   "stock": 8.8
+  },
+  {
+   "id": "731893c6-67b_w1",
+   "stock": 4.4
+  },
+  {
+   "id": "8804c154-629_w0",
+   "stock": 3.12
+  },
+  {
+   "id": "8804c154-629_w1",
+   "stock": 2.04
+  },
+  {
+   "id": "93dda0e8-dd7_w0",
+   "stock": 7.95
+  },
+  {
+   "id": "93dda0e8-dd7_w1",
+   "stock": 7.18
+  },
+  {
+   "id": "97b07e0e-274_w0",
+   "stock": -1.54
+  },
+  {
+   "id": "97b07e0e-274_w1",
+   "stock": -0.96
+  },
+  {
+   "id": "9eb8bc50-cff_w0",
+   "stock": 2.29
+  },
+  {
+   "id": "9eb8bc50-cff_w1",
+   "stock": 2.48
+  },
+  {
+   "id": "c70471f9-9c4_w0",
+   "stock": 3.61
+  },
+  {
+   "id": "c70471f9-9c4_w1",
+   "stock": 3.0
+  },
+  {
+   "id": "cff5bcde-6a1_w0",
+   "stock": -0.98
+  },
+  {
+   "id": "cff5bcde-6a1_w1",
+   "stock": 0.97
+  },
+  {
+   "id": "d4df499c-e39_w0",
+   "stock": 4.93
+  },
+  {
+   "id": "d4df499c-e39_w1",
+   "stock": 2.08
+  },
+  {
+   "id": "d890ff35-300_w0",
+   "stock": -0.57
+  },
+  {
+   "id": "d890ff35-300_w1",
+   "stock": -4.65
+  },
+  {
+   "id": "dda2c057-6d7_w0",
+   "stock": 8.22
+  },
+  {
+   "id": "dda2c057-6d7_w1",
+   "stock": 11.71
+  },
+  {
+   "id": "e62afdcd-0c9_w0",
+   "stock": -2.13
+  },
+  {
+   "id": "e62afdcd-0c9_w1",
+   "stock": -1.46
+  },
+  {
+   "id": "f9a1d21b-bfc_w0",
+   "stock": 4.17
+  },
+  {
+   "id": "f9a1d21b-bfc_w1",
+   "stock": 1.97
+  }
+ ]
+}

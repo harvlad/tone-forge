@@ -28,5 +28,10 @@
   "advantage_dB": 3.62, "riley_track_wins": "13/15", "blind": "15/15 (P~3e-5) -> PROMOTE",
   "note": "absolute negative for both = real full-band domain gap (models trained only on GuitarSet+Freesound synthesis). Relative + blind decisive."
  },
- "the_bar": "riley_corpus_v1.0 (hash df4167dc) is the incumbent DEFAULT. A challenger corpus/model is promoted only if it beats v1.0's separator on this benchmark: SI-SDR improvement AND a real-song blind majority preferring the challenger."
+ "the_bar": "riley_corpus_v1.0 (hash df4167dc) is the incumbent DEFAULT corpus. A challenger corpus/model is promoted only if it beats v1.0's separator on this benchmark: SI-SDR improvement AND a real-song blind majority preferring the challenger.",
+ "production_reference": {
+  "model": "stock htdemucs_6s (jamn.app production, Meta MIT 6-source)",
+  "real_song_sisdr_median": 3.12,
+  "note": "THE bar for DEPLOYMENT. Stock (+3.12) beats both Campaign-2 fine-tunes (Riley -2.35, naive -5.97) by ~5.5 dB on real songs — fine-tuning stock on the synthesis-only corpus REGRESSED real-song quality. A Riley separator is deployable only when it EXCEEDS +3.12 here. The Campaign-2 A/B proves corpus quality (Riley>naive), NOT separator superiority over production. Next: add real training data to close the synthesis->real gap."
+ }
 }

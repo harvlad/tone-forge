@@ -1,0 +1,2 @@
+78e4f993556a4fe930bc3a807116b2c02ac5542bccbc34266197198ffe3ca80a  riley_v3_real_best.ckpt
+a01fb2e0a2c862642e25fdd13c3a9f47e685deec44ee01400d209fd466f66461  riley_v3_real_latest.ckpt

@@ -1,0 +1,68 @@
+{
+ "model": "stock htdemucs_6s (jamn.app production)",
+ "n": 15,
+ "stock_median": 3.12,
+ "stock_mean": 2.87,
+ "per": [
+  {
+   "id": "0a589d65-50a",
+   "stock": 4.65
+  },
+  {
+   "id": "1ee489e8-55a",
+   "stock": 8.44
+  },
+  {
+   "id": "2dc237cd-163",
+   "stock": 6.58
+  },
+  {
+   "id": "3e389000-8fd",
+   "stock": 2.28
+  },
+  {
+   "id": "3e656eec-84d",
+   "stock": -2.8
+  },
+  {
+   "id": "6b168ae6-9d8",
+   "stock": -5.12
+  },
+  {
+   "id": "6ceda40a-88b",
+   "stock": 1.99
+  },
+  {
+   "id": "731893c6-67b",
+   "stock": 8.8
+  },
+  {
+   "id": "8804c154-629",
+   "stock": 3.12
+  },
+  {
+   "id": "93dda0e8-dd7",
+   "stock": 7.95
+  },
+  {
+   "id": "97b07e0e-274",
+   "stock": -1.54
+  },
+  {
+   "id": "9eb8bc50-cff",
+   "stock": 2.29
+  },
+  {
+   "id": "c70471f9-9c4",
+   "stock": 3.61
+  },
+  {
+   "id": "d4df499c-e39",
+   "stock": 4.93
+  },
+  {
+   "id": "e62afdcd-0c9",
+   "stock": -2.13
+  }
+ ]
+}
