@@ -572,13 +572,18 @@ public final class SampleScheduler: ObservableObject {
         let effects = effectsResolver?(pid, padIdx, pad.effects)
             ?? pad.effects
             ?? .neutral
+        // Seamless crossfade for auto-kit loops: a scored loop (loopScore set)
+        // gets an overlap-add seam so it holds forever without a click. A worse
+        // measured seam → a longer fade; clamped to a musical 8..30 ms.
+        let crossfadeMs: Double = pad.loopScore.map { max(8.0, min(30.0, (1.0 - $0) * 45.0)) } ?? 0
         let req = SampleTrigger(
             padKey: padKey,
             loop: loop || loopOverride || pad.loopPointSec != nil
                 || (loopResolver?(pid, padIdx) ?? false),
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,
-            effects: effects
+            effects: effects,
+            crossfadeMs: crossfadeMs
         )
         let audioTime = audioTime(forSongSeconds: targetSong, nowSong: nowSong)
         pool.trigger(req, buffer: buffer, at: audioTime)
