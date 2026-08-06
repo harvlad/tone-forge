@@ -36,7 +36,7 @@ except Exception:  # pragma: no cover
 
 _REST = "https://rest.runpod.io/v1"
 _POD_NAME = "jamn-analysis-worker"
-_DEFAULT_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+_DEFAULT_IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
 
 
 def enabled() -> bool:
@@ -56,23 +56,25 @@ def _gpu_ids() -> List[str]:
     return [g.strip() for g in raw.split(",") if g.strip()]
 
 
-def _start_command() -> str:
-    """One-liner that bootstraps + runs the worker. Env is injected via the pod's
-    env vars (below), so the script just executes."""
+def _start_argv() -> List[str]:
+    """dockerStartCmd (argv form, per REST v1 PodCreateInput): overrides the image
+    CMD. Bootstraps then runs the worker; env is injected via the pod env below."""
     repo = os.environ.get("JAMN_REPO_DIR", "/workspace/tone-forge")
-    return (
-        "bash -lc '"
+    inner = (
         f"cd {repo} 2>/dev/null || git clone \"$JAMN_REPO_URL\" {repo}; "
-        f"bash {repo}/backend/scripts/runpod_analysis_worker.sh'"
+        f"bash {repo}/backend/scripts/runpod_analysis_worker.sh"
     )
+    return ["bash", "-lc", inner]
 
 
-def _worker_env() -> List[dict]:
+def _worker_env() -> dict:
+    # REST v1 wants env as a flat {KEY: value} object (NOT the legacy GraphQL
+    # [{key,value}] list).
     passthrough = [
         "TONEFORGE_ENGINE_TOKEN", "TONEFORGE_BACKEND_URL", "TONEFORGE_ANALYSIS_ENGINE",
         "JAMN_REPO_URL", "JAMN_DEPLOY_REF", "JAMN_REPO_DIR",
     ]
-    return [{"key": k, "value": os.environ[k]} for k in passthrough if os.environ.get(k)]
+    return {k: os.environ[k] for k in passthrough if os.environ.get(k)}
 
 
 def list_worker_pods() -> List[dict]:
@@ -112,7 +114,7 @@ def ensure_worker() -> Optional[str]:
         "volumeMountPath": "/workspace",
         "ports": ["8888/http"],
         "env": _worker_env(),
-        "dockerStartCmd": [_start_command()],
+        "dockerStartCmd": _start_argv(),
     }
     try:
         r = requests.post(f"{_REST}/pods", headers=_headers(), json=body, timeout=40)
