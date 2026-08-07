@@ -143,12 +143,14 @@ class AutoKitBuilder:
             "family": "mixed",     # valid SampleFamily
             "paletteHint": "song",
             "pads": pads,
-            "provenance": {
-                "source": "performance_intelligence",
-                "graph_hash": graph.graph_hash,
-                "module_version": graph.module_version,
-                "skill": skill,
-            },
+            # provenance is a STRING on the wire (SamplePack.provenance: String?).
+            # Emitting a dict here made JSONDecoder fail the ENTIRE kit with a
+            # typeMismatch ("data isn't in the correct format") — the pads never
+            # reached the app. Keep it a compact human/debuggable string.
+            "provenance": (
+                f"performance_intelligence graph={graph.graph_hash} "
+                f"module={graph.module_version} skill={skill}"
+            ),
         }
 
 

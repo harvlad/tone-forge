@@ -126,4 +126,7 @@ def test_auto_kit_builder_emits_sample_pack(tmp_path):
     assert 1 <= len(kit["pads"]) <= 8
     p0 = kit["pads"][0]
     assert "stemSlice" in p0 and "loopScore" in p0 and "contentType" in p0
-    assert kit["provenance"]["source"] == "performance_intelligence"
+    # provenance is a STRING on the wire (SamplePack.provenance: String?) — a
+    # dict here fails the whole kit decode in the app with a typeMismatch.
+    assert isinstance(kit["provenance"], str)
+    assert "performance_intelligence" in kit["provenance"]
