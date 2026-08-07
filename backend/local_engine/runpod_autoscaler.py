@@ -184,6 +184,16 @@ def ensure_worker() -> Optional[str]:
     else:
         body["gpuTypeIds"] = _gpu_ids()
         body["gpuCount"] = 1
+    # Persistent network volume: holds the venv + models so a pod boots in
+    # seconds instead of re-installing/re-downloading. Region-locked, so pin the
+    # pod to the volume's datacenter. Set RUNPOD_NETWORK_VOLUME_ID (+ _DATACENTER).
+    _nv = os.environ.get("RUNPOD_NETWORK_VOLUME_ID")
+    if _nv:
+        body["networkVolumeId"] = _nv
+        body.pop("volumeInGb", None)  # the network volume replaces the pod-local one
+        _dc = os.environ.get("RUNPOD_DATACENTER")
+        if _dc:
+            body["dataCenterIds"] = [_dc]
     # Private-registry pull (e.g. a private GHCR prebuilt image): RunPod uses a
     # stored Container Registry Auth credential, referenced by id. Set
     # RUNPOD_REGISTRY_AUTH_ID to attach it. Omitted -> anonymous pull (public

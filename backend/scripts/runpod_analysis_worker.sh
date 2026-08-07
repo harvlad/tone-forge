@@ -60,18 +60,32 @@ git fetch --quiet origin || true
 git checkout "${JAMN_DEPLOY_REF:-main}" || true
 git pull --quiet || true
 
-# 2. Deps — CUDA torch + the analysis stack. (Idempotent; pip skips satisfied.)
+# Caches on the PERSISTENT network volume (/workspace) so models + deps are
+# downloaded/installed ONCE (first pod seeds it), then every pod after mounts
+# the seeded volume and boots in seconds. NOTE: only meaningful when a network
+# volume is mounted at /workspace; without one this just uses pod-local disk.
+export XDG_CACHE_HOME=/workspace/.cache
+export HF_HOME=/workspace/.cache/huggingface
+export TORCH_HOME=/workspace/.cache/torch
+mkdir -p "$XDG_CACHE_HOME"
+
+# 2. Deps in a venv ON THE VOLUME. --system-site-packages reuses the base
+#    image's (multi-GB, CUDA) torch so we never reinstall it; only the analysis
+#    stack (demucs, torchcrepe, librosa, ...) installs onto the volume. First
+#    pod seeds it (~minutes); every pod after finds everything satisfied (fast).
+VENV=/workspace/venv
+if [[ ! -x "$VENV/bin/python" ]]; then
+  echo "==> creating volume venv (first-run seed)"
+  python -m venv --system-site-packages "$VENV"
+fi
+# shellcheck disable=SC1091
+source "$VENV/bin/activate"
 python -m pip install -q --upgrade pip
-# torch/torchaudio: match the pod's CUDA. Most RunPod PyTorch images ship them;
-# only install if missing so we don't fight the base image's build.
-python - <<'PY' || python -m pip install -q "torch>=2.1" "torchaudio>=2.1"
-import importlib.util, sys
-sys.exit(0 if importlib.util.find_spec("torch") else 1)
-PY
 python -m pip install -q -r requirements.txt
 
-# 3. Models — Demucs htdemucs_6s + basic-pitch (+ Riley HF models when the
-#    experimental_specialist engine is selected). Cached under the pod volume.
+# 3. Models — Demucs htdemucs_6s + Beat-This + All-In-One (+ Riley HF when
+#    experimental_specialist). Cached on the volume via the env above, so the
+#    seeded volume skips the ~250 MB download on every subsequent pod.
 python -m local_engine.download_models || echo "WARN: model prefetch failed; worker will lazy-load."
 
 # 3b. GPU self-test — prove whether CUDA actually COMPUTES (is_available can be
