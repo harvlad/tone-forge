@@ -60,32 +60,32 @@ git fetch --quiet origin || true
 git checkout "${JAMN_DEPLOY_REF:-main}" || true
 git pull --quiet || true
 
-# Caches on the PERSISTENT network volume (/workspace) so models + deps are
-# downloaded/installed ONCE (first pod seeds it), then every pod after mounts
-# the seeded volume and boots in seconds. NOTE: only meaningful when a network
-# volume is mounted at /workspace; without one this just uses pod-local disk.
+# Persistent network volume (/workspace) caches the SLOW-to-fetch bits — the
+# ~250 MB model weights and the pip WHEEL cache — but NOT the installed packages
+# themselves: a venv on a network volume is thousands of small files and makes
+# both install and every runtime import painfully slow. So deps install to the
+# base image's LOCAL python (fast imports), and pip pulls wheels from the volume
+# cache so it never re-downloads. Net: model download + wheel download happen
+# ONCE (seeded on the volume); subsequent pods just unpack cached wheels locally.
 export XDG_CACHE_HOME=/workspace/.cache
 export HF_HOME=/workspace/.cache/huggingface
 export TORCH_HOME=/workspace/.cache/torch
-mkdir -p "$XDG_CACHE_HOME"
+export PIP_CACHE_DIR=/workspace/.cache/pip
+mkdir -p "$XDG_CACHE_HOME" "$PIP_CACHE_DIR"
 
-# 2. Deps in a venv ON THE VOLUME. --system-site-packages reuses the base
-#    image's (multi-GB, CUDA) torch so we never reinstall it; only the analysis
-#    stack (demucs, torchcrepe, librosa, ...) installs onto the volume. First
-#    pod seeds it (~minutes); every pod after finds everything satisfied (fast).
-VENV=/workspace/venv
-if [[ ! -x "$VENV/bin/python" ]]; then
-  echo "==> creating volume venv (first-run seed)"
-  python -m venv --system-site-packages "$VENV"
-fi
-# shellcheck disable=SC1091
-source "$VENV/bin/activate"
-python -m pip install -q --upgrade pip
-python -m pip install -q -r requirements.txt
+# 2. Deps -> base image's local python. torch/torchaudio already ship in the
+#    base; only install if missing. pip reuses the volume wheel cache, so on a
+#    seeded volume this is unpack-only (no downloads).
+python -m pip install --upgrade pip
+python - <<'PY' || python -m pip install "torch>=2.1" "torchaudio>=2.1"
+import importlib.util, sys
+sys.exit(0 if importlib.util.find_spec("torch") else 1)
+PY
+python -m pip install -r requirements.txt
 
 # 3. Models — Demucs htdemucs_6s + Beat-This + All-In-One (+ Riley HF when
-#    experimental_specialist). Cached on the volume via the env above, so the
-#    seeded volume skips the ~250 MB download on every subsequent pod.
+#    experimental_specialist). Cached ON THE VOLUME via HF_HOME/TORCH_HOME, so
+#    the seeded volume skips the ~250 MB download on every subsequent pod.
 python -m local_engine.download_models || echo "WARN: model prefetch failed; worker will lazy-load."
 
 # 3b. GPU self-test — prove whether CUDA actually COMPUTES (is_available can be
