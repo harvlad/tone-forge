@@ -70,9 +70,14 @@ public final class BundleStore: @unchecked Sendable {
     /// into a normal error the caller can surface and recover from.
     public static func makeStemSession() -> URLSession {
         let cfg = URLSessionConfiguration.default
-        // Stall detection lives in the DATA-GAP timeout: 30s with no
-        // bytes at all = a dead transfer, error out and recover.
-        cfg.timeoutIntervalForRequest = 30
+        // Stall detection lives in the DATA-GAP timeout: N seconds with no
+        // bytes at all = a dead transfer, error out and recover. Raised
+        // 30s -> 120s: when stems are relayed through the analysis VPS
+        // (pod -> VPS -> R2 -> client), the VPS can go tens of seconds with
+        // no bytes to the client while it's still pulling a stem from R2 —
+        // a healthy-but-slow transfer, not a stall. 30s killed those with
+        // "The request timed out" even though the stem eventually arrived.
+        cfg.timeoutIntervalForRequest = 120
         // The whole-stem ceiling exists only as a last-resort backstop
         // and must accommodate slow links. Stems are ~40 MB each and
         // several download concurrently; a 300s ceiling required

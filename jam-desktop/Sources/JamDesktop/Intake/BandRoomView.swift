@@ -149,8 +149,17 @@ private struct QueueJobCard: View {
                     .disabled(model.isLoadingSession)
                 }
                 if openAttempted, model.isLoadingSession {
-                    ProgressView("Loading song…")
+                    if let p = model.loadProgress {
+                        ProgressView(value: min(max(p, 0), 1)) {
+                            Text("Downloading stems… \(Int((min(max(p, 0), 1)) * 100))%")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         .controlSize(.small)
+                    } else {
+                        ProgressView("Loading song…")
+                            .controlSize(.small)
+                    }
                 } else if openAttempted, let error = model.sessionError {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.caption)

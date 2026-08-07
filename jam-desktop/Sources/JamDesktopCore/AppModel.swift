@@ -47,6 +47,21 @@ public final class AppModel: ObservableObject {
     /// Loading state for the session-load flow.
     @Published public var isLoadingSession = false
     @Published public var sessionError: String?
+    /// Overall stem-download progress (0…1) while opening a session, so the
+    /// UI shows a real bar instead of an indeterminate spinner for the tens of
+    /// seconds it takes to pull ~280 MB of stems. nil = not downloading.
+    @Published public var loadProgress: Double?
+    private var _loadFractions: [String: Double] = [:]
+
+    private func _applyLoadProgress(_ p: BundleStore.StemProgress) {
+        let frac = p.isComplete
+            ? 1.0
+            : (p.bytesTotal > 0 ? Double(p.bytesDownloaded) / Double(p.bytesTotal) : 0.0)
+        _loadFractions[p.role] = frac
+        if !_loadFractions.isEmpty {
+            loadProgress = _loadFractions.values.reduce(0, +) / Double(_loadFractions.count)
+        }
+    }
 
     /// Bridge session id — the /ws/connect-bridge room key. Defaults
     /// to this device's stable id (so a co-open browser with the same
@@ -81,10 +96,15 @@ public final class AppModel: ObservableObject {
         isLoadingSession = true
         sessionError = nil
         sidecar = nil
-        defer { isLoadingSession = false }
+        _loadFractions = [:]
+        loadProgress = nil
+        defer { isLoadingSession = false; loadProgress = nil }
         do {
             session = try await loader.load(
-                analysisId: analysisId, backend: backendBaseURL
+                analysisId: analysisId, backend: backendBaseURL,
+                onProgress: { [weak self] p in
+                    Task { @MainActor in self?._applyLoadProgress(p) }
+                }
             )
             view = .perform
         } catch {
