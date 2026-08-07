@@ -13,7 +13,11 @@ Env (all off by default — this module is inert unless RUNPOD_AUTOSCALE=1):
   RUNPOD_AUTOSCALE=1              enable
   RUNPOD_API_KEY=rpa_...         RunPod API key
   RUNPOD_GPU_TYPE_IDS            comma list, default "NVIDIA A40"
-  RUNPOD_IMAGE                   base image, default a CUDA-12 PyTorch image
+  RUNPOD_IMAGE                   base image, default a CUDA-12 PyTorch image.
+                                 Set to ghcr.io/<owner>/tone-forge-worker:latest
+                                 (built by .github/workflows/runpod-worker-image.yml)
+                                 for a prebuilt image with ffmpeg+deps+models baked
+                                 in — cold boot ~2-3min -> ~30-60s.
   RUNPOD_IDLE_MINUTES            terminate after this idle, default 10
   JAMN_REPO_URL / JAMN_DEPLOY_REF / TONEFORGE_ENGINE_TOKEN / TONEFORGE_BACKEND_URL
   TONEFORGE_ANALYSIS_ENGINE      "experimental_specialist" (latest Riley) | current
