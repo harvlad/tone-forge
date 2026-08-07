@@ -11,9 +11,13 @@
 # changes) AND it carries no private source, so the GHCR package can be public
 # and RunPod needs no registry auth to pull it.
 #
-# CUDA 12.4 runtime runs on any host driver >= 12.4 (the 12.8.1 image lost the
-# GPU on 12.8.0-driver hosts — see runpod_autoscaler.py).
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+# RUNTIME (not devel) base: torch/demucs/torchcrepe ship prebuilt CUDA kernels,
+# so the ~7 GB CUDA toolkit/compilers in a -devel image are dead weight at
+# runtime. The runpod/pytorch:...-devel image was ~12 GB and took 7+ min to pull
+# on a fresh host (job stranded at "waiting for the analysis engine"). This
+# cuda12.4-cudnn9-runtime base is ~3 GB. CUDA 12.4 runtime runs on any host
+# driver >= 12.4 (the 12.8.1 image lost the GPU on 12.8.0-driver hosts).
+FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
 
 # System codecs the analysis stack needs but the base image lacks: ffmpeg
 # decodes m4a/mp3 (_ensure_decodable); libsndfile backs soundfile.
