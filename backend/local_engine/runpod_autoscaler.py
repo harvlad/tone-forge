@@ -105,13 +105,58 @@ def _has_live_worker() -> bool:
     return False
 
 
+# --- HARD guardrails so a crash-looping bootstrap can never runaway-spawn ---
+# (A missing cap once created 244 pods in 4.5h.) Every one of these must pass
+# before a pod is created.
+_MAX_LIVE_PODS = 1              # never more than one live worker
+_CREATE_COOLDOWN_SEC = 300     # >= 5 min between ANY two create attempts
+_MAX_CREATES_PER_PROCESS = 12  # absolute backstop; a runaway trips this, then
+                               # STOPS until the backend is restarted
+_last_create_ts = 0.0
+_creates_this_process = 0
+
+
+def _reap_exited_pods() -> None:
+    """Terminate EXITED/dead jamn pods so a crash-looping bootstrap can't
+    accumulate (or keep billing) allocated-but-dead pods."""
+    if requests is None:
+        return
+    for p in list_worker_pods():
+        if str(p.get("desiredStatus", "")).upper() in ("EXITED", "TERMINATED", "DEAD"):
+            pid = p.get("id")
+            if pid:
+                try:
+                    requests.delete(f"{_REST}/pods/{pid}", headers=_headers(), timeout=20)
+                except Exception:
+                    pass
+
+
 def ensure_worker() -> Optional[str]:
-    """Create a GPU worker pod if none is live. Returns the pod id (or existing).
-    Safe to call on every job submit — no-ops when a worker is already up."""
+    """Create a GPU worker pod if none is live — guarded by a hard live cap,
+    a create cooldown, and a per-process create backstop so a failing bootstrap
+    can never spawn a runaway fleet. Returns the pod id, "existing", or None."""
+    global _last_create_ts, _creates_this_process
     if not enabled() or requests is None:
         return None
-    if _has_live_worker():
+    # Reap dead pods first — otherwise a crash-looping worker leaves EXITED
+    # pods behind that may keep billing.
+    _reap_exited_pods()
+    live = [
+        p for p in list_worker_pods()
+        if str(p.get("desiredStatus", "")).upper() in ("RUNNING", "PENDING", "CREATED")
+    ]
+    if len(live) >= _MAX_LIVE_PODS:
         return "existing"
+    now = time.time()
+    if now - _last_create_ts < _CREATE_COOLDOWN_SEC:
+        return None  # cooldown — a fast-exiting pod cannot be respawned rapidly
+    if _creates_this_process >= _MAX_CREATES_PER_PROCESS:
+        print("[autoscaler] create backstop hit — refusing; restart to reset")
+        return None
+    # Record the attempt BEFORE the POST so a create that succeeds-but-then-
+    # exits still counts against the cooldown/backstop.
+    _last_create_ts = now
+    _creates_this_process += 1
     body = {
         "name": _POD_NAME,
         "imageName": os.environ.get("RUNPOD_IMAGE", _DEFAULT_IMAGE),

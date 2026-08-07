@@ -659,13 +659,12 @@ async def _autoscale_loop() -> None:
                 j.kind == "engine" and j.status in ("queued", "running")
                 for j in _JOBS.all()
             )
-            # Self-heal: ensure_worker only fires on job SUBMIT, so a pod that
-            # dies (crash, failed image pull, manual kill) leaves queued jobs
-            # stranded with no worker. If work is pending but no worker is
-            # live, spin one up. ensure_worker no-ops when a worker exists.
-            if pending and not _autoscale._has_live_worker():
-                _autoscale.note_activity()
-                await asyncio.to_thread(_autoscale.ensure_worker)
+            # NOTE: deliberately NO ensure_worker here. A loop-based self-heal
+            # (respawn when pending + no live worker) turned a crashing-pod
+            # bootstrap into a spawn-every-60s runaway (244 pods). ensure_worker
+            # now ONLY fires on job submit and is itself hard-capped +
+            # cooldown-guarded. If jobs strand, that's a visible failure to fix,
+            # not something to paper over by spawning pods on a timer.
             await asyncio.to_thread(_autoscale.scale_down_if_idle, pending)
         except Exception:  # noqa: BLE001
             logger.exception("autoscale tick failed")
