@@ -18,6 +18,11 @@ python-multipart>=0.0.6  # required by FastAPI for multipart/form-data file uplo
 demucs>=4.0.1
 torch>=2.1
 torchaudio>=2.1
+# GPU pitch tracker for MIDI extraction. Was installed only on the dev Mac,
+# so remote GPU workers hit "torchcrepe failed" and fell back to CPU pYIN —
+# making MIDI extraction (~62% of a run) run on CPU. Installing it lets the
+# heaviest stage use the GPU.
+torchcrepe>=0.0.23
 
 # Beat/downbeat tracking (Beat This!, MIT). Optional at runtime —
 # tone_forge.beat_tracking falls back to librosa when missing.

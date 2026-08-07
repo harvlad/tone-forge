@@ -124,6 +124,13 @@ def ensure_worker() -> Optional[str]:
         "env": _worker_env(),
         "dockerStartCmd": _start_argv(),
     }
+    # Private-registry pull (e.g. a private GHCR prebuilt image): RunPod uses a
+    # stored Container Registry Auth credential, referenced by id. Set
+    # RUNPOD_REGISTRY_AUTH_ID to attach it. Omitted -> anonymous pull (public
+    # image / the default base image).
+    _auth_id = os.environ.get("RUNPOD_REGISTRY_AUTH_ID")
+    if _auth_id:
+        body["containerRegistryAuthId"] = _auth_id
     try:
         r = requests.post(f"{_REST}/pods", headers=_headers(), json=body, timeout=40)
         if r.status_code in (200, 201):
