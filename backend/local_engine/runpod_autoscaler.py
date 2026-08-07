@@ -160,8 +160,6 @@ def ensure_worker() -> Optional[str]:
     body = {
         "name": _POD_NAME,
         "imageName": os.environ.get("RUNPOD_IMAGE", _DEFAULT_IMAGE),
-        "gpuTypeIds": _gpu_ids(),
-        "gpuCount": 1,
         "containerDiskInGb": 40,
         "volumeInGb": 60,
         "volumeMountPath": "/workspace",
@@ -169,6 +167,23 @@ def ensure_worker() -> Optional[str]:
         "env": _worker_env(),
         "dockerStartCmd": _start_argv(),
     }
+    # CPU vs GPU worker. The analysis pipeline is ~90% CPU-bound (only Demucs
+    # separation uses the GPU, ~11s of a ~4min run), so a CPU pod is far
+    # cheaper (~$0.05-0.10/hr vs $0.44) AND sidesteps every GPU failure mode
+    # (CUDA-fork crash, driver mismatch, torchcrepe-on-GPU). Separation just
+    # runs slower on CPU. Set RUNPOD_COMPUTE=CPU for the mobile backend.
+    if os.environ.get("RUNPOD_COMPUTE", "GPU").upper() == "CPU":
+        body["computeType"] = "CPU"
+        body["cpuFlavorIds"] = [
+            f.strip() for f in os.environ.get("RUNPOD_CPU_FLAVORS", "cpu5c").split(",") if f.strip()
+        ]
+        try:
+            body["vcpuCount"] = int(os.environ.get("RUNPOD_VCPU", "8"))
+        except ValueError:
+            body["vcpuCount"] = 8
+    else:
+        body["gpuTypeIds"] = _gpu_ids()
+        body["gpuCount"] = 1
     # Private-registry pull (e.g. a private GHCR prebuilt image): RunPod uses a
     # stored Container Registry Auth credential, referenced by id. Set
     # RUNPOD_REGISTRY_AUTH_ID to attach it. Omitted -> anonymous pull (public
