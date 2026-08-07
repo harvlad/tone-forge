@@ -36,7 +36,11 @@ except Exception:  # pragma: no cover
 
 _REST = "https://rest.runpod.io/v1"
 _POD_NAME = "jamn-analysis-worker"
-_DEFAULT_IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+# CUDA 12.4 runtime runs on any host driver >= 12.4, so an ephemeral pod placed
+# on any modern host has a working GPU. The 12.8.1 image needed a >=12.8.1
+# driver and silently lost the GPU (torch.cuda unavailable) on 12.8.0 hosts,
+# crashing analysis. Keep the runtime CUDA at/below the common host-driver floor.
+_DEFAULT_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
 
 
 def enabled() -> bool:
