@@ -189,6 +189,17 @@ public struct Chop: Codable, Sendable, Equatable {
     public let sectionLabel: String?
     public let chordSymbol: String?
     public let colorHint: String?
+    // --- Riley phrase-aware fields (additive; nil on legacy / non-phrase
+    // chops). Populated when the chop comes from the Musical Graph: how the
+    // pad is meant to be used, its playable-usefulness rank, whether it loops
+    // cleanly, and the seam crossfade for gapless looping. ---
+    public let contentType: String?
+    public let performanceScore: Double?
+    public let difficulty: Double?
+    public let loopable: Bool?
+    public let loopScore: Double?
+    public let crossfadeMs: Double?
+    public let patternId: String?
 
     public init(
         idx: Int,
@@ -199,7 +210,14 @@ public struct Chop: Codable, Sendable, Equatable {
         root: Int? = nil,
         sectionLabel: String? = nil,
         chordSymbol: String? = nil,
-        colorHint: String? = nil
+        colorHint: String? = nil,
+        contentType: String? = nil,
+        performanceScore: Double? = nil,
+        difficulty: Double? = nil,
+        loopable: Bool? = nil,
+        loopScore: Double? = nil,
+        crossfadeMs: Double? = nil,
+        patternId: String? = nil
     ) {
         self.idx = idx
         self.startSec = startSec
@@ -210,5 +228,12 @@ public struct Chop: Codable, Sendable, Equatable {
         self.sectionLabel = sectionLabel
         self.chordSymbol = chordSymbol
         self.colorHint = colorHint
+        self.contentType = contentType
+        self.performanceScore = performanceScore
+        self.difficulty = difficulty
+        self.loopable = loopable
+        self.loopScore = loopScore
+        self.crossfadeMs = crossfadeMs
+        self.patternId = patternId
     }
 }
