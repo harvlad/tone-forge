@@ -74,6 +74,28 @@ python -m pip install -q -r requirements.txt
 #    experimental_specialist engine is selected). Cached under the pod volume.
 python -m local_engine.download_models || echo "WARN: model prefetch failed; worker will lazy-load."
 
+# 3b. GPU self-test — prove whether CUDA actually COMPUTES (is_available can be
+#     true while kernels fail on a driver/arch mismatch, silently forcing CPU).
+python - <<'PY' || true
+import torch
+print("== GPU SELF-TEST ==")
+print("torch:", torch.__version__, "| cuda build:", torch.version.cuda)
+print("cuda.is_available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    try:
+        print("device:", torch.cuda.get_device_name(0),
+              "| capability:", torch.cuda.get_device_capability(0))
+        a = torch.randn(2048, 2048, device="cuda")
+        b = (a @ a).sum().item()   # real kernel launch
+        torch.cuda.synchronize()
+        print("GPU MATMUL OK, checksum:", b)
+    except Exception as e:
+        print("GPU COMPUTE FAILED (falls back to CPU):", repr(e))
+else:
+    print("CUDA NOT AVAILABLE -> everything runs on CPU")
+print("== END SELF-TEST ==")
+PY
+
 # 4. Run the claim loop. Restarts on crash so a transient error doesn't idle GPU.
 echo "==> JAMN analysis worker → $BACKEND_URL  (engine=$ANALYSIS_ENGINE)"
 export TONEFORGE_ANALYSIS_ENGINE="$ANALYSIS_ENGINE"
