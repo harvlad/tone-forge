@@ -334,7 +334,14 @@ class RemoteWorker:
             source = self.local_source_if_valid(job) \
                 or self.download_source(job_id, filename)
 
-            queue: multiprocessing.Queue = multiprocessing.Queue()
+            # 'spawn', not fork: this worker initializes CUDA in-parent to
+            # detect the GPU, and a forked child then crashes with "Cannot
+            # re-initialize CUDA in forked subprocess" the moment it touches
+            # torch.cuda. spawn gives the child a fresh interpreter + clean
+            # CUDA init. (macOS already defaults to spawn; this makes Linux/
+            # CUDA pods match.) Queue must come from the SAME context.
+            _ctx = multiprocessing.get_context("spawn")
+            queue: multiprocessing.Queue = _ctx.Queue()
             # Engine selection (INTERNAL): job payload wins, then this
             # worker's env, then "current". Lets a dev machine force the
             # experimental specialist engine without any client change.
@@ -342,7 +349,7 @@ class RemoteWorker:
                        or os.environ.get("TONEFORGE_ANALYSIS_ENGINE") or "current")
             _family = (job.get("target_family")
                        or os.environ.get("TONEFORGE_TARGET_FAMILY") or "")
-            process = multiprocessing.Process(
+            process = _ctx.Process(
                 target=run_file_analysis,
                 args=(str(source), queue, None, filename, _engine, _family),
                 daemon=True,

@@ -355,13 +355,19 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         from tone_forge import analyzer
         from tone_forge.auto_detect import detect_audio_type
 
-        # Get device info
-        if torch.backends.mps.is_available():
-            device_name = "Apple Silicon GPU"
-        elif torch.cuda.is_available():
-            device_name = torch.cuda.get_device_name(0)
-        else:
-            device_name = "CPU"
+        # Get device info. Guarded: a torch.cuda hiccup here (e.g. the
+        # fork/CUDA re-init crash on a GPU pod) must never fail the analysis —
+        # this is only a display label.
+        try:
+            if torch.backends.mps.is_available():
+                device_name = "Apple Silicon GPU"
+            elif torch.cuda.is_available():
+                device_name = torch.cuda.get_device_name(0)
+            else:
+                device_name = "CPU"
+        except Exception as _dev_err:  # noqa: BLE001
+            print(f"[Worker] device detect failed: {_dev_err}", file=sys.stderr)
+            device_name = "GPU"
 
         device_info = {"device_name": device_name}
 
