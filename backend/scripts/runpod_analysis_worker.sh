@@ -81,7 +81,13 @@ python - <<'PY' || python -m pip install "torch>=2.1" "torchaudio>=2.1"
 import importlib.util, sys
 sys.exit(0 if importlib.util.find_spec("torch") else 1)
 PY
-python -m pip install -r requirements.txt
+# Prefer the lean worker requirements (analysis deps only) — it drops the
+# compile-heavy web/db stack the worker never uses, cutting install time.
+# Falls back to the full requirements.txt if the lean file isn't present.
+REQ=requirements.txt
+[[ -f requirements-worker.txt ]] && REQ=requirements-worker.txt
+echo "==> installing deps from $REQ"
+python -m pip install -r "$REQ"
 
 # 3. Models — Demucs htdemucs_6s + Beat-This + All-In-One (+ Riley HF when
 #    experimental_specialist). Cached ON THE VOLUME via HF_HOME/TORCH_HOME, so
