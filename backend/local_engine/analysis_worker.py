@@ -1932,6 +1932,18 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 else:
                     result["midi_stems"][name] = serialized
 
+        # Content-address the analysis by the source audio so the Musical Graph
+        # (and its cache) is deterministic + replayable — identical audio ->
+        # identical hash -> identical graph. Previously unset, so the graph
+        # derived under the literal "pending", defeating content-addressing.
+        if not result.get("content_hash"):
+            try:
+                from lab.hashing import file_sha256 as _file_sha256
+
+                result["content_hash"] = _file_sha256(Path(audio_path))
+            except Exception as _hash_err:  # noqa: BLE001
+                logger.info("content hash skipped: %s", _hash_err)
+
         # Performance Intelligence: derive the Musical Graph NOW, while the stems
         # are LOCAL on this box — attach it to the result so the no-GPU prod box
         # serves /kit + /performance without re-reading the audio. Additive +

@@ -147,12 +147,20 @@ def build_chops(
         # spread-out) fallback chops. Only fall through to the
         # section waterfall when the slicer produced nothing
         # (missing WAV, silent stem, non-vocals stem).
+        # Riley-first: the Musical Graph gives grid-aligned, loop-scored,
+        # usefulness-ranked phrase assets for every stem — the musical
+        # replacement for time slicing. Prefer it whenever the analysis
+        # worker attached a graph; fall back to the legacy vocal/section
+        # waterfall when it didn't (older analyses, no-graph songs).
+        riley_chops = _chops_from_riley(analysis_result, stem)
         phrase_chops: List[Dict[str, Any]] = []
-        if stem == "vocals" and stem_wav_path is not None:
+        if not riley_chops and stem == "vocals" and stem_wav_path is not None:
             phrase_chops = _chops_from_vocal_phrases(
                 analysis_result, stem_wav_path,
             )
-        if phrase_chops:
+        if riley_chops:
+            chops = riley_chops
+        elif phrase_chops:
             chops = phrase_chops
         else:
             chops = _chops_from_sections(analysis_result)
@@ -294,6 +302,112 @@ def _duration_from_events(result: Dict[str, Any]) -> Optional[float]:
         if arr:
             candidates.append(arr[-1])
     return max(candidates) if candidates else None
+
+
+# Content-type → palette hint when the asset carries no explicit color_hint.
+_COLOR_CONTENT_TYPE = {
+    "rhythm_loop": "blue",
+    "lead_loop": "orange",
+    "chord_loop": "gold",
+    "bass_groove": "green",
+    "texture": "cyan",
+    "drone": "violet",
+    "impact": "red",
+    "transition": "yellow",
+    "one_shot": "magenta",
+    "pickup": "yellow-green",
+    "ending": "gray",
+    "ambient": "blue-violet",
+}
+
+# Map the /chops `stem` query onto the graph's per-stem asset labels. The graph
+# splits `other` into guitar sub-stems; a query for `other` should surface those.
+_STEM_ALIASES = {
+    "other": ("other", "guitar", "guitar_left", "guitar_right", "guitar_center", "guitar_sides", "keys", "piano"),
+    "bass": ("bass",),
+    "drums": ("drums",),
+    "vocals": ("vocals",),
+}
+
+
+def _chops_from_riley(result: Dict[str, Any], stem: str) -> List[Dict[str, Any]]:
+    """Phrase-aware chops sourced from Riley's Musical Graph.
+
+    This is the musical replacement for time/onset slicing: every chop is a
+    ``PerformanceAsset`` — grid-aligned (whole beats/bars), loop-quality scored,
+    ranked by playable usefulness, and tagged with the pattern it belongs to so
+    repeats group together. Reads only the graph the analysis worker already
+    attached under ``performance_graph`` (never re-analyzes). Returns [] when no
+    graph is present so the caller falls back to the legacy slicers.
+
+    Additive wire fields beyond the base chop shape (clients ignore unknown
+    keys): ``contentType``, ``performanceScore``, ``loopable``, ``loopScore``,
+    ``crossfadeMs`` (seam repair for gapless looping), ``patternId``.
+    """
+    graph = result.get("performance_graph")
+    if not isinstance(graph, dict):
+        return []
+    assets = graph.get("assets")
+    if not isinstance(assets, list) or not assets:
+        return []
+
+    # Loop lookup for optimized seam + crossfade (keyed by loop id == asset src).
+    loops_by_id: Dict[str, Dict[str, Any]] = {}
+    for lp in graph.get("loops") or []:
+        if isinstance(lp, dict) and lp.get("id"):
+            loops_by_id[str(lp["id"])] = lp
+
+    allowed = None if stem == "mix" else set(_STEM_ALIASES.get(stem, (stem,)))
+
+    scored: List[Dict[str, Any]] = []
+    for a in assets:
+        if not isinstance(a, dict):
+            continue
+        if allowed is not None and str(a.get("stem", "")) not in allowed:
+            continue
+        pos = a.get("pos") or {}
+        start = pos.get("start_s")
+        end = pos.get("end_s")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start:
+            continue
+
+        # Prefer the loop's optimized seam when the analyzer repaired one.
+        crossfade_ms = 0.0
+        lp = loops_by_id.get(str(a.get("source_id", "")))
+        if lp:
+            q = lp.get("quality") or {}
+            os_, oe_ = q.get("optimized_start_s"), q.get("optimized_end_s")
+            if isinstance(os_, (int, float)) and isinstance(oe_, (int, float)) and oe_ > os_:
+                start, end = os_, oe_
+            if isinstance(q.get("crossfade_ms"), (int, float)):
+                crossfade_ms = float(q["crossfade_ms"])
+
+        ctype = str(a.get("content_type") or "unknown")
+        color = a.get("color_hint") or _COLOR_CONTENT_TYPE.get(ctype, "gold")
+        scored.append({
+            "startSec": round(float(start), 4),
+            "endSec": round(float(end), 4),
+            "kind": "phrase",
+            "root": None,
+            "sectionLabel": a.get("label") or None,
+            "chordSymbol": None,
+            "colorHint": color,
+            # --- additive Riley fields (musical usefulness + gapless looping) ---
+            "contentType": ctype,
+            "performanceScore": round(float(a.get("performance_score") or 0.0), 4),
+            "difficulty": round(float(a.get("difficulty") or 0.0), 4),
+            "loopable": bool(a.get("loopable")),
+            "loopScore": round(float(a.get("loop_confidence") or 0.0), 4),
+            "crossfadeMs": round(crossfade_ms, 2),
+            "patternId": a.get("pattern_id") or None,
+            "_score": float(a.get("performance_score") or 0.0),
+        })
+
+    # Rank by musical usefulness (already the graph's ranking), cap to the grid.
+    scored.sort(key=lambda c: c["_score"], reverse=True)
+    for c in scored:
+        c.pop("_score", None)
+    return scored[:MAX_CHOPS]
 
 
 def _chops_from_downbeats(result: Dict[str, Any]) -> List[Dict[str, Any]]:

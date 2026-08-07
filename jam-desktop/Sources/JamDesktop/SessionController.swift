@@ -236,11 +236,16 @@ final class SessionController: ObservableObject {
             let delay = max(0, fireAt - clock.nowSongSeconds) / rate
             // Loopable chops (whole musical regions) hold seamlessly — the
             // ChopPlayer crossfades the seam (SeamlessLoop). Chord/onset stabs
-            // stay one-shot.
-            let loopable = (assignment.chop.kind == "section" || assignment.chop.kind == "phrase")
+            // stay one-shot. Riley phrase chops carry the decision + the
+            // measured seam crossfade; fall back to the kind heuristic +
+            // a safe 15 ms for legacy chops without the Riley fields.
+            let chop = assignment.chop
+            let loopable = chop.loopable ?? (chop.kind == "section" || chop.kind == "phrase")
+            let rileyFade = chop.crossfadeMs ?? 0
+            let crossfadeMs = loopable ? (rileyFade > 0 ? rileyFade : 15) : 0
             self.chopPlayer.trigger(
                 assignment, afterSeconds: delay,
-                loop: loopable, crossfadeMs: loopable ? 15 : 0
+                loop: loopable, crossfadeMs: crossfadeMs
             )
             // Publish for the session recorder. Timestamp = the
             // quantized fire-at moment (what actually SOUNDED), so
