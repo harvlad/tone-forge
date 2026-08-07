@@ -186,15 +186,22 @@ def _sections_of(result: Dict) -> List[Tuple[float, float, str]]:
 
 
 def _stem_paths_of(result: Dict) -> Dict[str, str]:
-    """Prefer local stem paths; fall back to any stems dict of {role: path}."""
-    for key in ("stems_paths", "stems_local", "stems"):
+    """Local stem paths for DSP. The worker rewrites ``stems_paths`` into
+    ``http://127.0.0.1:7777/...serve-file`` URLs for the backend handoff, which
+    soundfile can't open — so we (a) prefer an explicit raw-path ``stems_local``
+    the worker stashes for derivation, and (b) fall THROUGH to the next candidate
+    when a dict yields no usable local paths (the old code returned the empty
+    filtered dict from ``stems_paths`` and never reached the raw paths → empty
+    graph on every worker-derived analysis)."""
+    for key in ("stems_local", "stems_paths", "stems"):
         d = result.get(key)
         if isinstance(d, dict) and d:
-            # keep only string paths (skip URL-only entries the worker rewrote)
-            return {
+            local = {
                 k: v for k, v in d.items()
-                if isinstance(v, str) and not v.startswith("http")
+                if isinstance(v, str) and v and not v.startswith("http")
             }
+            if local:
+                return local
     return {}
 
 

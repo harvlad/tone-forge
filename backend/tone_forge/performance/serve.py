@@ -72,13 +72,20 @@ def derive_and_attach(entry_id: str, result: Dict) -> bool:
     LOCAL: derive the Musical Graph and attach it under GRAPH_RESULT_KEY so it
     persists with the result and the prod box serves it cache-free. Additive +
     guarded — never fails the analysis. Returns True if a graph was attached."""
+    import logging
+    _log = logging.getLogger(__name__)
     try:
         g = build_graph(entry_id, result)
         if g.assets:
             result[GRAPH_RESULT_KEY] = g.to_dict()
             return True
-    except Exception:
-        pass
+        _log.info(
+            "performance graph derived but EMPTY (phrases=%d loops=%d assets=%d) "
+            "— check stem paths were local/loadable",
+            len(g.phrases), len(g.loops), len(g.assets),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.info("performance graph derivation failed: %s", exc, exc_info=True)
     return False
 
 

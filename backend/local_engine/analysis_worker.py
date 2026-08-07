@@ -1948,10 +1948,29 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         # are LOCAL on this box — attach it to the result so the no-GPU prod box
         # serves /kit + /performance without re-reading the audio. Additive +
         # guarded: never blocks or fails the analysis.
+        #
+        # stems_paths values are http://127.0.0.1:7777/...serve-file?path=<p>
+        # URLs (backend handoff) which soundfile can't open — unwrap them to raw
+        # local paths under stems_local so the phrase/loop DSP can read the audio,
+        # then drop it so those pod-local paths never get persisted.
         try:
             from tone_forge.performance import serve as _perf_serve
-            _perf_serve.derive_and_attach(str(result.get("content_hash") or "pending"), result)
+
+            _local = {}
+            for _k, _v in (result.get("stems_paths") or {}).items():
+                if isinstance(_v, str) and "path=" in _v:
+                    _local[_k] = _v.split("path=", 1)[1]
+                elif isinstance(_v, str) and _v and not _v.startswith("http"):
+                    _local[_k] = _v
+            if _local:
+                result["stems_local"] = _local
+            attached = _perf_serve.derive_and_attach(
+                str(result.get("content_hash") or "pending"), result)
+            result.pop("stems_local", None)
+            logger.info("performance graph %s (%d local stems)",
+                        "attached" if attached else "EMPTY/skipped", len(_local))
         except Exception as _perf_err:  # noqa: BLE001
+            result.pop("stems_local", None)
             logger.info("performance graph derivation skipped: %s", _perf_err)
 
         send_result(queue, result)
