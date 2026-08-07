@@ -19,7 +19,15 @@
 # ── Run ────────────────────────────────────────────────────────────────────
 #   bash backend/scripts/runpod_analysis_worker.sh
 #
-set -euo pipefail
+set -uo pipefail  # NOT -e: a single failing step must not kill the worker silently
+
+# Mirror ALL output to a log on the persistent volume + serve it over the pod's
+# 8888 http port, so failures are retrievable without SSH:
+#   https://<podId>-8888.proxy.runpod.net/worker.log
+LOG="/workspace/worker.log"
+exec > >(tee -a "$LOG") 2>&1
+echo "==== bootstrap start $(date -u) ===="
+( cd /workspace && python -m http.server 8888 >/dev/null 2>&1 & ) || true
 
 BACKEND_URL="${TONEFORGE_BACKEND_URL:-https://jamn.app}"
 ANALYSIS_ENGINE="${TONEFORGE_ANALYSIS_ENGINE:-current}"
@@ -28,6 +36,16 @@ REPO_DIR="${JAMN_REPO_DIR:-/workspace/tone-forge}"
 if [[ -z "${TONEFORGE_ENGINE_TOKEN:-}" ]]; then
   echo "FATAL: set TONEFORGE_ENGINE_TOKEN (the backend's engine secret)." >&2
   exit 1
+fi
+
+# 0. System codecs the analysis stack needs but the base pytorch image lacks:
+#    ffmpeg decodes m4a/mp3 (_ensure_decodable); libsndfile backs soundfile.
+#    Without ffmpeg, any non-wav upload crashes the analysis subprocess BEFORE
+#    the GPU engages ("engine subprocess exited without a result").
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "==> installing ffmpeg + libsndfile1"
+  apt-get update -qq && apt-get install -y -qq ffmpeg libsndfile1 || \
+    echo "WARN: apt install failed; non-wav decode may fail"
 fi
 
 # 1. Repo — clone if absent, else pull the deploy branch.
