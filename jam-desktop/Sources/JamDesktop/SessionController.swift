@@ -234,13 +234,12 @@ final class SessionController: ObservableObject {
             print("[Trigger] pad=\(pad) stem=\(assignment.stem) chopIdx=\(assignment.chop.idx)")
             let rate = max(0.1, self.transport.tempoPct)
             let delay = max(0, fireAt - clock.nowSongSeconds) / rate
-            // Loopable chops (whole musical regions) hold seamlessly — the
-            // ChopPlayer crossfades the seam (SeamlessLoop). Chord/onset stabs
-            // stay one-shot. Riley phrase chops carry the decision + the
-            // measured seam crossfade; fall back to the kind heuristic +
-            // a safe 15 ms for legacy chops without the Riley fields.
+            // The Tap/Loop toggle drives playback: Loop = the chop region
+            // loops (seamless crossfade) while held; Tap = one-shot that plays
+            // through. When looping, use Riley's measured seam crossfade if the
+            // chop carries one, else a safe 15 ms.
             let chop = assignment.chop
-            let loopable = chop.loopable ?? (chop.kind == "section" || chop.kind == "phrase")
+            let loopable = self.launchpad.playbackMode == .loop
             let rileyFade = chop.crossfadeMs ?? 0
             let crossfadeMs = loopable ? (rileyFade > 0 ? rileyFade : 15) : 0
             self.chopPlayer.trigger(
@@ -261,7 +260,11 @@ final class SessionController: ObservableObject {
         }
         launchpad.onRelease = { [weak self] pad, assignment in
             guard let self else { return }
-            self.chopPlayer.release(assignment)
+            // Tap mode = one-shot that plays THROUGH: releasing the pad must
+            // not cut the sample. Loop mode stops on release.
+            if self.launchpad.playbackMode == .loop {
+                self.chopPlayer.release(assignment)
+            }
             if let coords = PadEventMapping.eventCoordinates(for: pad) {
                 self.eventBus.publish(ContributionEvent(
                     source: .launchpad,

@@ -62,9 +62,19 @@ public final class LaunchpadController {
         "chord", "section", "beat", "phrase", "onset", "drum-bundle",
     ]
 
+    /// How a pad plays back. `.tap` = one-shot: press plays the sample and it
+    /// plays THROUGH to the end (release doesn't cut it). `.loop` = the chop
+    /// region loops (seamless crossfade) for as long as the pad is held.
+    public enum PadPlaybackMode: String, CaseIterable, Sendable {
+        case tap
+        case loop
+        public var title: String { self == .tap ? "Tap" : "Loop" }
+    }
+
     // MARK: - Observable state
 
     public var quantize: QuantizeMode = .off
+    public var playbackMode: PadPlaybackMode = .tap
     public private(set) var assignments: [LaunchpadPad: PadAssignment] = [:]
     /// Pads currently sounding (pressed, or latched until release).
     public private(set) var activePads: Set<LaunchpadPad> = []

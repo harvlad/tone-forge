@@ -336,6 +336,15 @@ struct LaunchpadPanelView: View {
 
     private var controls: some View {
         HStack(spacing: 12) {
+            // Tap = one-shot that plays through; Loop = seamless loop while held.
+            Picker("Play", selection: playbackModeBinding) {
+                ForEach(LaunchpadController.PadPlaybackMode.allCases, id: \.self) {
+                    Text($0.title).tag($0)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 130)
+
             Picker("Quantize", selection: quantizeBinding) {
                 ForEach(QuantizeMode.allCases, id: \.self) {
                     Text($0.rawValue).tag($0)
@@ -404,6 +413,13 @@ struct LaunchpadPanelView: View {
         Binding(
             get: { launchpad.quantize },
             set: { launchpad.quantize = $0 }
+        )
+    }
+
+    private var playbackModeBinding: Binding<LaunchpadController.PadPlaybackMode> {
+        Binding(
+            get: { launchpad.playbackMode },
+            set: { launchpad.playbackMode = $0 }
         )
     }
 
