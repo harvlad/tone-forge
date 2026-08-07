@@ -234,6 +234,63 @@ def stem_key(analysis_id: str, role: str, extension: str) -> str:
     return f"bundles/{analysis_id}/stems/{safe_role}.{ext}"
 
 
+def job_tmp_stem_key(job_id: str, role: str, extension: str) -> str:
+    """Temp key a remote worker PUTs a stem to BEFORE the analysis id exists
+    (stems upload before /complete). Copied server-side to the final
+    ``stem_key`` at completion, then this temp object is deleted."""
+    ext = extension.lstrip(".").lower() or "bin"
+    safe_role = role.replace("/", "_").replace(" ", "_")
+    return f"engine-tmp/{job_id}/{safe_role}.{ext}"
+
+
+def presigned_put_url(
+    key: str, content_type: str = "audio/wav", ttl_sec: int = 3600
+) -> Optional[str]:
+    """Presigned PUT URL so a remote GPU worker uploads a stem STRAIGHT to R2,
+    bypassing the backend VPS relay (pod→R2, one hop). None if R2 unconfigured."""
+    if not is_configured():
+        return None
+    try:
+        return _client().generate_presigned_url(
+            "put_object",
+            Params={"Bucket": bucket_name(), "Key": key, "ContentType": content_type},
+            ExpiresIn=ttl_sec,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[r2] presigned_put_url failed for {key}: {exc}")
+        return None
+
+
+def copy_object(src_key: str, dst_key: str) -> bool:
+    """Server-side copy within the bucket — no bytes traverse this host. Moves a
+    worker's temp job-scoped stem to its final analysis-scoped key at complete."""
+    if not is_configured():
+        return False
+    try:
+        _client().copy_object(
+            Bucket=bucket_name(),
+            CopySource={"Bucket": bucket_name(), "Key": src_key},
+            Key=dst_key,
+            MetadataDirective="COPY",
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[r2] copy_object {src_key} -> {dst_key} failed: {exc}")
+        return False
+
+
+def delete_object(key: str) -> bool:
+    """Delete a single object (temp-stem cleanup after the copy)."""
+    if not is_configured() or not key:
+        return False
+    try:
+        _client().delete_object(Bucket=bucket_name(), Key=key)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[r2] delete_object {key} failed: {exc}")
+        return False
+
+
 def delete_analysis_objects(analysis_id: str) -> int:
     """Delete every R2 object under ``bundles/{analysis_id}/``.
 

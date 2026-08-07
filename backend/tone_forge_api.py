@@ -2547,6 +2547,37 @@ async def engine_job_stem_endpoint(
     return JSONResponse({"ok": True, "role": role})
 
 
+@app.post("/api/engine/job/{job_id}/stem-targets")
+async def engine_job_stem_targets_endpoint(job_id: str, request: Request) -> JSONResponse:
+    """Presigned R2 PUT URLs so the worker uploads stems STRAIGHT to R2 instead
+    of relaying ~280 MB of WAV through this VPS. Body: {"roles": [...], "ext":
+    "wav"}. Temp job-scoped keys; /complete copies them to the analysis key
+    server-side. Env-gated (STEM_DIRECT_R2=1) + only when R2 is configured;
+    otherwise returns enabled=false and the worker falls back to /stem."""
+    _require_engine_auth(request)
+    _engine_job_or_404(job_id)
+    _mark_engine_seen()
+    if os.environ.get("STEM_DIRECT_R2") != "1" or not r2_storage.is_configured():
+        return JSONResponse({"enabled": False, "targets": {}})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    roles = body.get("roles") or []
+    ext = str(body.get("ext") or "wav").lstrip(".").lower()
+    content_type = "audio/wav" if ext == "wav" else "application/octet-stream"
+    targets: dict = {}
+    for raw in roles:
+        role = str(raw).strip().lower()
+        if not _STEM_ROLE_RE.match(role):
+            continue
+        key = r2_storage.job_tmp_stem_key(job_id, role, ext)
+        url = r2_storage.presigned_put_url(key, content_type)
+        if url:
+            targets[role] = {"put_url": url, "key": key, "content_type": content_type}
+    return JSONResponse({"enabled": bool(targets), "targets": targets})
+
+
 @app.post("/api/engine/job/{job_id}/complete")
 async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONResponse:
     """Terminal success: persist the result to history.
