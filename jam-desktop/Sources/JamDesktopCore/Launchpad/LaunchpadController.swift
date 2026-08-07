@@ -97,6 +97,11 @@ public final class LaunchpadController {
     /// included so the recording layer can capture grid coordinates.
     @ObservationIgnored public var onTrigger: ((LaunchpadPad, PadAssignment, _ fireAtSongSeconds: Double) -> Void)?
     @ObservationIgnored public var onRelease: ((LaunchpadPad, PadAssignment) -> Void)?
+    /// Normalized playhead (0..<1) for a pad that's currently hard-looping, else
+    /// nil. Set by SessionController to query ChopPlayer; drives the on-pad
+    /// playback ring in the UI.
+    @ObservationIgnored public var loopProgressProvider: ((LaunchpadPad) -> Double?)?
+    public func loopProgress(_ pad: LaunchpadPad) -> Double? { loopProgressProvider?(pad) }
 
     /// Fire a pack pad (packId, source pad index within pack).
     @ObservationIgnored public var onPackPadTrigger: ((String, Int) -> Void)?
@@ -293,9 +298,14 @@ public final class LaunchpadController {
             return
         }
         let now = nowProvider()
+        // Loop mode forces bar-quantized starts so multiple loops line up on the
+        // downbeat grid (otherwise each hard-loop starts at its own tap time and
+        // they drift out of phase). Tap mode honors the Quantize control as-is.
+        let effectiveQuantize: QuantizeMode =
+            (playbackMode == .loop && quantize == .off) ? .bar : quantize
         let fireAt = Quantizer.nextQuantized(
             songSeconds: now,
-            mode: quantize,
+            mode: effectiveQuantize,
             beats: timeline?.beats ?? [],
             downbeats: timeline?.downbeats ?? [],
             sections: timeline?.sections ?? [],

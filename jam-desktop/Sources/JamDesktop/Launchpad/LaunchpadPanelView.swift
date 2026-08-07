@@ -575,6 +575,33 @@ private struct PadCell: View {
             .overlay(alignment: .bottomLeading) { labelOverlay(assignment: assignment) }
             .overlay { sequenceOverlay }
             .overlay { moveModeOverlay }
+            .overlay { playheadOverlay }
+    }
+
+    /// Loop playhead: a thin bar across the pad bottom that tracks the sample
+    /// position and snaps back to 0 each time the loop restarts, so you can see
+    /// how long the sample plays before it resets. Only rendered (and only
+    /// animating) while the pad is actively looping.
+    @ViewBuilder private var playheadOverlay: some View {
+        if launchpad.activePads.contains(pad), launchpad.loopProgress(pad) != nil {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
+                GeometryReader { geo in
+                    let p = launchpad.loopProgress(pad) ?? 0
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(Color.white.opacity(0.2))
+                            .frame(height: 3)
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(Color.white.opacity(0.9))
+                            .frame(width: max(0, geo.size.width * CGFloat(p)), height: 3)
+                    }
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                }
+                .padding(.horizontal, 5)
+                .padding(.bottom, 5)
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     private func borderColor(active: Bool) -> Color {

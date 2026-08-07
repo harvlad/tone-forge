@@ -47,6 +47,9 @@ public final class ChopPlayer {
         var format: AVAudioFormat?
         /// What the voice is sounding, nil when idle.
         var key: VoiceKey?
+        /// Loop length in frames when this voice is hard-looping (nil = one-shot).
+        /// Drives the per-pad playhead (loopProgress).
+        var loopFrames: AVAudioFrameCount?
     }
 
     private enum VoiceKey: Hashable {
@@ -202,6 +205,7 @@ public final class ChopPlayer {
             // Seamless looping: the [start,end] region is read into a buffer,
             // crossfaded (SeamlessLoop) and hard-looped so a held pad never clicks.
             voice.node.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
+            voice.loopFrames = buffer.frameLength
         } else {
             voice.node.scheduleSegment(
                 file,
@@ -210,10 +214,28 @@ public final class ChopPlayer {
                 at: nil,
                 completionHandler: nil
             )
+            voice.loopFrames = nil
         }
         voice.node.play(at: playTime(afterSeconds: delaySeconds))
         voice.key = key
         voices[index] = voice
+    }
+
+    /// Normalized playhead (0..<1) of a hard-looping pad, or nil if that pad
+    /// isn't currently looping. Drives the on-pad playback ring. The player
+    /// node's sampleTime counts total frames rendered since play; modulo the
+    /// loop length gives the position within the current loop.
+    public func loopProgress(stem: String, idx: Int) -> Double? {
+        let target = VoiceKey.chop(stem: stem, idx: idx)
+        for v in voices where v.key == target {
+            guard let frames = v.loopFrames, frames > 0, v.node.isPlaying,
+                  let rt = v.node.lastRenderTime,
+                  let pt = v.node.playerTime(forNodeTime: rt) else { return nil }
+            let s = pt.sampleTime
+            guard s >= 0 else { return 0 }  // scheduled but not yet fired
+            return Double(s % Int64(frames)) / Double(frames)
+        }
+        return nil
     }
 
     /// Read a [startFrame, frameCount] region into a PCM buffer and apply the

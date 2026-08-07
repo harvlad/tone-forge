@@ -258,6 +258,11 @@ final class SessionController: ObservableObject {
                 ))
             }
         }
+        // Per-pad playhead: the UI polls this to draw the loop progress ring.
+        launchpad.loopProgressProvider = { [weak self] pad in
+            guard let self, let a = self.launchpad.assignments[pad] else { return nil }
+            return self.chopPlayer.loopProgress(stem: a.stem, idx: a.chop.idx)
+        }
         launchpad.onRelease = { [weak self] pad, assignment in
             guard let self else { return }
             // onRelease now fires only on a Loop-mode toggle-OFF (re-tap) — the
