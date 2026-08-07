@@ -12,8 +12,11 @@ scipy>=1.11
 mutagen>=1.47
 requests>=2.31
 demucs>=4.0.1
-torch>=2.1
-torchaudio>=2.1
+# torch / torchaudio deliberately OMITTED: they ship in the base runpod/pytorch
+# image. Listing torch>=2.1 makes pip re-resolve it and try to pull the LATEST
+# torch + cuda-toolkit (gigabytes) instead of using the installed build. Deps
+# that need torch (demucs, torchcrepe) resolve against the pre-installed one.
+# The bootstrap installs torch explicitly only if it's genuinely missing.
 torchcrepe>=0.0.23
 beat-this>=1.1.0
 all-in-one-mps>=1.0.0
