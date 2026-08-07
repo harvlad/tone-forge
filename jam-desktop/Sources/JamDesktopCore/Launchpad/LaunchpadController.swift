@@ -282,8 +282,16 @@ public final class LaunchpadController {
             }
         }
 
-        // Normal chop trigger
+        // Normal chop trigger.
         guard let assignment = assignments[pad] else { return }
+        // Loop mode is a TOGGLE: re-tapping a currently-looping pad stops it.
+        // Tap mode is a one-shot that plays through. Neither stops on padUp.
+        if playbackMode == .loop && activePads.contains(pad) {
+            activePads.remove(pad)
+            transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
+            onRelease?(pad, assignment)   // stop the loop
+            return
+        }
         let now = nowProvider()
         let fireAt = Quantizer.nextQuantized(
             songSeconds: now,
@@ -316,11 +324,15 @@ public final class LaunchpadController {
             }
         }
 
-        // Normal chop release
+        // Normal chop release. Neither mode stops on padUp: Tap is a one-shot
+        // that plays through, Loop keeps looping until re-tapped (toggle). For
+        // Tap we clear the active light (the one-shot voice plays out on its
+        // own); Loop stays lit until the re-tap toggle stops it.
         guard let assignment = assignments[pad] else { return }
-        activePads.remove(pad)
-        transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
-        onRelease?(pad, assignment)
+        if playbackMode == .tap {
+            activePads.remove(pad)
+            transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
+        }
     }
 
     // MARK: - Sequence Pad Handling

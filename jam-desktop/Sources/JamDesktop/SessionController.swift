@@ -260,11 +260,9 @@ final class SessionController: ObservableObject {
         }
         launchpad.onRelease = { [weak self] pad, assignment in
             guard let self else { return }
-            // Tap mode = one-shot that plays THROUGH: releasing the pad must
-            // not cut the sample. Loop mode stops on release.
-            if self.launchpad.playbackMode == .loop {
-                self.chopPlayer.release(assignment)
-            }
+            // onRelease now fires only on a Loop-mode toggle-OFF (re-tap) — the
+            // controller no longer calls it on padUp. So always stop the voice.
+            self.chopPlayer.release(assignment)
             if let coords = PadEventMapping.eventCoordinates(for: pad) {
                 self.eventBus.publish(ContributionEvent(
                     source: .launchpad,
