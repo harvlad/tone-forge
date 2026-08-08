@@ -37,13 +37,16 @@ struct PerformView: View {
     }
     // Five independent display layers — persisted per user, all on by default;
     // at least one must always stay on. No layer knows whether another is on.
+    // Default Perform view = the clean full-width fretboard: Motion + Dots on
+    // the neck, no hand overlay/mesh, no reference card. (Hand / mesh / Chord
+    // / TAB stay available as toggles; they're just off by default now.)
     @AppStorage("perf.layer.motion") private var showMotion = true   // trajectories/ghosts/pulses (on neck)
-    @AppStorage("perf.layer.hand") private var showHand = true       // abstract posed hand (on neck)
-    @AppStorage("perf.hand.mesh") private var handMesh = true        // realistic MPFB mesh is the default beginner view
+    @AppStorage("perf.layer.hand") private var showHand = false      // abstract posed hand (on neck)
+    @AppStorage("perf.hand.mesh") private var handMesh = false       // realistic MPFB mesh (opt-in)
     @AppStorage("perf.hand.lead") private var leadMode = false       // play single MIDI notes instead of chords
     @AppStorage("perf.layer.dots") private var showDots = true       // finger contact dots (on neck)
     // Chord and TAB are the two reference cards — mutually exclusive (either/or).
-    @AppStorage("perf.layer.chord") private var showChord = true     // chord diagram (reference card)
+    @AppStorage("perf.layer.chord") private var showChord = false    // chord diagram (reference card)
     @AppStorage("perf.layer.tab") private var showTab = false        // tablature (reference card)
     private var layersOn: Int {
         (showMotion ?1:0) + (showHand ?1:0) + (showDots ?1:0) + (showChord ?1:0) + (showTab ?1:0)
@@ -231,7 +234,10 @@ struct PerformView: View {
     }
 
     private func resetLayout() {
-        showMotion = true; showHand = true; showDots = true; showChord = true; showTab = false
+        // Reset to the default Perform view: clean full-width fretboard with
+        // Motion + Dots, no hand/mesh, no reference card.
+        showMotion = true; showHand = false; handMesh = false
+        showDots = true; showChord = false; showTab = false
     }
 
     // MARK: supporting reference cards — Chord Diagram / TAB only.

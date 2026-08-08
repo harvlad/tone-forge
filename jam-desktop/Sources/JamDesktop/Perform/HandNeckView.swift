@@ -198,7 +198,13 @@ struct HandNeckView: View {
         let hiMM = GuitarPhysical.wire(maxFret)
         let spanMM = max(1, hiMM - loMM)
         let gapMM = GuitarPhysical.stringGapMM(atX: (loMM + hiMM) / 2)
-        let pxPerMM = max(0.3, min((W - padR - padL) / spanMM, (H * 0.42) / (6 * gapMM)))
+        // Fit to whichever axis binds. Use the FULL height budget (minus the
+        // top margin + bottom fret-number labels) instead of a fixed 0.42·H
+        // cap — the old cap left the board height-limited so it never grew to
+        // fill the (wide) container, stranding it small and right-aligned.
+        // Now the width fit binds and the board fills the space, aspect intact.
+        let vBudget = max(1, H - top - 48)
+        let pxPerMM = max(0.3, min((W - padR - padL) / spanMM, vBudget / (6 * gapMM)))
         let gap = gapMM * pxPerMM
         let boardH = 6 * gap
         let bot = top + boardH
