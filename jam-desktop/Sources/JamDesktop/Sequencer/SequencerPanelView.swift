@@ -64,6 +64,12 @@ struct SequencerPanelView: View {
                 store: session.patternStore,
                 padAssignmentStore: session.padAssignmentStore,
                 presets: model.session?.bundle.presets ?? [:],
+                localSamples: session.padSampleStore.samples,
+                packPads: session.packPlayer.registeredPacks.flatMap { pack in
+                    pack.pack.pads
+                        .filter { pack.padFileURLs[$0.padIdx] != nil }
+                        .map { (packId: pack.pack.packId, padIdx: $0.padIdx, name: $0.name) }
+                },
                 onTogglePlay: { session.toggleSequencerPlayback() }
             )
             .padding(16)
@@ -89,6 +95,10 @@ private struct SequencerEditorView: View {
     var store: SequencerPatternStore
     var padAssignmentStore: PadAssignmentStore
     let presets: [String: BundlePreset]
+    /// Recorded local (vocoder / mic) samples — sequenceable as Voice tracks.
+    let localSamples: [PadSampleMetadata]
+    /// File-backed pack pads: (packId, padIdx, label) — sequenceable tracks.
+    let packPads: [(packId: String, padIdx: Int, name: String)]
     /// Play/stop routed through the session so it starts song-synced when
     /// the transport is rolling (phase-locked to the chop-loop bar grid).
     var onTogglePlay: () -> Void
@@ -343,6 +353,30 @@ private struct SequencerEditorView: View {
                                     resolvedId: nil
                                 ),
                                 name: chopLabel(chop, fallback: "\(key) \(index + 1)")
+                            )
+                        }
+                    }
+                }
+            }
+            // Recorded Voice (vocoder / mic) takes.
+            if !localSamples.isEmpty {
+                Section("Voice (\(localSamples.count))") {
+                    ForEach(Array(localSamples.enumerated()), id: \.element.id) { index, meta in
+                        let name = "Voice \(index + 1)"
+                        Button(name) {
+                            player.addTrack(for: .localSample(id: meta.id), name: name)
+                        }
+                    }
+                }
+            }
+            // Sample-pack pads.
+            if !packPads.isEmpty {
+                Section("Packs (\(packPads.count))") {
+                    ForEach(Array(packPads.enumerated()), id: \.offset) { _, p in
+                        Button(p.name) {
+                            player.addTrack(
+                                for: .packPad(packId: p.packId, padIdx: p.padIdx),
+                                name: p.name
                             )
                         }
                     }

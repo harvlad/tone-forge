@@ -59,6 +59,9 @@ public final class SequencerAudioAdapter {
     public weak var packPlayer: PackPadPlayer?
     /// Synth chord playback (P5). Weak — SessionController owns both.
     public weak var synth: DesktopSynthNode?
+    /// Local sample store (vocoder / mic takes) so `.localSample` steps
+    /// resolve to their on-disk WAV. Weak — SessionController owns it.
+    public weak var sampleStore: PadSampleStore?
 
     /// Per-preset chops sorted by idx — chopIndex in a ChopReference
     /// indexes into this order.
@@ -131,13 +134,17 @@ extension SequencerAudioAdapter: SequencerPlayerDelegate {
         )
     }
 
-    // No local-sample store on desktop yet (Phase 4/5).
+    /// Local (vocoder / mic) sample: play its stored WAV as a file segment.
     public func sequencerPlayer(
         _ player: SequencerPlayer,
         playLocalSample id: UUID,
         velocity: Float,
         pan: Float
-    ) {}
+    ) {
+        guard let url = try? sampleStore?.wavURL(id: id) else { return }
+        sink.sequencerTriggerFile(
+            url: url, startSec: nil, endSec: nil, velocity: velocity, pan: pan)
+    }
 
     public func sequencerPlayer(
         _ player: SequencerPlayer,

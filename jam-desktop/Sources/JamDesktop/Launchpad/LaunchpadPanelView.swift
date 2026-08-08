@@ -187,6 +187,12 @@ struct LaunchpadPanelView: View {
                 showSequencerEditor = true
             }
 
+        case .addToSequence:
+            // Add this pad's sample to the step sequencer as a new track,
+            // then open the sequencer so the user can place its steps.
+            session.addPadToSequence(padIdx: padIdx, pad: pad)
+            showSequencerEditor = true
+
         case .addSound:
             soundPickerTarget = padIdx
 

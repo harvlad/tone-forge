@@ -27,13 +27,14 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
     case reset
     case delete
     case sequence
+    case addToSequence
     case edit
     case addSound
     case voiceRecord
 
     /// Actions shown on a pad that already holds a sound.
     public static let assigned: [PadRadialAction] =
-        [.delete, .chop, .reset, .effects, .loop, .sequence]
+        [.delete, .chop, .addToSequence, .effects, .loop, .sequence]
 
     /// Actions shown on an empty pad.
     public static let empty: [PadRadialAction] = [.addSound, .voiceRecord, .sequence]
@@ -42,33 +43,35 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
     public static let sequencePad: [PadRadialAction] = [.edit, .delete, .effects, .sequence]
 
     /// Actions shown on a pack pad (sample from curated pack).
-    public static let packPad: [PadRadialAction] = [.delete, .addSound, .effects, .sequence]
+    public static let packPad: [PadRadialAction] = [.delete, .addToSequence, .effects, .sequence]
 
     var label: String {
         switch self {
-        case .effects:     return "Effects"
-        case .chop:        return "Chop"
-        case .loop:        return "Loop"
-        case .reset:       return "Reset"
-        case .delete:      return "Delete"
-        case .sequence:    return "Sequence"
-        case .edit:        return "Edit"
-        case .addSound:    return "Add Sound"
-        case .voiceRecord: return "Voice"
+        case .effects:       return "Effects"
+        case .chop:          return "Chop"
+        case .loop:          return "Loop"
+        case .reset:         return "Reset"
+        case .delete:        return "Delete"
+        case .sequence:      return "Sequence"
+        case .addToSequence: return "To Sequence"
+        case .edit:          return "Edit"
+        case .addSound:      return "Add Sound"
+        case .voiceRecord:   return "Voice"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .effects:     return "slider.horizontal.3"
-        case .chop:        return "waveform"
-        case .loop:        return "repeat"
-        case .reset:       return "arrow.uturn.backward"
-        case .delete:      return "trash"
-        case .sequence:    return "square.grid.3x3.fill"
-        case .edit:        return "pencil"
-        case .addSound:    return "plus.circle.fill"
-        case .voiceRecord: return "mic.fill"
+        case .effects:       return "slider.horizontal.3"
+        case .chop:          return "waveform"
+        case .loop:          return "repeat"
+        case .reset:         return "arrow.uturn.backward"
+        case .delete:        return "trash"
+        case .sequence:      return "square.grid.3x3.fill"
+        case .addToSequence: return "plus.square.on.square"
+        case .edit:          return "pencil"
+        case .addSound:      return "plus.circle.fill"
+        case .voiceRecord:   return "mic.fill"
         }
     }
 
@@ -245,6 +248,7 @@ struct PadRadialMenu: View {
         case .sequence: return Color(
             red: 0x30 / 255, green: 0xD5 / 255, blue: 0xC8 / 255
         ).opacity(0.6)
+        case .addToSequence: return .indigo.opacity(0.6)
         case .edit:     return .yellow.opacity(0.6)
         case .addSound: return .green.opacity(0.6)
         case .voiceRecord: return .pink.opacity(0.6)

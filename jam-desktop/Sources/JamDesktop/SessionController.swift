@@ -129,6 +129,36 @@ final class SessionController: ObservableObject {
     /// The attached session's local stem files, kept for bounce.
     private var attachedStemURLs: [String: URL] = [:]
 
+    /// Local file URL of a stem role's audio (for building a `.customURL`
+    /// sequencer step from a launchpad chop), or nil if not downloaded.
+    func stemFileURL(role: String) -> URL? { attachedStemURLs[role] }
+
+    /// Add a launchpad pad to the step sequencer as a new track. Resolves
+    /// the pad to a ChopReference: pack / local-sample slots keep their
+    /// identity; a chop pad becomes a `.customURL` slice of its stem file so
+    /// it plays regardless of whether it came from a bundle preset or the
+    /// auto-kit. No-op for empty / sequence pads.
+    func addPadToSequence(padIdx: Int, pad: LaunchpadPad) {
+        if let slot = padAssignmentStore.slot(padIdx: padIdx) {
+            switch slot {
+            case .packPad(let packId, let src):
+                sequencer.addTrack(for: .packPad(packId: packId, padIdx: src), name: "Pack")
+            case .localSample(let id):
+                sequencer.addTrack(for: .localSample(id: id), name: "Voice")
+            case .sequence:
+                return   // a sequence pad isn't a sample
+            }
+            return
+        }
+        guard let a = launchpad.assignments[pad],
+              let url = stemFileURL(role: a.stem) else { return }
+        let name = a.chop.chordSymbol ?? a.chop.sectionLabel ?? a.stem.capitalized
+        sequencer.addTrack(
+            for: .customURL(url: url, startSec: a.chop.startSec, endSec: a.chop.endSec),
+            name: name
+        )
+    }
+
     @Published var engineError: String?
 
     /// True once an inbound connect_state arrived — some OTHER
@@ -211,6 +241,7 @@ final class SessionController: ObservableObject {
         sequencer.delegate = sequencerAdapter
         sequencerAdapter.packPlayer = packPlayer
         sequencerAdapter.synth = synthNode
+        sequencerAdapter.sampleStore = padSampleStore
 
         // Sequence pad manager: multiple patterns on pads, all routing
         // through the same audio adapter. Wire pulse updates to the

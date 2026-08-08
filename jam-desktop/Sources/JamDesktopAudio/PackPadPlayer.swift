@@ -37,6 +37,12 @@ public final class PackPadPlayer {
         packs[packId] != nil
     }
 
+    /// All registered packs (for the sequencer's Add Track menu). Only
+    /// file-backed pads are triggerable, so callers filter on padFileURLs.
+    public var registeredPacks: [ResolvedSamplePack] {
+        Array(packs.values)
+    }
+
     /// Fire one pad. Velocity is scaled by the pad's manifest gainDb.
     /// Unknown pack / pad-index / non-file pads no-op.
     public func trigger(
