@@ -307,6 +307,10 @@ final class SessionController: ObservableObject {
         launchpad.onStopAllVoices = { [weak self] in
             self?.chopPlayer.stopAll()
         }
+        launchpad.onLocalSampleTrigger = { [weak self] id in
+            guard let self, let url = try? self.padSampleStore.wavURL(id: id) else { return }
+            self.chopPlayer.trigger(file: url, startSec: nil, endSec: nil)
+        }
         launchpad.onPackPadTrigger = { [weak self] packId, sourcePadIdx in
             self?.triggerPackPad(packId: packId, padIdx: sourcePadIdx)
         }
@@ -580,9 +584,9 @@ final class SessionController: ObservableObject {
         return await builder.buildProgram(for: mode)
     }
 
-    /// Save vocoder take to pad sample store and return metadata.
-    /// Note: grid assignment deferred — PadAssignment requires Chop+stem,
-    /// local sample pad support is a follow-up.
+    /// Save a vocoder take to the pad sample store AND bind it to the
+    /// target grid pad as a `.localSample`, so it shows on the launchpad
+    /// and triggers (via `onLocalSampleTrigger` → ChopPlayer).
     func saveVocoderTake(
         _ take: VocoderCaptureSession.Take, toGridPad padIndex: Int
     ) async throws -> PadSampleMetadata {
@@ -611,11 +615,15 @@ final class SessionController: ObservableObject {
         )
 
         // Save to store
-        return try await padSampleStore.save(
+        let saved = try await padSampleStore.save(
             samples: samples,
             sampleRate: sampleRate,
             metadata: metadata
         )
+        // Bind it to the grid pad so it actually appears + plays. Without
+        // this the take was persisted but never reached the launchpad.
+        padAssignmentStore.assign(.localSample(id: saved.id), padIdx: padIndex)
+        return saved
     }
 
     // MARK: - Tone card

@@ -558,6 +558,10 @@ private struct PadCell: View {
         if case .packPad = slotRef { return true }
         return false
     }
+    private var isLocalSample: Bool {
+        if case .localSample = slotRef { return true }
+        return false
+    }
     private var sequencePulse: SequencePulse? { launchpad.sequencePulses[padIdx] }
     /// Pad has something assigned (chop, sequence, or pack pad).
     private var hasContent: Bool {
@@ -668,6 +672,10 @@ private struct PadCell: View {
                 .foregroundStyle(.white.opacity(0.6))
         } else if isPackPad {
             Image(systemName: "speaker.wave.2.fill")
+                .font(.body)
+                .foregroundStyle(.white.opacity(0.6))
+        } else if isLocalSample {
+            Image(systemName: "mic.fill")
                 .font(.body)
                 .foregroundStyle(.white.opacity(0.6))
         }
@@ -789,6 +797,11 @@ private struct PadCell: View {
             let base = Color(hex: 0xA855F7)  // Purple like iOS
             return active ? base : base.opacity(0.55)
         }
+        // Local (vocoder/mic) samples: vocoded purple.
+        if isLocalSample {
+            let base = Color(hex: 0x9B4DFF)
+            return active ? base : base.opacity(0.55)
+        }
 
         guard let assignment else {
             return Color.white.opacity(0.06)
@@ -817,6 +830,9 @@ private struct PadCell: View {
         if isPackPad {
             return Color(hex: 0xA855F7)
         }
+        if isLocalSample {
+            return Color(hex: 0x9B4DFF)
+        }
         guard let assignment else {
             return Color.white.opacity(0.3)
         }
@@ -829,6 +845,7 @@ private struct PadCell: View {
     }
 
     private func padLabel(_ assignment: PadAssignment?) -> String? {
+        if isLocalSample { return "Voice" }
         guard let chop = assignment?.chop else { return nil }
         return chop.chordSymbol ?? chop.sectionLabel ?? chop.kind
     }

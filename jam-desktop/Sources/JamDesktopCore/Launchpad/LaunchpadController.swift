@@ -249,6 +249,9 @@ public final class LaunchpadController {
     /// Fire a pack pad (packId, source pad index within pack).
     @ObservationIgnored public var onPackPadTrigger: ((String, Int) -> Void)?
 
+    /// Fire a locally-recorded sample (vocoder / mic take) by its store id.
+    @ObservationIgnored public var onLocalSampleTrigger: ((UUID) -> Void)?
+
     /// Hard-stop EVERY sounding voice unconditionally (ChopPlayer.stopAll),
     /// not just the ones the current assignments can name. Used before a
     /// grid swap so a looping voice can't be orphaned — after `assignments`
@@ -440,8 +443,10 @@ public final class LaunchpadController {
                 activePads.insert(pad)
                 transport?.setLight(.pulse(colorHint: 0xA855F7), at: pad)
                 return
-            case .localSample:
-                // Future: handle local sample trigger
+            case .localSample(let id):
+                onLocalSampleTrigger?(id)
+                activePads.insert(pad)
+                transport?.setLight(.pulse(colorHint: 0x9B4DFF), at: pad)  // vocoded purple
                 return
             }
         }
@@ -489,6 +494,9 @@ public final class LaunchpadController {
                 transport?.setLight(.solid(colorHint: 0xA855F7), at: pad)
                 return
             case .localSample:
+                // One-shot (plays through); just clear active state.
+                activePads.remove(pad)
+                transport?.setLight(.solid(colorHint: 0x9B4DFF), at: pad)
                 return
             }
         }
