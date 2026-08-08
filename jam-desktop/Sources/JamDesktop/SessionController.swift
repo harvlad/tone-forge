@@ -140,6 +140,17 @@ final class SessionController: ObservableObject {
         didSet { engine.clickEnabled = clickEnabled }
     }
 
+    /// Stem takeover / song augmentation: when on, triggering a sample of a
+    /// stem ducks the song's own stem while the sample plays, and restores
+    /// it when the sample (tap / one-shot / loop) ends. Off = samples play
+    /// OVER the song (the classic layering behavior).
+    @Published var stemTakeoverEnabled = true {
+        didSet {
+            // Turning it off must restore any currently-ducked stems.
+            if !stemTakeoverEnabled { mix.clearTakeover() }
+        }
+    }
+
     private var engineStarted = false
     /// Suppresses outbound echoes while applying a peer's transport
     /// frame (onDiscreteChange fires for the applied intents).
@@ -310,6 +321,12 @@ final class SessionController: ObservableObject {
         launchpad.onLocalSampleTrigger = { [weak self] id in
             guard let self, let url = try? self.padSampleStore.wavURL(id: id) else { return }
             self.chopPlayer.trigger(file: url, startSec: nil, endSec: nil)
+        }
+        // Song augmentation: duck / restore the song's own stem as chop
+        // voices for that stem start and stop (ref-counted in ChopPlayer).
+        chopPlayer.onStemTakeoverChange = { [weak self] role, active in
+            guard let self, self.stemTakeoverEnabled else { return }
+            self.mix.setTakeover(active, for: role)
         }
         launchpad.onPackPadTrigger = { [weak self] packId, sourcePadIdx in
             self?.triggerPackPad(packId: packId, padIdx: sourcePadIdx)

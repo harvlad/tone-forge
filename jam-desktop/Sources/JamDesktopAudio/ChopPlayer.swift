@@ -50,6 +50,12 @@ public final class ChopPlayer {
         /// Loop length in frames when this voice is hard-looping (nil = one-shot).
         /// Drives the per-pad playhead (loopProgress).
         var loopFrames: AVAudioFrameCount?
+        /// The song stem this voice is currently "taking over" (ducking),
+        /// or nil. Cleared when the voice stops/completes/is stolen.
+        var takeoverStem: String?
+        /// Monotonic per-voice token so a late one-shot completion can't
+        /// end a takeover the slot has since been reused for.
+        var gen: Int = 0
     }
 
     private enum VoiceKey: Hashable {
@@ -72,6 +78,15 @@ public final class ChopPlayer {
     /// main mixer; SessionController points it at the MusicBus so
     /// master FX color the pads.
     public var outputNode: AVAudioNode?
+
+    /// Live stem takeover (song augmentation): fired when the number of
+    /// sounding chop voices for a stem role crosses 0↔active, so the host
+    /// can duck (active=true) / restore (active=false) the song's own stem.
+    /// Only bundle-chop voices carry a stem; pack/local-file voices don't.
+    public var onStemTakeoverChange: ((_ role: String, _ active: Bool) -> Void)?
+
+    /// How many sounding voices currently take over each stem role.
+    private var takeoverCounts: [String: Int] = [:]
 
     private var destination: AVAudioNode {
         outputNode ?? avEngine.mainMixerNode
@@ -197,8 +212,16 @@ public final class ChopPlayer {
         guard frameCount > 0, startFrame < file.length else { return }
 
         let index = claimVoice(for: key)
+        // Stem this trigger takes over (bundle chops only; file voices don't
+        // duck the song). End the claimed slot's PRIOR takeover first — unless
+        // it's the same stem (a same-stem retrigger keeps the duck, no blip).
+        let takeoverStem: String? = { if case .chop(let s, _) = key { return s }; return nil }()
+        if voices[index].takeoverStem != takeoverStem { endTakeover(index) }
+
         var voice = voices[index]
         voice.node.stop()
+        voice.gen &+= 1
+        let capturedGen = voice.gen
 
         if voice.format != file.processingFormat {
             connectChain(voice, format: file.processingFormat)
@@ -219,8 +242,10 @@ public final class ChopPlayer {
                                             frameCount: AVAudioFrameCount(frameCount)) {
             // One-shot: read the region into a buffer and micro-fade its
             // edges so a slice that doesn't start/end on a zero-crossing
-            // (stabs, drum hits) doesn't click on attack or tail.
-            voice.node.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            // (stabs, drum hits) doesn't click on attack or tail. On natural
+            // end, restore the taken-over stem (gen-guarded against reuse).
+            voice.node.scheduleBuffer(buffer, at: nil, options: [],
+                                      completionHandler: oneShotCompletion(index, gen: capturedGen))
             voice.loopFrames = nil
         } else {
             // Fallback: buffer read failed — schedule straight from the file.
@@ -229,13 +254,34 @@ public final class ChopPlayer {
                 startingFrame: startFrame,
                 frameCount: AVAudioFrameCount(frameCount),
                 at: nil,
-                completionHandler: nil
+                completionHandler: oneShotCompletion(index, gen: capturedGen)
             )
             voice.loopFrames = nil
         }
         voice.node.play(at: playTime(afterSeconds: delaySeconds))
         voice.key = key
         voices[index] = voice
+        // Begin the new takeover AFTER the struct write-back (which would
+        // otherwise clobber takeoverStem). Skip if already taking over this
+        // same stem on this voice (same-stem retrigger — count unchanged).
+        if let s = takeoverStem, voices[index].takeoverStem != s {
+            beginTakeover(index, stem: s)
+        }
+    }
+
+    /// Completion handler for a one-shot voice: on the audio thread when the
+    /// buffer finishes (or the node is stopped). Hops to the main actor and
+    /// ends the takeover only if this slot hasn't since been reused (gen
+    /// match). endTakeover is idempotent, so a stop-then-complete is safe.
+    private nonisolated func oneShotCompletion(_ index: Int, gen: Int) -> AVAudioNodeCompletionHandler {
+        { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                guard self.voices.indices.contains(index),
+                      self.voices[index].gen == gen else { return }
+                self.endTakeover(index)
+            }
+        }
     }
 
     /// Normalized playhead (0..<1) of a hard-looping pad, or nil if that pad
@@ -304,6 +350,7 @@ public final class ChopPlayer {
     public func release(_ assignment: PadAssignment) {
         let key = VoiceKey.chop(stem: assignment.stem, idx: assignment.chop.idx)
         for index in voices.indices where voices[index].key == key {
+            endTakeover(index)
             voices[index].node.stop()
             voices[index].key = nil
         }
@@ -311,8 +358,34 @@ public final class ChopPlayer {
 
     public func stopAll() {
         for index in voices.indices {
+            endTakeover(index)
             voices[index].node.stop()
             voices[index].key = nil
+        }
+    }
+
+    // MARK: - Stem takeover (song augmentation)
+
+    /// This voice begins taking over `stem`. Ref-counted per role; the host
+    /// is notified only when a role goes from 0 → active.
+    private func beginTakeover(_ index: Int, stem: String) {
+        voices[index].takeoverStem = stem
+        let c = takeoverCounts[stem] ?? 0
+        takeoverCounts[stem] = c + 1
+        if c == 0 { onStemTakeoverChange?(stem, true) }
+    }
+
+    /// This voice stops taking over its stem (if any). The host is notified
+    /// only when the role's count returns to 0.
+    private func endTakeover(_ index: Int) {
+        guard let stem = voices[index].takeoverStem else { return }
+        voices[index].takeoverStem = nil
+        let c = takeoverCounts[stem] ?? 0
+        if c <= 1 {
+            takeoverCounts[stem] = nil
+            onStemTakeoverChange?(stem, false)
+        } else {
+            takeoverCounts[stem] = c - 1
         }
     }
 
@@ -321,6 +394,7 @@ public final class ChopPlayer {
     /// drop.
     public func reattach() {
         for index in voices.indices {
+            endTakeover(index)
             voices[index].node.stop()
             voices[index].key = nil
             if let format = voices[index].format {

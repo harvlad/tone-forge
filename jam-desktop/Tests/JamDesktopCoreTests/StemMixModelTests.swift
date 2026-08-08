@@ -64,6 +64,44 @@ final class StemMixModelTests: XCTestCase {
         XCTAssertEqual(mix.effectiveGain(for: "theremin"), 0)
     }
 
+    // MARK: - Takeover (song augmentation)
+
+    func testTakeoverDucksToSilenceAndRestores() {
+        mix.setGain(0.8, for: "drums")
+        XCTAssertEqual(mix.effectiveGain(for: "drums"), 0.8)
+        mix.setTakeover(true, for: "drums")
+        XCTAssertEqual(mix.effectiveGain(for: "drums"), 0)   // sample took over
+        mix.setTakeover(false, for: "drums")
+        XCTAssertEqual(mix.effectiveGain(for: "drums"), 0.8) // restored to its gain
+    }
+
+    func testTakeoverWinsOverEverythingButRestoresUnderlyingState() {
+        // A slider change while ducked doesn't un-duck; it lands once restored.
+        mix.setTakeover(true, for: "bass")
+        mix.setGain(0.5, for: "bass")
+        XCTAssertEqual(mix.effectiveGain(for: "bass"), 0)    // still ducked
+        mix.setTakeover(false, for: "bass")
+        XCTAssertEqual(mix.effectiveGain(for: "bass"), 0.5)  // the mid-duck change survives
+    }
+
+    func testTakeoverSignalsOnlyOnRealEdges() {
+        var count = 0
+        mix.onMixChanged = { count += 1 }
+        mix.setTakeover(true, for: "drums")   // 1
+        mix.setTakeover(true, for: "drums")   // no-op — already ducked
+        mix.setTakeover(false, for: "drums")  // 2
+        mix.setTakeover(false, for: "drums")  // no-op — already restored
+        XCTAssertEqual(count, 2)
+    }
+
+    func testClearTakeoverRestoresAll() {
+        mix.setTakeover(true, for: "drums")
+        mix.setTakeover(true, for: "bass")
+        mix.clearTakeover()
+        XCTAssertEqual(mix.effectiveGain(for: "drums"), 1.0)
+        XCTAssertEqual(mix.effectiveGain(for: "bass"), 1.0)
+    }
+
     func testChangeSignalFiresOncePerRealChange() {
         var count = 0
         mix.onMixChanged = { count += 1 }

@@ -370,6 +370,20 @@ struct LaunchpadPanelView: View {
             .pickerStyle(.segmented)
             .frame(maxWidth: 130)
 
+            // Augment: triggering a sample ducks the song's own stem while it
+            // plays, then restores it — the sample "takes over" that part.
+            Button {
+                session.stemTakeoverEnabled.toggle()
+            } label: {
+                Label("Augment", systemImage: "arrow.left.arrow.right")
+                    .font(.caption)
+                    .foregroundStyle(session.stemTakeoverEnabled ? JamTheme.accent : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(session.stemTakeoverEnabled
+                  ? "Augment on: samples replace the song's stem while playing"
+                  : "Augment off: samples layer over the song")
+
             Picker("Quantize", selection: quantizeBinding) {
                 ForEach(QuantizeMode.allCases, id: \.self) {
                     Text($0.rawValue).tag($0)
