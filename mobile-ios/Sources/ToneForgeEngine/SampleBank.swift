@@ -201,7 +201,9 @@ public final class SampleBank: @unchecked Sendable {
             // at 0) so they sustain like Ableton clips; all song chops
             // launch on the next bar so triggering several lands them
             // together on the downbeat. Chord chops stay one-shot stabs.
-            let looping = (chop.kind == "section" || chop.kind == "phrase")
+            // Prefer Riley's measured loopability (loopable/loopScore) over the
+            // kind heuristic; keep the heuristic as fallback for legacy chops.
+            let looping = chop.loopable ?? (chop.kind == "section" || chop.kind == "phrase")
             return SamplePad(
                 padIdx: chop.idx,
                 name: label(for: chop),
@@ -218,7 +220,14 @@ public final class SampleBank: @unchecked Sendable {
                     stemRole: preset.stem,
                     startSec: chop.startSec,
                     endSec: chop.endSec
-                ).clamped()
+                ).clamped(),
+                // Carry Riley's loop metadata so the scheduler loops + crossfades
+                // these chops (loopScore -> seam) instead of dropping it all.
+                loopScore: chop.loopScore,
+                loopable: looping,
+                contentType: chop.contentType,
+                performanceScore: chop.performanceScore,
+                difficulty: chop.difficulty
             )
         }
         let pack = SamplePack(

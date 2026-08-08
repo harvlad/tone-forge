@@ -578,7 +578,11 @@ public final class SampleScheduler: ObservableObject {
         let crossfadeMs: Double = pad.loopScore.map { max(8.0, min(30.0, (1.0 - $0) * 45.0)) } ?? 0
         let req = SampleTrigger(
             padKey: padKey,
+            // A Riley auto-kit pad is "seamlessly loopable" via loopable+loopScore
+            // but carries NO loopPointSec, so it was silently one-shot. Honor
+            // loopable so it actually loops (with the loopScore crossfade above).
             loop: loop || loopOverride || pad.loopPointSec != nil
+                || (pad.loopable ?? false)
                 || (loopResolver?(pid, padIdx) ?? false),
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,
