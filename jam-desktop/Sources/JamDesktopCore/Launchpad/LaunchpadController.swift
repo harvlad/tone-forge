@@ -501,13 +501,14 @@ public final class LaunchpadController {
             }
         }
 
-        // Normal chop release. Neither mode stops on padUp: Tap is a one-shot
-        // that plays through, Loop keeps looping until re-tapped (toggle). For
-        // Tap we clear the active light (the one-shot voice plays out on its
-        // own); Loop stays lit until the re-tap toggle stops it.
+        // Normal chop release. Tap is MOMENTARY — it sounds only while held,
+        // so releasing stops the voice (and restores any taken-over stem).
+        // Loop is a latch: it keeps looping until re-tapped, so padUp is a
+        // no-op for it (the re-tap in padDown toggles it off).
         guard let assignment = assignments[pad] else { return }
         if playbackMode == .tap {
             activePads.remove(pad)
+            onRelease?(pad, assignment)   // stop the momentary voice
             transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
         }
     }

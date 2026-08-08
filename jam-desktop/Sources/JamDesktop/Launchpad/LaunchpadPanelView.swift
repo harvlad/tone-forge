@@ -361,7 +361,8 @@ struct LaunchpadPanelView: View {
             .pickerStyle(.segmented)
             .frame(width: 84)
 
-            // Tap = one-shot that plays through; Loop = seamless loop while held.
+            // Tap = momentary (sounds only while held); Loop = latched seamless
+            // loop (tap on, tap off).
             Picker("Play", selection: playbackModeBinding) {
                 ForEach(LaunchpadController.PadPlaybackMode.allCases, id: \.self) {
                     Text($0.title).tag($0)
@@ -372,38 +373,48 @@ struct LaunchpadPanelView: View {
 
             // Augment: triggering a sample ducks the song's own stem while it
             // plays, then restores it — the sample "takes over" that part.
+            // Icon-only to keep the header compact.
             Button {
                 session.stemTakeoverEnabled.toggle()
             } label: {
-                Label("Augment", systemImage: "arrow.left.arrow.right")
-                    .font(.caption)
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.body)
                     .foregroundStyle(session.stemTakeoverEnabled ? JamTheme.accent : Color.secondary)
+                    .frame(width: 28, height: 24)
             }
             .buttonStyle(.plain)
             .help(session.stemTakeoverEnabled
-                  ? "Augment on: samples replace the song's stem while playing"
-                  : "Augment off: samples layer over the song")
+                  ? "Augment ON: samples replace the song's stem while playing (tap to layer instead)"
+                  : "Augment OFF: samples layer over the song (tap to replace the stem)")
 
+            // Labels hidden + fixed-size so the header stays a single tidy
+            // row (the selected value is self-explanatory; tooltips name each).
             Picker("Quantize", selection: quantizeBinding) {
                 ForEach(QuantizeMode.allCases, id: \.self) {
                     Text($0.rawValue).tag($0)
                 }
             }
-            .frame(maxWidth: 160)
+            .labelsHidden()
+            .fixedSize()
+            .help("Quantize")
 
             Picker("Stem", selection: $selectedStem) {
                 ForEach(stemRoles, id: \.self) {
                     Text($0.capitalized).tag($0)
                 }
             }
-            .frame(maxWidth: 140)
+            .labelsHidden()
+            .fixedSize()
+            .help("Source stem")
 
             Picker("Slices", selection: $selectedSliceMode) {
                 ForEach(LaunchpadController.sliceModes, id: \.self) {
                     Text($0.capitalized).tag($0)
                 }
             }
-            .frame(maxWidth: 140)
+            .labelsHidden()
+            .fixedSize()
+            .help("Slice mode")
 
             Button("Load") {
                 let stem = selectedStem
@@ -594,7 +605,8 @@ private struct PadCell: View {
             .overlay(
                 PadClickOverlay(
                     moveMode: moveMode,
-                    onPrimaryClick: handlePrimaryClick,
+                    onPrimaryDown: handlePrimaryDown,
+                    onPrimaryUp: handlePrimaryUp,
                     onSecondaryClick: handleRightClick
                 )
             )
@@ -602,18 +614,23 @@ private struct PadCell: View {
             .onHover { hovered = $0 }
     }
 
-    private func handlePrimaryClick() {
+    /// Mouse-down on a pad: filled pads sound for the hold (Tap = momentary,
+    /// stopped on release by handlePrimaryUp; Loop toggles on/off). Empty
+    /// pads open the create radial.
+    private func handlePrimaryDown() {
         guard !moveMode else { return }
         if hasContent {
-            // Trigger sound for filled pads
             launchpad.padDown(pad)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                launchpad.padUp(pad)
-            }
         } else {
-            // Show radial menu for empty pads (Add Sound, Sequence, Voice Record)
             showRadialMenu()
         }
+    }
+
+    /// Mouse-up: release the pad so Tap stops on finger-lift (Loop stays
+    /// latched — padUp is a no-op for it in the controller).
+    private func handlePrimaryUp() {
+        guard !moveMode, hasContent else { return }
+        launchpad.padUp(pad)
     }
 
     private var padContent: some View {
@@ -1105,13 +1122,18 @@ private struct SoundPickerSheet: View {
 /// When moveMode is true, passes events through to allow drag gestures.
 private struct PadClickOverlay: NSViewRepresentable {
     let moveMode: Bool
-    let onPrimaryClick: () -> Void
+    /// Fired on mouse-DOWN (press). Paired with `onPrimaryUp` so a pad can
+    /// gate audio for the hold duration (Tap = momentary).
+    let onPrimaryDown: () -> Void
+    /// Fired on mouse-UP (release), even if the cursor left the pad first.
+    let onPrimaryUp: () -> Void
     let onSecondaryClick: () -> Void
 
     func makeNSView(context: Context) -> NSView {
         let view = PadClickView()
         view.moveMode = moveMode
-        view.onPrimaryClick = onPrimaryClick
+        view.onPrimaryDown = onPrimaryDown
+        view.onPrimaryUp = onPrimaryUp
         view.onSecondaryClick = onSecondaryClick
         return view
     }
@@ -1119,7 +1141,8 @@ private struct PadClickOverlay: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         if let view = nsView as? PadClickView {
             view.moveMode = moveMode
-            view.onPrimaryClick = onPrimaryClick
+            view.onPrimaryDown = onPrimaryDown
+            view.onPrimaryUp = onPrimaryUp
             view.onSecondaryClick = onSecondaryClick
         }
     }
@@ -1127,7 +1150,8 @@ private struct PadClickOverlay: NSViewRepresentable {
 
 private class PadClickView: NSView {
     var moveMode = false
-    var onPrimaryClick: (() -> Void)?
+    var onPrimaryDown: (() -> Void)?
+    var onPrimaryUp: (() -> Void)?
     var onSecondaryClick: (() -> Void)?
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -1137,7 +1161,13 @@ private class PadClickView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        onPrimaryClick?()
+        onPrimaryDown?()
+        // Cocoa delivers mouseUp to the view that got mouseDown even if the
+        // cursor leaves the bounds first, so a release always pairs the press.
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        onPrimaryUp?()
     }
 
     override func rightMouseDown(with event: NSEvent) {
