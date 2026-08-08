@@ -257,27 +257,13 @@ struct JamView: View {
                 songChordSymbols: appState.currentBundle?.timeline.chords.map(\.symbol) ?? []
             )
         case .samples:
-            JamSamplesGrid(
-                pads: appState.jamSampleFlatPads,
-                voicePool: appState.sampleVoicePool,
-                onTrigger: { padIdx, packId in
-                    coordinator.triggerJamSample(padIdx: padIdx, packId: packId, latch: jamSettings.sampleLatch)
-                },
-                onRelease: { padIdx, packId in
-                    // Tap mode plays while held — release on lift. Latch
-                    // stops on the next tap, so no release there.
-                    if !jamSettings.sampleLatch { coordinator.releaseJamSample(padIdx: padIdx, packId: packId) }
-                },
-                onLongPress: {
-                    Haptics.radialOpen()
-                    showInstrumentEditor = true
-                }
-            )
-            .onAppear {
-                // All stem packs shown in one grid → load every pack's
-                // buffers (songDnaPacks may populate after setPadMode).
-                appState.preloadAllSongDnaPacks()
-            }
+            // The familiar Launchpad: the active pack (auto-built Auto Kit)
+            // as a 4×4 rack with the hold→radial menu (Add Sound / Chop /
+            // Loop / Effects / Sequence / Delete). Empty pads show "+" and
+            // fill from the radial, so this is where you ADD/SWAP pads —
+            // driven by the same contribution bus, so audio + loops work
+            // unchanged. Tiles color by the pad's category colorHint.
+            SamplePadGrid4x4(coordinator: coordinator)
         }
     }
 
