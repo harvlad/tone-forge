@@ -32,8 +32,11 @@ struct PerformancePad: View {
     /// Optional normalized waveform samples (0…1) for the mini preview.
     var waveform: [Float]? = nil
     var state: PadState = .idle
+    /// Explicit tile tint (e.g. a musical-category colour) that wins over
+    /// the family palette. Nil falls back to the sound-family tint.
+    var tintOverride: Color? = nil
 
-    private var tint: Color { TFTheme.familyTint(family) }
+    private var tint: Color { tintOverride ?? TFTheme.familyTint(family) }
 
     var body: some View {
         if state == .empty {

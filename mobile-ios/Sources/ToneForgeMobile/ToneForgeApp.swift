@@ -507,16 +507,48 @@ public final class AppState: ObservableObject {
         public let stem: String
         public let name: String
         public let family: SampleFamily
+        /// Musical category (DRUMS/BASS/CHORDS/LEAD/…) when the pad comes
+        /// from a categorized Auto Kit; nil for raw song-DNA chops.
+        public let category: String?
         public var id: String { "\(packId)#\(padIdx)" }
     }
 
+    /// True when the current active pack is a Performance-Intelligence
+    /// Auto Kit (packId `auto-…`) — the categorized, color-coded rack.
+    public var activeKitIsAutoKit: Bool {
+        activeSamplePack?.pack.packId.hasPrefix("auto-") ?? false
+    }
+
     public var jamSampleFlatPads: [JamSamplePad] {
-        songDnaPacks.flatMap { dna in
+        // Prefer the categorized Auto Kit as the Jam launchpad when one is
+        // loaded (drums/bass/chords/lead/… grouped + colored). It carries
+        // per-pad `category`, so the grid renders the same color-coded rack
+        // as desktop. Falls back to raw song-DNA chops when no kit is up.
+        if let kit = activeSamplePack, activeKitIsAutoKit {
+            return kit.pack.pads
+                .sorted { padSortKey($0) < padSortKey($1) }
+                .map { JamSamplePad(packId: kit.pack.packId, padIdx: $0.padIdx,
+                                    stem: $0.category ?? kit.pack.family.rawValue,
+                                    name: $0.name, family: $0.family, category: $0.category) }
+        }
+        return songDnaPacks.flatMap { dna in
             dna.pack.pack.pads
                 .sorted { $0.padIdx < $1.padIdx }
                 .map { JamSamplePad(packId: dna.pack.pack.packId, padIdx: $0.padIdx,
-                                    stem: dna.stem, name: $0.name, family: $0.family) }
+                                    stem: dna.stem, name: $0.name, family: $0.family,
+                                    category: nil) }
         }
+    }
+
+    /// Group Auto Kit pads by category (core order) so the rack reads
+    /// drums→bass→chords→lead→… left-to-right, then by pad index.
+    private func padSortKey(_ pad: SamplePad) -> String {
+        let order: [String: Int] = [
+            "DRUMS": 0, "BASS": 1, "CHORDS": 2, "LEAD": 3,
+            "RHYTHM": 4, "TEXTURE": 5, "VOCAL": 6, "STAB": 7, "FX": 8,
+        ]
+        let rank = order[pad.category ?? ""] ?? 9
+        return String(format: "%02d-%03d", rank, pad.padIdx)
     }
 
     // MARK: - Curated packs (Browse → Curated)
@@ -1705,6 +1737,12 @@ public final class AppState: ObservableObject {
             // silent padNotFound while an on-demand decode is still in
             // flight (the "have to tap twice" bug).
             preloadAllSongDnaPacks()
+            // Jam-straight-away: build the categorized Auto Kit now so the
+            // Jam launchpad opens as the color-coded drums/bass/chords/lead
+            // rack (not the raw one-color-per-stem song-DNA chops). Needs
+            // stems on the backend; on failure the grid falls back to
+            // song-DNA and autoKitError carries the reason.
+            if !localURLs.isEmpty { loadAutoKit() }
             // Surface a "no audio" state when the song expected stems but
             // none downloaded (backend/R2 unavailable — e.g. jamn.app
             // analyses with no stored stems). The bundled demo is offline

@@ -363,6 +363,10 @@ struct JamView: View {
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
+                    if jamSettings.padMode == .samples && appState.activeKitIsAutoKit {
+                        instantGrooveChip
+                        stopAllChip
+                    }
                     quantizeChip
                     metronomeChip
                     loopSectionChip
@@ -380,6 +384,41 @@ struct JamView: View {
             .accessibilityLabel("Jam settings")
         }
         .padding(.horizontal, TFTheme.Spacing.md)
+    }
+
+    /// One-tap groove: fire the best loop of each core category. Loops
+    /// are bar-synced, so a single press yields a locked, playable bed.
+    private var instantGrooveChip: some View {
+        Button {
+            Haptics.padTrigger()
+            appState.instantGroove()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "wand.and.stars").font(.caption)
+                Text("Groove").font(TFTheme.chipFont)
+            }
+            .tfChip(active: true)
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Instant Groove: play the best loop of every category")
+    }
+
+    /// Global stop for the whole kit — silences every sounding pad.
+    private var stopAllChip: some View {
+        Button {
+            Haptics.selectionChanged()
+            appState.stopAllPads()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "stop.fill").font(.caption)
+                Text("Stop").font(TFTheme.chipFont)
+            }
+            .tfChip(active: false)
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Stop all pads")
     }
 
     private var quantizeChip: some View {
@@ -626,7 +665,8 @@ struct JamSamplesGrid: View {
             title: pad.name,
             family: pad.family,
             icon: Self.familyIcon(pad.family),
-            state: state
+            state: state,
+            tintOverride: Self.categoryTint(pad.category)
         )
         .frame(height: 72)
         .contentShape(RoundedRectangle(cornerRadius: TFTheme.Radius.large))
@@ -664,6 +704,25 @@ struct JamSamplesGrid: View {
             } else {
                 tile
             }
+        }
+    }
+
+    /// Musical-category tile tint — mirrors the backend `_CATEGORY_HEX`
+    /// map so the Jam rack is grouped/colored exactly like desktop
+    /// (drums red, bass green, chords amber, lead orange…). Nil for raw
+    /// song-DNA pads (no category), which keep their sound-family tint.
+    static func categoryTint(_ category: String?) -> Color? {
+        switch category {
+        case "DRUMS":   return Color(red: 0.937, green: 0.267, blue: 0.267) // EF4444
+        case "BASS":    return Color(red: 0.133, green: 0.773, blue: 0.369) // 22C55E
+        case "CHORDS":  return Color(red: 0.961, green: 0.620, blue: 0.043) // F59E0B
+        case "LEAD":    return Color(red: 0.976, green: 0.451, blue: 0.086) // F97316
+        case "VOCAL":   return Color(red: 0.925, green: 0.286, blue: 0.600) // EC4899
+        case "RHYTHM":  return Color(red: 0.231, green: 0.510, blue: 0.965) // 3B82F6
+        case "TEXTURE": return Color(red: 0.024, green: 0.714, blue: 0.831) // 06B6D4
+        case "FX":      return Color(red: 0.659, green: 0.333, blue: 0.969) // A855F7
+        case "STAB":    return Color(red: 0.545, green: 0.361, blue: 0.965) // 8B5CF6
+        default:        return nil
         }
     }
 
