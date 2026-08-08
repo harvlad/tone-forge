@@ -584,10 +584,13 @@ public final class SampleScheduler: ObservableObject {
         let effects = effectsResolver?(pid, padIdx, pad.effects)
             ?? pad.effects
             ?? .neutral
-        // Seamless crossfade for auto-kit loops: a scored loop (loopScore set)
-        // gets an overlap-add seam so it holds forever without a click. A worse
-        // measured seam → a longer fade; clamped to a musical 8..30 ms.
-        let crossfadeMs: Double = pad.loopScore.map { max(8.0, min(30.0, (1.0 - $0) * 45.0)) } ?? 0
+        // Seamless crossfade for auto-kit loops: prefer the analyzer's
+        // per-seam measurement (pad.crossfadeMs) when present; otherwise fall
+        // back to the coarse loopScore→ms map. A worse seam → a longer fade;
+        // clamped musical 8..30 ms. 0 ⇒ voice pool applies its default floor.
+        let crossfadeMs: Double = pad.crossfadeMs.map { max(8.0, min(30.0, $0)) }
+            ?? pad.loopScore.map { max(8.0, min(30.0, (1.0 - $0) * 45.0)) }
+            ?? 0
         let req = SampleTrigger(
             padKey: padKey,
             // A Riley auto-kit pad is "seamlessly loopable" via loopable+loopScore

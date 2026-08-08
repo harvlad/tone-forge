@@ -215,7 +215,15 @@ public final class ChopPlayer {
             // crossfaded (SeamlessLoop) and hard-looped so a held pad never clicks.
             voice.node.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
             voice.loopFrames = buffer.frameLength
+        } else if let buffer = regionBuffer(file: file, startFrame: startFrame,
+                                            frameCount: AVAudioFrameCount(frameCount)) {
+            // One-shot: read the region into a buffer and micro-fade its
+            // edges so a slice that doesn't start/end on a zero-crossing
+            // (stabs, drum hits) doesn't click on attack or tail.
+            voice.node.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            voice.loopFrames = nil
         } else {
+            // Fallback: buffer read failed — schedule straight from the file.
             voice.node.scheduleSegment(
                 file,
                 startingFrame: startFrame,
@@ -247,21 +255,37 @@ public final class ChopPlayer {
         return nil
     }
 
-    /// Read a [startFrame, frameCount] region into a PCM buffer and apply the
-    /// seam crossfade for gapless looping. Returns nil on read failure.
-    private func loopBuffer(
+    /// Read a [startFrame, frameCount] region into an edge-faded PCM buffer.
+    /// The micro-fades kill attack/tail clicks on one-shots and the first
+    /// pass of a loop. Returns nil on read failure.
+    private func regionBuffer(
         file: AVAudioFile, startFrame: AVAudioFramePosition,
-        frameCount: AVAudioFrameCount, crossfadeMs: Double
+        frameCount: AVAudioFrameCount
     ) -> AVAudioPCMBuffer? {
         guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else { return nil }
         do {
             file.framePosition = startFrame
             try file.read(into: buf, frameCount: frameCount)
         } catch {
-            print("[ChopPlayer] loop read failed: \(error)")
+            print("[ChopPlayer] region read failed: \(error)")
             return nil
         }
-        return crossfadeMs > 0 ? SeamlessLoop.crossfaded(buf, crossfadeMs: crossfadeMs) : buf
+        SeamlessLoop.applyEdgeFades(buf)
+        return buf
+    }
+
+    /// Read a [startFrame, frameCount] region and apply the seam crossfade
+    /// for gapless looping. EVERY looping voice gets a seam — a measured
+    /// length when supplied, else the default floor — so an unscored loop
+    /// never hard-loops with a click. Returns nil on read failure.
+    private func loopBuffer(
+        file: AVAudioFile, startFrame: AVAudioFramePosition,
+        frameCount: AVAudioFrameCount, crossfadeMs: Double
+    ) -> AVAudioPCMBuffer? {
+        guard let buf = regionBuffer(file: file, startFrame: startFrame,
+                                     frameCount: frameCount) else { return nil }
+        let xfadeMs = crossfadeMs > 0 ? crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
+        return SeamlessLoop.crossfaded(buf, crossfadeMs: xfadeMs)
     }
 
     private func cachedFile(for url: URL) -> AVAudioFile? {

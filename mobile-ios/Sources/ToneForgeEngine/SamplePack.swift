@@ -175,6 +175,10 @@ public struct SamplePad: Codable, Sendable, Equatable {
     /// Musical category (DRUMS/BASS/CHORDS/LEAD/VOCAL/RHYTHM/TEXTURE/FX/STAB) —
     /// drives grid grouping/color + Instant Groove role selection.
     public let category: String?
+    /// Server-measured loop-seam crossfade length (ms) from the analyzer.
+    /// When present + > 0, playback prefers this over the coarse
+    /// loopScore→ms fallback. nil ⇒ use the fallback / default floor.
+    public let crossfadeMs: Double?
 
     public init(
         padIdx: Int,
@@ -195,7 +199,8 @@ public struct SamplePad: Codable, Sendable, Equatable {
         contentType: String? = nil,
         performanceScore: Double? = nil,
         difficulty: Double? = nil,
-        category: String? = nil
+        category: String? = nil,
+        crossfadeMs: Double? = nil
     ) {
         self.padIdx = padIdx
         self.name = name
@@ -216,6 +221,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.performanceScore = performanceScore
         self.difficulty = difficulty
         self.category = category
+        self.crossfadeMs = crossfadeMs
     }
 
     // Custom decoding to default `gainDb` when the key is absent.
@@ -226,7 +232,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         case padIdx, name, family, colorHint, filename, chokeGroup,
              loopPointSec, gainDb, defaultQuantize, stemSlice, effects,
              loopStartSec, loopEndSec, loopScore, loopable, contentType,
-             performanceScore, difficulty, category
+             performanceScore, difficulty, category, crossfadeMs
     }
 
     public init(from decoder: Decoder) throws {
@@ -250,6 +256,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.performanceScore = try c.decodeIfPresent(Double.self, forKey: .performanceScore)
         self.difficulty = try c.decodeIfPresent(Double.self, forKey: .difficulty)
         self.category = try c.decodeIfPresent(String.self, forKey: .category)
+        self.crossfadeMs = try c.decodeIfPresent(Double.self, forKey: .crossfadeMs)
     }
 }
 

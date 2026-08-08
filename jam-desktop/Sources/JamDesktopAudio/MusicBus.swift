@@ -32,6 +32,9 @@ public final class MusicBus {
 
     private let eq = AVAudioUnitEQ(numberOfBands: 3)
     private let comp: AVAudioUnitEffect
+    /// Always-on safety brickwall limiter after the user comp — catches
+    /// summing overs so the music submix never hard-clips into mainMixer.
+    private let limiter: AVAudioUnitEffect
     private let fxSend = AVAudioMixerNode()
     private let reverb = AVAudioUnitReverb()
     private let delay = AVAudioUnitDelay()
@@ -50,6 +53,15 @@ public final class MusicBus {
             componentFlagsMask: 0
         )
         comp = AVAudioUnitEffect(audioComponentDescription: compDesc)
+
+        let limDesc = AudioComponentDescription(
+            componentType: kAudioUnitType_Effect,
+            componentSubType: kAudioUnitSubType_PeakLimiter,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        limiter = AVAudioUnitEffect(audioComponentDescription: limDesc)
 
         // Band layout mirrors iOS buildMasterFXGraph.
         eq.bypass = false
@@ -74,7 +86,7 @@ public final class MusicBus {
     /// attach on an already-attached node is a no-op, and connect
     /// replaces existing wiring.
     public func attach() {
-        for node in [input, eq, comp, fxSend, reverb, delay, fxReturn]
+        for node in [input, eq, comp, limiter, fxSend, reverb, delay, fxReturn]
             as [AVAudioNode] {
             if node.engine == nil { avEngine.attach(node) }
         }
@@ -102,7 +114,8 @@ public final class MusicBus {
             format: nil
         )
         avEngine.connect(eq, to: comp, format: nil)
-        avEngine.connect(comp, to: main, format: nil)
+        avEngine.connect(comp, to: limiter, format: nil)
+        avEngine.connect(limiter, to: main, format: nil)
         avEngine.connect(fxSend, to: reverb, format: nil)
         avEngine.connect(reverb, to: delay, format: nil)
         avEngine.connect(delay, to: fxReturn, format: nil)

@@ -457,7 +457,10 @@ final class SessionController: ObservableObject {
                     performanceScore: pad.performanceScore,
                     difficulty: pad.difficulty,
                     loopable: pad.loopable,
-                    loopScore: pad.loopScore
+                    loopScore: pad.loopScore,
+                    // Carry the analyzer's measured seam crossfade so held
+                    // loops use it (else SessionController's 15 ms floor).
+                    crossfadeMs: pad.crossfadeMs
                 )
                 return (chop, slice.stemRole)
             }

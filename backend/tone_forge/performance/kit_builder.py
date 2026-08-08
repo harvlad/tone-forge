@@ -208,6 +208,9 @@ class AutoKitBuilder:
             oe_ = getattr(qual, "optimized_end_s", None) if qual else None
             if isinstance(os_, (int, float)) and isinstance(oe_, (int, float)) and oe_ > os_:
                 loop_start, loop_end = os_, oe_
+            # The analyzer's per-seam crossfade measurement (ms). The app
+            # prefers this over its coarse loopScore→ms fallback when > 0.
+            xfade_ms = getattr(qual, "crossfade_ms", None) if qual else None
             pads.append(
                 {
                     "padIdx": idx,
@@ -224,6 +227,8 @@ class AutoKitBuilder:
                     "loopStartSec": round(loop_start, 4),
                     "loopEndSec": round(loop_end, 4),
                     "loopScore": round(a.loop_confidence, 3),
+                    **({"crossfadeMs": round(float(xfade_ms), 2)}
+                       if isinstance(xfade_ms, (int, float)) and xfade_ms > 0 else {}),
                     "loopable": a.loopable,
                     "contentType": a.content_type.value,
                     "performanceScore": round(a.performance_score, 3),

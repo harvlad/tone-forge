@@ -131,6 +131,9 @@ public final class AudioEngine: ObservableObject {
     private var fxReturnMixer: AVAudioMixerNode?
     private var masterEQ: AVAudioUnitEQ?
     private var masterComp: AVAudioUnitEffect?
+    /// Always-on safety brickwall limiter, last node before outputNode.
+    /// Independent of the user-shaped `masterComp` — catches summing overs.
+    private var masterLimiter: AVAudioUnitEffect?
 
     // Performance-FX insert (PERFORM_PARITY spec 1). Built in
     // buildMasterFXGraph, inserted between mainMixer and masterEQ:
@@ -322,8 +325,26 @@ public final class AudioEngine: ObservableObject {
         )
         let comp = AVAudioUnitEffect(audioComponentDescription: compDesc)
 
+        // Always-on brickwall peak limiter, LAST before the output SRC. The
+        // user compressor (comp) is neutral by default and is theirs to
+        // shape; this is a separate safety net that catches the summing
+        // overs when several -1 dBFS pads land on the same downbeat, so the
+        // output never hard-clips. Apple's PeakLimiter is transparent until
+        // the signal approaches 0 dBFS — default params (preGain 0, ~12 ms
+        // attack) act as a clean ceiling with no audible pumping at normal
+        // levels.
+        let limDesc = AudioComponentDescription(
+            componentType: kAudioUnitType_Effect,
+            componentSubType: kAudioUnitSubType_PeakLimiter,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        let limiter = AVAudioUnitEffect(audioComponentDescription: limDesc)
+
         engine.attach(eq)
         engine.attach(comp)
+        engine.attach(limiter)
 
         // A/B kill-switch for diagnosing the sim audio stutter / 15s stop.
         // When false, wire the original mainMixer → eq → comp → out path
@@ -333,10 +354,12 @@ public final class AudioEngine: ObservableObject {
             let format = canonicalFormat
             engine.connect(engine.mainMixerNode, to: eq, format: format)
             engine.connect(eq, to: comp, format: format)
-            engine.connect(comp, to: engine.outputNode, format: format)
+            engine.connect(comp, to: limiter, format: format)
+            engine.connect(limiter, to: engine.outputNode, format: format)
             setCompressorParams(FXCompParams.neutral)
             self.masterEQ = eq
             self.masterComp = comp
+            self.masterLimiter = limiter
             return
         }
 
@@ -376,13 +399,15 @@ public final class AudioEngine: ObservableObject {
         engine.connect(perfThr, to: perfGate, format: format)
         engine.connect(perfGate, to: eq, format: format)
         engine.connect(eq, to: comp, format: format)
-        engine.connect(comp, to: engine.outputNode, format: format)
+        engine.connect(comp, to: limiter, format: format)
+        engine.connect(limiter, to: engine.outputNode, format: format)
 
         // Set initial compressor params (bypassed — amountDb 0 = infinite headroom)
         setCompressorParams(FXCompParams.neutral)
 
         self.masterEQ = eq
         self.masterComp = comp
+        self.masterLimiter = limiter
         self.perfInputMixer = perfIn
         self.perfFilter = perfFilt
         self.perfFlanger = perfFlang
