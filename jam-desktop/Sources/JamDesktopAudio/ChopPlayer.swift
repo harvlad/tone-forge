@@ -121,14 +121,23 @@ public final class ChopPlayer {
         velocity: Float = 1,
         pan: Float = 0,
         loop: Bool = false,
-        crossfadeMs: Double = 0
+        crossfadeMs: Double = 0,
+        loopBarSeconds: Double = 0
     ) {
         guard let file = files[assignment.stem] else { return }
         let chop = assignment.chop
+        // Phase-lock: snap the loop length to a whole number of bars so it stays
+        // aligned to the downbeat grid forever (a slightly-off length drifts).
+        var endSec = chop.endSec
+        if loop, loopBarSeconds > 0 {
+            let loopSec = chop.endSec - chop.startSec
+            let bars = max(1, (loopSec / loopBarSeconds).rounded())
+            endSec = chop.startSec + bars * loopBarSeconds
+        }
         schedule(
             file: file,
             startSec: chop.startSec,
-            endSec: chop.endSec,
+            endSec: endSec,
             key: .chop(stem: assignment.stem, idx: chop.idx),
             effects: effects,
             velocity: velocity,

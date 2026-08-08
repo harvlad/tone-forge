@@ -242,9 +242,14 @@ final class SessionController: ObservableObject {
             let loopable = self.launchpad.playbackMode == .loop
             let rileyFade = chop.crossfadeMs ?? 0
             let crossfadeMs = loopable ? (rileyFade > 0 ? rileyFade : 15) : 0
+            // Bar length (4/4) from the song tempo — the ChopPlayer snaps a loop
+            // to a whole-bar multiple so all loops stay phase-locked to the grid.
+            let bpm = self.attachedBundle?.meta.tempoBpm ?? 0
+            let barSeconds = (loopable && bpm > 0) ? (60.0 / bpm) * 4.0 : 0
             self.chopPlayer.trigger(
                 assignment, afterSeconds: delay,
-                loop: loopable, crossfadeMs: crossfadeMs
+                loop: loopable, crossfadeMs: crossfadeMs,
+                loopBarSeconds: barSeconds
             )
             // Publish for the session recorder. Timestamp = the
             // quantized fire-at moment (what actually SOUNDED), so
