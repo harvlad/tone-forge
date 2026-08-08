@@ -303,6 +303,14 @@ public enum SampleFamily: String, Codable, Sendable, CaseIterable {
     case vocals
     /// Pack contains a mix of families (used at pack level, not pad).
     case mixed
+
+    /// Tolerant decode: an unrecognized family (a value a newer backend adds)
+    /// degrades to `.mixed` instead of throwing and failing the ENTIRE pack
+    /// decode — the class of bug that hid behind the provenance typeMismatch.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = SampleFamily(rawValue: raw) ?? .mixed
+    }
 }
 
 // MARK: - Quantize
@@ -323,6 +331,13 @@ public enum QuantizeMode: String, Codable, Sendable, CaseIterable, Equatable {
     case bar       = "1 bar"
     /// Snap to next section boundary (chorus/verse/etc.).
     case phrase    = "phrase"
+
+    /// Tolerant decode: an unknown quantize token degrades to `.bar` (a safe,
+    /// musical default) rather than throwing and failing the whole pad/pack.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = QuantizeMode(rawValue: raw) ?? .bar
+    }
 }
 
 // MARK: - Hold / Beat-Bar modes (persisted with pack settings)
