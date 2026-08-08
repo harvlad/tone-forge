@@ -120,6 +120,13 @@ public final class LaunchpadController {
         return Self.category(stem: a.stem, contentType: a.chop.contentType)
     }
 
+    /// Human label for a pad — the descriptive kit name ("Chorus Guitar riff"),
+    /// else a chord symbol, else a positional fallback.
+    public func padLabel(_ pad: LaunchpadPad) -> String {
+        guard let a = assignments[pad] else { return "" }
+        return a.chop.sectionLabel ?? a.chop.chordSymbol ?? "Pad \(pad.row * 8 + pad.col + 1)"
+    }
+
     /// Instant Groove: start the single best-scoring loop in each core category
     /// (drums/bass/chords/lead/rhythm/texture) — all bar-synced via the Loop
     /// path, so one tap yields a locked, playable groove.
@@ -140,6 +147,66 @@ public final class LaunchpadController {
             if let pad = best[cat], !activePads.contains(pad) {
                 padDown(pad)
             }
+        }
+    }
+
+    // MARK: - Layer stack (one active loop per category)
+
+    /// Assigned pads in a category, best (highest performanceScore) first — the
+    /// swap menu for a layer row.
+    public func pads(in category: PadCategory) -> [LaunchpadPad] {
+        assignments.compactMap { (pad, a) -> (LaunchpadPad, Double)? in
+            guard Self.category(stem: a.stem, contentType: a.chop.contentType) == category else { return nil }
+            return (pad, a.chop.performanceScore ?? a.chop.loopScore ?? 0)
+        }
+        .sorted { $0.1 > $1.1 }
+        .map { $0.0 }
+    }
+
+    /// The pad currently looping in a category (the active layer), if any.
+    public func activeLayer(_ category: PadCategory) -> LaunchpadPad? {
+        activePads.first { self.category(for: $0) == category }
+    }
+
+    /// Make `pad` the active loop for its category: stop whatever was looping in
+    /// that category, start this one (looping, bar-synced).
+    public func setLayer(_ pad: LaunchpadPad, category: PadCategory) {
+        playbackMode = .loop
+        for p in activePads where self.category(for: p) == category && p != pad {
+            padDown(p)   // toggle-off the previous layer
+        }
+        if !activePads.contains(pad) {
+            padDown(pad) // start the new one
+        }
+    }
+
+    /// Stop the active loop in a category (empty the layer).
+    public func clearLayer(_ category: PadCategory) {
+        for p in activePads where self.category(for: p) == category {
+            padDown(p)
+        }
+    }
+
+    /// Global stop: silence every sounding pad on the launchpad (all layers,
+    /// loops, one-shots) and reset the grid to idle.
+    public func stopAllPads() {
+        for pad in Array(activePads) {
+            if let a = assignments[pad] {
+                onRelease?(pad, a)
+                transport?.setLight(.solid(colorHint: colorHint(for: a)), at: pad)
+            } else {
+                transport?.setLight(.off, at: pad)
+            }
+        }
+        activePads.removeAll()
+    }
+
+    /// Toggle a layer: stop if active, else start the category's best pad.
+    public func toggleLayer(_ category: PadCategory) {
+        if let p = activeLayer(category) {
+            padDown(p)
+        } else if let p = pads(in: category).first {
+            setLayer(p, category: category)
         }
     }
 

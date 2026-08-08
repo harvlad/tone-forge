@@ -35,6 +35,7 @@ struct LaunchpadPanelView: View {
     @State private var showSequencerEditor = false
     @State private var moveMode = false
     @State private var dragSourcePad: Int?
+    @State private var showLayers = false
 
     private var launchpad: LaunchpadController { session.launchpad }
 
@@ -42,8 +43,12 @@ struct LaunchpadPanelView: View {
         VStack(spacing: 12) {
             header
             controls
-            padGrid
-                .aspectRatio(1, contentMode: .fit)
+            if showLayers {
+                LayerStackView().environmentObject(session)
+            } else {
+                padGrid
+                    .aspectRatio(1, contentMode: .fit)
+            }
             if let error = launchpad.fetchError {
                 Text(error)
                     .font(.caption)
@@ -336,6 +341,26 @@ struct LaunchpadPanelView: View {
 
     private var controls: some View {
         HStack(spacing: 12) {
+            // Global stop — silence every sounding pad/layer at once.
+            Button {
+                launchpad.stopAllPads()
+            } label: {
+                Image(systemName: "stop.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(launchpad.activePads.isEmpty ? Color.secondary : JamTheme.error)
+            }
+            .buttonStyle(.plain)
+            .help("Stop all pads")
+            .disabled(launchpad.activePads.isEmpty)
+
+            // Grid ⇄ Layers view.
+            Picker("", selection: $showLayers) {
+                Image(systemName: "square.grid.3x3.fill").tag(false)
+                Image(systemName: "slider.horizontal.3").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 84)
+
             // Tap = one-shot that plays through; Loop = seamless loop while held.
             Picker("Play", selection: playbackModeBinding) {
                 ForEach(LaunchpadController.PadPlaybackMode.allCases, id: \.self) {
