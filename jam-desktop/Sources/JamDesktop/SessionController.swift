@@ -282,6 +282,9 @@ final class SessionController: ObservableObject {
                 ))
             }
         }
+        launchpad.onStopAllVoices = { [weak self] in
+            self?.chopPlayer.stopAll()
+        }
         launchpad.onPackPadTrigger = { [weak self] packId, sourcePadIdx in
             self?.triggerPackPad(packId: packId, padIdx: sourcePadIdx)
         }

@@ -304,10 +304,13 @@ private struct SequencerEditorView: View {
     /// SequencerAudioAdapter resolves against.
     private func addTrackMenu(label: String) -> some View {
         Menu {
+            // Inline Sections rather than nested submenus: a Menu-in-Menu
+            // cascade renders empty / needs an extra hover on macOS, so
+            // every choice is laid out flat under a header instead.
+            //
             // Synth chords work with no song loaded — route to the
-            // DesktopSynthNode. A C-major diatonic palette is a sane
-            // default starting point.
-            Menu("Chords") {
+            // DesktopSynthNode. A C-major diatonic palette is a sane default.
+            Section("Chords") {
                 ForEach(Self.defaultChordSymbols, id: \.self) { symbol in
                     Button(symbol) {
                         player.addTrack(
@@ -317,12 +320,9 @@ private struct SequencerEditorView: View {
                     }
                 }
             }
-            if !presets.isEmpty {
-                Divider()
-            }
             ForEach(presets.keys.sorted(), id: \.self) { key in
                 let chops = presets[key]!.chops.sorted { $0.idx < $1.idx }
-                Menu("\(key.capitalized) (\(chops.count))") {
+                Section("\(key.capitalized) (\(chops.count))") {
                     ForEach(Array(chops.enumerated()), id: \.offset) { index, chop in
                         Button(chopLabel(chop, fallback: "\(key) \(index + 1)")) {
                             player.addTrack(

@@ -198,6 +198,10 @@ public final class LaunchpadController {
                 transport?.setLight(.off, at: pad)
             }
         }
+        // Belt-and-braces: also hard-stop every voice so a ring that outlived
+        // its pad binding (e.g. orphaned by an earlier grid swap) is silenced
+        // too — the "Stop won't kill it" bug.
+        onStopAllVoices?()
         activePads.removeAll()
     }
 
@@ -244,6 +248,13 @@ public final class LaunchpadController {
 
     /// Fire a pack pad (packId, source pad index within pack).
     @ObservationIgnored public var onPackPadTrigger: ((String, Int) -> Void)?
+
+    /// Hard-stop EVERY sounding voice unconditionally (ChopPlayer.stopAll),
+    /// not just the ones the current assignments can name. Used before a
+    /// grid swap so a looping voice can't be orphaned — after `assignments`
+    /// is replaced, `onRelease` would release the NEW chop's key and leave
+    /// the old voice ringing with no pad able to stop it.
+    @ObservationIgnored public var onStopAllVoices: (() -> Void)?
 
     // MARK: - Sequence Pad Support
 
@@ -361,6 +372,10 @@ public final class LaunchpadController {
     }
 
     private func layout() {
+        // Any grid swap replaces `assignments`; kill sounding voices first so
+        // a held loop can't be orphaned into an unstoppable ring (callers
+        // already cleared activePads).
+        onStopAllVoices?()
         var next: [LaunchpadPad: PadAssignment] = [:]
         if let stem {
             for (slot, chop) in displayChops.prefix(64).enumerated() {
@@ -377,6 +392,11 @@ public final class LaunchpadController {
     /// row-major. Unlike `loadChops` (one stem), this drives the grid from a
     /// pre-built kit — the chops carry their own stem + loop `kind`.
     public func adoptAssignments(_ pairs: [(chop: Chop, stem: String)]) {
+        // Kill every sounding voice BEFORE the assignment map changes — a
+        // looping pad would otherwise keep ringing with no pad able to stop
+        // it once its slot points at a different chop (orphaned voice).
+        onStopAllVoices?()
+        activePads.removeAll()
         var next: [LaunchpadPad: PadAssignment] = [:]
         for (slot, pair) in pairs.prefix(64).enumerated() {
             let pad = LaunchpadPad(row: slot / 8, col: slot % 8)
