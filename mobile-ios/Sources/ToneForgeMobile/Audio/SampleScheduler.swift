@@ -454,6 +454,7 @@ public final class SampleScheduler: ObservableObject {
         // RecordingProcessor; this is a ~no-op for them but gives
         // vocoded/chopped sources the same pack-parity loudness.
         Self.normalizePeak(resolved)
+        SeamlessLoop.applyEdgeFades(resolved)
         localBuffers[padIdx] = (meta, resolved)
     }
 
@@ -1047,10 +1048,15 @@ public final class SampleScheduler: ObservableObject {
             // whose format differs is converted below.
             guard let target = target, !format.isEqual(target) else {
                 normalizePeak(srcBuf)
+                SeamlessLoop.applyEdgeFades(srcBuf)
                 return srcBuf
             }
             guard let dstBuf = convert(srcBuf, to: target) else { return nil }
             normalizePeak(dstBuf)
+            // Micro-fade the slice edges so one-shots/stabs don't click on
+            // attack or tail (grid-boundary slices aren't zero-crossings);
+            // shorter than any loop crossfade, so seam quality is unaffected.
+            SeamlessLoop.applyEdgeFades(dstBuf)
             return dstBuf
         } catch {
             return nil

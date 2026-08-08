@@ -17,6 +17,44 @@ import AVFoundation
 
 public enum SeamlessLoop {
 
+    /// Default seam crossfade (ms) for a looping voice that carries no
+    /// measured `loopScore`-derived length. A hard buffer loop clicks at
+    /// the wrap; a short equal-power overlap hides it. 12 ms is long
+    /// enough to mask a boundary mismatch yet short enough to stay
+    /// rhythmically tight on a bar-synced loop.
+    public static let defaultLoopCrossfadeMs: Double = 12.0
+
+    /// Ramp the first `attackMs` and last `releaseMs` of `buf` in place so
+    /// a one-shot's start and tail don't begin/end on a non-zero sample —
+    /// the click you hear on stabs, drum hits, and the first pass of a
+    /// loop whose slice boundary isn't a zero-crossing. Linear ramps are
+    /// inaudible at a few ms but kill the DC step. No-op on silent/short
+    /// buffers. Safe before a loop crossfade: the fade regions (a few ms)
+    /// are far shorter than the default seam crossfade, so the seam math
+    /// is unaffected.
+    public static func applyEdgeFades(
+        _ buf: AVAudioPCMBuffer, attackMs: Double = 3.0, releaseMs: Double = 5.0
+    ) {
+        let n = Int(buf.frameLength)
+        let sr = buf.format.sampleRate
+        guard n > 8, sr > 0, let data = buf.floatChannelData else { return }
+        var a = Int((attackMs / 1000.0) * sr)
+        var r = Int((releaseMs / 1000.0) * sr)
+        // Never overlap the two ramps, and always leave a body sample.
+        a = max(0, min(a, (n - 1) / 2))
+        r = max(0, min(r, (n - 1) / 2))
+        let channels = Int(buf.format.channelCount)
+        for c in 0..<channels {
+            let d = data[c]
+            if a > 0 {
+                for i in 0..<a { d[i] *= Float(i) / Float(a) }
+            }
+            if r > 0 {
+                for i in 0..<r { d[n - 1 - i] *= Float(i) / Float(r) }
+            }
+        }
+    }
+
     /// A crossfaded, seamlessly-loopable copy of `src`.
     ///
     /// - Parameters:

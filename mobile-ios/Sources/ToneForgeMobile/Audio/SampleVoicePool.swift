@@ -314,11 +314,16 @@ public final class SampleVoicePool: ObservableObject {
             ? Double(buffer.frameLength) / buffer.format.sampleRate
             : 0
 
-        // Seamless looping: when this is a looping voice with a crossfade
-        // length (from the loop scorer), overlap-add the seam so the hard
-        // buffer loop has no audible click. Falls back to the raw buffer.
-        let playBuffer: AVAudioPCMBuffer = (req.loop && req.crossfadeMs > 0)
-            ? SeamlessLoop.crossfaded(buffer, crossfadeMs: req.crossfadeMs)
+        // Seamless looping: EVERY looping voice gets an overlap-add seam so
+        // the hard buffer loop has no click at the wrap. A scored loop
+        // carries a measured crossfade length (loopScore → ms); an unscored
+        // one (Jam latch/loopOverride, loop-point, local `.loop`, Instant
+        // Groove via triggerRaw) falls back to the default floor instead of
+        // hard-looping. Non-loop one-shots play the raw (already edge-faded)
+        // buffer.
+        let xfadeMs = req.crossfadeMs > 0 ? req.crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
+        let playBuffer: AVAudioPCMBuffer = req.loop
+            ? SeamlessLoop.crossfaded(buffer, crossfadeMs: xfadeMs)
             : buffer
         // One pass length reflects the (possibly shortened) crossfaded buffer.
         slot.bufferDurationSec = playBuffer.format.sampleRate > 0
@@ -329,9 +334,13 @@ public final class SampleVoicePool: ObservableObject {
             ? [.interrupts, .loops]
             : [.interrupts]
 
-        // Voice gain: dB → linear, clamped to [0, 2].
+        // Voice gain: dB → linear, clamped to [0, 1]. Buffers are peak-
+        // normalized to -1 dBFS on load, so unity is already near full
+        // scale — a per-voice boost only invites clipping once several
+        // voices sum at the unity voiceMixer. Attenuation (gainDb < 0, for
+        // balancing) still works; boosts are capped at 0 dB.
         let linear = Float(pow(10.0, req.gainDb / 20.0))
-        slot.mixer.outputVolume = max(0, min(2, linear))
+        slot.mixer.outputVolume = max(0, min(1, linear))
         slot.mixer.pan = max(-1, min(1, req.pan))
 
         // Apply per-pad effects onto this slot's delay + eq. Clamp
