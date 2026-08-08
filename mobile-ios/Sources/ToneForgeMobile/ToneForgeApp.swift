@@ -1813,7 +1813,7 @@ public final class AppState: ObservableObject {
             defer { self.autoKitLoading = false }
             do {
                 let pack = try await KitClient().fetchKit(
-                    baseURL: base, analysisId: analysisId, skill: skill)
+                    baseURL: base, analysisId: analysisId, skill: skill, pads: 16)
                 self.activateSamplePack(SampleBank.autoKit(pack), stemFiles: stems)
             } catch {
                 self.autoKitError = error.localizedDescription

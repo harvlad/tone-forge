@@ -83,13 +83,16 @@ def _section_at(sections, t: float) -> str:
 
 
 def _descriptive_label(asset, sections) -> str:
-    """A human 'what is this' name: '{Section} {Instrument} {role}' —
-    e.g. 'Chorus Guitar riff', 'Verse Bass groove', 'Drop lead'."""
+    """A human 'what is this' name, INSTRUMENT-first so it stays readable
+    when the grid tile truncates: '{Instrument} {role} {Section}' —
+    e.g. 'Guitar riff Chorus', 'Bass groove Verse', 'Drums beat'. Section
+    trails so two pads of the same instrument/role still differ on the
+    second line without hiding the instrument up front."""
     inst = _INSTRUMENT.get(asset.stem, asset.stem.replace("_", " ").title())
     role = "beat" if asset.stem == "drums" else _ROLE_WORD.get(asset.content_type, "loop")
     sec = _section_at(sections, asset.pos.start_s)
-    sec_txt = (sec.title() + " ") if sec and sec.lower() not in ("section", "") else ""
-    return f"{sec_txt}{inst} {role}".strip()
+    sec_txt = (" " + sec.title()) if sec and sec.lower() not in ("section", "") else ""
+    return f"{inst} {role}{sec_txt}".strip()
 
 
 # Skill → which assets are eligible (difficulty ceiling + loop preference).
