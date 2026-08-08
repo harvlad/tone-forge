@@ -447,6 +447,18 @@ final class SessionController: ObservableObject {
     /// downbeat), or nil. Consumed by `tick()`.
     private var pendingSequencerStartSec: Double?
 
+    /// Global stop: silence EVERYTHING at once — pause the song transport,
+    /// stop the step sequencer, kill every sounding launchpad pad/loop
+    /// (which also restores any taken-over stem), and clear any queued
+    /// sequencer start.
+    func stopEverything() {
+        transport.pause()
+        pendingSequencerStartSec = nil
+        sequencer.stop()
+        launchpad.stopAllPads()   // → ChopPlayer.stopAll + endTakeover
+        mix.clearTakeover()
+    }
+
     /// Play/stop the step sequencer. When the song transport is rolling,
     /// queue the start for the next downbeat and run SONG-SYNCED (external
     /// ticks drive its clock) so its steps land on the same bar grid the

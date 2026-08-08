@@ -105,18 +105,26 @@ struct RootView: View {
                 .help("Step sequencer (chords, pack pads, and song chops)")
             }
             ToolbarItem(placement: .automatic) {
-                Button {
-                    if session.sequencer.isPlaying {
-                        session.sequencer.stop()
-                    } else {
-                        session.ensureEngineStarted()
-                        session.sequencer.play()
+                HStack(spacing: 10) {
+                    Button {
+                        // Song-synced when the transport is rolling (phase-locked
+                        // to the chop-loop bar grid), else standalone.
+                        session.toggleSequencerPlayback()
+                    } label: {
+                        Image(systemName: session.sequencer.isPlaying ? "stop.fill" : "play.fill")
+                            .foregroundStyle(session.sequencer.isPlaying ? .red : .green)
                     }
-                } label: {
-                    Image(systemName: session.sequencer.isPlaying ? "stop.fill" : "play.fill")
-                        .foregroundStyle(session.sequencer.isPlaying ? .red : .green)
+                    .help(session.sequencer.isPlaying ? "Stop sequencer" : "Play sequencer")
+
+                    // Global stop — song, sequencer, and every sounding pad.
+                    Button {
+                        session.stopEverything()
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .help("Stop everything — song, sequencer, and all pads")
                 }
-                .help(session.sequencer.isPlaying ? "Stop sequencer" : "Play sequencer")
             }
             ToolbarItem(placement: .automatic) {
                 Button {

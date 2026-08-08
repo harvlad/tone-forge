@@ -368,8 +368,9 @@ struct LaunchpadPanelView: View {
                     Text($0.title).tag($0)
                 }
             }
+            .labelsHidden()   // the "Play" title was wrapping to "P l a y"
             .pickerStyle(.segmented)
-            .frame(maxWidth: 130)
+            .fixedSize()
 
             // Augment: triggering a sample ducks the song's own stem while it
             // plays, then restores it — the sample "takes over" that part.
