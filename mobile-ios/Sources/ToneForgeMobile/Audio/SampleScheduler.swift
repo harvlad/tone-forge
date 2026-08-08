@@ -289,12 +289,23 @@ public final class SampleScheduler: ObservableObject {
                 }
             } else if let slice = pad.stemSlice,
                       let stemURL = stemFiles[slice.stemRole] {
-                if let buf = loadBuffer(from: stemURL, slice: slice, target: target) {
+                if let buf = loadBuffer(from: stemURL, slice: _loopRegion(for: pad, slice: slice), target: target) {
                     loaded[pad.padIdx] = buf
                 }
             }
         }
         return loaded
+    }
+
+    /// The stem region to preload for a pad: the analyzer's optimized loop seam
+    /// [loopStartSec, loopEndSec] when the pad carries one (so a looping pad
+    /// cycles that tighter, click-free region), else the full stemSlice. No 8s
+    /// clamp — that cap is for user-sampled contribute chops, not auto-kit.
+    private nonisolated static func _loopRegion(for pad: SamplePad, slice: StemSlice) -> StemSlice {
+        if let ls = pad.loopStartSec, let le = pad.loopEndSec, le > ls {
+            return StemSlice(stemRole: slice.stemRole, startSec: ls, endSec: le)
+        }
+        return slice
     }
     #endif
 

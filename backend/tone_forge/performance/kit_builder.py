@@ -114,10 +114,28 @@ class AutoKitBuilder:
         """Emit the frozen SamplePack manifest shape (SamplePack.swift):
         packId/name/family/pads[] with per-pad loop region + loopScore so the
         app can honor real seamless loops."""
+        # Loop lookup so a pad can carry the OPTIMIZED loop seam (LoopAnalyzer's
+        # crossfaded [optimized_start_s, optimized_end_s]) instead of the raw
+        # phrase bounds — the app loops that tighter sub-region for a clean seam.
+        loops_by_id = {}
+        for lp in (getattr(graph, "loops", ()) or ()):
+            if getattr(lp, "id", None):
+                loops_by_id[lp.id] = lp
+
         pads = []
         for idx, a in enumerate(assets):
             q_start = a.pos.start_s
             q_end = a.pos.end_s
+            # Loop region: the analyzer's optimized seam when it repaired one,
+            # else the phrase bounds. stemSlice stays the full phrase (initial
+            # play region); loopStart/End is the sub-region to cycle.
+            loop_start, loop_end = q_start, q_end
+            lp = loops_by_id.get(getattr(a, "source_id", None))
+            qual = getattr(lp, "quality", None) if lp else None
+            os_ = getattr(qual, "optimized_start_s", None) if qual else None
+            oe_ = getattr(qual, "optimized_end_s", None) if qual else None
+            if isinstance(os_, (int, float)) and isinstance(oe_, (int, float)) and oe_ > os_:
+                loop_start, loop_end = os_, oe_
             pads.append(
                 {
                     "padIdx": idx,
@@ -126,8 +144,8 @@ class AutoKitBuilder:
                     "colorHint": a.color_hint,
                     "stemSlice": {"stemRole": a.stem, "startSec": q_start, "endSec": q_end},
                     # performance-intelligence additive fields (app reads if present):
-                    "loopStartSec": q_start,
-                    "loopEndSec": q_end,
+                    "loopStartSec": round(loop_start, 4),
+                    "loopEndSec": round(loop_end, 4),
                     "loopScore": round(a.loop_confidence, 3),
                     "loopable": a.loopable,
                     "contentType": a.content_type.value,
