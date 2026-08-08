@@ -172,6 +172,16 @@ final class SessionController: ObservableObject {
         beatCapture.sharedEngineRunning = { [weak self] in self?.vocoderMonitor.isEngineRunning ?? false }
         beatCapture.willOpenInput = { [weak self] in self?.monitor.stopInputMeter() }
         beatCapture.didCloseInput = { [weak self] in self?.monitor.startInputMeter() }
+        liveBeatTap.sharedInput = { [weak self] in self?.vocoderMonitor.sharedInputNode }
+        liveBeatTap.sharedEngineRunning = { [weak self] in self?.vocoderMonitor.isEngineRunning ?? false }
+        liveBeatTap.willOpenInput = { [weak self] in self?.monitor.stopInputMeter() }
+        liveBeatTap.didCloseInput = { [weak self] in self?.monitor.startInputMeter() }
+        liveBeatCalibrator.configureMic(
+            sharedInput: { [weak self] in self?.vocoderMonitor.sharedInputNode },
+            sharedEngineRunning: { [weak self] in self?.vocoderMonitor.isEngineRunning ?? false },
+            willOpenInput: { [weak self] in self?.monitor.stopInputMeter() },
+            didCloseInput: { [weak self] in self?.monitor.startInputMeter() }
+        )
 
         engine.onGraphReattached = { [weak self] in
             self?.monitor.startInputMeter()

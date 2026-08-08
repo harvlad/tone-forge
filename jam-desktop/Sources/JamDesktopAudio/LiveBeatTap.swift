@@ -46,8 +46,21 @@ public final class LiveBeatTap: ObservableObject {
         didSet { processor.inputGain = inputGain }
     }
 
-    /// Dedicated capture engine (not the main playback engine).
+    /// The shared engine's input node, when the host wants Live Beat
+    /// serialized on it (avoids a second AVAudioEngine on one mic → 0/0
+    /// format). Returns nil to force the private-engine path.
+    public var sharedInput: (() -> AVAudioInputNode?)?
+    /// Whether the shared engine is running (and holds the mic).
+    public var sharedEngineRunning: (() -> Bool)?
+    /// Host frees / restores the shared input meter around the tap.
+    public var willOpenInput: (() -> Void)?
+    public var didCloseInput: (() -> Void)?
+
+    /// Private capture engine — fallback ONLY when the shared engine isn't
+    /// running (and therefore isn't holding the mic).
     private var captureEngine: AVAudioEngine?
+    /// True when the tap sits on the shared engine's input node.
+    private var tappedSharedInput = false
     /// Shared onset DSP. Audio-thread access is serial (one tap callback).
     private let processor = LiveBeatOnsetProcessor(config: .desktop)
     /// Capture sample rate (set on install), for ms→samples conversion.
@@ -65,39 +78,58 @@ public final class LiveBeatTap: ObservableObject {
             throw LiveBeatError.permissionDenied
         }
 
-        // Create dedicated capture engine
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
+        // Free the shared input meter, then serialize on the shared engine's
+        // input (one engine, one tap on the single mic). Only build a private
+        // engine when the shared engine isn't running.
+        willOpenInput?()
 
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw LiveBeatError.noInputAvailable
+        func monoFormat(for sr: Double) -> AVAudioFormat {
+            AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sr, channels: 1, interleaved: false
+            )!
         }
 
-        // Mono conversion format
-        let monoFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: format.sampleRate,
-            channels: 1,
-            interleaved: false
-        )!
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: monoFormat) { [weak self] buffer, time in
-            self?.processTapBuffer(buffer, time: time)
-        }
-
-        engine.prepare()
-        do {
-            try engine.start()
-            self.captureEngine = engine
+        if (sharedEngineRunning?() ?? false), let inputNode = sharedInput?() {
+            let format = inputNode.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                didCloseInput?()
+                throw LiveBeatError.noInputAvailable
+            }
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: monoFormat(for: format.sampleRate)) { [weak self] buffer, time in
+                self?.processTapBuffer(buffer, time: time)
+            }
+            self.tappedSharedInput = true
             self.captureSampleRate = format.sampleRate
             isRunning = true
             processor.reset()
             processor.inputGain = inputGain
             updateThresholds()
-        } catch {
-            inputNode.removeTap(onBus: 0)
-            throw LiveBeatError.engineStartFailed(error.localizedDescription)
+        } else {
+            let engine = AVAudioEngine()
+            let inputNode = engine.inputNode
+            let format = inputNode.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                didCloseInput?()
+                throw LiveBeatError.noInputAvailable
+            }
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: monoFormat(for: format.sampleRate)) { [weak self] buffer, time in
+                self?.processTapBuffer(buffer, time: time)
+            }
+            engine.prepare()
+            do {
+                try engine.start()
+                self.captureEngine = engine
+                self.captureSampleRate = format.sampleRate
+                isRunning = true
+                processor.reset()
+                processor.inputGain = inputGain
+                updateThresholds()
+            } catch {
+                inputNode.removeTap(onBus: 0)
+                didCloseInput?()
+                throw LiveBeatError.engineStartFailed(error.localizedDescription)
+            }
         }
     }
 
@@ -105,9 +137,16 @@ public final class LiveBeatTap: ObservableObject {
     public func remove() {
         guard isRunning else { return }
 
-        captureEngine?.inputNode.removeTap(onBus: 0)
-        captureEngine?.stop()
-        captureEngine = nil
+        if tappedSharedInput {
+            sharedInput?()?.removeTap(onBus: 0)
+            tappedSharedInput = false
+        } else {
+            captureEngine?.inputNode.removeTap(onBus: 0)
+            captureEngine?.stop()
+            captureEngine = nil
+        }
+        // Restore the shared input meter.
+        didCloseInput?()
         isRunning = false
     }
 

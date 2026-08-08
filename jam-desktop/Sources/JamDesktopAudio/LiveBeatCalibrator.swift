@@ -6,6 +6,7 @@
 // and reinstalls the tap per role. The calibration flow itself lives in
 // the shared engine so iOS and macOS run the same logic.
 
+import AVFoundation
 import Combine
 import Foundation
 import ToneForgeEngine
@@ -55,6 +56,21 @@ public final class LiveBeatCalibrator: ObservableObject {
 
     public init() {
         setupBindings()
+    }
+
+    /// Wire the internal capture tap onto the shared engine's input so
+    /// calibration doesn't open a second AVAudioEngine on the one mic
+    /// (→ 0/0 format). Call once at session setup.
+    public func configureMic(
+        sharedInput: @escaping () -> AVAudioInputNode?,
+        sharedEngineRunning: @escaping () -> Bool,
+        willOpenInput: @escaping () -> Void,
+        didCloseInput: @escaping () -> Void
+    ) {
+        tap.sharedInput = sharedInput
+        tap.sharedEngineRunning = sharedEngineRunning
+        tap.willOpenInput = willOpenInput
+        tap.didCloseInput = didCloseInput
     }
 
     // MARK: - Guided API
