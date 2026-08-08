@@ -406,12 +406,19 @@ public final class ChopPlayer {
     // MARK: - Voice chain
 
     /// Wire (or rewire) a voice's player→delay→EQ→mixer→destination
-    /// chain in the stem's processing format.
+    /// chain. The player→…→mixer legs run in the stem's processing format
+    /// (mono for center-extracted stems), but the mixer→destination leg is
+    /// forced STEREO so a MONO chop is up-mixed and equal-power-panned to
+    /// both channels. Wiring the mixer output mono routed it to a single
+    /// side — the "audio drops on one side when I trigger a pad" bug.
     private func connectChain(_ voice: Voice, format: AVAudioFormat) {
+        let stereo = AVAudioFormat(
+            standardFormatWithSampleRate: format.sampleRate, channels: 2
+        ) ?? format
         avEngine.connect(voice.node, to: voice.delay, format: format)
         avEngine.connect(voice.delay, to: voice.eq, format: format)
         avEngine.connect(voice.eq, to: voice.mixer, format: format)
-        avEngine.connect(voice.mixer, to: destination, format: format)
+        avEngine.connect(voice.mixer, to: destination, format: stereo)
     }
 
     /// iOS SampleVoicePool.applyEffects parity: the filter band is
