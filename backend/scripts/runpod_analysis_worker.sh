@@ -89,6 +89,15 @@ REQ=requirements.txt
 echo "==> installing deps from $REQ"
 python -m pip install -r "$REQ"
 
+# Optional: basic-pitch via its ONNX backend (NO TensorFlow) re-enables the
+# polyphonic-bass MIDI route + octave-subdivision aid, which are silently dead
+# without it (the pipeline logs "basic_pitch not installed" and locks poly bass
+# to monophonic pYIN). Best-effort: if it fails to install, the worker keeps
+# working exactly as today (pYIN fallback), so it never breaks the boot. The
+# next run's receipt shows whether it helped + the boot cost.
+python -m pip install "basic-pitch[onnx]" onnxruntime 2>&1 | tail -3 \
+  || echo "basic_pitch optional install skipped (pYIN fallback stays in effect)"
+
 # 3. Models — Demucs htdemucs_6s + Beat-This + All-In-One (+ Riley HF when
 #    experimental_specialist). Cached ON THE VOLUME via HF_HOME/TORCH_HOME, so
 #    the seeded volume skips the ~250 MB download on every subsequent pod.
