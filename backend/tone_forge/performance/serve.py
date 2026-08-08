@@ -107,9 +107,24 @@ def performance_payload(entry_id: str, result: Dict) -> Dict:
     }
 
 
+def _sections_of(result: Dict) -> List:
+    """Normalize the result's sections to [(start_s, end_s, label), …] for the
+    kit's section-aware pad labels ('Chorus Guitar riff')."""
+    out: List = []
+    for s in result.get("sections") or []:
+        if not isinstance(s, dict):
+            continue
+        start = s.get("start_time", s.get("start_s", s.get("start")))
+        end = s.get("end_time", s.get("end_s", s.get("end")))
+        label = s.get("type") or s.get("label") or s.get("name") or ""
+        if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+            out.append((float(start), float(end), str(label)))
+    return out
+
+
 def kit_payload(entry_id: str, result: Dict, skill: str = "intermediate", pads: int = 8) -> Dict:
     g = graph_from_result(entry_id, result)
-    kit = AutoKitBuilder().build(g, skill=skill, pads=pads)
+    kit = AutoKitBuilder().build(g, skill=skill, pads=pads, sections=_sections_of(result))
     kit["analysisId"] = entry_id
     return kit
 

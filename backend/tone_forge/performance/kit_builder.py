@@ -25,6 +25,66 @@ _KIT_SLOTS = [
     ("Ending", [ContentType.ENDING, ContentType.IMPACT, ContentType.ONE_SHOT]),
 ]
 
+# --- Categorization + human labels so the user knows what each pad IS ---
+# Category drives grouping + color in the grid; label is the descriptive name.
+_ROLE_CATEGORY = {
+    ContentType.RHYTHM_LOOP: "RHYTHM",
+    ContentType.LEAD_LOOP: "LEAD",
+    ContentType.CHORD_LOOP: "CHORDS",
+    ContentType.BASS_GROOVE: "BASS",
+    ContentType.TEXTURE: "TEXTURE",
+    ContentType.DRONE: "TEXTURE",
+    ContentType.AMBIENT: "TEXTURE",
+    ContentType.IMPACT: "FX",
+    ContentType.TRANSITION: "FX",
+    ContentType.PICKUP: "FX",
+    ContentType.ENDING: "FX",
+    ContentType.ONE_SHOT: "STAB",
+}
+# stem wins for the strong instrument categories; content_type covers the rest.
+_STEM_CATEGORY = {"drums": "DRUMS", "bass": "BASS", "vocals": "VOCAL"}
+_INSTRUMENT = {
+    "drums": "Drums", "bass": "Bass", "vocals": "Vocal",
+    "other": "Guitar", "guitar": "Guitar", "guitar_center": "Guitar",
+    "guitar_sides": "Guitar", "guitar_left": "Guitar", "guitar_right": "Guitar",
+    "piano": "Keys", "keys": "Keys",
+}
+_ROLE_WORD = {
+    ContentType.RHYTHM_LOOP: "riff", ContentType.LEAD_LOOP: "lead",
+    ContentType.CHORD_LOOP: "chords", ContentType.BASS_GROOVE: "groove",
+    ContentType.TEXTURE: "texture", ContentType.DRONE: "pad",
+    ContentType.AMBIENT: "pad", ContentType.IMPACT: "hit",
+    ContentType.TRANSITION: "fill", ContentType.PICKUP: "pickup",
+    ContentType.ENDING: "ending", ContentType.ONE_SHOT: "stab",
+}
+
+
+def _category_for(asset) -> str:
+    cat = _STEM_CATEGORY.get(asset.stem)
+    if cat:
+        return cat
+    return _ROLE_CATEGORY.get(asset.content_type, "SAMPLE")
+
+
+def _section_at(sections, t: float) -> str:
+    """Section label covering time ``t`` (verse/chorus/drop/…), or ''. sections
+    is [(start_s, end_s, label), …]."""
+    for start, end, label in (sections or []):
+        if start <= t < end:
+            return str(label or "").strip()
+    return ""
+
+
+def _descriptive_label(asset, sections) -> str:
+    """A human 'what is this' name: '{Section} {Instrument} {role}' —
+    e.g. 'Chorus Guitar riff', 'Verse Bass groove', 'Drop lead'."""
+    inst = _INSTRUMENT.get(asset.stem, asset.stem.replace("_", " ").title())
+    role = "beat" if asset.stem == "drums" else _ROLE_WORD.get(asset.content_type, "loop")
+    sec = _section_at(sections, asset.pos.start_s)
+    sec_txt = (sec.title() + " ") if sec and sec.lower() not in ("section", "") else ""
+    return f"{sec_txt}{inst} {role}".strip()
+
+
 # Skill → which assets are eligible (difficulty ceiling + loop preference).
 _SKILL = {
     "beginner": dict(max_difficulty=0.5, require_loop=True),
@@ -40,6 +100,7 @@ class AutoKitBuilder:
         skill: str = "intermediate",
         pads: int = 8,
         pack_name: Optional[str] = None,
+        sections: Optional[List] = None,
     ) -> Dict:
         rule = _SKILL.get(skill, _SKILL["intermediate"])
         # A pad must be actually usable: loopable OR a decent-scoring one-shot.
@@ -72,7 +133,8 @@ class AutoKitBuilder:
                 continue
             chosen.append(a); self._mark(a, used_ids, used_patterns, stem_counts)
 
-        return self._to_sample_pack(graph, chosen, pack_name or f"{graph.song_id} — Auto Kit", skill)
+        return self._to_sample_pack(
+            graph, chosen, pack_name or f"{graph.song_id} — Auto Kit", skill, sections or [])
 
     def _one_per_pattern(self, pool: List[PerformanceAsset]) -> List[PerformanceAsset]:
         best: Dict[str, PerformanceAsset] = {}
@@ -110,7 +172,7 @@ class AutoKitBuilder:
             used_patterns.add(a.pattern_id)
         stem_counts[a.stem] = stem_counts.get(a.stem, 0) + 1
 
-    def _to_sample_pack(self, graph, assets, name, skill) -> Dict:
+    def _to_sample_pack(self, graph, assets, name, skill, sections=None) -> Dict:
         """Emit the frozen SamplePack manifest shape (SamplePack.swift):
         packId/name/family/pads[] with per-pad loop region + loopScore so the
         app can honor real seamless loops."""
@@ -139,7 +201,10 @@ class AutoKitBuilder:
             pads.append(
                 {
                     "padIdx": idx,
-                    "name": _KIT_SLOTS[idx][0] if idx < len(_KIT_SLOTS) else a.label,
+                    # Descriptive 'what is this' name (section+instrument+role),
+                    # not a generic slot — so the user knows each pad instantly.
+                    "name": _descriptive_label(a, sections),
+                    "category": _category_for(a),
                     "family": _family_for(a.content_type),
                     "colorHint": a.color_hint,
                     "stemSlice": {"stemRole": a.stem, "startSec": q_start, "endSec": q_end},
