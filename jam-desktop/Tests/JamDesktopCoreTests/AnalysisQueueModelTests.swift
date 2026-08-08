@@ -69,7 +69,8 @@ private final class ScriptedJobs: JobSubmitting, @unchecked Sendable {
 
     func submit(
         baseURL: URL, wavFileURL: URL, filename: String,
-        extraFields: [(name: String, value: String)]
+        extraFields: [(name: String, value: String)],
+        onUploadProgress: (@Sendable (Double) -> Void)?
     ) async throws -> String {
         XCTFail("submit should not be called by the desktop queue")
         return "unused"
