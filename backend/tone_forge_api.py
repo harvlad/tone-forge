@@ -1902,7 +1902,9 @@ def _write_run_receipt(job) -> None:
                     break
         dev = result.get("device")
         device = dev.get("device_name") if isinstance(dev, dict) else dev
-        stages = ((result.get("stage_timings") or {}).get("stages") or {})
+        # Per-stage times live under result["profiling"]["stages"] (older runs
+        # used "stage_timings"); each stage is {duration_ms, ...}.
+        stages = ((result.get("profiling") or result.get("stage_timings") or {}).get("stages") or {})
 
         def _stage_sec(key: str):
             s = stages.get(key) if isinstance(stages, dict) else None
