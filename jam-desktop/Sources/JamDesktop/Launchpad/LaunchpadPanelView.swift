@@ -401,6 +401,17 @@ struct LaunchpadPanelView: View {
             if session.autoKitLoading {
                 ProgressView().controlSize(.small)
             }
+
+            // Instant Groove: one tap fires the best loop in each category
+            // (drums/bass/chords/lead/…), all bar-synced — jam immediately.
+            Button {
+                session.launchpad.instantGroove()
+            } label: {
+                Label("Instant Groove", systemImage: "bolt.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(session.launchpad.assignments.isEmpty)
+            .help("Start the best loop of each category, locked to the grid")
         }
         .overlay(alignment: .bottomTrailing) {
             if let err = session.autoKitError {
@@ -757,7 +768,15 @@ private struct PadCell: View {
         guard let assignment else {
             return Color.white.opacity(0.06)
         }
-        let hint = launchpad.colorHint(for: assignment)
+        // Color by musical CATEGORY (grouped rack) when the pad carries Riley
+        // metadata; fall back to the raw color hint for legacy chops.
+        let hint: Int
+        if assignment.chop.contentType != nil {
+            hint = LaunchpadController.category(
+                stem: assignment.stem, contentType: assignment.chop.contentType).colorHex
+        } else {
+            hint = Int(launchpad.colorHint(for: assignment))
+        }
         let base = Color(
             red: Double((hint >> 16) & 0xFF) / 255.0,
             green: Double((hint >> 8) & 0xFF) / 255.0,

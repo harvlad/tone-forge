@@ -448,7 +448,16 @@ final class SessionController: ObservableObject {
                     endSec: slice.endSec,
                     durationSec: max(0, slice.endSec - slice.startSec),
                     kind: loopable ? "phrase" : "chord",
-                    colorHint: pad.colorHint
+                    // Descriptive kit name ("Chorus Guitar riff") shown on the pad.
+                    sectionLabel: pad.name,
+                    colorHint: pad.colorHint,
+                    // Carry the kit metadata so the grid can group/color by
+                    // category and Instant Groove can pick the best per role.
+                    contentType: pad.contentType,
+                    performanceScore: pad.performanceScore,
+                    difficulty: pad.difficulty,
+                    loopable: pad.loopable,
+                    loopScore: pad.loopScore
                 )
                 return (chop, slice.stemRole)
             }

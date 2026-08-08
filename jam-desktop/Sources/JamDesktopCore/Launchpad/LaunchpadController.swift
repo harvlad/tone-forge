@@ -71,6 +71,78 @@ public final class LaunchpadController {
         public var title: String { self == .tap ? "Tap" : "Loop" }
     }
 
+    /// Musical category of a pad — groups + colors the grid and drives Instant
+    /// Groove (one best loop per category). Derived from the stem + Riley
+    /// contentType, mirroring the backend kit categorization.
+    public enum PadCategory: String, CaseIterable, Sendable {
+        case drums = "DRUMS", bass = "BASS", chords = "CHORDS", lead = "LEAD"
+        case vocal = "VOCAL", rhythm = "RHYTHM", texture = "TEXTURE"
+        case fx = "FX", stab = "STAB", sample = "SAMPLE"
+
+        /// 0xRRGGBB accent per category for the pad grid.
+        public var colorHex: Int {
+            switch self {
+            case .drums: return 0xEF4444
+            case .bass: return 0x22C55E
+            case .chords: return 0xF59E0B
+            case .lead: return 0xF97316
+            case .vocal: return 0xEC4899
+            case .rhythm: return 0x3B82F6
+            case .texture: return 0x06B6D4
+            case .fx: return 0xA855F7
+            case .stab: return 0x8B5CF6
+            case .sample: return 0x64748B
+            }
+        }
+    }
+
+    public static func category(stem: String, contentType: String?) -> PadCategory {
+        switch stem {
+        case "drums": return .drums
+        case "bass": return .bass
+        case "vocals": return .vocal
+        default: break
+        }
+        switch contentType {
+        case "rhythm_loop": return .rhythm
+        case "lead_loop": return .lead
+        case "chord_loop": return .chords
+        case "bass_groove": return .bass
+        case "texture", "drone", "ambient": return .texture
+        case "impact", "transition", "pickup", "ending": return .fx
+        case "one_shot": return .stab
+        default: return .sample
+        }
+    }
+
+    public func category(for pad: LaunchpadPad) -> PadCategory? {
+        guard let a = assignments[pad] else { return nil }
+        return Self.category(stem: a.stem, contentType: a.chop.contentType)
+    }
+
+    /// Instant Groove: start the single best-scoring loop in each core category
+    /// (drums/bass/chords/lead/rhythm/texture) — all bar-synced via the Loop
+    /// path, so one tap yields a locked, playable groove.
+    public func instantGroove() {
+        playbackMode = .loop
+        let targets: [PadCategory] = [.drums, .bass, .chords, .lead, .rhythm, .texture]
+        var best: [PadCategory: LaunchpadPad] = [:]
+        var bestScore: [PadCategory: Double] = [:]
+        for (pad, a) in assignments {
+            let cat = Self.category(stem: a.stem, contentType: a.chop.contentType)
+            let score = a.chop.performanceScore ?? a.chop.loopScore ?? 0
+            if score > (bestScore[cat] ?? -1) {
+                best[cat] = pad
+                bestScore[cat] = score
+            }
+        }
+        for cat in targets {
+            if let pad = best[cat], !activePads.contains(pad) {
+                padDown(pad)
+            }
+        }
+    }
+
     // MARK: - Observable state
 
     public var quantize: QuantizeMode = .off
