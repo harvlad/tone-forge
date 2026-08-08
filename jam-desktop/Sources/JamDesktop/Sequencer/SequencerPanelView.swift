@@ -40,6 +40,9 @@ struct SequencerPanelView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var session: SessionController
 
+    /// 30 Hz clock driver while this panel is up (mirrors PerformView).
+    private let panelTick = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
+
     var body: some View {
         VStack(spacing: 0) {
             // Close button row
@@ -60,7 +63,8 @@ struct SequencerPanelView: View {
                 player: session.sequencer,
                 store: session.patternStore,
                 padAssignmentStore: session.padAssignmentStore,
-                presets: model.session?.bundle.presets ?? [:]
+                presets: model.session?.bundle.presets ?? [:],
+                onTogglePlay: { session.toggleSequencerPlayback() }
             )
             .padding(16)
         }
@@ -72,6 +76,11 @@ struct SequencerPanelView: View {
         // route to their own P5 players). player.play() alone doesn't
         // start the engine, so ensure it here.
         .onAppear { session.ensureEngineStarted() }
+        // Drive the transport + sequencer clock while this panel is up, so
+        // a song-synced sequencer still advances when Perform (the usual
+        // ticker) isn't on screen. tick() is a clock read + absolute
+        // sequencer tick, so double-ticking with Perform is harmless.
+        .onReceive(panelTick) { _ in session.tick() }
     }
 }
 
@@ -80,6 +89,9 @@ private struct SequencerEditorView: View {
     var store: SequencerPatternStore
     var padAssignmentStore: PadAssignmentStore
     let presets: [String: BundlePreset]
+    /// Play/stop routed through the session so it starts song-synced when
+    /// the transport is rolling (phase-locked to the chop-loop bar grid).
+    var onTogglePlay: () -> Void
 
     @State private var showPadPicker = false
 
@@ -272,7 +284,7 @@ private struct SequencerEditorView: View {
             Spacer()
 
             Button {
-                player.isPlaying ? player.stop() : player.play()
+                onTogglePlay()
             } label: {
                 Image(systemName: player.isPlaying ? "stop.fill" : "play.fill")
                     .font(.title2)

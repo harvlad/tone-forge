@@ -411,9 +411,51 @@ final class SessionController: ObservableObject {
     /// throttles to ~4 Hz on the wire).
     func tick() {
         transport.tick()
+        // Start a song-synced sequencer exactly on the next downbeat (same
+        // bar grid the chop loops quantize to), then drive its clock off the
+        // SAME song time so they stay phase-locked with no drift.
+        if let start = pendingSequencerStartSec,
+           transport.positionSeconds >= start {
+            pendingSequencerStartSec = nil
+            sequencer.play(at: start, sync: true)
+        }
+        // No-op when the sequencer is standalone (own driver) or stopped.
+        sequencer.tick(songSeconds: transport.positionSeconds)
         if transport.isPlaying {
             sendTransportState(discrete: false)
         }
+    }
+
+    /// Song-time at which a queued sequencer start should fire (the next
+    /// downbeat), or nil. Consumed by `tick()`.
+    private var pendingSequencerStartSec: Double?
+
+    /// Play/stop the step sequencer. When the song transport is rolling,
+    /// queue the start for the next downbeat and run SONG-SYNCED (external
+    /// ticks drive its clock) so its steps land on the same bar grid the
+    /// chop loops use — otherwise it ran on its own wall-clock, starting at
+    /// the press time and drifting against the loops. With no song rolling
+    /// it falls back to immediate standalone playback.
+    func toggleSequencerPlayback() {
+        if sequencer.isPlaying || pendingSequencerStartSec != nil {
+            pendingSequencerStartSec = nil
+            sequencer.stop()
+            return
+        }
+        ensureEngineStarted()
+        guard transport.isPlaying else {
+            sequencer.play()   // standalone: no song to lock to
+            return
+        }
+        // Queue the start on the next bar downbeat.
+        pendingSequencerStartSec = Quantizer.nextQuantized(
+            songSeconds: transport.positionSeconds,
+            mode: .bar,
+            beats: attachedBundle?.timeline.beats ?? [],
+            downbeats: attachedBundle?.timeline.downbeats ?? [],
+            sections: attachedBundle?.timeline.sections ?? [],
+            tempoBpm: attachedBundle?.meta.tempoBpm
+        )
     }
 
     // MARK: - Session attach
