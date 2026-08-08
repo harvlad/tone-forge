@@ -43,6 +43,13 @@ _ROLE_CATEGORY = {
 }
 # stem wins for the strong instrument categories; content_type covers the rest.
 _STEM_CATEGORY = {"drums": "DRUMS", "bass": "BASS", "vocals": "VOCAL"}
+# Per-category accent (matches the desktop PadCategory palette) so every client
+# renders the same grouped rack from colorHint — no per-client color logic.
+_CATEGORY_HEX = {
+    "DRUMS": "#EF4444", "BASS": "#22C55E", "CHORDS": "#F59E0B", "LEAD": "#F97316",
+    "VOCAL": "#EC4899", "RHYTHM": "#3B82F6", "TEXTURE": "#06B6D4", "FX": "#A855F7",
+    "STAB": "#8B5CF6", "SAMPLE": "#64748B",
+}
 _INSTRUMENT = {
     "drums": "Drums", "bass": "Bass", "vocals": "Vocal",
     "other": "Guitar", "guitar": "Guitar", "guitar_center": "Guitar",
@@ -206,7 +213,9 @@ class AutoKitBuilder:
                     "name": _descriptive_label(a, sections),
                     "category": _category_for(a),
                     "family": _family_for(a.content_type),
-                    "colorHint": a.color_hint,
+                    # Category color so every client shows a grouped, color-coded
+                    # rack straight from colorHint (no per-client color logic).
+                    "colorHint": _CATEGORY_HEX.get(_category_for(a), a.color_hint),
                     "stemSlice": {"stemRole": a.stem, "startSec": q_start, "endSec": q_end},
                     # performance-intelligence additive fields (app reads if present):
                     "loopStartSec": round(loop_start, 4),

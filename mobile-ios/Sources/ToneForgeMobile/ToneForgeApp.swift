@@ -1783,6 +1783,38 @@ public final class AppState: ObservableObject {
         }
     }
 
+    /// Instant Groove: fire the single best-scoring loop in each core category
+    /// (drums/bass/chords/lead/rhythm/texture) of the active kit — each loops
+    /// (pad.loopable) bar-synced (defaultQuantize), so one tap yields a locked,
+    /// playable groove.
+    public func instantGroove() {
+        guard let pack = activeSamplePack else { return }
+        let packId = pack.pack.packId
+        let core: Set<String> = ["DRUMS", "BASS", "CHORDS", "LEAD", "RHYTHM", "TEXTURE"]
+        var best: [String: SamplePad] = [:]
+        var bestScore: [String: Double] = [:]
+        for pad in pack.pack.pads {
+            guard let cat = pad.category, core.contains(cat) else { continue }
+            let s = pad.performanceScore ?? pad.loopScore ?? 0
+            if s > (bestScore[cat] ?? -1) {
+                best[cat] = pad
+                bestScore[cat] = s
+            }
+        }
+        for pad in best.values {
+            _ = sampleScheduler.triggerRaw(padIdx: pad.padIdx, packId: packId)
+        }
+    }
+
+    /// Global stop: silence every sounding pad in the active kit.
+    public func stopAllPads() {
+        guard let pack = activeSamplePack else { return }
+        let packId = pack.pack.packId
+        for pad in pack.pack.pads {
+            sampleScheduler.release(padIdx: pad.padIdx, packId: packId)
+        }
+    }
+
     /// Load a Song DNA pack's buffers WITHOUT making it the active
     /// Contribute pack — Jam Samples triggers it by explicit packId, so
     /// it must not swap the Contribute grid / hide its tabs (shared

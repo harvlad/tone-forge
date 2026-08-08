@@ -172,6 +172,9 @@ public struct SamplePad: Codable, Sendable, Equatable {
     public let performanceScore: Double?
     /// Difficulty (0..1) — for adaptive skill filtering.
     public let difficulty: Double?
+    /// Musical category (DRUMS/BASS/CHORDS/LEAD/VOCAL/RHYTHM/TEXTURE/FX/STAB) —
+    /// drives grid grouping/color + Instant Groove role selection.
+    public let category: String?
 
     public init(
         padIdx: Int,
@@ -191,7 +194,8 @@ public struct SamplePad: Codable, Sendable, Equatable {
         loopable: Bool? = nil,
         contentType: String? = nil,
         performanceScore: Double? = nil,
-        difficulty: Double? = nil
+        difficulty: Double? = nil,
+        category: String? = nil
     ) {
         self.padIdx = padIdx
         self.name = name
@@ -211,6 +215,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.contentType = contentType
         self.performanceScore = performanceScore
         self.difficulty = difficulty
+        self.category = category
     }
 
     // Custom decoding to default `gainDb` when the key is absent.
@@ -221,7 +226,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         case padIdx, name, family, colorHint, filename, chokeGroup,
              loopPointSec, gainDb, defaultQuantize, stemSlice, effects,
              loopStartSec, loopEndSec, loopScore, loopable, contentType,
-             performanceScore, difficulty
+             performanceScore, difficulty, category
     }
 
     public init(from decoder: Decoder) throws {
@@ -244,6 +249,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.contentType = try c.decodeIfPresent(String.self, forKey: .contentType)
         self.performanceScore = try c.decodeIfPresent(Double.self, forKey: .performanceScore)
         self.difficulty = try c.decodeIfPresent(Double.self, forKey: .difficulty)
+        self.category = try c.decodeIfPresent(String.self, forKey: .category)
     }
 }
 

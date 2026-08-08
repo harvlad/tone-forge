@@ -231,13 +231,42 @@ struct PacksBrowserView: View {
             .buttonStyle(.plain)
             .disabled(appState.currentBundle == nil || appState.autoKitLoading)
             .tfLibraryRowChrome()
+
+            // One-tap groove: fire the best loop of each category, bar-synced.
+            Button {
+                appState.instantGroove()
+                onActivated?()
+            } label: {
+                HStack {
+                    Label("Instant Groove", systemImage: "bolt.fill")
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.activeSamplePack == nil)
+            .tfLibraryRowChrome()
+
+            // Global stop — silence every pad at once.
+            Button {
+                appState.stopAllPads()
+            } label: {
+                HStack {
+                    Label("Stop All", systemImage: "stop.circle.fill")
+                    Spacer()
+                }
+                .foregroundStyle(.red)
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.activeSamplePack == nil)
+            .tfLibraryRowChrome()
+
             if let err = appState.autoKitError {
                 Text(err).font(.footnote).foregroundStyle(.red)
             }
         } header: {
             Text("Perform")
         } footer: {
-            Text("An auto-built, seamlessly-loopable kit of this song's best material — one tap to play along.")
+            Text("Auto Kit builds a labelled, color-coded rack of this song's best material. Instant Groove fires the best loop of each category, locked to the grid — one tap to jam.")
         }
     }
 
