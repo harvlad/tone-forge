@@ -59,7 +59,7 @@ struct LaunchpadPanelView: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 620, idealWidth: 720, minHeight: 700, idealHeight: 800)
+        .frame(minWidth: 900, idealWidth: 1040, minHeight: 720, idealHeight: 860)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
