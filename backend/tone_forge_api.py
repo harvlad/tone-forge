@@ -1885,10 +1885,84 @@ async def analyze_stream_endpoint(
 # ---------------------------------------------------------------------------
 
 
+_RUN_RECEIPTS_PATH = Path(__file__).parent / "data" / "run_receipts.jsonl"
+
+
+def _write_run_receipt(job) -> None:
+    """Durable per-run record so we can see WHAT happened in a run (device,
+    engine, timing, graph, errors) without SSH-ing into prod. Appended to
+    data/run_receipts.jsonl on every terminal job; read via
+    /api/admin/run-receipts. Best-effort — never affects the job outcome."""
+    try:
+        result: dict = {}
+        if getattr(job, "history_id", None):
+            for e in _load_history():
+                if e.get("id") == job.history_id:
+                    result = e.get("result") or {}
+                    break
+        dev = result.get("device")
+        device = dev.get("device_name") if isinstance(dev, dict) else dev
+        stages = ((result.get("stage_timings") or {}).get("stages") or {})
+
+        def _stage_sec(key: str):
+            s = stages.get(key) if isinstance(stages, dict) else None
+            if isinstance(s, dict) and isinstance(s.get("duration_ms"), (int, float)):
+                return round(s["duration_ms"] / 1000, 1)
+            return None
+
+        pg = result.get("performance_graph")
+        receipt = {
+            "ts": time.time(),
+            "job_id": job.id,
+            "history_id": getattr(job, "history_id", None),
+            "filename": getattr(job, "filename", None),
+            "status": job.status,
+            "error": (str(job.error)[:300] if getattr(job, "error", None) else None),
+            "kind": getattr(job, "kind", None),
+            "device": device,
+            "engine": result.get("analysis_engine"),
+            "processing_time_sec": (round(result["processing_time"], 1)
+                                    if isinstance(result.get("processing_time"), (int, float)) else None),
+            "separation_sec": _stage_sec("stem_separation"),
+            "midi_sec": _stage_sec("midi_extraction_wallclock"),
+            "graph_assets": (len(pg.get("assets") or []) if isinstance(pg, dict) else 0),
+            "stems": len(result.get("stems_paths") or {}),
+            "queue_to_done_sec": (round(time.time() - job.created_at, 1)
+                                  if getattr(job, "created_at", None) else None),
+        }
+        _RUN_RECEIPTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_RUN_RECEIPTS_PATH, "a") as f:
+            f.write(json.dumps(receipt, default=str) + "\n")
+    except Exception:  # noqa: BLE001
+        logger.exception("run receipt write failed")
+
+
+@app.get("/api/admin/run-receipts")
+async def get_run_receipts(request: Request, limit: int = 50) -> JSONResponse:
+    """Recent run receipts, newest first (admin-guarded). One-stop view of what
+    happened in each analysis — device, engine, timing, graph, errors."""
+    if not _admin_request_authorized(request):
+        raise HTTPException(status_code=403, detail="admin token required")
+    rows: list[dict] = []
+    try:
+        if _RUN_RECEIPTS_PATH.exists():
+            lines = _RUN_RECEIPTS_PATH.read_text().splitlines()
+            for line in lines[-max(1, min(limit, 500)):]:
+                try:
+                    rows.append(json.loads(line))
+                except Exception:  # noqa: BLE001
+                    continue
+    except Exception:  # noqa: BLE001
+        logger.exception("run receipts read failed")
+    rows.reverse()
+    return JSONResponse({"count": len(rows), "receipts": rows})
+
+
 def _on_job_complete(job) -> None:
     """Terminal-state hook. Inert until push infra exists — this is the
     APNs seam. A device token is only present once /api/register-device
     is wired on the client."""
+    _write_run_receipt(job)
     if job is not None and job.device_token:
         logger.info(
             "job %s reached %s with device_token set; APNs push not yet wired",
