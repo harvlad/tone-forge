@@ -444,10 +444,11 @@ struct LaunchpadPanelView: View {
             Button {
                 Task { await session.loadAutoKit() }
             } label: {
-                Label("Auto Kit", systemImage: "wand.and.stars")
+                Image(systemName: "wand.and.stars")
+                    .frame(width: 30, height: 24)
             }
             .disabled(session.autoKitLoading)
-            .help("Load the auto-built Launchpad kit for this song")
+            .help("Auto Kit — load the auto-built Launchpad kit for this song")
             if session.autoKitLoading {
                 ProgressView().controlSize(.small)
             }
@@ -457,11 +458,12 @@ struct LaunchpadPanelView: View {
             Button {
                 session.launchpad.instantGroove()
             } label: {
-                Label("Instant Groove", systemImage: "bolt.fill")
+                Image(systemName: "bolt.fill")
+                    .frame(width: 30, height: 24)
             }
             .buttonStyle(.borderedProminent)
             .disabled(session.launchpad.assignments.isEmpty)
-            .help("Start the best loop of each category, locked to the grid")
+            .help("Instant Groove — start the best loop of each category, locked to the grid")
         }
         .overlay(alignment: .bottomTrailing) {
             if let err = session.autoKitError {
