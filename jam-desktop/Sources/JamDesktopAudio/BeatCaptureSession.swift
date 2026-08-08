@@ -60,7 +60,18 @@ public final class BeatCaptureSession: ObservableObject {
     /// Fired on the main actor when the duration cap auto-stops.
     public var onAutoStop: ((Take) -> Void)?
 
+    /// The shared engine's input node, when the host wants captures
+    /// serialized on it (avoids a second AVAudioEngine on one mic → 0/0
+    /// format). Returns nil to force the private-engine path.
+    public var sharedInput: (() -> AVAudioInputNode?)?
+    /// Whether the shared engine is running (and holds the mic).
+    public var sharedEngineRunning: (() -> Bool)?
+    /// Host frees / restores the shared input meter around the capture.
+    public var willOpenInput: (() -> Void)?
+    public var didCloseInput: (() -> Void)?
+
     private var captureEngine: AVAudioEngine?
+    private var tappedSharedInput = false
     private var worker: BeatCaptureWorker?
     private var elapsedTimer: Timer?
     private var startedAt: Date?
@@ -84,27 +95,45 @@ public final class BeatCaptureSession: ObservableObject {
             }
         )
 
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw CaptureError.noInputAvailable
+        // Prefer tapping the shared engine's input (serialized single mic);
+        // fall back to a private engine only when the shared engine isn't
+        // running (so it isn't holding the mic).
+        willOpenInput?()
+
+        if (sharedEngineRunning?() ?? false), let shared = sharedInput?() {
+            let format = shared.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                didCloseInput?()
+                throw CaptureError.noInputAvailable
+            }
+            shared.installTap(onBus: 0, bufferSize: 1024, format: format) {
+                buffer, _ in
+                worker.ingest(buffer)
+            }
+            self.tappedSharedInput = true
+        } else {
+            let engine = AVAudioEngine()
+            let input = engine.inputNode
+            let format = input.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                didCloseInput?()
+                throw CaptureError.noInputAvailable
+            }
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) {
+                buffer, _ in
+                worker.ingest(buffer)
+            }
+            engine.prepare()
+            do {
+                try engine.start()
+            } catch {
+                input.removeTap(onBus: 0)
+                didCloseInput?()
+                throw CaptureError.engineStartFailed(error.localizedDescription)
+            }
+            self.captureEngine = engine
         }
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) {
-            buffer, _ in
-            worker.ingest(buffer)
-        }
-
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            throw CaptureError.engineStartFailed(error.localizedDescription)
-        }
-
-        self.captureEngine = engine
         self.worker = worker
         self.startedAt = Date()
         self.elapsedSec = 0
@@ -148,9 +177,15 @@ public final class BeatCaptureSession: ObservableObject {
         startedAt = nil
         level = 0
 
-        captureEngine?.inputNode.removeTap(onBus: 0)
-        captureEngine?.stop()
-        captureEngine = nil
+        if tappedSharedInput {
+            sharedInput?()?.removeTap(onBus: 0)
+            tappedSharedInput = false
+        } else {
+            captureEngine?.inputNode.removeTap(onBus: 0)
+            captureEngine?.stop()
+            captureEngine = nil
+        }
+        didCloseInput?()
 
         guard let worker else { return [] }
         self.worker = nil

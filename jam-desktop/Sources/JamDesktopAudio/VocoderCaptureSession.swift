@@ -68,8 +68,22 @@ public final class VocoderCaptureSession: ObservableObject {
     /// capture, after full-quality processing.
     public var onAutoStop: ((Take) -> Void)?
 
+    /// Called just before the capture claims the hardware input — the
+    /// host frees the shared input meter (removes its tap on bus 0) so
+    /// this session can install its own. Paired with `didCloseInput`.
+    public var willOpenInput: (() -> Void)?
+    /// Called after the capture releases the input — the host restores
+    /// the shared input meter.
+    public var didCloseInput: (() -> Void)?
+
     private let monitor: VocoderMonitor
+    /// A private engine, used ONLY as a fallback when the shared engine
+    /// isn't running (and therefore isn't holding the mic). The normal
+    /// path taps the shared engine's input directly.
     private var captureEngine: AVAudioEngine?
+    /// True when this capture tapped the shared engine's input node
+    /// (vs its own `captureEngine`), so teardown removes the right tap.
+    private var tappedSharedInput = false
     private var worker: VocoderPreviewWorker?
     private var program: VocoderProgram?
     private var elapsedTimer: Timer?
@@ -104,29 +118,52 @@ public final class VocoderCaptureSession: ObservableObject {
             }
         )
 
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            monitor.ring.end()
-            throw CaptureError.noInputAvailable
+        // Free the shared input meter so bus 0 has no tap, then tap the
+        // shared engine's input directly (one engine, one tap on the
+        // single hardware mic). Only fall back to a private engine when
+        // the shared engine isn't running — then it isn't holding the mic
+        // and a second engine resolves the device cleanly.
+        willOpenInput?()
+
+        if monitor.isEngineRunning {
+            let input = monitor.sharedInputNode
+            let format = input.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                didCloseInput?()
+                monitor.ring.end()
+                throw CaptureError.noInputAvailable
+            }
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) {
+                buffer, _ in
+                worker.ingest(buffer)
+            }
+            self.tappedSharedInput = true
+            // No engine start — the shared engine is already running.
+        } else {
+            let engine = AVAudioEngine()
+            let input = engine.inputNode
+            let format = input.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                didCloseInput?()
+                monitor.ring.end()
+                throw CaptureError.noInputAvailable
+            }
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) {
+                buffer, _ in
+                worker.ingest(buffer)
+            }
+            engine.prepare()
+            do {
+                try engine.start()
+            } catch {
+                input.removeTap(onBus: 0)
+                didCloseInput?()
+                monitor.ring.end()
+                throw CaptureError.engineStartFailed(error.localizedDescription)
+            }
+            self.captureEngine = engine
         }
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) {
-            buffer, _ in
-            worker.ingest(buffer)
-        }
-
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            monitor.ring.end()
-            throw CaptureError.engineStartFailed(error.localizedDescription)
-        }
-
-        self.captureEngine = engine
         self.worker = worker
         self.program = program
         self.startedAt = Date()
@@ -186,9 +223,16 @@ public final class VocoderCaptureSession: ObservableObject {
         isCapturing = false
         startedAt = nil
 
-        captureEngine?.inputNode.removeTap(onBus: 0)
-        captureEngine?.stop()
-        captureEngine = nil
+        if tappedSharedInput {
+            monitor.sharedInputNode.removeTap(onBus: 0)
+            tappedSharedInput = false
+        } else {
+            captureEngine?.inputNode.removeTap(onBus: 0)
+            captureEngine?.stop()
+            captureEngine = nil
+        }
+        // Restore the shared input meter (reinstalls its bus-0 tap).
+        didCloseInput?()
         underrunCount = monitor.ring.underruns
         monitor.ring.end()
 

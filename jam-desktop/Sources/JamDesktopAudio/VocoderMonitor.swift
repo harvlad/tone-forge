@@ -146,6 +146,17 @@ public final class VocoderMonitor: ObservableObject {
         self.avEngine = avEngine
     }
 
+    /// The shared engine's hardware input. Capture sessions tap THIS
+    /// (after freeing the input meter) instead of opening a second
+    /// AVAudioEngine — two engines on one built-in mic make the second
+    /// engine's input resolve to a 0 Hz / 0-channel format on macOS.
+    public var sharedInputNode: AVAudioInputNode { avEngine.inputNode }
+
+    /// Whether the shared engine is live (and thus already owns the mic).
+    /// When false the shared engine isn't holding the input, so a capture
+    /// may safely open its own private engine instead.
+    public var isEngineRunning: Bool { avEngine.isRunning }
+
     /// Attach the source node to the engine (connect to `outputNode`
     /// which should be musicBus). Idempotent; call before engine start.
     public func attach(outputNode: AVAudioNode) {

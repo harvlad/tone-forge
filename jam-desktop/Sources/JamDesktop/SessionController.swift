@@ -161,6 +161,18 @@ final class SessionController: ObservableObject {
         }
 
         monitor.bind(to: bridge)
+
+        // Serialize mic capture on the single shared engine input: free the
+        // input meter (bus-0 tap) while capturing, restore it after. Without
+        // this the capture sessions opened a second AVAudioEngine on the same
+        // built-in mic → 0 Hz / 0-channel format → "No audio input device".
+        vocoderCapture.willOpenInput = { [weak self] in self?.monitor.stopInputMeter() }
+        vocoderCapture.didCloseInput = { [weak self] in self?.monitor.startInputMeter() }
+        beatCapture.sharedInput = { [weak self] in self?.vocoderMonitor.sharedInputNode }
+        beatCapture.sharedEngineRunning = { [weak self] in self?.vocoderMonitor.isEngineRunning ?? false }
+        beatCapture.willOpenInput = { [weak self] in self?.monitor.stopInputMeter() }
+        beatCapture.didCloseInput = { [weak self] in self?.monitor.startInputMeter() }
+
         engine.onGraphReattached = { [weak self] in
             self?.monitor.startInputMeter()
             self?.chopPlayer.reattach()
