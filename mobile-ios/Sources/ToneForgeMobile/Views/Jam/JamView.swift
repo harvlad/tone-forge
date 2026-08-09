@@ -352,6 +352,7 @@ struct JamView: View {
                     if jamSettings.padMode == .samples && appState.activeKitIsAutoKit {
                         instantGrooveChip
                         stopAllChip
+                        loopLockChip
                     }
                     quantizeChip
                     metronomeChip
@@ -388,6 +389,25 @@ struct JamView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Instant Groove: play the best loop of every category")
+    }
+
+    /// Loop lock: hold triggered loops until the shared cycle restarts so
+    /// every pad phase-locks to one 8 s grid and layers coherently.
+    private var loopLockChip: some View {
+        Button {
+            Haptics.selectionChanged()
+            appState.sampleScheduler.loopLock.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: appState.sampleScheduler.loopLock ? "lock.fill" : "lock.open")
+                    .font(.caption)
+                Text("Lock").font(TFTheme.chipFont)
+            }
+            .tfChip(active: appState.sampleScheduler.loopLock)
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(appState.sampleScheduler.loopLock ? "Loop lock on" : "Loop lock off")
     }
 
     /// Global stop for the whole kit — silences every sounding pad.

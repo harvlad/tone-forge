@@ -601,6 +601,24 @@ public final class SampleVoicePool: ObservableObject {
         band.bypass = fx.filterCutoffHz >= 19_999
     }
 
+    /// Normalized loop position (0..<1) for a currently-looping pad, or nil
+    /// if it isn't ringing a loop. Drives the on-pad loop playhead — the UI
+    /// polls this from a 30 Hz TimelineView. Derived from how long the voice
+    /// has been audible modulo one loop pass (host-clock based, no per-frame
+    /// bookkeeping).
+    public func loopPhase(padKey: SamplePadKey) -> Double? {
+        for slot in slots where slot.isActive && slot.isLooping
+            && slot.padKey == padKey && slot.bufferDurationSec > 0 {
+            let now = mach_absolute_time()
+            guard now > slot.audibleStartHostTime else { return 0 }
+            let elapsedTicks = Double(now - slot.audibleStartHostTime)
+            let elapsedSec = elapsedTicks / TransportClock.ticksPerSecond()
+            let phase = elapsedSec.truncatingRemainder(dividingBy: slot.bufferDurationSec)
+            return max(0, min(0.9999, phase / slot.bufferDurationSec))
+        }
+        return nil
+    }
+
     /// Recompute the published ringing-loop set from slot truth.
     /// Assigns only on change so SwiftUI isn't poked on every
     /// one-shot trigger.

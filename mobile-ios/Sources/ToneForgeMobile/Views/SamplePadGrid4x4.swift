@@ -339,7 +339,8 @@ struct SamplePadGrid4x4: View {
                             pressed: coordinator.pressedPads.contains(
                                 gridRow * 10 + gridCol),
                             ringing: ringing.contains(gridRow * 10 + gridCol),
-                            pulse: coordinator.sequencePulses[gridRow * 10 + gridCol]
+                            pulse: coordinator.sequencePulses[gridRow * 10 + gridCol],
+                            padKey: padKey(gridRow: gridRow, gridCol: gridCol)
                         )
                     }
                 }
@@ -347,12 +348,22 @@ struct SamplePadGrid4x4: View {
         }
     }
 
+    /// The active pack's SamplePadKey for a sample-quadrant grid cell
+    /// (rows 5–8, cols 1–4). Pack padIdx = (8-row)*4 + (col-1) — the inverse
+    /// of the quadrant mapping. Nil when no pack is active.
+    private func padKey(gridRow: Int, gridCol: Int) -> SamplePadKey? {
+        guard let packId = appState.activeSamplePack?.pack.packId else { return nil }
+        let padIdx = (8 - gridRow) * 4 + (gridCol - 1)
+        return SamplePadKey(packId: packId, padIdx: padIdx)
+    }
+
     @ViewBuilder
     private func tile(
         visual: PadVisual,
         pressed: Bool,
         ringing: Bool,
-        pulse: SequencePulse? = nil
+        pulse: SequencePulse? = nil,
+        padKey: SamplePadKey? = nil
     ) -> some View {
         let tint = Self.color(fromHex: visual.colorHint)
         ZStack(alignment: .topLeading) {
@@ -415,6 +426,11 @@ struct SamplePadGrid4x4: View {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(.white.opacity(0.25))
             }
+
+            // Loop playhead across the tile — only while ringing a loop.
+            if ringing, let padKey {
+                loopPlayhead(padKey: padKey)
+            }
         }
         .overlay(
             RoundedRectangle(cornerRadius: 10)
@@ -429,6 +445,28 @@ struct SamplePadGrid4x4: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityLabel(visual.label ?? "Empty pad")
+    }
+
+    /// Elapsed sweep + a bright playhead line showing where the loop is at.
+    /// Polled at 30 Hz; extracted so the tile body type-checks quickly.
+    @ViewBuilder
+    private func loopPlayhead(padKey: SamplePadKey) -> some View {
+        SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
+            GeometryReader { geo in
+                let p = CGFloat(appState.sampleVoicePool.loopPhase(padKey: padKey) ?? 0)
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.white.opacity(0.16))
+                        .frame(width: max(0, w * p))
+                    Rectangle()
+                        .fill(Color.white.opacity(0.95))
+                        .frame(width: 2)
+                        .offset(x: max(0, w * p - 1))
+                }
+            }
+            .allowsHitTesting(false)
+        }
     }
 
     private static func symbolName(_ badge: PadBadge) -> String {

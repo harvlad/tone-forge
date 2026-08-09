@@ -63,6 +63,10 @@ public final class SampleScheduler: ObservableObject {
 
     /// Live user settings mirrored from SampleSettingsStore.
     @Published public var quantize: QuantizeMode = .off
+    /// Loop lock: when on, a looping pad starts on the next SHARED loop-cycle
+    /// boundary so every loop phase-locks to one 8 s grid and layers
+    /// coherently. Off = normal quantize (instant when quantize is .off).
+    @Published public var loopLock: Bool = true
     @Published public var holdMode: HoldMode = .hold
     /// Session-view latch: force the next trigger(s) to loop their
     /// buffer regardless of loop points / transforms. Set (and
@@ -190,6 +194,25 @@ public final class SampleScheduler: ObservableObject {
     /// tempo — quantize degrades to .off). AppState calls this when
     /// the Sketch tab activates and restores the bundle context via
     /// `updateBundle` when it deactivates.
+    /// Sample-loop length (s): the 8 s kit window snapped to whole bars at
+    /// the song tempo, so loops stay musical. The shared lock cycle uses
+    /// this. Falls back to 8 s without tempo.
+    private var loopLengthSeconds: Double {
+        guard let bpm = tempoBpm, bpm > 0 else { return 8.0 }
+        let barSec = (60.0 / bpm) * 4.0
+        let bars = max(1.0, (8.0 / barSec).rounded())
+        return bars * barSec
+    }
+
+    /// Next shared loop-cycle boundary at/after `now` (multiples of
+    /// `loopLengthSeconds` from song origin) with a small grace.
+    private func nextLoopBoundary(after now: Double) -> Double {
+        let L = loopLengthSeconds
+        guard L > 0 else { return now }
+        let k = ((now + 0.08) / L).rounded(.down) + 1
+        return k * L
+    }
+
     public func updateSyntheticContext(tempoBpm: Double?) {
         self.beats = []
         self.downbeats = []
@@ -558,14 +581,23 @@ public final class SampleScheduler: ObservableObject {
         let effectiveQuantize: QuantizeMode = transportRunning
             ? (pad.defaultQuantize ?? quantize)
             : .off
-        let targetSong = Quantizer.nextQuantized(
-            songSeconds: nowSong,
-            mode: effectiveQuantize,
-            beats: beats,
-            downbeats: downbeats,
-            sections: sections,
-            tempoBpm: tempoBpm
-        )
+        // Will this trigger loop? (Same predicate as the SampleTrigger below.)
+        let toggleLoop = (holdMode == .toggle)
+            && (pad.loopPointSec != nil || effectiveQuantize == .off)
+        let willLoop = toggleLoop || loopOverride || pad.loopPointSec != nil
+            || (pad.loopable ?? false) || (loopResolver?(pid, padIdx) ?? false)
+        // Loop lock: a looping pad starts on the shared loop-cycle boundary so
+        // all loops phase-lock and stack coherently; otherwise normal quantize.
+        let targetSong: Double = (loopLock && willLoop && transportRunning)
+            ? nextLoopBoundary(after: nowSong)
+            : Quantizer.nextQuantized(
+                songSeconds: nowSong,
+                mode: effectiveQuantize,
+                beats: beats,
+                downbeats: downbeats,
+                sections: sections,
+                tempoBpm: tempoBpm
+            )
 
         #if canImport(AVFoundation)
         guard let baseBuffer = entry.buffers[padIdx] else { return .padNotFound }
@@ -578,9 +610,6 @@ public final class SampleScheduler: ObservableObject {
             pool.release(padKey: padKey)
         }
 
-        let loop: Bool = (holdMode == .toggle) && (pad.loopPointSec != nil || effectiveQuantize == .off)
-        // hold-mode always one-shot; toggle-mode loops if the pad has
-        // a loop point or if quantize is off (short loops).
         let effects = effectsResolver?(pid, padIdx, pad.effects)
             ?? pad.effects
             ?? .neutral
@@ -596,9 +625,7 @@ public final class SampleScheduler: ObservableObject {
             // A Riley auto-kit pad is "seamlessly loopable" via loopable+loopScore
             // but carries NO loopPointSec, so it was silently one-shot. Honor
             // loopable so it actually loops (with the loopScore crossfade above).
-            loop: loop || loopOverride || pad.loopPointSec != nil
-                || (pad.loopable ?? false)
-                || (loopResolver?(pid, padIdx) ?? false),
+            loop: willLoop,
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,
             effects: effects,
