@@ -66,7 +66,12 @@ struct LaunchpadPanelView: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 900, idealWidth: 1040, minHeight: 720, idealHeight: 860)
+        // maxWidth/maxHeight matter now that the panel floats as an overlay:
+        // without them it stretched to the whole window, leaving the header
+        // controls scattered across a huge row and the square grid marooned
+        // at the leading edge.
+        .frame(minWidth: 900, idealWidth: 1040, maxWidth: 1120,
+               minHeight: 720, idealHeight: 860, maxHeight: 920)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
@@ -354,12 +359,13 @@ struct LaunchpadPanelView: View {
 
     // MARK: - Controls
 
-    /// Tiny secondary caption naming the picker to its right.
+    /// Tiny secondary caption naming the picker to its right. Rendered as
+    /// part of a tight caption+picker pair (see call sites) so the pair
+    /// reads as one labeled control, not two floating row items.
     private func pickerCaption(_ title: String) -> some View {
         Text(title)
             .font(.caption2)
             .foregroundStyle(.secondary)
-            .padding(.leading, 2)
     }
 
     /// Shared loop-cycle strip: elapsed sweep of the current cycle, a flash
@@ -462,36 +468,42 @@ struct LaunchpadPanelView: View {
                   ? "Augment ON: samples replace the song's stem while playing (tap to layer instead)"
                   : "Augment OFF: samples layer over the song (tap to replace the stem)")
 
-            // Each picker gets a small visible caption (UX audit fix #3:
-            // three anonymous label-hidden dropdowns were indistinguishable).
-            pickerCaption("Quantize")
-            Picker("Quantize", selection: quantizeBinding) {
-                ForEach(QuantizeMode.allCases, id: \.self) {
-                    Text($0.rawValue).tag($0)
+            // Each picker gets a small visible caption (UX audit fix #3),
+            // paired tightly so caption+control read as one labeled unit.
+            HStack(spacing: 5) {
+                pickerCaption("Quantize")
+                Picker("Quantize", selection: quantizeBinding) {
+                    ForEach(QuantizeMode.allCases, id: \.self) {
+                        Text($0.rawValue).tag($0)
+                    }
                 }
+                .labelsHidden()
+                .fixedSize()
             }
-            .labelsHidden()
-            .fixedSize()
             .help("Quantize")
 
-            pickerCaption("Stem")
-            Picker("Stem", selection: $selectedStem) {
-                ForEach(stemRoles, id: \.self) {
-                    Text($0.capitalized).tag($0)
+            HStack(spacing: 5) {
+                pickerCaption("Stem")
+                Picker("Stem", selection: $selectedStem) {
+                    ForEach(stemRoles, id: \.self) {
+                        Text($0.capitalized).tag($0)
+                    }
                 }
+                .labelsHidden()
+                .fixedSize()
             }
-            .labelsHidden()
-            .fixedSize()
             .help("Source stem")
 
-            pickerCaption("Slices")
-            Picker("Slices", selection: $selectedSliceMode) {
-                ForEach(LaunchpadController.sliceModes, id: \.self) {
-                    Text($0.capitalized).tag($0)
+            HStack(spacing: 5) {
+                pickerCaption("Slices")
+                Picker("Slices", selection: $selectedSliceMode) {
+                    ForEach(LaunchpadController.sliceModes, id: \.self) {
+                        Text($0.capitalized).tag($0)
+                    }
                 }
+                .labelsHidden()
+                .fixedSize()
             }
-            .labelsHidden()
-            .fixedSize()
             .help("Slice mode")
 
             Button("Load") {
