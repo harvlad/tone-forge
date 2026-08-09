@@ -14,6 +14,11 @@ from typing import Dict, List, Optional
 from .graph import ContentType, MusicalGraph, PerformanceAsset
 
 # Ideal 8-pad role layout (content types preferred per slot, best-first).
+# Fixed kit-pad sample window (seconds). Every auto-kit pad is an 8 s loop
+# from the asset's start; the client bar-snaps + phase-locks them so they
+# layer musically. Matches StemSlice.maxChopDurationSec on the clients.
+_SAMPLE_LEN_SEC = 8.0
+
 _KIT_SLOTS = [
     ("Main riff", [ContentType.RHYTHM_LOOP, ContentType.LEAD_LOOP, ContentType.CHORD_LOOP]),
     ("Variation", [ContentType.LEAD_LOOP, ContentType.RHYTHM_LOOP, ContentType.CHORD_LOOP]),
@@ -196,20 +201,19 @@ class AutoKitBuilder:
 
         pads = []
         for idx, a in enumerate(assets):
+            # Every kit pad is a fixed 8-second loop window from the asset's
+            # start. The client snaps the loop length to whole bars and
+            # phase-locks all pads to one shared cycle, so pressing several
+            # pads layers them coherently (and drums give a continuous beat).
+            # The user can still shorten/extend this window in the chop editor.
             q_start = a.pos.start_s
-            q_end = a.pos.end_s
-            # Loop region: the analyzer's optimized seam when it repaired one,
-            # else the phrase bounds. stemSlice stays the full phrase (initial
-            # play region); loopStart/End is the sub-region to cycle.
+            q_end = q_start + _SAMPLE_LEN_SEC
+            # Loop the whole 8-second window (full-slice loop).
             loop_start, loop_end = q_start, q_end
+            # Carry the analyzer's per-seam crossfade measurement when present
+            # (the app prefers it over its coarse loopScore→ms fallback).
             lp = loops_by_id.get(getattr(a, "source_id", None))
             qual = getattr(lp, "quality", None) if lp else None
-            os_ = getattr(qual, "optimized_start_s", None) if qual else None
-            oe_ = getattr(qual, "optimized_end_s", None) if qual else None
-            if isinstance(os_, (int, float)) and isinstance(oe_, (int, float)) and oe_ > os_:
-                loop_start, loop_end = os_, oe_
-            # The analyzer's per-seam crossfade measurement (ms). The app
-            # prefers this over its coarse loopScore→ms fallback when > 0.
             xfade_ms = getattr(qual, "crossfade_ms", None) if qual else None
             pads.append(
                 {
@@ -222,18 +226,20 @@ class AutoKitBuilder:
                     # Category color so every client shows a grouped, color-coded
                     # rack straight from colorHint (no per-client color logic).
                     "colorHint": _CATEGORY_HEX.get(_category_for(a), a.color_hint),
-                    "stemSlice": {"stemRole": a.stem, "startSec": q_start, "endSec": q_end},
+                    "stemSlice": {"stemRole": a.stem, "startSec": round(q_start, 4), "endSec": round(q_end, 4)},
                     # performance-intelligence additive fields (app reads if present):
                     "loopStartSec": round(loop_start, 4),
                     "loopEndSec": round(loop_end, 4),
                     "loopScore": round(a.loop_confidence, 3),
                     **({"crossfadeMs": round(float(xfade_ms), 2)}
                        if isinstance(xfade_ms, (int, float)) and xfade_ms > 0 else {}),
-                    "loopable": a.loopable,
+                    # Every pad loops the 8 s window so all samples can layer
+                    # continuously — drums keep a beat, and held loops stack.
+                    "loopable": True,
                     "contentType": a.content_type.value,
                     "performanceScore": round(a.performance_score, 3),
                     "difficulty": round(a.difficulty, 3),
-                    "defaultQuantize": "1 bar" if a.pos.length_bars >= 1 else "1/2",
+                    "defaultQuantize": "1 bar",
                 }
             )
         return {
