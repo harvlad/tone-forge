@@ -40,19 +40,30 @@ struct ChopEditorSheet: View {
     @State private var startFraction: Double = 0
     @State private var endFraction: Double = 1
 
-    // Original values for reset
-    private var originalStartFraction: Double {
-        target.chop.startSec / target.stemDurationSec
+    // Editable STEM WINDOW: the chop padded generously on each side (a full
+    // sample's worth, min 8 s) so you can EXTEND past the chop's default
+    // length — not just trim inside it — clamped to the stem. Fractions
+    // (start/endFraction) run over this window, not the raw chop.
+    private var windowPad: Double { max(8, target.chop.endSec - target.chop.startSec) }
+    private var windowStart: Double { max(0, target.chop.startSec - windowPad) }
+    private var windowEnd: Double {
+        min(target.stemDurationSec, target.chop.endSec + windowPad)
     }
-    private var originalEndFraction: Double {
-        target.chop.endSec / target.stemDurationSec
+    private var windowDuration: Double { max(0.001, windowEnd - windowStart) }
+    /// Where the chop's own bounds sit within the window (the reset target).
+    private var chopStartFraction: Double {
+        (target.chop.startSec - windowStart) / windowDuration
+    }
+    private var chopEndFraction: Double {
+        (target.chop.endSec - windowStart) / windowDuration
     }
 
-    // Chop-relative peaks (subset of full stem peaks)
+    // Peaks over the editable window (subset of the full stem peaks).
     private var chopPeaks: [Float] {
-        guard !target.peaks.isEmpty else { return [] }
-        let startIdx = Int(originalStartFraction * Double(target.peaks.count))
-        let endIdx = Int(originalEndFraction * Double(target.peaks.count))
+        guard !target.peaks.isEmpty, target.stemDurationSec > 0 else { return [] }
+        let n = Double(target.peaks.count)
+        let startIdx = Int((windowStart / target.stemDurationSec) * n)
+        let endIdx = Int((windowEnd / target.stemDurationSec) * n)
         guard startIdx < endIdx, startIdx >= 0, endIdx <= target.peaks.count else {
             return target.peaks
         }
@@ -71,12 +82,10 @@ struct ChopEditorSheet: View {
                     startFraction: $startFraction,
                     endFraction: $endFraction,
                     onPlay: { s, e in
-                        let chopDuration = target.chop.endSec - target.chop.startSec
-                        let absStart = target.chop.startSec + s * chopDuration
-                        let absEnd = target.chop.startSec + e * chopDuration
-                        target.onPreview(absStart, absEnd)
+                        target.onPreview(windowStart + s * windowDuration,
+                                         windowStart + e * windowDuration)
                     },
-                    durationSec: target.chop.durationSec
+                    durationSec: windowDuration
                 )
                 .padding(.horizontal)
 
@@ -103,9 +112,9 @@ struct ChopEditorSheet: View {
             }
         }
         .onAppear {
-            // Initialize to full chop range
-            startFraction = 0
-            endFraction = 1
+            // Start at the chop's own bounds within the wider window.
+            startFraction = chopStartFraction
+            endFraction = chopEndFraction
         }
     }
 
@@ -141,10 +150,8 @@ struct ChopEditorSheet: View {
                 label: "Play",
                 color: .green
             ) {
-                let chopDuration = target.chop.durationSec
-                let absStart = target.chop.startSec + startFraction * chopDuration
-                let absEnd = target.chop.startSec + endFraction * chopDuration
-                target.onPreview(absStart, absEnd)
+                target.onPreview(windowStart + startFraction * windowDuration,
+                                 windowStart + endFraction * windowDuration)
             }
 
             // Split at midpoint
@@ -165,8 +172,8 @@ struct ChopEditorSheet: View {
                 disabled: !hasChanges
             ) {
                 withAnimation {
-                    startFraction = 0
-                    endFraction = 1
+                    startFraction = chopStartFraction
+                    endFraction = chopEndFraction
                 }
             }
         }
@@ -200,19 +207,17 @@ struct ChopEditorSheet: View {
     // MARK: - Helpers
 
     private var hasChanges: Bool {
-        abs(startFraction) > 0.001 || abs(endFraction - 1) > 0.001
+        abs(startFraction - chopStartFraction) > 0.001
+            || abs(endFraction - chopEndFraction) > 0.001
     }
 
     private func saveAndDismiss() {
-        // Calculate new absolute boundaries
-        let chopDuration = target.chop.durationSec
-        let newStart = target.chop.startSec + startFraction * chopDuration
-        let newEnd = target.chop.startSec + endFraction * chopDuration
-
-        // FUTURE: Persist via ChopEditStore
-        // For now, just print and dismiss
+        // New absolute boundaries over the editable window (can extend past
+        // the original chop). NOTE: mobile persistence is still a stub —
+        // desktop persists via ChopEditStore.
+        let newStart = windowStart + startFraction * windowDuration
+        let newEnd = windowStart + endFraction * windowDuration
         print("[ChopEditor] Saving: \(newStart) - \(newEnd)")
-
         dismiss()
     }
 }

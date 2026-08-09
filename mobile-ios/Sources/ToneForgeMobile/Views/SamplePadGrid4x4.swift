@@ -427,8 +427,10 @@ struct SamplePadGrid4x4: View {
                     .fill(.white.opacity(0.25))
             }
 
-            // Loop playhead across the tile — only while ringing a loop.
-            if ringing, let padKey {
+            // Loop playhead across the tile — only on a FILLED pad that's
+            // ringing a loop (never on an empty "+" cell whose padKey happens
+            // to match a stale ringing voice from a previous kit).
+            if ringing, visual.colorHint != 0, let padKey {
                 loopPlayhead(padKey: padKey)
             }
         }

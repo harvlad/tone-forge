@@ -51,16 +51,16 @@ struct ChopEditorSheet: View {
             .boundaryEdits[target.chop.idx]
     }
 
-    /// Context window: the original chop padded by half its duration
-    /// on each side (at least 1s), clamped to the stem.
+    /// Context window: the original chop padded generously on each side so
+    /// you can extend a sample well past its default length (up to a full
+    /// extra sample's worth, min 8 s), clamped to the stem. Raised from the
+    /// old ±50%-of-duration so an 8 s kit pad can grow to ~16 s.
+    private var windowPad: Double { max(8, originalEnd - originalStart) }
     private var windowStart: Double {
-        max(0, originalStart - max(1, (originalEnd - originalStart) * 0.5))
+        max(0, originalStart - windowPad)
     }
     private var windowEnd: Double {
-        min(
-            target.stemDurationSec,
-            originalEnd + max(1, (originalEnd - originalStart) * 0.5)
-        )
+        min(target.stemDurationSec, originalEnd + windowPad)
     }
 
     private var hasChanges: Bool {
