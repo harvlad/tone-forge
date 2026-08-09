@@ -32,6 +32,22 @@ extension ModeCoordinator {
 
     func rebuildLayout() {
         let content = sampleQuadrantContent()
+        // Jam/Perform in SAMPLES mode always shows the active pack's
+        // labeled quadrant, whatever the underlying appMode — this was
+        // racing with refreshJamSamplesLEDs (an unlabeled LED overwrite),
+        // flip-flopping the grid between all-"+" and label-less tiles.
+        if app.jamSettings.padMode == .samples {
+            layout = SampleModeLayout(content: content)
+            var visuals = [PadVisual](repeating: .off, count: 64)
+            for row in 1...8 {
+                for col in 1...8 {
+                    visuals[(row - 1) * 8 + (col - 1)] =
+                        layout.visual(at: PadIndex.at(row: row, col: col))
+                }
+            }
+            padVisuals = visuals
+            return
+        }
         switch appMode {
         case .sample:
             layout = SampleModeLayout(content: content)

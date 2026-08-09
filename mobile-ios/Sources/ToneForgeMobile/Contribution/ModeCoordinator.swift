@@ -235,15 +235,11 @@ public final class ModeCoordinator: ObservableObject {
     /// No-op unless the Jam surface is in Samples mode.
     func refreshJamSamplesLEDs() {
         guard appMode == .jamInKey, app.jamSettings.padMode == .samples else { return }
-        var v = Array(repeating: PadVisual.off, count: 64)
-        for (i, p) in app.jamSampleFlatPads.prefix(64).enumerated() {
-            let key = SamplePadKey(packId: p.packId, padIdx: p.padIdx)
-            let playing = app.sampleVoicePool.ringingPadKeys.contains(key)
-            let armed = app.sampleVoicePool.pendingPadKeys.contains(key)
-            let hint: UInt32 = armed ? 0xFF8000 : Self.familyColor(p.family)
-            v[i] = PadVisual(colorHint: hint, isBright: playing || armed)
-        }
-        padVisuals = v
+        // One writer: rebuildLayout owns padVisuals (labeled pack quadrant).
+        // This used to OVERWRITE it with an unlabeled flat-kit color map,
+        // racing the layout into "Pad n"/blank tiles. Ringing/armed
+        // brightness reaches the screen via the grid's own overlays.
+        rebuildLayout()
     }
 
     public init(app: AppState) {
