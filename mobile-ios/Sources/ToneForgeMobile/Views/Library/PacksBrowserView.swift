@@ -264,9 +264,11 @@ struct PacksBrowserView: View {
                 Text(err).font(.footnote).foregroundStyle(.red)
             }
         } header: {
-            Text("Perform")
+            // "Jam Kit", not "Perform" — the old title collided with the
+            // Perform TAB while actually building the kit the Jam tab plays.
+            Text("Jam Kit")
         } footer: {
-            Text("Auto Kit builds a labelled, color-coded rack of this song's best material. Instant Groove fires the best loop of each category, locked to the grid — one tap to jam.")
+            Text("Auto Kit builds a labelled, color-coded rack of this song's best material for the Jam tab. Instant Groove fires the best loop of each category, locked to the grid — one tap to jam.")
         }
     }
 

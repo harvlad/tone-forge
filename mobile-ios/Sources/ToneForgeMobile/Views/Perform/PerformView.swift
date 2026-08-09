@@ -121,17 +121,14 @@ struct PerformView: View {
                 songChordSymbols: appState.currentBundle?.timeline.chords.map(\.symbol) ?? []
             )
         case .samples:
-            // No onLongPress → no Instrument Editor from Perform.
-            JamSamplesGrid(
-                pads: appState.jamSampleFlatPads,
-                voicePool: appState.sampleVoicePool,
-                onTrigger: { padIdx, packId in
-                    coordinator.triggerJamSample(padIdx: padIdx, packId: packId, latch: jamSettings.sampleLatch)
-                },
-                onRelease: { padIdx, packId in
-                    if !jamSettings.sampleLatch { coordinator.releaseJamSample(padIdx: padIdx, packId: packId) }
-                }
-            )
+            // SAME grid as Jam (UX audit fix #4): Perform previously rendered
+            // a different flat pad-set under the same "Samples" label, so the
+            // instrument you built in Jam wasn't the one you performed. One
+            // launchpad, both tabs — plus the shared loop-cycle strip.
+            VStack(spacing: 6) {
+                LoopCycleStrip()
+                SamplePadGrid4x4(coordinator: coordinator)
+            }
             .onAppear { appState.preloadAllSongDnaPacks() }
         }
     }

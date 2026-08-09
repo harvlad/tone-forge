@@ -31,9 +31,11 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
     case beatCapture
 
     /// Actions shown on a pad that already holds a sound. Order fixes
-    /// the ring layout: index 0 centers at 0° (right), each +60°.
+    /// the ring layout: index 0 centers at 0° (right). `.loop` is omitted
+    /// until the toggle is actually wired on mobile — a segment that did
+    /// nothing on release eroded trust in the whole ring (UX audit fix #2).
     public static let assigned: [PadRadialAction] =
-        [.delete, .chop, .reset, .effects, .loop, .sequence]
+        [.delete, .chop, .reset, .effects, .sequence]
 
     /// Actions shown on an empty pad — the create menu: add a sample,
     /// record a voice, capture a beat, or build a sequence.

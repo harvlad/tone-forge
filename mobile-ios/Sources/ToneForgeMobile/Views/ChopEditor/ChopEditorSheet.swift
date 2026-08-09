@@ -102,12 +102,15 @@ struct ChopEditorSheet: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Done") { dismiss() }
                 }
+                // HONESTY (UX audit fix #2): mobile chop-edit persistence is
+                // a stub (saveAndDismiss only printed). Don't offer a Save
+                // that discards work — label the surface as preview-only.
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { saveAndDismiss() }
-                        .fontWeight(.semibold)
-                        .disabled(!hasChanges)
+                    Text("Preview only")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -154,15 +157,8 @@ struct ChopEditorSheet: View {
                                  windowStart + endFraction * windowDuration)
             }
 
-            // Split at midpoint
-            actionButton(
-                icon: "scissors",
-                label: "Split",
-                color: .orange
-            ) {
-                // FUTURE: Implement split - adds a ChopSplit at the midpoint
-                // For now, this is a placeholder
-            }
+            // (Split removed until implemented — a visible button that did
+            // nothing was worse than its absence. UX audit fix #2.)
 
             // Reset to original
             actionButton(
@@ -211,15 +207,8 @@ struct ChopEditorSheet: View {
             || abs(endFraction - chopEndFraction) > 0.001
     }
 
-    private func saveAndDismiss() {
-        // New absolute boundaries over the editable window (can extend past
-        // the original chop). NOTE: mobile persistence is still a stub —
-        // desktop persists via ChopEditStore.
-        let newStart = windowStart + startFraction * windowDuration
-        let newEnd = windowStart + endFraction * windowDuration
-        print("[ChopEditor] Saving: \(newStart) - \(newEnd)")
-        dismiss()
-    }
+    // Persistence intentionally absent: desktop persists via ChopEditStore;
+    // mobile has no store yet, so this sheet is preview-only (see toolbar).
 }
 
 // MARK: - Preview

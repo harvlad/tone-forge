@@ -197,7 +197,7 @@ public final class SampleScheduler: ObservableObject {
     /// Sample-loop length (s): the 8 s kit window snapped to whole bars at
     /// the song tempo, so loops stay musical. The shared lock cycle uses
     /// this. Falls back to 8 s without tempo.
-    private var loopLengthSeconds: Double {
+    public var loopLengthSeconds: Double {
         guard let bpm = tempoBpm, bpm > 0 else { return 8.0 }
         let barSec = (60.0 / bpm) * 4.0
         let bars = max(1.0, (8.0 / barSec).rounded())

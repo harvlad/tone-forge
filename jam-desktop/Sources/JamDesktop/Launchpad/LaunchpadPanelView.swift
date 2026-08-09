@@ -21,6 +21,9 @@ extension Int: @retroactive Identifiable {
 
 struct LaunchpadPanelView: View {
     @Environment(\.dismiss) private var dismiss
+    /// Set when the panel is hosted as a non-modal overlay (UX audit fix #5)
+    /// — the ✕ calls this instead of the sheet dismiss.
+    var onClose: (() -> Void)? = nil
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var session: SessionController
 
@@ -43,6 +46,10 @@ struct LaunchpadPanelView: View {
         VStack(spacing: 12) {
             header
             controls
+            // The visible musical clock (UX audit fix #1): sweep of the
+            // shared loop cycle + countdown to the next lock boundary, so
+            // "why is my pad waiting" reads as timing, not lag.
+            cycleStrip
             if showLayers {
                 LayerStackView().environmentObject(session)
             } else {
@@ -310,7 +317,9 @@ struct LaunchpadPanelView: View {
             Spacer()
             hardwareStatus
 
-            Button { dismiss() } label: {
+            Button {
+                if let onClose { onClose() } else { dismiss() }
+            } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title3)
                     .foregroundStyle(.secondary)
@@ -344,6 +353,51 @@ struct LaunchpadPanelView: View {
     }
 
     // MARK: - Controls
+
+    /// Tiny secondary caption naming the picker to its right.
+    private func pickerCaption(_ title: String) -> some View {
+        Text(title)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .padding(.leading, 2)
+    }
+
+    /// Shared loop-cycle strip: elapsed sweep of the current cycle, a flash
+    /// on each cycle start (the shared downbeat), and a countdown to the
+    /// next lock boundary while the song is rolling. Hidden when stopped.
+    @ViewBuilder
+    private var cycleStrip: some View {
+        let length = launchpad.loopLengthSeconds
+        if length > 0, session.transport.isPlaying {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
+                let t = session.transport.positionSeconds
+                let phase = (t.truncatingRemainder(dividingBy: length)) / length
+                let remaining = length - t.truncatingRemainder(dividingBy: length)
+                HStack(spacing: 10) {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.08))
+                            Capsule()
+                                .fill(JamTheme.accent.opacity(0.6))
+                                .frame(width: max(4, geo.size.width * phase))
+                            if phase < 0.06 {   // cycle-start flash
+                                Capsule().fill(Color.white.opacity(0.35))
+                            }
+                        }
+                    }
+                    .frame(height: 5)
+                    if launchpad.loopLockEnabled {
+                        Text(String(format: "next lock %.1fs", remaining))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
+                }
+                .frame(height: 12)
+            }
+            .accessibilityLabel("Shared loop cycle position")
+        }
+    }
 
     private var controls: some View {
         HStack(spacing: 12) {
@@ -380,13 +434,13 @@ struct LaunchpadPanelView: View {
 
             // Loop lock: hold triggered loops until the shared cycle restarts
             // so every pad phase-locks to one 8 s grid and stacks coherently.
+            // Text + icon (UX audit fix #3: icon-only was undecodable).
             Button {
                 launchpad.loopLockEnabled.toggle()
             } label: {
-                Image(systemName: launchpad.loopLockEnabled ? "lock.fill" : "lock.open")
-                    .font(.body)
+                Label("Lock", systemImage: launchpad.loopLockEnabled ? "lock.fill" : "lock.open")
+                    .font(.caption)
                     .foregroundStyle(launchpad.loopLockEnabled ? JamTheme.accent : Color.secondary)
-                    .frame(width: 28, height: 24)
             }
             .buttonStyle(.plain)
             .help(launchpad.loopLockEnabled
@@ -395,22 +449,22 @@ struct LaunchpadPanelView: View {
 
             // Augment: triggering a sample ducks the song's own stem while it
             // plays, then restores it — the sample "takes over" that part.
-            // Icon-only to keep the header compact.
+            // Text + icon (the bare ⇄ read as "transpose", not "stem swap").
             Button {
                 session.stemTakeoverEnabled.toggle()
             } label: {
-                Image(systemName: "arrow.left.arrow.right")
-                    .font(.body)
+                Label("Augment", systemImage: "arrow.left.arrow.right")
+                    .font(.caption)
                     .foregroundStyle(session.stemTakeoverEnabled ? JamTheme.accent : Color.secondary)
-                    .frame(width: 28, height: 24)
             }
             .buttonStyle(.plain)
             .help(session.stemTakeoverEnabled
                   ? "Augment ON: samples replace the song's stem while playing (tap to layer instead)"
                   : "Augment OFF: samples layer over the song (tap to replace the stem)")
 
-            // Labels hidden + fixed-size so the header stays a single tidy
-            // row (the selected value is self-explanatory; tooltips name each).
+            // Each picker gets a small visible caption (UX audit fix #3:
+            // three anonymous label-hidden dropdowns were indistinguishable).
+            pickerCaption("Quantize")
             Picker("Quantize", selection: quantizeBinding) {
                 ForEach(QuantizeMode.allCases, id: \.self) {
                     Text($0.rawValue).tag($0)
@@ -420,6 +474,7 @@ struct LaunchpadPanelView: View {
             .fixedSize()
             .help("Quantize")
 
+            pickerCaption("Stem")
             Picker("Stem", selection: $selectedStem) {
                 ForEach(stemRoles, id: \.self) {
                     Text($0.capitalized).tag($0)
@@ -429,6 +484,7 @@ struct LaunchpadPanelView: View {
             .fixedSize()
             .help("Source stem")
 
+            pickerCaption("Slices")
             Picker("Slices", selection: $selectedSliceMode) {
                 ForEach(LaunchpadController.sliceModes, id: \.self) {
                     Text($0.capitalized).tag($0)
@@ -466,8 +522,8 @@ struct LaunchpadPanelView: View {
             Button {
                 Task { await session.loadAutoKit() }
             } label: {
-                Image(systemName: "wand.and.stars")
-                    .frame(width: 30, height: 24)
+                Label("Auto Kit", systemImage: "wand.and.stars")
+                    .font(.caption)
             }
             .disabled(session.autoKitLoading)
             .help("Auto Kit — load the auto-built Launchpad kit for this song")
@@ -480,8 +536,8 @@ struct LaunchpadPanelView: View {
             Button {
                 session.launchpad.instantGroove()
             } label: {
-                Image(systemName: "bolt.fill")
-                    .frame(width: 30, height: 24)
+                Label("Groove", systemImage: "bolt.fill")
+                    .font(.caption)
             }
             .buttonStyle(.borderedProminent)
             .disabled(session.launchpad.assignments.isEmpty)
@@ -671,6 +727,17 @@ private struct PadCell: View {
             .overlay { sequenceOverlay }
             .overlay { moveModeOverlay }
             .overlay { playheadOverlay }
+            // Right-click affordance (UX audit fix #3): the radial menu was
+            // invisible. A ⋯ on hover says "this pad has more".
+            .overlay(alignment: .topTrailing) {
+                if hovered, hasContent, !moveMode {
+                    Image(systemName: "ellipsis.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .padding(4)
+                        .help("Right-click for pad actions (chop, effects, loop, sequence)")
+                }
+            }
     }
 
     /// Loop playhead: a clear position indicator for where the loop is at —

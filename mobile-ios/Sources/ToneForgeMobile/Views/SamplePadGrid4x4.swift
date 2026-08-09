@@ -337,6 +337,11 @@ struct SamplePadGrid4x4: View {
     private var tiles: some View {
         let ringing = coordinator.ringingGridPads(
             from: appState.ringingPadKeys)
+        // Armed = queued for the next lock/quantize boundary. Surfacing this
+        // is what makes a locked tap read as "waiting for the beat" instead
+        // of "broken silence" (UX audit fix #1).
+        let armed = coordinator.ringingGridPads(
+            from: appState.sampleVoicePool.pendingPadKeys)
         // Screen top row = grid row 8 (pack padIdx 0–3).
         return VStack(spacing: 6) {
             ForEach([8, 7, 6, 5], id: \.self) { gridRow in
@@ -347,6 +352,7 @@ struct SamplePadGrid4x4: View {
                             pressed: coordinator.pressedPads.contains(
                                 gridRow * 10 + gridCol),
                             ringing: ringing.contains(gridRow * 10 + gridCol),
+                            armed: armed.contains(gridRow * 10 + gridCol),
                             pulse: coordinator.sequencePulses[gridRow * 10 + gridCol],
                             padKey: padKey(gridRow: gridRow, gridCol: gridCol)
                         )
@@ -370,6 +376,7 @@ struct SamplePadGrid4x4: View {
         visual: PadVisual,
         pressed: Bool,
         ringing: Bool,
+        armed: Bool = false,
         pulse: SequencePulse? = nil,
         padKey: SamplePadKey? = nil
     ) -> some View {
@@ -441,16 +448,29 @@ struct SamplePadGrid4x4: View {
             if ringing, visual.colorHint != 0, let padKey {
                 loopPlayhead(padKey: padKey)
             }
+
+            // Armed: queued for the next lock/quantize boundary. Hourglass +
+            // orange ring says "waiting for the beat", not silence.
+            if armed, visual.colorHint != 0 {
+                Image(systemName: "hourglass")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.orange)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .topTrailing)
+                    .padding(6)
+            }
         }
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(
                     pressed
                         ? Color.white
-                        : (ringing
-                            ? .white.opacity(0.85)
-                            : (pulse != nil ? tint.opacity(0.9) : TFTheme.stroke)),
-                    lineWidth: pressed ? 2 : (ringing || pulse != nil ? 1.5 : 1)
+                        : (armed
+                            ? Color.orange.opacity(0.9)
+                            : (ringing
+                                ? .white.opacity(0.85)
+                                : (pulse != nil ? tint.opacity(0.9) : TFTheme.stroke))),
+                    lineWidth: pressed ? 2 : (armed || ringing || pulse != nil ? 1.5 : 1)
                 )
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)

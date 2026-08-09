@@ -138,14 +138,23 @@ private struct QueueJobCard: View {
                         .font(.subheadline)
                         .foregroundStyle(.green)
                     Spacer()
-                    Button("Open") {
+                    // The most rewarding moment of the whole flow — make the
+                    // next step unmissable (UX audit: users stranded on a
+                    // finished queue not realizing another click was needed).
+                    Button {
                         openAttempted = true
                         Task {
                             // loadSession flips to .perform on success.
                             await model.loadSession(analysisId: historyId)
                         }
+                    } label: {
+                        Label("Start Jamming", systemImage: "play.fill")
+                            .font(.body.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.green)
                     .disabled(model.isLoadingSession)
                 }
                 if openAttempted, model.isLoadingSession {

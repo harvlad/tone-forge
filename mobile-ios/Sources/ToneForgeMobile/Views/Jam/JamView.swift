@@ -263,7 +263,14 @@ struct JamView: View {
             // fill from the radial, so this is where you ADD/SWAP pads —
             // driven by the same contribution bus, so audio + loops work
             // unchanged. Tiles color by the pad's category colorHint.
-            SamplePadGrid4x4(coordinator: coordinator)
+            VStack(spacing: 6) {
+                // Shared loop-cycle strip: makes the invisible 8 s lock grid
+                // VISIBLE — a sweep of the current cycle with a countdown to
+                // the next boundary, so a locked pad's wait reads as musical
+                // timing instead of a bug.
+                LoopCycleStrip()
+                SamplePadGrid4x4(coordinator: coordinator)
+            }
         }
     }
 
@@ -349,7 +356,10 @@ struct JamView: View {
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    if jamSettings.padMode == .samples && appState.activeKitIsAutoKit {
+                    // Always visible in Samples mode — these are the core
+                    // performance controls; gating them on an Auto Kit hid
+                    // them from anyone who hadn't visited Library first.
+                    if jamSettings.padMode == .samples {
                         instantGrooveChip
                         stopAllChip
                         loopLockChip

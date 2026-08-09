@@ -133,26 +133,29 @@ struct SampleTrimmerSheet: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Done") { dismiss() }
                 }
+                // HONESTY (UX audit fix #2): trim persistence isn't built yet
+                // (no SampleTrimStore). The old "Apply" button confirmed then
+                // silently discarded the trim — worse than no button. Preview
+                // works; a visible note says saving is coming.
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") { saveAndDismiss() }
-                        .fontWeight(.semibold)
-                        .disabled(!hasChanges)
+                    Text("Preview only")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+            }
+            .safeAreaInset(edge: .bottom) {
+                Text("Trims preview but don't save yet — saving is coming soon.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 8)
             }
         }
     }
 
     private var hasChanges: Bool {
         abs(startFraction) > 0.001 || abs(endFraction - 1) > 0.001
-    }
-
-    private func saveAndDismiss() {
-        // FUTURE: Persist trim points to SampleTrimStore
-        // For now, just dismiss
-        print("[SampleTrimmer] Apply trim: \(startFraction) - \(endFraction)")
-        dismiss()
     }
 
     private func formatTime(_ seconds: Double) -> String {

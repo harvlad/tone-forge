@@ -162,10 +162,23 @@ struct RootView: View {
                 ConnectStatusPill(status: session.bridge.status)
             }
         }
-        .sheet(isPresented: $showLaunchpad) {
-            LaunchpadPanelView()
-                .environmentObject(model)
-                .environmentObject(session)
+        // Launchpad is a NON-MODAL floating panel (UX audit fix #5): the
+        // fretboard/song stays visible and interactive behind it, so you can
+        // watch the song play while triggering loops — the core premise a
+        // covering modal sheet made impossible. Trailing-aligned so the neck
+        // (leading) stays in view on wide windows.
+        .overlay(alignment: .trailing) {
+            if showLaunchpad {
+                LaunchpadPanelView(onClose: { showLaunchpad = false })
+                    .environmentObject(model)
+                    .environmentObject(session)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(.white.opacity(0.12)))
+                    .shadow(color: .black.opacity(0.5), radius: 28, y: 8)
+                    .padding(16)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
         .sheet(isPresented: $showSequencer) {
             SequencerPanelView()
