@@ -378,6 +378,21 @@ struct LaunchpadPanelView: View {
             .pickerStyle(.segmented)
             .fixedSize()
 
+            // Loop lock: hold triggered loops until the shared cycle restarts
+            // so every pad phase-locks to one 8 s grid and stacks coherently.
+            Button {
+                launchpad.loopLockEnabled.toggle()
+            } label: {
+                Image(systemName: launchpad.loopLockEnabled ? "lock.fill" : "lock.open")
+                    .font(.body)
+                    .foregroundStyle(launchpad.loopLockEnabled ? JamTheme.accent : Color.secondary)
+                    .frame(width: 28, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help(launchpad.loopLockEnabled
+                  ? "Loop lock ON: loops start on the shared cycle (stack in sync)"
+                  : "Loop lock OFF: loops start immediately (bar-quantized)")
+
             // Augment: triggering a sample ducks the song's own stem while it
             // plays, then restores it — the sample "takes over" that part.
             // Icon-only to keep the header compact.
@@ -658,27 +673,39 @@ private struct PadCell: View {
             .overlay { playheadOverlay }
     }
 
-    /// Loop playhead: a thin bar across the pad bottom that tracks the sample
-    /// position and snaps back to 0 each time the loop restarts, so you can see
-    /// how long the sample plays before it resets. Only rendered (and only
-    /// animating) while the pad is actively looping.
+    /// Loop playhead: a clear position indicator for where the loop is at —
+    /// a dimmed "elapsed" fill sweeping left→right across the whole pad, a
+    /// bright vertical playhead line at the current position, and a bottom
+    /// progress bar. Snaps back to 0 each loop. Only while the pad loops.
     @ViewBuilder private var playheadOverlay: some View {
         if launchpad.activePads.contains(pad), launchpad.loopProgress(pad) != nil {
             TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
                 GeometryReader { geo in
-                    let p = launchpad.loopProgress(pad) ?? 0
+                    let p = CGFloat(launchpad.loopProgress(pad) ?? 0)
+                    let w = geo.size.width
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(Color.white.opacity(0.2))
-                            .frame(height: 3)
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(Color.white.opacity(0.9))
-                            .frame(width: max(0, geo.size.width * CGFloat(p)), height: 3)
+                        // Elapsed sweep across the whole tile.
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: max(0, w * p))
+                        // Playhead line at the current position.
+                        Rectangle()
+                            .fill(Color.white.opacity(0.95))
+                            .frame(width: 2)
+                            .offset(x: max(0, w * p - 1))
+                        // Bottom progress bar.
+                        VStack {
+                            Spacer()
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color.white.opacity(0.22)).frame(height: 4)
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color.white.opacity(0.95))
+                                    .frame(width: max(0, w * p), height: 4)
+                            }
+                        }
                     }
-                    .frame(maxHeight: .infinity, alignment: .bottom)
                 }
-                .padding(.horizontal, 5)
-                .padding(.bottom, 5)
                 .allowsHitTesting(false)
             }
         }

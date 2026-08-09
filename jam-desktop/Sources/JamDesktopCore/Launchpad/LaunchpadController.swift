@@ -218,6 +218,31 @@ public final class LaunchpadController {
 
     public var quantize: QuantizeMode = .off
     public var playbackMode: PadPlaybackMode = .tap
+    /// Loop lock: when on, a triggered loop waits until the shared loop
+    /// cycle restarts, so every pad is phase-locked to one grid and stacks
+    /// coherently. Off = start immediately (bar-quantized only).
+    public var loopLockEnabled: Bool = true
+
+    /// Target sample-loop length in seconds: the 8 s kit window snapped to a
+    /// whole number of bars at the song tempo (so loops stay musical). The
+    /// shared lock cycle uses this period. Falls back to 8 s with no tempo.
+    public var loopLengthSeconds: Double {
+        guard let bpm = tempoBpm, bpm > 0 else { return 8.0 }
+        let barSec = (60.0 / bpm) * 4.0
+        let bars = max(1.0, (8.0 / barSec).rounded())
+        return bars * barSec
+    }
+
+    /// Next shared loop-cycle boundary at/after `now` (multiples of
+    /// `loopLengthSeconds` from song origin), with a small grace so a press
+    /// a hair late still catches the current boundary.
+    private func nextLoopBoundary(after now: Double) -> Double {
+        let L = loopLengthSeconds
+        guard L > 0 else { return now }
+        let grace = 0.08
+        let k = ((now + grace) / L).rounded(.down) + 1
+        return k * L
+    }
     public private(set) var assignments: [LaunchpadPad: PadAssignment] = [:]
     /// Pads currently sounding (pressed, or latched until release).
     public private(set) var activePads: Set<LaunchpadPad> = []
@@ -462,19 +487,25 @@ public final class LaunchpadController {
             return
         }
         let now = nowProvider()
-        // Loop mode forces bar-quantized starts so multiple loops line up on the
-        // downbeat grid (otherwise each hard-loop starts at its own tap time and
-        // they drift out of phase). Tap mode honors the Quantize control as-is.
-        let effectiveQuantize: QuantizeMode =
-            (playbackMode == .loop && quantize == .off) ? .bar : quantize
-        let fireAt = Quantizer.nextQuantized(
-            songSeconds: now,
-            mode: effectiveQuantize,
-            beats: timeline?.beats ?? [],
-            downbeats: timeline?.downbeats ?? [],
-            sections: timeline?.sections ?? [],
-            tempoBpm: tempoBpm
-        )
+        // Loop + lock: start on the next SHARED loop-cycle boundary so every
+        // pad is phase-locked to one 8 s grid and they stack coherently. With
+        // lock off (or in Tap mode) fall back to bar-quantize / the Quantize
+        // control so a single hit still lands on the beat.
+        let fireAt: Double
+        if playbackMode == .loop && loopLockEnabled {
+            fireAt = nextLoopBoundary(after: now)
+        } else {
+            let effectiveQuantize: QuantizeMode =
+                (playbackMode == .loop && quantize == .off) ? .bar : quantize
+            fireAt = Quantizer.nextQuantized(
+                songSeconds: now,
+                mode: effectiveQuantize,
+                beats: timeline?.beats ?? [],
+                downbeats: timeline?.downbeats ?? [],
+                sections: timeline?.sections ?? [],
+                tempoBpm: tempoBpm
+            )
+        }
         activePads.insert(pad)
         transport?.setLight(.pulse(colorHint: colorHint(for: assignment)), at: pad)
         onTrigger?(pad, assignment, fireAt)
