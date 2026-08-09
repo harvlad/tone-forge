@@ -1737,11 +1737,18 @@ public final class AppState: ObservableObject {
             // silent padNotFound while an on-demand decode is still in
             // flight (the "have to tap twice" bug).
             preloadAllSongDnaPacks()
+            // Populate the Jam launchpad IMMEDIATELY with the song's own chops
+            // so it's never empty — the SamplePadGrid4x4 binds to
+            // activeSamplePack, so without this the grid stays blank until the
+            // async Auto Kit fetch returns (or forever if it fails). The Auto
+            // Kit replaces this when it lands.
+            if let firstDna = songDnaPacks.first {
+                activateSamplePack(firstDna.pack, stemFiles: localURLs)
+            }
             // Jam-straight-away: build the categorized Auto Kit now so the
             // Jam launchpad opens as the color-coded drums/bass/chords/lead
-            // rack (not the raw one-color-per-stem song-DNA chops). Needs
-            // stems on the backend; on failure the grid falls back to
-            // song-DNA and autoKitError carries the reason.
+            // rack. Needs stems on the backend; on failure the grid keeps the
+            // song-DNA pack activated above and autoKitError carries why.
             if !localURLs.isEmpty { loadAutoKit() }
             // Surface a "no audio" state when the song expected stems but
             // none downloaded (backend/R2 unavailable — e.g. jamn.app

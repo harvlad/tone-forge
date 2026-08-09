@@ -56,9 +56,17 @@ struct SamplePadGrid4x4: View {
                         cols: 4,
                         onPadDown: { row, col in
                             let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
-                            // Empty pads do nothing on tap; long-press opens
-                            // the radial with "Add Sound".
-                            guard !isEmpty(gridRow: gridRow, gridCol: gridCol) else { return }
+                            // Empty pad: a plain tap now opens the add-sound
+                            // picker (long-press still gives the full create
+                            // radial). Was a no-op — "can't add sounds here".
+                            if isEmpty(gridRow: gridRow, gridCol: gridCol) {
+                                if let onOpenBrowse {
+                                    onOpenBrowse(gridRow, gridCol)
+                                } else {
+                                    chopPickerTarget = ChopPickerTarget(row: gridRow, col: gridCol)
+                                }
+                                return
+                            }
                             coordinator.touchPadDown(row: gridRow, col: gridCol)
                         },
                         onPadUp: { row, col in
