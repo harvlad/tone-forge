@@ -383,10 +383,13 @@ struct SamplePadGrid4x4: View {
         let tint = Self.color(fromHex: visual.colorHint)
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 10)
+                // Raised from 0.30/0.16 — at the old opacity an idle filled
+                // pad was nearly indistinguishable from an empty one (PM
+                // eval: "filled reads as dead").
                 .fill(visual.colorHint == 0
                     ? AnyShapeStyle(TFTheme.chipFill)
                     : AnyShapeStyle(tint.opacity(
-                        (visual.isBright || ringing) ? 0.30 : 0.16)))
+                        (visual.isBright || ringing) ? 0.50 : 0.30)))
 
             if visual.colorHint == 0 {
                 Image(systemName: "plus")
@@ -395,7 +398,13 @@ struct SamplePadGrid4x4: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(visual.label ?? "")
+                    // A filled pad ALWAYS gets a name — unlabeled chops were
+                    // rendering as anonymous dead squares.
+                    Text({ () -> String in
+                        if let l = visual.label, !l.isEmpty { return l }
+                        if let padKey { return "Pad \(padKey.padIdx + 1)" }
+                        return "Pad"
+                    }())
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(TFTheme.textPrimary)
                         .lineLimit(2)

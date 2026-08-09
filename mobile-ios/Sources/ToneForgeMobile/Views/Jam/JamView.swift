@@ -301,7 +301,9 @@ struct JamView: View {
 
             fxHoldPad("Gater", system: "square.grid.4x3.fill",
                       engaged: perfFX.gater) { perfFX.gater = $0 }
-            fxHoldPad("Stopper", system: "stop.circle",
+            // Same name as Perform's FX pad — "Stopper" vs "Stop" was two
+            // words for one effect across the two surfaces.
+            fxHoldPad("Brake", system: "stop.circle",
                       engaged: perfFX.stopper) { perfFX.stopper = $0 }
             fxHoldPad("Flanger", system: "wind",
                       engaged: perfFX.flanger) { perfFX.flanger = $0 }

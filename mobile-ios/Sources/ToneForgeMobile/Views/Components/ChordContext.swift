@@ -58,8 +58,10 @@ struct ChordContext: View {
                     onToggleLatch?()
                 } label: {
                     VStack(spacing: 1) {
-                        Image(systemName: latchOn ? "lock.fill" : "lock.open")
-                        Text(latchOn ? "On" : "Off").font(.caption2)
+                        // "Latch", not a bare lock icon — the padlock read as
+                        // the (different) loop Lock. One word per concept.
+                        Image(systemName: latchOn ? "pin.fill" : "pin")
+                        Text("Latch").font(.caption2)
                     }
                     .foregroundStyle(latchOn ? TFTheme.accent : TFTheme.textSecondary)
                     .padding(.horizontal, TFTheme.Spacing.sm)

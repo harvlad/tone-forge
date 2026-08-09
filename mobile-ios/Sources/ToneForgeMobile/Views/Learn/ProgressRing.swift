@@ -29,12 +29,17 @@ struct ProgressRing: View {
                 )
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 0) {
+                // Scale type to the ring so a small ring doesn't overflow
+                // (an 84pt-set ring inside a 44pt frame was spilling over
+                // the transport row).
                 Text(centerText)
-                    .font(.headline.weight(.bold))
+                    .font(.system(size: diameter * 0.26, weight: .bold))
                     .foregroundStyle(TFTheme.textPrimary)
-                Text(caption)
-                    .font(.caption2)
-                    .foregroundStyle(TFTheme.textSecondary)
+                if diameter >= 60 {
+                    Text(caption)
+                        .font(.caption2)
+                        .foregroundStyle(TFTheme.textSecondary)
+                }
             }
         }
         .frame(width: diameter, height: diameter)

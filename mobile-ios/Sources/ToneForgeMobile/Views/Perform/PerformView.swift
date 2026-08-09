@@ -158,7 +158,9 @@ struct PerformView: View {
                       engaged: perfFX.gater) { perfFX.gater = $0 }
             fxHoldPad("Throw", system: "arrow.uturn.right",
                       engaged: perfFX.delayThrow) { perfFX.delayThrow = $0 }
-            fxHoldPad("Stop", system: "stop.fill",
+            // "Brake" (DJ stop effect) — "Stop" collided with the transport
+            // stop one row below; this momentarily halts playback rate.
+            fxHoldPad("Brake", system: "stop.fill",
                       engaged: perfFX.stopper) { perfFX.stopper = $0 }
         }
         .frame(height: 68)

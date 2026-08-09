@@ -254,15 +254,17 @@ struct LearnView: View {
 
             Spacer(minLength: 0)
 
+            // Neck (trajectory) view ⇄ chord charts. The neck is the hero
+            // now — the hand silhouette is gone (it covered the dots).
             Button {
                 showHand.toggle()
             } label: {
-                Image(systemName: "hand.raised.fingers.spread")
+                Image(systemName: showHand ? "guitars" : "square.grid.2x2")
                     .padding(.horizontal, 2)
                     .tfChip(active: showHand)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(showHand ? "Hide hand overlay" : "Show hand overlay")
+            .accessibilityLabel(showHand ? "Switch to chord charts" : "Switch to neck view")
 
             Button {
                 cycleSpeed()
@@ -290,12 +292,16 @@ struct LearnView: View {
         let pct = Int((controller.percentComplete * 100).rounded())
         let acc = Int((controller.overallAccuracy * 100).rounded())
         return HStack(spacing: TFTheme.Spacing.md) {
+            // diameter param, NOT an outer .frame — the ring sizes itself
+            // internally, so an outer 44pt frame just let the 84pt default
+            // overflow onto the transport row.
             ProgressRing(
                 value: controller.percentComplete,
                 centerText: "\(pct)%",
-                caption: "learned"
+                caption: "learned",
+                diameter: 44,
+                lineWidth: 5
             )
-            .frame(width: 44, height: 44)
 
             Text("\(controller.learnedCount)/\(controller.totalSections) sections · \(acc)% acc · streak \(controller.longestStreak)")
                 .font(TFTheme.metadata)

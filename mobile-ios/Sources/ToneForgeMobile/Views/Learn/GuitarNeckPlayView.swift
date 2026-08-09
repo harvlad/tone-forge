@@ -18,11 +18,19 @@ struct GuitarNeckPlayView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: TFTheme.Spacing.sm) {
             header
-            // Mock-panel aspect: the tall Learn card must not stretch
-            // the hand/forearm to fill it.
-            GuitarNeckPlaySurface(current: current)
-                .aspectRatio(1.75, contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // The trajectory view is the hero (PM eval): neck +
+            // role-colored numbered finger dots + movement arrows toward
+            // the NEXT chord — no hand silhouette (it covered the very
+            // dots it was meant to teach). Neck-only aspect, no forearm room.
+            GuitarNeckPlaySurface(
+                current: current,
+                transitionTo: next,
+                showHand: false
+            )
+            .aspectRatio(2.6, contentMode: .fit)
+            .frame(maxWidth: .infinity, alignment: .top)
+            legend
+            Spacer(minLength: 0)
         }
         .padding(TFTheme.Spacing.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -30,6 +38,26 @@ struct GuitarNeckPlayView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Guitar neck. Now \(current ?? "no chord")"
             + (next.map { ", next \($0)" } ?? ""))
+    }
+
+    /// What the trajectory colors mean — one compact row, learners
+    /// shouldn't have to guess the movement language.
+    private var legend: some View {
+        HStack(spacing: TFTheme.Spacing.md) {
+            legendDot(FingerRole.stay.color, "Stay")
+            legendDot(FingerRole.move.color, "Move")
+            legendDot(FingerRole.place.color, "Lift / Place")
+            Spacer()
+        }
+        .font(.caption2)
+        .foregroundStyle(TFTheme.textSecondary)
+    }
+
+    private func legendDot(_ color: Color, _ label: String) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(label)
+        }
     }
 
     private var header: some View {

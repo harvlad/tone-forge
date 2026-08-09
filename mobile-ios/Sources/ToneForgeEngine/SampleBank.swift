@@ -293,9 +293,14 @@ public final class SampleBank: @unchecked Sendable {
     }
 
     private static func label(for chop: Chop) -> String {
+        // CONTENT-first (PM eval): a sample pad should say what it sounds
+        // like (section/kind), not its harmonic function — harmonic-slice
+        // packs were labelling sample tiles with bare chord numerals
+        // ("iv", "VII"), which mean nothing on a trigger surface. Chord
+        // symbol stays as a fallback for chops with no other identity.
+        if let section = chop.sectionLabel, !section.isEmpty { return section.capitalized }
+        if let kind = chop.kind, !kind.isEmpty, kind != "chord" { return kind.capitalized }
         if let sym = chop.chordSymbol, !sym.isEmpty { return sym }
-        if let section = chop.sectionLabel, !section.isEmpty { return section }
-        if let kind = chop.kind, !kind.isEmpty { return kind.capitalized }
-        return "Chop \(chop.idx)"
+        return "Chop \(chop.idx + 1)"
     }
 }

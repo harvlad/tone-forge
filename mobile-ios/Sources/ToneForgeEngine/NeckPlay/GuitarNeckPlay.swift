@@ -166,18 +166,20 @@ public struct NeckGeometry: Equatable {
     /// the LAST wire — nut is on the right).
     private let windowLoMM: CGFloat
 
-    public init(size: CGSize, baseFret: Int, window: Int = 4) {
+    public init(size: CGSize, baseFret: Int, window: Int = 4,
+                heightFraction: CGFloat = 0.45) {
         let gutter: CGFloat = 40   // x/o markers beside the nut
         let top: CGFloat = 8
         let loMM = GuitarPhysical.wire(baseFret - 1)
         let hiMM = GuitarPhysical.wire(baseFret - 1 + window)
         let spanMM = hiMM - loMM
         let gapMM = GuitarPhysical.stringGapMM(atX: (loMM + hiMM) / 2)
-        // px/mm from whichever axis constrains (board ≤ 45% height —
-        // the mock gives the hand the majority of the panel).
+        // px/mm from whichever axis constrains. Default board ≤ 45% height
+        // (the hand mock gets the rest); hand-less trajectory view passes
+        // ~0.9 so the neck fills the panel instead of floating small.
         let s = max(0.4, min(
             (size.width - gutter - 10) / spanMM,
-            size.height * 0.45 / (6 * gapMM)))
+            size.height * heightFraction / (6 * gapMM)))
         let neckW = spanMM * s
         let gap = gapMM * s
         let x = max(10, (size.width - gutter - neckW) / 2)
@@ -540,21 +542,29 @@ public struct GuitarNeckPlaySurface: View {
     let handTarget: String?
     /// True while the hand is lifted off the strings (mid-transition).
     let handLifted: Bool
+    /// Draw the silhouette hand. False = the trajectory view (neck +
+    /// role-colored numbered dots + movement arrows only) — the primary
+    /// Learn surface; the hand is an optional overlay on top of it.
+    let showHand: Bool
 
     public init(
         current: String?, transitionTo: String? = nil,
-        handTarget: String? = nil, handLifted: Bool = false
+        handTarget: String? = nil, handLifted: Bool = false,
+        showHand: Bool = true
     ) {
         self.current = current
         self.transitionTo = transitionTo
         self.handTarget = handTarget
         self.handLifted = handLifted
+        self.showHand = showHand
     }
 
     public var body: some View {
         GeometryReader { g in
             let shape = current.flatMap { GuitarVoicing.shape(symbol: $0) }
-            let geo = NeckGeometry(size: g.size, baseFret: shape?.baseFret ?? 1)
+            let geo = NeckGeometry(
+                size: g.size, baseFret: shape?.baseFret ?? 1,
+                heightFraction: showHand ? 0.45 : 0.9)
             let fingering = shape.map { ChordFingering.assign(shape: $0) }
                 ?? ChordFingering.Result(notes: [], barreStrings: nil, barreFret: nil)
             let handShape = (handTarget ?? current)
@@ -581,9 +591,11 @@ public struct GuitarNeckPlaySurface: View {
                 // then strings/wires OVER the fingers (a hand sits
                 // behind the strings), then dots + arrows on top.
                 NeckBoardCanvas(shape: shape, geo: geo, layer: .wood)
-                HandSilhouetteView(plan: plan, lifted: handLifted)
-                    .animation(.easeInOut(duration: 0.32), value: plan)
-                    .animation(.easeInOut(duration: 0.16), value: handLifted)
+                if showHand {
+                    HandSilhouetteView(plan: plan, lifted: handLifted)
+                        .animation(.easeInOut(duration: 0.32), value: plan)
+                        .animation(.easeInOut(duration: 0.16), value: handLifted)
+                }
                 NeckBoardCanvas(shape: shape, geo: geo, layer: .hardware)
                 NeckDotsCanvas(
                     shape: shape, geo: geo, fingering: fingering,
