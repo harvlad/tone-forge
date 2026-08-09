@@ -176,12 +176,23 @@ struct RehearsalView: View {
     private func practiceContent(_ item: RehearsalSectionItem) -> some View {
         let currentPos = session.transport.positionSeconds
         let currentChord = session.ribbon?.currentChord(at: currentPos)
+        // Upcoming chord — drives the trajectory arrows/landing rings.
+        let nextChord: String? = session.ribbon.flatMap { ribbon in
+            ribbon.chordIndex(at: currentPos).flatMap { idx in
+                idx + 1 < ribbon.chords.count ? ribbon.chords[idx + 1].symbol : nil
+            }
+        }
         VStack(spacing: 16) {
             if showHand {
                 HStack {
                     Text(currentChord?.symbol ?? "—")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(Color.accentColor)
+                    if let nextChord {
+                        Text("→ \(nextChord)")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Button("Transitions") { showTransitions = true }
                         .controlSize(.small)
@@ -189,7 +200,14 @@ struct RehearsalView: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 }
-                GuitarNeckPlaySurface(current: currentChord?.symbol)
+                // Trajectory view (mobile parity): role-colored animated
+                // dots + movement arrows toward the next chord — the hand
+                // silhouette is gone here too (it covered the dots).
+                GuitarNeckPlaySurface(
+                    current: currentChord?.symbol,
+                    transitionTo: nextChord,
+                    showHand: false
+                )
                     .frame(minHeight: 260, maxHeight: 460)
                     .sheet(isPresented: $showTransitions) {
                         TransitionsSheet(pairs: TransitionsSheet.pairs(
