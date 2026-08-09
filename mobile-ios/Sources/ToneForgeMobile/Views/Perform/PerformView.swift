@@ -30,23 +30,9 @@ struct PerformView: View {
 
     var body: some View {
         VStack(spacing: TFTheme.Spacing.md) {
-            // The Jam↔Perform contract, stated: Perform PLAYS the instrument
-            // Jam builds — same pack, same pads, same modes. Name the kit so
-            // edits made in Jam visibly carry over; offer the Jam hop when
-            // there's no kit yet.
-            HStack(spacing: 6) {
-                if let kit = appState.activeSamplePack?.pack.name {
-                    Text("Playing your Jam kit — \(kit)")
-                } else {
-                    Text("No kit yet.")
-                    Button("Build one in Jam") { appState.selectedTab = .jam }
-                        .font(.caption2.weight(.semibold))
-                }
-                Spacer(minLength: 0)
-            }
-            .font(.caption2)
-            .foregroundStyle(TFTheme.textSecondary)
-            .padding(.horizontal, TFTheme.Spacing.md)
+            // Jam→Perform pipeline breadcrumb (shared with Jam): current
+            // stage lit, kit name cleaned, chips hop tabs.
+            KitFlowPill(active: .perform)
 
             sectionStrip
 

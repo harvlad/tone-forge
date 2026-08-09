@@ -28,7 +28,9 @@ public enum AppTab: String, CaseIterable, Hashable {
     var title: String {
         switch self {
         case .learn:   return "Learn"
-        case .jam:     return "Jam"
+        // "Build", not "Jam" — the tab is the workbench that stages
+        // Perform; "Jam vs Perform" read as synonyms (PM eval).
+        case .jam:     return "Build"
         case .perform: return "Perform"
         case .mixer:   return "Mixer"
         case .library: return "Library"
@@ -38,7 +40,7 @@ public enum AppTab: String, CaseIterable, Hashable {
     var systemImage: String {
         switch self {
         case .learn:   return "book.fill"
-        case .jam:     return "pianokeys"
+        case .jam:     return "wrench.adjustable.fill"
         case .perform: return "waveform"
         case .mixer:   return "slider.horizontal.3"
         case .library: return "music.note.list"

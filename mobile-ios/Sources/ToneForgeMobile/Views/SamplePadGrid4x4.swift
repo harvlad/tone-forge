@@ -694,10 +694,8 @@ struct SamplePadGrid4x4: View {
 
     /// Handle selection from the ChopPickerSheet.
     private func handleChopSelection(_ ref: ChopReference, target: (row: Int, col: Int)) {
-        print("[SamplePadGrid4x4] handleChopSelection called with ref: \(ref), target: \(target)")
         switch ref {
         case .packPad(let packId, let padIdx):
-            print("[SamplePadGrid4x4] Assigning packPad - packId: \(packId), padIdx: \(padIdx)")
             coordinator.assignPadFromPack(
                 targetRow: target.row,
                 targetCol: target.col,
@@ -710,9 +708,29 @@ struct SamplePadGrid4x4: View {
                 targetCol: target.col,
                 patternId: patternId
             )
-        case .bundleChop, .localSample, .customURL, .synthChord:
-            print("[SamplePadGrid4x4] Unhandled ref type: \(ref)")
-            break
+        case .bundleChop(let presetKey, let chopIndex, _):
+            // A song chop IS a pack pad — the bundle's presets live as
+            // song-DNA packs. Translate (presetKey, sorted index) →
+            // (packId, padIdx) and pin it like any pack pad. This case
+            // was a silent no-op — "can't add samples to the Jam grid".
+            guard let dna = appState.songDnaPacks.first(where: { $0.presetKey == presetKey })
+            else { return }
+            let sorted = dna.pack.pack.pads.sorted { $0.padIdx < $1.padIdx }
+            guard sorted.indices.contains(chopIndex) else { return }
+            appState.preloadSongDnaPack(dna)   // buffers for the pinned pad
+            coordinator.assignPadFromPack(
+                targetRow: target.row,
+                targetCol: target.col,
+                sourcePackId: dna.pack.pack.packId,
+                sourcePadIdx: sorted[chopIndex].padIdx
+            )
+        case .localSample(let id):
+            // Recorded voice/mic take from the picker (was also dropped).
+            let grid = PadIndex.at(row: target.row, col: target.col)
+            guard grid.isValid else { return }
+            coordinator.assignLocalSample(id: id, toGridPad: grid.rawValue)
+        case .customURL, .synthChord:
+            break   // not offered by this picker's sources
         }
     }
 

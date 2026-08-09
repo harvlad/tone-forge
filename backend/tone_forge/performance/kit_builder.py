@@ -149,7 +149,8 @@ class AutoKitBuilder:
             chosen.append(a); self._mark(a, used_ids, used_patterns, stem_counts)
 
         return self._to_sample_pack(
-            graph, chosen, pack_name or f"{graph.song_id} — Auto Kit", skill, sections or [])
+            # Human name — song_id is an analysis hash, never show it in UI.
+            graph, chosen, pack_name or "Auto Kit", skill, sections or [])
 
     def _one_per_pattern(self, pool: List[PerformanceAsset]) -> List[PerformanceAsset]:
         best: Dict[str, PerformanceAsset] = {}

@@ -64,6 +64,19 @@ public struct RootView: View {
                 }
                 .tag(AppTab.library)
         }
+        // Build→Perform pipeline arrow IN the tab bar: a small → floating
+        // at the boundary between the two tabs (items 2 and 3 of 5), so
+        // the staging relationship reads in the navigation itself.
+        .overlay(alignment: .bottom) {
+            GeometryReader { geo in
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(TFTheme.textSecondary.opacity(0.8))
+                    .position(x: geo.size.width * 0.415,
+                              y: geo.size.height - 28)
+            }
+            .allowsHitTesting(false)
+        }
         // P7: Launchpad underpower warning floats over every tab —
         // the performer needs to see it wherever they are.
         .overlay(alignment: .top) {
