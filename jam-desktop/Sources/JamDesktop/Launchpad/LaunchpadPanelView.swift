@@ -981,7 +981,12 @@ private struct PadCell: View {
     private func padLabel(_ assignment: PadAssignment?) -> String? {
         if isLocalSample { return "Voice" }
         guard let chop = assignment?.chop else { return nil }
-        return chop.chordSymbol ?? chop.sectionLabel ?? chop.kind
+        // CONTENT-first (mobile parity): sample tiles say what they sound
+        // like, not their harmonic function — harmonic grids were painting
+        // bare numerals ("iv", "VII") across the launchpad.
+        if let s = chop.sectionLabel, !s.isEmpty { return s }
+        if let k = chop.kind, !k.isEmpty, k != "chord" { return k.capitalized }
+        return chop.chordSymbol
     }
 }
 
