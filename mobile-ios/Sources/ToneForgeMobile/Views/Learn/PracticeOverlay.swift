@@ -138,10 +138,20 @@ struct PracticeOverlay: View {
     private static let nextColor = Color(
         red: 1.00, green: 0.72, blue: 0.30)
 
+    /// The ONE pad to light as "play now": the exact target symbol when
+    /// it's in the grid, else the first lenient match. The scorer stays
+    /// lenient (Dm counts for Dm7) but the DISPLAY must not light every
+    /// acceptable pad — two blue chords read as a bug and don't teach
+    /// which voicing the song actually plays.
+    private var expectedPadSymbol: String? {
+        guard let target = appState.currentChord?.symbol else { return nil }
+        let chords = controller.songChords
+        if chords.contains(target) { return target }
+        return chords.first { LearnScorer.matches(pressed: $0, target: target) }
+    }
+
     private func chordPad(_ symbol: String) -> some View {
-        let isExpected = appState.currentChord.map {
-            LearnScorer.matches(pressed: symbol, target: $0.symbol)
-        } ?? false
+        let isExpected = symbol == expectedPadSymbol
         // Up next (distinct chord) blinks; the blink phase rides the
         // 30 Hz songSeconds publisher, no extra timer.
         let isNext = !isExpected

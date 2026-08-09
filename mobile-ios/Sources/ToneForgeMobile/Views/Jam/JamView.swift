@@ -49,6 +49,15 @@ struct JamView: View {
 
     var body: some View {
         VStack(spacing: TFTheme.Spacing.sm) {
+            // One-line purpose caption: Jam and Perform share the same
+            // instrument, so each surface states its job (PM eval: the two
+            // tabs read as unexplained near-duplicates).
+            Text("Build your instrument — pads, chops, sequences")
+                .font(.caption2)
+                .foregroundStyle(TFTheme.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, TFTheme.Spacing.md)
+
             sectionStrip
 
             // Key editing + harmonic detail moved off the primary

@@ -30,6 +30,13 @@ struct PerformView: View {
 
     var body: some View {
         VStack(spacing: TFTheme.Spacing.md) {
+            // Counterpart to Jam's caption — same instrument, different job.
+            Text("Perform it live — your kit + FX")
+                .font(.caption2)
+                .foregroundStyle(TFTheme.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, TFTheme.Spacing.md)
+
             sectionStrip
 
             if let latch = latchBinding {

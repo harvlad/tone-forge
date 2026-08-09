@@ -597,9 +597,19 @@ public struct GuitarNeckPlaySurface: View {
                         .animation(.easeInOut(duration: 0.16), value: handLifted)
                 }
                 NeckBoardCanvas(shape: shape, geo: geo, layer: .hardware)
-                NeckDotsCanvas(
-                    shape: shape, geo: geo, fingering: fingering,
-                    roles: transition?.rolesByFinger ?? [:])
+                if showHand {
+                    NeckDotsCanvas(
+                        shape: shape, geo: geo, fingering: fingering,
+                        roles: transition?.rolesByFinger ?? [:])
+                } else {
+                    // Trajectory mode: the dots ANIMATE — each finger slides
+                    // to its next position on chord change, mimicking the
+                    // hand's motion without the hand (the arrows preview the
+                    // path, the dots then travel it).
+                    AnimatedNeckDots(
+                        hasShape: shape != nil, geo: geo, fingering: fingering,
+                        roles: transition?.rolesByFinger ?? [:])
+                }
                 if let transition {
                     TransitionOverlayCanvas(transition: transition, geo: geo)
                 }
@@ -736,6 +746,54 @@ private struct NeckBoardCanvas: View {
 
 // MARK: - Numbered dots (drawn above the hand)
 
+
+/// Trajectory-mode dots: one SwiftUI view PER FINGER, positioned on the
+/// board and implicitly animated — on a chord change each finger's dot
+/// slides along to its new fret/string (the motion the silhouette hand
+/// used to carry, now on the dots themselves). Identity is the finger
+/// number (plus occurrence for barre doubles), so SwiftUI animates
+/// position instead of cross-fading two dots.
+private struct AnimatedNeckDots: View {
+    let hasShape: Bool
+    let geo: NeckGeometry
+    let fingering: ChordFingering.Result
+    var roles: [Int: FingerRole] = [:]
+
+    /// Stable per-dot identity: finger number + occurrence index within
+    /// that finger (barres repeat a finger across strings).
+    private var dots: [(id: String, note: ChordFingering.Note)] {
+        var seen: [Int: Int] = [:]
+        return fingering.notes.map { n in
+            let k = seen[n.finger, default: 0]
+            seen[n.finger] = k + 1
+            return (id: "\(n.finger)#\(k)", note: n)
+        }
+    }
+
+    var body: some View {
+        let r = geo.stringGap * 0.42
+        ZStack {
+            if hasShape {
+                ForEach(dots, id: \.id) { dot in
+                    ZStack {
+                        Circle()
+                            .fill(roles[dot.note.finger]?.color ?? Color.accentColor)
+                        Text("\(dot.note.finger)")
+                            .font(.system(size: r * 1.15, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .frame(width: r * 2, height: r * 2)
+                    .position(
+                        x: geo.fretX(dot.note.fret),
+                        y: geo.stringY(dot.note.string))
+                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.35), value: fingering)
+        .allowsHitTesting(false)
+    }
+}
 
 private struct NeckDotsCanvas: View {
     let shape: GuitarChordShape?
