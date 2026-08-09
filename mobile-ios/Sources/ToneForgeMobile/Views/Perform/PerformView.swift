@@ -145,7 +145,9 @@ struct PerformView: View {
             // launchpad, both tabs — plus the shared loop-cycle strip.
             VStack(spacing: 6) {
                 LoopCycleStrip()
-                SamplePadGrid4x4(coordinator: coordinator)
+                // STAGE build of the Jam kit: same pads, play-only — empty
+                // slots recede, no edit radial, hotter tiles + ring glow.
+                SamplePadGrid4x4(coordinator: coordinator, stage: true)
             }
             .onAppear { appState.preloadAllSongDnaPacks() }
         }

@@ -37,6 +37,11 @@ struct SamplePadGrid4x4: View {
     var onOpenBrowse: ((Int, Int) -> Void)? = nil
     /// Callback to open Beat Capture from the empty-pad create radial.
     var onBeatCapture: (() -> Void)? = nil
+    /// STAGE mode (Perform): the same kit rendered as an instrument to
+    /// play, not a bench to edit — empty slots vanish (no "+", no
+    /// tap-to-add), the hold-radial is off, filled tiles run hotter and
+    /// glow while ringing. Jam keeps the workbench (stage = false).
+    var stage: Bool = false
     @EnvironmentObject private var appState: AppState
 
     @State private var sheetTarget: PadSheetTarget?
@@ -59,7 +64,9 @@ struct SamplePadGrid4x4: View {
                             // Empty pad: a plain tap now opens the add-sound
                             // picker (long-press still gives the full create
                             // radial). Was a no-op — "can't add sounds here".
+                            // Stage mode: empty slots are inert (build in Jam).
                             if isEmpty(gridRow: gridRow, gridCol: gridCol) {
+                                guard !stage else { return }
                                 if let onOpenBrowse {
                                     onOpenBrowse(gridRow, gridCol)
                                 } else {
@@ -74,6 +81,8 @@ struct SamplePadGrid4x4: View {
                             coordinator.touchPadUp(row: gridRow, col: gridCol)
                         },
                         onLongPress: { row, col in
+                            // Stage mode is play-only — no edit radial.
+                            guard !stage else { return }
                             let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
                             // Anchor the wheel on the pressed pad; clamp
                             // keeps the full wheel on-screen near edges so
@@ -385,17 +394,24 @@ struct SamplePadGrid4x4: View {
             RoundedRectangle(cornerRadius: 10)
                 // Raised from 0.30/0.16 — at the old opacity an idle filled
                 // pad was nearly indistinguishable from an empty one (PM
-                // eval: "filled reads as dead").
+                // eval: "filled reads as dead"). Stage runs hotter still —
+                // Perform should LOOK lit, the staged version of Jam's bench.
                 .fill(visual.colorHint == 0
-                    ? AnyShapeStyle(TFTheme.chipFill)
+                    ? AnyShapeStyle(TFTheme.chipFill.opacity(stage ? 0.25 : 1.0))
                     : AnyShapeStyle(tint.opacity(
-                        (visual.isBright || ringing) ? 0.50 : 0.30)))
+                        stage
+                            ? ((visual.isBright || ringing) ? 0.75 : 0.50)
+                            : ((visual.isBright || ringing) ? 0.50 : 0.30))))
 
             if visual.colorHint == 0 {
-                Image(systemName: "plus")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(TFTheme.textSecondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Workbench: "+" invites adding. Stage: empty slots recede —
+                // you don't edit on stage.
+                if !stage {
+                    Image(systemName: "plus")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(TFTheme.textSecondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     // A filled pad ALWAYS gets a name — unlabeled chops were
@@ -405,7 +421,9 @@ struct SamplePadGrid4x4: View {
                         if let padKey { return "Pad \(padKey.padIdx + 1)" }
                         return "Pad"
                     }())
-                        .font(.caption.weight(.semibold))
+                        // Stage: bigger type, readable at arm's length.
+                        .font(stage ? .subheadline.weight(.bold)
+                                    : .caption.weight(.semibold))
                         .foregroundStyle(TFTheme.textPrimary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
@@ -483,6 +501,10 @@ struct SamplePadGrid4x4: View {
                 )
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Stage lighting: a ringing pad throws its color as a glow.
+        .shadow(color: stage && ringing && visual.colorHint != 0
+                    ? tint.opacity(0.55) : .clear,
+                radius: 12)
         .accessibilityLabel(visual.label ?? "Empty pad")
     }
 
