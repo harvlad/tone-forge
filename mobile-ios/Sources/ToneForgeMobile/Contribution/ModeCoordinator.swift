@@ -437,23 +437,35 @@ public final class ModeCoordinator: ObservableObject {
             break
         }
 
-        // Jam Samples: hardware (Launchpad) pad events arrive on the bus.
-        // When the Jam surface is in Samples mode, map them onto the
-        // song's chops (Launchpad-clip behavior) instead of the synth.
-        // On-screen Samples pads bypass the bus (direct calls), so this
-        // only catches hardware — no double-trigger.
+        // Jam/Perform Samples mode: pad events map onto sample pads with
+        // session-clip semantics (latch loops, bar-quantize, preload retry).
+        // TWO coordinate systems share this bus now:
+        //  - on-screen 4×4 (source .touch): QUADRANT cells (rows 5–8) →
+        //    resolve via padBindings (the labeled pack quadrant, incl.
+        //    swapped-in pins). The old flat mapping indexed 32+ into a
+        //    16-pad list → nil → the event was consumed anyway → the
+        //    "pads don't play sound" bug.
+        //  - hardware Launchpad: full 8×8 reading order → flat kit list.
         if appMode == .jamInKey && app.jamSettings.padMode == .samples {
+            func target(row: Int, col: Int) -> (padIdx: Int, packId: String)? {
+                if event.source == .touch {
+                    let grid = PadIndex.at(row: row, col: col)
+                    guard let b = padBindings[grid.rawValue] else { return nil }
+                    return (b.padIdx, b.packId)
+                }
+                return jamSampleAt(row: row, col: col)
+            }
             switch event.kind {
             case .padDown(let row, let col):
-                if let (padIdx, packId) = jamSampleAt(row: row, col: col) {
-                    triggerJamSample(padIdx: padIdx, packId: packId,
+                if let t = target(row: row, col: col) {
+                    triggerJamSample(padIdx: t.padIdx, packId: t.packId,
                                      latch: app.jamSettings.sampleLatch)
                 }
                 return
             case .padUp(let row, let col):
                 if !app.jamSettings.sampleLatch,
-                   let (padIdx, packId) = jamSampleAt(row: row, col: col) {
-                    releaseJamSample(padIdx: padIdx, packId: packId)
+                   let t = target(row: row, col: col) {
+                    releaseJamSample(padIdx: t.padIdx, packId: t.packId)
                 }
                 return
             default:
