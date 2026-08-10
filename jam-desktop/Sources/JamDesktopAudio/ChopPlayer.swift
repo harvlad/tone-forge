@@ -78,6 +78,20 @@ public final class ChopPlayer {
     /// Readers for sequencer customURL sources, cached per URL.
     private var fileCache: [URL: AVAudioFile] = [:]
 
+    /// Decoded-region cache: converted-to-canonical (+faded/crossfaded)
+    /// buffers keyed by source+range+variant. The canonical-format redesign
+    /// moved an 8 s read+SRC into the trigger path — first press paid
+    /// tens of ms ("delay on pads"). Repeat triggers now schedule the
+    /// cached buffer immediately. Cleared on load/unload; soft-capped.
+    private struct RegionKey: Hashable {
+        let url: URL
+        let startFrame: AVAudioFramePosition
+        let frameCount: AVAudioFrameCount
+        let loopXfadeMs: Int   // -1 = one-shot variant
+    }
+    private var regionCache: [RegionKey: AVAudioPCMBuffer] = [:]
+    private static let regionCacheCap = 48
+
     private static let poolSize = 16
 
     /// Destination the voice chains feed. Defaults to the engine's
@@ -121,12 +135,14 @@ public final class ChopPlayer {
             return out
         }.value
         files = opened
+        regionCache.removeAll()
     }
 
     public func unload() {
         stopAll()
         files.removeAll()
         fileCache.removeAll()
+        regionCache.removeAll()
     }
 
     // MARK: - Trigger / release
@@ -318,6 +334,9 @@ public final class ChopPlayer {
         file: AVAudioFile, startFrame: AVAudioFramePosition,
         frameCount: AVAudioFrameCount
     ) -> AVAudioPCMBuffer? {
+        let key = RegionKey(url: file.url, startFrame: startFrame,
+                            frameCount: frameCount, loopXfadeMs: -1)
+        if let cached = regionCache[key] { return cached }
         guard let raw = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else { return nil }
         do {
             file.framePosition = startFrame
@@ -332,7 +351,15 @@ public final class ChopPlayer {
             return nil
         }
         SeamlessLoop.applyEdgeFades(buf)
+        cacheRegion(buf, for: key)
         return buf
+    }
+
+    private func cacheRegion(_ buf: AVAudioPCMBuffer, for key: RegionKey) {
+        if regionCache.count >= Self.regionCacheCap {
+            regionCache.removeAll()   // simple flush; next presses re-fill
+        }
+        regionCache[key] = buf
     }
 
     /// Read a [startFrame, frameCount] region and apply the seam crossfade
@@ -522,8 +549,21 @@ public final class ChopPlayer {
             ))
             return voices.count - 1
         }
+        // Pool full: steal — but NEVER a ringing loop if a one-shot voice
+        // exists. Round-robin used to grab loop voices freely, so tapping
+        // beats on pads killed running loops ("loops affected by taps").
+        // Loops are only stolen when the whole pool is loops.
+        for probe in 0..<voices.count {
+            let i = (nextVoice + probe) % voices.count
+            if voices[i].loopFrames == nil {
+                nextVoice = i + 1
+                endTakeover(i)
+                return i
+            }
+        }
         let index = nextVoice % voices.count
         nextVoice += 1
+        endTakeover(index)
         return index
     }
 
