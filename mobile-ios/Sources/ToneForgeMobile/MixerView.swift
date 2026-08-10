@@ -121,6 +121,9 @@ struct MixerBody: View {
                         .foregroundStyle(
                             segment == seg ? TFTheme.textPrimary : TFTheme.textSecondary
                         )
+                        // Whole segment is tappable — plain buttons only
+                        // hit-test the text glyphs without this.
+                        .contentShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
             }
