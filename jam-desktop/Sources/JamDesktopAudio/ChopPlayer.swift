@@ -56,6 +56,12 @@ public final class ChopPlayer {
         /// Monotonic per-voice token so a late one-shot completion can't
         /// end a takeover the slot has since been reused for.
         var gen: Int = 0
+        /// mixer→destination wired (stereo, once per attach). Reset on
+        /// reattach. Rewiring this leg on every per-voice format change
+        /// crashed when a trigger raced a CoreAudio device reconfig
+        /// (USB plug): AVAudioEngine.connect threw NSException mid-
+        /// UpdateGraphAfterReconfig.
+        var outputWired: Bool = false
     }
 
     private enum VoiceKey: Hashable {
@@ -227,6 +233,11 @@ public final class ChopPlayer {
             connectChain(voice, format: file.processingFormat)
             voice.format = file.processingFormat
         }
+        // Output leg wired at most once per attach cycle (see Voice.outputWired).
+        if !voice.outputWired {
+            connectOutput(voice)
+            voice.outputWired = true
+        }
         applyEffects(effects.clamped(), to: voice)
         voice.mixer.outputVolume = min(max(velocity, 0), 1)
         voice.mixer.pan = min(max(pan, -1), 1)
@@ -397,27 +408,35 @@ public final class ChopPlayer {
             endTakeover(index)
             voices[index].node.stop()
             voices[index].key = nil
+            voices[index].outputWired = false
             if let format = voices[index].format {
                 connectChain(voices[index], format: format)
+                connectOutput(voices[index])
+                voices[index].outputWired = true
             }
         }
     }
 
     // MARK: - Voice chain
 
-    /// Wire (or rewire) a voice's player→delay→EQ→mixer→destination
-    /// chain. The player→…→mixer legs run in the stem's processing format
-    /// (mono for center-extracted stems), but the mixer→destination leg is
-    /// forced STEREO so a MONO chop is up-mixed and equal-power-panned to
-    /// both channels. Wiring the mixer output mono routed it to a single
-    /// side — the "audio drops on one side when I trigger a pad" bug.
+    /// Wire (or rewire) a voice's player→delay→EQ→mixer legs in the stem's
+    /// processing format (mono for center-extracted stems). The
+    /// mixer→destination leg is wired SEPARATELY (connectOutput) — stereo,
+    /// once per attach cycle — because rewiring it on every per-voice
+    /// format change crashed when a trigger raced a CoreAudio device
+    /// reconfig (USB plug → NSException in UpdateGraphAfterReconfig).
     private func connectChain(_ voice: Voice, format: AVAudioFormat) {
-        let stereo = AVAudioFormat(
-            standardFormatWithSampleRate: format.sampleRate, channels: 2
-        ) ?? format
         avEngine.connect(voice.node, to: voice.delay, format: format)
         avEngine.connect(voice.delay, to: voice.eq, format: format)
         avEngine.connect(voice.eq, to: voice.mixer, format: format)
+    }
+
+    /// The stable output leg: mixer→destination at canonical stereo 48 kHz,
+    /// so a MONO chop up-mixes and centers (the one-side-of-the-speakers
+    /// fix) without ever needing a per-format rewire.
+    private func connectOutput(_ voice: Voice) {
+        let stereo = AVAudioFormat(
+            standardFormatWithSampleRate: 48_000, channels: 2)
         avEngine.connect(voice.mixer, to: destination, format: stereo)
     }
 
