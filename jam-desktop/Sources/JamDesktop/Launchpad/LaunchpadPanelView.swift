@@ -66,12 +66,10 @@ struct LaunchpadPanelView: View {
             }
         }
         .padding(20)
-        // maxWidth/maxHeight matter now that the panel floats as an overlay:
-        // without them it stretched to the whole window, leaving the header
-        // controls scattered across a huge row and the square grid marooned
-        // at the leading edge.
-        .frame(minWidth: 900, idealWidth: 1040, maxWidth: 1120,
-               minHeight: 720, idealHeight: 860, maxHeight: 920)
+        // FIXED size: as a floating overlay the panel must not negotiate
+        // with the window's proposal at all — min/ideal/max still let it
+        // stretch in practice. One deterministic footprint.
+        .frame(width: 1040, height: 860)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
