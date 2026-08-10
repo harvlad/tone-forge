@@ -229,14 +229,15 @@ public final class ChopPlayer {
         voice.gen &+= 1
         let capturedGen = voice.gen
 
-        if voice.format != file.processingFormat {
-            connectChain(voice, format: file.processingFormat)
-            voice.format = file.processingFormat
-        }
-        // Output leg wired at most once per attach cycle (see Voice.outputWired).
+        // Voice chains are wired ONCE at the canonical 48 kHz stereo format
+        // (lazy, reset by reattach). Buffers are CONVERTED to canonical at
+        // read instead of rewiring the chain per file format — per-format
+        // engine.connect calls threw -10868 / NSException whenever a trigger
+        // raced a device reconfig or crossed sample rates (drums 44.1 k).
         if !voice.outputWired {
-            connectOutput(voice)
+            wireVoice(voice)
             voice.outputWired = true
+            voice.format = Self.canonicalFormat
         }
         applyEffects(effects.clamped(), to: voice)
         voice.mixer.outputVolume = min(max(velocity, 0), 1)
@@ -259,15 +260,13 @@ public final class ChopPlayer {
                                       completionHandler: oneShotCompletion(index, gen: capturedGen))
             voice.loopFrames = nil
         } else {
-            // Fallback: buffer read failed — schedule straight from the file.
-            voice.node.scheduleSegment(
-                file,
-                startingFrame: startFrame,
-                frameCount: AVAudioFrameCount(frameCount),
-                at: nil,
-                completionHandler: oneShotCompletion(index, gen: capturedGen)
-            )
-            voice.loopFrames = nil
+            // Buffer read/convert failed — skip the trigger. (No raw
+            // scheduleSegment fallback: the file's native format may not
+            // match the canonical chain, and a mismatched schedule is the
+            // same crash class we're eliminating.)
+            print("[ChopPlayer] dropped trigger: region read failed")
+            voices[index] = voice
+            return
         }
         voice.node.play(at: playTime(afterSeconds: delaySeconds))
         voice.key = key
@@ -319,12 +318,17 @@ public final class ChopPlayer {
         file: AVAudioFile, startFrame: AVAudioFramePosition,
         frameCount: AVAudioFrameCount
     ) -> AVAudioPCMBuffer? {
-        guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else { return nil }
+        guard let raw = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else { return nil }
         do {
             file.framePosition = startFrame
-            try file.read(into: buf, frameCount: frameCount)
+            try file.read(into: raw, frameCount: frameCount)
         } catch {
             print("[ChopPlayer] region read failed: \(error)")
+            return nil
+        }
+        // Canonical 48 kHz stereo — the ONLY format the voice chains speak.
+        guard let buf = Self.toCanonical(raw) else {
+            print("[ChopPlayer] region convert failed")
             return nil
         }
         SeamlessLoop.applyEdgeFades(buf)
@@ -408,36 +412,59 @@ public final class ChopPlayer {
             endTakeover(index)
             voices[index].node.stop()
             voices[index].key = nil
+            // Mark unwired; the next trigger lazily rewires at canonical.
+            // (Not rewired eagerly here — reattach fires while the graph is
+            // still settling from the device flap, exactly when connect
+            // calls are dangerous.)
             voices[index].outputWired = false
-            if let format = voices[index].format {
-                connectChain(voices[index], format: format)
-                connectOutput(voices[index])
-                voices[index].outputWired = true
-            }
+            voices[index].format = nil
         }
     }
 
     // MARK: - Voice chain
 
-    /// Wire (or rewire) a voice's player→delay→EQ→mixer legs in the stem's
-    /// processing format (mono for center-extracted stems). The
-    /// mixer→destination leg is wired SEPARATELY (connectOutput) — stereo,
-    /// once per attach cycle — because rewiring it on every per-voice
-    /// format change crashed when a trigger raced a CoreAudio device
-    /// reconfig (USB plug → NSException in UpdateGraphAfterReconfig).
-    private func connectChain(_ voice: Voice, format: AVAudioFormat) {
-        avEngine.connect(voice.node, to: voice.delay, format: format)
-        avEngine.connect(voice.delay, to: voice.eq, format: format)
-        avEngine.connect(voice.eq, to: voice.mixer, format: format)
+    /// The ONE voice-chain format: 48 kHz stereo. Buffers convert to it at
+    /// read; chains never rewire per file. (Mirrors mobile's D-017 single-
+    /// resample design.)
+    static let canonicalFormat = AVAudioFormat(
+        standardFormatWithSampleRate: 48_000, channels: 2)!
+
+    /// Wire a voice's player→delay→EQ→mixer→destination chain at the
+    /// canonical format. Called once per attach cycle (lazy at first
+    /// trigger, and from reattach) — NEVER per trigger/per file format:
+    /// engine.connect during a CoreAudio device reconfig or across sample
+    /// rates raised NSException/-10868 and crashed the app.
+    private func wireVoice(_ voice: Voice) {
+        let f = Self.canonicalFormat
+        avEngine.connect(voice.node, to: voice.delay, format: f)
+        avEngine.connect(voice.delay, to: voice.eq, format: f)
+        avEngine.connect(voice.eq, to: voice.mixer, format: f)
+        avEngine.connect(voice.mixer, to: destination, format: f)
     }
 
-    /// The stable output leg: mixer→destination at canonical stereo 48 kHz,
-    /// so a MONO chop up-mixes and centers (the one-side-of-the-speakers
-    /// fix) without ever needing a per-format rewire.
-    private func connectOutput(_ voice: Voice) {
-        let stereo = AVAudioFormat(
-            standardFormatWithSampleRate: 48_000, channels: 2)
-        avEngine.connect(voice.mixer, to: destination, format: stereo)
+    /// One-shot whole-buffer conversion to the canonical format (rate +
+    /// channel layout; mono up-mixes to centered stereo — the one-side-of-
+    /// the-speakers fix). Returns the input untouched when it already
+    /// matches. Nil on converter failure.
+    private static func toCanonical(_ src: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let target = canonicalFormat
+        if src.format == target { return src }
+        guard let converter = AVAudioConverter(from: src.format, to: target)
+        else { return nil }
+        converter.sampleRateConverterQuality = AVAudioQuality.max.rawValue
+        let ratio = target.sampleRate / src.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(src.frameLength) * ratio) + 32
+        guard let dst = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity)
+        else { return nil }
+        var provided = false
+        var err: NSError?
+        _ = converter.convert(to: dst, error: &err) { _, outStatus in
+            if provided { outStatus.pointee = .endOfStream; return nil }
+            provided = true
+            outStatus.pointee = .haveData
+            return src
+        }
+        return err == nil ? dst : nil
     }
 
     /// iOS SampleVoicePool.applyEffects parity: the filter band is
