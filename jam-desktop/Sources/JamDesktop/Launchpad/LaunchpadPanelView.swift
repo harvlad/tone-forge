@@ -78,7 +78,7 @@ struct LaunchpadPanelView: View {
         // FIXED size: as a floating overlay the panel must not negotiate
         // with the window's proposal at all — min/ideal/max still let it
         // stretch in practice. One deterministic footprint.
-        .frame(width: 1040, height: 860)
+        .frame(width: 1220, height: 880)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)

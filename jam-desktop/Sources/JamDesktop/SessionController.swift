@@ -366,6 +366,14 @@ final class SessionController: ObservableObject {
         launchpad.onStopAllVoices = { [weak self] in
             self?.chopPlayer.stopAll()
         }
+        // A loop press with the song stopped starts the transport first —
+        // loops belong to the song's grid; without a rolling clock they
+        // free-ran at their press phases. (Move-style: the first loop
+        // starts the music.)
+        launchpad.onLoopArm = { [weak self] in
+            guard let self, !self.transport.isPlaying else { return }
+            self.transport.play()
+        }
         launchpad.onLocalSampleTrigger = { [weak self] id in
             guard let self, let url = try? self.padSampleStore.wavURL(id: id) else { return }
             self.chopPlayer.trigger(file: url, startSec: nil, endSec: nil)

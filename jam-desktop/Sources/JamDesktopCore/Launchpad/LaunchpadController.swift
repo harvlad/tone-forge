@@ -234,13 +234,17 @@ public final class LaunchpadController {
     }
 
     /// Next shared loop-cycle boundary at/after `now` (multiples of
-    /// `loopLengthSeconds` from song origin), with a small grace so a press
-    /// a hair late still catches the current boundary.
+    /// `loopLengthSeconds` from song origin), with a grace window so a
+    /// press just after a boundary fires NOW on that boundary instead of
+    /// waiting a whole cycle (critical for the first loop right after the
+    /// transport auto-starts at ~0).
     private func nextLoopBoundary(after now: Double) -> Double {
         let L = loopLengthSeconds
         guard L > 0 else { return now }
-        let grace = 0.08
-        let k = ((now + grace) / L).rounded(.down) + 1
+        let grace = 0.12
+        let r = now.truncatingRemainder(dividingBy: L)
+        if r < grace { return now }
+        let k = (now / L).rounded(.down) + 1
         return k * L
     }
     public private(set) var assignments: [LaunchpadPad: PadAssignment] = [:]
@@ -276,6 +280,13 @@ public final class LaunchpadController {
 
     /// Fire a locally-recorded sample (vocoder / mic take) by its store id.
     @ObservationIgnored public var onLocalSampleTrigger: ((UUID) -> Void)?
+
+    /// Fired just BEFORE a loop-mode trigger computes its quantize target.
+    /// The host starts the song transport here if it's stopped — with a
+    /// frozen clock every press "quantized" against a dead grid and fired
+    /// immediately, so loops free-ran at their press phases (the "are you
+    /// sure it's synced?" bug).
+    @ObservationIgnored public var onLoopArm: (() -> Void)?
 
     /// Hard-stop EVERY sounding voice unconditionally (ChopPlayer.stopAll),
     /// not just the ones the current assignments can name. Used before a
@@ -486,6 +497,10 @@ public final class LaunchpadController {
             onRelease?(pad, assignment)   // stop the loop
             return
         }
+        // Starting a loop with the transport stopped = quantizing against a
+        // frozen clock (everything fires immediately, phases free-run). Let
+        // the host start the transport BEFORE we read the clock.
+        if playbackMode == .loop { onLoopArm?() }
         let now = nowProvider()
         // Loop + lock: start on the next SHARED loop-cycle boundary so every
         // pad is phase-locked to one 8 s grid and they stack coherently. With
