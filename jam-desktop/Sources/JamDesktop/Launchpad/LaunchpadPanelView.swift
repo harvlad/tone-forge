@@ -421,17 +421,23 @@ struct LaunchpadPanelView: View {
 
     private var controls: some View {
         HStack(spacing: 12) {
-            // Global stop — silence every sounding pad/layer at once.
+            // Global stop — every sounding pad/layer AND the running
+            // sequencer beat (Style Beats live on the sequencer; the old
+            // pads-only stop couldn't kill a beat, and the button disabled
+            // itself when only the beat was playing).
             Button {
                 launchpad.stopAllPads()
+                if session.sequencer.isPlaying { session.sequencer.stop() }
             } label: {
                 Image(systemName: "stop.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(launchpad.activePads.isEmpty ? Color.secondary : JamTheme.error)
+                    .foregroundStyle(
+                        (launchpad.activePads.isEmpty && !session.sequencer.isPlaying)
+                            ? Color.secondary : JamTheme.error)
             }
             .buttonStyle(.plain)
-            .help("Stop all pads")
-            .disabled(launchpad.activePads.isEmpty)
+            .help("Stop all pads and the beat")
+            .disabled(launchpad.activePads.isEmpty && !session.sequencer.isPlaying)
 
             // Grid ⇄ Layers view.
             Picker("", selection: $showLayers) {
