@@ -167,7 +167,7 @@ struct RootView: View {
         // watch the song play while triggering loops — the core premise a
         // covering modal sheet made impossible. Trailing-aligned so the neck
         // (leading) stays in view on wide windows.
-        .overlay(alignment: .trailing) {
+        .overlay(alignment: .center) {
             if showLaunchpad {
                 LaunchpadPanelView(onClose: { showLaunchpad = false })
                     .environmentObject(model)
@@ -177,7 +177,7 @@ struct RootView: View {
                         .strokeBorder(.white.opacity(0.12)))
                     .shadow(color: .black.opacity(0.5), radius: 28, y: 8)
                     .padding(16)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .transition(.scale(scale: 0.98).combined(with: .opacity))
             }
         }
         .sheet(isPresented: $showSequencer) {

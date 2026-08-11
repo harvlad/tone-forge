@@ -40,6 +40,15 @@ struct LaunchpadPanelView: View {
     @State private var dragSourcePad: Int?
     @State private var showLayers = false
 
+    /// ONE 30 Hz driver for every animated readout in the panel (per-pad
+    /// loop playheads + the cycle strip). The per-cell
+    /// TimelineView(.animation) instances silently stopped ticking on
+    /// macOS release builds — playheads froze and only jumped when an
+    /// unrelated re-render (hover!) redrew the cell.
+    @State private var animTick = 0
+    private let animTimer = Timer.publish(
+        every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
+
     private var launchpad: LaunchpadController { session.launchpad }
 
     var body: some View {
@@ -66,10 +75,20 @@ struct LaunchpadPanelView: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 900, idealWidth: 1040, minHeight: 720, idealHeight: 860)
+        // FIXED size: as a floating overlay the panel must not negotiate
+        // with the window's proposal at all — min/ideal/max still let it
+        // stretch in practice. One deterministic footprint.
+        .frame(width: 1040, height: 860)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
+        // Tick only while something is actually animating (sounding pads or
+        // a rolling transport) so an idle panel doesn't redraw at 30 Hz.
+        .onReceive(animTimer) { _ in
+            if !launchpad.activePads.isEmpty || session.transport.isPlaying {
+                animTick &+= 1
+            }
+        }
         .onAppear {
             selectedStem = launchpad.stem ?? ""
             selectedSliceMode = launchpad.sliceMode ?? ""
@@ -354,12 +373,13 @@ struct LaunchpadPanelView: View {
 
     // MARK: - Controls
 
-    /// Tiny secondary caption naming the picker to its right.
+    /// Tiny secondary caption naming the picker to its right. Rendered as
+    /// part of a tight caption+picker pair (see call sites) so the pair
+    /// reads as one labeled control, not two floating row items.
     private func pickerCaption(_ title: String) -> some View {
         Text(title)
             .font(.caption2)
             .foregroundStyle(.secondary)
-            .padding(.leading, 2)
     }
 
     /// Shared loop-cycle strip: elapsed sweep of the current cycle, a flash
@@ -369,32 +389,32 @@ struct LaunchpadPanelView: View {
     private var cycleStrip: some View {
         let length = launchpad.loopLengthSeconds
         if length > 0, session.transport.isPlaying {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
-                let t = session.transport.positionSeconds
-                let phase = (t.truncatingRemainder(dividingBy: length)) / length
-                let remaining = length - t.truncatingRemainder(dividingBy: length)
-                HStack(spacing: 10) {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.08))
-                            Capsule()
-                                .fill(JamTheme.accent.opacity(0.6))
-                                .frame(width: max(4, geo.size.width * phase))
-                            if phase < 0.06 {   // cycle-start flash
-                                Capsule().fill(Color.white.opacity(0.35))
-                            }
+            // Shares the panel's animTick driver (see playheadOverlay).
+            let _ = animTick
+            let t = session.transport.positionSeconds
+            let phase = (t.truncatingRemainder(dividingBy: length)) / length
+            let remaining = length - t.truncatingRemainder(dividingBy: length)
+            HStack(spacing: 10) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.08))
+                        Capsule()
+                            .fill(JamTheme.accent.opacity(0.6))
+                            .frame(width: max(4, geo.size.width * phase))
+                        if phase < 0.06 {   // cycle-start flash
+                            Capsule().fill(Color.white.opacity(0.35))
                         }
                     }
-                    .frame(height: 5)
-                    if launchpad.loopLockEnabled {
-                        Text(String(format: "next lock %.1fs", remaining))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .fixedSize()
-                    }
                 }
-                .frame(height: 12)
+                .frame(height: 5)
+                if launchpad.loopLockEnabled {
+                    Text(String(format: "next lock %.1fs", remaining))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
             }
+            .frame(height: 12)
             .accessibilityLabel("Shared loop cycle position")
         }
     }
@@ -462,36 +482,42 @@ struct LaunchpadPanelView: View {
                   ? "Augment ON: samples replace the song's stem while playing (tap to layer instead)"
                   : "Augment OFF: samples layer over the song (tap to replace the stem)")
 
-            // Each picker gets a small visible caption (UX audit fix #3:
-            // three anonymous label-hidden dropdowns were indistinguishable).
-            pickerCaption("Quantize")
-            Picker("Quantize", selection: quantizeBinding) {
-                ForEach(QuantizeMode.allCases, id: \.self) {
-                    Text($0.rawValue).tag($0)
+            // Each picker gets a small visible caption (UX audit fix #3),
+            // paired tightly so caption+control read as one labeled unit.
+            HStack(spacing: 5) {
+                pickerCaption("Quantize")
+                Picker("Quantize", selection: quantizeBinding) {
+                    ForEach(QuantizeMode.allCases, id: \.self) {
+                        Text($0.rawValue).tag($0)
+                    }
                 }
+                .labelsHidden()
+                .fixedSize()
             }
-            .labelsHidden()
-            .fixedSize()
             .help("Quantize")
 
-            pickerCaption("Stem")
-            Picker("Stem", selection: $selectedStem) {
-                ForEach(stemRoles, id: \.self) {
-                    Text($0.capitalized).tag($0)
+            HStack(spacing: 5) {
+                pickerCaption("Stem")
+                Picker("Stem", selection: $selectedStem) {
+                    ForEach(stemRoles, id: \.self) {
+                        Text($0.capitalized).tag($0)
+                    }
                 }
+                .labelsHidden()
+                .fixedSize()
             }
-            .labelsHidden()
-            .fixedSize()
             .help("Source stem")
 
-            pickerCaption("Slices")
-            Picker("Slices", selection: $selectedSliceMode) {
-                ForEach(LaunchpadController.sliceModes, id: \.self) {
-                    Text($0.capitalized).tag($0)
+            HStack(spacing: 5) {
+                pickerCaption("Slices")
+                Picker("Slices", selection: $selectedSliceMode) {
+                    ForEach(LaunchpadController.sliceModes, id: \.self) {
+                        Text($0.capitalized).tag($0)
+                    }
                 }
+                .labelsHidden()
+                .fixedSize()
             }
-            .labelsHidden()
-            .fixedSize()
             .help("Slice mode")
 
             Button("Load") {
@@ -583,6 +609,7 @@ struct LaunchpadPanelView: View {
                             PadCell(
                                 pad: pad,
                                 launchpad: launchpad,
+                                animTick: animTick,
                                 padAssignmentStore: session.padAssignmentStore,
                                 transformHost: session.transformHost,
                                 analysisId: model.session?.bundle.analysisId,
@@ -635,6 +662,8 @@ struct LaunchpadPanelView: View {
 private struct PadCell: View {
     let pad: LaunchpadPad
     let launchpad: LaunchpadController
+    /// Panel-level 30 Hz pulse — the playhead's re-render dependency.
+    let animTick: Int
     let padAssignmentStore: PadAssignmentStore
     let transformHost: PadTransformHost
     let analysisId: String?
@@ -746,35 +775,37 @@ private struct PadCell: View {
     /// progress bar. Snaps back to 0 each loop. Only while the pad loops.
     @ViewBuilder private var playheadOverlay: some View {
         if launchpad.activePads.contains(pad), launchpad.loopProgress(pad) != nil {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
-                GeometryReader { geo in
-                    let p = CGFloat(launchpad.loopProgress(pad) ?? 0)
-                    let w = geo.size.width
-                    ZStack(alignment: .leading) {
-                        // Elapsed sweep across the whole tile.
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.white.opacity(0.18))
-                            .frame(width: max(0, w * p))
-                        // Playhead line at the current position.
-                        Rectangle()
-                            .fill(Color.white.opacity(0.95))
-                            .frame(width: 2)
-                            .offset(x: max(0, w * p - 1))
-                        // Bottom progress bar.
-                        VStack {
-                            Spacer()
-                            ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(Color.white.opacity(0.22)).frame(height: 4)
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(Color.white.opacity(0.95))
-                                    .frame(width: max(0, w * p), height: 4)
-                            }
+            // Driven by the panel's shared animTick (a per-cell
+            // TimelineView(.animation) froze on macOS release builds:
+            // playheads only jumped when hover re-rendered the cell).
+            GeometryReader { geo in
+                let _ = animTick   // re-render dependency, 30 Hz
+                let p = CGFloat(launchpad.loopProgress(pad) ?? 0)
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    // Elapsed sweep across the whole tile.
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: max(0, w * p))
+                    // Playhead line at the current position.
+                    Rectangle()
+                        .fill(Color.white.opacity(0.95))
+                        .frame(width: 2)
+                        .offset(x: max(0, w * p - 1))
+                    // Bottom progress bar.
+                    VStack {
+                        Spacer()
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.white.opacity(0.22)).frame(height: 4)
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.white.opacity(0.95))
+                                .frame(width: max(0, w * p), height: 4)
                         }
                     }
                 }
-                .allowsHitTesting(false)
             }
+            .allowsHitTesting(false)
         }
     }
 
@@ -981,7 +1012,12 @@ private struct PadCell: View {
     private func padLabel(_ assignment: PadAssignment?) -> String? {
         if isLocalSample { return "Voice" }
         guard let chop = assignment?.chop else { return nil }
-        return chop.chordSymbol ?? chop.sectionLabel ?? chop.kind
+        // CONTENT-first (mobile parity): sample tiles say what they sound
+        // like, not their harmonic function — harmonic grids were painting
+        // bare numerals ("iv", "VII") across the launchpad.
+        if let s = chop.sectionLabel, !s.isEmpty { return s }
+        if let k = chop.kind, !k.isEmpty, k != "chord" { return k.capitalized }
+        return chop.chordSymbol
     }
 }
 

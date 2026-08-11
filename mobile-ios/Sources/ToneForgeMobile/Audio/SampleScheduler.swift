@@ -194,6 +194,13 @@ public final class SampleScheduler: ObservableObject {
     /// tempo — quantize degrades to .off). AppState calls this when
     /// the Sketch tab activates and restores the bundle context via
     /// `updateBundle` when it deactivates.
+    /// One 4/4 bar at the song tempo, or nil without tempo. Used to
+    /// bar-snap loop buffers at decode so they match the lock grid.
+    private var currentBarSeconds: Double? {
+        guard let bpm = tempoBpm, bpm > 0 else { return nil }
+        return (60.0 / bpm) * 4.0
+    }
+
     /// Sample-loop length (s): the 8 s kit window snapped to whole bars at
     /// the song tempo, so loops stay musical. The shared lock cycle uses
     /// this. Falls back to 8 s without tempo.
@@ -239,7 +246,8 @@ public final class SampleScheduler: ObservableObject {
 
         #if canImport(AVFoundation)
         let loaded = Self.decodePackBuffers(
-            pack, stemFiles: stemFiles, target: engine?.canonicalFormat
+            pack, stemFiles: stemFiles, target: engine?.canonicalFormat,
+            barSeconds: currentBarSeconds
         )
         loadedPacks[packId] = LoadedPack(pack: pack, buffers: loaded)
         #else
@@ -273,8 +281,10 @@ public final class SampleScheduler: ObservableObject {
 
         #if canImport(AVFoundation)
         let target = engine?.canonicalFormat
+        let bar = currentBarSeconds
         let loaded = await Task.detached(priority: .userInitiated) {
-            Self.decodePackBuffers(pack, stemFiles: stemFiles, target: target)
+            Self.decodePackBuffers(pack, stemFiles: stemFiles, target: target,
+                                   barSeconds: bar)
         }.value
         guard loadedPacks[packId] == nil else { return }
         loadedPacks[packId] = LoadedPack(pack: pack, buffers: loaded)
@@ -302,7 +312,8 @@ public final class SampleScheduler: ObservableObject {
     nonisolated static func decodePackBuffers(
         _ pack: ResolvedSamplePack,
         stemFiles: [String: URL],
-        target: AVAudioFormat?
+        target: AVAudioFormat?,
+        barSeconds: Double? = nil
     ) -> [Int: AVAudioPCMBuffer] {
         var loaded: [Int: AVAudioPCMBuffer] = [:]
         for pad in pack.pack.pads {
@@ -312,7 +323,9 @@ public final class SampleScheduler: ObservableObject {
                 }
             } else if let slice = pad.stemSlice,
                       let stemURL = stemFiles[slice.stemRole] {
-                if let buf = loadBuffer(from: stemURL, slice: _loopRegion(for: pad, slice: slice), target: target) {
+                let region = _loopRegion(for: pad, slice: slice,
+                                         barSeconds: barSeconds)
+                if let buf = loadBuffer(from: stemURL, slice: region, target: target) {
                     loaded[pad.padIdx] = buf
                 }
             }
@@ -324,11 +337,28 @@ public final class SampleScheduler: ObservableObject {
     /// [loopStartSec, loopEndSec] when the pad carries one (so a looping pad
     /// cycles that tighter, click-free region), else the full stemSlice. No 8s
     /// clamp — that cap is for user-sampled contribute chops, not auto-kit.
-    private nonisolated static func _loopRegion(for pad: SamplePad, slice: StemSlice) -> StemSlice {
-        if let ls = pad.loopStartSec, let le = pad.loopEndSec, le > ls {
-            return StemSlice(stemRole: slice.stemRole, startSec: ls, endSec: le)
+    ///
+    /// BAR-SNAP: a loopable region's length is snapped to a whole number of
+    /// bars when the tempo is known. Without this the buffers looped at their
+    /// raw 8.00 s while the loop-lock grid ran at the bar-snapped cycle
+    /// (e.g. 8.39 s at 143 BPM) — locked loops drifted visibly apart every
+    /// pass (the "timing misalignment on the samples").
+    private nonisolated static func _loopRegion(
+        for pad: SamplePad, slice: StemSlice, barSeconds: Double? = nil
+    ) -> StemSlice {
+        func snapped(_ start: Double, _ end: Double) -> StemSlice {
+            guard pad.loopable ?? false, let bar = barSeconds, bar > 0 else {
+                return StemSlice(stemRole: slice.stemRole, startSec: start, endSec: end)
+            }
+            let len = end - start
+            let bars = max(1.0, (len / bar).rounded())
+            return StemSlice(stemRole: slice.stemRole,
+                             startSec: start, endSec: start + bars * bar)
         }
-        return slice
+        if let ls = pad.loopStartSec, let le = pad.loopEndSec, le > ls {
+            return snapped(ls, le)
+        }
+        return snapped(slice.startSec, slice.endSec)
     }
     #endif
 
@@ -1004,7 +1034,12 @@ public final class SampleScheduler: ObservableObject {
     /// but sound quieter due to Fletcher-Munson. +2 dB gives the
     /// StarterPack more punch while leaving 1 dB inter-sample
     /// headroom before the mixer chain.
-    private nonisolated static let normalizeTargetPeak: Float = 0.891  // -1 dBFS
+    /// Lowered -1 → -4 dBFS: with every pad normalized to -1 dBFS, stacking
+    /// three or four locked loops drove the master PeakLimiter into constant
+    /// heavy limiting — audible pumping/grind ("raspy") on dense mixes. -4
+    /// leaves ~9 dB of stack headroom before the limiter works hard, at the
+    /// cost of a modestly lower per-pad level.
+    private nonisolated static let normalizeTargetPeak: Float = 0.63   // -4 dBFS
 
     /// Normalize `buf` in-place so its peak sample sits at
     /// `normalizeTargetPeak`. Skipped for effectively-silent buffers.

@@ -291,6 +291,23 @@ final class SessionController: ObservableObject {
         )
         usbLaunchpad = usb
         launchpad.attach(transport: usb)
+        // Hardware transport controls (Launchpad Pro MK3 side buttons).
+        // Left column: Play (CC 20, row 2) toggles the song transport;
+        // the bottom-left button (CC 10, row 1) is global stop. Every
+        // control press is logged so unexpected labels can be mapped.
+        usb.onControlButton = { [weak self] button, down in
+            guard let self, down else { return }
+            print("[Launchpad] control button: \(button)")
+            switch button {
+            case .left(row: 2):
+                self.transport.isPlaying ? self.transport.pause()
+                                         : self.transport.play()
+            case .left(row: 1):
+                self.stopEverything()
+            default:
+                break
+            }
+        }
         launchpad.sequencePadManager = sequencePadManager
         launchpad.padAssignmentStore = padAssignmentStore
         launchpad.onTrigger = { [weak self] pad, assignment, fireAt in

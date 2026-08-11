@@ -32,9 +32,11 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
     case addSound
     case voiceRecord
 
-    /// Actions shown on a pad that already holds a sound.
+    /// Actions shown on a pad that already holds a sound. `.addSound`
+    /// doubles as SWAP: a full 16-pad Auto Kit leaves no empty cells, so
+    /// this is the only way to change a sound (mobile parity).
     public static let assigned: [PadRadialAction] =
-        [.delete, .chop, .addToSequence, .effects, .loop, .sequence]
+        [.delete, .chop, .addSound, .addToSequence, .effects, .loop, .sequence]
 
     /// Actions shown on an empty pad.
     public static let empty: [PadRadialAction] = [.addSound, .voiceRecord, .sequence]

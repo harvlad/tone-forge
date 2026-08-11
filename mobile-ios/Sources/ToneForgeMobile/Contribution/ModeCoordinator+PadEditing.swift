@@ -20,7 +20,11 @@ extension ModeCoordinator {
     func padSheetTarget(row: Int, col: Int) -> PadSheetTarget? {
         let grid = PadIndex.at(row: row, col: col)
         guard grid.isValid, appMode.isImplemented else { return nil }
-        if appMode == .jamInKey { return nil }
+        // jamInKey used to mean "the whole grid is notes", but the Jam
+        // surface's SAMPLES mode now hosts the pack quadrant there — its
+        // pads are bound and fully editable (the Effects radial silently
+        // no-oped behind this guard).
+        if appMode == .jamInKey && app.jamSettings.padMode != .samples { return nil }
         if case .localSample(let id)? =
             app.padAssignmentStore.slot(mode: appMode, padIdx: grid.rawValue)?.ref,
            let meta = app.padSampleStore.metadata(id: id) {
