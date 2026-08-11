@@ -1730,6 +1730,14 @@ public final class AppState: ObservableObject {
             // guitar_center/guitar_sides) — their pads can never load
             // a buffer, so every tap would be a silent padNotFound.
             currentStemLocalURLs = localURLs
+            // THE missing wire (sync bug): the scheduler's quantize/lock
+            // context was NEVER fed the song — no tempo, no beats, no
+            // downbeats — so `.bar` quantize degraded to immediate fire,
+            // the lock grid had no tempo, and decode-time bar-snap no-oped.
+            // Must run BEFORE the pack preloads below so loop buffers
+            // decode bar-snapped.
+            sampleScheduler.updateBundle(
+                timeline: bundle.timeline, meta: bundle.meta)
             songDnaPacks = SongDnaPack.synthesize(from: bundle)
                 .filter { localURLs[$0.stem] != nil }
             // Decode the chop buffers now, on song load — long before the
@@ -1851,8 +1859,42 @@ public final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Style Beats (predefined full drum grooves)
+
+    /// The style beat currently looping, or nil. Drives the Beat chip.
+    @Published public private(set) var activeStyleBeat: BeatStyle?
+    /// Reserved grid slot for the style-beat sequence pulse — row 1 col 8,
+    /// outside the 4×4 sample quadrant so it never collides with pads.
+    private static let styleBeatPadIdx = 7
+
+    /// Drop in a complete drum groove for `style` at song tempo (the
+    /// GarageBand-Drummer move) through the BeatKit + step sequencer.
+    /// Tapping the active style stops it; another style switches.
+    public func loadStyleBeat(_ style: BeatStyle) {
+        Task { @MainActor in
+            if activeStyleBeat != nil {
+                modeCoordinator.sequencePadManager.stop(padIdx: Self.styleBeatPadIdx)
+                if activeStyleBeat == style { activeStyleBeat = nil; return }
+            }
+            await preloadBeatKit()
+            let pattern = StyleBeats.pattern(style)
+            sequencerPatternStore.save(pattern)   // idempotent by id
+            modeCoordinator.sequencePadManager.start(
+                patternId: pattern.id,
+                padIdx: Self.styleBeatPadIdx,
+                songBPM: currentBundle?.meta.tempoBpm ?? 120
+            )
+            activeStyleBeat = style
+        }
+    }
+
     /// Global stop: silence every sounding pad in the active kit.
     public func stopAllPads() {
+        // Global stop covers the style beat too — one Stop, everything quiet.
+        if activeStyleBeat != nil {
+            modeCoordinator.sequencePadManager.stop(padIdx: Self.styleBeatPadIdx)
+            activeStyleBeat = nil
+        }
         guard let pack = activeSamplePack else { return }
         let packId = pack.pack.packId
         for pad in pack.pack.pads {

@@ -568,6 +568,21 @@ struct LaunchpadPanelView: View {
             .buttonStyle(.borderedProminent)
             .disabled(session.launchpad.assignments.isEmpty)
             .help("Instant Groove — start the best loop of each category, locked to the grid")
+
+            // Style Beats: a complete drum groove per style at song tempo,
+            // one tap (GarageBand-Drummer model; plays the BeatKit).
+            Menu {
+                ForEach(BeatStyle.allCases) { style in
+                    Button(style.displayName) {
+                        session.loadStyleBeat(style)
+                    }
+                }
+            } label: {
+                Label("Beat", systemImage: "metronome.fill")
+                    .font(.caption)
+            }
+            .fixedSize()
+            .help("Drop in a full drum beat — House, Boom Bap, Trap, DnB, Rock — synced to the song")
         }
         .overlay(alignment: .bottomTrailing) {
             if let err = session.autoKitError {

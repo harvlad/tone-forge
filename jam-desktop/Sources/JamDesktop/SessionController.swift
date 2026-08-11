@@ -507,6 +507,20 @@ final class SessionController: ObservableObject {
         mix.clearTakeover()
     }
 
+    /// Drop in a predefined full drum beat for `style` (StyleBeats): load
+    /// it into the sequencer at song tempo, persist it (idempotent id) so
+    /// it appears in the pattern picker, and start playing — song-synced
+    /// when the transport rolls. The GarageBand-Drummer move: a complete
+    /// groove in one tap, tweak after.
+    func loadStyleBeat(_ style: BeatStyle) {
+        ensureBeatKitRegistered()
+        let pattern = StyleBeats.pattern(style)
+        patternStore.save(pattern)
+        if sequencer.isPlaying { sequencer.stop() }
+        sequencer.pattern = pattern
+        toggleSequencerPlayback()
+    }
+
     /// Play/stop the step sequencer. When the song transport is rolling,
     /// queue the start for the next downbeat and run SONG-SYNCED (external
     /// ticks drive its clock) so its steps land on the same bar grid the

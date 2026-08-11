@@ -367,6 +367,7 @@ struct JamView: View {
                     // them from anyone who hadn't visited Library first.
                     if jamSettings.padMode == .samples {
                         instantGrooveChip
+                        styleBeatChip
                         stopAllChip
                         loopLockChip
                     }
@@ -405,6 +406,35 @@ struct JamView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Instant Groove: play the best loop of every category")
+    }
+
+    /// Style Beats: one tap drops a complete drum groove (House / Boom Bap
+    /// / Trap / DnB / Rock) at song tempo through the BeatKit — the
+    /// GarageBand-Drummer model. Tap the active style again to stop.
+    private var styleBeatChip: some View {
+        Menu {
+            ForEach(BeatStyle.allCases) { style in
+                Button {
+                    Haptics.selectionChanged()
+                    appState.loadStyleBeat(style)
+                } label: {
+                    if appState.activeStyleBeat == style {
+                        Label(style.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(style.displayName)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "metronome.fill").font(.caption)
+                Text(appState.activeStyleBeat?.displayName ?? "Beat")
+                    .font(TFTheme.chipFont)
+            }
+            .tfChip(active: appState.activeStyleBeat != nil)
+            .fixedSize()
+        }
+        .accessibilityLabel("Style beat: \(appState.activeStyleBeat?.displayName ?? "off")")
     }
 
     /// Loop lock: hold triggered loops until the shared cycle restarts so
