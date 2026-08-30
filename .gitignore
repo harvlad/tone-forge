@@ -81,6 +81,9 @@ backend/data/tone_log.jsonl
 backend/data/history.json
 # layer uploads posted by the mobile app at runtime
 backend/data/layers/
+# analysis job state + run receipts written at runtime
+backend/data/jobs/
+backend/data/run_receipts.jsonl
 
 # bench/ harness outputs (M1)
 backend/bench/runs/

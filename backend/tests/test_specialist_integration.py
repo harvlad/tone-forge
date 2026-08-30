@@ -20,26 +20,29 @@ def test_current_engine_never_routes():
         assert resolve(RoutingRequest(engine="current", family=fam)) is None
 
 
-def test_experimental_routes_bass_guitar_keys():
-    expect = {"bass": "riley_bass", "guitar": "riley_guitar", "keys": "kong_piano"}
-    for fam, transcriber in expect.items():
+def test_experimental_routes_bass_guitar():
+    expect = {"bass": ("riley_bass", "register_up_12"),
+              "guitar": ("riley_guitar", "register_passthrough")}
+    for fam, (transcriber, norm) in expect.items():
         d = resolve(RoutingRequest(engine="experimental_specialist", family=fam))
         assert d is not None
         assert d.transcriber == transcriber
         assert d.stem_role == FAMILY_TO_STEM_ROLE[fam]
         assert d.separator == "htdemucs_6s"
-        assert d.normalization == "register_passthrough"
+        assert d.normalization == norm
 
 
 def test_unsupported_families_fall_back():
-    for fam in ("drums", "vocals", "strings", "", "unknown"):
+    # keys dropped 2026-08-30: kong at parity with the incumbent on
+    # separated input (sep_revalidation_htdemucs6s_validation.json).
+    for fam in ("keys", "drums", "vocals", "strings", "", "unknown"):
         assert resolve(RoutingRequest(engine="experimental_specialist",
                                       family=fam)) is None
 
 
 def test_cache_identities_do_not_collide():
     hashes = set()
-    for fam in ("bass", "guitar", "keys"):
+    for fam in ("bass", "guitar"):
         d = resolve(RoutingRequest(engine="experimental_specialist", family=fam))
         h = d.config_hash()
         assert h not in hashes
@@ -83,14 +86,29 @@ def test_cleared_models_have_evidence_and_license():
 # -- normalization ---------------------------------------------------------
 
 def test_normalization_is_separate_stage_and_default_passthrough():
-    d = resolve(RoutingRequest(engine="experimental_specialist", family="bass"))
+    d = resolve(RoutingRequest(engine="experimental_specialist", family="guitar"))
     assert d.normalization_shift == 0, \
-        "real-audio default must preserve sounding pitch (no invented +12 rule)"
+        "guitar default must preserve sounding pitch (no invented shift)"
     notes = [{"pitch": 40, "onset": 0.1, "offset": 0.4}]
     out, prov = normalization.apply(notes, d.normalization_shift,
                                     d.normalization, d.normalization_version)
     assert out[0]["pitch"] == 40
     assert prov["raw_preserved"] is True
+
+
+def test_bass_routes_register_up_12():
+    """Promoted from the 2026-08-14 separated revalidation: the raw
+    riley_bass variant collapses on htdemucs_6s stems; +12 wins .513
+    vs .0947. Listening check pending — the caveat must say so."""
+    d = resolve(RoutingRequest(engine="experimental_specialist", family="bass"))
+    assert d.normalization == "register_up_12"
+    assert d.normalization_shift == 12
+    assert "listening check pending" in (d.caveat or "")
+    notes = [{"pitch": 28, "onset": 0.1, "offset": 0.4}]
+    out, prov = normalization.apply(notes, d.normalization_shift,
+                                    d.normalization, d.normalization_version)
+    assert out[0]["pitch"] == 40
+    assert prov["raw_preserved"] is False
 
 
 def test_normalization_shift_and_provenance():

@@ -14,9 +14,10 @@ from typing import Optional
 from . import registry as reg
 
 # Product families the experimental engine can route today.  Everything
-# else falls back to the current pipeline (Wave-3 evidence only covers
-# these; do not add speculative routes).
-ROUTABLE_FAMILIES = ("bass", "guitar", "keys")
+# else falls back to the current pipeline.  keys was dropped 2026-08-30:
+# the separated-input revalidation showed kong at parity with the
+# incumbent on htdemucs_6s stems (do not re-add without new evidence).
+ROUTABLE_FAMILIES = ("bass", "guitar")
 
 # Map htdemucs_6s stem roles onto product families.
 FAMILY_TO_STEM_ROLE = {"bass": "bass", "guitar": "guitar", "keys": "piano"}
