@@ -115,3 +115,27 @@ dist/
 
 # Benchmark ground-truth datasets (large, licensed separately)
 backend/bench/data/
+
+# Local admin tokens (secrets — never commit)
+backend/.admin_token
+backend/.jamn_admin_token
+
+# Transcription-lab / specialist-discovery local artifacts (large, regenerable
+# or mirrored on the volume per the artifact-durability rule)
+.hf_cache/
+.mt3_checkpoints/
+backend/.mt3_checkpoints/
+backend/experiments/basic_pitch_finetune/
+backend/lab_data/derived/
+backend/data/performance_cache/
+backend/models/
+backend/pas.json
+datasets/
+samples/
+*.profraw
+
+# handrig optimizer-benchmark GIFs (report JSON is tracked; GIFs are heavy demos)
+tools/handrig/benchmark/results/*.gif
+
+# one-off data-ops scratch scripts
+scratchpad_cambridge218_to_r2.sh

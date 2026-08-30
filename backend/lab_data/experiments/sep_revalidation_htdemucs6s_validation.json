@@ -1,0 +1,29 @@
+{
+ "Bass": {
+  "basic_pitch": 0.0947,
+  "specialist": 0.513,
+  "specialist_model": "riley_bass_p12",
+  "delta": 0.4182,
+  "n_stems": 15,
+  "note": "raw riley_bass was wrong variant (sounding-pitch); +12 is the shippable one"
+ },
+ "Guitar": {
+  "basic_pitch": 0.2819,
+  "specialist": 0.3705,
+  "specialist_model": "riley_guitar",
+  "delta": 0.0886,
+  "n_stems": 15
+ },
+ "Piano": {
+  "basic_pitch": 0.2319,
+  "specialist": 0.2312,
+  "specialist_model": "kong_piano",
+  "delta": -0.0007,
+  "n_stems": 15
+ },
+ "_meta": {
+  "eval": "htdemucs_6s-separated slakh validation, 45 stems (15/class)",
+  "metric": "strict exact-pitch F1 @100ms, no auto-align (lab.matching greedy_exact_srcorder_v2)",
+  "date": "2026-08-14"
+ }
+}
