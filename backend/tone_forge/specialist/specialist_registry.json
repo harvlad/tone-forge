@@ -1,5 +1,5 @@
 {
-  "registry_version": "2026.08.31-1",
+  "registry_version": "2026.08.31-2",
   "promoted_by": "matt",
   "promoted_from": "Specialist Discovery Waves 1-3 (backend/lab_data/reports/discovery_2026-07/) + separated-input revalidation (backend/lab_data/experiments/sep_revalidation_htdemucs6s_validation.json, 2026-08-14)",
   "notes": "Production-facing specialist registry per INTENT_DRIVEN_ANALYSIS_ARCHITECTURE.md §21. Human-promoted from Lab results. The Lab NEVER writes this file. Runtime refuses entries whose license_status is not 'cleared_internal' or 'cleared_production'.",
@@ -34,7 +34,7 @@
       "model_version": "filobass_2023",
       "license": "MIT code + MIT weights (HF tag)",
       "license_status": "cleared_internal",
-      "ship_caveat": "confirm HF model card explicitly covers weights before public shipping",
+      "ship_caveat": "license checked 2026-08-31: HF repo hosting the .pth weights carries the MIT license tag (standard HF semantics = weights covered). Residual: no explicit weights sentence in the card; GAPS/FiloBass training-data licenses unexamined.",
       "lab_evidence": {"heldout_f1": 0.642, "incumbent_f1": 0.408, "ci_pp": [14.8, 39.9], "experiment": "wave3_heldout_oneshot",
                        "sep_revalidation": {"specialist_f1": 0.513, "incumbent_f1": 0.0947, "delta": 0.4182, "n_stems": 15, "variant": "riley_bass_p12", "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"},
                        "listening_check": {"wins": 5, "n_clips": 6, "winning_variant": "raw_sounding_pitch", "p12_wins": 0, "experiment": "listening_pack_v1_real_audio_2026-08-31"}}
@@ -47,7 +47,7 @@
       "model_version": "gaps_2024",
       "license": "MIT code + MIT weights (HF tag)",
       "license_status": "cleared_internal",
-      "ship_caveat": "confirm HF model card explicitly covers weights before public shipping",
+      "ship_caveat": "license checked 2026-08-31: HF repo hosting the .pth weights carries the MIT license tag (standard HF semantics = weights covered). Residual: no explicit weights sentence in the card; GAPS/FiloBass training-data licenses unexamined.",
       "lab_evidence": {"heldout_f1": 0.635, "incumbent_f1": 0.477, "ci_pp": [3.3, 15.3], "experiment": "wave3_heldout_oneshot",
                        "sep_revalidation": {"specialist_f1": 0.3705, "incumbent_f1": 0.2819, "delta": 0.0886, "n_stems": 15, "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"},
                        "listening_check": {"wins": 1, "n_clips": 1, "experiment": "listening_pack_v1_real_audio_2026-08-31", "note": "only one real-audio guitar multitrack available; weak n"}}
