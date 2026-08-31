@@ -16,8 +16,11 @@ Outputs per clip into the pack:
     match_ir.wav        2048-tap match IR (when di.wav present) — import
                         into the Helix IR library; generated.hlx points
                         its IR block at --ir-index
-    X1.wav / X2.wav     blind pair (target stem excerpt vs render),
-                        shuffled per clip with --seed
+    X1.wav / X2.wav     blind pair: the SAME di.wav part rendered
+                        through the generated chain vs a generic
+                        baseline drive (no IR), shuffled with --seed.
+                        ref_target.wav is the tone anchor only — its
+                        part differs, it is never one of the X files.
     ANSWER_KEY.json     which X is which — open ONLY after VERDICTS.md
 
 Renderers (--renderer):
@@ -83,16 +86,28 @@ def _normalize(x: np.ndarray) -> np.ndarray:
 
 
 def _render_proxy(di: np.ndarray, descriptor: dict,
-                  target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Numpy stand-in render: staged tanh drive + match-EQ IR."""
+                  target: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Numpy stand-in renders of the SAME DI part.
+
+    Returns (generated, baseline, ir):
+      generated  tanh drive staged from the descriptor's gain + match IR
+      baseline   fixed generic drive, no IR — the control arm
+    The blind pair is generated-vs-baseline so musical content is held
+    constant; the song stem stays an anchor reference only. (Comparing
+    a render against the stem itself is a broken blind — different
+    performances are trivially tellable apart.)
+    """
     from scipy.signal import fftconvolve
     from tone_forge.ir_match import compute_match_ir
 
     gain = float((descriptor.get("amp") or {}).get("gain", 0.5) or 0.5)
     driven = np.tanh(di * (1.0 + gain * 12.0))
     result = compute_match_ir(driven, target)
-    rendered = fftconvolve(driven, result.ir)[:len(driven)]
-    return _normalize(rendered.astype(np.float32)), result.ir
+    generated = fftconvolve(driven, result.ir)[:len(driven)]
+    baseline = np.tanh(di * 7.0)  # gain 0.5 equivalent, no IR
+    return (_normalize(generated.astype(np.float32)),
+            _normalize(baseline.astype(np.float32)),
+            result.ir)
 
 
 def _render_helix_native(di: np.ndarray, hlx_path: Path) -> np.ndarray:
@@ -143,13 +158,14 @@ def build_clip(clip_dir: Path, out_dir: Path, clip_s: float,
     preset = export_helix_preset(chain, descriptor, preset_name=clip_dir.name)
     hlx_content = preset.content
 
-    rendered = None
+    pair = None
     if di_path.exists():
         di = _load_mono(di_path)
         di_clip = di[:len(target_clip)] if len(di) > len(target_clip) else di
         if renderer == "proxy":
-            rendered, ir = _render_proxy(di_clip, descriptor.to_dict(),
-                                         target_clip)
+            generated, baseline, ir = _render_proxy(
+                di_clip, descriptor.to_dict(), target_clip)
+            pair = [("generated", generated), ("baseline", baseline)]
         else:
             from tone_forge.ir_match import compute_match_ir
             result = compute_match_ir(di_clip, target_clip)
@@ -157,7 +173,10 @@ def build_clip(clip_dir: Path, out_dir: Path, clip_s: float,
             if renderer == "helix-native":
                 hlx_tmp = out_dir / "generated.hlx"
                 hlx_tmp.write_text(hlx_content)
-                rendered = _render_helix_native(di_clip, hlx_tmp)
+                generated = _render_helix_native(di_clip, hlx_tmp)
+                baseline = _normalize(np.tanh(di_clip * 7.0))
+                pair = [("generated", _normalize(generated)),
+                        ("baseline", baseline)]
         ir_result = MatchIRResult(ir=ir, sample_rate=SR,
                                   ratio_db_range=(0.0, 0.0),
                                   source_seconds=len(di_clip) / SR,
@@ -170,11 +189,11 @@ def build_clip(clip_dir: Path, out_dir: Path, clip_s: float,
     entry = {
         "clip": clip_dir.name,
         "amp_family": descriptor.to_dict().get("amp", {}).get("family"),
-        "renderer": renderer if rendered is not None else "none",
+        "renderer": renderer if pair is not None else "none",
     }
 
-    if rendered is not None:
-        pair = [("target", _normalize(target_clip)), ("render", rendered)]
+    if pair is not None:
+        # Blind pair: same DI part through generated vs baseline chain.
         rng.shuffle(pair)
         for i, (label, audio) in enumerate(pair, start=1):
             sf.write(str(out_dir / f"X{i}.wav"), audio, SR)
@@ -216,11 +235,14 @@ def main() -> None:
     (out / "ANSWER_KEY.json").write_text(json.dumps(key, indent=2))
     (out / "VERDICTS.md").write_text(
         "# Tone audit verdicts\n\n"
-        "Protocol: per clip, listen to ref_target.wav then the X files "
-        "(or play the generated.hlx + match_ir.wav on hardware against "
-        "the ref). Note per clip: close / usable / wrong, and what's "
-        "off (gain, EQ, ambience). Fill this file COMPLETELY before "
-        "opening ANSWER_KEY.json.\n\n"
+        "Protocol: per clip, anchor on ref_target.wav's TONE (its part "
+        "differs — ignore the notes, judge the sound), then A/B the X "
+        "files: same DI part, one through the generated chain, one "
+        "through a generic baseline. Note which X is closer to the "
+        "ref's tone, rate close / usable / wrong, and what's off "
+        "(gain, EQ, ambience). Hardware path: play generated.hlx + "
+        "match_ir.wav yourself against the ref. Fill this file "
+        "COMPLETELY before opening ANSWER_KEY.json.\n\n"
         + "\n".join(f"- [ ] {e['clip']}: " for e in key) + "\n")
     print(f"[done] {len(key)} clips → {out}")
 

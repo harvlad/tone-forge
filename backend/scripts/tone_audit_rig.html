@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tone Audit — Blind Verdicts</title>
+  <style>
+    :root {
+      --bg: #14161a; --card: #1d2026; --text: #e8e8e6; --muted: #8a8f98;
+      --accent: #e8b44a; --good: #7bc47f; --mid: #e8b44a; --bad: #e06c5f;
+      --line: #2c3038;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px; background: var(--bg); color: var(--text);
+      font: 15px/1.5 -apple-system, "SF Pro Text", Helvetica, sans-serif;
+      max-width: 760px; margin-inline: auto;
+    }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin-bottom: 20px; font-size: 13px; }
+    .progress { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .progress b { color: var(--accent); }
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 10px; padding: 18px 20px; margin-bottom: 14px;
+    }
+    .card.done { border-color: #3a4a3c; }
+    .clipname { font-weight: 600; margin-bottom: 10px; }
+    .clipname .tick { color: var(--good); margin-left: 6px; }
+    .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+    .row label { width: 42px; color: var(--muted); font-size: 13px; flex: none; }
+    audio { width: 100%; height: 32px; }
+    .q { margin-top: 14px; font-size: 13px; color: var(--muted); }
+    .btns { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+    button {
+      background: #262a31; color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+    }
+    button:hover { border-color: var(--muted); }
+    button.active { background: var(--accent); color: #000; border-color: var(--accent); }
+    button.active.g { background: var(--good); border-color: var(--good); }
+    button.active.b { background: var(--bad); border-color: var(--bad); color: #fff; }
+    textarea {
+      width: 100%; margin-top: 10px; background: #15171b; color: var(--text);
+      border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+      font: 13px/1.4 inherit; resize: vertical; min-height: 34px;
+    }
+    .savebar {
+      position: sticky; bottom: 0; background: var(--bg); padding: 12px 0;
+      display: flex; align-items: center; gap: 12px;
+    }
+    #save { background: var(--accent); color: #000; font-weight: 600; padding: 8px 20px; }
+    #status { color: var(--muted); font-size: 13px; }
+    .doneNote { color: var(--good); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Tone audit — blind verdicts</h1>
+  <div class="sub">Per clip: anchor on <b>Ref</b>'s <i>tone</i> (the song's
+    guitar stem — its part differs, ignore the notes, judge the sound). Then
+    A/B <b>X1</b>/<b>X2</b>: the same DI part through the <i>generated</i>
+    chain vs a <i>generic baseline</i>. Pick which X sounds closer to Ref's
+    tone, rate how close the winner gets, note what's off. Fill everything
+    before opening ANSWER_KEY.json on disk.</div>
+  <div class="progress" id="progress"></div>
+  <div id="clips"></div>
+  <div class="savebar">
+    <button id="save">Save verdicts</button>
+    <span id="status"></span>
+  </div>
+
+<script>
+const RATINGS = [["close", "close", "g"], ["usable", "usable", ""], ["wrong", "wrong", "b"]];
+let clips = [], verdicts = {};
+
+function v(name) {
+  if (!verdicts[name]) verdicts[name] = { closer: null, rating: null, notes: "" };
+  return verdicts[name];
+}
+
+function isDone(name) {
+  const x = verdicts[name];
+  return !!(x && x.closer && x.rating);
+}
+
+function render() {
+  const root = document.getElementById("clips");
+  root.innerHTML = "";
+  clips.forEach(c => {
+    const d = v(c.name);
+    const card = document.createElement("div");
+    card.className = "card" + (isDone(c.name) ? " done" : "");
+    card.innerHTML = `
+      <div class="clipname">${c.name}${isDone(c.name) ? '<span class="tick">✓</span>' : ""}</div>
+      <div class="row"><label>Ref</label><audio controls preload="none" src="/audio?clip=${encodeURIComponent(c.name)}&file=ref_target.wav"></audio></div>
+      <div class="row"><label>X1</label><audio controls preload="none" src="/audio?clip=${encodeURIComponent(c.name)}&file=X1.wav"></audio></div>
+      <div class="row"><label>X2</label><audio controls preload="none" src="/audio?clip=${encodeURIComponent(c.name)}&file=X2.wav"></audio></div>
+      <div class="q">Which X is closer to Ref's tone?</div>
+      <div class="btns" data-k="closer">
+        <button data-val="X1" ${d.closer === "X1" ? 'class="active"' : ""}>X1</button>
+        <button data-val="X2" ${d.closer === "X2" ? 'class="active"' : ""}>X2</button>
+        <button data-val="tie" ${d.closer === "tie" ? 'class="active"' : ""}>tie / can't tell</button>
+      </div>
+      <div class="q">How close does the winner get to the ref?</div>
+      <div class="btns" data-k="rating">
+        ${RATINGS.map(([val, label, cls]) =>
+          `<button data-val="${val}" class="${d.rating === val ? "active " + cls : ""}">${label}</button>`).join("")}
+      </div>
+      <textarea placeholder="what's off — gain / EQ / ambience / feel…">${d.notes || ""}</textarea>`;
+    card.querySelectorAll(".btns").forEach(group => {
+      group.addEventListener("click", e => {
+        if (e.target.tagName !== "BUTTON") return;
+        v(c.name)[group.dataset.k] = e.target.dataset.val;
+        render();
+      });
+    });
+    card.querySelector("textarea").addEventListener("input", e => {
+      v(c.name).notes = e.target.value;
+    });
+    root.appendChild(card);
+  });
+  const done = clips.filter(c => isDone(c.name)).length;
+  document.getElementById("progress").innerHTML =
+    `<b>${done}</b> / ${clips.length} clips judged` +
+    (done === clips.length && clips.length
+      ? ' — <span class="doneNote">all done: save, then open ANSWER_KEY.json on disk</span>' : "");
+}
+
+async function load() {
+  const r = await fetch("/api/clips");
+  const data = await r.json();
+  clips = data.clips.filter(c => c.hasBlindPair);
+  verdicts = data.verdicts || {};
+  render();
+}
+
+document.getElementById("save").addEventListener("click", async () => {
+  const status = document.getElementById("status");
+  status.textContent = "saving…";
+  const r = await fetch("/api/verdicts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(verdicts),
+  });
+  status.textContent = r.ok
+    ? "saved to VERDICTS.json at " + new Date().toLocaleTimeString()
+    : "save FAILED";
+});
+
+load();
+</script>
+</body>
+</html>
