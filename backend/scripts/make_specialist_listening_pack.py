@@ -159,24 +159,11 @@ def _specialist_notes(stem_path: Path, family: str) -> tuple[list[tuple], dict]:
 
 # -- main ------------------------------------------------------------------
 
-def build_clip(song_dir: Path, family: str, out_dir: Path, clip_s: float,
-               rng: random.Random) -> dict | None:
-    marker = "bass" if family == "bass" else "guitar"
-    targets = [w for w in song_dir.glob("*.wav")
-               if marker in w.name.lower() and CLICK_MARKER not in w.name.lower()]
-    if not targets:
-        return None
-    print(f"[{song_dir.name}] {family}: mixing + separating ...", flush=True)
-    mix, stems = _mix_song(song_dir)
-    clean = _load_mono(targets[0])
-    start = _best_window(clean, clip_s)
-    n = int(clip_s * SR)
-    mix_clip = mix[start:start + n]
-    clean_clip = clean[start:start + n]
-
-    clip_dir = out_dir / f"{song_dir.name.replace(' ', '_')}__{family}"
+def _separate_and_blind(mix_clip: np.ndarray, clean_clip: np.ndarray,
+                        family: str, clip_dir: Path, clip_s: float,
+                        rng: random.Random) -> dict | None:
+    """Shared tail: separate mix, transcribe variants, render blind X files."""
     clip_dir.mkdir(parents=True, exist_ok=True)
-
     from tone_forge.stem_separator import separate_all_stems
     with tempfile.TemporaryDirectory() as td:
         mix_path = Path(td) / "mix.wav"
@@ -190,7 +177,6 @@ def build_clip(song_dir: Path, family: str, out_dir: Path, clip_s: float,
             return None
         sep_stem = clip_dir / "ref_separated.wav"
         shutil.copy(sep[sep_key], sep_stem)
-
         sf.write(str(clip_dir / "ref_clean.wav"), clean_clip, SR)
 
         print(f"  transcribing (incumbent + specialist) ...", flush=True)
@@ -213,9 +199,7 @@ def build_clip(song_dir: Path, family: str, out_dir: Path, clip_s: float,
     print(f"  done: {clip_dir.name} ({', '.join(labels)})", flush=True)
     return {
         "clip": clip_dir.name,
-        "song": song_dir.name,
         "family": family,
-        "window_start_s": round(start / SR, 1),
         "clip_seconds": clip_s,
         "note_counts": {v: len(nts) for v, nts in variants.items()},
         "specialist_provenance": provenance,
@@ -223,36 +207,92 @@ def build_clip(song_dir: Path, family: str, out_dir: Path, clip_s: float,
     }
 
 
+def build_prepared_clip(clip_src: Path, out_dir: Path, clip_s: float,
+                        rng: random.Random) -> dict | None:
+    """Clip dir prepared elsewhere (e.g. Hetzner): <name>__<family>/ with
+    mix.wav + ref_clean.wav already windowed."""
+    family = clip_src.name.rsplit("__", 1)[-1]
+    if family not in ("bass", "guitar"):
+        print(f"  !! cannot parse family from {clip_src.name}; skipping")
+        return None
+    print(f"[{clip_src.name}] separating ...", flush=True)
+    mix_clip = _load_mono(clip_src / "mix.wav")
+    clean_clip = _load_mono(clip_src / "ref_clean.wav")
+    info = _separate_and_blind(mix_clip, clean_clip, family,
+                               out_dir / clip_src.name, clip_s, rng)
+    if info:
+        info["source"] = "prepared:" + str(clip_src)
+    return info
+
+
+def build_clip(song_dir: Path, family: str, out_dir: Path, clip_s: float,
+               rng: random.Random) -> dict | None:
+    marker = "bass" if family == "bass" else "guitar"
+    targets = [w for w in song_dir.glob("*.wav")
+               if marker in w.name.lower() and CLICK_MARKER not in w.name.lower()]
+    if not targets:
+        return None
+    print(f"[{song_dir.name}] {family}: mixing + separating ...", flush=True)
+    mix, stems = _mix_song(song_dir)
+    clean = _load_mono(targets[0])
+    start = _best_window(clean, clip_s)
+    n = int(clip_s * SR)
+    mix_clip = mix[start:start + n]
+    clean_clip = clean[start:start + n]
+
+    clip_dir = out_dir / f"{song_dir.name.replace(' ', '_')}__{family}"
+    info = _separate_and_blind(mix_clip, clean_clip, family, clip_dir,
+                               clip_s, rng)
+    if info:
+        info["song"] = song_dir.name
+        info["window_start_s"] = round(start / SR, 1)
+    return info
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--samples-dir", default="../samples")
+    ap.add_argument("--prepared-dir", default=None,
+                    help="dir of pre-windowed clip dirs (<name>__<family>/ "
+                         "with mix.wav + ref_clean.wav); overrides "
+                         "--samples-dir selection")
     ap.add_argument("--out", default="lab_data/listening_pack_v1")
     ap.add_argument("--bass-clips", type=int, default=6)
     ap.add_argument("--clip-seconds", type=float, default=30.0)
     ap.add_argument("--seed", type=int, default=20260830)
     args = ap.parse_args()
 
-    samples = Path(args.samples_dir)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
 
-    bass_songs = sorted(d for d in samples.iterdir() if d.is_dir()
-                        and any("bass" in w.name.lower()
-                                for w in d.glob("*.wav")))
-    guitar_songs = sorted(d for d in samples.iterdir() if d.is_dir()
-                          and any("guitar" in w.name.lower()
-                                  for w in d.glob("*.wav")))
-    picked_bass = rng.sample(bass_songs, min(args.bass_clips, len(bass_songs)))
-
-    jobs = [(d, "bass") for d in picked_bass] + [(d, "guitar") for d in guitar_songs]
-    print(f"{len(jobs)} clips: {len(picked_bass)} bass, {len(guitar_songs)} guitar")
-
     clips = []
-    for song_dir, family in jobs:
-        info = build_clip(song_dir, family, out_dir, args.clip_seconds, rng)
-        if info:
-            clips.append(info)
+    if args.prepared_dir:
+        srcs = sorted(d for d in Path(args.prepared_dir).iterdir()
+                      if d.is_dir() and (d / "mix.wav").exists())
+        print(f"{len(srcs)} prepared clips")
+        for src in srcs:
+            info = build_prepared_clip(src, out_dir, args.clip_seconds, rng)
+            if info:
+                clips.append(info)
+    else:
+        samples = Path(args.samples_dir)
+        bass_songs = sorted(d for d in samples.iterdir() if d.is_dir()
+                            and any("bass" in w.name.lower()
+                                    for w in d.glob("*.wav")))
+        guitar_songs = sorted(d for d in samples.iterdir() if d.is_dir()
+                              and any("guitar" in w.name.lower()
+                                      for w in d.glob("*.wav")))
+        picked_bass = rng.sample(bass_songs,
+                                 min(args.bass_clips, len(bass_songs)))
+        jobs = ([(d, "bass") for d in picked_bass]
+                + [(d, "guitar") for d in guitar_songs])
+        print(f"{len(jobs)} clips: {len(picked_bass)} bass, "
+              f"{len(guitar_songs)} guitar")
+        for song_dir, family in jobs:
+            info = build_clip(song_dir, family, out_dir, args.clip_seconds, rng)
+            if info:
+                clips.append(info)
 
     from tone_forge.specialist import registry as reg
     answer_key = {c["clip"]: c.pop("_answer_key") for c in clips}
