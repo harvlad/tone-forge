@@ -196,10 +196,17 @@ def test_build_zip_end_to_end(tmp_path, monkeypatch):
     xml_root = ET.fromstring(adg_xml)
     assert len(xml_root.findall(".//DrumBranchPreset")) == 2
 
-    # kit manifest is embedded for provenance
+    # kit manifest is embedded for provenance + plugin consumption
     kit = json.loads(z.read(f"{root}/kit.json"))
     assert kit["entryId"] == "entry123"
     assert len(kit["kit"]["pads"]) == 2
+    # rendered-samples manifest: MIDI-ordered, file paths inside the zip
+    assert len(kit["samples"]) == 2
+    assert kit["samples"][0]["midiNote"] == 36
+    assert kit["samples"][1]["midiNote"] == 37
+    for s in kit["samples"]:
+        assert f"{root}/{s['file']}" in names
+        assert s["frames"] > 0 and s["sampleRate"] > 0
 
     # README carries the pad map + tempo
     readme = z.read(f"{root}/README.txt").decode()

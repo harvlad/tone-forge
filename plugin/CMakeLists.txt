@@ -40,6 +40,7 @@ juce_add_plugin(JamnKit
     PRODUCT_NAME "jamn Kit")
 
 target_sources(JamnKit PRIVATE
+    Source/KitPack.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
 

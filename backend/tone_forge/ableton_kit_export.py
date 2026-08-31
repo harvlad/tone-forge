@@ -406,10 +406,32 @@ def build_ableton_kit_zip(
             z.writestr(f"{root}/{pack_title}.adg", adg)
             z.writestr(f"{root}/{pack_title}.sfz", sfz)
             z.writestr(f"{root}/README.txt", readme)
+            # `samples` = the RENDERED pad list in MIDI order — consumers
+            # (the jamn Kit plugin) must use this, not filename guessing:
+            # kit pads whose slice failed to render are absent here while
+            # still present in `kit.pads`.
             z.writestr(
                 f"{root}/kit.json",
-                json.dumps({"source": "tone-forge", "entryId": entry_id,
-                            "skill": skill, "kit": kit}, indent=2),
+                json.dumps({
+                    "source": "tone-forge",
+                    "entryId": entry_id,
+                    "skill": skill,
+                    "songName": song_name,
+                    "tempoBpm": float(tempo) if tempo else None,
+                    "samples": [
+                        {
+                            "file": f"Samples/{Path(p['sample_rel_path']).name}",
+                            "name": p["name"],
+                            "category": p.get("category"),
+                            "midiNote": p["midi_note"],
+                            "loopable": bool(p.get("loop", True)),
+                            "sampleRate": p["sample_rate"],
+                            "frames": p["frames"],
+                        }
+                        for p in rendered
+                    ],
+                    "kit": kit,
+                }, indent=2),
             )
             for fname, data in wav_bytes.items():
                 # WAVs are already compressed poorly; store as-is is fine,

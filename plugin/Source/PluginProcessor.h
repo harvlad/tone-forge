@@ -1,13 +1,17 @@
-// PluginProcessor.h — jamn Kit milestone 0.
+// PluginProcessor.h — jamn Kit milestone 1.
 //
-// Audio side of the skeleton: a 16-voice sine "ping" per MIDI note so
-// loading the plugin is immediately audible/testable from a pad
-// controller or piano roll. Milestone 1 swaps the sine voices for the
-// kit-pack sample player (same voice slots, same C1..D#2 map).
+// Plays a loaded kit pack: one voice per pad, MIDI C1 up (same map as
+// the .adg export). Loopable pads sustain-loop while the note is held
+// (gate); one-shots play through. With no pack loaded, pads fall back
+// to the milestone-0 sine pings so the plugin is always audible.
+//
+// Threading: packs load on the message thread and swap in via a
+// SpinLock-guarded shared_ptr; the audio thread try-locks and keeps
+// using its current snapshot if the swap is mid-flight.
 
 #pragma once
 
-#include <juce_audio_utils/juce_audio_utils.h>
+#include "KitPack.h"
 
 class JamnKitProcessor : public juce::AudioProcessor
 {
@@ -32,11 +36,26 @@ public:
     const juce::String getProgramName(int) override { return {}; }
     void changeProgramName(int, const juce::String&) override {}
 
-    void getStateInformation(juce::MemoryBlock&) override {}
-    void setStateInformation(const void*, int) override {}
+    /// Persist the pack path so a saved DAW project reopens the kit.
+    void getStateInformation(juce::MemoryBlock&) override;
+    void setStateInformation(const void*, int) override;
 
-    /// Host transport snapshot for the editor readout (and, from
-    /// milestone 2, the launch-quantize grid).
+    // MARK: Pack (message thread)
+
+    /// Load a pack (folder or exporter zip). Returns error text, empty
+    /// on success. Message thread only.
+    juce::String loadPack(const juce::File& source);
+
+    /// Current pack snapshot for the editor (may be null).
+    std::shared_ptr<const LoadedPack> currentPack() const;
+
+    /// Editor pad state: is the voice for `midiNote` sounding?
+    bool isNoteActive(int midiNote) const;
+
+    /// UI-triggered pad press/release (editor pads mirror MIDI).
+    void noteOnFromUI(int midiNote);
+    void noteOffFromUI(int midiNote);
+
     struct HostClock
     {
         double bpm = 0.0;
@@ -45,18 +64,36 @@ public:
     };
     HostClock hostClock() const { return clock.load(); }
 
+    static constexpr int kVoices = 16;
+    static constexpr int kFirstNote = 36;  // C1
+
 private:
     struct Voice
     {
+        // Sample playback (pack mode)
+        const KitPadSample* pad = nullptr;  // borrowed from activePack
+        double position = 0.0;
+        double step = 1.0;
+        bool held = false;
+        bool active = false;
+        // Sine fallback (no pack)
         double phase = 0.0;
         double increment = 0.0;
-        float level = 0.0f;   // decaying envelope; 0 = free
+        float sineLevel = 0.0f;
     };
-    static constexpr int kVoices = 16;
-    static constexpr int kFirstNote = 36;  // C1, same map as the .adg
+
+    void handleNoteOn(int note, float velocity);
+    void handleNoteOff(int note);
 
     std::array<Voice, kVoices> voices {};
+    std::array<std::atomic<bool>, 128> activeNotes {};
     double currentSampleRate = 44100.0;
+
+    juce::SpinLock packLock;
+    std::shared_ptr<const LoadedPack> activePack;      // audio-thread view
+    std::shared_ptr<const LoadedPack> editorPack;      // message-thread view
+    // MIDI events synthesized from UI presses, merged into processBlock.
+    juce::MidiMessageCollector uiMidi;
 
     std::atomic<HostClock> clock { HostClock{} };
 
