@@ -1650,6 +1650,21 @@ public final class AppState: ObservableObject {
         onReady: (() -> Void)? = nil
     ) async {
         currentBundle = bundle
+        // Song-derived pad-synth patch (additive; absent on old cached
+        // bundles → keep current knobs). masterGain stays the fixed
+        // loudness-calibrated trim — only sound-shaping fields follow
+        // the song.
+        if let pad = bundle.synthPatch?.pad {
+            padSynth.update(params: PadSynthParams(
+                masterGain: padSynth.params.masterGain,
+                brightness: pad.brightness,
+                strumMs: pad.strumMs,
+                attackMs: pad.attackMs,
+                releaseSec: pad.releaseSec,
+                sawMix: pad.sawMix,
+                detuneCents: pad.detuneCents
+            ))
+        }
         advancer = ChordAdvancer(chords: bundle.timeline.chords)
         // Sync performance FX (gater/flanger/throw/stopper) to this
         // song's beat grid (PERFORM_PARITY spec 1).

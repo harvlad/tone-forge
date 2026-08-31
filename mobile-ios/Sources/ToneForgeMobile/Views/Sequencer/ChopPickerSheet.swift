@@ -177,29 +177,46 @@ struct ChopPickerSheet: View {
                 ForEach(sortedPresetKeys, id: \.self) { presetKey in
                     if let chops = bundleChops[presetKey], !chops.isEmpty {
                         Section {
-                            ForEach(filteredChops(chops), id: \.idx) { chop in
-                                ChopRow(
-                                    chop: chop,
-                                    presetKey: presetKey,
-                                    onSelect: {
-                                        let ref = ChopReference.bundleChop(
-                                            presetKey: presetKey,
-                                            chopIndex: chop.idx,
-                                            resolvedId: nil
-                                        )
-                                        onSelect(ref, chopLabel(chop, preset: presetKey))
-                                        dismiss()
-                                    },
-                                    onPreview: {
-                                        let ref = ChopReference.bundleChop(
-                                            presetKey: presetKey,
-                                            chopIndex: chop.idx,
-                                            resolvedId: nil
-                                        )
-                                        onPreview(ref)
-                                    }
-                                )
+                            // 4-column tile grid (same layout as Sample
+                            // Packs): a 24-chop song fits on one screen
+                            // instead of a 24-row scroll. Tap previews,
+                            // long-press adds — identical to pack tiles.
+                            LazyVGrid(
+                                columns: Array(
+                                    repeating: GridItem(.flexible(), spacing: 10),
+                                    count: 4),
+                                spacing: 10
+                            ) {
+                                ForEach(filteredChops(chops), id: \.idx) { chop in
+                                    let ref = ChopReference.bundleChop(
+                                        presetKey: presetKey,
+                                        chopIndex: chop.idx,
+                                        resolvedId: nil
+                                    )
+                                    PadPickerCell(
+                                        name: chopLabel(chop, preset: presetKey),
+                                        family: nil,
+                                        tint: Self.presetTint(presetKey),
+                                        subtitle: String(
+                                            format: "%.1fs · %.1fs",
+                                            chop.startSec, chop.durationSec),
+                                        onSelect: {
+                                            onStopPreview?()
+                                            onSelect(ref, chopLabel(chop, preset: presetKey))
+                                            dismiss()
+                                        },
+                                        onPlay: {
+                                            onPreview(ref)
+                                            return chop.durationSec
+                                        },
+                                        onStop: {
+                                            onStopPreview?()
+                                        }
+                                    )
+                                }
                             }
+                            .padding(.horizontal)
+                            .padding(.vertical, 8)
                         } header: {
                             presetHeader(presetKey)
                         }
@@ -245,6 +262,21 @@ struct ChopPickerSheet: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(TFTheme.surface)
+    }
+
+    /// Tile tint per preset family — chords amber, sections cyan,
+    /// phrases orange, beats/transients red-ish; matches the category
+    /// palette used on the Jam rack so colors mean the same thing
+    /// everywhere.
+    static func presetTint(_ key: String) -> Color {
+        switch key {
+        case "harmonic": return Color(red: 0.961, green: 0.620, blue: 0.043) // amber
+        case "sections": return Color(red: 0.024, green: 0.714, blue: 0.831) // cyan
+        case "phrases":  return Color(red: 0.976, green: 0.451, blue: 0.086) // orange
+        case "beats", "onsets":
+            return Color(red: 0.937, green: 0.267, blue: 0.267) // red
+        default:         return Color(red: 0.231, green: 0.510, blue: 0.965) // blue
+        }
     }
 
     private func presetDisplayName(_ key: String) -> String {
@@ -465,67 +497,16 @@ struct ChopPickerSheet: View {
     }
 }
 
-// MARK: - Chop Row
-
-private struct ChopRow: View {
-    let chop: Chop
-    let presetKey: String
-    let onSelect: () -> Void
-    let onPreview: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // Preview button
-            Button(action: onPreview) {
-                Image(systemName: "play.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color.accentColor)
-            }
-
-            // Info
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    if let label = chop.sectionLabel {
-                        Text(label)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(TFTheme.textPrimary)
-                    }
-                    if let chord = chop.chordSymbol {
-                        Text(chord)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.2), in: Capsule())
-                    }
-                }
-
-                Text(String(format: "%.1fs - %.1fs", chop.startSec, chop.endSec))
-                    .font(.caption)
-                    .foregroundStyle(TFTheme.textSecondary)
-            }
-
-            Spacer()
-
-            // Select button
-            Button(action: onSelect) {
-                Image(systemName: "plus.circle")
-                    .font(.title2)
-                    .foregroundStyle(TFTheme.textSecondary)
-            }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
-    }
-}
-
 // MARK: - Pad Picker Cell
 
 private struct PadPickerCell: View {
     let name: String
     let family: SampleFamily?
+    /// Explicit tile tint (bundle-chop tiles color by preset, not
+    /// family). Nil = family tint.
+    var tint: Color? = nil
+    /// Small second line (chop start time). Nil hides it.
+    var subtitle: String? = nil
     let onSelect: () -> Void
     /// Starts preview; returns the one-shot length (seconds) so the cell
     /// can auto-revert its icon, or nil for looping/unknown.
@@ -539,6 +520,7 @@ private struct PadPickerCell: View {
 
     /// Use the same family tint as the main pad grid for visual continuity.
     private var familyColor: Color {
+        if let tint { return tint }
         guard let family = family else { return TFTheme.chipFill }
         return TFTheme.familyTint(family)
     }
@@ -552,12 +534,20 @@ private struct PadPickerCell: View {
                     .fill(familyColor.opacity(0.85))
 
                 // Name label at top-left (like main pads)
-                Text(name)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .padding(.horizontal, 6)
-                    .padding(.top, 6)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(subtitle == nil ? 2 : 1)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.top, 6)
 
                 // Play indicator (top-right corner)
                 VStack {

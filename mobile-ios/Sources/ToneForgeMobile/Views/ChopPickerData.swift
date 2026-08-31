@@ -63,9 +63,20 @@ extension AppState {
             let pads = active.pack.pads.map { pad in
                 SamplePadInfo(padIdx: pad.padIdx, name: pad.name, family: pad.family)
             }
+            // Manifest name first — prettifying the packId turned the
+            // Auto Kit's `auto-{analysisId}-{skill}` into a wall of hex.
+            let displayName: String
+            if active.pack.packId.hasPrefix("auto-") {
+                displayName = "Jam Kit"
+            } else if !active.pack.name.isEmpty {
+                displayName = active.pack.name
+            } else {
+                displayName = active.pack.packId
+                    .replacingOccurrences(of: "-", with: " ").capitalized
+            }
             packs.append(SamplePackInfo(
                 id: active.pack.packId,
-                name: active.pack.packId.replacingOccurrences(of: "-", with: " ").capitalized,
+                name: displayName,
                 padCount: pads.count,
                 pads: pads
             ))

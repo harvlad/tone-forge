@@ -26,8 +26,15 @@ struct PracticeOverlay: View {
                     songSeconds: appState.songSeconds
                 )
             }
-            chordPads
-            Spacer(minLength: 0)
+            // Chord-dense songs (20+ symbols) outgrow the no-scroll
+            // surface; the vocabulary scrolls WITHIN its slot so stats,
+            // Stop and the transport row are never pushed under the
+            // floating tab bar.
+            ScrollView {
+                chordPads
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             statsRow
             stopButton
         }
