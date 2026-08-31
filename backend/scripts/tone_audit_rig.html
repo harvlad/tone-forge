@@ -55,12 +55,12 @@
 </head>
 <body>
   <h1>Tone audit — blind verdicts</h1>
-  <div class="sub">Per clip: anchor on <b>Ref</b>'s <i>tone</i> (the song's
-    guitar stem — its part differs, ignore the notes, judge the sound). Then
-    A/B <b>X1</b>/<b>X2</b>: the same DI part through the <i>generated</i>
-    chain vs a <i>generic baseline</i>. Pick which X sounds closer to Ref's
-    tone, rate how close the winner gets, note what's off. Fill everything
-    before opening ANSWER_KEY.json on disk.</div>
+  <div class="sub">Per clip: <b>Ref</b> is the song's guitar stem.
+    <b>X1</b>/<b>X2</b> are the <i>same performance</i> — the stem de-amped
+    to a pseudo-DI, then re-rendered through the <i>generated</i> chain vs a
+    <i>generic baseline</i>. Pick which X sounds closer to Ref's tone, rate
+    how close the winner gets, note what's off. Fill everything before
+    opening ANSWER_KEY.json on disk.</div>
   <div class="progress" id="progress"></div>
   <div id="clips"></div>
   <div class="savebar">

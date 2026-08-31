@@ -16,11 +16,13 @@ Outputs per clip into the pack:
     match_ir.wav        2048-tap match IR (when di.wav present) — import
                         into the Helix IR library; generated.hlx points
                         its IR block at --ir-index
-    X1.wav / X2.wav     blind pair: the SAME di.wav part rendered
-                        through the generated chain vs a generic
-                        baseline drive (no IR), shuffled with --seed.
-                        ref_target.wav is the tone anchor only — its
-                        part differs, it is never one of the X files.
+    X1.wav / X2.wav     blind pair on the SONG'S OWN PART: the stem is
+                        de-amped toward di.wav's spectrum (pseudo-DI,
+                        see _pseudo_di) and rendered through the
+                        generated chain vs a generic baseline drive
+                        (no IR), shuffled with --seed. ref/X1/X2 all
+                        carry the same performance; di.wav serves as
+                        the whitening spectral reference only.
     ANSWER_KEY.json     which X is which — open ONLY after VERDICTS.md
 
 Renderers (--renderer):
@@ -85,17 +87,33 @@ def _normalize(x: np.ndarray) -> np.ndarray:
     return x * (0.891 / peak) if peak > 0 else x
 
 
+def _pseudo_di(target: np.ndarray, di_ref: np.ndarray) -> np.ndarray:
+    """De-amp approximation: whiten the stem toward the DI's spectrum.
+
+    The song's DI doesn't exist, but the blind needs every file on the
+    SAME part. So the X-input is the stem itself, spectrally flattened
+    to DI-like tone with an inverse match IR (stem→DI spectrum). The
+    amp's EQ/cab fingerprint is removed; distortion harmonics can't be
+    undone — but they're identical in both arms, so the comparison
+    stays fair.
+    """
+    from scipy.signal import fftconvolve
+    from tone_forge.ir_match import compute_match_ir
+
+    whiten = compute_match_ir(target, di_ref)
+    flat = fftconvolve(target, whiten.ir)[:len(target)]
+    return _normalize(flat.astype(np.float32))
+
+
 def _render_proxy(di: np.ndarray, descriptor: dict,
                   target: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Numpy stand-in renders of the SAME DI part.
+    """Numpy stand-in renders of the same-part pseudo-DI.
 
     Returns (generated, baseline, ir):
       generated  tanh drive staged from the descriptor's gain + match IR
       baseline   fixed generic drive, no IR — the control arm
-    The blind pair is generated-vs-baseline so musical content is held
-    constant; the song stem stays an anchor reference only. (Comparing
-    a render against the stem itself is a broken blind — different
-    performances are trivially tellable apart.)
+    Musical content is held constant across ref/X1/X2: `di` here is the
+    de-amped stem (see _pseudo_di), so all three carry the song's part.
     """
     from scipy.signal import fftconvolve
     from tone_forge.ir_match import compute_match_ir
@@ -162,19 +180,22 @@ def build_clip(clip_dir: Path, out_dir: Path, clip_s: float,
     if di_path.exists():
         di = _load_mono(di_path)
         di_clip = di[:len(target_clip)] if len(di) > len(target_clip) else di
+        # Same-part input for both arms: the stem de-amped toward the
+        # DI's spectrum, so ref/X1/X2 all carry the song's part.
+        x_input = _pseudo_di(target_clip, di_clip)
         if renderer == "proxy":
             generated, baseline, ir = _render_proxy(
-                di_clip, descriptor.to_dict(), target_clip)
+                x_input, descriptor.to_dict(), target_clip)
             pair = [("generated", generated), ("baseline", baseline)]
         else:
             from tone_forge.ir_match import compute_match_ir
-            result = compute_match_ir(di_clip, target_clip)
+            result = compute_match_ir(x_input, target_clip)
             ir = result.ir
             if renderer == "helix-native":
                 hlx_tmp = out_dir / "generated.hlx"
                 hlx_tmp.write_text(hlx_content)
-                generated = _render_helix_native(di_clip, hlx_tmp)
-                baseline = _normalize(np.tanh(di_clip * 7.0))
+                generated = _render_helix_native(x_input, hlx_tmp)
+                baseline = _normalize(np.tanh(x_input * 7.0))
                 pair = [("generated", _normalize(generated)),
                         ("baseline", baseline)]
         ir_result = MatchIRResult(ir=ir, sample_rate=SR,
