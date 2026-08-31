@@ -21,7 +21,7 @@ def test_current_engine_never_routes():
 
 
 def test_experimental_routes_bass_guitar():
-    expect = {"bass": ("riley_bass", "register_up_12"),
+    expect = {"bass": ("riley_bass", "register_passthrough"),
               "guitar": ("riley_guitar", "register_passthrough")}
     for fam, (transcriber, norm) in expect.items():
         d = resolve(RoutingRequest(engine="experimental_specialist", family=fam))
@@ -96,19 +96,18 @@ def test_normalization_is_separate_stage_and_default_passthrough():
     assert prov["raw_preserved"] is True
 
 
-def test_bass_routes_register_up_12():
-    """Promoted from the 2026-08-14 separated revalidation: the raw
-    riley_bass variant collapses on htdemucs_6s stems; +12 wins .513
-    vs .0947. Listening check pending — the caveat must say so."""
+def test_bass_routes_passthrough_not_p12():
+    """2026-08-31 real-audio blind listening check: raw sounding pitch
+    chosen 5/6 vs incumbent, the +12 variant 0/6 — the Slakh +12 rule
+    is a written-pitch dataset convention and must NOT route in
+    production. register_up_12 stays in the registry for Slakh evals
+    only."""
     d = resolve(RoutingRequest(engine="experimental_specialist", family="bass"))
-    assert d.normalization == "register_up_12"
-    assert d.normalization_shift == 12
-    assert "listening check pending" in (d.caveat or "")
-    notes = [{"pitch": 28, "onset": 0.1, "offset": 0.4}]
-    out, prov = normalization.apply(notes, d.normalization_shift,
-                                    d.normalization, d.normalization_version)
-    assert out[0]["pitch"] == 40
-    assert prov["raw_preserved"] is False
+    assert d.normalization == "register_passthrough"
+    assert d.normalization_shift == 0
+    from tone_forge.specialist import registry as reg
+    assert "register_up_12" in reg.load_registry()["normalizations"], \
+        "Slakh-eval comparator must remain documented"
 
 
 def test_normalization_shift_and_provenance():

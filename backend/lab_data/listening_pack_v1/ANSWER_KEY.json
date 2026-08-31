@@ -1,0 +1,36 @@
+{
+ "03_-_Simulated_Life__bass": {
+  "X1": "spec_raw",
+  "X2": "specialist",
+  "X3": "incumbent"
+ },
+ "12_-_Mr_Dance__bass": {
+  "X1": "incumbent",
+  "X2": "specialist",
+  "X3": "spec_raw"
+ },
+ "23_-_Hello_AI_ft_Jason_Hanes__bass": {
+  "X1": "specialist",
+  "X2": "spec_raw",
+  "X3": "incumbent"
+ },
+ "24_-_Hello_AI_Ancestry__bass": {
+  "X1": "incumbent",
+  "X2": "spec_raw",
+  "X3": "specialist"
+ },
+ "15_-_Death_by_Nanobots__bass": {
+  "X1": "specialist",
+  "X2": "incumbent",
+  "X3": "spec_raw"
+ },
+ "17_-_Winter_Mode__bass": {
+  "X1": "incumbent",
+  "X2": "specialist",
+  "X3": "spec_raw"
+ },
+ "02_-_Jump_and_Die__guitar": {
+  "X1": "specialist",
+  "X2": "incumbent"
+ }
+}

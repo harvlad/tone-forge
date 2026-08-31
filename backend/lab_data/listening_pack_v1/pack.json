@@ -1,0 +1,440 @@
+{
+ "purpose": "real-audio listening check for registry promotion 2026.08.30-1 (bass register_up_12 caveat + guitar route)",
+ "protocol": "Per clip: listen to ref_clean.wav and ref_separated.wav, then X*.wav. Note the best variant per clip in VERDICTS.md BEFORE opening ANSWER_KEY.json.",
+ "registry_version": "2026.08.30-1",
+ "seed": 20260830,
+ "clips": [
+  {
+   "clip": "03_-_Simulated_Life__bass",
+   "song": "03 - Simulated Life",
+   "family": "bass",
+   "window_start_s": 104.0,
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 136,
+    "specialist": 46,
+    "spec_raw": 46
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_up_12",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 12,
+    "registry_version": "2026.08.30-1",
+    "config_hash": "d7e21798a9998fab",
+    "caveat": "+12 register promoted from Slakh separated revalidation; real-audio listening check pending",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_up_12",
+     "version": "v1",
+     "shift_semitones": 12,
+     "n_notes": 46,
+     "raw_preserved": false
+    },
+    "timing": {
+     "transcription_s": 5.79,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 46
+   }
+  },
+  {
+   "clip": "12_-_Mr_Dance__bass",
+   "song": "12 - Mr Dance",
+   "family": "bass",
+   "window_start_s": 136.0,
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 138,
+    "specialist": 113,
+    "spec_raw": 113
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_up_12",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 12,
+    "registry_version": "2026.08.30-1",
+    "config_hash": "d7e21798a9998fab",
+    "caveat": "+12 register promoted from Slakh separated revalidation; real-audio listening check pending",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_up_12",
+     "version": "v1",
+     "shift_semitones": 12,
+     "n_notes": 113,
+     "raw_preserved": false
+    },
+    "timing": {
+     "transcription_s": 4.93,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 113
+   }
+  },
+  {
+   "clip": "23_-_Hello_AI_ft_Jason_Hanes__bass",
+   "song": "23 - Hello AI ft Jason Hanes",
+   "family": "bass",
+   "window_start_s": 178.0,
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 119,
+    "specialist": 58,
+    "spec_raw": 58
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_up_12",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 12,
+    "registry_version": "2026.08.30-1",
+    "config_hash": "d7e21798a9998fab",
+    "caveat": "+12 register promoted from Slakh separated revalidation; real-audio listening check pending",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_up_12",
+     "version": "v1",
+     "shift_semitones": 12,
+     "n_notes": 58,
+     "raw_preserved": false
+    },
+    "timing": {
+     "transcription_s": 4.85,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 58
+   }
+  },
+  {
+   "clip": "24_-_Hello_AI_Ancestry__bass",
+   "song": "24 - Hello AI Ancestry",
+   "family": "bass",
+   "window_start_s": 146.0,
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 105,
+    "specialist": 49,
+    "spec_raw": 49
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_up_12",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 12,
+    "registry_version": "2026.08.30-1",
+    "config_hash": "d7e21798a9998fab",
+    "caveat": "+12 register promoted from Slakh separated revalidation; real-audio listening check pending",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_up_12",
+     "version": "v1",
+     "shift_semitones": 12,
+     "n_notes": 49,
+     "raw_preserved": false
+    },
+    "timing": {
+     "transcription_s": 4.89,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 49
+   }
+  },
+  {
+   "clip": "15_-_Death_by_Nanobots__bass",
+   "song": "15 - Death by Nanobots",
+   "family": "bass",
+   "window_start_s": 198.0,
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 110,
+    "specialist": 63,
+    "spec_raw": 63
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_up_12",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 12,
+    "registry_version": "2026.08.30-1",
+    "config_hash": "d7e21798a9998fab",
+    "caveat": "+12 register promoted from Slakh separated revalidation; real-audio listening check pending",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_up_12",
+     "version": "v1",
+     "shift_semitones": 12,
+     "n_notes": 63,
+     "raw_preserved": false
+    },
+    "timing": {
+     "transcription_s": 4.82,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 63
+   }
+  },
+  {
+   "clip": "17_-_Winter_Mode__bass",
+   "song": "17 - Winter Mode",
+   "family": "bass",
+   "window_start_s": 5.0,
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 63,
+    "specialist": 41,
+    "spec_raw": 41
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_up_12",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 12,
+    "registry_version": "2026.08.30-1",
+    "config_hash": "d7e21798a9998fab",
+    "caveat": "+12 register promoted from Slakh separated revalidation; real-audio listening check pending",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_up_12",
+     "version": "v1",
+     "shift_semitones": 12,
+     "n_notes": 41,
+     "raw_preserved": false
+    },
+    "timing": {
+     "transcription_s": 4.72,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 41
+   }
+  },
+  {
+   "clip": "02_-_Jump_and_Die__guitar",
+   "song": "02 - Jump and Die",
+   "family": "guitar",
+   "window_start_s": 8.0,
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 290,
+    "specialist": 214
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.30-1",
+    "config_hash": "4204ba979a7c9223",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 214,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 5.9,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 214
+   }
+  }
+ ]
+}
