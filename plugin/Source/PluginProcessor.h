@@ -13,6 +13,8 @@
 
 #include "KitPack.h"
 
+#include <juce_dsp/juce_dsp.h>
+
 class JamnKitProcessor : public juce::AudioProcessor
 {
 public:
@@ -63,9 +65,25 @@ public:
     {
         double bpm = 0.0;
         double ppqPosition = 0.0;
+        double barPhase = 0.0;  // 0..1 within the current bar
         bool playing = false;
     };
     HostClock hostClock() const { return clock.load(); }
+
+    /// 0..1 loop phase of a playing pad slot, or -1 when silent —
+    /// drives the editor's pad playheads.
+    float padPhase(int slot) const
+    {
+        return slot >= 0 && slot < kVoices
+            ? padPhases[(size_t) slot].load() : -1.0f;
+    }
+
+    /// Macro parameters (Filter / Space / Drive / Gain) — automatable.
+    juce::AudioProcessorValueTreeState apvts;
+
+    /// Backend base URL for the in-plugin pack browser (persisted).
+    juce::String backendUrl() const { return backendUrlValue; }
+    void setBackendUrl(const juce::String& url) { backendUrlValue = url; }
 
     static constexpr int kVoices = 16;
     static constexpr int kFirstNote = 36;  // C1
@@ -99,9 +117,24 @@ private:
     void renderVoice(Voice& v, int slot, float* left, float* right,
                      int numSamples);
 
+    static juce::AudioProcessorValueTreeState::ParameterLayout
+        parameterLayout();
+    void applyMacros(juce::AudioBuffer<float>&);
+
     std::array<Voice, kVoices> voices {};
     std::array<std::atomic<bool>, 128> activeNotes {};
     std::array<std::atomic<bool>, 128> armedNotes {};
+    std::array<std::atomic<float>, kVoices> padPhases {};
+
+    // Macro DSP: soft drive -> lowpass -> reverb wet -> master gain.
+    juce::dsp::StateVariableTPTFilter<float> lowpass;
+    juce::Reverb reverb;
+    std::atomic<float>* pFilter = nullptr;
+    std::atomic<float>* pSpace = nullptr;
+    std::atomic<float>* pDrive = nullptr;
+    std::atomic<float>* pGain = nullptr;
+
+    juce::String backendUrlValue { "http://127.0.0.1:8300" };
     double currentSampleRate = 44100.0;
 
     juce::SpinLock packLock;

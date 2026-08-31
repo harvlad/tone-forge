@@ -22,6 +22,8 @@ struct KitPadSample
     bool loopable = true;
     double sourceSampleRate = 44100.0;
     juce::AudioBuffer<float> audio;  // decoded at source rate
+    /// 64-bin normalized peak envelope for the pad's mini waveform.
+    std::vector<float> peaks;
 
     juce::Colour colour() const;
 };

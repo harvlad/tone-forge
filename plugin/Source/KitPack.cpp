@@ -48,6 +48,33 @@ static void bakeLoopCrossfade(juce::AudioBuffer<float>& audio,
     audio.setSize(audio.getNumChannels(), newLength, true, true, true);
 }
 
+/// Normalized max-abs peak envelope for pad thumbnails.
+static std::vector<float> computePeaks(const juce::AudioBuffer<float>& audio,
+                                       int bins)
+{
+    std::vector<float> peaks((size_t) bins, 0.0f);
+    const int frames = audio.getNumSamples();
+    if (frames < bins || bins < 1)
+        return peaks;
+    const int per = frames / bins;
+    for (int b = 0; b < bins; ++b)
+    {
+        float peak = 0.0f;
+        for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+        {
+            const float* d = audio.getReadPointer(ch);
+            for (int i = b * per; i < (b + 1) * per; ++i)
+                peak = juce::jmax(peak, std::abs(d[i]));
+        }
+        peaks[(size_t) b] = peak;
+    }
+    const float maxPeak = *std::max_element(peaks.begin(), peaks.end());
+    if (maxPeak > 0.0f)
+        for (auto& p : peaks)
+            p /= maxPeak;
+    return peaks;
+}
+
 static juce::File findPackRoot(const juce::File& dir)
 {
     // The kit.json may sit in `dir` itself or one level down (zip
@@ -131,6 +158,7 @@ std::shared_ptr<const LoadedPack> load(const juce::File& source,
                      true, true);
         if (pad.loopable)
             bakeLoopCrossfade(pad.audio, pad.sourceSampleRate);
+        pad.peaks = computePeaks(pad.audio, 64);
         pack->pads.push_back(std::move(pad));
         return true;
     };

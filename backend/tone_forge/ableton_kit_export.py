@@ -339,12 +339,38 @@ def build_ableton_kit_zip(
     Raises ValueError when no pad could be rendered (no kit, or no
     reachable stem audio).
     """
+    import hashlib
+    import os
+
     from tone_forge.performance import serve as _perf
 
     kit = _perf.kit_payload(entry_id, result, skill=skill, pads=pads)
     kit_pads = kit.get("pads") or []
     if not kit_pads:
         raise ValueError("Song has no performance kit (no ranked assets)")
+
+    # Rendered-zip cache: the kit provenance embeds the graph hash, so
+    # (entry, skill, pads, provenance) uniquely names an output. Repeat
+    # downloads (plugin Browse, re-export) return in milliseconds
+    # instead of re-fetching stems + re-slicing. TONEFORGE_KIT_CACHE=0
+    # disables (tests point it at a tmp dir).
+    cache_dir_raw = os.environ.get("TONEFORGE_KIT_CACHE")
+    cache_dir = None
+    if cache_dir_raw != "0":
+        cache_dir = Path(cache_dir_raw) if cache_dir_raw else (
+            Path.home() / ".toneforge" / "kit_zip_cache")
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            cache_dir = None
+    cache_key = hashlib.sha1(
+        f"{entry_id}|{skill}|{pads}|{kit.get('provenance', '')}|{song_name}"
+        .encode()).hexdigest()
+    cache_file = cache_dir / f"{cache_key}.zip" if cache_dir else None
+    filename_default = f"{_safe_name(song_name)} Jam Kit.zip"
+    if cache_file is not None and cache_file.exists() \
+            and cache_file.stat().st_size > 0:
+        return cache_file.read_bytes(), filename_default
 
     pack_title = f"{_safe_name(song_name)} Jam Kit"
     tempo = result.get("tempo_bpm") or result.get("tempo")
@@ -437,7 +463,15 @@ def build_ableton_kit_zip(
                 # WAVs are already compressed poorly; store as-is is fine,
                 # deflate still shaves silence.
                 z.writestr(f"{root}/Samples/{fname}", data)
-        return buf.getvalue(), f"{pack_title}.zip"
+        payload = buf.getvalue()
+        if cache_file is not None:
+            try:
+                tmp = cache_file.with_suffix(".part")
+                tmp.write_bytes(payload)
+                tmp.rename(cache_file)
+            except Exception:
+                pass
+        return payload, f"{pack_title}.zip"
 
 
 def _readme(pack_title: str, song_name: str, tempo, pads: List[Dict]) -> str:

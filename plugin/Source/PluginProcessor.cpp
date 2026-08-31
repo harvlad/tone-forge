@@ -10,17 +10,44 @@
 
 #include <cmath>
 
+juce::AudioProcessorValueTreeState::ParameterLayout
+JamnKitProcessor::parameterLayout()
+{
+    using P = juce::AudioParameterFloat;
+    juce::AudioProcessorValueTreeState::ParameterLayout layout;
+    layout.add(std::make_unique<P>("filter", "Filter",
+                                   juce::NormalisableRange<float>(0.f, 1.f),
+                                   1.0f));
+    layout.add(std::make_unique<P>("space", "Space",
+                                   juce::NormalisableRange<float>(0.f, 1.f),
+                                   0.0f));
+    layout.add(std::make_unique<P>("drive", "Drive",
+                                   juce::NormalisableRange<float>(0.f, 1.f),
+                                   0.0f));
+    layout.add(std::make_unique<P>(
+        "gain", "Gain",
+        juce::NormalisableRange<float>(-24.0f, 6.0f, 0.1f), 0.0f));
+    return layout;
+}
+
 JamnKitProcessor::JamnKitProcessor()
     : AudioProcessor(BusesProperties().withOutput(
-          "Output", juce::AudioChannelSet::stereo(), true))
+          "Output", juce::AudioChannelSet::stereo(), true)),
+      apvts(*this, nullptr, "params", parameterLayout())
 {
     for (auto& n : activeNotes)
         n.store(false);
     for (auto& n : armedNotes)
         n.store(false);
+    for (auto& p : padPhases)
+        p.store(-1.0f);
+    pFilter = apvts.getRawParameterValue("filter");
+    pSpace = apvts.getRawParameterValue("space");
+    pDrive = apvts.getRawParameterValue("drive");
+    pGain = apvts.getRawParameterValue("gain");
 }
 
-void JamnKitProcessor::prepareToPlay(double sampleRate, int)
+void JamnKitProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
     voices.fill({});
@@ -29,6 +56,66 @@ void JamnKitProcessor::prepareToPlay(double sampleRate, int)
         n.store(false);
     for (auto& n : armedNotes)
         n.store(false);
+    for (auto& p : padPhases)
+        p.store(-1.0f);
+
+    juce::dsp::ProcessSpec spec { sampleRate,
+                                  (juce::uint32) samplesPerBlock, 2 };
+    lowpass.prepare(spec);
+    lowpass.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+    reverb.setSampleRate(sampleRate);
+}
+
+void JamnKitProcessor::applyMacros(juce::AudioBuffer<float>& buffer)
+{
+    const float drive = pDrive != nullptr ? pDrive->load() : 0.0f;
+    const float filterAmt = pFilter != nullptr ? pFilter->load() : 1.0f;
+    const float space = pSpace != nullptr ? pSpace->load() : 0.0f;
+    const float gainDb = pGain != nullptr ? pGain->load() : 0.0f;
+    const int numSamples = buffer.getNumSamples();
+
+    if (drive > 0.001f)
+    {
+        const float pre = 1.0f + drive * 8.0f;
+        const float post = 1.0f / std::sqrt(pre);
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        {
+            auto* d = buffer.getWritePointer(ch);
+            for (int i = 0; i < numSamples; ++i)
+                d[i] = std::tanh(d[i] * pre) * post;
+        }
+    }
+
+    if (filterAmt < 0.999f)
+    {
+        // 1.0 = wide open; sweep down to ~200 Hz, log-ish.
+        const float cutoff =
+            200.0f * std::pow(100.0f, juce::jlimit(0.0f, 1.0f, filterAmt));
+        lowpass.setCutoffFrequency(
+            juce::jmin(cutoff, (float) currentSampleRate * 0.45f));
+        juce::dsp::AudioBlock<float> block(buffer);
+        juce::dsp::ProcessContextReplacing<float> ctx(block);
+        lowpass.process(ctx);
+    }
+
+    if (space > 0.001f)
+    {
+        juce::Reverb::Parameters rp;
+        rp.roomSize = 0.6f;
+        rp.damping = 0.4f;
+        rp.wetLevel = space * 0.6f;
+        rp.dryLevel = 1.0f - space * 0.3f;
+        rp.width = 1.0f;
+        reverb.setParameters(rp);
+        if (buffer.getNumChannels() > 1)
+            reverb.processStereo(buffer.getWritePointer(0),
+                                 buffer.getWritePointer(1), numSamples);
+        else
+            reverb.processMono(buffer.getWritePointer(0), numSamples);
+    }
+
+    if (std::abs(gainDb) > 0.05f)
+        buffer.applyGain(juce::Decibels::decibelsToGain(gainDb));
 }
 
 // MARK: - Pack management (message thread)
@@ -281,10 +368,17 @@ void JamnKitProcessor::processBlock(
     {
         if (auto position = playHead->getPosition())
         {
+            if (auto sig = position->getTimeSignature())
+                barPpq = juce::jmax(
+                    1.0, 4.0 * sig->numerator / juce::jmax(1, sig->denominator));
             HostClock c;
             c.bpm = position->getBpm().orFallback(0.0);
             c.ppqPosition = position->getPpqPosition().orFallback(0.0);
             c.playing = position->getIsPlaying();
+            double phase = std::fmod(c.ppqPosition, barPpq) / barPpq;
+            if (phase < 0.0)
+                phase += 1.0;
+            c.barPhase = phase;
             clock.store(c);
             hostPlaying = c.playing;
             if (c.bpm > 0.0)
@@ -292,9 +386,6 @@ void JamnKitProcessor::processBlock(
                 samplesPerPpq = currentSampleRate * 60.0 / c.bpm;
                 blockPpq = c.ppqPosition;
             }
-            if (auto sig = position->getTimeSignature())
-                barPpq = juce::jmax(
-                    1.0, 4.0 * sig->numerator / juce::jmax(1, sig->denominator));
         }
     }
     // Quantize only makes sense on a rolling transport.
@@ -331,32 +422,52 @@ void JamnKitProcessor::processBlock(
         auto& v = voices[(size_t) slot];
         if (v.state != Voice::State::idle)
             renderVoice(v, slot, left, right, numSamples);
+        // Editor playhead: loop phase while sounding, -1 when silent.
+        const bool sounding =
+            (v.state == Voice::State::playing
+             || v.state == Voice::State::releasing)
+            && v.pad != nullptr && v.pad->audio.getNumSamples() > 0;
+        padPhases[(size_t) slot].store(
+            sounding ? (float) (v.position / v.pad->audio.getNumSamples())
+                     : -1.0f);
     }
+
+    applyMacros(buffer);
 }
 
 // MARK: - State
 
 void JamnKitProcessor::getStateInformation(juce::MemoryBlock& dest)
 {
-    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
-    obj->setProperty("packPath",
-                     editorPack != nullptr ? editorPack->sourcePath
-                                           : juce::String());
-    const auto json = juce::JSON::toString(juce::var(obj.get()));
-    dest.replaceAll(json.toRawUTF8(), json.getNumBytesAsUTF8());
+    auto state = apvts.copyState();
+    state.setProperty("packPath",
+                      editorPack != nullptr ? editorPack->sourcePath
+                                            : juce::String(),
+                      nullptr);
+    state.setProperty("backendUrl", backendUrlValue, nullptr);
+    if (auto xml = state.createXml())
+        copyXmlToBinary(*xml, dest);
 }
 
 void JamnKitProcessor::setStateInformation(const void* data, int size)
 {
-    const auto parsed = juce::JSON::parse(
-        juce::String::fromUTF8((const char*) data, size));
-    const juce::String path =
-        parsed.getProperty("packPath", juce::String()).toString();
-    if (path.isEmpty())
+    auto xml = getXmlFromBinary(data, size);
+    if (xml == nullptr)
         return;
-    const juce::File source(path);
-    if (source.exists())
-        (void) loadPack(source);
+    auto state = juce::ValueTree::fromXml(*xml);
+    if (!state.isValid())
+        return;
+    apvts.replaceState(state);
+    const juce::String url = state.getProperty("backendUrl", juce::String());
+    if (url.isNotEmpty())
+        backendUrlValue = url;
+    const juce::String path = state.getProperty("packPath", juce::String());
+    if (path.isNotEmpty())
+    {
+        const juce::File source(path);
+        if (source.exists())
+            (void) loadPack(source);
+    }
 }
 
 juce::AudioProcessorEditor* JamnKitProcessor::createEditor()

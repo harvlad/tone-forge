@@ -14,6 +14,12 @@ import soundfile as sf
 from tone_forge import ableton_kit_export as ake
 
 
+@pytest.fixture(autouse=True)
+def _isolated_caches(tmp_path, monkeypatch):
+    monkeypatch.setenv("TONEFORGE_KIT_CACHE", str(tmp_path / "kitcache"))
+    monkeypatch.setenv("TONEFORGE_STEM_CACHE", str(tmp_path / "stemcache"))
+
+
 def _write_tone(path: Path, seconds: float = 2.0, sr: int = 44100) -> None:
     t = np.linspace(0, seconds, int(seconds * sr), endpoint=False)
     sf.write(str(path), (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32), sr)
@@ -212,6 +218,23 @@ def test_build_zip_end_to_end(tmp_path, monkeypatch):
     readme = z.read(f"{root}/README.txt").decode()
     assert "97 BPM" in readme
     assert "Groove 0" in readme
+
+
+def test_build_zip_second_call_serves_from_cache(tmp_path, monkeypatch):
+    stem = tmp_path / "drums.wav"
+    _write_tone(stem, seconds=3.0)
+    result = {"stems_local": {"drums": str(stem)}, "tempo_bpm": 97.0}
+
+    from tone_forge.performance import serve as perf_serve
+    monkeypatch.setattr(perf_serve, "kit_payload", lambda *a, **k: _fake_kit(2))
+
+    first, _ = ake.build_ableton_kit_zip(
+        "entry123", result, song_name="Song", pads=2)
+    # Stems gone — only the zip cache can satisfy the second call.
+    stem.unlink()
+    second, _ = ake.build_ableton_kit_zip(
+        "entry123", result, song_name="Song", pads=2)
+    assert second == first
 
 
 def test_build_zip_raises_without_reachable_stems(tmp_path, monkeypatch):
