@@ -1,6 +1,6 @@
-# Draft — GitHub issue for xavriley/hf_midi_transcription (optional, not sent)
+# GitHub issue for xavriley/hf_midi_transcription — SENT 2026-08-31
 
-Post at: https://github.com/xavriley/hf_midi_transcription/issues/new
+Posted as harvlad: https://github.com/xavriley/hf_midi_transcription/issues/3
 
 **Title:** Add LICENSE file to match the declared MIT license?
 
