@@ -67,6 +67,63 @@ def build_graph(entry_id: str, result: Dict) -> MusicalGraph:
     )
 
 
+def ensure_graph(entry_id: str, result: Dict) -> tuple[MusicalGraph, bool]:
+    """Graph for a persisted result, BACKFILLING legacy entries.
+
+    Songs analyzed before ``derive_and_attach`` existed persisted no
+    ``performance_graph``; on an R2-only serving box the local-stems
+    build degrades to an empty graph and every kit is 0 pads forever.
+    This path closes that hole: when there's no stored graph and no
+    local stems, fetch the (already re-presigned) R2 stems to a temp
+    dir, derive the graph there, and attach it to ``result`` in place.
+
+    Returns (graph, attached) — ``attached`` means the caller should
+    persist the mutated result (history save) so the fetch+derivation
+    only ever happens once per song. Heavy (stem download + DSP); call
+    off the event loop.
+    """
+    stored = result.get(GRAPH_RESULT_KEY)
+    if isinstance(stored, dict) and stored.get("assets") is not None:
+        try:
+            from .builder import _graph_from_dict
+
+            return _graph_from_dict(stored), False
+        except Exception:
+            pass
+
+    from .builder import _stem_paths_of
+
+    # Local stems present (analysis box / dev): the normal cached build.
+    if _stem_paths_of(result):
+        g = build_graph(entry_id, result)
+        if g.assets:
+            result[GRAPH_RESULT_KEY] = g.to_dict()
+            return g, True
+
+    import tempfile
+    from pathlib import Path
+
+    from tone_forge.stem_fetch import materialize_stems
+
+    with tempfile.TemporaryDirectory(prefix="toneforge_graphfill_") as td:
+        stems = materialize_stems(result, Path(td))
+        shadow = dict(result)
+        shadow["stems_local"] = {k: str(v) for k, v in stems.items()}
+        # use_cache=False both ways: earlier no-stem builds STORED an
+        # empty graph under this content hash (cache.store runs even for
+        # empties), and reading it back here would defeat the backfill.
+        g = _get_builder().build(
+            result=shadow,
+            song_id=entry_id,
+            content_hash=_content_hash(entry_id, result),
+            use_cache=False,
+        )
+        if g.assets:
+            result[GRAPH_RESULT_KEY] = g.to_dict()
+            return g, True
+        return g, False
+
+
 def derive_and_attach(entry_id: str, result: Dict) -> bool:
     """Called on the analysis worker after `result` is assembled and stems are
     LOCAL: derive the Musical Graph and attach it under GRAPH_RESULT_KEY so it

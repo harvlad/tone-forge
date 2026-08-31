@@ -5457,7 +5457,37 @@ async def get_song_kit(
     if not isinstance(result, dict):
         raise HTTPException(status_code=422, detail="Song has no analysis result")
     _refresh_r2_stem_urls(result)
+    # Backfill legacy entries (analyzed before derive_and_attach): fetch
+    # stems + derive the graph once, persist, then serve the kit. Heavy
+    # only on that first hit — off the event loop.
+    attached = await asyncio.to_thread(
+        lambda: _perf.ensure_graph(entry_id, result)[1]
+    )
+    if attached:
+        _persist_backfilled_graph(entry_id, result)
     return JSONResponse(_perf.kit_payload(entry_id, result, skill=skill, pads=pads))
+
+
+def _persist_backfilled_graph(entry_id: str, result: dict) -> None:
+    """Write a just-backfilled performance graph into the history entry so
+    the stem fetch + derivation runs once per song, not per request."""
+    from tone_forge.performance import serve as _perf
+
+    graph = result.get(_perf.GRAPH_RESULT_KEY)
+    if not isinstance(graph, dict):
+        return
+    try:
+        history = _load_history()
+        for e in history:
+            if e.get("id") == entry_id and isinstance(e.get("result"), dict):
+                e["result"][_perf.GRAPH_RESULT_KEY] = graph
+                break
+        else:
+            return
+        _save_history(history)
+        logger.info("performance graph backfilled + persisted for %s", entry_id)
+    except Exception:
+        logger.warning("graph backfill persist failed for %s", entry_id, exc_info=True)
 
 
 @app.get("/api/song/{entry_id}/ableton-kit")
@@ -5482,14 +5512,16 @@ async def get_song_ableton_kit(
     _refresh_r2_stem_urls(result)
     song_name = entry.get("name") or entry.get("title") or entry_id[:8]
     try:
-        data, filename = await asyncio.to_thread(
-            build_ableton_kit_zip,
-            entry_id,
-            result,
-            song_name=song_name,
-            skill=skill,
-            pads=pads,
-        )
+        def _render() -> tuple[bytes, str, bool]:
+            from tone_forge.performance import serve as _perf
+            _, attached = _perf.ensure_graph(entry_id, result)
+            data, filename = build_ableton_kit_zip(
+                entry_id, result, song_name=song_name, skill=skill, pads=pads)
+            return data, filename, attached
+
+        data, filename, attached = await asyncio.to_thread(_render)
+        if attached:
+            _persist_backfilled_graph(entry_id, result)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return StreamingResponse(

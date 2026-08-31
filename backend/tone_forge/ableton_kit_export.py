@@ -31,7 +31,6 @@ import json
 import logging
 import re
 import tempfile
-import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -83,46 +82,12 @@ def _sample_filename(idx: int, pad: Dict) -> str:
 # Stem audio access
 # ---------------------------------------------------------------------------
 
-def _local_stem_paths(result: Dict) -> Dict[str, str]:
-    """Local stem files when this box has them (analysis box / dev)."""
-    try:
-        from tone_forge.performance.builder import _stem_paths_of
-        return _stem_paths_of(result) or {}
-    except Exception:
-        return {}
-
-
 def _materialize_stems(
     result: Dict, roles: List[str], scratch: Path
 ) -> Dict[str, Path]:
-    """Local file per needed stem role. Server-local paths win; URL-only
-    stems (R2 serving box) are fetched once each into ``scratch``.
-    Missing/failed roles are dropped — their pads are skipped."""
-    out: Dict[str, Path] = {}
-    local = _local_stem_paths(result)
-    urls = result.get("stems_paths") if isinstance(result.get("stems_paths"), dict) else {}
-
-    for role in roles:
-        lp = local.get(role)
-        if lp and Path(lp).exists():
-            out[role] = Path(lp)
-            continue
-        url = urls.get(role)
-        if not isinstance(url, str) or not url.startswith("http"):
-            logger.warning("[ableton-kit] no audio source for stem %r", role)
-            continue
-        dest = scratch / f"stem_{_safe_name(role, 24)}"
-        try:
-            with urllib.request.urlopen(url, timeout=120) as resp, open(dest, "wb") as f:
-                while True:
-                    chunk = resp.read(1 << 20)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            out[role] = dest
-        except Exception as exc:
-            logger.warning("[ableton-kit] stem fetch failed for %r: %s", role, exc)
-    return out
+    """Local file per needed stem role — shared logic in stem_fetch."""
+    from tone_forge.stem_fetch import materialize_stems
+    return materialize_stems(result, scratch, roles=roles)
 
 
 def _render_slice(
