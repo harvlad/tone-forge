@@ -563,6 +563,11 @@ struct LaunchpadPanelView: View {
                 ProgressView().controlSize(.small)
             }
 
+            // Ableton Link: join the local Link session — loop launches
+            // land on the shared bar grid and the sequencer follows the
+            // session tempo, so jamn stacks in phase with Live.
+            LinkChip(link: session.linkSync)
+
             // Instant Groove: one tap fires the best loop in each category
             // (drums/bass/chords/lead/…), all bar-synced — jam immediately.
             Button {
@@ -1348,4 +1353,32 @@ private class PadClickView: NSView {
     }
 
     override var isFlipped: Bool { true }
+}
+
+// MARK: - Ableton Link chip
+
+/// Link toggle for the launchpad control row: joins/leaves the local
+/// Ableton Link session. Active = accent tint; shows the peer count
+/// (how many Live/Link apps are in the session) and the shared tempo.
+private struct LinkChip: View {
+    @ObservedObject var link: LinkSync
+
+    var body: some View {
+        Button {
+            link.toggle()
+        } label: {
+            Label(title, systemImage: "link")
+                .font(.caption)
+        }
+        .foregroundStyle(link.enabled ? Color.accentColor : Color.primary)
+        .help(link.enabled
+            ? "Ableton Link ON — \(link.peers) peer(s) · \(Int(link.tempo.rounded())) BPM. Loops launch on the shared bar."
+            : "Join the Ableton Link session (sync loops + tempo with Live)")
+        .accessibilityLabel(link.enabled ? "Leave Ableton Link session" : "Join Ableton Link session")
+    }
+
+    private var title: String {
+        guard link.enabled else { return "Link" }
+        return link.peers > 0 ? "Link \(link.peers)" : "Link 0"
+    }
 }

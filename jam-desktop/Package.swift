@@ -37,6 +37,19 @@ let package = Package(
         .package(path: "../mobile-ios"),
     ],
     targets: [
+        // Ableton Link (vendored at third_party/link, GPLv2+ — obtain
+        // Ableton's proprietary license before commercial distribution)
+        // behind a tiny C facade so Swift needs no C++ interop.
+        .target(
+            name: "AbletonLinkShim",
+            path: "Sources/AbletonLinkShim",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("../../third_party/link/include"),
+                .headerSearchPath("../../third_party/link/modules/asio-standalone/asio/include"),
+                .define("LINK_PLATFORM_MACOSX", to: "1"),
+            ]
+        ),
         .target(
             name: "JamDesktopCore",
             dependencies: [
@@ -59,6 +72,7 @@ let package = Package(
             dependencies: [
                 "JamDesktopCore",
                 "JamDesktopAudio",
+                "AbletonLinkShim",
                 .product(name: "ToneForgeML", package: "mobile-ios"),
             ],
             path: "Sources/JamDesktop",
@@ -75,5 +89,6 @@ let package = Package(
             dependencies: ["JamDesktopAudio"],
             path: "Tests/JamDesktopAudioTests"
         ),
-    ]
+    ],
+    cxxLanguageStandard: .cxx17
 )

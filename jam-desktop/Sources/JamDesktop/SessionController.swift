@@ -30,6 +30,8 @@ final class SessionController: ObservableObject {
 
     let engine = EngineController()
     let transport = TransportController()
+    /// Ableton Link session sync (follow-only V1) — see LinkSync.swift.
+    let linkSync = LinkSync()
     let mix = StemMixModel()
     let fx = FXPanelModel()
     let bridge = BridgeClient()
@@ -310,11 +312,22 @@ final class SessionController: ObservableObject {
         }
         launchpad.sequencePadManager = sequencePadManager
         launchpad.padAssignmentStore = padAssignmentStore
+        // Sequencer follows the shared Link tempo the moment it moves.
+        linkSync.onTempoChanged = { [weak self] bpm in
+            self?.sequencer.songBPM = bpm
+        }
         launchpad.onTrigger = { [weak self] pad, assignment, fireAt in
             guard let self else { return }
             print("[Trigger] pad=\(pad) stem=\(assignment.stem) chopIdx=\(assignment.chop.idx)")
             let rate = max(0.1, self.transport.tempoPct)
-            let delay = max(0, fireAt - clock.nowSongSeconds) / rate
+            var delay = max(0, fireAt - clock.nowSongSeconds) / rate
+            // Link session with peers: loops land on the NEXT LINK BAR
+            // (Live's grid), not the song transport's — pads fired here
+            // stack in phase with clips playing in the DAW.
+            let linked = self.linkSync.enabled && self.linkSync.peers > 0
+            if linked, self.launchpad.playbackMode == .loop {
+                delay = self.linkSync.secondsToNextBar()
+            }
             // The Tap/Loop toggle drives playback: Loop = the chop region
             // loops (seamless crossfade) while held; Tap = one-shot that plays
             // through. When looping, use Riley's measured seam crossfade if the
@@ -325,7 +338,10 @@ final class SessionController: ObservableObject {
             let crossfadeMs = loopable ? (rileyFade > 0 ? rileyFade : 15) : 0
             // Bar length (4/4) from the song tempo — the ChopPlayer snaps a loop
             // to a whole-bar multiple so all loops stay phase-locked to the grid.
-            let bpm = self.attachedBundle?.meta.tempoBpm ?? 0
+            // Linked: bar length comes from the SESSION tempo so loop
+            // buffers phase-lock to the DAW's grid, not the song's.
+            let bpm = linked ? self.linkSync.tempo
+                             : (self.attachedBundle?.meta.tempoBpm ?? 0)
             let barSeconds = (loopable && bpm > 0) ? (60.0 / bpm) * 4.0 : 0
             self.chopPlayer.trigger(
                 assignment, afterSeconds: delay,
@@ -576,6 +592,9 @@ final class SessionController: ObservableObject {
         await chopPlayer.load(stemURLs: session.stemURLs)
         sequencer.stop()
         sequencer.songBPM = session.bundle.meta.tempoBpm ?? 120
+        // Joining Link alone: seed the session with the song's tempo so
+        // a later-arriving DAW inherits it (with peers, theirs wins).
+        linkSync.seedTempoIfAlone(session.bundle.meta.tempoBpm ?? 120)
         attachedBundle = session.bundle
         attachedStemURLs = session.stemURLs
         // Song-derived synth patch: color the jam-pad/sequencer synth
