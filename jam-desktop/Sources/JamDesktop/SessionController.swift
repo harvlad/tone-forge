@@ -578,6 +578,12 @@ final class SessionController: ObservableObject {
         sequencer.songBPM = session.bundle.meta.tempoBpm ?? 120
         attachedBundle = session.bundle
         attachedStemURLs = session.stemURLs
+        // Song-derived synth patch: color the jam-pad/sequencer synth
+        // like the song's synth stem. masterGain is preserved from the
+        // current params (loudness staging is never song-derived).
+        if let wt = session.bundle.synthPatch?.wavetable {
+            synthNode.update(params: wt.synthParams(over: synthNode.params))
+        }
         applyChopEdits(analysisId: session.bundle.analysisId)
         jam.configure(
             detectedKey: session.bundle.meta.detectedKey,

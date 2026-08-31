@@ -301,6 +301,67 @@ def _default_snapshot() -> dict:
     }
 
 
+def attach_match_ir(
+    hlx_content: str,
+    ir_index: int = 1,
+    level_db: float = 0.0,
+    low_cut_hz: float = 19.9,
+    high_cut_hz: float = 20100.0,
+) -> str:
+    """Swap the cab block of an exported .hlx for a match-EQ IR block.
+
+    Pairs with ir_match.py: the rendered 2048-tap IR is imported into
+    the Helix IR library at slot ``ir_index`` (1-128; the .hlx stores a
+    reference, never the audio), and the preset's cab block is replaced
+    by an IR block pointing at that slot so the spectral fingerprint
+    ships inside the preset. Field shapes cribbed from a real
+    HD2_ImpulseResponse2048 block (HighCut/Index/Level/LowCut/Mix).
+
+    If the preset has no cab block, the first empty slot is used; if
+    none is free, the content is returned unchanged (never destructive).
+    """
+    preset = json.loads(hlx_content)
+    dsp0 = preset.get("data", {}).get("tone", {}).get("dsp0", {})
+
+    target_key = None
+    position = None
+    for key, block in dsp0.items():
+        if not (key.startswith("block") and isinstance(block, dict)):
+            continue
+        model = str(block.get("@model", ""))
+        if model.startswith("HD2_Cab"):
+            target_key = key
+            position = block.get("@position")
+            break
+    if target_key is None:
+        for key, block in dsp0.items():
+            if (key.startswith("block") and isinstance(block, dict)
+                    and not block.get("@model")):
+                target_key = key
+                break
+    if target_key is None:
+        logger.warning("attach_match_ir: no cab or free slot; preset unchanged")
+        return hlx_content
+
+    ir_block = {
+        "@enabled": True,
+        "@model": "HD2_ImpulseResponse2048",
+        "@no_snapshot_bypass": False,
+        "@path": 0,
+        "@type": 5,
+        "@uuid": uuid.uuid4().hex,
+        "HighCut": float(high_cut_hz),
+        "Index": int(max(1, min(128, ir_index))),
+        "Level": float(level_db),
+        "LowCut": float(low_cut_hz),
+        "Mix": 1.0,
+    }
+    if position is not None:
+        ir_block["@position"] = position
+    preset["data"]["tone"]["dsp0"][target_key] = ir_block
+    return json.dumps(preset, indent=2)
+
+
 def export_json_preset(
     chain: list[dict],
     descriptor_dict: dict,
@@ -1494,46 +1555,62 @@ def export_ableton_analog(
             return m.group(0)
         return re.sub(pattern, replacer, xml_str)
 
-    # Convert filter cutoff to 0-1 range (Analog uses normalized values)
-    # Analog's filter range is roughly 20Hz to 18kHz, logarithmic
-    # Cap at 6kHz max for a musical sound (high cutoff = harsh)
-    cutoff_hz = filt.get("cutoff_hz", 3000)
-    cutoff_hz = min(cutoff_hz, 6000)  # Cap for warmer sound
     import math
+
+    osc = synth_descriptor.get("oscillator", {})
+    filt_env = synth_descriptor.get("filter_envelope") or {}
+
+    # Convert filter cutoff to 0-1 range (Analog uses normalized values,
+    # log-mapped over roughly 20 Hz – 18 kHz). Faithful transfer: no
+    # "musical" caps — the estimator's clamps are the only guard rails.
+    cutoff_hz = filt.get("cutoff_hz", 3000)
     cutoff_norm = (math.log10(max(20, min(18000, cutoff_hz))) - math.log10(20)) / (math.log10(18000) - math.log10(20))
-    cutoff_norm = max(0.3, min(0.75, cutoff_norm))  # Keep in musical range (0.3-0.75)
+    cutoff_norm = max(0.0, min(1.0, cutoff_norm))
 
-    # Filter resonance (already 0-1 in our descriptor)
-    # Add some default resonance for character if none detected
-    resonance = filt.get("resonance", 0.3)
-    if resonance < 0.15:
-        resonance = 0.25  # Minimum resonance for some character
-    resonance = max(0.1, min(0.7, resonance))  # Keep in musical range
+    # Filter resonance (already 0-1 in our descriptor). 0 is a valid
+    # detected value; upper clamp keeps clear of self-oscillation.
+    resonance = max(0.0, min(0.85, filt.get("resonance", 0.2)))
 
-    # Envelope times - Analog uses 0-1 normalized values
-    # Attack: 0=instant, 1=max (~20s)
-    # We'll map our ms values logarithmically
-    def ms_to_analog_time(ms, max_ms=20000):
-        if ms <= 0:
-            return 0
-        return min(1, (math.log10(max(1, ms)) / math.log10(max_ms)))
+    # Envelope times: Analog stores knob positions 0-1, exponential over
+    # ~0.1 ms – 60 s. Inferred from the stock Defaults/Instruments/
+    # Analog.adv (amp release 0.5718 ⇔ 200 ms lands within 0.1%).
+    def ms_to_analog_time(ms):
+        ms = max(0.1, min(60_000.0, float(ms)))
+        return math.log(ms / 0.1) / math.log(60_000.0 / 0.1)
 
-    # Use reasonable defaults for a musical synth sound
-    # Clamp attack to reasonable range (1-100ms typical for synth leads/pads)
-    attack_ms = env.get("attack_ms", 20)
-    attack_ms = max(5, min(100, attack_ms))  # Keep snappy
-    attack = ms_to_analog_time(attack_ms)
+    attack = ms_to_analog_time(env.get("attack_ms", 20))
+    decay = ms_to_analog_time(env.get("decay_ms", 200))
+    release = ms_to_analog_time(env.get("release_ms", 300))
+    sustain = max(0.0, min(1.0, env.get("sustain", 0.7)))
 
-    decay_ms = env.get("decay_ms", 200)
-    decay_ms = max(50, min(500, decay_ms))
-    decay = ms_to_analog_time(decay_ms)
+    # Filter envelope: analyzer emits a separate filter_envelope when it
+    # detects a sweep; otherwise mirror the amp envelope so the filter
+    # movement at least tracks the amplitude contour.
+    f_attack = ms_to_analog_time(filt_env.get("attack_ms", env.get("attack_ms", 20)))
+    f_decay = ms_to_analog_time(filt_env.get("decay_ms", env.get("decay_ms", 200)))
+    f_release = ms_to_analog_time(filt_env.get("release_ms", env.get("release_ms", 300)))
+    f_sustain = max(0.0, min(1.0, filt_env.get("sustain", env.get("sustain", 0.7))))
 
-    release_ms = env.get("release_ms", 300)
-    release_ms = max(100, min(800, release_ms))
-    release = ms_to_analog_time(release_ms)
+    # Filter-envelope depth: descriptor envelope_amount is 0-1; Analog's
+    # FilterEnvCutoffMod is bipolar −1..1 (positive = sweep opens).
+    env_amount = max(-1.0, min(1.0, filt.get("envelope_amount", 0.0)))
 
-    sustain = env.get("sustain", 0.7)
-    sustain = max(0.5, min(0.9, sustain))  # Keep sustain reasonably high
+    # Oscillator waveform: Analog shapes are 0=Sine 1=Saw 2=Rect 3=Noise.
+    # Triangle isn't available — sine is the nearest neighbour (steep
+    # harmonic rolloff); the matched cutoff carries the brightness.
+    wave_map = {"sine": "0", "saw": "1", "square": "2", "triangle": "0", "noise": "3"}
+    wave_shape = wave_map.get(str(osc.get("type", "saw")), "1")
+
+    # Detune: Analog's OscillatorDetune knob is 0-1 with 0.5 = center,
+    # full range ±50 cents. Spread the two chains symmetrically.
+    detune_cents = max(0.0, min(50.0, abs(float(osc.get("detune", 0) or 0))))
+    if int(osc.get("num_voices", 1) or 1) >= 2:
+        detune_cents = max(detune_cents, 6.0)
+    detune_lo = 0.5 - (detune_cents / 2.0) / 100.0
+    detune_hi = 0.5 + (detune_cents / 2.0) / 100.0
+
+    sub_amount = 0.5 if osc.get("sub_osc") else 0.0
+    noise_level = 0.34375 if osc.get("type") == "noise" else 0.0
 
     # Modify preset name
     xml = re.sub(r'(<UserName Value=")[^"]*(")', rf'\g<1>{preset_name}\g<2>', xml, count=1)
@@ -1544,8 +1621,8 @@ def export_ableton_analog(
     xml = replace_param(xml, "FilterType", "0", occurrence=1)  # First oscillator
     xml = replace_param(xml, "FilterType", "0", occurrence=2)  # Second oscillator
 
-    # Disable noise (correct param name is NoiseLevel)
-    xml = replace_param(xml, "NoiseLevel", "0.0", occurrence=1)
+    # Noise: only when the detected oscillator class is noise.
+    xml = replace_param(xml, "NoiseLevel", f"{noise_level:.6f}", occurrence=1)
 
     # Set oscillator levels (correct param name is OscillatorLevel)
     xml = replace_param(xml, "OscillatorLevel", "0.75", occurrence=1)  # Osc1
@@ -1559,26 +1636,37 @@ def export_ableton_analog(
     xml = replace_param(xml, "OscillatorOct", "0", occurrence=1)
     xml = replace_param(xml, "OscillatorOct", "0", occurrence=2)
 
-    # Set waveform - 0=Sine, 1=Saw, 2=Rect, 3=Noise (Analog uses different mapping)
-    # For a typical synth sound, use Saw (1)
-    xml = replace_param(xml, "OscillatorWaveShape", "1", occurrence=1)  # Saw wave
-    xml = replace_param(xml, "OscillatorWaveShape", "1", occurrence=2)
+    # Waveform from the detected oscillator class (both chains).
+    xml = replace_param(xml, "OscillatorWaveShape", wave_shape, occurrence=1)
+    xml = replace_param(xml, "OscillatorWaveShape", wave_shape, occurrence=2)
+
+    # Detune spread across the two chains; sub-osc blend when detected.
+    xml = replace_param(xml, "OscillatorDetune", f"{detune_lo:.6f}", occurrence=1)
+    xml = replace_param(xml, "OscillatorDetune", f"{detune_hi:.6f}", occurrence=2)
+    xml = replace_param(xml, "OscillatorSubAmount", f"{sub_amount:.6f}", occurrence=1)
+    xml = replace_param(xml, "OscillatorSubAmount", f"{sub_amount:.6f}", occurrence=2)
 
     # Modify filter cutoff
     xml = replace_param(xml, "FilterCutoffFrequency", f"{cutoff_norm:.6f}", occurrence=1)
     xml = replace_param(xml, "FilterCutoffFrequency", f"{cutoff_norm:.6f}", occurrence=2)
     xml = replace_param(xml, "FilterQFactor", f"{resonance:.6f}", occurrence=1)
     xml = replace_param(xml, "FilterQFactor", f"{resonance:.6f}", occurrence=2)
+    xml = replace_param(xml, "FilterEnvCutoffMod", f"{env_amount:.6f}", occurrence=1)
+    xml = replace_param(xml, "FilterEnvCutoffMod", f"{env_amount:.6f}", occurrence=2)
 
-    # Modify amp envelope
-    xml = replace_param(xml, "AttackTime", f"{attack:.6f}", occurrence=1)
-    xml = replace_param(xml, "AttackTime", f"{attack:.6f}", occurrence=2)
-    xml = replace_param(xml, "DecayTime", f"{decay:.6f}", occurrence=1)
-    xml = replace_param(xml, "DecayTime", f"{decay:.6f}", occurrence=2)
-    xml = replace_param(xml, "SustainLevel", f"{sustain:.6f}", occurrence=1)
-    xml = replace_param(xml, "SustainLevel", f"{sustain:.6f}", occurrence=2)
-    xml = replace_param(xml, "ReleaseTime", f"{release:.6f}", occurrence=1)
-    xml = replace_param(xml, "ReleaseTime", f"{release:.6f}", occurrence=2)
+    # Envelopes. Per signal chain the template holds Envelope.0 (filter)
+    # then Envelope.1 (amp), so occurrences run: 1 = chain1 filter,
+    # 2 = chain1 amp, 3 = chain2 filter, 4 = chain2 amp.
+    for occ, (a, d, s, r) in (
+        (1, (f_attack, f_decay, f_sustain, f_release)),
+        (2, (attack, decay, sustain, release)),
+        (3, (f_attack, f_decay, f_sustain, f_release)),
+        (4, (attack, decay, sustain, release)),
+    ):
+        xml = replace_param(xml, "AttackTime", f"{a:.6f}", occurrence=occ)
+        xml = replace_param(xml, "DecayTime", f"{d:.6f}", occurrence=occ)
+        xml = replace_param(xml, "SustainLevel", f"{s:.6f}", occurrence=occ)
+        xml = replace_param(xml, "ReleaseTime", f"{r:.6f}", occurrence=occ)
 
     # Compress with gzip
     adv_bytes = gzip.compress(xml.encode('utf-8'))

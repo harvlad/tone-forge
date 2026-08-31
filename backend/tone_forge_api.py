@@ -5373,6 +5373,35 @@ async def get_song_bundle(entry_id: str) -> JSONResponse:
         print(f"[bundle] songDna extraction failed: {exc}")
         song_dna = {}
 
+    # ----- Tone transfer (additive fields; absent = old behavior) ----
+    # guitarTone: the analyzed guitar ToneDescriptor + Helix chain so
+    # clients can show/route the song's guitar tone. synthPatch: the
+    # SynthDescriptor translated to the client synth engines so Jam
+    # pads/sequencer chords take the song's synth color at bundle load.
+    guitar_tone = None
+    guitar_analysis = result.get("guitar") or {}
+    guitar_descriptor = guitar_analysis.get("descriptor")
+    if isinstance(guitar_descriptor, dict) and guitar_descriptor:
+        amp = guitar_descriptor.get("amp") or {}
+        guitar_tone = {
+            "ampFamily": amp.get("family"),
+            "gain": amp.get("gain"),
+            "descriptor": guitar_descriptor,
+            "helixChain": (guitar_analysis.get("platforms") or {}).get("helix") or [],
+        }
+
+    synth_patch = None
+    synth_analysis = result.get("synth") or {}
+    synth_descriptor = synth_analysis.get("descriptor")
+    if isinstance(synth_descriptor, dict) and synth_descriptor:
+        try:
+            from tone_forge.synth_patch import synth_patch_from_descriptor
+            synth_patch = synth_patch_from_descriptor(synth_descriptor)
+        except Exception as exc:
+            # Tone transfer must never sink the bundle.
+            print(f"[bundle] synthPatch translation failed: {exc}")
+            synth_patch = None
+
     payload = {
         "bundleVersion": 2,
         "analysisId": entry_id,
@@ -5382,6 +5411,10 @@ async def get_song_bundle(entry_id: str) -> JSONResponse:
         "presets": presets,
         "songDna": song_dna,
     }
+    if guitar_tone is not None:
+        payload["guitarTone"] = guitar_tone
+    if synth_patch is not None:
+        payload["synthPatch"] = synth_patch
     return JSONResponse(_convert_numpy_types(payload))
 
 
