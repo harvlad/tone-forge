@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Specialist listening check — real-band Cambridge (v2)</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 900px;
+         margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { font-size: 1.4rem; }
+  .clip { border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+          border-radius: 10px; padding: 1rem 1.2rem; margin: 1.2rem 0; }
+  .clip h2 { font-size: 1.05rem; margin: 0 0 .6rem; }
+  .row { display: flex; align-items: center; gap: .8rem; margin: .35rem 0; }
+  .row label { width: 9.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .row.ref label { font-weight: 400; opacity: .75; }
+  audio { flex: 1; height: 32px; }
+  .verdict { margin-top: .6rem; display: flex; gap: .8rem; align-items: center;
+             flex-wrap: wrap; }
+  .verdict input[type=text] { flex: 1; min-width: 12rem; padding: .3rem .5rem; }
+  .protocol { background: color-mix(in srgb, currentColor 8%, transparent);
+              border-radius: 8px; padding: .8rem 1rem; font-size: .92rem; }
+  button { padding: .5rem 1rem; font-size: 1rem; cursor: pointer; }
+  #out { white-space: pre-wrap; font-family: ui-monospace, monospace;
+         font-size: .85rem; background: color-mix(in srgb, currentColor 8%, transparent);
+         border-radius: 8px; padding: 1rem; display: none; }
+</style>
+</head>
+<body>
+<h1>Specialist listening check — real audio (registry 2026.08.31-2 — real-band material)</h1>
+<div class="protocol">
+  <b>Protocol:</b> per clip, first hear <i>clean stem</i> (ground truth) and
+  <i>separated stem</i> (what the models actually got). Then judge which X
+  best matches the reference — notes, octave, timing. Same synth everywhere,
+  so timbre carries no information. Bass clips have 3 X's (one is a no-shift
+  octave variant — this settles the +12 register question). Pick a best X per
+  clip, add notes, hit <b>Export verdicts</b>, paste the block into
+  <code>VERDICTS.md</code>. <b>Only then</b> open <code>ANSWER_KEY.json</code>.
+</div>
+<div id="clips"></div>
+<p><button onclick="exportVerdicts()">Export verdicts</button></p>
+<div id="out"></div>
+<script>
+const CLIPS = [
+  ["AngelsInAmplifiers_I__bass", 3],
+  ["AngelsInAmplifiers_I__guitar", 2],
+  ["BalkunBrothers_SoHiS__bass", 3],
+  ["BalkunBrothers_SoHiS__guitar", 2],
+  ["BannedFromTheZoo_Bla__bass", 3],
+  ["BannedFromTheZoo_Bla__guitar", 2],
+  ["BigStoneCulture_Frag__bass", 3],
+  ["BigStoneCulture_Frag__guitar", 2],
+  ["BosnianRainbows_Morn__bass", 3],
+  ["BosnianRainbows_Morn__guitar", 2],
+  ["BronzeRadioReturn_Mi__guitar", 2],
+  ["Candlebox_HappyPills__bass", 3],
+  ["Candlebox_HappyPills__guitar", 2],
+  ["Forkupines_Semantics__bass", 3],
+  ["Forkupines_Semantics__guitar", 2],
+  ["HollowGround_IllFate__bass", 3],
+  ["HollowGround_IllFate__guitar", 2],
+  ["TheBrew_WhatIWant__bass", 3],
+  ["TheBrew_WhatIWant__guitar", 2],
+];
+const root = document.getElementById("clips");
+for (const [clip, nx] of CLIPS) {
+  const xs = Array.from({length: nx}, (_, i) => `X${i + 1}`);
+  const el = document.createElement("div");
+  el.className = "clip";
+  el.innerHTML = `
+    <h2>${clip.replaceAll("_", " ")}</h2>
+    <div class="row ref"><label>clean stem</label>
+      <audio controls preload="none" src="${clip}/ref_clean.wav"></audio></div>
+    <div class="row ref"><label>separated stem</label>
+      <audio controls preload="none" src="${clip}/ref_separated.wav"></audio></div>
+    ${xs.map(x => `<div class="row"><label>${x}</label>
+      <audio controls preload="none" src="${clip}/${x}.wav"></audio></div>`).join("")}
+    <div class="verdict"><span>best:</span>
+      ${xs.map(x => `<label><input type="radio" name="v_${clip}" value="${x}">${x}</label>`).join("")}
+      <label><input type="radio" name="v_${clip}" value="none">none/tie</label>
+      <input type="text" id="n_${clip}" placeholder="notes (octave? extra notes? timing?)">
+    </div>`;
+  root.appendChild(el);
+}
+// one player at a time
+document.addEventListener("play", e => {
+  document.querySelectorAll("audio").forEach(a => { if (a !== e.target) a.pause(); });
+}, true);
+function exportVerdicts() {
+  let md = "# Listening verdicts (fill in BEFORE opening ANSWER_KEY.json)\n\n";
+  for (const [clip] of CLIPS) {
+    const v = document.querySelector(`input[name="v_${clip}"]:checked`);
+    const n = document.getElementById(`n_${clip}`).value;
+    md += `- ${clip}: ${v ? v.value : "X?"} best${n ? " — " + n : ""}\n`;
+  }
+  const out = document.getElementById("out");
+  out.textContent = md;
+  out.style.display = "block";
+  navigator.clipboard?.writeText(md);
+}
+</script>
+</body>
+</html>

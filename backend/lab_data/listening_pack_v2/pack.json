@@ -1,0 +1,1270 @@
+{
+ "purpose": "real-audio listening check for registry promotion 2026.08.30-1 (bass register_up_12 caveat + guitar route)",
+ "protocol": "Per clip: listen to ref_clean.wav and ref_separated.wav, then X*.wav. Note the best variant per clip in VERDICTS.md BEFORE opening ANSWER_KEY.json.",
+ "registry_version": "2026.08.31-2",
+ "seed": 20260831,
+ "clips": [
+  {
+   "clip": "AngelsInAmplifiers_I__bass",
+   "family": "bass",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 87,
+    "specialist": 48,
+    "spec_raw": 48
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "eeec236ded3e46b7",
+    "caveat": "real-audio listening check 2026-08-31: raw sounding pitch wins 5/6 vs incumbent; +12 confirmed Slakh-only",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 5,
+      "n_clips": 6,
+      "winning_variant": "raw_sounding_pitch",
+      "p12_wins": 0,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 48,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 5.65,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 48
+   },
+   "source": "prepared:lab_data/listening_pack2_src/AngelsInAmplifiers_I__bass"
+  },
+  {
+   "clip": "AngelsInAmplifiers_I__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 368,
+    "specialist": 444
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 444,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 5.76,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 444
+   },
+   "source": "prepared:lab_data/listening_pack2_src/AngelsInAmplifiers_I__guitar"
+  },
+  {
+   "clip": "BalkunBrothers_SoHiS__bass",
+   "family": "bass",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 109,
+    "specialist": 82,
+    "spec_raw": 82
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "eeec236ded3e46b7",
+    "caveat": "real-audio listening check 2026-08-31: raw sounding pitch wins 5/6 vs incumbent; +12 confirmed Slakh-only",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 5,
+      "n_clips": 6,
+      "winning_variant": "raw_sounding_pitch",
+      "p12_wins": 0,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 82,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.77,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 82
+   },
+   "source": "prepared:lab_data/listening_pack2_src/BalkunBrothers_SoHiS__bass"
+  },
+  {
+   "clip": "BalkunBrothers_SoHiS__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 225,
+    "specialist": 155
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 155,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.91,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 155
+   },
+   "source": "prepared:lab_data/listening_pack2_src/BalkunBrothers_SoHiS__guitar"
+  },
+  {
+   "clip": "BannedFromTheZoo_Bla__bass",
+   "family": "bass",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 80,
+    "specialist": 46,
+    "spec_raw": 46
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "eeec236ded3e46b7",
+    "caveat": "real-audio listening check 2026-08-31: raw sounding pitch wins 5/6 vs incumbent; +12 confirmed Slakh-only",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 5,
+      "n_clips": 6,
+      "winning_variant": "raw_sounding_pitch",
+      "p12_wins": 0,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 46,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.68,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 46
+   },
+   "source": "prepared:lab_data/listening_pack2_src/BannedFromTheZoo_Bla__bass"
+  },
+  {
+   "clip": "BannedFromTheZoo_Bla__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 348,
+    "specialist": 394
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 394,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.85,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 394
+   },
+   "source": "prepared:lab_data/listening_pack2_src/BannedFromTheZoo_Bla__guitar"
+  },
+  {
+   "clip": "BigStoneCulture_Frag__bass",
+   "family": "bass",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 122,
+    "specialist": 119,
+    "spec_raw": 119
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "eeec236ded3e46b7",
+    "caveat": "real-audio listening check 2026-08-31: raw sounding pitch wins 5/6 vs incumbent; +12 confirmed Slakh-only",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 5,
+      "n_clips": 6,
+      "winning_variant": "raw_sounding_pitch",
+      "p12_wins": 0,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 119,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.64,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 119
+   },
+   "source": "prepared:lab_data/listening_pack2_src/BigStoneCulture_Frag__bass"
+  },
+  {
+   "clip": "BigStoneCulture_Frag__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 187,
+    "specialist": 140
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 140,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.74,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 140
+   },
+   "source": "prepared:lab_data/listening_pack2_src/BigStoneCulture_Frag__guitar"
+  },
+  {
+   "clip": "BosnianRainbows_Morn__bass",
+   "family": "bass",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 108,
+    "specialist": 95,
+    "spec_raw": 95
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "eeec236ded3e46b7",
+    "caveat": "real-audio listening check 2026-08-31: raw sounding pitch wins 5/6 vs incumbent; +12 confirmed Slakh-only",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 5,
+      "n_clips": 6,
+      "winning_variant": "raw_sounding_pitch",
+      "p12_wins": 0,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 95,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.68,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 95
+   },
+   "source": "prepared:lab_data/listening_pack2_src/BosnianRainbows_Morn__bass"
+  },
+  {
+   "clip": "BosnianRainbows_Morn__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 162,
+    "specialist": 49
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 49,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.72,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 49
+   },
+   "source": "prepared:lab_data/listening_pack2_src/BosnianRainbows_Morn__guitar"
+  },
+  {
+   "clip": "BronzeRadioReturn_Mi__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 220,
+    "specialist": 244
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 244,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.78,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 244
+   },
+   "source": "prepared:lab_data/listening_pack2_src/BronzeRadioReturn_Mi__guitar"
+  },
+  {
+   "clip": "Candlebox_HappyPills__bass",
+   "family": "bass",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 141,
+    "specialist": 77,
+    "spec_raw": 77
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "eeec236ded3e46b7",
+    "caveat": "real-audio listening check 2026-08-31: raw sounding pitch wins 5/6 vs incumbent; +12 confirmed Slakh-only",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 5,
+      "n_clips": 6,
+      "winning_variant": "raw_sounding_pitch",
+      "p12_wins": 0,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 77,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.69,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 77
+   },
+   "source": "prepared:lab_data/listening_pack2_src/Candlebox_HappyPills__bass"
+  },
+  {
+   "clip": "Candlebox_HappyPills__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 214,
+    "specialist": 149
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 149,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.84,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 149
+   },
+   "source": "prepared:lab_data/listening_pack2_src/Candlebox_HappyPills__guitar"
+  },
+  {
+   "clip": "Forkupines_Semantics__bass",
+   "family": "bass",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 129,
+    "specialist": 71,
+    "spec_raw": 71
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "eeec236ded3e46b7",
+    "caveat": "real-audio listening check 2026-08-31: raw sounding pitch wins 5/6 vs incumbent; +12 confirmed Slakh-only",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 5,
+      "n_clips": 6,
+      "winning_variant": "raw_sounding_pitch",
+      "p12_wins": 0,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 71,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.66,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 71
+   },
+   "source": "prepared:lab_data/listening_pack2_src/Forkupines_Semantics__bass"
+  },
+  {
+   "clip": "Forkupines_Semantics__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 224,
+    "specialist": 289
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 289,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.8,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 289
+   },
+   "source": "prepared:lab_data/listening_pack2_src/Forkupines_Semantics__guitar"
+  },
+  {
+   "clip": "HollowGround_IllFate__bass",
+   "family": "bass",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 143,
+    "specialist": 86,
+    "spec_raw": 86
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "eeec236ded3e46b7",
+    "caveat": "real-audio listening check 2026-08-31: raw sounding pitch wins 5/6 vs incumbent; +12 confirmed Slakh-only",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 5,
+      "n_clips": 6,
+      "winning_variant": "raw_sounding_pitch",
+      "p12_wins": 0,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 86,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.7,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 86
+   },
+   "source": "prepared:lab_data/listening_pack2_src/HollowGround_IllFate__bass"
+  },
+  {
+   "clip": "HollowGround_IllFate__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 142,
+    "specialist": 26
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 26,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.73,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 26
+   },
+   "source": "prepared:lab_data/listening_pack2_src/HollowGround_IllFate__guitar"
+  },
+  {
+   "clip": "TheBrew_WhatIWant__bass",
+   "family": "bass",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 75,
+    "specialist": 29,
+    "spec_raw": 29
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "bass",
+    "stem_role": "bass",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_bass",
+    "transcriber_version": "filobass_2023",
+    "transcriber_config": {
+     "instrument": "bass",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "eeec236ded3e46b7",
+    "caveat": "real-audio listening check 2026-08-31: raw sounding pitch wins 5/6 vs incumbent; +12 confirmed Slakh-only",
+    "lab_evidence": {
+     "heldout_f1": 0.642,
+     "incumbent_f1": 0.408,
+     "ci_pp": [
+      14.8,
+      39.9
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.513,
+      "incumbent_f1": 0.0947,
+      "delta": 0.4182,
+      "n_stems": 15,
+      "variant": "riley_bass_p12",
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 5,
+      "n_clips": 6,
+      "winning_variant": "raw_sounding_pitch",
+      "p12_wins": 0,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 29,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.69,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 29
+   },
+   "source": "prepared:lab_data/listening_pack2_src/TheBrew_WhatIWant__bass"
+  },
+  {
+   "clip": "TheBrew_WhatIWant__guitar",
+   "family": "guitar",
+   "clip_seconds": 30.0,
+   "note_counts": {
+    "incumbent": 225,
+    "specialist": 227
+   },
+   "specialist_provenance": {
+    "engine": "experimental_specialist",
+    "family": "guitar",
+    "stem_role": "guitar",
+    "separator": "htdemucs_6s",
+    "separator_version": "demucs-4.0.1",
+    "transcriber": "riley_guitar",
+    "transcriber_version": "gaps_2024",
+    "transcriber_config": {
+     "instrument": "guitar",
+     "onset_threshold": 0.3,
+     "offset_threshold": 0.3,
+     "frame_threshold": 0.1
+    },
+    "normalization": "register_passthrough",
+    "normalization_version": "v1",
+    "normalization_shift_semitones": 0,
+    "registry_version": "2026.08.31-2",
+    "config_hash": "458b785a2c09eadf",
+    "caveat": null,
+    "lab_evidence": {
+     "heldout_f1": 0.635,
+     "incumbent_f1": 0.477,
+     "ci_pp": [
+      3.3,
+      15.3
+     ],
+     "experiment": "wave3_heldout_oneshot",
+     "sep_revalidation": {
+      "specialist_f1": 0.3705,
+      "incumbent_f1": 0.2819,
+      "delta": 0.0886,
+      "n_stems": 15,
+      "experiment": "sep_revalidation_htdemucs6s_validation_2026-08-14"
+     },
+     "listening_check": {
+      "wins": 1,
+      "n_clips": 1,
+      "experiment": "listening_pack_v1_real_audio_2026-08-31",
+      "note": "only one real-audio guitar multitrack available; weak n"
+     }
+    },
+    "normalization_applied": {
+     "rule": "register_passthrough",
+     "version": "v1",
+     "shift_semitones": 0,
+     "n_notes": 227,
+     "raw_preserved": true
+    },
+    "timing": {
+     "transcription_s": 4.79,
+     "normalization_s": 0.0
+    },
+    "raw_note_count": 227
+   },
+   "source": "prepared:lab_data/listening_pack2_src/TheBrew_WhatIWant__guitar"
+  }
+ ]
+}

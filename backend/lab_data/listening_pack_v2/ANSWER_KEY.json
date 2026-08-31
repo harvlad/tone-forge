@@ -1,0 +1,87 @@
+{
+ "AngelsInAmplifiers_I__bass": {
+  "X1": "specialist",
+  "X2": "spec_raw",
+  "X3": "incumbent"
+ },
+ "AngelsInAmplifiers_I__guitar": {
+  "X1": "incumbent",
+  "X2": "specialist"
+ },
+ "BalkunBrothers_SoHiS__bass": {
+  "X1": "spec_raw",
+  "X2": "incumbent",
+  "X3": "specialist"
+ },
+ "BalkunBrothers_SoHiS__guitar": {
+  "X1": "incumbent",
+  "X2": "specialist"
+ },
+ "BannedFromTheZoo_Bla__bass": {
+  "X1": "incumbent",
+  "X2": "specialist",
+  "X3": "spec_raw"
+ },
+ "BannedFromTheZoo_Bla__guitar": {
+  "X1": "specialist",
+  "X2": "incumbent"
+ },
+ "BigStoneCulture_Frag__bass": {
+  "X1": "incumbent",
+  "X2": "spec_raw",
+  "X3": "specialist"
+ },
+ "BigStoneCulture_Frag__guitar": {
+  "X1": "specialist",
+  "X2": "incumbent"
+ },
+ "BosnianRainbows_Morn__bass": {
+  "X1": "incumbent",
+  "X2": "spec_raw",
+  "X3": "specialist"
+ },
+ "BosnianRainbows_Morn__guitar": {
+  "X1": "specialist",
+  "X2": "incumbent"
+ },
+ "BronzeRadioReturn_Mi__guitar": {
+  "X1": "incumbent",
+  "X2": "specialist"
+ },
+ "Candlebox_HappyPills__bass": {
+  "X1": "incumbent",
+  "X2": "specialist",
+  "X3": "spec_raw"
+ },
+ "Candlebox_HappyPills__guitar": {
+  "X1": "specialist",
+  "X2": "incumbent"
+ },
+ "Forkupines_Semantics__bass": {
+  "X1": "specialist",
+  "X2": "spec_raw",
+  "X3": "incumbent"
+ },
+ "Forkupines_Semantics__guitar": {
+  "X1": "specialist",
+  "X2": "incumbent"
+ },
+ "HollowGround_IllFate__bass": {
+  "X1": "specialist",
+  "X2": "spec_raw",
+  "X3": "incumbent"
+ },
+ "HollowGround_IllFate__guitar": {
+  "X1": "incumbent",
+  "X2": "specialist"
+ },
+ "TheBrew_WhatIWant__bass": {
+  "X1": "spec_raw",
+  "X2": "specialist",
+  "X3": "incumbent"
+ },
+ "TheBrew_WhatIWant__guitar": {
+  "X1": "incumbent",
+  "X2": "specialist"
+ }
+}
