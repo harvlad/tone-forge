@@ -93,24 +93,41 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity,
     if (slot < 0 || slot >= kVoices)
         return;
     auto& v = voices[(size_t) slot];
-    v = {};
-    v.held = true;
 
     const KitPadSample* pad =
         activePack != nullptr ? activePack->padForNote(note) : nullptr;
 
-    if (pad != nullptr)
+    if (pad != nullptr && pad->loopable)
     {
+        // TOGGLE launch (clip-launcher semantics). Gate + quantize was
+        // unusable: a mouse click / short MIDI note sent note-off
+        // before the bar arrived and the arm self-cancelled — "arming
+        // not happening". Tap = arm for the next bar; tap while armed
+        // = cancel; tap while looping = release.
+        if (v.state == Voice::State::armed)
+        {
+            v = {};
+            armedNotes[(size_t) note].store(false);
+            return;
+        }
+        if (v.state == Voice::State::playing)
+        {
+            v.state = Voice::State::releasing;
+            v.releaseGain = 1.0f;
+            v.releaseStep = 1.0f
+                / juce::jmax(1.0f, 0.020f * (float) currentSampleRate);
+            return;
+        }
+
+        v = {};
         v.pad = pad;
         v.position = 0.0;
         v.step = pad->sourceSampleRate / currentSampleRate;
-
-        // Loopable pads land on the next host bar while the transport
-        // rolls — this is loop-lock, DAW edition. A tiny grace window
-        // (1/32 beat) right after the barline still counts as "now".
-        if (pad->loopable && eventPpq >= 0.0 && samplesPerPpq > 0.0)
+        if (eventPpq >= 0.0 && samplesPerPpq > 0.0)
         {
-            const double intoBar = std::fmod(eventPpq, barPpq);
+            double intoBar = std::fmod(eventPpq, barPpq);
+            if (intoBar < 0.0)
+                intoBar += barPpq;  // pre-roll / count-in ppq is negative
             const double grace = 1.0 / 32.0;
             const double toNext =
                 (intoBar < grace) ? 0.0 : (barPpq - intoBar);
@@ -122,6 +139,20 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity,
                 return;
             }
         }
+        v.state = Voice::State::playing;
+        activeNotes[(size_t) note].store(true);
+        return;
+    }
+
+    v = {};
+    v.held = true;
+
+    if (pad != nullptr)
+    {
+        // One-shot: immediate, plays through (drum-machine feel).
+        v.pad = pad;
+        v.position = 0.0;
+        v.step = pad->sourceSampleRate / currentSampleRate;
         v.state = Voice::State::playing;
         activeNotes[(size_t) note].store(true);
         return;
@@ -143,23 +174,8 @@ void JamnKitProcessor::handleNoteOff(int note)
         return;
     auto& v = voices[(size_t) slot];
     v.held = false;
-
-    if (v.state == Voice::State::armed)
-    {
-        // Released before the bar arrived: cancel the launch.
-        v = {};
-        armedNotes[(size_t) note].store(false);
-        return;
-    }
-    // Loopable pads gate off with a 20 ms fade; one-shots play through.
-    if (v.state == Voice::State::playing && v.pad != nullptr
-        && v.pad->loopable)
-    {
-        v.state = Voice::State::releasing;
-        v.releaseGain = 1.0f;
-        v.releaseStep =
-            1.0f / juce::jmax(1.0f, 0.020f * (float) currentSampleRate);
-    }
+    // Note-offs are IGNORED for loopable pads (toggle semantics — the
+    // next note-on releases); one-shots play through regardless.
 }
 
 void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
@@ -200,8 +216,9 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
         {
             if (v.position >= length - 1)
             {
-                if (v.pad->loopable && v.state != Voice::State::releasing)
-                    v.position = 0.0;  // seam is baked — hard wrap is clean
+                if (v.pad->loopable)
+                    v.position = 0.0;  // seam is baked; keeps wrapping
+                                       // through the release fade too
                 else
                 {
                     v = {};
