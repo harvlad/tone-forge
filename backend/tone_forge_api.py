@@ -17,6 +17,7 @@ always reach ToneForge regardless of which network the Mac is on.)
 """
 from __future__ import annotations
 
+import io
 import os
 
 # Suppress ONNX Runtime verbose logging BEFORE any imports that might load it
@@ -5457,6 +5458,45 @@ async def get_song_kit(
         raise HTTPException(status_code=422, detail="Song has no analysis result")
     _refresh_r2_stem_urls(result)
     return JSONResponse(_perf.kit_payload(entry_id, result, skill=skill, pads=pads))
+
+
+@app.get("/api/song/{entry_id}/ableton-kit")
+async def get_song_ableton_kit(
+    entry_id: str,
+    skill: str = Query("intermediate", description="beginner|intermediate|advanced"),
+    pads: int = Query(16, ge=1, le=16),
+):
+    """Export the song's Auto Kit as an Ableton Live Pack zip: a Drum Rack
+    (.adg) with one color-coded chain per kit pad, the rendered stem-slice
+    WAVs, an SFZ fallback, and the kit manifest. Slices are cut server-side
+    (local stems when present, else fetched from the freshly-presigned R2
+    URLs), so this endpoint does real audio I/O — seconds, not millis."""
+    from tone_forge.ableton_kit_export import build_ableton_kit_zip
+
+    entry = _get_history_item(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail="Song has no analysis result")
+    _refresh_r2_stem_urls(result)
+    song_name = entry.get("name") or entry.get("title") or entry_id[:8]
+    try:
+        data, filename = await asyncio.to_thread(
+            build_ableton_kit_zip,
+            entry_id,
+            result,
+            song_name=song_name,
+            skill=skill,
+            pads=pads,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/song/{entry_id}/song-dna")
