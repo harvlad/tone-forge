@@ -1,4 +1,9 @@
 // PluginProcessor.cpp — see PluginProcessor.h.
+//
+// Milestone 2: loopable pads LAUNCH-QUANTIZE to the host's next bar
+// while the transport rolls (sample-accurate, computed from ppq), gate
+// off with a 20 ms release fade, and loop over a baked crossfade seam.
+// One-shots stay immediate — drum-machine feel.
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
@@ -11,6 +16,8 @@ JamnKitProcessor::JamnKitProcessor()
 {
     for (auto& n : activeNotes)
         n.store(false);
+    for (auto& n : armedNotes)
+        n.store(false);
 }
 
 void JamnKitProcessor::prepareToPlay(double sampleRate, int)
@@ -19,6 +26,8 @@ void JamnKitProcessor::prepareToPlay(double sampleRate, int)
     voices.fill({});
     uiMidi.reset(sampleRate);
     for (auto& n : activeNotes)
+        n.store(false);
+    for (auto& n : armedNotes)
         n.store(false);
 }
 
@@ -35,8 +44,10 @@ juce::String JamnKitProcessor::loadPack(const juce::File& source)
         const juce::SpinLock::ScopedLockType lock(packLock);
         activePack = pack;
         for (auto& v : voices)
-            v = {};  // old pad pointers die with the old pack
+            v = {};
         for (auto& n : activeNotes)
+            n.store(false);
+        for (auto& n : armedNotes)
             n.store(false);
     }
     editorPack = pack;
@@ -54,6 +65,12 @@ bool JamnKitProcessor::isNoteActive(int midiNote) const
         && activeNotes[(size_t) midiNote].load();
 }
 
+bool JamnKitProcessor::isNoteArmed(int midiNote) const
+{
+    return midiNote >= 0 && midiNote < 128
+        && armedNotes[(size_t) midiNote].load();
+}
+
 void JamnKitProcessor::noteOnFromUI(int midiNote)
 {
     uiMidi.addMessageToQueue(juce::MidiMessage::noteOn(1, midiNote, 1.0f)
@@ -68,7 +85,9 @@ void JamnKitProcessor::noteOffFromUI(int midiNote)
 
 // MARK: - Voices (audio thread; caller holds packLock via processBlock)
 
-void JamnKitProcessor::handleNoteOn(int note, float velocity)
+void JamnKitProcessor::handleNoteOn(int note, float velocity,
+                                    double eventPpq, double samplesPerPpq,
+                                    double barPpq)
 {
     const int slot = note - kFirstNote;
     if (slot < 0 || slot >= kVoices)
@@ -77,24 +96,43 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity)
     v = {};
     v.held = true;
 
-    if (activePack != nullptr)
+    const KitPadSample* pad =
+        activePack != nullptr ? activePack->padForNote(note) : nullptr;
+
+    if (pad != nullptr)
     {
-        if (const auto* pad = activePack->padForNote(note))
+        v.pad = pad;
+        v.position = 0.0;
+        v.step = pad->sourceSampleRate / currentSampleRate;
+
+        // Loopable pads land on the next host bar while the transport
+        // rolls — this is loop-lock, DAW edition. A tiny grace window
+        // (1/32 beat) right after the barline still counts as "now".
+        if (pad->loopable && eventPpq >= 0.0 && samplesPerPpq > 0.0)
         {
-            v.pad = pad;
-            v.position = 0.0;
-            v.step = pad->sourceSampleRate / currentSampleRate;
-            v.active = true;
-            activeNotes[(size_t) note].store(true);
-            return;
+            const double intoBar = std::fmod(eventPpq, barPpq);
+            const double grace = 1.0 / 32.0;
+            const double toNext =
+                (intoBar < grace) ? 0.0 : (barPpq - intoBar);
+            if (toNext > 0.0)
+            {
+                v.state = Voice::State::armed;
+                v.startDelaySamples = toNext * samplesPerPpq;
+                armedNotes[(size_t) note].store(true);
+                return;
+            }
         }
+        v.state = Voice::State::playing;
+        activeNotes[(size_t) note].store(true);
+        return;
     }
+
     // Sine fallback (no pack / unmapped note-in-range).
     const double hz = 110.0 * std::pow(2.0, slot / 5.0);
     v.phase = 0.0;
     v.increment = juce::MathConstants<double>::twoPi * hz / currentSampleRate;
     v.sineLevel = velocity * 0.4f;
-    v.active = true;
+    v.state = Voice::State::playing;
     activeNotes[(size_t) note].store(true);
 }
 
@@ -105,12 +143,112 @@ void JamnKitProcessor::handleNoteOff(int note)
         return;
     auto& v = voices[(size_t) slot];
     v.held = false;
-    // Loopable pads gate off with the note; one-shots play through.
-    if (v.pad != nullptr && v.pad->loopable)
+
+    if (v.state == Voice::State::armed)
     {
-        v.active = false;
-        v.pad = nullptr;
-        activeNotes[(size_t) note].store(false);
+        // Released before the bar arrived: cancel the launch.
+        v = {};
+        armedNotes[(size_t) note].store(false);
+        return;
+    }
+    // Loopable pads gate off with a 20 ms fade; one-shots play through.
+    if (v.state == Voice::State::playing && v.pad != nullptr
+        && v.pad->loopable)
+    {
+        v.state = Voice::State::releasing;
+        v.releaseGain = 1.0f;
+        v.releaseStep =
+            1.0f / juce::jmax(1.0f, 0.020f * (float) currentSampleRate);
+    }
+}
+
+void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
+                                   float* right, int numSamples)
+{
+    const int note = slot + kFirstNote;
+    int start = 0;
+
+    if (v.state == Voice::State::armed)
+    {
+        if (v.startDelaySamples >= (double) numSamples)
+        {
+            v.startDelaySamples -= numSamples;
+            return;
+        }
+        start = (int) v.startDelaySamples;
+        v.startDelaySamples = 0.0;
+        v.state = Voice::State::playing;
+        armedNotes[(size_t) note].store(false);
+        activeNotes[(size_t) note].store(true);
+    }
+
+    if (v.pad != nullptr)
+    {
+        const auto& audio = v.pad->audio;
+        const int length = audio.getNumSamples();
+        const int channels = audio.getNumChannels();
+        if (length < 2)
+        {
+            v = {};
+            activeNotes[(size_t) note].store(false);
+            return;
+        }
+        const float* srcL = audio.getReadPointer(0);
+        const float* srcR = channels > 1 ? audio.getReadPointer(1) : srcL;
+
+        for (int i = start; i < numSamples; ++i)
+        {
+            if (v.position >= length - 1)
+            {
+                if (v.pad->loopable && v.state != Voice::State::releasing)
+                    v.position = 0.0;  // seam is baked — hard wrap is clean
+                else
+                {
+                    v = {};
+                    activeNotes[(size_t) note].store(false);
+                    return;
+                }
+            }
+            const int idx = (int) v.position;
+            const float frac = (float) (v.position - idx);
+            float gain = 1.0f;
+            if (v.state == Voice::State::releasing)
+            {
+                v.releaseGain -= v.releaseStep;
+                if (v.releaseGain <= 0.0f)
+                {
+                    v = {};
+                    activeNotes[(size_t) note].store(false);
+                    return;
+                }
+                gain = v.releaseGain;
+            }
+            left[i] += gain * (srcL[idx] + frac * (srcL[idx + 1] - srcL[idx]));
+            if (right != left)
+                right[i] +=
+                    gain * (srcR[idx] + frac * (srcR[idx + 1] - srcR[idx]));
+            v.position += v.step;
+        }
+        return;
+    }
+
+    // Sine fallback.
+    const float sineDecay =
+        std::exp(-1.0f / (0.25f * (float) currentSampleRate));
+    for (int i = start; i < numSamples; ++i)
+    {
+        if (v.sineLevel <= 0.0005f)
+        {
+            v = {};
+            activeNotes[(size_t) note].store(false);
+            return;
+        }
+        const float s = v.sineLevel * (float) std::sin(v.phase);
+        left[i] += s;
+        if (right != left)
+            right[i] += s;
+        v.phase += v.increment;
+        v.sineLevel *= sineDecay;
     }
 }
 
@@ -120,6 +258,8 @@ void JamnKitProcessor::processBlock(
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
+    double blockPpq = -1.0, samplesPerPpq = 0.0, barPpq = 4.0;
+    bool hostPlaying = false;
     if (auto* playHead = getPlayHead())
     {
         if (auto position = playHead->getPosition())
@@ -129,21 +269,38 @@ void JamnKitProcessor::processBlock(
             c.ppqPosition = position->getPpqPosition().orFallback(0.0);
             c.playing = position->getIsPlaying();
             clock.store(c);
+            hostPlaying = c.playing;
+            if (c.bpm > 0.0)
+            {
+                samplesPerPpq = currentSampleRate * 60.0 / c.bpm;
+                blockPpq = c.ppqPosition;
+            }
+            if (auto sig = position->getTimeSignature())
+                barPpq = juce::jmax(
+                    1.0, 4.0 * sig->numerator / juce::jmax(1, sig->denominator));
         }
     }
+    // Quantize only makes sense on a rolling transport.
+    const bool quantizable = hostPlaying && blockPpq >= 0.0
+        && samplesPerPpq > 0.0;
 
-    // Merge UI pad presses with host MIDI.
     uiMidi.removeNextBlockOfMessages(midi, buffer.getNumSamples());
 
     const juce::SpinLock::ScopedTryLockType lock(packLock);
     if (!lock.isLocked())
-        return;  // pack swap in flight — one silent block is fine
+        return;
 
     for (const auto metadata : midi)
     {
         const auto msg = metadata.getMessage();
         if (msg.isNoteOn())
-            handleNoteOn(msg.getNoteNumber(), msg.getFloatVelocity());
+        {
+            const double eventPpq = quantizable
+                ? blockPpq + metadata.samplePosition / samplesPerPpq
+                : -1.0;
+            handleNoteOn(msg.getNoteNumber(), msg.getFloatVelocity(),
+                         eventPpq, samplesPerPpq, barPpq);
+        }
         else if (msg.isNoteOff())
             handleNoteOff(msg.getNoteNumber());
     }
@@ -151,69 +308,12 @@ void JamnKitProcessor::processBlock(
     const int numSamples = buffer.getNumSamples();
     auto* left = buffer.getWritePointer(0);
     auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : left;
-    const float sineDecay =
-        std::exp(-1.0f / (0.25f * (float) currentSampleRate));
 
     for (int slot = 0; slot < kVoices; ++slot)
     {
         auto& v = voices[(size_t) slot];
-        if (!v.active)
-            continue;
-
-        if (v.pad != nullptr)
-        {
-            const auto& audio = v.pad->audio;
-            const int length = audio.getNumSamples();
-            const int channels = audio.getNumChannels();
-            if (length < 2)
-            {
-                v.active = false;
-                continue;
-            }
-            const float* srcL = audio.getReadPointer(0);
-            const float* srcR =
-                channels > 1 ? audio.getReadPointer(1) : srcL;
-
-            for (int i = 0; i < numSamples; ++i)
-            {
-                if (v.position >= length - 1)
-                {
-                    if (v.pad->loopable && v.held)
-                        v.position = 0.0;
-                    else
-                    {
-                        v.active = false;
-                        v.pad = nullptr;
-                        activeNotes[(size_t)(slot + kFirstNote)].store(false);
-                        break;
-                    }
-                }
-                const int idx = (int) v.position;
-                const float frac = (float) (v.position - idx);
-                left[i] += srcL[idx] + frac * (srcL[idx + 1] - srcL[idx]);
-                if (right != left)
-                    right[i] += srcR[idx] + frac * (srcR[idx + 1] - srcR[idx]);
-                v.position += v.step;
-            }
-        }
-        else
-        {
-            for (int i = 0; i < numSamples; ++i)
-            {
-                if (v.sineLevel <= 0.0005f)
-                {
-                    v.active = false;
-                    activeNotes[(size_t)(slot + kFirstNote)].store(false);
-                    break;
-                }
-                const float s = v.sineLevel * (float) std::sin(v.phase);
-                left[i] += s;
-                if (right != left)
-                    right[i] += s;
-                v.phase += v.increment;
-                v.sineLevel *= sineDecay;
-            }
-        }
+        if (v.state != Voice::State::idle)
+            renderVoice(v, slot, left, right, numSamples);
     }
 }
 

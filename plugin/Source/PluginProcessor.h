@@ -52,6 +52,9 @@ public:
     /// Editor pad state: is the voice for `midiNote` sounding?
     bool isNoteActive(int midiNote) const;
 
+    /// Editor pad state: queued for the next host bar (launch quantize)?
+    bool isNoteArmed(int midiNote) const;
+
     /// UI-triggered pad press/release (editor pads mirror MIDI).
     void noteOnFromUI(int midiNote);
     void noteOffFromUI(int midiNote);
@@ -70,23 +73,35 @@ public:
 private:
     struct Voice
     {
+        enum class State { idle, armed, playing, releasing };
+        State state = State::idle;
         // Sample playback (pack mode)
         const KitPadSample* pad = nullptr;  // borrowed from activePack
         double position = 0.0;
         double step = 1.0;
         bool held = false;
-        bool active = false;
+        /// Samples until the armed voice fires (host-bar quantize).
+        double startDelaySamples = 0.0;
+        /// Gate-off fade (avoids the hard-cut click).
+        float releaseGain = 1.0f;
+        float releaseStep = 0.0f;
         // Sine fallback (no pack)
         double phase = 0.0;
         double increment = 0.0;
         float sineLevel = 0.0f;
     };
 
-    void handleNoteOn(int note, float velocity);
+    /// `eventPpq` = host ppq at the event's sample offset; < 0 = host
+    /// clock unusable (fire immediately).
+    void handleNoteOn(int note, float velocity, double eventPpq,
+                      double samplesPerPpq, double barPpq);
     void handleNoteOff(int note);
+    void renderVoice(Voice& v, int slot, float* left, float* right,
+                     int numSamples);
 
     std::array<Voice, kVoices> voices {};
     std::array<std::atomic<bool>, 128> activeNotes {};
+    std::array<std::atomic<bool>, 128> armedNotes {};
     double currentSampleRate = 44100.0;
 
     juce::SpinLock packLock;

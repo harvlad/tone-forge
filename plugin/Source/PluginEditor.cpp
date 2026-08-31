@@ -35,6 +35,7 @@ void JamnKitEditor::resized()
 
 void JamnKitEditor::openPackChooser()
 {
+    lastError.clear();  // stale errors outlived successful loads
     chooser = std::make_unique<juce::FileChooser>(
         "Open a jamn Kit pack (folder or zip)",
         juce::File::getSpecialLocation(juce::File::userHomeDirectory),
@@ -152,6 +153,9 @@ void JamnKitEditor::paint(juce::Graphics& g)
             const KitPadSample* pad =
                 pack != nullptr ? pack->padForNote(note) : nullptr;
             const bool active = processor.isNoteActive(note);
+            // Armed = queued for the next host bar; orange ring says
+            // "waiting for the beat", not broken (app UX parity).
+            const bool armed = processor.isNoteArmed(note);
 
             juce::Colour base = pad != nullptr
                 ? pad->colour()
@@ -160,11 +164,14 @@ void JamnKitEditor::paint(juce::Graphics& g)
             if (empty)
                 base = theme::surface;
 
-            g.setColour(base.withAlpha(active ? 0.75f : 0.30f));
+            g.setColour(base.withAlpha(active ? 0.75f : (armed ? 0.45f : 0.30f)));
             g.fillRoundedRectangle(r.toFloat(), 10.0f);
-            g.setColour(active ? juce::Colours::white.withAlpha(0.85f)
-                               : theme::stroke);
-            g.drawRoundedRectangle(r.toFloat(), 10.0f, active ? 1.6f : 1.0f);
+            const juce::Colour ring = active
+                ? juce::Colours::white.withAlpha(0.85f)
+                : (armed ? juce::Colour(0xfff59e0b) : theme::stroke);
+            g.setColour(ring);
+            g.drawRoundedRectangle(r.toFloat(), 10.0f,
+                                   (active || armed) ? 1.6f : 1.0f);
             if (!empty)
             {
                 g.setColour(base.withAlpha(0.9f));

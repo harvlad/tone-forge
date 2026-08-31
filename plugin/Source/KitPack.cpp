@@ -23,6 +23,31 @@ juce::Colour KitPadSample::colour() const
 namespace kitpack
 {
 
+/// Bake a ~15 ms equal-power crossfade into a loop buffer: the tail is
+/// blended into the head and then trimmed, so a hard wrap at the new
+/// end is seamless (same idea as the app's SeamlessLoop).
+static void bakeLoopCrossfade(juce::AudioBuffer<float>& audio,
+                              double sampleRate)
+{
+    const int fade = juce::jmin((int) (0.015 * sampleRate),
+                                audio.getNumSamples() / 4);
+    if (fade < 8)
+        return;
+    const int newLength = audio.getNumSamples() - fade;
+    for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+    {
+        auto* data = audio.getWritePointer(ch);
+        for (int i = 0; i < fade; ++i)
+        {
+            const float t = (float) i / (float) fade;
+            const float in = std::sqrt(t);
+            const float out = std::sqrt(1.0f - t);
+            data[i] = data[i] * in + data[newLength + i] * out;
+        }
+    }
+    audio.setSize(audio.getNumChannels(), newLength, true, true, true);
+}
+
 static juce::File findPackRoot(const juce::File& dir)
 {
     // The kit.json may sit in `dir` itself or one level down (zip
@@ -104,6 +129,8 @@ std::shared_ptr<const LoadedPack> load(const juce::File& source,
                           (int) reader->lengthInSamples);
         reader->read(&pad.audio, 0, (int) reader->lengthInSamples, 0,
                      true, true);
+        if (pad.loopable)
+            bakeLoopCrossfade(pad.audio, pad.sourceSampleRate);
         pack->pads.push_back(std::move(pad));
         return true;
     };
