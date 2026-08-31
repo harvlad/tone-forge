@@ -82,23 +82,44 @@ def test_adg_receiving_note_is_inverted():
     assert note.get("Value") == str(128 - 36)
 
 
-def test_adg_sample_refs_are_relative():
+def test_adg_sample_refs_are_user_library_relative():
     adg = ake.build_drum_rack_adg("Kit", [_pad(3)])
     root = ET.fromstring(gzip.decompress(adg))
-    rel = root.find(".//SampleRef/FileRef/RelativePath")
+    part = root.find(".//MultiSamplePart")
+    rel = part.find("SampleRef/FileRef/RelativePath")
     assert rel.get("Value") == "Samples/03 Pad.wav"
-    rel_type = root.find(".//SampleRef/FileRef/RelativePathType")
-    assert rel_type.get("Value") == "3"
+    # Type 6 = relative to the User Library — the only mode verified to
+    # resolve in Live 12 (type 3 leaves "Media files are missing").
+    rel_type = part.find("SampleRef/FileRef/RelativePathType")
+    assert rel_type.get("Value") == "6"
 
 
 def test_adg_chain_colors_follow_category():
     adg = ake.build_drum_rack_adg("Kit", [_pad(0, "DRUMS"), _pad(1, "BASS")])
     root = ET.fromstring(gzip.decompress(adg))
-    colors = [b.find("Color").get("Value") for b in root.findall(".//DrumBranchPreset")]
+    colors = [
+        b.find("DocumentColorIndex").get("Value")
+        for b in root.findall(".//BranchPresets/DrumBranchPreset")
+    ]
     assert colors == [
         str(ake._CATEGORY_ABLETON_COLOR["DRUMS"]),
         str(ake._CATEGORY_ABLETON_COLOR["BASS"]),
     ]
+
+
+def test_adg_branch_ids_are_unique():
+    adg = ake.build_drum_rack_adg("Kit", [_pad(i) for i in range(4)])
+    root = ET.fromstring(gzip.decompress(adg))
+    ids = []
+    for b in root.findall(".//BranchPresets/DrumBranchPreset"):
+        ids.extend(el.get("Id") for el in b.iter() if el.get("Id") is not None)
+    assert len(ids) == len(set(ids))
+
+
+def test_adg_keeps_template_root_attrs():
+    adg = ake.build_drum_rack_adg("Kit", [_pad(0)])
+    root = ET.fromstring(gzip.decompress(adg))
+    assert root.get("Creator", "").startswith("Ableton Live 12")
 
 
 def test_adg_escapes_xml_in_names():
