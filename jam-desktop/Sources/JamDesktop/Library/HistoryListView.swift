@@ -91,9 +91,16 @@ struct HistoryListView: View {
                 }
                 if loadingEntryId == entry.id, !model.isLoadingSession,
                    let error = model.sessionError {
-                    Label(error, systemImage: "exclamationmark.triangle")
+                    HStack(spacing: 6) {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(JamTheme.error)
+                        Button("Retry") {
+                            Task { await model.retryLoadSession() }
+                        }
                         .font(.caption)
-                        .foregroundStyle(JamTheme.error)
+                        .buttonStyle(.link)
+                    }
                 }
             }
             Spacer()

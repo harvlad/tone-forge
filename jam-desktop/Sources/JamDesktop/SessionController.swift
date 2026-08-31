@@ -585,6 +585,18 @@ final class SessionController: ObservableObject {
         )
         learn.configure(bundle: session.bundle)
         announce(session)
+        // Jam-straight-away (mobile parity): build the categorized Auto
+        // Kit now so the Launchpad opens as the color-coded rack instead
+        // of waiting for the Auto Kit button; the preset-chop grid laid
+        // by configure(bundle:) stays up until the kit lands (or keeps
+        // the grid if the fetch ultimately fails). Also prewarm the
+        // preset grid so first presses don't pay the read+SRC.
+        let presetAssignments = launchpad.assignments.values
+            .map { (chop: $0.chop, stem: $0.stem) }
+        Task { [weak self] in
+            await self?.chopPlayer.prewarm(presetAssignments)
+            await self?.loadAutoKit()
+        }
     }
 
     // MARK: - Performance-Intelligence auto-kit
@@ -601,11 +613,21 @@ final class SessionController: ObservableObject {
             autoKitError = "No song loaded."
             return
         }
+        guard !autoKitLoading else { return }
         autoKitLoading = true
         autoKitError = nil
         defer { autoKitLoading = false }
         do {
-            let pack = try await KitClient().fetchKit(baseURL: base, analysisId: analysisId, skill: skill)
+            // 16 ranked pads (the builder's named role slots + top-ups) —
+            // the default 8 under-filled a 64-cell grid. Retries transient
+            // failures with a short backoff before surfacing the error.
+            let pack = try await Self.fetchKitWithRetry(
+                base: base, analysisId: analysisId, skill: skill,
+                stillCurrent: { [weak self] in
+                    self?.attachedAnalysisId == analysisId
+                })
+            // Song changed while fetching — never adopt a stale kit.
+            guard attachedAnalysisId == analysisId else { return }
             // The kit's pads are stem slices, not files — so drive the chop-based
             // Launchpad grid: each pad → (Chop, stem). Loopable pads get kind
             // "phrase" so onTrigger loops them seamlessly (SeamlessLoop crossfade).
@@ -635,9 +657,38 @@ final class SessionController: ObservableObject {
                 return (chop, slice.stemRole)
             }
             launchpad.adoptAssignments(pairs)
+            // Decode the kit's buffers off the touch path so the first
+            // press of every pad fires without the read+SRC delay.
+            Task { [weak self] in await self?.chopPlayer.prewarm(pairs) }
+        } catch is CancellationError {
+            // Song changed mid-retry — not an error for the new song.
         } catch {
+            guard attachedAnalysisId == analysisId else { return }
             autoKitError = error.localizedDescription
         }
+    }
+
+    /// KitClient fetch with 3 attempts and a short backoff for transient
+    /// failures. Throws `CancellationError` (silently handled above) the
+    /// moment `stillCurrent` reports the song changed.
+    private static func fetchKitWithRetry(
+        base: URL, analysisId: String, skill: String,
+        stillCurrent: @escaping () -> Bool?
+    ) async throws -> SamplePack {
+        var lastError: Error = URLError(.unknown)
+        for attempt in 0..<3 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 2_000_000_000)
+            }
+            guard stillCurrent() == true else { throw CancellationError() }
+            do {
+                return try await KitClient().fetchKit(
+                    baseURL: base, analysisId: analysisId, skill: skill, pads: 16)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
     }
 
     // MARK: - Layer recording (P4)

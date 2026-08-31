@@ -265,15 +265,17 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// Library song activation: open the tapped song in Learn. Does NOT
-    /// auto-play — the user starts the transport when ready. The tab
-    /// switch runs in an animation-disabled transaction so the Learn
-    /// surface doesn't scale/zoom in on entry.
+    /// Library song activation: open the tapped song in Jam so the
+    /// launchpad (Auto Kit prepping in the background) is the first
+    /// surface — load-a-song-and-jam-straight-away. Does NOT auto-play
+    /// — the user starts the transport when ready. The tab switch runs
+    /// in an animation-disabled transaction so the surface doesn't
+    /// scale/zoom in on entry.
     public func openSong() {
         var tx = Transaction()
         tx.disablesAnimations = true
         withTransaction(tx) {
-            selectedTab = .learn
+            selectedTab = .jam
         }
     }
 
@@ -532,6 +534,20 @@ public final class AppState: ObservableObject {
                                     name: $0.name, family: $0.family, category: $0.category) }
         }
         return songDnaPacks.flatMap { dna in
+            dna.pack.pack.pads
+                .sorted { $0.padIdx < $1.padIdx }
+                .map { JamSamplePad(packId: dna.pack.pack.packId, padIdx: $0.padIdx,
+                                    stem: dna.stem, name: $0.name, family: $0.family,
+                                    category: nil) }
+        }
+    }
+
+    /// Every raw song-DNA chop, flattened in stable order — the
+    /// hardware Launchpad's 48 non-quadrant cells map these (see
+    /// ModeCoordinator.jamSampleAt) so the full 8×8 reaches ALL of the
+    /// song's samples while the quadrant holds the active kit.
+    public var jamOverflowPads: [JamSamplePad] {
+        songDnaPacks.flatMap { dna in
             dna.pack.pack.pads
                 .sorted { $0.padIdx < $1.padIdx }
                 .map { JamSamplePad(packId: dna.pack.pack.packId, padIdx: $0.padIdx,
@@ -1185,6 +1201,15 @@ public final class AppState: ObservableObject {
         sampleVoicePool.$ringingPadKeys
             .sink { [weak self] keys in
                 self?.ringingPadKeys = keys
+                self?.updateDrumDuck(ringing: keys)
+            }
+            .store(in: &settingsCancellables)
+
+        // Armed pads count for the duck too, so the stem dips right as
+        // the kit-drum loop lands instead of a beat late.
+        sampleVoicePool.$pendingPadKeys
+            .sink { [weak self] keys in
+                self?.updateDrumDuck(pending: keys)
             }
             .store(in: &settingsCancellables)
 
@@ -1815,24 +1840,46 @@ public final class AppState: ObservableObject {
     /// Fetch the song's auto-built kit (GET /api/song/{id}/kit) and activate it
     /// as the sample pack — its stem-slice pads decode via the scheduler and
     /// loop seamlessly (loopScore → crossfade). One tap, best material first.
+    ///
+    /// Resilience: retries transient fetch failures (3 attempts, short
+    /// backoff) before surfacing `autoKitError`; every await is guarded
+    /// against the song changing mid-flight so a stale kit can never
+    /// clobber the next song's pack. Buffers are decoded BEFORE the kit
+    /// fronts the grid, so the DNA→kit swap has no silent-tap window —
+    /// the song-DNA pack keeps playing until the kit is actually ready.
     public func loadAutoKit(skill: String = "intermediate") {
         guard let analysisId = currentBundle?.analysisId else {
             autoKitError = "No song loaded."
             return
         }
+        guard !autoKitLoading else { return }
         autoKitLoading = true
         autoKitError = nil
         let base = backendBaseURL
         let stems = currentStemLocalURLs
         Task { @MainActor in
             defer { self.autoKitLoading = false }
-            do {
-                let pack = try await KitClient().fetchKit(
-                    baseURL: base, analysisId: analysisId, skill: skill, pads: 16)
-                self.activateSamplePack(SampleBank.autoKit(pack), stemFiles: stems)
-            } catch {
-                self.autoKitError = error.localizedDescription
+            var lastError: Error?
+            for attempt in 0..<3 {
+                if attempt > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 2_000_000_000)
+                }
+                guard self.currentBundle?.analysisId == analysisId else { return }
+                do {
+                    let pack = try await KitClient().fetchKit(
+                        baseURL: base, analysisId: analysisId, skill: skill, pads: 16)
+                    let resolved = SampleBank.autoKit(pack)
+                    await self.sampleScheduler.preloadPackAsync(
+                        resolved, stemFiles: stems)
+                    guard self.currentBundle?.analysisId == analysisId else { return }
+                    self.activateSamplePack(resolved, stemFiles: stems)
+                    return
+                } catch {
+                    lastError = error
+                }
             }
+            guard self.currentBundle?.analysisId == analysisId else { return }
+            self.autoKitError = lastError?.localizedDescription ?? "Kit unavailable."
         }
     }
 
@@ -1874,7 +1921,11 @@ public final class AppState: ObservableObject {
         Task { @MainActor in
             if activeStyleBeat != nil {
                 modeCoordinator.sequencePadManager.stop(padIdx: Self.styleBeatPadIdx)
-                if activeStyleBeat == style { activeStyleBeat = nil; return }
+                if activeStyleBeat == style {
+                    activeStyleBeat = nil
+                    updateDrumDuck()
+                    return
+                }
             }
             await preloadBeatKit()
             let pattern = StyleBeats.pattern(style)
@@ -1885,6 +1936,7 @@ public final class AppState: ObservableObject {
                 songBPM: currentBundle?.meta.tempoBpm ?? 120
             )
             activeStyleBeat = style
+            updateDrumDuck()
         }
     }
 
@@ -1895,11 +1947,40 @@ public final class AppState: ObservableObject {
             modeCoordinator.sequencePadManager.stop(padIdx: Self.styleBeatPadIdx)
             activeStyleBeat = nil
         }
-        guard let pack = activeSamplePack else { return }
+        guard let pack = activeSamplePack else { updateDrumDuck(); return }
         let packId = pack.pack.packId
         for pad in pack.pack.pads {
             sampleScheduler.release(padIdx: pad.padIdx, packId: packId)
         }
+        updateDrumDuck()
+    }
+
+    // MARK: - Drum-stem auto-duck
+
+    /// Duck the original drums stem (-9 dB, not a mute) while the user's
+    /// own drums are sounding — a ringing/armed kit pad of category
+    /// DRUMS / family percussion, or a running Style Beat. Restores the
+    /// moment they stop. Keeps requirement "original kit keeps playing"
+    /// (it stays audible under the duck, and mixer state is untouched)
+    /// while stopping the flam of two full drum takes fighting.
+    ///
+    /// `ringing`/`pending` overrides exist because @Published sinks fire
+    /// on willSet — the pool's own properties still hold the OLD sets
+    /// when the sink runs.
+    private func updateDrumDuck(
+        ringing: Set<SamplePadKey>? = nil,
+        pending: Set<SamplePadKey>? = nil
+    ) {
+        let keys = (ringing ?? sampleVoicePool.ringingPadKeys)
+            .union(pending ?? sampleVoicePool.pendingPadKeys)
+        let kitDrumsActive = keys.contains { key in
+            guard let pack = resolvedPack(forPackId: key.packId),
+                  let pad = pack.pack.pads.first(where: { $0.padIdx == key.padIdx })
+            else { return false }
+            return pad.category == "DRUMS" || pad.family == .percussion
+        }
+        stemPlayer.setDucked(
+            role: "drums", kitDrumsActive || activeStyleBeat != nil)
     }
 
     /// Load a Song DNA pack's buffers WITHOUT making it the active

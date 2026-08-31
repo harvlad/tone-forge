@@ -592,7 +592,15 @@ struct LaunchpadPanelView: View {
         }
         .overlay(alignment: .bottomTrailing) {
             if let err = session.autoKitError {
-                Text(err).font(.caption2).foregroundStyle(JamTheme.error)
+                HStack(spacing: 6) {
+                    Text(err).font(.caption2).foregroundStyle(JamTheme.error)
+                    Button("Retry") {
+                        Task { await session.loadAutoKit() }
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.link)
+                    .disabled(session.autoKitLoading)
+                }
             }
         }
     }

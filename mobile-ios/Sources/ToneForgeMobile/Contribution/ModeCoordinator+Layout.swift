@@ -45,6 +45,26 @@ extension ModeCoordinator {
                         layout.visual(at: PadIndex.at(row: row, col: col))
                 }
             }
+            // Hardware Launchpad: light the 48 non-quadrant cells with
+            // the song's overflow chops (jamSampleAt maps them by the
+            // same reading order) so the full 8×8 plays the whole song
+            // instead of leaving dead unlit cells. The on-screen 4×4
+            // only reads quadrant cells, so this is LED/hardware-only.
+            let overflow = app.jamOverflowPads
+            if !overflow.isEmpty {
+                for row in 1...8 {
+                    for col in 1...8 {
+                        guard let idx = Self.jamOverflowIndex(row: row, col: col),
+                              idx < overflow.count
+                        else { continue }
+                        let pad = overflow[idx]
+                        visuals[(row - 1) * 8 + (col - 1)] = PadVisual(
+                            colorHint: Self.familyColor(pad.family),
+                            label: pad.name
+                        )
+                    }
+                }
+            }
             padVisuals = visuals
             return
         }
@@ -121,11 +141,16 @@ extension ModeCoordinator {
                 // Show edited badge if user has modified effects from baseline
                 let hasEffectsOverride = app.sampleSettings
                     .padEffectsOverride(packId: packId, padIdx: pad.padIdx) != nil
+                // Loop state: radial per-pad override wins; else manifest
+                // (loopPointSec or the kit's loopable flag).
+                let loopKey = SamplePadKey(packId: packId, padIdx: pad.padIdx)
+                let loops = app.sampleScheduler.padLoopOverrides[loopKey]
+                    ?? (pad.loopPointSec != nil || (pad.loopable ?? false))
                 content[grid.rawValue] = PadContent(
                     label: pad.name,
                     colorHint: Self.familyColor(pad.family),
                     badge: hasEffectsOverride ? .edited : nil,
-                    loops: pad.loopPointSec != nil
+                    loops: loops
                 )
             }
         }

@@ -93,6 +93,7 @@ public final class AppModel: ObservableObject {
         loader: SessionLoader = SessionLoader(),
         sidecarFetcher: SessionSidecarFetching = SessionSidecarClient()
     ) async {
+        lastAttemptedAnalysisId = analysisId
         isLoadingSession = true
         sessionError = nil
         sidecar = nil
@@ -114,5 +115,18 @@ public final class AppModel: ObservableObject {
         sidecar = try? await sidecarFetcher.fetch(
             analysisId: analysisId, backend: backendBaseURL
         )
+    }
+
+    /// The analysis id of the most recent load attempt — the Retry
+    /// buttons on session-load errors re-drive `loadSession` with it
+    /// (transient LTE/backend blips shouldn't strand a song behind a
+    /// bare error caption).
+    public private(set) var lastAttemptedAnalysisId: String?
+
+    /// Re-attempt the last failed session load. No-op while a load is
+    /// already running or when nothing was ever attempted.
+    public func retryLoadSession() async {
+        guard !isLoadingSession, let id = lastAttemptedAnalysisId else { return }
+        await loadSession(analysisId: id)
     }
 }

@@ -145,6 +145,28 @@ public final class ChopPlayer {
         regionCache.removeAll()
     }
 
+    // MARK: - Prewarm
+
+    /// Decode-and-cache each assignment's region buffer WITHOUT playing
+    /// it, so the first real press schedules from cache instead of
+    /// paying the 8 s read+SRC in the touch path ("delay on pads").
+    /// Yields between pads so a 16-pad kit doesn't hitch the UI. Safe
+    /// to race a real trigger — regionBuffer re-checks the cache.
+    public func prewarm(_ items: [(chop: Chop, stem: String)]) async {
+        for item in items {
+            guard let file = files[item.stem] else { continue }
+            let sampleRate = file.fileFormat.sampleRate
+            let startFrame = AVAudioFramePosition(max(0, item.chop.startSec) * sampleRate)
+            let endFrame = min(
+                AVAudioFramePosition(item.chop.endSec * sampleRate), file.length)
+            let frameCount = endFrame - startFrame
+            guard frameCount > 0, startFrame < file.length else { continue }
+            _ = regionBuffer(file: file, startFrame: startFrame,
+                             frameCount: AVAudioFrameCount(frameCount))
+            await Task.yield()
+        }
+    }
+
     // MARK: - Trigger / release
 
     /// Play `assignment`'s chop after `delaySeconds` of wall-clock

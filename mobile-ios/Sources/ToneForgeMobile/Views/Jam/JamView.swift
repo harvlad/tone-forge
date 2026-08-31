@@ -31,6 +31,11 @@ struct JamView: View {
     @State private var showSettingsSheet = false
     @State private var showMetronomeSheet = false
     @State private var showChordSheet = false
+    /// Sounds chip: browse EVERY song chop / pack / curated download in
+    /// one sheet. Picking a sound enters place mode (`pendingChop`) —
+    /// the next pad tap assigns it to that pad.
+    @State private var showSoundsBrowser = false
+    @State private var pendingChop: ChopReference?
     /// Progressive disclosure L3: long-pressing a Samples pad opens the
     /// deeper instrument-construction workspace (the ex-Contribute
     /// tools) — reached contextually from Jam, no permanent button.
@@ -98,6 +103,52 @@ struct JamView: View {
         .fullScreenCover(isPresented: $showInstrumentEditor) {
             InstrumentEditorView()
         }
+        // Separate background node: this view already hosts three
+        // sheets, and SwiftUI only presents one `.sheet` reliably per
+        // node (same workaround as SamplePadGrid4x4's pickers).
+        .background {
+            Color.clear
+                .sheet(isPresented: $showSoundsBrowser) {
+                    soundsBrowserSheet
+                }
+        }
+    }
+
+    /// The all-sounds browser behind the Sounds chip: every song chop
+    /// (grouped by preset), the song-DNA packs, other packs, and
+    /// curated downloads — same sections as the radial Add Sound
+    /// picker (shared data via ChopPickerData.swift). Selection closes
+    /// the sheet and arms place mode.
+    private var soundsBrowserSheet: some View {
+        ChopPickerSheet(
+            onSelect: { ref, _ in
+                pendingChop = ref
+                showSoundsBrowser = false
+            },
+            bundleChops: appState.pickerBundleChops,
+            samplePacks: appState.pickerSamplePacks,
+            localSamples: [],
+            sequences: appState.pickerSequences,
+            downloadablePacks: appState.pickerDownloadablePacks,
+            downloadingPackIds: appState.pickerDownloadingPackIds,
+            downloadFractions: appState.pickerDownloadFractions,
+            onDownloadPack: { packId in
+                guard let entry = appState.curatedCatalog
+                    .first(where: { $0.packId == packId })
+                else { return }
+                Task { await appState.downloadCuratedPack(entry) }
+            },
+            onPreview: { ref in
+                appState.previewChopReference(ref)
+            },
+            onStopPreview: {
+                coordinator.stopPreviewPad()
+            },
+            previewDurationProvider: { packId, padIdx in
+                appState.previewPadDurationSec(packId: packId, padIdx: padIdx)
+            }
+        )
+        .task { await appState.refreshCuratedCatalog() }
     }
 
     // MARK: - Section strip
@@ -202,6 +253,11 @@ struct JamView: View {
         // the Contribute active pack / tabs.
         if mode == .samples {
             appState.preloadAllSongDnaPacks()
+            // A kit fetch that failed earlier retries the moment the
+            // user actually arrives at the launchpad.
+            if appState.autoKitError != nil {
+                appState.loadAutoKit()
+            }
         }
         if mode == .pads {
             // Latched chord visuals make no sense off-surface.
@@ -268,12 +324,13 @@ struct JamView: View {
             // driven by the same contribution bus, so audio + loops work
             // unchanged. Tiles color by the pad's category colorHint.
             VStack(spacing: 6) {
+                samplesStatusStrip
                 // Shared loop-cycle strip: makes the invisible 8 s lock grid
                 // VISIBLE — a sweep of the current cycle with a countdown to
                 // the next boundary, so a locked pad's wait reads as musical
                 // timing instead of a bug.
                 LoopCycleStrip()
-                SamplePadGrid4x4(coordinator: coordinator)
+                SamplePadGrid4x4(coordinator: coordinator, pendingChop: $pendingChop)
             }
         }
     }
@@ -368,6 +425,7 @@ struct JamView: View {
                     if jamSettings.padMode == .samples {
                         instantGrooveChip
                         styleBeatChip
+                        soundsChip
                         stopAllChip
                         loopLockChip
                     }
@@ -435,6 +493,99 @@ struct JamView: View {
             .fixedSize()
         }
         .accessibilityLabel("Style beat: \(appState.activeStyleBeat?.displayName ?? "off")")
+    }
+
+    /// Sounds: browse EVERY sample the song (and pack library) offers —
+    /// the 16-pad kit is a starting point, not the ceiling. Selection
+    /// arms place mode; the next pad tap swaps the sound in.
+    private var soundsChip: some View {
+        Button {
+            Haptics.selectionChanged()
+            showSoundsBrowser = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "square.grid.3x3.topleft.filled").font(.caption)
+                Text("Sounds").font(TFTheme.chipFont)
+            }
+            .tfChip(active: pendingChop != nil)
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Browse all song samples and packs")
+    }
+
+    /// One-line status over the launchpad: place-mode prompt, stem
+    /// download/retry, or kit fetch state. Empty when all is well, so
+    /// the grid keeps the room.
+    @ViewBuilder
+    private var samplesStatusStrip: some View {
+        if pendingChop != nil {
+            HStack(spacing: 8) {
+                Image(systemName: "hand.tap")
+                    .font(.caption)
+                Text("Tap a pad to place the sound")
+                    .font(.caption)
+                Spacer()
+                Button("Cancel") { pendingChop = nil }
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(TFTheme.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(TFTheme.accent.opacity(0.25),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+        } else if appState.stemsUnavailable {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.caption)
+                Text("Song audio unavailable")
+                    .font(.caption)
+                Spacer()
+                Button("Retry") { appState.retryStemDownload() }
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(TFTheme.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.orange.opacity(0.25),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+        } else if appState.isDownloading {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.mini)
+                Text("Downloading song audio…")
+                    .font(.caption)
+                    .foregroundStyle(TFTheme.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+        } else if appState.autoKitError != nil {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.caption)
+                Text("Jam kit unavailable")
+                    .font(.caption)
+                Spacer()
+                Button("Retry") { appState.loadAutoKit() }
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(TFTheme.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.orange.opacity(0.25),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+        } else if appState.autoKitLoading {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.mini)
+                Text("Building jam kit…")
+                    .font(.caption)
+                    .foregroundStyle(TFTheme.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+        }
     }
 
     /// Loop lock: hold triggered loops until the shared cycle restarts so

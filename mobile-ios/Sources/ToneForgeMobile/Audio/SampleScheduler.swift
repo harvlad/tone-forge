@@ -129,6 +129,34 @@ public final class SampleScheduler: ObservableObject {
     /// Triggers without an explicit packId resolve against this.
     public private(set) var activePackId: String?
 
+    /// Per-pad user loop override (radial "Loop" toggle). true forces the
+    /// pad to loop, false forces one-shot; absent = manifest/transform
+    /// behavior. Session-scoped — cleared when the pack unloads.
+    public private(set) var padLoopOverrides: [SamplePadKey: Bool] = [:]
+
+    /// Effective loop state for a pad: override > manifest loop point /
+    /// loopable flag > transform-chain `.loop`. Drives the radial menu's
+    /// Loop segment highlight and the grid's loop badge.
+    public func padLoops(packId: String, padIdx: Int) -> Bool {
+        let key = SamplePadKey(packId: packId, padIdx: padIdx)
+        if let override = padLoopOverrides[key] { return override }
+        guard let pad = loadedPacks[packId]?.pack.pack.pads
+            .first(where: { $0.padIdx == padIdx })
+        else { return loopResolver?(packId, padIdx) ?? false }
+        return pad.loopPointSec != nil || (pad.loopable ?? false)
+            || (loopResolver?(packId, padIdx) ?? false)
+    }
+
+    /// Flip a pad's loop override (radial "Loop"). A ringing voice is
+    /// released so the next trigger picks up the new behavior instead of
+    /// an un-releasable loop lingering under a now-one-shot pad.
+    public func togglePadLoop(packId: String, padIdx: Int) {
+        let key = SamplePadKey(packId: packId, padIdx: padIdx)
+        let now = padLoops(packId: packId, padIdx: padIdx)
+        padLoopOverrides[key] = !now
+        if pool.isActive(padKey: key) { pool.release(padKey: key) }
+    }
+
     /// Bundle context for quantize + gate. Updated when a bundle loads.
     private var beats: [Double] = []
     private var downbeats: [Double] = []
@@ -474,6 +502,7 @@ public final class SampleScheduler: ObservableObject {
             if pool.isActive(padKey: key) {
                 pool.release(padKey: key)
             }
+            padLoopOverrides.removeValue(forKey: key)
         }
         if activePackId == packId {
             activePackId = nil
@@ -485,6 +514,7 @@ public final class SampleScheduler: ObservableObject {
     public func unloadAllPacks() {
         pool.stopAll()
         loadedPacks.removeAll()
+        padLoopOverrides.removeAll()
         activePackId = nil
     }
 
@@ -614,8 +644,10 @@ public final class SampleScheduler: ObservableObject {
         // Will this trigger loop? (Same predicate as the SampleTrigger below.)
         let toggleLoop = (holdMode == .toggle)
             && (pad.loopPointSec != nil || effectiveQuantize == .off)
-        let willLoop = toggleLoop || loopOverride || pad.loopPointSec != nil
+        let naturalLoop = toggleLoop || loopOverride || pad.loopPointSec != nil
             || (pad.loopable ?? false) || (loopResolver?(pid, padIdx) ?? false)
+        // Per-pad radial override wins over manifest/transform behavior.
+        let willLoop = padLoopOverrides[padKey] ?? naturalLoop
         // Loop lock: a looping pad starts on the shared loop-cycle boundary so
         // all loops phase-lock and stack coherently; otherwise normal quantize.
         let targetSong: Double = (loopLock && willLoop && transportRunning)
@@ -848,12 +880,11 @@ public final class SampleScheduler: ObservableObject {
         #endif
         guard holdMode == .hold,
               let pid = packId ?? activePackId,
-              let entry = loadedPacks[pid]
+              loadedPacks[pid] != nil
         else { return }
-        let pad = entry.pack.pack.pads.first(where: { $0.padIdx == padIdx })
-        guard pad?.loopPointSec != nil
-            || (loopResolver?(pid, padIdx) ?? false)
-        else { return }
+        // Effective loop state (incl. the radial per-pad override and
+        // kit `loopable` pads, which loop without a loopPointSec).
+        guard padLoops(packId: pid, padIdx: padIdx) else { return }
         let padKey = SamplePadKey(packId: pid, padIdx: padIdx)
         if pool.isActive(padKey: padKey) {
             pool.release(padKey: padKey)

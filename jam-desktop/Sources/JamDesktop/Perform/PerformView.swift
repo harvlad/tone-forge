@@ -362,7 +362,15 @@ private struct DebugSessionLoaderView: View {
             if model.isLoadingSession {
                 ProgressView().controlSize(.small).offset(y: 24)
             } else if let err = model.sessionError {
-                Text(err).font(.caption).foregroundStyle(JamTheme.error).offset(y: 24)
+                HStack(spacing: 8) {
+                    Text(err).font(.caption).foregroundStyle(JamTheme.error)
+                    Button("Retry") {
+                        Task { await model.retryLoadSession() }
+                    }
+                    .font(.caption)
+                    .buttonStyle(.link)
+                }
+                .offset(y: 24)
             }
         }
     }

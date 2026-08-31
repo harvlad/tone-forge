@@ -477,13 +477,64 @@ public final class ModeCoordinator: ObservableObject {
         execute(action, for: event)
     }
 
-    /// Map a Launchpad grid cell (row/col 1…8) to a Jam Samples chop by
-    /// reading order — top-left pad = first chop. Nil past the chop count.
+    /// Map a hardware Launchpad grid cell (row/col 1…8) to a Jam Samples
+    /// pad. Sample-quadrant cells (rows 5–8, cols 1–4) mirror the
+    /// on-screen 4×4 exactly — same `padBindings`, including swapped-in
+    /// pins — so hardware pad N and screen pad N always agree. The other
+    /// 48 cells map the song's OVERFLOW chops (every song-DNA chop, in
+    /// reading order) so the full 8×8 reaches all of the song's samples,
+    /// not just the kit's 16. Nil past the chop count.
     private func jamSampleAt(row: Int, col: Int) -> (padIdx: Int, packId: String)? {
-        let flat = app.jamSampleFlatPads
-        let index = (row - 1) * 8 + (col - 1)
-        guard index >= 0, index < flat.count else { return nil }
+        if (5...8).contains(row), (1...4).contains(col) {
+            guard let b = padBindings[PadIndex.at(row: row, col: col).rawValue]
+            else { return nil }
+            return (b.padIdx, b.packId)
+        }
+        guard let index = Self.jamOverflowIndex(row: row, col: col) else { return nil }
+        let flat = app.jamOverflowPads
+        guard index < flat.count else { return nil }
         return (flat[index].padIdx, flat[index].packId)
+    }
+
+    /// Reading-order position (top row first, left-to-right; row 8 =
+    /// top) of a NON-quadrant cell among the 48 cells outside the
+    /// sample quadrant. Nil for quadrant cells / out-of-range.
+    static func jamOverflowIndex(row: Int, col: Int) -> Int? {
+        guard (1...8).contains(row), (1...8).contains(col) else { return nil }
+        if (5...8).contains(row), (1...4).contains(col) { return nil }
+        var i = 0
+        for r in stride(from: 8, through: 1, by: -1) {
+            for c in 1...8 {
+                if (5...8).contains(r), (1...4).contains(c) { continue }
+                if r == row, c == col { return i }
+                i += 1
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Pad identity + loop toggle (radial menu)
+
+    /// The scheduler key bound to a grid cell, or nil for empty cells.
+    /// The radial menu uses this for its real pad identity instead of a
+    /// synthetic grid index.
+    public func padBinding(row: Int, col: Int) -> (packId: String, padIdx: Int)? {
+        padBindings[PadIndex.at(row: row, col: col).rawValue]
+    }
+
+    /// Effective loop state of the pad bound at a grid cell (radial
+    /// "Loop" highlight + grid badge).
+    public func padLoops(row: Int, col: Int) -> Bool {
+        guard let b = padBinding(row: row, col: col) else { return false }
+        return app.sampleScheduler.padLoops(packId: b.packId, padIdx: b.padIdx)
+    }
+
+    /// Radial "Loop": flip the bound pad between looping and one-shot,
+    /// then repaint so the loop badge follows.
+    public func togglePadLoop(row: Int, col: Int) {
+        guard let b = padBinding(row: row, col: col) else { return }
+        app.sampleScheduler.togglePadLoop(packId: b.packId, padIdx: b.padIdx)
+        rebuildLayout()
     }
 
     private func execute(_ action: AudioAction, for event: ContributionEvent) {

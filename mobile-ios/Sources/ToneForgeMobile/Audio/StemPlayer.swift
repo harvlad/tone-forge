@@ -81,6 +81,15 @@ public final class StemPlayer: ObservableObject {
     /// the user's speed. Clamping (0.5–1.0) lives in AppState.
     private var playbackRate: Float = 1.0
 
+    /// Roles temporarily ducked by the performance layer (e.g. the
+    /// drums stem while a kit drum pad rings). Separate from user
+    /// mute/solo so mixer UI state is untouched and restore is exact.
+    private var duckedRoles: Set<String> = []
+
+    /// Gain multiplier while a role is performance-ducked: -9 dB — the
+    /// original stays audible underneath, it just yields the pocket.
+    private static let duckGain: Float = 0.35
+
     private weak var engine: AudioEngine?
 
     public init(engine: AudioEngine) {
@@ -198,6 +207,7 @@ public final class StemPlayer: ObservableObject {
         stemMixer = nil
         timePitch = nil
         #endif
+        duckedRoles.removeAll()
         stems.removeAll()
         isLoaded = false
     }
@@ -307,6 +317,15 @@ public final class StemPlayer: ObservableObject {
         applyGains()
     }
 
+    /// Performance-layer duck for one stem role. Idempotent; a no-op
+    /// change skips the gain pass.
+    public func setDucked(role: String, _ ducked: Bool) {
+        let changed = ducked
+            ? duckedRoles.insert(role).inserted
+            : duckedRoles.remove(role) != nil
+        if changed { applyGains() }
+    }
+
     /// Set the combined "Song" gain for all stems (0..1 linear).
     /// Controls the stemMixer output so Your Layer is unaffected.
     public func setSongGain(_ gain: Float) {
@@ -323,13 +342,16 @@ public final class StemPlayer: ObservableObject {
         let anySolo = stems.contains(where: { $0.isSoloed })
         for state in stems {
             guard let ch = channels.first(where: { $0.role == state.role }) else { continue }
-            let effective: Float
+            var effective: Float
             if state.isMuted {
                 effective = 0
             } else if anySolo && !state.isSoloed {
                 effective = 0
             } else {
                 effective = state.gain
+            }
+            if duckedRoles.contains(state.role) {
+                effective *= Self.duckGain
             }
             ch.gainNode.outputVolume = effective
         }

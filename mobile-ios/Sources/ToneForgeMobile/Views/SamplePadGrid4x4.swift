@@ -42,6 +42,11 @@ struct SamplePadGrid4x4: View {
     /// tap-to-add), the hold-radial is off, filled tiles run hotter and
     /// glow while ringing. Jam keeps the workbench (stage = false).
     var stage: Bool = false
+    /// PLACE mode (Jam's Sounds browser): when the binding holds a
+    /// picked chop, the next pad tap ASSIGNS it there (replacing the
+    /// pad) instead of triggering, then clears. Nil hosts (Contribute,
+    /// Perform) never enter place mode.
+    var pendingChop: Binding<ChopReference?>? = nil
     @EnvironmentObject private var appState: AppState
 
     @State private var sheetTarget: PadSheetTarget?
@@ -61,6 +66,14 @@ struct SamplePadGrid4x4: View {
                         cols: 4,
                         onPadDown: { row, col in
                             let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
+                            // Place mode: a picked chop is waiting — this tap
+                            // assigns it to the pad instead of triggering.
+                            if let pending = pendingChop, let ref = pending.wrappedValue {
+                                handleChopSelection(ref, target: (gridRow, gridCol))
+                                pending.wrappedValue = nil
+                                Haptics.selectionChanged()
+                                return
+                            }
                             // Empty pad: a plain tap now opens the add-sound
                             // picker (long-press still gives the full create
                             // radial). Was a no-op — "can't add sounds here".
@@ -251,15 +264,16 @@ struct SamplePadGrid4x4: View {
         containerSize: CGSize,
         actions: [PadRadialAction]
     ) -> PadRadialMenuState {
-        let padIdx = gridRow * 10 + gridCol
-        // FUTURE: Get actual pack ID and loop state from coordinator
+        // Real scheduler identity + effective loop state from the
+        // coordinator's bindings (empty pads have neither).
+        let binding = coordinator.padBinding(row: gridRow, col: gridCol)
         return PadRadialMenuState(
             gridRow: gridRow,
             gridCol: gridCol,
             center: Self.clampWheelCenter(center, in: containerSize),
-            packId: nil,
-            padIdx: padIdx,
-            hasLoop: false,
+            packId: binding?.packId,
+            padIdx: binding?.padIdx ?? (gridRow * 10 + gridCol),
+            hasLoop: coordinator.padLoops(row: gridRow, col: gridCol),
             actions: actions
         )
     }
@@ -290,9 +304,9 @@ struct SamplePadGrid4x4: View {
                 sheetTarget = .trimmer(trimmerTarget)
             }
         case .loop:
-            // FUTURE: Toggle loop transform on pad
-            // Requires adding togglePadLoop to ModeCoordinator
-            break
+            // Flip the pad between looping and one-shot (scheduler
+            // per-pad override; badge repaints via the coordinator).
+            coordinator.togglePadLoop(row: state.gridRow, col: state.gridCol)
         case .reset:
             // Reset pad to default state (clear effects, trim, loop)
             coordinator.resetPadToDefault(
@@ -571,126 +585,17 @@ struct SamplePadGrid4x4: View {
         }
     }
 
-    // MARK: - ChopPicker Data
+    // MARK: - ChopPicker Data (shared with JamView's Sounds chip —
+    // see ChopPickerData.swift)
 
-    /// Saved sequencer patterns available to assign to a pad.
-    private var sequencesForPicker: [SequenceInfo] {
-        appState.sequencerPatternStore.all().map { pattern in
-            SequenceInfo(
-                id: pattern.id,
-                name: pattern.name,
-                trackCount: pattern.tracks.count,
-                stepCount: pattern.stepCount.rawValue
-            )
-        }
-    }
-
-    /// Bundle chops grouped by preset key from the current song.
-    private var bundleChopsForPicker: [String: [Chop]] {
-        guard let bundle = appState.currentBundle else { return [:] }
-        var result: [String: [Chop]] = [:]
-
-        for (key, preset) in bundle.presets {
-            if !preset.chops.isEmpty {
-                result[key] = preset.chops
-            }
-        }
-
-        // Create section chops from timeline if no preset exists
-        if result["sections"] == nil && !bundle.timeline.sections.isEmpty {
-            result["sections"] = bundle.timeline.sections.enumerated().map { idx, section in
-                Chop(
-                    idx: idx,
-                    startSec: section.start,
-                    endSec: section.end,
-                    durationSec: section.end - section.start,
-                    kind: "section",
-                    root: nil,
-                    sectionLabel: section.label,
-                    chordSymbol: nil,
-                    colorHint: nil
-                )
-            }
-        }
-
-        return result
-    }
-
-    /// Sample packs available for the picker.
-    private var samplePacksForPicker: [SamplePackInfo] {
-        var packs: [SamplePackInfo] = []
-
-        // Active sample pack
-        if let active = appState.activeSamplePack {
-            let pads = active.pack.pads.map { pad in
-                SamplePadInfo(padIdx: pad.padIdx, name: pad.name, family: pad.family)
-            }
-            packs.append(SamplePackInfo(
-                id: active.pack.packId,
-                name: active.pack.packId.replacingOccurrences(of: "-", with: " ").capitalized,
-                padCount: pads.count,
-                pads: pads
-            ))
-        }
-
-        // All carousel pages (other packs)
-        for page in appState.carouselPages {
-            if packs.contains(where: { $0.id == page.id }) { continue }
-            if let resolved = appState.resolvedPack(for: page) {
-                let pads = resolved.pack.pads.map { pad in
-                    SamplePadInfo(padIdx: pad.padIdx, name: pad.name, family: pad.family)
-                }
-                packs.append(SamplePackInfo(
-                    id: resolved.pack.packId,
-                    name: page.displayName,
-                    padCount: pads.count,
-                    pads: pads
-                ))
-            }
-        }
-
-        return packs
-    }
-
-    /// Curated catalog packs not yet resolved into the picker (not
-    /// downloaded) — surfaced as download rows so the user can pull
-    /// them inline instead of leaving for the Library.
+    private var sequencesForPicker: [SequenceInfo] { appState.pickerSequences }
+    private var bundleChopsForPicker: [String: [Chop]] { appState.pickerBundleChops }
+    private var samplePacksForPicker: [SamplePackInfo] { appState.pickerSamplePacks }
     private var downloadablePacksForPicker: [DownloadablePackInfo] {
-        let present = Set(samplePacksForPicker.map { $0.id })
-        return appState.curatedCatalog
-            .filter { !present.contains($0.packId) }
-            .map { entry in
-                DownloadablePackInfo(
-                    id: entry.packId,
-                    name: entry.name,
-                    family: entry.family,
-                    padCount: entry.padCount
-                )
-            }
+        appState.pickerDownloadablePacks
     }
-
-    /// packIds with an in-flight (not-complete) curated download.
-    private var downloadingPackIds: Set<String> {
-        Set(appState.curatedDownloads.values
-            .filter { !$0.isComplete }
-            .map { $0.packId })
-    }
-
-    /// Fractional progress (0–1) per in-flight curated download —
-    /// byte-weighted when the server declared sizes, else pad-count.
-    private var downloadFractions: [String: Double] {
-        appState.curatedDownloads.reduce(into: [:]) { dict, kv in
-            let p = kv.value
-            guard !p.isComplete else { return }
-            if p.bytesTotal > 0 {
-                dict[kv.key] = Double(p.bytesDownloaded) / Double(p.bytesTotal)
-            } else if p.padsTotal > 0 {
-                dict[kv.key] = Double(p.padsCompleted) / Double(p.padsTotal)
-            } else {
-                dict[kv.key] = 0
-            }
-        }
-    }
+    private var downloadingPackIds: Set<String> { appState.pickerDownloadingPackIds }
+    private var downloadFractions: [String: Double] { appState.pickerDownloadFractions }
 
     /// Handle selection from the ChopPickerSheet.
     private func handleChopSelection(_ ref: ChopReference, target: (row: Int, col: Int)) {

@@ -31,13 +31,13 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
     case beatCapture
 
     /// Actions shown on a pad that already holds a sound. Order fixes
-    /// the ring layout: index 0 centers at 0° (right). `.loop` is omitted
-    /// until the toggle is actually wired on mobile — a segment that did
-    /// nothing on release eroded trust in the whole ring (UX audit fix #2).
+    /// the ring layout: index 0 centers at 0° (right). `.loop` is a real
+    /// toggle now (ModeCoordinator.togglePadLoop → scheduler per-pad
+    /// override) — green highlight when the pad currently loops.
     /// `.addSound` doubles as SWAP here: with a full 16-pad Auto Kit there
     /// are no empty "+" cells, so this is the only way to change a sound.
     public static let assigned: [PadRadialAction] =
-        [.delete, .chop, .addSound, .reset, .effects, .sequence]
+        [.delete, .chop, .addSound, .loop, .reset, .effects, .sequence]
 
     /// Actions shown on an empty pad — the create menu: add a sample,
     /// record a voice, capture a beat, or build a sequence.
