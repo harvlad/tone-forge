@@ -54,16 +54,26 @@ struct JamnLookAndFeel : juce::LookAndFeel_V4
 
     void drawPopupMenuBackground(juce::Graphics& g, int w, int h) override
     {
-        const auto r = juce::Rectangle<float>(0, 0, (float) w, (float) h);
-        g.setColour(theme::panelDeep);
-        g.fillRoundedRectangle(r, 9.0f);
+        // Fill the WHOLE window square — a rounded fill left the opaque
+        // white window backing showing at the corners.
+        g.fillAll(theme::panelDeep);
         g.setColour(theme::panelStroke);
-        g.drawRoundedRectangle(r.reduced(0.5f), 9.0f, 1.0f);
+        g.drawRect(0, 0, w, h, 1);
     }
 
     juce::Font getPopupMenuFont() override
     {
         return juce::Font(juce::FontOptions(13.0f));
+    }
+
+    void drawPopupMenuSectionHeader(juce::Graphics& g,
+                                    const juce::Rectangle<int>& area,
+                                    const juce::String& name) override
+    {
+        g.setColour(theme::textSecondary);
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.drawText(name.toUpperCase(), area.reduced(12, 0),
+                   juce::Justification::centredLeft);
     }
 
     void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h,
@@ -231,13 +241,50 @@ static juce::MemoryBlock fetchHttp(const juce::String& urlString,
     statusCode = head.fromFirstOccurrenceOf(" ", false, false)
                      .upToFirstOccurrenceOf(" ", false, false)
                      .getIntValue();
+    // Uvicorn chunk-encodes even for an HTTP/1.0 request — the raw
+    // body interleaves hex size lines with the payload (this corrupted
+    // downloaded zips into garbage entry names). Strip the framing
+    // when the header declares it.
+    const bool chunked = head.toLowerCase()
+                             .fromFirstOccurrenceOf("transfer-encoding:",
+                                                    false, false)
+                             .upToFirstOccurrenceOf("\n", false, false)
+                             .contains("chunked");
     const char* data = (const char*) raw.getData();
     for (size_t i = 3; i < raw.getSize(); ++i)
         if (data[i - 3] == '\r' && data[i - 2] == '\n'
             && data[i - 1] == '\r' && data[i] == '\n')
         {
+            const char* p = data + i + 1;
+            const size_t len = raw.getSize() - i - 1;
             juce::MemoryBlock body;
-            body.append(data + i + 1, raw.getSize() - i - 1);
+            if (!chunked)
+            {
+                body.append(p, len);
+                return body;
+            }
+            size_t pos = 0;
+            while (pos < len)
+            {
+                size_t eol = pos;
+                while (eol + 1 < len
+                       && !(p[eol] == '\r' && p[eol + 1] == '\n'))
+                    ++eol;
+                if (eol + 1 >= len)
+                    break;
+                const juce::String sizeLine(p + pos, eol - pos);
+                const auto chunk = sizeLine
+                                       .upToFirstOccurrenceOf(";", false, false)
+                                       .trim()
+                                       .getHexValue64();
+                pos = eol + 2;
+                if (chunk <= 0)
+                    break;
+                const size_t take =
+                    juce::jmin((size_t) chunk, len - pos);
+                body.append(p + pos, take);
+                pos += (size_t) chunk + 2;  // payload + trailing CRLF
+            }
             return body;
         }
     return {};
@@ -394,7 +441,8 @@ void JamnKitEditor::browseBackend()
             menu.setLookAndFeel(&jamnLookAndFeel());
             juce::StringArray ids, names;
             int itemId = 1;
-            menu.addSectionHeader("JamN — your songs");
+            menu.addSectionHeader("Your Songs");  // ASCII only: JUCE
+                                                  // char* literals mojibake
             for (const auto& entry : *history)
             {
                 const auto name =
@@ -551,7 +599,7 @@ void JamnKitEditor::paint(juce::Graphics& g)
         g.setFont(juce::Font(juce::FontOptions(11.0f)));
         // Build stamp: instantly answers "is Live running the fresh
         // binary?" (hosts cache plugin dylibs for the whole session).
-        g.drawText(juce::String("jamn.app  ·  b") + __TIME__, words,
+        g.drawText(juce::String("jamn.app  b") + __TIME__, words,
                    juce::Justification::topLeft);
 
         g.setFont(juce::Font(juce::FontOptions(11.0f)));
