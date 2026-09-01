@@ -61,6 +61,29 @@ public:
     void noteOnFromUI(int midiNote);
     void noteOffFromUI(int midiNote);
 
+    /// Per-pad loop division in HOST BARS (0 = full sample, else the
+    /// loop wraps every N bars so it stays locked to the DAW grid).
+    /// Right-click on a pad cycles Full -> 8 -> 4 -> 2 -> 1.
+    int padDivision(int slot) const
+    {
+        return slot >= 0 && slot < kVoices
+            ? padDivisions[(size_t) slot].load() : 0;
+    }
+    void cyclePadDivision(int slot)
+    {
+        if (slot < 0 || slot >= kVoices)
+            return;
+        auto& d = padDivisions[(size_t) slot];
+        switch (d.load())
+        {
+            case 0: d.store(8); break;
+            case 8: d.store(4); break;
+            case 4: d.store(2); break;
+            case 2: d.store(1); break;
+            default: d.store(0); break;
+        }
+    }
+
     struct HostClock
     {
         double bpm = 0.0;
@@ -102,8 +125,14 @@ private:
         double position = 0.0;
         double step = 1.0;
         bool held = false;
-        /// Samples until the armed voice fires (host-bar quantize).
+        /// Samples until the armed voice fires (cycle quantize).
         double startDelaySamples = 0.0;
+        /// Loop wrap point in SOURCE frames when a division trim is
+        /// set (0 = wrap at the buffer end / baked seam).
+        double loopLimitFrames = 0.0;
+        /// Declick ramp counter after a division wrap (the trim point
+        /// has no baked crossfade seam).
+        int wrapRamp = 0;
         /// Gate-off fade (avoids the hard-cut click).
         float releaseGain = 1.0f;
         float releaseStep = 0.0f;
@@ -117,6 +146,8 @@ private:
     /// clock unusable (fire immediately).
     void handleNoteOn(int note, float velocity, double eventPpq,
                       double samplesPerPpq, double barPpq);
+    double sharedCyclePpq(double barPpq) const;
+    void applyDivisionTrim(Voice& v, int slot);
     void handleNoteOff(int note);
     void renderVoice(Voice& v, int slot, float* left, float* right,
                      int numSamples);
@@ -129,6 +160,9 @@ private:
     std::array<std::atomic<bool>, 128> activeNotes {};
     std::array<std::atomic<bool>, 128> armedNotes {};
     std::array<std::atomic<float>, kVoices> padPhases {};
+    std::array<std::atomic<int>, kVoices> padDivisions {};
+    /// Host clock cached for noteOn-time trim math.
+    double lastBpm = 0.0, lastBarPpq = 4.0;
 
     // Macro DSP: soft drive -> lowpass -> reverb wet -> master gain.
     juce::dsp::StateVariableTPTFilter<float> lowpass;

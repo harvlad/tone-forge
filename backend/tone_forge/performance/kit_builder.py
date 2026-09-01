@@ -135,7 +135,28 @@ class AutoKitBuilder:
         used_ids: set = set()
         used_patterns: set = set()
         stem_counts: Dict[str, int] = {}
+
+        # Anchor slot: the STEADIEST drum groove from a body section.
+        # Generic ranking kept picking outro/intro drum phrases ("only a
+        # drum outro which isn't a consistent beat") — a kit needs one
+        # drums pad that just plays through. Steadiness proxy =
+        # loop_confidence (seamless/regular) weighted over raw score,
+        # with intro/outro/ending material heavily penalized.
+        drum_pool = [a for a in pool if a.stem == "drums"]
+        if drum_pool:
+            def _groove_key(a) -> float:
+                sec = _section_at(sections or [], a.pos.start_s).lower()
+                boundary = any(w in sec for w in
+                               ("intro", "outro", "ending", "transition"))
+                return (2.0 * a.loop_confidence + a.performance_score
+                        - (1.5 if boundary else 0.0))
+            anchor = max(drum_pool, key=_groove_key)
+            chosen.append(anchor)
+            self._mark(anchor, used_ids, used_patterns, stem_counts)
+
         for _slot_name, prefs in _KIT_SLOTS[:pads]:
+            if len(chosen) >= pads:
+                break  # the drum anchor may already occupy a slot
             pick = self._best_for(pool, prefs, used_ids, used_patterns, stem_counts)
             if pick:
                 chosen.append(pick)
@@ -254,9 +275,12 @@ class AutoKitBuilder:
             # Emitting a dict here made JSONDecoder fail the ENTIRE kit with a
             # typeMismatch ("data isn't in the correct format") — the pads never
             # reached the app. Keep it a compact human/debuggable string.
+            # kit=… versions the BUILDER logic (drum-groove anchor etc.)
+            # separately from the graph — it feeds the export zip-cache
+            # key, so bumping it invalidates stale cached kits.
             "provenance": (
                 f"performance_intelligence graph={graph.graph_hash} "
-                f"module={graph.module_version} skill={skill}"
+                f"module={graph.module_version} kit=2 skill={skill}"
             ),
         }
 

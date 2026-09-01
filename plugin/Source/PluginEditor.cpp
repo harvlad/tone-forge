@@ -615,6 +615,15 @@ void JamnKitEditor::mouseDown(const juce::MouseEvent& e)
     const int pad = padIndexAt(e.getPosition());
     if (pad < 0)
         return;
+    // Right-click: cycle the loop division trim (Full -> 8 -> 4 -> 2
+    // -> 1 host bars) — the loop wraps on the division so it stays
+    // locked to the DAW grid.
+    if (e.mods.isRightButtonDown() || e.mods.isCtrlDown())
+    {
+        processor.cyclePadDivision(pad);
+        repaint();
+        return;
+    }
     mousePad = pad;
     processor.noteOnFromUI(JamnKitProcessor::kFirstNote + pad);
 }
@@ -790,6 +799,18 @@ void JamnKitEditor::paint(juce::Graphics& g)
             g.drawFittedText(label,
                              r.reduced(8).removeFromTop(r.getHeight() / 2 - 6),
                              juce::Justification::topLeft, 2);
+
+            // Division badge (right-click to cycle): "4b" = loop wraps
+            // every 4 host bars.
+            const int division = processor.padDivision(padIdx);
+            if (division > 0 && pad != nullptr)
+            {
+                g.setColour(armedAmber.withAlpha(0.95f));
+                g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+                g.drawText(juce::String(division) + "b",
+                           r.reduced(8).removeFromTop(14),
+                           juce::Justification::topRight);
+            }
         }
     }
 

@@ -187,6 +187,30 @@ void JamnKitProcessor::noteOffFromUI(int midiNote)
 
 // MARK: - Voices (audio thread; caller holds packLock via processBlock)
 
+/// Shared launch cycle in ppq: ~8 seconds of host bars (>=1 bar) —
+/// the DAW-tempo twin of the app's 8s loop-lock grid.
+double JamnKitProcessor::sharedCyclePpq(double barPpq) const
+{
+    if (lastBpm <= 0.0)
+        return barPpq;
+    const double beatsPer8s = lastBpm * 8.0 / 60.0;
+    const double bars = juce::jmax(1.0, std::round(beatsPer8s / barPpq));
+    return bars * barPpq;
+}
+
+/// Apply the pad's division trim to a freshly-started voice: the loop
+/// wraps every N HOST bars (in source frames) so it stays welded to
+/// the DAW grid regardless of the slice's own length.
+void JamnKitProcessor::applyDivisionTrim(Voice& v, int slot)
+{
+    v.loopLimitFrames = 0.0;
+    const int bars = padDivision(slot);
+    if (bars <= 0 || lastBpm <= 0.0 || v.pad == nullptr)
+        return;
+    const double barSeconds = lastBarPpq * 60.0 / lastBpm;
+    v.loopLimitFrames = bars * barSeconds * v.pad->sourceSampleRate;
+}
+
 void JamnKitProcessor::handleNoteOn(int note, float velocity,
                                     double eventPpq, double samplesPerPpq,
                                     double barPpq)
@@ -225,14 +249,21 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity,
         v.pad = pad;
         v.position = 0.0;
         v.step = pad->sourceSampleRate / currentSampleRate;
+        applyDivisionTrim(v, note - kFirstNote);
         if (eventPpq >= 0.0 && samplesPerPpq > 0.0)
         {
-            double intoBar = std::fmod(eventPpq, barPpq);
-            if (intoBar < 0.0)
-                intoBar += barPpq;  // pre-roll / count-in ppq is negative
+            // Quantize to the shared LOOP CYCLE (the app's loop-lock
+            // quantum: ~8s of host bars), not a single bar — a pad
+            // armed mid-cycle used to land one bar in and play out of
+            // phase with the loops already running ("waits but not
+            // for the start of the loops").
+            const double cyclePpq = sharedCyclePpq(barPpq);
+            double intoCycle = std::fmod(eventPpq, cyclePpq);
+            if (intoCycle < 0.0)
+                intoCycle += cyclePpq;  // pre-roll ppq is negative
             const double grace = 1.0 / 32.0;
             const double toNext =
-                (intoBar < grace) ? 0.0 : (barPpq - intoBar);
+                (intoCycle < grace) ? 0.0 : (cyclePpq - intoCycle);
             if (toNext > 0.0)
             {
                 v.state = Voice::State::armed;
@@ -324,14 +355,23 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
         }
         const float* srcL = audio.getReadPointer(0);
         const float* srcR = channels > 1 ? audio.getReadPointer(1) : srcL;
+        // Division trim: wrap early at N host bars so the loop stays
+        // welded to the DAW grid (falls back to the full buffer whose
+        // seam crossfade is baked).
+        const double wrapAt = (v.loopLimitFrames > 1.0)
+            ? juce::jmin((double) (length - 1), v.loopLimitFrames)
+            : (double) (length - 1);
 
         for (int i = start; i < numSamples; ++i)
         {
-            if (v.position >= length - 1)
+            if (v.position >= wrapAt)
             {
                 if (v.pad->loopable)
-                    v.position = 0.0;  // seam is baked; keeps wrapping
-                                       // through the release fade too
+                {
+                    v.position = 0.0;
+                    if (v.loopLimitFrames > 1.0)
+                        v.wrapRamp = 256;  // trim point has no baked seam
+                }
                 else
                 {
                     v = {};
@@ -342,6 +382,11 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
             const int idx = (int) v.position;
             const float frac = (float) (v.position - idx);
             float gain = 1.0f;
+            if (v.wrapRamp > 0)
+            {
+                gain *= 1.0f - (float) v.wrapRamp / 256.0f;
+                --v.wrapRamp;
+            }
             if (v.state == Voice::State::releasing)
             {
                 v.releaseGain -= v.releaseStep;
@@ -351,7 +396,7 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
                     activeNotes[(size_t) note].store(false);
                     return;
                 }
-                gain = v.releaseGain;
+                gain *= v.releaseGain;
             }
             left[i] += gain * (srcL[idx] + frac * (srcL[idx + 1] - srcL[idx]));
             if (right != left)
@@ -411,7 +456,9 @@ void JamnKitProcessor::processBlock(
             {
                 samplesPerPpq = currentSampleRate * 60.0 / c.bpm;
                 blockPpq = c.ppqPosition;
+                lastBpm = c.bpm;
             }
+            lastBarPpq = barPpq;
         }
     }
     // Quantize only makes sense on a rolling transport.
@@ -423,20 +470,23 @@ void JamnKitProcessor::processBlock(
     // beat 1 itself, so the whole selection starts as one).
     if (hostPlaying && !wasPlaying)
     {
-        for (auto& v : voices)
+        for (int slot = 0; slot < kVoices; ++slot)
         {
+            auto& v = voices[(size_t) slot];
             if (v.state != Voice::State::armed || !v.waitForTransport)
                 continue;
             v.waitForTransport = false;
+            applyDivisionTrim(v, slot);
             double delay = 0.0;
             if (quantizable)
             {
-                double intoBar = std::fmod(blockPpq, barPpq);
-                if (intoBar < 0.0)
-                    intoBar += barPpq;
+                const double cyclePpq = sharedCyclePpq(barPpq);
+                double intoCycle = std::fmod(blockPpq, cyclePpq);
+                if (intoCycle < 0.0)
+                    intoCycle += cyclePpq;
                 const double grace = 1.0 / 32.0;
-                if (intoBar >= grace)
-                    delay = (barPpq - intoBar) * samplesPerPpq;
+                if (intoCycle >= grace)
+                    delay = (cyclePpq - intoCycle) * samplesPerPpq;
             }
             v.startDelaySamples = delay;
         }
