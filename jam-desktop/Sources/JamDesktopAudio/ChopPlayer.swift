@@ -372,9 +372,40 @@ public final class ChopPlayer {
             print("[ChopPlayer] region convert failed")
             return nil
         }
+        // Loudness parity with the mobile scheduler + the jamn Kit
+        // plugin: peak-normalize every chop to -4 dBFS. Raw stem
+        // slices vary by tens of dB; un-normalized, quiet parts read
+        // as "pad doesn't work".
+        Self.normalizePeak(buf)
         SeamlessLoop.applyEdgeFades(buf)
         cacheRegion(buf, for: key)
         return buf
+    }
+
+    /// Peak-normalize to -4 dBFS (0.63 linear), matching mobile's
+    /// SampleScheduler target. Effectively-silent buffers are left
+    /// untouched (amplifying noise floor bursts on tap).
+    private static func normalizePeak(_ buf: AVAudioPCMBuffer) {
+        guard let channels = buf.floatChannelData else { return }
+        let frames = Int(buf.frameLength)
+        let channelCount = Int(buf.format.channelCount)
+        guard frames > 0, channelCount > 0 else { return }
+        var peak: Float = 0
+        for c in 0..<channelCount {
+            let ptr = channels[c]
+            for i in 0..<frames where abs(ptr[i]) > peak {
+                peak = abs(ptr[i])
+            }
+        }
+        guard peak > 1e-4 else { return }
+        let gain = 0.63 / peak
+        guard abs(gain - 1.0) > 0.01 else { return }
+        for c in 0..<channelCount {
+            let ptr = channels[c]
+            for i in 0..<frames {
+                ptr[i] *= gain
+            }
+        }
     }
 
     private func cacheRegion(_ buf: AVAudioPCMBuffer, for key: RegionKey) {

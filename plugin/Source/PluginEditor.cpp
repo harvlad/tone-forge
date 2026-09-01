@@ -186,6 +186,19 @@ static void themeKnob(juce::Slider& s, juce::Label& l, const juce::String& name)
 // we therefore speak HTTP/1.0 over a raw socket (1.0 = no chunked
 // encoding, read-until-close); https:// still goes through juce::URL.
 // Returns the body; statusCode 0 = connect/parse failure.
+/// Diagnostics: ~/Library/Logs/jamnKit.log — every network stage, so
+/// "backend unreachable" reports can be read off the machine instead
+/// of guessed at.
+static void jlog(const juce::String& s)
+{
+    static juce::CriticalSection cs;
+    const juce::ScopedLock lock(cs);
+    auto f = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                 .getChildFile("Library/Logs/jamnKit.log");
+    f.appendText(juce::Time::getCurrentTime().toISO8601(true)
+                 + " [b" + __TIME__ + "] " + s + "\n");
+}
+
 static juce::MemoryBlock fetchHttp(const juce::String& urlString,
                                    int& statusCode, int timeoutMs)
 {
@@ -210,15 +223,23 @@ static juce::MemoryBlock fetchHttp(const juce::String& urlString,
                             .fromFirstOccurrenceOf("/", false, false);
     path = "/" + path;
 
+    jlog("GET " + urlString + " host=" + host + " port="
+         + juce::String(port));
     juce::StreamingSocket socket;
     if (!socket.connect(host, port, timeoutMs))
+    {
+        jlog("CONNECT FAILED " + host + ":" + juce::String(port));
         return {};
+    }
     const juce::String request =
         "GET " + path + " HTTP/1.0\r\nHost: " + host
         + "\r\nConnection: close\r\n\r\n";
     if (socket.write(request.toRawUTF8(),
                      (int) request.getNumBytesAsUTF8()) < 0)
+    {
+        jlog("WRITE FAILED");
         return {};
+    }
 
     juce::MemoryBlock raw;
     char buffer[1 << 16];
@@ -241,6 +262,8 @@ static juce::MemoryBlock fetchHttp(const juce::String& urlString,
     statusCode = head.fromFirstOccurrenceOf(" ", false, false)
                      .upToFirstOccurrenceOf(" ", false, false)
                      .getIntValue();
+    jlog("REPLY status=" + juce::String(statusCode) + " bytes="
+         + juce::String((juce::int64) raw.getSize()));
     // Uvicorn chunk-encodes even for an HTTP/1.0 request — the raw
     // body interleaves hex size lines with the payload (this corrupted
     // downloaded zips into garbage entry names). Strip the framing
