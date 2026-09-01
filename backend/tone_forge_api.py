@@ -5541,7 +5541,8 @@ async def get_song_ableton_kit(
         if isinstance(graph, dict):
             from tone_forge.performance import serve as _perf
             result[_perf.GRAPH_RESULT_KEY] = graph
-            _persist_backfilled_graph(entry_id, result)
+            # Multi-MB R2 history upload — keep it off the event loop.
+            await asyncio.to_thread(_persist_backfilled_graph, entry_id, result)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return StreamingResponse(
