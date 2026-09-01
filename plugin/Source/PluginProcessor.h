@@ -83,6 +83,17 @@ public:
             default: d.store(0); break;
         }
     }
+    /// Drag-trim: set an arbitrary bar count (0 = full). Applies LIVE
+    /// to a looping voice (render reads it every block).
+    void setPadDivision(int slot, int bars)
+    {
+        if (slot >= 0 && slot < kVoices)
+            padDivisions[(size_t) slot].store(juce::jmax(0, bars));
+    }
+
+    /// Host tempo snapshot for the editor's trim math.
+    double hostBpm() const { return lastBpm; }
+    double hostBarBeats() const { return lastBarPpq; }
 
     struct HostClock
     {
@@ -127,9 +138,6 @@ private:
         bool held = false;
         /// Samples until the armed voice fires (cycle quantize).
         double startDelaySamples = 0.0;
-        /// Loop wrap point in SOURCE frames when a division trim is
-        /// set (0 = wrap at the buffer end / baked seam).
-        double loopLimitFrames = 0.0;
         /// Declick ramp counter after a division wrap (the trim point
         /// has no baked crossfade seam).
         int wrapRamp = 0;
@@ -147,7 +155,6 @@ private:
     void handleNoteOn(int note, float velocity, double eventPpq,
                       double samplesPerPpq, double barPpq);
     double sharedCyclePpq(double barPpq) const;
-    void applyDivisionTrim(Voice& v, int slot);
     void handleNoteOff(int note);
     void renderVoice(Voice& v, int slot, float* left, float* right,
                      int numSamples);

@@ -5458,14 +5458,34 @@ async def get_song_kit(
         raise HTTPException(status_code=422, detail="Song has no analysis result")
     _refresh_r2_stem_urls(result)
     # Backfill legacy entries (analyzed before derive_and_attach): fetch
-    # stems + derive the graph once, persist, then serve the kit. Heavy
-    # only on that first hit — off the event loop.
-    attached = await asyncio.to_thread(
-        lambda: _perf.ensure_graph(entry_id, result)[1]
-    )
-    if attached:
-        _persist_backfilled_graph(entry_id, result)
+    # stems + derive the graph once, persist, then serve the kit. Runs
+    # in a WORKER PROCESS — the derivation's GIL-heavy DSP starved the
+    # event loop even via to_thread (log-verified: connects succeeded,
+    # reads hung until the work finished).
+    if _perf.GRAPH_RESULT_KEY not in result:
+        from tone_forge.ableton_kit_export import ensure_graph_job
+        graph = await asyncio.get_running_loop().run_in_executor(
+            _render_pool(), ensure_graph_job, entry_id, result)
+        if isinstance(graph, dict):
+            result[_perf.GRAPH_RESULT_KEY] = graph
+            _persist_backfilled_graph(entry_id, result)
     return JSONResponse(_perf.kit_payload(entry_id, result, skill=skill, pads=pads))
+
+
+_kit_render_pool = None
+
+
+def _render_pool():
+    """Single-worker process pool for kit renders + graph backfills.
+    Process (not thread): the DSP holds the GIL in long stretches and
+    starves uvicorn's event loop — /api/history hung for entire renders
+    ('backend unreachable' in the plugin). Spawned lazily; the worker
+    stays warm between jobs."""
+    global _kit_render_pool
+    if _kit_render_pool is None:
+        import concurrent.futures
+        _kit_render_pool = concurrent.futures.ProcessPoolExecutor(max_workers=1)
+    return _kit_render_pool
 
 
 def _persist_backfilled_graph(entry_id: str, result: dict) -> None:
@@ -5512,15 +5532,14 @@ async def get_song_ableton_kit(
     _refresh_r2_stem_urls(result)
     song_name = entry.get("name") or entry.get("title") or entry_id[:8]
     try:
-        def _render() -> tuple[bytes, str, bool]:
+        # Worker PROCESS, not thread — see _render_pool.
+        from tone_forge.ableton_kit_export import render_kit_job
+        data, filename, graph = await asyncio.get_running_loop().run_in_executor(
+            _render_pool(), render_kit_job, entry_id, result,
+            song_name, skill, pads)
+        if isinstance(graph, dict):
             from tone_forge.performance import serve as _perf
-            _, attached = _perf.ensure_graph(entry_id, result)
-            data, filename = build_ableton_kit_zip(
-                entry_id, result, song_name=song_name, skill=skill, pads=pads)
-            return data, filename, attached
-
-        data, filename, attached = await asyncio.to_thread(_render)
-        if attached:
+            result[_perf.GRAPH_RESULT_KEY] = graph
             _persist_backfilled_graph(entry_id, result)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

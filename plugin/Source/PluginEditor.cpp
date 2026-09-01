@@ -624,12 +624,59 @@ void JamnKitEditor::mouseDown(const juce::MouseEvent& e)
         repaint();
         return;
     }
+    // Alt-drag: scrub the trim across the waveform, snapped to whole
+    // host bars; updates the loop LIVE.
+    if (e.mods.isAltDown())
+    {
+        trimDragPad = pad;
+        applyTrimDrag(pad, e.getPosition());
+        return;
+    }
     mousePad = pad;
     processor.noteOnFromUI(JamnKitProcessor::kFirstNote + pad);
 }
 
+void JamnKitEditor::mouseDrag(const juce::MouseEvent& e)
+{
+    if (trimDragPad >= 0)
+        applyTrimDrag(trimDragPad, e.getPosition());
+}
+
+void JamnKitEditor::applyTrimDrag(int pad, juce::Point<int> pos)
+{
+    const auto pack = processor.currentPack();
+    const double bpm = processor.hostBpm();
+    if (pack == nullptr || bpm <= 0.0)
+        return;  // no tempo yet — press play in the host once
+    const auto* sample =
+        pack->padForNote(JamnKitProcessor::kFirstNote + pad);
+    if (sample == nullptr || sample->audio.getNumSamples() < 2)
+        return;
+
+    // Fraction across the pad -> bars, snapped to whole host bars.
+    int cellW = 0, cellH = 0, x0 = 0, y0 = 0;
+    const int gap = 8;
+    padCellGeometry(gridArea(), cellW, cellH, x0, y0, gap);
+    const int col = pad % 4;
+    const double frac = juce::jlimit(
+        0.05, 1.0,
+        (double) (pos.x - (x0 + col * (cellW + gap))) / juce::jmax(1, cellW));
+
+    const double padSeconds =
+        sample->audio.getNumSamples() / sample->sourceSampleRate;
+    const double barSeconds = processor.hostBarBeats() * 60.0 / bpm;
+    const int totalBars =
+        juce::jmax(1, (int) std::floor(padSeconds / barSeconds));
+    const int bars =
+        juce::jlimit(1, totalBars, (int) std::round(frac * totalBars));
+    // Dragging to the far right restores Full (baked seam).
+    processor.setPadDivision(pad, bars >= totalBars ? 0 : bars);
+    repaint();
+}
+
 void JamnKitEditor::mouseUp(const juce::MouseEvent&)
 {
+    trimDragPad = -1;
     if (mousePad < 0)
         return;
     processor.noteOffFromUI(JamnKitProcessor::kFirstNote + mousePad);
@@ -771,6 +818,32 @@ void JamnKitEditor::paint(juce::Graphics& g)
                     g.fillRect((float) wf.getX() + (float) i * bw,
                                (float) wf.getCentreY() - h * 0.5f,
                                juce::jmax(1.0f, bw - 1.0f), h);
+                }
+                // Trim veil: everything past the division wrap point
+                // is dimmed (alt-drag / right-click sets it).
+                const int division = processor.padDivision(padIdx);
+                const double bpm = processor.hostBpm();
+                if (division > 0 && bpm > 0.0)
+                {
+                    const double padSeconds =
+                        pad->audio.getNumSamples() / pad->sourceSampleRate;
+                    const double trimFrac = juce::jlimit(
+                        0.0, 1.0,
+                        (division * processor.hostBarBeats() * 60.0 / bpm)
+                            / juce::jmax(0.001, padSeconds));
+                    if (trimFrac < 0.999)
+                    {
+                        auto veil = wf.toFloat();
+                        veil.removeFromLeft(
+                            (float) (trimFrac * wf.getWidth()));
+                        g.setColour(theme::background.withAlpha(0.62f));
+                        g.fillRect(veil);
+                        g.setColour(theme::armedAmber.withAlpha(0.9f));
+                        g.fillRect((float) wf.getX()
+                                       + (float) (trimFrac * wf.getWidth()),
+                                   (float) wf.getY(), 1.5f,
+                                   (float) wf.getHeight());
+                    }
                 }
                 const float phase =
                     processor.padPhase(note - JamnKitProcessor::kFirstNote);

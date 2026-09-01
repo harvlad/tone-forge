@@ -198,19 +198,6 @@ double JamnKitProcessor::sharedCyclePpq(double barPpq) const
     return bars * barPpq;
 }
 
-/// Apply the pad's division trim to a freshly-started voice: the loop
-/// wraps every N HOST bars (in source frames) so it stays welded to
-/// the DAW grid regardless of the slice's own length.
-void JamnKitProcessor::applyDivisionTrim(Voice& v, int slot)
-{
-    v.loopLimitFrames = 0.0;
-    const int bars = padDivision(slot);
-    if (bars <= 0 || lastBpm <= 0.0 || v.pad == nullptr)
-        return;
-    const double barSeconds = lastBarPpq * 60.0 / lastBpm;
-    v.loopLimitFrames = bars * barSeconds * v.pad->sourceSampleRate;
-}
-
 void JamnKitProcessor::handleNoteOn(int note, float velocity,
                                     double eventPpq, double samplesPerPpq,
                                     double barPpq)
@@ -249,7 +236,6 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity,
         v.pad = pad;
         v.position = 0.0;
         v.step = pad->sourceSampleRate / currentSampleRate;
-        applyDivisionTrim(v, note - kFirstNote);
         if (eventPpq >= 0.0 && samplesPerPpq > 0.0)
         {
             // Quantize to the shared LOOP CYCLE (the app's loop-lock
@@ -355,12 +341,19 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
         }
         const float* srcL = audio.getReadPointer(0);
         const float* srcR = channels > 1 ? audio.getReadPointer(1) : srcL;
-        // Division trim: wrap early at N host bars so the loop stays
-        // welded to the DAW grid (falls back to the full buffer whose
-        // seam crossfade is baked).
-        const double wrapAt = (v.loopLimitFrames > 1.0)
-            ? juce::jmin((double) (length - 1), v.loopLimitFrames)
-            : (double) (length - 1);
+        // Division trim, read LIVE each block (drag-trim updates a
+        // looping pad in place): wrap early at N host bars so the loop
+        // stays welded to the DAW grid. Full buffer keeps its baked
+        // crossfade seam.
+        double wrapAt = (double) (length - 1);
+        const int trimBars = padDivision(slot);
+        if (trimBars > 0 && lastBpm > 0.0)
+        {
+            const double frames = trimBars * (lastBarPpq * 60.0 / lastBpm)
+                * v.pad->sourceSampleRate;
+            if (frames > 1.0)
+                wrapAt = juce::jmin(wrapAt, frames);
+        }
 
         for (int i = start; i < numSamples; ++i)
         {
@@ -369,7 +362,7 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
                 if (v.pad->loopable)
                 {
                     v.position = 0.0;
-                    if (v.loopLimitFrames > 1.0)
+                    if (wrapAt < (double) (length - 1))
                         v.wrapRamp = 256;  // trim point has no baked seam
                 }
                 else
@@ -476,7 +469,6 @@ void JamnKitProcessor::processBlock(
             if (v.state != Voice::State::armed || !v.waitForTransport)
                 continue;
             v.waitForTransport = false;
-            applyDivisionTrim(v, slot);
             double delay = 0.0;
             if (quantizable)
             {
@@ -523,7 +515,8 @@ void JamnKitProcessor::processBlock(
         auto& v = voices[(size_t) slot];
         if (v.state != Voice::State::idle)
             renderVoice(v, slot, left, right, numSamples);
-        // Editor playhead: loop phase while sounding, -1 when silent.
+        // Editor playhead: position within the FULL waveform (the trim
+        // veil marks the wrap point, so the sweep just stays inside it).
         const bool sounding =
             (v.state == Voice::State::playing
              || v.state == Voice::State::releasing)

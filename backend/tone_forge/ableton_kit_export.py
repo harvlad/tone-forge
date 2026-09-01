@@ -474,6 +474,43 @@ def build_ableton_kit_zip(
         return payload, f"{pack_title}.zip"
 
 
+# ---------------------------------------------------------------------------
+# Subprocess jobs (see tone_forge_api's render pool)
+# ---------------------------------------------------------------------------
+# Renders are GIL-heavy (soundfile/numpy): even via asyncio.to_thread
+# they starve uvicorn's event loop — /api/history hung for the whole
+# render and the plugin read "backend unreachable" (log-verified:
+# connects succeeded, reads timed out until the render finished).
+# These wrappers run in a spawned worker PROCESS instead.
+
+def render_kit_job(
+    entry_id: str,
+    result: Dict,
+    song_name: str,
+    skill: str,
+    pads: int,
+) -> Tuple[bytes, str, Optional[Dict]]:
+    """Ensure the performance graph, render the kit zip. Returns
+    (zip_bytes, filename, backfilled_graph_or_None) — the parent
+    process persists the graph into history."""
+    from tone_forge.performance import serve as _perf
+
+    _, attached = _perf.ensure_graph(entry_id, result)
+    data, filename = build_ableton_kit_zip(
+        entry_id, result, song_name=song_name, skill=skill, pads=pads)
+    graph = result.get(_perf.GRAPH_RESULT_KEY) if attached else None
+    return data, filename, graph
+
+
+def ensure_graph_job(entry_id: str, result: Dict) -> Optional[Dict]:
+    """Graph backfill alone (the /kit route's legacy-song path).
+    Returns the graph dict when one was derived, else None."""
+    from tone_forge.performance import serve as _perf
+
+    _, attached = _perf.ensure_graph(entry_id, result)
+    return result.get(_perf.GRAPH_RESULT_KEY) if attached else None
+
+
 def _readme(pack_title: str, song_name: str, tempo, pads: List[Dict]) -> str:
     lines = [
         "=" * 60,

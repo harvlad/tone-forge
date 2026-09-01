@@ -24,6 +24,7 @@ public:
     void resized() override;
 
     void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
 
 private:
@@ -51,6 +52,8 @@ private:
     bool busy = false;         // network in flight
     juce::int64 busyStartMs = 0;
     int mousePad = -1;
+    int trimDragPad = -1;   // alt-drag loop-trim in progress
+    void applyTrimDrag(int pad, juce::Point<int> pos);
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<std::thread> worker;
 
