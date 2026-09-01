@@ -46,8 +46,24 @@ struct JamnLookAndFeel : juce::LookAndFeel_V4
     {
         setColour(juce::PopupMenu::backgroundColourId, theme::panelDeep);
         setColour(juce::PopupMenu::textColourId, theme::textPrimary);
+        setColour(juce::PopupMenu::highlightedTextColourId,
+                  juce::Colours::white);
         setColour(juce::PopupMenu::highlightedBackgroundColourId,
-                  theme::accent.withAlpha(0.4f));
+                  theme::accent.withAlpha(0.45f));
+    }
+
+    void drawPopupMenuBackground(juce::Graphics& g, int w, int h) override
+    {
+        const auto r = juce::Rectangle<float>(0, 0, (float) w, (float) h);
+        g.setColour(theme::panelDeep);
+        g.fillRoundedRectangle(r, 9.0f);
+        g.setColour(theme::panelStroke);
+        g.drawRoundedRectangle(r.reduced(0.5f), 9.0f, 1.0f);
+    }
+
+    juce::Font getPopupMenuFont() override
+    {
+        return juce::Font(juce::FontOptions(13.0f));
     }
 
     void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h,
@@ -89,10 +105,28 @@ struct JamnLookAndFeel : juce::LookAndFeel_V4
     }
 };
 
-JamnLookAndFeel& lookAndFeel()
+JamnLookAndFeel& jamnLookAndFeel()
 {
     static JamnLookAndFeel lnf;
     return lnf;
+}
+
+/// Human title from an analysis slug: dashes → spaces, the trailing
+/// random suffix dropped, words capitalized.
+/// "tycho-sea-lemon-anotherwave-official-visualiser-rmigek"
+///   → "Tycho Sea Lemon Anotherwave Official Visualiser".
+static juce::String prettySongName(const juce::String& slug)
+{
+    auto tokens = juce::StringArray::fromTokens(slug, "-", "");
+    tokens.removeEmptyStrings();
+    if (tokens.size() > 2 && tokens.strings.getLast().length() == 6
+        && tokens.strings.getLast().containsOnly(
+            "abcdefghijklmnopqrstuvwxyz0123456789"))
+        tokens.remove(tokens.size() - 1);
+    for (auto& t : tokens.strings)
+        t = t.substring(0, 1).toUpperCase() + t.substring(1);
+    const auto joined = tokens.joinIntoString(" ");
+    return joined.isNotEmpty() ? joined : slug;
 }
 
 /// The JamN mark: gradient waveform bars, drawn vectorially so it is
@@ -126,11 +160,87 @@ static void themeKnob(juce::Slider& s, juce::Label& l, const juce::String& name)
     s.setColour(juce::Slider::textBoxTextColourId, theme::textSecondary);
     s.setColour(juce::Slider::textBoxOutlineColourId,
                 juce::Colours::transparentBlack);
-    s.setLookAndFeel(&lookAndFeel());
+    s.setLookAndFeel(&jamnLookAndFeel());
     l.setText(name, juce::dontSendNotification);
     l.setJustificationType(juce::Justification::centred);
     l.setColour(juce::Label::textColourId, theme::textPrimary);
     l.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+}
+
+// MARK: - Host-proof HTTP
+//
+// Inside a DAW, network calls inherit the HOST app's App Transport
+// Security policy — Live blocks cleartext http:// via NSURLSession
+// ("backend unreachable" with the backend demonstrably up), and the
+// numeric 127.0.0.1 doesn't get the localhost exemption. For http://
+// we therefore speak HTTP/1.0 over a raw socket (1.0 = no chunked
+// encoding, read-until-close); https:// still goes through juce::URL.
+// Returns the body; statusCode 0 = connect/parse failure.
+static juce::MemoryBlock fetchHttp(const juce::String& urlString,
+                                   int& statusCode, int timeoutMs)
+{
+    statusCode = 0;
+    juce::URL url(urlString);
+    if (url.getScheme() != "http")
+    {
+        juce::MemoryBlock body;
+        if (auto stream = url.createInputStream(
+                juce::URL::InputStreamOptions(
+                    juce::URL::ParameterHandling::inAddress)
+                    .withConnectionTimeoutMs(timeoutMs)
+                    .withStatusCode(&statusCode)))
+            stream->readIntoMemoryBlock(body);
+        return body;
+    }
+
+    const auto host = url.getDomain();
+    const int port = url.getPort() != 0 ? url.getPort() : 80;
+    juce::String path = url.toString(true)
+                            .fromFirstOccurrenceOf("//", false, false)
+                            .fromFirstOccurrenceOf("/", false, false);
+    path = "/" + path;
+
+    juce::StreamingSocket socket;
+    if (!socket.connect(host, port, timeoutMs))
+        return {};
+    const juce::String request =
+        "GET " + path + " HTTP/1.0\r\nHost: " + host
+        + "\r\nConnection: close\r\n\r\n";
+    if (socket.write(request.toRawUTF8(),
+                     (int) request.getNumBytesAsUTF8()) < 0)
+        return {};
+
+    juce::MemoryBlock raw;
+    char buffer[1 << 16];
+    for (;;)
+    {
+        // Long server renders send nothing for minutes; keep waiting
+        // for readiness up to the caller's timeout per read.
+        const int ready = socket.waitUntilReady(true, timeoutMs);
+        if (ready <= 0)
+            break;
+        const int n = socket.read(buffer, sizeof(buffer), false);
+        if (n <= 0)
+            break;
+        raw.append(buffer, (size_t) n);
+    }
+
+    const juce::String head =
+        juce::String::fromUTF8((const char*) raw.getData(),
+                               (int) juce::jmin(raw.getSize(), (size_t) 4096));
+    statusCode = head.fromFirstOccurrenceOf(" ", false, false)
+                     .upToFirstOccurrenceOf(" ", false, false)
+                     .getIntValue();
+    const char* data = (const char*) raw.getData();
+    for (size_t i = 3; i < raw.getSize(); ++i)
+        if (data[i - 3] == '\r' && data[i - 2] == '\n'
+            && data[i - 1] == '\r' && data[i] == '\n')
+        {
+            juce::MemoryBlock body;
+            body.append(data + i + 1, raw.getSize() - i - 1);
+            return body;
+        }
+    return {};
 }
 
 JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
@@ -189,7 +299,11 @@ void JamnKitEditor::resized()
     using namespace theme;
     auto area = getLocalBounds().reduced(margin);
     auto header = area.removeFromTop(headerH);
-    auto buttons = header.removeFromRight(170).withSizeKeepingCentre(170, 28);
+    // Inset from the header panel's rounded edge — flush-right read as
+    // touching the margin.
+    auto buttons = header.reduced(14, 0)
+                       .removeFromRight(170)
+                       .withSizeKeepingCentre(170, 28);
     browseButton.setBounds(buttons.removeFromLeft(80));
     buttons.removeFromLeft(8);
     openButton.setBounds(buttons);
@@ -248,15 +362,10 @@ void JamnKitEditor::browseBackend()
     if (worker != nullptr && worker->joinable())
         worker->join();
     worker = std::make_unique<std::thread>([self, base] {
-        juce::URL url(base + "/api/history?limit=25");
-        juce::String body;
         int statusCode = 0;
-        if (auto stream = url.createInputStream(
-                juce::URL::InputStreamOptions(
-                    juce::URL::ParameterHandling::inAddress)
-                    .withConnectionTimeoutMs(8000)
-                    .withStatusCode(&statusCode)))
-            body = stream->readEntireStreamAsString();
+        const auto raw =
+            fetchHttp(base + "/api/history?limit=25", statusCode, 8000);
+        const juce::String body = raw.toString();
 
         juce::MessageManager::callAsync([self, body, statusCode, base] {
             if (self == nullptr)
@@ -282,19 +391,24 @@ void JamnKitEditor::browseBackend()
             }
             self->statusLine.clear();
             juce::PopupMenu menu;
+            menu.setLookAndFeel(&jamnLookAndFeel());
             juce::StringArray ids, names;
             int itemId = 1;
+            menu.addSectionHeader("JamN — your songs");
             for (const auto& entry : *history)
             {
                 const auto name =
                     entry.getProperty("name", "song").toString();
                 ids.add(entry.getProperty("id", "").toString());
                 names.add(name);
-                menu.addItem(itemId++, name.substring(0, 48));
+                menu.addItem(itemId++,
+                             prettySongName(name).substring(0, 44));
             }
             menu.showMenuAsync(
                 juce::PopupMenu::Options()
-                    .withTargetComponent(&self->browseButton),
+                    .withTargetComponent(&self->browseButton)
+                    .withStandardItemHeight(26)
+                    .withMinimumWidth(260),
                 [self, ids, names](int picked) {
                     if (self == nullptr || picked <= 0)
                         return;
@@ -320,28 +434,20 @@ void JamnKitEditor::downloadKit(const juce::String& entryId,
     if (worker != nullptr && worker->joinable())
         worker->join();
     worker = std::make_unique<std::thread>([self, base, entryId] {
-        juce::URL url(base + "/api/song/" + entryId + "/ableton-kit?pads=16");
         auto dest = juce::File::getSpecialLocation(juce::File::tempDirectory)
                         .getChildFile("jamnKit")
                         .getChildFile("dl_" + entryId + ".zip");
         dest.getParentDirectory().createDirectory();
 
-        bool ok = false;
-        if (auto stream = url.createInputStream(
-                juce::URL::InputStreamOptions(
-                    juce::URL::ParameterHandling::inAddress)
-                    // Legacy songs backfill their graph server-side on
-                    // the first hit — allow minutes, not seconds.
-                    .withConnectionTimeoutMs(600000)))
-        {
-            juce::FileOutputStream out(dest);
-            if (out.openedOk())
-            {
-                out.setPosition(0);
-                out.truncate();
-                ok = out.writeFromInputStream(*stream, -1) > 0;
-            }
-        }
+        // Legacy songs backfill their graph server-side on the first
+        // hit — allow minutes, not seconds.
+        int statusCode = 0;
+        const auto raw = fetchHttp(
+            base + "/api/song/" + entryId + "/ableton-kit?pads=16",
+            statusCode, 600000);
+        bool ok = statusCode == 200 && raw.getSize() > 0;
+        if (ok)
+            ok = dest.replaceWithData(raw.getData(), raw.getSize());
 
         juce::MessageManager::callAsync([self, dest, ok] {
             if (self == nullptr)

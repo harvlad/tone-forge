@@ -76,11 +76,12 @@ struct LaunchpadPanelView: View {
             }
         }
         .padding(20)
-        // FIXED size: as a floating overlay the panel must not negotiate
-        // with the window's proposal at all — min/ideal/max still let it
-        // stretch in practice. One deterministic footprint, sized so the
-        // 8×8 grid FILLS the panel width (controls wrap to two rows).
-        .frame(width: 800, height: 952)
+        // Fixed WIDTH (sized so the 8×8 grid fills it; controls wrap to
+        // two rows); height CAPS at 952 but yields to a shorter window —
+        // a hard 952 clipped the title and bottom rows on smaller
+        // displays. The grid sizes itself from whatever height remains.
+        .frame(width: 800)
+        .frame(maxHeight: 952)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
