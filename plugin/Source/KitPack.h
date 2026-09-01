@@ -18,6 +18,9 @@ struct KitPadSample
 {
     juce::String name;
     juce::String category;   // DRUMS/BASS/CHORDS/... or empty
+    /// Stable graph-asset id — the feedback loop keys play/skip
+    /// events on this (empty on legacy packs: no feedback sent).
+    juce::String assetId;
     int midiNote = 36;
     bool loopable = true;
     double sourceSampleRate = 44100.0;
@@ -31,6 +34,8 @@ struct KitPadSample
 struct LoadedPack
 {
     juce::String songName;
+    /// Backend analysis id — target for pad-feedback posts.
+    juce::String entryId;
     double tempoBpm = 0.0;
     juce::String sourcePath;            // what to persist/restore
     std::vector<KitPadSample> pads;     // MIDI-ordered (note 36 up)

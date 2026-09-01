@@ -102,6 +102,7 @@ std::shared_ptr<const LoadedPack> load(const juce::File& source,
 
     auto pack = std::make_shared<LoadedPack>();
     pack->sourcePath = source.getFullPathName();
+    pack->entryId = parsed.getProperty("entryId", juce::String()).toString();
     pack->songName = parsed.getProperty("songName", juce::String()).toString();
     pack->tempoBpm = (double) parsed.getProperty("tempoBpm", 0.0);
     if (pack->songName.isEmpty())
@@ -124,6 +125,7 @@ std::shared_ptr<const LoadedPack> load(const juce::File& source,
         pad.name = entry.getProperty("name", file.getFileNameWithoutExtension())
                        .toString();
         pad.category = entry.getProperty("category", juce::String()).toString();
+        pad.assetId = entry.getProperty("assetId", juce::String()).toString();
         pad.midiNote = (int) entry.getProperty("midiNote", fallbackNote);
         pad.loopable = (bool) entry.getProperty("loopable", true);
         pad.sourceSampleRate = reader->sampleRate;

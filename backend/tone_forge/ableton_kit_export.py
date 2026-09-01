@@ -415,6 +415,7 @@ def build_ableton_kit_zip(
             wav_bytes[fname] = data
             rendered.append({
                 "name": str(pad.get("name") or f"Pad {i + 1}"),
+                "asset_id": pad.get("assetId"),
                 "category": pad.get("category"),
                 # User-Library-relative (RelativePathType 6): resolves
                 # when the pack folder sits in User Library/JamKits/.
@@ -456,6 +457,7 @@ def build_ableton_kit_zip(
                     "samples": [
                         {
                             "file": f"Samples/{Path(p['sample_rel_path']).name}",
+                            "assetId": p.get("asset_id"),
                             "name": p["name"],
                             "category": p.get("category"),
                             "midiNote": p["midi_note"],

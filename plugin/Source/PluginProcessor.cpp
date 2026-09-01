@@ -186,6 +186,17 @@ void JamnKitProcessor::noteOffFromUI(int midiNote)
                                  .withTimeStamp(juce::Time::getMillisecondCounterHiRes() * 0.001));
 }
 
+void JamnKitProcessor::pushFeedback(const juce::String& assetId,
+                                    const char* kind)
+{
+    if (assetId.isEmpty())
+        return;  // legacy pack — nothing to key on
+    const juce::SpinLock::ScopedTryLockType lock(feedbackLock);
+    if (!lock.isLocked() || pendingFeedback.size() >= 256)
+        return;  // contended/full: drop — feedback is best-effort
+    pendingFeedback.emplace_back(assetId, kind);
+}
+
 // MARK: - Voices (audio thread; caller holds packLock via processBlock)
 
 /// Shared launch cycle in ppq: ~8 seconds of host bars (>=1 bar) —
@@ -220,12 +231,19 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity,
         // = cancel; tap while looping = release.
         if (v.state == Voice::State::armed)
         {
+            // Cancelled before it ever sounded — a change of mind.
+            pushFeedback(pad->assetId, "skip");
             v = {};
             armedNotes[(size_t) note].store(false);
             return;
         }
         if (v.state == Voice::State::playing)
         {
+            // Feedback: killed within 3 s of sounding = didn't want
+            // it; held longer = an actual play.
+            const double heardSec =
+                (double) (sampleClock - v.startClock) / currentSampleRate;
+            pushFeedback(pad->assetId, heardSec < 3.0 ? "skip" : "play");
             v.state = Voice::State::releasing;
             v.releaseGain = 1.0f;
             v.releaseStep = 1.0f
@@ -269,6 +287,7 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity,
             return;
         }
         v.state = Voice::State::playing;
+        v.startClock = sampleClock;
         activeNotes[(size_t) note].store(true);
         return;
     }
@@ -278,11 +297,14 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity,
 
     if (pad != nullptr)
     {
-        // One-shot: immediate, plays through (drum-machine feel).
+        // One-shot: immediate, plays through (drum-machine feel);
+        // firing one IS the play signal.
         v.pad = pad;
         v.position = 0.0;
         v.step = pad->sourceSampleRate / currentSampleRate;
         v.state = Voice::State::playing;
+        v.startClock = sampleClock;
+        pushFeedback(pad->assetId, "play");
         activeNotes[(size_t) note].store(true);
         return;
     }
@@ -325,6 +347,7 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
         start = (int) v.startDelaySamples;
         v.startDelaySamples = 0.0;
         v.state = Voice::State::playing;
+        v.startClock = sampleClock + start;
         armedNotes[(size_t) note].store(false);
         activeNotes[(size_t) note].store(true);
     }
@@ -581,6 +604,7 @@ void JamnKitProcessor::processBlock(
                      : -1.0f);
     }
 
+    sampleClock += numSamples;
     applyMacros(buffer);
 }
 

@@ -200,17 +200,22 @@ static void jlog(const juce::String& s)
 }
 
 static juce::MemoryBlock fetchHttp(const juce::String& urlString,
-                                   int& statusCode, int timeoutMs)
+                                   int& statusCode, int timeoutMs,
+                                   const juce::String& postJson = {})
 {
     statusCode = 0;
     juce::URL url(urlString);
     if (url.getScheme() != "http")
     {
         juce::MemoryBlock body;
-        if (auto stream = url.createInputStream(
+        auto u = postJson.isNotEmpty() ? url.withPOSTData(postJson) : url;
+        if (auto stream = u.createInputStream(
                 juce::URL::InputStreamOptions(
                     juce::URL::ParameterHandling::inAddress)
                     .withConnectionTimeoutMs(timeoutMs)
+                    .withExtraHeaders(postJson.isNotEmpty()
+                                          ? "Content-Type: application/json"
+                                          : "")
                     .withStatusCode(&statusCode)))
             stream->readIntoMemoryBlock(body);
         return body;
@@ -231,9 +236,15 @@ static juce::MemoryBlock fetchHttp(const juce::String& urlString,
         jlog("CONNECT FAILED " + host + ":" + juce::String(port));
         return {};
     }
-    const juce::String request =
-        "GET " + path + " HTTP/1.0\r\nHost: " + host
-        + "\r\nConnection: close\r\n\r\n";
+    juce::String request;
+    if (postJson.isNotEmpty())
+        request = "POST " + path + " HTTP/1.0\r\nHost: " + host
+            + "\r\nContent-Type: application/json\r\nContent-Length: "
+            + juce::String((int) postJson.getNumBytesAsUTF8())
+            + "\r\nConnection: close\r\n\r\n" + postJson;
+    else
+        request = "GET " + path + " HTTP/1.0\r\nHost: " + host
+            + "\r\nConnection: close\r\n\r\n";
     if (socket.write(request.toRawUTF8(),
                      (int) request.getNumBytesAsUTF8()) < 0)
     {
@@ -568,6 +579,38 @@ void JamnKitEditor::downloadKit(const juce::String& entryId,
             self->repaint();
         });
     });
+}
+
+void JamnKitEditor::flushFeedback()
+{
+    const auto pack = processor.currentPack();
+    if (pack == nullptr || pack->entryId.isEmpty())
+        return;
+    auto events = processor.drainFeedback();
+    if (events.empty())
+        return;
+
+    juce::Array<juce::var> items;
+    for (const auto& [assetId, kind] : events)
+    {
+        juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+        obj->setProperty("assetId", assetId);
+        obj->setProperty("kind", kind);
+        items.add(juce::var(obj.get()));
+    }
+    juce::DynamicObject::Ptr root = new juce::DynamicObject();
+    root->setProperty("events", items);
+    const auto body = juce::JSON::toString(juce::var(root.get()));
+    const juce::String target = processor.backendUrl()
+        + "/api/song/" + pack->entryId + "/pad-feedback";
+
+    // Fire-and-forget: feedback is best-effort telemetry.
+    std::thread([target, body] {
+        int status = 0;
+        fetchHttp(target, status, 8000, body);
+        jlog("FEEDBACK status=" + juce::String(status) + " bytes="
+             + juce::String((int) body.getNumBytesAsUTF8()));
+    }).detach();
 }
 
 // MARK: - Layout helpers

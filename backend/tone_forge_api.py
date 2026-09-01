@@ -5511,6 +5511,25 @@ def _persist_backfilled_graph(entry_id: str, result: dict) -> None:
         logger.warning("graph backfill persist failed for %s", entry_id, exc_info=True)
 
 
+@app.post("/api/song/{entry_id}/pad-feedback")
+async def post_pad_feedback(entry_id: str, request: Request) -> JSONResponse:
+    """Kit feedback loop: clients report per-asset pad events
+    ({events: [{assetId, kind: play|skip}]}). Counts fold into the next
+    kit build's ranking (and its usage digest busts the export cache),
+    so kits learn what the user actually reaches for."""
+    from tone_forge import pad_usage
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid JSON")
+    events = payload.get("events") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        raise HTTPException(status_code=422, detail="events[] required")
+    accepted = await asyncio.to_thread(pad_usage.record, entry_id, events)
+    return JSONResponse({"accepted": accepted})
+
+
 @app.get("/api/song/{entry_id}/ableton-kit")
 async def get_song_ableton_kit(
     entry_id: str,

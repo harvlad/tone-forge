@@ -132,6 +132,16 @@ public:
     juce::String backendUrl() const { return backendUrlValue; }
     void setBackendUrl(const juce::String& url) { backendUrlValue = url; }
 
+    /// Feedback loop: drain queued pad events ({assetId, "play"|"skip"})
+    /// — the editor batches these to POST /pad-feedback. Message thread.
+    std::vector<std::pair<juce::String, juce::String>> drainFeedback()
+    {
+        const juce::SpinLock::ScopedLockType lock(feedbackLock);
+        auto out = std::move(pendingFeedback);
+        pendingFeedback.clear();
+        return out;
+    }
+
     static constexpr int kVoices = 16;
     static constexpr int kFirstNote = 36;  // C1
 
@@ -157,6 +167,8 @@ private:
         /// Gate-off fade (avoids the hard-cut click).
         float releaseGain = 1.0f;
         float releaseStep = 0.0f;
+        /// Sample-clock when the voice became audible (feedback loop).
+        juce::int64 startClock = 0;
         // Sine fallback (no pack)
         double phase = 0.0;
         double increment = 0.0;
@@ -196,6 +208,13 @@ private:
     std::atomic<float>* pGain = nullptr;
     std::atomic<float>* pArm = nullptr;
     bool wasPlaying = false;
+
+    /// Feedback loop plumbing. Push is audio-thread (event-rate only,
+    /// try-lock, capped); drain is message-thread.
+    void pushFeedback(const juce::String& assetId, const char* kind);
+    juce::SpinLock feedbackLock;
+    std::vector<std::pair<juce::String, juce::String>> pendingFeedback;
+    juce::int64 sampleClock = 0;
 
     juce::String backendUrlValue { "http://127.0.0.1:8300" };
     double currentSampleRate = 44100.0;

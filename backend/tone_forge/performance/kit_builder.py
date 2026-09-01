@@ -116,8 +116,24 @@ class AutoKitBuilder:
         pads: int = 8,
         pack_name: Optional[str] = None,
         sections: Optional[List] = None,
+        usage: Optional[Dict] = None,
     ) -> Dict:
         rule = _SKILL.get(skill, _SKILL["intermediate"])
+
+        # Usage feedback fold: what the user actually plays outranks
+        # what the analyzer guessed. Bounded nudges (tanh) so usage
+        # can bias ranking but never swamp audio quality: +0.15 max
+        # for repeated plays, -0.20 max for repeated instant-kills.
+        import math
+
+        def _score(a) -> float:
+            s = a.performance_score
+            u = (usage or {}).get(a.id)
+            if isinstance(u, dict):
+                s += 0.15 * math.tanh(float(u.get("play", 0)) / 5.0)
+                s -= 0.20 * math.tanh(float(u.get("skip", 0)) / 3.0)
+            return s
+        self._score = _score
         # A pad must be actually usable: loopable OR a decent-scoring one-shot.
         usable = [a for a in graph.ranked_assets() if a.loop_confidence > 0.2 or a.performance_score > 0.4]
         pool = [
@@ -148,7 +164,7 @@ class AutoKitBuilder:
                 sec = _section_at(sections or [], a.pos.start_s).lower()
                 boundary = any(w in sec for w in
                                ("intro", "outro", "ending", "transition"))
-                return (2.0 * a.loop_confidence + a.performance_score
+                return (2.0 * a.loop_confidence + _score(a)
                         - (1.5 if boundary else 0.0))
             anchor = max(drum_pool, key=_groove_key)
             chosen.append(anchor)
@@ -169,9 +185,11 @@ class AutoKitBuilder:
                 continue
             chosen.append(a); self._mark(a, used_ids, used_patterns, stem_counts)
 
+        from tone_forge import pad_usage as _pu
         return self._to_sample_pack(
             # Human name — song_id is an analysis hash, never show it in UI.
-            graph, chosen, pack_name or "Auto Kit", skill, sections or [])
+            graph, chosen, pack_name or "Auto Kit", skill, sections or [],
+            use_digest=_pu.digest(usage))
 
     def _one_per_pattern(self, pool: List[PerformanceAsset]) -> List[PerformanceAsset]:
         best: Dict[str, PerformanceAsset] = {}
@@ -183,7 +201,7 @@ class AutoKitBuilder:
             else:
                 loose.append(a)
         merged = list(best.values()) + loose
-        merged.sort(key=lambda a: a.performance_score, reverse=True)
+        merged.sort(key=self._score, reverse=True)
         return merged
 
     def _best_for(self, pool, prefs, used_ids, used_patterns, stem_counts) -> Optional[PerformanceAsset]:
@@ -196,7 +214,7 @@ class AutoKitBuilder:
                     continue
                 if a.content_type != ct:
                     continue
-                key = a.performance_score - 0.15 * stem_counts.get(a.stem, 0)
+                key = self._score(a) - 0.15 * stem_counts.get(a.stem, 0)
                 if key > best_key:
                     best, best_key = a, key
             if best:
@@ -209,7 +227,8 @@ class AutoKitBuilder:
             used_patterns.add(a.pattern_id)
         stem_counts[a.stem] = stem_counts.get(a.stem, 0) + 1
 
-    def _to_sample_pack(self, graph, assets, name, skill, sections=None) -> Dict:
+    def _to_sample_pack(self, graph, assets, name, skill, sections=None,
+                        use_digest="0") -> Dict:
         """Emit the frozen SamplePack manifest shape (SamplePack.swift):
         packId/name/family/pads[] with per-pad loop region + loopScore so the
         app can honor real seamless loops."""
@@ -240,6 +259,9 @@ class AutoKitBuilder:
             pads.append(
                 {
                     "padIdx": idx,
+                    # Stable graph-asset id: the feedback loop keys
+                    # play/skip events on this, not the pad slot.
+                    "assetId": a.id,
                     # Descriptive 'what is this' name (section+instrument+role),
                     # not a generic slot — so the user knows each pad instantly.
                     "name": _descriptive_label(a, sections),
@@ -280,7 +302,8 @@ class AutoKitBuilder:
             # key, so bumping it invalidates stale cached kits.
             "provenance": (
                 f"performance_intelligence graph={graph.graph_hash} "
-                f"module={graph.module_version} kit=3 skill={skill}"
+                f"module={graph.module_version} kit=4 use={use_digest} "
+                f"skill={skill}"
             ),
         }
 

@@ -28,7 +28,18 @@ public:
     void mouseUp(const juce::MouseEvent&) override;
 
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override
+    {
+        repaint();
+        // Feedback loop: flush queued pad play/skip events ~every 15 s.
+        if (++feedbackTick >= 450)
+        {
+            feedbackTick = 0;
+            flushFeedback();
+        }
+    }
+    void flushFeedback();
+    int feedbackTick = 0;
     void openPackChooser();
     void browseBackend();
     void downloadKit(const juce::String& entryId, const juce::String& name);

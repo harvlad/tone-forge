@@ -180,8 +180,14 @@ def _sections_of(result: Dict) -> List:
 
 
 def kit_payload(entry_id: str, result: Dict, skill: str = "intermediate", pads: int = 8) -> Dict:
+    from tone_forge import pad_usage
+
     g = graph_from_result(entry_id, result)
-    kit = AutoKitBuilder().build(g, skill=skill, pads=pads, sections=_sections_of(result))
+    kit = AutoKitBuilder().build(
+        g, skill=skill, pads=pads, sections=_sections_of(result),
+        # Feedback loop: fold recorded play/skip counts into ranking so
+        # kits learn what this user actually reaches for.
+        usage=pad_usage.load(entry_id))
     kit["analysisId"] = entry_id
     return kit
 
