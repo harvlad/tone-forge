@@ -8,6 +8,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include "signalsmith-stretch.h"
+
 #include <cmath>
 
 juce::AudioProcessorValueTreeState::ParameterLayout
@@ -65,6 +67,13 @@ JamnKitProcessor::JamnKitProcessor()
     pGain = apvts.getRawParameterValue("gain");
     pArm = apvts.getRawParameterValue("arm");
     pLearn = apvts.getRawParameterValue("learn");
+    startTimer(500);  // tempo watch for the stretch cache
+}
+
+JamnKitProcessor::~JamnKitProcessor()
+{
+    stopTimer();
+    stretchPool.removeAllJobs(true, 4000);
 }
 
 void JamnKitProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -150,6 +159,7 @@ juce::String JamnKitProcessor::loadPack(const juce::File& source)
     {
         const juce::SpinLock::ScopedLockType lock(packLock);
         activePack = pack;
+        activeStretch = nullptr;  // stale tempo renders of the old pack
         for (auto& v : voices)
             v = {};
         for (auto& n : activeNotes)
@@ -159,6 +169,17 @@ juce::String JamnKitProcessor::loadPack(const juce::File& source)
     }
     editorPack = pack;
     packTempoBpm.store(pack->tempoBpm > 0 ? pack->tempoBpm : 0.0);
+    // Warp defaults, Live-style: drums repitch (transients survive
+    // varispeed and often sound BETTER repitched), melodic loops
+    // stretch (keep their pitch when the host tempo diverges).
+    for (int slot = 0; slot < kVoices; ++slot)
+    {
+        const auto* p = pack->padForNote(kFirstNote + slot);
+        padWarps[(size_t) slot].store(
+            p != nullptr && p->loopable
+                    && !p->category.containsIgnoreCase("drum")
+                ? 1 : 0);
+    }
     return {};
 }
 
@@ -212,6 +233,123 @@ void JamnKitProcessor::pushFeedback(const juce::String& assetId,
     if (!lock.isLocked() || pendingFeedback.size() >= 256)
         return;  // contended/full: drop — feedback is best-effort
     pendingFeedback.emplace_back(assetId, kind);
+}
+
+// MARK: - Stretch cache (pool thread builds; audio thread plays)
+
+/// Pitch-preserved render of one loopable pad: output length is EXACT
+/// (round(inLen * songBpm / hostBpm)) so bar math holds at unity rate.
+/// The input is read CIRCULARLY — a loop's own tail/head are the
+/// correct spectral context, so the seam region stretches clean.
+static void stretchPad(const KitPadSample& pad, double songBpm,
+                       double hostBpm, juce::AudioBuffer<float>& out)
+{
+    const auto& in = pad.audio;
+    const int inLen = in.getNumSamples();
+    const int ch = juce::jmax(1, in.getNumChannels());
+    const int outLen = (int) std::llround(inLen * songBpm / hostBpm);
+    if (inLen < 256 || outLen < 256)
+    {
+        out.setSize(0, 0);
+        return;
+    }
+
+    signalsmith::stretch::SignalsmithStretch<float> st;
+    st.presetDefault(ch, (float) pad.sourceSampleRate);
+    st.setTransposeFactor(1.0f);  // time changes, pitch does not
+
+    const int inLat = st.inputLatency();
+    const int outLat = st.outputLatency();
+    const int totalOut = outLen + outLat;
+    const int totalIn =
+        (int) std::ceil((double) totalOut * inLen / outLen) + 1;
+
+    auto wrap = [inLen](int i)
+    {
+        i %= inLen;
+        return i < 0 ? i + inLen : i;
+    };
+    juce::AudioBuffer<float> pre(ch, inLat), inBuf(ch, totalIn),
+        outBuf(ch, totalOut);
+    for (int c = 0; c < ch; ++c)
+    {
+        const float* s = in.getReadPointer(juce::jmin(c, in.getNumChannels() - 1));
+        auto* p = pre.getWritePointer(c);
+        for (int i = 0; i < inLat; ++i)
+            p[i] = s[wrap(i - inLat)];
+        auto* q = inBuf.getWritePointer(c);
+        for (int i = 0; i < totalIn; ++i)
+            q[i] = s[wrap(i)];
+    }
+
+    // Seek aligns the processing time to the loop start; the first
+    // outLat frames of output are pre-roll and get dropped.
+    st.seek(pre.getArrayOfWritePointers(), inLat,
+            (double) inLen / outLen);
+    outBuf.clear();
+    st.process(inBuf.getArrayOfWritePointers(), totalIn,
+               outBuf.getArrayOfWritePointers(), totalOut);
+
+    out.setSize(ch, outLen);
+    for (int c = 0; c < ch; ++c)
+        out.copyFrom(c, 0, outBuf, c, outLat, outLen);
+}
+
+void JamnKitProcessor::timerCallback()
+{
+    const double bpm = clock.load().bpm;
+    const double songBpm = packTempoBpm.load();
+    auto pack = editorPack;  // message thread's stable snapshot
+    if (pack == nullptr || songBpm <= 0.0 || bpm <= 0.0)
+        return;
+    // Rebuild only once the tempo HOLDS across two ticks — a Live
+    // tempo drag would otherwise queue a render per wiggle.
+    if (std::abs(bpm - stretchSeenBpm) > 0.01)
+    {
+        stretchSeenBpm = bpm;
+        return;
+    }
+    // At (near) native tempo varispeed is already pitch-true — the
+    // stretch path adds nothing but artifacts. Keep the original.
+    if (std::abs(bpm / songBpm - 1.0) < 0.005)
+        return;
+    {
+        const juce::SpinLock::ScopedLockType lock(packLock);
+        if (activeStretch != nullptr
+            && activeStretch->pack == pack.get()
+            && std::abs(activeStretch->hostBpm - bpm) < 0.01)
+            return;  // cache already matches
+    }
+    if (stretchBusy.exchange(true))
+        return;  // one build at a time; next tick catches up
+
+    stretchPool.addJob([this, pack, songBpm, bpm]
+    {
+        auto set = std::make_shared<StretchSet>();
+        set->hostBpm = bpm;
+        set->pack = pack.get();
+        for (int slot = 0; slot < kVoices; ++slot)
+        {
+            const auto* p = pack->padForNote(kFirstNote + slot);
+            if (p != nullptr && p->loopable)
+                stretchPad(*p, songBpm, bpm,
+                           set->buffers[(size_t) slot]);
+        }
+        {
+            const juce::SpinLock::ScopedLockType lock(packLock);
+            if (activePack == pack)  // pack may have changed mid-build
+                activeStretch = set;
+        }
+        stretchBusy.store(false);
+    });
+}
+
+bool JamnKitProcessor::stretchReady() const
+{
+    auto* self = const_cast<JamnKitProcessor*>(this);
+    const juce::SpinLock::ScopedLockType lock(self->packLock);
+    return activeStretch != nullptr
+        && std::abs(activeStretch->hostBpm - lastBpm) < 0.02;
 }
 
 // MARK: - Voices (audio thread; caller holds packLock via processBlock)
@@ -371,18 +509,6 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
 
     if (v.pad != nullptr)
     {
-        const auto& audio = v.pad->audio;
-        const int length = audio.getNumSamples();
-        const int channels = audio.getNumChannels();
-        if (length < 2)
-        {
-            v = {};
-            activeNotes[(size_t) note].store(false);
-            return;
-        }
-        const float* srcL = audio.getReadPointer(0);
-        const float* srcR = channels > 1 ? audio.getReadPointer(1) : srcL;
-
         // RATE-MATCH: content is bar-snapped at the SONG tempo; playing
         // it at hostBpm/songBpm makes N song-bars exactly N host-bars,
         // so wraps land on the grid with zero drift (varispeed pitch
@@ -391,13 +517,52 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
         double rate = 1.0;
         if (songBpm > 0.0 && lastBpm > 0.0)
             rate = juce::jlimit(0.25, 4.0, lastBpm / songBpm);
+
+        // STRETCH warp: when the background cache holds this pad
+        // rendered at the CURRENT host tempo, play that buffer at
+        // unity rate — pitch preserved, bar math intact (a content
+        // bar in the stretched buffer IS a host bar). Until the
+        // cache lands (or after a tempo jump) fall back to varispeed
+        // so the pad never goes silent.
+        const juce::AudioBuffer<float>* playBuf = &v.pad->audio;
+        double barBpm = songBpm;  // tempo that defines a content bar
+        if (v.pad->loopable && padWarp(slot) == 1
+            && activeStretch != nullptr
+            && std::abs(activeStretch->hostBpm - lastBpm) < 0.02
+            && activeStretch->buffers[(size_t) slot].getNumSamples() > 1)
+        {
+            playBuf = &activeStretch->buffers[(size_t) slot];
+            barBpm = lastBpm;
+            rate = 1.0;
+        }
+
+        const int length = playBuf->getNumSamples();
+        const int channels = playBuf->getNumChannels();
+        if (length < 2)
+        {
+            v = {};
+            activeNotes[(size_t) note].store(false);
+            return;
+        }
+        const float* srcL = playBuf->getReadPointer(0);
+        const float* srcR = channels > 1 ? playBuf->getReadPointer(1) : srcL;
+
+        // Buffer switch mid-play (warp toggled / stretch render just
+        // landed): carry the loop phase across domains by scaling the
+        // read position, with a declick ramp over the jump.
+        if (v.playLength > 1.0 && std::abs(v.playLength - length) > 0.5)
+        {
+            v.position *= (double) length / v.playLength;
+            v.wrapRamp = 256;
+        }
+        v.playLength = (double) length;
         v.step = (v.pad->sourceSampleRate / currentSampleRate) * rate;
 
         // Loop REGION in SONG bars (content domain — with rate-match a
         // content bar IS a host bar). Live-read so drag-trim re-wraps
         // a looping pad in place.
-        const double barFrames = songBpm > 0.0
-            ? (60.0 / songBpm) * 4.0 * v.pad->sourceSampleRate
+        const double barFrames = barBpm > 0.0
+            ? (60.0 / barBpm) * 4.0 * v.pad->sourceSampleRate
             : 0.0;
         double wrapStart = 0.0;
         double wrapAt = (double) (length - 1);
@@ -615,10 +780,9 @@ void JamnKitProcessor::processBlock(
         const bool sounding =
             (v.state == Voice::State::playing
              || v.state == Voice::State::releasing)
-            && v.pad != nullptr && v.pad->audio.getNumSamples() > 0;
+            && v.pad != nullptr && v.playLength > 0.0;
         padPhases[(size_t) slot].store(
-            sounding ? (float) (v.position / v.pad->audio.getNumSamples())
-                     : -1.0f);
+            sounding ? (float) (v.position / v.playLength) : -1.0f);
     }
 
     sampleClock += numSamples;

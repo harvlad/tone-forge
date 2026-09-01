@@ -693,7 +693,12 @@ void JamnKitEditor::mouseDown(const juce::MouseEvent& e)
     // locked to the DAW grid.
     if (e.mods.isRightButtonDown() || e.mods.isCtrlDown())
     {
-        processor.cyclePadDivision(pad);
+        // Shift+right-click: toggle the WARP mode (Repitch <-> Stretch)
+        // — plain right-click keeps cycling the loop division.
+        if (e.mods.isShiftDown())
+            processor.togglePadWarp(pad);
+        else
+            processor.cyclePadDivision(pad);
         repaint();
         return;
     }
@@ -992,6 +997,26 @@ void JamnKitEditor::paint(juce::Graphics& g)
                     : juce::String(divBadge) + "b";
                 g.drawText(txt, r.reduced(8).removeFromTop(14),
                            juce::Justification::topRight);
+            }
+
+            // Warp tag (shift+right-click toggles): shown only when the
+            // host tempo actually diverges from the song. ST = stretch
+            // sounding, ST* = stretch still rendering (varispeed
+            // fallback audible), RP = repitch.
+            const double songBpm = pack != nullptr ? pack->tempoBpm : 0.0;
+            const double hostBpm = processor.hostBpm();
+            if (pad != nullptr && pad->loopable && songBpm > 0.0
+                && hostBpm > 0.0
+                && std::abs(hostBpm / songBpm - 1.0) >= 0.005)
+            {
+                const bool stretchMode = processor.padWarp(padIdx) == 1;
+                const juce::String tag = !stretchMode ? "RP"
+                    : processor.stretchReady() ? "ST"
+                                               : "ST*";
+                g.setColour(theme::textSecondary.withAlpha(0.85f));
+                g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+                g.drawText(tag, r.reduced(8).removeFromBottom(12),
+                           juce::Justification::bottomRight);
             }
         }
     }

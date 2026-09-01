@@ -15,10 +15,12 @@
 
 #include <juce_dsp/juce_dsp.h>
 
-class JamnKitProcessor : public juce::AudioProcessor
+class JamnKitProcessor : public juce::AudioProcessor,
+                         private juce::Timer
 {
 public:
     JamnKitProcessor();
+    ~JamnKitProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -109,6 +111,26 @@ public:
         padDivisions[(size_t) slot].store(juce::jmax(0, lengthBars));
     }
 
+    /// Per-pad WARP mode: 0 = Repitch (varispeed — pitch follows host
+    /// tempo, zero smearing), 1 = Stretch (signalsmith time-stretch,
+    /// pitch preserved). Shift+right-click toggles. Defaults: drums
+    /// repitch, everything else stretch (Live's warp-mode split).
+    int padWarp(int slot) const
+    {
+        return slot >= 0 && slot < kVoices
+            ? padWarps[(size_t) slot].load() : 0;
+    }
+    void togglePadWarp(int slot)
+    {
+        if (slot >= 0 && slot < kVoices)
+            padWarps[(size_t) slot].store(
+                padWarps[(size_t) slot].load() == 1 ? 0 : 1);
+    }
+
+    /// True when the stretch cache matches the current host tempo (the
+    /// editor shows which mode is actually sounding).
+    bool stretchReady() const;
+
     /// Host tempo snapshot for the editor's trim math.
     double hostBpm() const { return lastBpm; }
     double hostBarBeats() const { return lastBarPpq; }
@@ -174,6 +196,10 @@ private:
         float releaseStep = 0.0f;
         /// Sample-clock when the voice became audible (feedback loop).
         juce::int64 startClock = 0;
+        /// Frames of the buffer this voice is CURRENTLY reading
+        /// (original vs stretched differ) — lets a mid-play warp
+        /// switch carry the loop phase across domains.
+        double playLength = 0.0;
         // Sine fallback (no pack)
         double phase = 0.0;
         double increment = 0.0;
@@ -199,6 +225,24 @@ private:
     std::array<std::atomic<float>, kVoices> padPhases {};
     std::array<std::atomic<int>, kVoices> padDivisions {};
     std::array<std::atomic<int>, kVoices> padStarts {};
+    std::array<std::atomic<int>, kVoices> padWarps {};
+
+    /// Pitch-preserved renders of every loopable pad at one host
+    /// tempo, built off-thread (signalsmith-stretch); the audio
+    /// thread plays them at unity rate so song bars stay host bars.
+    struct StretchSet
+    {
+        double hostBpm = 0.0;
+        const LoadedPack* pack = nullptr;  // identity check only
+        std::array<juce::AudioBuffer<float>, kVoices> buffers;
+    };
+    /// Swapped under packLock (audio thread reads inside processBlock's
+    /// try-lock; pool thread swaps after a build).
+    std::shared_ptr<const StretchSet> activeStretch;
+    void timerCallback() override;  // tempo watch -> stretch rebuilds
+    juce::ThreadPool stretchPool { 1 };
+    std::atomic<bool> stretchBusy { false };
+    double stretchSeenBpm = 0.0;    // debounce: rebuild on STABLE tempo
     /// Host clock cached for noteOn-time trim math.
     double lastBpm = 0.0, lastBarPpq = 4.0;
     /// Loaded pack's song tempo (0 = unknown) — drives rate-matching.
