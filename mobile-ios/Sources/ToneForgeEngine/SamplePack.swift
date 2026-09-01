@@ -179,6 +179,9 @@ public struct SamplePad: Codable, Sendable, Equatable {
     /// When present + > 0, playback prefers this over the coarse
     /// loopScore→ms fallback. nil ⇒ use the fallback / default floor.
     public let crossfadeMs: Double?
+    /// Stable graph-asset id — the usage feedback loop keys play/skip
+    /// events on this. nil on non-kit packs.
+    public let assetId: String?
 
     public init(
         padIdx: Int,
@@ -200,7 +203,8 @@ public struct SamplePad: Codable, Sendable, Equatable {
         performanceScore: Double? = nil,
         difficulty: Double? = nil,
         category: String? = nil,
-        crossfadeMs: Double? = nil
+        crossfadeMs: Double? = nil,
+        assetId: String? = nil
     ) {
         self.padIdx = padIdx
         self.name = name
@@ -222,6 +226,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.difficulty = difficulty
         self.category = category
         self.crossfadeMs = crossfadeMs
+        self.assetId = assetId
     }
 
     // Custom decoding to default `gainDb` when the key is absent.
@@ -232,7 +237,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         case padIdx, name, family, colorHint, filename, chokeGroup,
              loopPointSec, gainDb, defaultQuantize, stemSlice, effects,
              loopStartSec, loopEndSec, loopScore, loopable, contentType,
-             performanceScore, difficulty, category, crossfadeMs
+             performanceScore, difficulty, category, crossfadeMs, assetId
     }
 
     public init(from decoder: Decoder) throws {
@@ -257,6 +262,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.difficulty = try c.decodeIfPresent(Double.self, forKey: .difficulty)
         self.category = try c.decodeIfPresent(String.self, forKey: .category)
         self.crossfadeMs = try c.decodeIfPresent(Double.self, forKey: .crossfadeMs)
+        self.assetId = try c.decodeIfPresent(String.self, forKey: .assetId)
     }
 }
 

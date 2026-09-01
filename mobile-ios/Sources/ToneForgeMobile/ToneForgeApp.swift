@@ -785,6 +785,7 @@ public final class AppState: ObservableObject {
 
         wireSampleSettings()
         wireSampleEffects()
+        wirePadFeedback()
         loadInitialSamplePack()
         // Sketch layers persist across launches under the sentinel id.
         savedSketchLayers = layerStore.list(
@@ -1112,6 +1113,78 @@ public final class AppState: ObservableObject {
             b = 77 + (82 - 77) * s
         }
         return (UInt32(r) << 16) | (UInt32(g) << 8) | UInt32(b)
+    }
+
+    // MARK: - Pad usage feedback (kits learn from playing)
+
+    /// Kit pads report play/skip usage so future Auto Kits re-rank
+    /// around what the user actually reaches for (same loop as the
+    /// jamn Kit plugin: held >= 3 s = play, killed sooner = skip).
+    /// Gated by the "learnFromPlaying" default (on unless disabled).
+    private var padFeedbackStart: [SamplePadKey: Date] = [:]
+    private var padFeedbackEvents: [(assetId: String, kind: String)] = []
+    private var padFeedbackTimer: Timer?
+
+    private func wirePadFeedback() {
+        sampleScheduler.onEvent = { [weak self] event in
+            self?.handlePadFeedback(event)
+        }
+        padFeedbackTimer = Timer.scheduledTimer(
+            withTimeInterval: 20, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.flushPadFeedback() }
+        }
+    }
+
+    private func handlePadFeedback(_ event: LayerEvent) {
+        guard UserDefaults.standard.object(forKey: "learnFromPlaying")
+            as? Bool ?? true else { return }
+        guard let packId = event.params.packIdOverride,
+              packId.hasPrefix("auto-"),
+              let pack = activeSamplePack, pack.pack.packId == packId,
+              let padIdx = event.params.padIdx,
+              let pad = pack.pack.pads.first(where: { $0.padIdx == padIdx }),
+              let assetId = pad.assetId
+        else { return }
+        let key = SamplePadKey(packId: packId, padIdx: padIdx)
+        switch event.kind {
+        case .sampleOn:
+            padFeedbackStart[key] = Date()
+        case .sampleOff:
+            guard let started = padFeedbackStart.removeValue(forKey: key)
+            else { return }
+            let heard = Date().timeIntervalSince(started)
+            padFeedbackEvents.append((assetId, heard < 3.0 ? "skip" : "play"))
+            if padFeedbackEvents.count > 256 {
+                padFeedbackEvents.removeFirst()
+            }
+        default:
+            break
+        }
+    }
+
+    private func flushPadFeedback() {
+        guard let analysisId = currentBundle?.analysisId,
+              !padFeedbackEvents.isEmpty else { return }
+        let events = padFeedbackEvents
+        padFeedbackEvents.removeAll()
+        let body: [String: Any] = [
+            "events": events.map { ["assetId": $0.assetId, "kind": $0.kind] }
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: body),
+              let url = URL(string: backendBaseURL
+                  .appendingPathComponent("api/song")
+                  .appendingPathComponent(analysisId)
+                  .appendingPathComponent("pad-feedback").absoluteString)
+        else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json",
+                         forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        AuthContext.shared.apply(to: &request)
+        // Fire-and-forget: feedback is best-effort telemetry.
+        URLSession.shared.dataTask(with: request).resume()
     }
 
     /// Per-pad effects resolution for the scheduler. (This used to

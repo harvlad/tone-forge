@@ -48,6 +48,11 @@ public:
     /// on success. Message thread only.
     juce::String loadPack(const juce::File& source);
 
+    /// Durable kit storage (~/Library/Application Support/jamnKit/Kits
+    /// on macOS). Downloads land here — never the OS temp dir — so a
+    /// saved DAW project still finds its kit after temp cleanup.
+    static juce::File kitStoreDir();
+
     /// Current pack snapshot for the editor (may be null).
     std::shared_ptr<const LoadedPack> currentPack() const;
 

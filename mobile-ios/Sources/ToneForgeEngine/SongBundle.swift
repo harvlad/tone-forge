@@ -309,6 +309,8 @@ public struct Chop: Codable, Sendable, Equatable {
     public let loopScore: Double?
     public let crossfadeMs: Double?
     public let patternId: String?
+    /// Graph-asset id for the usage feedback loop (kit chops only).
+    public let assetId: String?
 
     public init(
         idx: Int,
@@ -326,7 +328,8 @@ public struct Chop: Codable, Sendable, Equatable {
         loopable: Bool? = nil,
         loopScore: Double? = nil,
         crossfadeMs: Double? = nil,
-        patternId: String? = nil
+        patternId: String? = nil,
+        assetId: String? = nil
     ) {
         self.idx = idx
         self.startSec = startSec
@@ -344,5 +347,6 @@ public struct Chop: Codable, Sendable, Equatable {
         self.loopScore = loopScore
         self.crossfadeMs = crossfadeMs
         self.patternId = patternId
+        self.assetId = assetId
     }
 }

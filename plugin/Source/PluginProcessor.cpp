@@ -162,6 +162,16 @@ juce::String JamnKitProcessor::loadPack(const juce::File& source)
     return {};
 }
 
+juce::File JamnKitProcessor::kitStoreDir()
+{
+    auto dir = juce::File::getSpecialLocation(
+                   juce::File::userApplicationDataDirectory)
+                   .getChildFile("jamnKit")
+                   .getChildFile("Kits");
+    dir.createDirectory();
+    return dir;
+}
+
 std::shared_ptr<const LoadedPack> JamnKitProcessor::currentPack() const
 {
     return editorPack;
@@ -644,7 +654,31 @@ void JamnKitProcessor::setStateInformation(const void* data, int size)
     const juce::String path = state.getProperty("packPath", juce::String());
     if (path.isNotEmpty())
     {
-        const juce::File source(path);
+        juce::File source(path);
+        const auto tempRoot =
+            juce::File::getSpecialLocation(juce::File::tempDirectory);
+
+        if (!source.exists())
+        {
+            // Sessions saved before the durable store (or whose temp
+            // copy the OS cleaned): the same zip may exist in the
+            // store under its original name.
+            const auto fallback =
+                kitStoreDir().getChildFile(source.getFileName());
+            if (fallback.exists())
+                source = fallback;
+        }
+        else if (source.isAChildOf(tempRoot))
+        {
+            // Legacy temp-dir path that still exists: migrate it into
+            // the durable store now so the NEXT save survives temp
+            // cleanup. Load from wherever the copy landed.
+            const auto durable =
+                kitStoreDir().getChildFile(source.getFileName());
+            if (durable.exists() || source.copyFileTo(durable))
+                source = durable;
+        }
+
         if (source.exists())
             (void) loadPack(source);
     }

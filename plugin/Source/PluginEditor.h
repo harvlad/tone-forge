@@ -50,6 +50,7 @@ private:
 
     juce::TextButton openButton { "Open..." };
     juce::TextButton browseButton { "Browse" };
+    juce::TextButton refreshButton { "Re-rank" };
     juce::TextButton armButton { "ARM" };
     juce::TextButton learnButton { "LEARN" };
     juce::TextEditor urlEditor;

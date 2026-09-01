@@ -310,6 +310,22 @@ final class SessionController: ObservableObject {
                 break
             }
         }
+        // Usage feedback loop: pad play/skip outcomes batch to the
+        // backend every 20 s so future kits re-rank around what the
+        // user actually plays (same loop as the jamn Kit plugin).
+        launchpad.onPadUsage = { [weak self] assetId, kind in
+            guard let self else { return }
+            self.padUsageEvents.append((assetId, kind))
+            if self.padUsageEvents.count > 256 {
+                self.padUsageEvents.removeFirst()
+            }
+        }
+        padUsageTimer = Timer.scheduledTimer(
+            withTimeInterval: 20, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.flushPadUsage() }
+        }
+
         launchpad.sequencePadManager = sequencePadManager
         launchpad.padAssignmentStore = padAssignmentStore
         // Sequencer follows the shared Link tempo the moment it moves.
@@ -624,6 +640,31 @@ final class SessionController: ObservableObject {
         }
     }
 
+    // MARK: - Pad usage feedback
+
+    private var padUsageEvents: [(String, String)] = []
+    private var padUsageTimer: Timer?
+
+    private func flushPadUsage() {
+        guard let analysisId = attachedAnalysisId,
+              let base = backendBaseURL,
+              !padUsageEvents.isEmpty else { return }
+        let events = padUsageEvents
+        padUsageEvents.removeAll()
+        let body: [String: Any] = [
+            "events": events.map { ["assetId": $0.0, "kind": $0.1] }
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: body)
+        else { return }
+        var request = URLRequest(
+            url: base.appendingPathComponent("api/song/\(analysisId)/pad-feedback"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        // Fire-and-forget: feedback is best-effort telemetry.
+        URLSession.shared.dataTask(with: request).resume()
+    }
+
     // MARK: - Performance-Intelligence auto-kit
 
     /// Fetch the song's auto-built Launchpad kit (GET /api/song/{id}/kit) and
@@ -677,7 +718,9 @@ final class SessionController: ObservableObject {
                     loopScore: pad.loopScore,
                     // Carry the analyzer's measured seam crossfade so held
                     // loops use it (else SessionController's 15 ms floor).
-                    crossfadeMs: pad.crossfadeMs
+                    crossfadeMs: pad.crossfadeMs,
+                    // Usage feedback loop keys on the graph-asset id.
+                    assetId: pad.assetId
                 )
                 return (chop, slice.stemRole)
             }

@@ -217,6 +217,12 @@ public final class LaunchpadController {
     // MARK: - Observable state
 
     public var quantize: QuantizeMode = .off
+
+    /// Usage feedback: fired with (assetId, "play"|"skip") when a kit
+    /// pad's outcome is known — the host batches these to the backend
+    /// so future kits re-rank around what the user actually plays.
+    public var onPadUsage: ((String, String) -> Void)?
+    private var padUsageStart: [LaunchpadPad: Date] = [:]
     public var playbackMode: PadPlaybackMode = .tap
     /// Loop lock: when on, a triggered loop waits until the shared loop
     /// cycle restarts, so every pad is phase-locked to one grid and stacks
@@ -494,6 +500,12 @@ public final class LaunchpadController {
         if playbackMode == .loop && activePads.contains(pad) {
             activePads.remove(pad)
             transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
+            // Usage feedback: held >= 3 s = play, killed sooner = skip.
+            if let assetId = assignment.chop.assetId,
+               let started = padUsageStart.removeValue(forKey: pad) {
+                let heard = Date().timeIntervalSince(started)
+                onPadUsage?(assetId, heard < 3.0 ? "skip" : "play")
+            }
             onRelease?(pad, assignment)   // stop the loop
             return
         }
@@ -522,6 +534,15 @@ public final class LaunchpadController {
             )
         }
         activePads.insert(pad)
+        // Usage feedback: loops judge play/skip at toggle-off; a tap
+        // one-shot firing IS the play signal.
+        if let assetId = assignment.chop.assetId {
+            if playbackMode == .loop {
+                padUsageStart[pad] = Date()
+            } else {
+                onPadUsage?(assetId, "play")
+            }
+        }
         transport?.setLight(.pulse(colorHint: colorHint(for: assignment)), at: pad)
         onTrigger?(pad, assignment, fireAt)
     }

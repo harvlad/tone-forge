@@ -327,7 +327,7 @@ static juce::MemoryBlock fetchHttp(const juce::String& urlString,
 JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
     : AudioProcessorEditor(p), processor(p)
 {
-    for (auto* b : { &openButton, &browseButton })
+    for (auto* b : { &openButton, &browseButton, &refreshButton })
     {
         addAndMakeVisible(*b);
         b->setColour(juce::TextButton::buttonColourId, theme::panelDeep);
@@ -335,6 +335,16 @@ JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
     }
     openButton.onClick = [this] { openPackChooser(); };
     browseButton.onClick = [this] { browseBackend(); };
+    // Re-rank: re-download the CURRENT pack — the server folds your
+    // reported play/skip usage into the ranking, so this is "my kit,
+    // re-sorted by how I actually play".
+    refreshButton.onClick = [this] {
+        if (auto pack = processor.currentPack();
+            pack != nullptr && pack->entryId.isNotEmpty())
+            downloadKit(pack->entryId, pack->songName);
+    };
+    refreshButton.setTooltip(
+        "Re-download this kit re-ranked by your reported playing");
     browseButton.setColour(juce::TextButton::buttonColourId,
                            theme::accent.withAlpha(0.45f));
 
@@ -415,10 +425,12 @@ void JamnKitEditor::resized()
     // Inset from the header panel's rounded edge — flush-right read as
     // touching the margin.
     auto buttons = header.reduced(14, 0)
-                       .removeFromRight(170)
-                       .withSizeKeepingCentre(170, 28);
+                       .removeFromRight(252)
+                       .withSizeKeepingCentre(252, 28);
+    refreshButton.setBounds(buttons.removeFromLeft(74));
+    buttons.removeFromLeft(6);
     browseButton.setBounds(buttons.removeFromLeft(80));
-    buttons.removeFromLeft(8);
+    buttons.removeFromLeft(6);
     openButton.setBounds(buttons);
 
     area.removeFromTop(gapS);
@@ -565,10 +577,10 @@ void JamnKitEditor::downloadKit(const juce::String& entryId,
     if (worker != nullptr && worker->joinable())
         worker->join();
     worker = std::make_unique<std::thread>([self, base, entryId] {
-        auto dest = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                        .getChildFile("jamnKit")
+        // Durable store, not temp: the saved DAW project's packPath
+        // must survive OS temp cleanup (kitStoreDir doc).
+        auto dest = JamnKitProcessor::kitStoreDir()
                         .getChildFile("dl_" + entryId + ".zip");
-        dest.getParentDirectory().createDirectory();
 
         // Legacy songs backfill their graph server-side on the first
         // hit — allow minutes, not seconds. One retry covers a busy

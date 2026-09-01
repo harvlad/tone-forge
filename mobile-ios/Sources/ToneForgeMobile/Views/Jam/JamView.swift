@@ -426,6 +426,7 @@ struct JamView: View {
                         instantGrooveChip
                         styleBeatChip
                         soundsChip
+                        refreshKitChip
                         stopAllChip
                         loopLockChip
                     }
@@ -512,6 +513,26 @@ struct JamView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Browse all song samples and packs")
+    }
+
+    /// Refresh the Auto Kit: server ranking folds in the pad usage the
+    /// clients have reported, so a re-fetch re-sorts the rack around
+    /// what you actually play.
+    private var refreshKitChip: some View {
+        Button {
+            Haptics.selectionChanged()
+            appState.loadAutoKit()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.2.circlepath").font(.caption)
+                Text("Rekit").font(TFTheme.chipFont)
+            }
+            .tfChip(active: false)
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .disabled(appState.autoKitLoading)
+        .accessibilityLabel("Rebuild the kit, re-ranked by how you play")
     }
 
     /// One-line status over the launchpad: place-mode prompt, stem
