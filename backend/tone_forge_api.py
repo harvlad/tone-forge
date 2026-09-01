@@ -5468,7 +5468,8 @@ async def get_song_kit(
             _render_pool(), ensure_graph_job, entry_id, result)
         if isinstance(graph, dict):
             result[_perf.GRAPH_RESULT_KEY] = graph
-            _persist_backfilled_graph(entry_id, result)
+            # Multi-MB R2 history upload — keep it off the event loop.
+            await asyncio.to_thread(_persist_backfilled_graph, entry_id, result)
     return JSONResponse(_perf.kit_payload(entry_id, result, skill=skill, pads=pads))
 
 

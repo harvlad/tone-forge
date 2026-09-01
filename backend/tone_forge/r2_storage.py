@@ -88,9 +88,17 @@ def _client():
         aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
         region_name="auto",  # R2 ignores region but boto3 requires a value
+        # Tight timeouts + one retry: several call sites run SYNC on
+        # uvicorn's event loop (history load at every read choke point),
+        # and boto's defaults (60s connect x standard retries) froze the
+        # whole API for minutes during one R2 hiccup — nothing could
+        # even be accepted ("fetching songs times out"). A slow moment
+        # must cost seconds and fall back to the local history file.
         config=Config(
             signature_version="s3v4",
-            retries={"max_attempts": 3, "mode": "standard"},
+            connect_timeout=3,
+            read_timeout=8,
+            retries={"max_attempts": 1, "mode": "standard"},
         ),
     )
 
