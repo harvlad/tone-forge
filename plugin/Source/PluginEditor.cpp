@@ -171,8 +171,8 @@ JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
     attGain = std::make_unique<Attachment>(processor.apvts, "gain", knobGain);
 
     setResizable(true, true);
-    setResizeLimits(440, 560, 1100, 1400);
-    setSize(520, 700);
+    setResizeLimits(440, 620, 1100, 1500);
+    setSize(540, 780);
     startTimerHz(30);
 }
 
@@ -365,30 +365,29 @@ juce::Rectangle<int> JamnKitEditor::gridArea() const
     return area;
 }
 
-/// Square pad cell geometry, CENTERED in the pads panel so leftover
-/// space splits evenly instead of piling up on the right.
-static void padCellGeometry(juce::Rectangle<int> panel, int& cell,
-                            int& x0, int& y0, int gap = 8)
+/// Pad cell geometry: cells STRETCH so the 4×4 fills the pads panel
+/// edge-to-edge on both axes (no dead margins; cells go rectangular
+/// as the window changes shape).
+static void padCellGeometry(juce::Rectangle<int> panel, int& cellW,
+                            int& cellH, int& x0, int& y0, int gap = 8)
 {
     const auto area = panel.reduced(10);
-    cell = juce::jmin((area.getWidth() - 3 * gap) / 4,
-                      (area.getHeight() - 3 * gap) / 4);
-    const int gridW = 4 * cell + 3 * gap;
-    const int gridH = gridW;
-    x0 = area.getX() + (area.getWidth() - gridW) / 2;
-    y0 = area.getY() + (area.getHeight() - gridH) / 2;
+    cellW = (area.getWidth() - 3 * gap) / 4;
+    cellH = (area.getHeight() - 3 * gap) / 4;
+    x0 = area.getX();
+    y0 = area.getY();
 }
 
 int JamnKitEditor::padIndexAt(juce::Point<int> pos) const
 {
-    int cell = 0, x0 = 0, y0 = 0;
+    int cellW = 0, cellH = 0, x0 = 0, y0 = 0;
     const int gap = 8;
-    padCellGeometry(gridArea(), cell, x0, y0, gap);
+    padCellGeometry(gridArea(), cellW, cellH, x0, y0, gap);
     for (int row = 0; row < 4; ++row)
         for (int col = 0; col < 4; ++col)
         {
-            juce::Rectangle<int> r(x0 + col * (cell + gap),
-                                   y0 + row * (cell + gap), cell, cell);
+            juce::Rectangle<int> r(x0 + col * (cellW + gap),
+                                   y0 + row * (cellH + gap), cellW, cellH);
             if (r.contains(pos))
                 return (3 - row) * 4 + col;
         }
@@ -504,17 +503,17 @@ void JamnKitEditor::paint(juce::Graphics& g)
     g.setColour(panelStroke.withAlpha(0.5f));
     g.drawRoundedRectangle(gridPanel.toFloat(), 10.0f, 1.0f);
 
-    int cell = 0, x0 = 0, y0 = 0;
+    int cellW = 0, cellH = 0, x0 = 0, y0 = 0;
     const int gap = 8;
-    padCellGeometry(gridPanel, cell, x0, y0, gap);
+    padCellGeometry(gridPanel, cellW, cellH, x0, y0, gap);
     for (int row = 0; row < 4; ++row)
     {
         for (int col = 0; col < 4; ++col)
         {
             const int padIdx = (3 - row) * 4 + col;
             const int note = JamnKitProcessor::kFirstNote + padIdx;
-            juce::Rectangle<int> r(x0 + col * (cell + gap),
-                                   y0 + row * (cell + gap), cell, cell);
+            juce::Rectangle<int> r(x0 + col * (cellW + gap),
+                                   y0 + row * (cellH + gap), cellW, cellH);
 
             const KitPadSample* pad =
                 pack != nullptr ? pack->padForNote(note) : nullptr;
