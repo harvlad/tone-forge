@@ -93,6 +93,10 @@ private:
     {
         enum class State { idle, armed, playing, releasing };
         State state = State::idle;
+        /// Armed while the transport is STOPPED (Arm & Wait): holds
+        /// until the host starts rolling, then launches on the first
+        /// bar together with every other waiting pad.
+        bool waitForTransport = false;
         // Sample playback (pack mode)
         const KitPadSample* pad = nullptr;  // borrowed from activePack
         double position = 0.0;
@@ -133,6 +137,8 @@ private:
     std::atomic<float>* pSpace = nullptr;
     std::atomic<float>* pDrive = nullptr;
     std::atomic<float>* pGain = nullptr;
+    std::atomic<float>* pArm = nullptr;
+    bool wasPlaying = false;
 
     juce::String backendUrlValue { "http://127.0.0.1:8300" };
     double currentSampleRate = 44100.0;

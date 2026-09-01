@@ -158,6 +158,16 @@ std::shared_ptr<const LoadedPack> load(const juce::File& source,
                      true, true);
         if (pad.loopable)
             bakeLoopCrossfade(pad.audio, pad.sourceSampleRate);
+        // Loudness-normalize to -4 dBFS peak (the app scheduler's
+        // target): raw stem slices vary wildly, and the per-pad
+        // NORMALIZED thumbnails made whisper-quiet pads look full —
+        // "no sound despite having waveforms".
+        {
+            const float peak = pad.audio.getMagnitude(
+                0, pad.audio.getNumSamples());
+            if (peak > 1.0e-4f)
+                pad.audio.applyGain(0.63f / peak);
+        }
         pad.peaks = computePeaks(pad.audio, 64);
         pack->pads.push_back(std::move(pad));
         return true;

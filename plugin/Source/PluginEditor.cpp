@@ -322,6 +322,22 @@ JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
              &knobFilter, &knobSpace, &knobDrive, &knobGain, &labelFilter,
              &labelSpace, &labelDrive, &labelGain })
         addAndMakeVisible(*c);
+    // Arm & Wait toggle: stopped-transport taps queue and launch
+    // together when the host starts.
+    addAndMakeVisible(armButton);
+    armButton.setClickingTogglesState(true);
+    armButton.setColour(juce::TextButton::buttonColourId, theme::panelDeep);
+    armButton.setColour(juce::TextButton::buttonOnColourId,
+                        theme::accent.withAlpha(0.55f));
+    armButton.setColour(juce::TextButton::textColourOffId,
+                        theme::textSecondary);
+    armButton.setColour(juce::TextButton::textColourOnId,
+                        juce::Colours::white);
+    armButton.setTooltip(
+        "Arm & Wait: while the host is stopped, pad taps queue and all "
+        "launch together when the transport starts");
+    attArm = std::make_unique<BtnAttachment>(processor.apvts, "arm", armButton);
+
     attFilter = std::make_unique<Attachment>(processor.apvts, "filter", knobFilter);
     attSpace = std::make_unique<Attachment>(processor.apvts, "space", knobSpace);
     attDrive = std::make_unique<Attachment>(processor.apvts, "drive", knobDrive);
@@ -355,7 +371,11 @@ void JamnKitEditor::resized()
     buttons.removeFromLeft(8);
     openButton.setBounds(buttons);
 
-    area.removeFromTop(gapS + clockH + gapM);
+    area.removeFromTop(gapS);
+    auto clockRow = area.removeFromTop(clockH);
+    armButton.setBounds(
+        clockRow.removeFromRight(64).reduced(4, 3));
+    area.removeFromTop(gapM);
     auto knobPanel = area.removeFromTop(knobPanelH).reduced(6, 8);
     urlEditor.setBounds(getLocalBounds()
                             .removeFromBottom(footerH)
@@ -409,9 +429,20 @@ void JamnKitEditor::browseBackend()
     if (worker != nullptr && worker->joinable())
         worker->join();
     worker = std::make_unique<std::thread>([self, base] {
+        // Bulletproofing: the dev backend can stall for seconds while
+        // it renders a kit (single worker + R2-backed history), which
+        // used to read as "unreachable". Retry with patience before
+        // declaring it down.
         int statusCode = 0;
-        const auto raw =
-            fetchHttp(base + "/api/history?limit=25", statusCode, 8000);
+        juce::MemoryBlock raw;
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            raw = fetchHttp(base + "/api/history?limit=25", statusCode,
+                            15000);
+            if (statusCode == 200 && raw.getSize() > 0)
+                break;
+            juce::Thread::sleep(1500);
+        }
         const juce::String body = raw.toString();
 
         juce::MessageManager::callAsync([self, body, statusCode, base] {
@@ -488,11 +519,19 @@ void JamnKitEditor::downloadKit(const juce::String& entryId,
         dest.getParentDirectory().createDirectory();
 
         // Legacy songs backfill their graph server-side on the first
-        // hit — allow minutes, not seconds.
+        // hit — allow minutes, not seconds. One retry covers a busy
+        // single-worker backend.
         int statusCode = 0;
-        const auto raw = fetchHttp(
-            base + "/api/song/" + entryId + "/ableton-kit?pads=16",
-            statusCode, 600000);
+        juce::MemoryBlock raw;
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            raw = fetchHttp(
+                base + "/api/song/" + entryId + "/ableton-kit?pads=16",
+                statusCode, 600000);
+            if (statusCode == 200 && raw.getSize() > 0)
+                break;
+            juce::Thread::sleep(2000);
+        }
         bool ok = statusCode == 200 && raw.getSize() > 0;
         if (ok)
             ok = dest.replaceWithData(raw.getData(), raw.getSize());

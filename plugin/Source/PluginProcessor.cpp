@@ -37,6 +37,10 @@ JamnKitProcessor::parameterLayout()
     layout.add(std::make_unique<P>(
         "gain", "Gain",
         juce::NormalisableRange<float>(-24.0f, 6.0f, 0.1f), 0.0f, db));
+    // Arm & Wait: with the transport stopped, loop taps QUEUE (amber)
+    // and all launch together on the first bar when the host starts.
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "arm", "Arm & Wait", true));
     return layout;
 }
 
@@ -55,6 +59,7 @@ JamnKitProcessor::JamnKitProcessor()
     pSpace = apvts.getRawParameterValue("space");
     pDrive = apvts.getRawParameterValue("drive");
     pGain = apvts.getRawParameterValue("gain");
+    pArm = apvts.getRawParameterValue("arm");
 }
 
 void JamnKitProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -236,6 +241,15 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity,
                 return;
             }
         }
+        else if (pArm != nullptr && pArm->load() > 0.5f)
+        {
+            // Arm & Wait: transport stopped — queue this pad; every
+            // waiting pad launches together when the host starts.
+            v.state = Voice::State::armed;
+            v.waitForTransport = true;
+            armedNotes[(size_t) note].store(true);
+            return;
+        }
         v.state = Voice::State::playing;
         activeNotes[(size_t) note].store(true);
         return;
@@ -283,6 +297,8 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
 
     if (v.state == Voice::State::armed)
     {
+        if (v.waitForTransport)
+            return;  // holds until the host transport starts
         if (v.startDelaySamples >= (double) numSamples)
         {
             v.startDelaySamples -= numSamples;
@@ -401,6 +417,31 @@ void JamnKitProcessor::processBlock(
     // Quantize only makes sense on a rolling transport.
     const bool quantizable = hostPlaying && blockPpq >= 0.0
         && samplesPerPpq > 0.0;
+
+    // Transport just started: release every Arm & Wait pad onto the
+    // grid — they land together on the first bar boundary (usually
+    // beat 1 itself, so the whole selection starts as one).
+    if (hostPlaying && !wasPlaying)
+    {
+        for (auto& v : voices)
+        {
+            if (v.state != Voice::State::armed || !v.waitForTransport)
+                continue;
+            v.waitForTransport = false;
+            double delay = 0.0;
+            if (quantizable)
+            {
+                double intoBar = std::fmod(blockPpq, barPpq);
+                if (intoBar < 0.0)
+                    intoBar += barPpq;
+                const double grace = 1.0 / 32.0;
+                if (intoBar >= grace)
+                    delay = (barPpq - intoBar) * samplesPerPpq;
+            }
+            v.startDelaySamples = delay;
+        }
+    }
+    wasPlaying = hostPlaying;
 
     uiMidi.removeNextBlockOfMessages(midi, buffer.getNumSamples());
 

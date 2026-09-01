@@ -38,11 +38,14 @@ private:
 
     juce::TextButton openButton { "Open..." };
     juce::TextButton browseButton { "Browse" };
+    juce::TextButton armButton { "ARM" };
     juce::TextEditor urlEditor;
     juce::Slider knobFilter, knobSpace, knobDrive, knobGain;
     juce::Label labelFilter, labelSpace, labelDrive, labelGain;
     using Attachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using BtnAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<Attachment> attFilter, attSpace, attDrive, attGain;
+    std::unique_ptr<BtnAttachment> attArm;
 
     juce::String statusLine;   // footer: errors / download progress
     bool busy = false;         // network in flight
