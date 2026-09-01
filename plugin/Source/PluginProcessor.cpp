@@ -341,18 +341,35 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
         }
         const float* srcL = audio.getReadPointer(0);
         const float* srcR = channels > 1 ? audio.getReadPointer(1) : srcL;
-        // Division trim, read LIVE each block (drag-trim updates a
-        // looping pad in place): wrap early at N host bars so the loop
-        // stays welded to the DAW grid. Full buffer keeps its baked
-        // crossfade seam.
+        // Loop REGION, read LIVE each block (drag-trim updates a
+        // looping pad in place): [startBars, startBars+lengthBars] in
+        // host bars, welded to the DAW grid. The untrimmed full buffer
+        // keeps its baked crossfade seam.
+        double wrapStart = 0.0;
         double wrapAt = (double) (length - 1);
+        const int startBars = padStart(slot);
         const int trimBars = padDivision(slot);
-        if (trimBars > 0 && lastBpm > 0.0)
+        if (lastBpm > 0.0 && (startBars > 0 || trimBars > 0))
         {
-            const double frames = trimBars * (lastBarPpq * 60.0 / lastBpm)
+            const double barFrames = (lastBarPpq * 60.0 / lastBpm)
                 * v.pad->sourceSampleRate;
-            if (frames > 1.0)
-                wrapAt = juce::jmin(wrapAt, frames);
+            if (startBars > 0)
+                wrapStart = juce::jmin((double) (length - 2),
+                                       startBars * barFrames);
+            if (trimBars > 0)
+                wrapAt = juce::jmin(wrapAt,
+                                    wrapStart + trimBars * barFrames);
+            if (wrapAt <= wrapStart + 1.0)
+            {
+                wrapStart = 0.0;
+                wrapAt = (double) (length - 1);
+            }
+        }
+        // Entering (or dragged out of) the region: jump to its start.
+        if (v.position < wrapStart)
+        {
+            v.position = wrapStart;
+            v.wrapRamp = 256;
         }
 
         for (int i = start; i < numSamples; ++i)
@@ -361,9 +378,9 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
             {
                 if (v.pad->loopable)
                 {
-                    v.position = 0.0;
-                    if (wrapAt < (double) (length - 1))
-                        v.wrapRamp = 256;  // trim point has no baked seam
+                    v.position = wrapStart;
+                    if (wrapAt < (double) (length - 1) || wrapStart > 0.0)
+                        v.wrapRamp = 256;  // trim points have no baked seam
                 }
                 else
                 {

@@ -80,15 +80,28 @@ public:
             case 8: d.store(4); break;
             case 4: d.store(2); break;
             case 2: d.store(1); break;
-            default: d.store(0); break;
+            default:
+                d.store(0);
+                padStarts[(size_t) slot].store(0);  // Full = whole sample
+                break;
         }
     }
-    /// Drag-trim: set an arbitrary bar count (0 = full). Applies LIVE
-    /// to a looping voice (render reads it every block).
-    void setPadDivision(int slot, int bars)
+    /// Loop-region START offset in host bars (0 = sample start).
+    int padStart(int slot) const
     {
-        if (slot >= 0 && slot < kVoices)
-            padDivisions[(size_t) slot].store(juce::jmax(0, bars));
+        return slot >= 0 && slot < kVoices
+            ? padStarts[(size_t) slot].load() : 0;
+    }
+
+    /// Drag-trim: set the loop REGION [startBars, startBars+lengthBars]
+    /// (length 0 = to the end). Applies LIVE — the render reads it
+    /// every block, so a looping pad re-wraps as you drag either edge.
+    void setPadRegion(int slot, int startBars, int lengthBars)
+    {
+        if (slot < 0 || slot >= kVoices)
+            return;
+        padStarts[(size_t) slot].store(juce::jmax(0, startBars));
+        padDivisions[(size_t) slot].store(juce::jmax(0, lengthBars));
     }
 
     /// Host tempo snapshot for the editor's trim math.
@@ -168,6 +181,7 @@ private:
     std::array<std::atomic<bool>, 128> armedNotes {};
     std::array<std::atomic<float>, kVoices> padPhases {};
     std::array<std::atomic<int>, kVoices> padDivisions {};
+    std::array<std::atomic<int>, kVoices> padStarts {};
     /// Host clock cached for noteOn-time trim math.
     double lastBpm = 0.0, lastBarPpq = 4.0;
 

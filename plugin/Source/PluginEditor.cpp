@@ -624,11 +624,13 @@ void JamnKitEditor::mouseDown(const juce::MouseEvent& e)
         repaint();
         return;
     }
-    // Alt-drag: scrub the trim across the waveform, snapped to whole
-    // host bars; updates the loop LIVE.
+    // Alt-drag: sweep a loop REGION across the waveform — press at the
+    // start, drag to the end (either direction), both edges snapped to
+    // whole host bars; updates the loop LIVE.
     if (e.mods.isAltDown())
     {
         trimDragPad = pad;
+        trimAnchorFrac = padFracAt(pad, e.getPosition());
         applyTrimDrag(pad, e.getPosition());
         return;
     }
@@ -642,6 +644,17 @@ void JamnKitEditor::mouseDrag(const juce::MouseEvent& e)
         applyTrimDrag(trimDragPad, e.getPosition());
 }
 
+double JamnKitEditor::padFracAt(int pad, juce::Point<int> pos) const
+{
+    int cellW = 0, cellH = 0, x0 = 0, y0 = 0;
+    const int gap = 8;
+    padCellGeometry(gridArea(), cellW, cellH, x0, y0, gap);
+    const int col = pad % 4;
+    return juce::jlimit(
+        0.0, 1.0,
+        (double) (pos.x - (x0 + col * (cellW + gap))) / juce::jmax(1, cellW));
+}
+
 void JamnKitEditor::applyTrimDrag(int pad, juce::Point<int> pos)
 {
     const auto pack = processor.currentPack();
@@ -653,24 +666,28 @@ void JamnKitEditor::applyTrimDrag(int pad, juce::Point<int> pos)
     if (sample == nullptr || sample->audio.getNumSamples() < 2)
         return;
 
-    // Fraction across the pad -> bars, snapped to whole host bars.
-    int cellW = 0, cellH = 0, x0 = 0, y0 = 0;
-    const int gap = 8;
-    padCellGeometry(gridArea(), cellW, cellH, x0, y0, gap);
-    const int col = pad % 4;
-    const double frac = juce::jlimit(
-        0.05, 1.0,
-        (double) (pos.x - (x0 + col * (cellW + gap))) / juce::jmax(1, cellW));
-
     const double padSeconds =
         sample->audio.getNumSamples() / sample->sourceSampleRate;
     const double barSeconds = processor.hostBarBeats() * 60.0 / bpm;
     const int totalBars =
         juce::jmax(1, (int) std::floor(padSeconds / barSeconds));
-    const int bars =
-        juce::jlimit(1, totalBars, (int) std::round(frac * totalBars));
-    // Dragging to the far right restores Full (baked seam).
-    processor.setPadDivision(pad, bars >= totalBars ? 0 : bars);
+
+    // Region between the press anchor and the current point, snapped
+    // to whole bars, minimum one bar.
+    const double cur = padFracAt(pad, pos);
+    const double lo = juce::jmin(trimAnchorFrac, cur);
+    const double hi = juce::jmax(trimAnchorFrac, cur);
+    int startBars =
+        juce::jlimit(0, totalBars - 1, (int) std::floor(lo * totalBars));
+    int endBars =
+        juce::jlimit(startBars + 1, totalBars,
+                     (int) std::round(hi * totalBars));
+
+    // Sweeping (nearly) everything restores Full — baked seam.
+    if (startBars == 0 && endBars >= totalBars)
+        processor.setPadRegion(pad, 0, 0);
+    else
+        processor.setPadRegion(pad, startBars, endBars - startBars);
     repaint();
 }
 
@@ -819,31 +836,43 @@ void JamnKitEditor::paint(juce::Graphics& g)
                                (float) wf.getCentreY() - h * 0.5f,
                                juce::jmax(1.0f, bw - 1.0f), h);
                 }
-                // Trim veil: everything past the division wrap point
-                // is dimmed (alt-drag / right-click sets it).
+                // Region veil: everything OUTSIDE [start, end] dims
+                // (alt-drag sweeps the region; right-click cycles).
                 const int division = processor.padDivision(padIdx);
+                const int startBars = processor.padStart(padIdx);
                 const double bpm = processor.hostBpm();
-                if (division > 0 && bpm > 0.0)
+                if ((division > 0 || startBars > 0) && bpm > 0.0)
                 {
                     const double padSeconds =
                         pad->audio.getNumSamples() / pad->sourceSampleRate;
-                    const double trimFrac = juce::jlimit(
+                    const double barSec =
+                        processor.hostBarBeats() * 60.0 / bpm;
+                    const double startFrac = juce::jlimit(
                         0.0, 1.0,
-                        (division * processor.hostBarBeats() * 60.0 / bpm)
-                            / juce::jmax(0.001, padSeconds));
-                    if (trimFrac < 0.999)
-                    {
-                        auto veil = wf.toFloat();
-                        veil.removeFromLeft(
-                            (float) (trimFrac * wf.getWidth()));
-                        g.setColour(theme::background.withAlpha(0.62f));
-                        g.fillRect(veil);
-                        g.setColour(theme::armedAmber.withAlpha(0.9f));
-                        g.fillRect((float) wf.getX()
-                                       + (float) (trimFrac * wf.getWidth()),
-                                   (float) wf.getY(), 1.5f,
+                        startBars * barSec / juce::jmax(0.001, padSeconds));
+                    const double endFrac = division > 0
+                        ? juce::jlimit(startFrac, 1.0,
+                                       (startBars + division) * barSec
+                                           / juce::jmax(0.001, padSeconds))
+                        : 1.0;
+                    g.setColour(theme::background.withAlpha(0.62f));
+                    if (startFrac > 0.001)
+                        g.fillRect((float) wf.getX(), (float) wf.getY(),
+                                   (float) (startFrac * wf.getWidth()),
                                    (float) wf.getHeight());
-                    }
+                    if (endFrac < 0.999)
+                        g.fillRect((float) wf.getX()
+                                       + (float) (endFrac * wf.getWidth()),
+                                   (float) wf.getY(),
+                                   (float) ((1.0 - endFrac) * wf.getWidth()),
+                                   (float) wf.getHeight());
+                    g.setColour(theme::armedAmber.withAlpha(0.9f));
+                    for (double f : { startFrac, endFrac })
+                        if (f > 0.001 && f < 0.999)
+                            g.fillRect((float) wf.getX()
+                                           + (float) (f * wf.getWidth()),
+                                       (float) wf.getY(), 1.5f,
+                                       (float) wf.getHeight());
                 }
                 const float phase =
                     processor.padPhase(note - JamnKitProcessor::kFirstNote);
@@ -873,15 +902,20 @@ void JamnKitEditor::paint(juce::Graphics& g)
                              r.reduced(8).removeFromTop(r.getHeight() / 2 - 6),
                              juce::Justification::topLeft, 2);
 
-            // Division badge (right-click to cycle): "4b" = loop wraps
-            // every 4 host bars.
-            const int division = processor.padDivision(padIdx);
-            if (division > 0 && pad != nullptr)
+            // Region badge: "4b" = 4 bars from the start; "2-6b" =
+            // bars 2..6 (alt-drag sets it, right-click cycles).
+            const int divBadge = processor.padDivision(padIdx);
+            const int startBadge = processor.padStart(padIdx);
+            if ((divBadge > 0 || startBadge > 0) && pad != nullptr)
             {
                 g.setColour(armedAmber.withAlpha(0.95f));
                 g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-                g.drawText(juce::String(division) + "b",
-                           r.reduced(8).removeFromTop(14),
+                const juce::String txt = startBadge > 0
+                    ? juce::String(startBadge) + "-"
+                          + juce::String(startBadge
+                                         + juce::jmax(1, divBadge)) + "b"
+                    : juce::String(divBadge) + "b";
+                g.drawText(txt, r.reduced(8).removeFromTop(14),
                            juce::Justification::topRight);
             }
         }
