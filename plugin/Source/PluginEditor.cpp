@@ -549,7 +549,10 @@ void JamnKitEditor::paint(juce::Graphics& g)
                    juce::Justification::bottomLeft);
         g.setColour(textSecondary);
         g.setFont(juce::Font(juce::FontOptions(11.0f)));
-        g.drawText("jamn.app", words, juce::Justification::topLeft);
+        // Build stamp: instantly answers "is Live running the fresh
+        // binary?" (hosts cache plugin dylibs for the whole session).
+        g.drawText(juce::String("jamn.app  ·  b") + __TIME__, words,
+                   juce::Justification::topLeft);
 
         g.setFont(juce::Font(juce::FontOptions(11.0f)));
         g.drawText(pack != nullptr ? pack->songName : juce::String("no pack"),
