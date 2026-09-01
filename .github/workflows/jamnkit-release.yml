@@ -1,0 +1,128 @@
+# jamn Kit plugin — release pipeline.
+#
+# Triggered by pushing a tag matching `jamnkit-v*`. Builds the AU +
+# VST3 + Standalone via plugin/scripts/package.sh (which picks up the
+# Developer ID identities from the keychain automatically), smoke-
+# validates the AU with auval, notarizes + staples the .pkg, and
+# uploads it to the GitHub Release.
+#
+# Secrets required (shared with connect-release.yml):
+#   APPLE_TEAM_ID                 — 10-char team identifier
+#   APPLE_NOTARY_API_KEY_ID       — App Store Connect key ID
+#   APPLE_NOTARY_API_ISSUER_ID    — issuer UUID
+#   APPLE_NOTARY_API_KEY_P8       — base64-encoded .p8 private key
+#   APPLE_CERT_P12                — base64 of the Developer ID Application .p12
+#   APPLE_CERT_P12_PASSWORD       — passphrase for the .p12
+# Optional (pkg outer signature; without it the pkg is unsigned but
+# the stapled notarization still passes Gatekeeper):
+#   APPLE_INSTALLER_CERT_P12          — base64 Developer ID Installer .p12
+#   APPLE_INSTALLER_CERT_P12_PASSWORD — its passphrase
+#
+# LICENSING GATE — do NOT tag a public release until:
+#   1. JUCE license tier bought (repo builds against GPLv3 JUCE today;
+#      JUCE_DISPLAY_SPLASH_SCREEN=1 in plugin/CMakeLists.txt).
+#   2. Ableton Link agreement signed IF the plugin ever links Link
+#      (jam-desktop vendors it; the plugin currently does not).
+# This workflow is infrastructure, not permission.
+
+name: jamnkit-release
+
+on:
+  push:
+    tags:
+      - 'jamnkit-v*'
+
+permissions:
+  contents: write  # Release upload
+
+jobs:
+  release:
+    runs-on: macos-14
+    timeout-minutes: 90  # first run compiles JUCE from scratch
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Cache JUCE + build tree
+        uses: actions/cache@v4
+        with:
+          path: plugin/build
+          key: jamnkit-build-${{ runner.os }}-${{ hashFiles('plugin/CMakeLists.txt') }}
+
+      - name: Import Developer ID certificates
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_P12_PASSWORD: ${{ secrets.APPLE_CERT_P12_PASSWORD }}
+          APPLE_INSTALLER_CERT_P12: ${{ secrets.APPLE_INSTALLER_CERT_P12 }}
+          APPLE_INSTALLER_CERT_P12_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERT_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          security create-keychain -p "tmp-pass" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "tmp-pass" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+
+          echo "$APPLE_CERT_P12" | base64 --decode > /tmp/dev_id.p12
+          security import /tmp/dev_id.p12 -k build.keychain \
+            -P "$APPLE_CERT_P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm /tmp/dev_id.p12
+
+          # Installer cert is optional: package.sh falls back to an
+          # unsigned pkg when no "Developer ID Installer" identity
+          # exists — notarization + staple still gets it past
+          # Gatekeeper.
+          if [[ -n "${APPLE_INSTALLER_CERT_P12:-}" ]]; then
+            echo "$APPLE_INSTALLER_CERT_P12" | base64 --decode > /tmp/inst_id.p12
+            security import /tmp/inst_id.p12 -k build.keychain \
+              -P "$APPLE_INSTALLER_CERT_P12_PASSWORD" \
+              -T /usr/bin/productbuild -T /usr/bin/productsign \
+              -T /usr/bin/security
+            rm /tmp/inst_id.p12
+          fi
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "tmp-pass" build.keychain
+
+      - name: Build + sign + package
+        run: |
+          set -euo pipefail
+          ./plugin/scripts/package.sh
+          PKG="$(ls plugin/dist/jamnKit-*.pkg | head -1)"
+          echo "PKG_PATH=$PKG" >> "$GITHUB_ENV"
+
+      - name: auval smoke test
+        run: |
+          set -euo pipefail
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "plugin/build/JamnKit_artefacts/Release/AU/jamn Kit.component" \
+            ~/Library/Audio/Plug-Ins/Components/
+          killall -q AudioComponentRegistrar || true
+          auval -v aumu Jkit Jamn
+
+      - name: Notarize + staple
+        env:
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          NOTARY_KEY_P8_B64: ${{ secrets.APPLE_NOTARY_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          echo "$NOTARY_KEY_P8_B64" | base64 --decode > /tmp/notary.p8
+          xcrun notarytool submit "$PKG_PATH" \
+            --key /tmp/notary.p8 \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$PKG_PATH"
+          rm /tmp/notary.p8
+
+      - name: Upload pkg to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: plugin/dist/jamnKit-*.pkg
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
