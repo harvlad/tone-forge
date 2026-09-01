@@ -438,7 +438,22 @@ struct SamplePadGrid4x4: View {
                         // Stage: bigger type, readable at arm's length.
                         .font(stage ? .subheadline.weight(.bold)
                                     : .caption.weight(.semibold))
-                        .foregroundStyle(TFTheme.textPrimary)
+                        // Contrast fix: bright tints (amber/teal) flip
+                        // the label to dark ink; darker tints keep the
+                        // light label with a subtle scrim shadow so it
+                        // stays readable mid-flash.
+                        .foregroundStyle(
+                            Self.labelWantsDarkText(
+                                hex: visual.colorHint, stage: stage,
+                                bright: visual.isBright || ringing)
+                                ? Color.black.opacity(0.85)
+                                : TFTheme.textPrimary)
+                        .shadow(
+                            color: Self.labelWantsDarkText(
+                                hex: visual.colorHint, stage: stage,
+                                bright: visual.isBright || ringing)
+                                ? .clear : .black.opacity(0.45),
+                            radius: 1.5, y: 1)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                     Spacer(minLength: 0)
@@ -560,6 +575,23 @@ struct SamplePadGrid4x4: View {
             green: Double((hex >> 8) & 0xFF) / 255,
             blue: Double(hex & 0xFF) / 255
         )
+    }
+
+    /// Perceived luminance (0–255) of the pad tint AS RENDERED — the
+    /// tint sits at partial opacity over the near-black canvas, so the
+    /// effective brightness is luminance × opacity. White labels on
+    /// bright ambers/teals fell below readable contrast; those tiles
+    /// flip to dark text.
+    static func labelWantsDarkText(
+        hex: UInt32, stage: Bool, bright: Bool
+    ) -> Bool {
+        let r = Double((hex >> 16) & 0xFF)
+        let g = Double((hex >> 8) & 0xFF)
+        let b = Double(hex & 0xFF)
+        let luminance = 0.299 * r + 0.587 * g + 0.114 * b
+        let opacity = stage ? (bright ? 0.75 : 0.50)
+                            : (bright ? 0.50 : 0.30)
+        return luminance * opacity > 110
     }
 
     /// Fire the pad through the bus (down + short hold + up) so sheet

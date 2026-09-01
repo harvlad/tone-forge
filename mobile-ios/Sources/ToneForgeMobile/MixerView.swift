@@ -73,6 +73,11 @@ struct MixerBody: View {
     private let initialSegment: MixerSegment
     /// D-022 Phase 8: segment selection.
     @State private var segment: MixerSegment
+    /// Your-Layer M/S (view-local; restore values for untoggle).
+    @State private var layerMuted = false
+    @State private var layerSoloed = false
+    @State private var preMuteLayerDb: Double = 0
+    @State private var preSoloSongGain: Float = 1
 
     init(
         stemPlayer: StemPlayer,
@@ -251,6 +256,12 @@ struct MixerBody: View {
     /// Instrument-panel pad synth output fold into this fader; pulling
     /// to -60 dB effectively mutes the layer while leaving the stems
     /// untouched.
+    ///
+    /// M/S parity with the stem rows (ergonomics audit): M drops the
+    /// layer fader to −60 dB and restores the prior level on untoggle;
+    /// S ducks the song group to silence (your layer alone) and
+    /// restores its prior gain. Both are view-local conveniences over
+    /// the same faders — no new engine state.
     private var yourLayerRow: some View {
         channelRow(
             icon: "person.wave.2.fill",
@@ -259,14 +270,36 @@ struct MixerBody: View {
             value: $sampleSettings.layerFaderDb,
             range: -60...6,
             readout: String(format: "%+.0f dB", sampleSettings.layerFaderDb),
-            dimmed: false
+            dimmed: layerMuted
         ) {
-            // No S/M for the layer — hidden placeholders keep the
-            // slider column aligned with the stem rows.
-            soloMuteButton(label: "S", active: false, activeTint: .yellow,
-                           accessibility: "") {}.hidden()
-            soloMuteButton(label: "M", active: false, activeTint: .red,
-                           accessibility: "") {}.hidden()
+            soloMuteButton(
+                label: "S",
+                active: layerSoloed,
+                activeTint: .yellow,
+                accessibility: "Solo your layer"
+            ) {
+                if layerSoloed {
+                    stemPlayer.setSongGain(preSoloSongGain)
+                } else {
+                    preSoloSongGain = stemPlayer.songGain
+                    stemPlayer.setSongGain(0)
+                }
+                layerSoloed.toggle()
+            }
+            soloMuteButton(
+                label: "M",
+                active: layerMuted,
+                activeTint: .red,
+                accessibility: "Mute your layer"
+            ) {
+                if layerMuted {
+                    sampleSettings.layerFaderDb = preMuteLayerDb
+                } else {
+                    preMuteLayerDb = sampleSettings.layerFaderDb
+                    sampleSettings.layerFaderDb = -60
+                }
+                layerMuted.toggle()
+            }
         }
     }
 
@@ -312,8 +345,14 @@ struct MixerBody: View {
         dimmed: Bool,
         @ViewBuilder buttons: () -> Buttons
     ) -> some View {
+        // S/M sit BETWEEN the icon and the slider (fat-finger fix): at
+        // max volume the thumb used to park directly under the S/M
+        // column on the right — a fast level ride could mute the stem.
+        // The right edge now holds only the passive dB readout.
         HStack(spacing: 12) {
             iconCircle(icon: icon, tint: dimmed ? TFTheme.textSecondary : tint)
+
+            VStack(spacing: 4) { buttons() }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
@@ -328,14 +367,10 @@ struct MixerBody: View {
                     .accessibilityLabel("\(name) level")
             }
 
-            VStack(alignment: .trailing, spacing: 2) {
-                HStack(spacing: 6) { buttons() }
-
-                Text(readout)
-                    .font(TFTheme.readout)
-                    .foregroundStyle(dimmed ? TFTheme.textSecondary : TFTheme.textPrimary)
-            }
-            .frame(width: 74, alignment: .trailing)
+            Text(readout)
+                .font(TFTheme.readout)
+                .foregroundStyle(dimmed ? TFTheme.textSecondary : TFTheme.textPrimary)
+                .frame(width: 58, alignment: .trailing)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -363,7 +398,7 @@ struct MixerBody: View {
             Text(label)
                 .font(TFTheme.chipFont)
                 .foregroundStyle(active ? Color.black : TFTheme.textSecondary)
-                .frame(width: 30, height: 26)
+                .frame(width: 34, height: 22)
                 .background(
                     active ? activeTint : TFTheme.chipFill,
                     in: RoundedRectangle(cornerRadius: 7)

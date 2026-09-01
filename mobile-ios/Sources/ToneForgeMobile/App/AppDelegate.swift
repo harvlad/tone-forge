@@ -14,6 +14,20 @@ import UIKit
 
 public final class AppDelegate: NSObject, UIApplicationDelegate {
 
+    /// Orientation gate: the app is portrait-only EXCEPT the immersive
+    /// Perform takeover, which may rotate to landscape. AppState flips
+    /// this when `isPerforming` changes; the rest of the app keeps the
+    /// "no scrolling, fits the height" portrait contract.
+    public static var allowLandscape = false
+
+    public func application(
+        _ application: UIApplication,
+        supportedInterfaceOrientationsFor window: UIWindow?
+    ) -> UIInterfaceOrientationMask {
+        Self.allowLandscape ? [.portrait, .landscapeLeft, .landscapeRight]
+                            : .portrait
+    }
+
     public func application(
         _ application: UIApplication,
         handleEventsForBackgroundURLSession identifier: String,

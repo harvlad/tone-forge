@@ -29,28 +29,24 @@ struct PerformView: View {
     @State private var perfFX = PerfFXState.idle
 
     var body: some View {
-        VStack(spacing: TFTheme.Spacing.md) {
-            // Jam→Perform pipeline breadcrumb (shared with Jam): current
-            // stage lit, kit name cleaned, chips hop tabs.
-            KitFlowPill(active: .perform)
-
-            sectionStrip
-
-            if let latch = latchBinding {
-                ChordContext(
-                    current: controller.currentChordSymbol,
-                    next: controller.suggestedChords.map(\.symbol),
-                    onSelectNext: { controller.trigger(symbol: $0) },
-                    latchOn: latch.on,
-                    onToggleLatch: latch.toggle
-                )
+        // Landscape (immersive only — the orientation gate keys on
+        // isPerforming) goes side-by-side: pads maximized left, the
+        // context + FX rail right. Portrait stays stacked.
+        GeometryReader { geo in
+            if geo.size.width > geo.size.height {
+                landscapeLayout
             } else {
-                ChordContext(
-                    current: controller.currentChordSymbol,
-                    next: controller.suggestedChords.map(\.symbol),
-                    onSelectNext: { controller.trigger(symbol: $0) }
-                )
+                portraitLayout
             }
+        }
+        .onAppear { Haptics.prepare() }
+    }
+
+    private var portraitLayout: some View {
+        VStack(spacing: TFTheme.Spacing.md) {
+            headerRow
+            sectionStrip
+            chordContext
 
             playSurface
                 .padding(.horizontal, TFTheme.Spacing.md)
@@ -59,7 +55,140 @@ struct PerformView: View {
             fxBar
         }
         .frame(maxWidth: .infinity)
-        .onAppear { Haptics.prepare() }
+    }
+
+    private var landscapeLayout: some View {
+        HStack(alignment: .top, spacing: TFTheme.Spacing.md) {
+            // Pads own the left — biggest playable surface. The grids
+            // size to the height they're given, so no aspect break.
+            playSurface
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            VStack(spacing: TFTheme.Spacing.sm) {
+                headerRow
+                sectionStrip
+                chordContext
+                Spacer(minLength: 0)
+                fxColumn
+            }
+            .frame(width: 300)
+        }
+        .padding(.horizontal, TFTheme.Spacing.md)
+    }
+
+    // MARK: - Header (breadcrumb behind a menu + immersive toggle)
+
+    /// The breadcrumb pill was three chips of standing information —
+    /// on stage it's dead vertical space. It collapses into a menu;
+    /// the reclaimed row carries the immersive enter/exit control.
+    private var headerRow: some View {
+        HStack(spacing: TFTheme.Spacing.sm) {
+            Menu {
+                Button {
+                    appState.isPerforming = false
+                    appState.selectedTab = .jam
+                } label: {
+                    Label("Edit kit in Build", systemImage: "wrench.adjustable.fill")
+                }
+                if let kitName {
+                    Section("Kit") { Text(kitName) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("Perform")
+                        .font(.caption2.weight(.semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .foregroundStyle(TFTheme.textPrimary)
+                .background(TFTheme.accent.opacity(0.35), in: Capsule())
+                .overlay(Capsule().stroke(TFTheme.accent, lineWidth: 1))
+            }
+            .accessibilityLabel("Perform menu: edit kit in Build")
+
+            if let kitName {
+                Text(kitName)
+                    .font(.caption2)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if appState.isPerforming {
+                // High-contrast exit — restores the tab bar.
+                Button {
+                    setImmersive(false)
+                } label: {
+                    Text("Done")
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(Color.black)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(TFTheme.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Exit immersive performance")
+            } else {
+                Button {
+                    setImmersive(true)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName:
+                            "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Go Live")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .foregroundStyle(TFTheme.textPrimary)
+                    .background(TFTheme.chipFill, in: Capsule())
+                    .overlay(Capsule().stroke(TFTheme.stroke, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(
+                    "Go live: hide the tab bar for performance")
+            }
+        }
+        .padding(.horizontal, TFTheme.Spacing.md)
+    }
+
+    private var kitName: String? {
+        guard let pack = appState.activeSamplePack?.pack else { return nil }
+        return pack.packId.hasPrefix("auto-") ? "Auto Kit" : pack.name
+    }
+
+    private func setImmersive(_ on: Bool) {
+        Haptics.toggle()
+        withAnimation(.easeInOut(duration: 0.25)) {
+            appState.isPerforming = on
+        }
+    }
+
+    // MARK: - Chord context (shared by both layouts)
+
+    @ViewBuilder
+    private var chordContext: some View {
+        if let latch = latchBinding {
+            ChordContext(
+                current: controller.currentChordSymbol,
+                next: controller.suggestedChords.map(\.symbol),
+                onSelectNext: { controller.trigger(symbol: $0) },
+                latchOn: latch.on,
+                onToggleLatch: latch.toggle
+            )
+        } else {
+            ChordContext(
+                current: controller.currentChordSymbol,
+                next: controller.suggestedChords.map(\.symbol),
+                onSelectNext: { controller.trigger(symbol: $0) }
+            )
+        }
     }
 
     // MARK: - Sections (prominent, the live scene navigator)
@@ -139,38 +268,60 @@ struct PerformView: View {
         }
     }
 
-    // MARK: - Live FX bar (Filter · Gater · Throw · Stop)
+    // MARK: - Live FX (Filter · Gater · Throw · Brake)
 
+    /// Portrait: one row along the bottom, XY pad on the left.
     private var fxBar: some View {
         HStack(spacing: TFTheme.Spacing.sm) {
-            FilterXYPad(
-                engaged: perfFX.filter,
-                x: perfFX.filterX,
-                y: perfFX.filterY,
-                onChange: { x, y in
-                    perfFX.filter = true
-                    perfFX.filterX = x
-                    perfFX.filterY = y
-                    applyPerfFX()
-                },
-                onEnd: {
-                    perfFX.filter = false
-                    applyPerfFX()
-                }
-            )
-            .frame(width: 96)
-
-            fxHoldPad("Gater", system: "square.grid.4x3.fill",
-                      engaged: perfFX.gater) { perfFX.gater = $0 }
-            fxHoldPad("Throw", system: "arrow.uturn.right",
-                      engaged: perfFX.delayThrow) { perfFX.delayThrow = $0 }
-            // "Brake" (DJ stop effect) — "Stop" collided with the transport
-            // stop one row below; this momentarily halts playback rate.
-            fxHoldPad("Brake", system: "stop.fill",
-                      engaged: perfFX.stopper) { perfFX.stopper = $0 }
+            filterPad.frame(width: 96)
+            fxHoldPads
         }
         .frame(height: 68)
         .padding(.horizontal, TFTheme.Spacing.md)
+    }
+
+    /// Landscape rail: a big square XY pad over a row of hold pads —
+    /// FX maximized next to the maximized grid.
+    private var fxColumn: some View {
+        VStack(spacing: TFTheme.Spacing.sm) {
+            filterPad
+                .aspectRatio(1.4, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+            HStack(spacing: TFTheme.Spacing.sm) {
+                fxHoldPads
+            }
+            .frame(height: 60)
+        }
+    }
+
+    private var filterPad: some View {
+        FilterXYPad(
+            engaged: perfFX.filter,
+            x: perfFX.filterX,
+            y: perfFX.filterY,
+            onChange: { x, y in
+                perfFX.filter = true
+                perfFX.filterX = x
+                perfFX.filterY = y
+                applyPerfFX()
+            },
+            onEnd: {
+                perfFX.filter = false
+                applyPerfFX()
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var fxHoldPads: some View {
+        fxHoldPad("Gater", system: "square.grid.4x3.fill",
+                  engaged: perfFX.gater) { perfFX.gater = $0 }
+        fxHoldPad("Throw", system: "arrow.uturn.right",
+                  engaged: perfFX.delayThrow) { perfFX.delayThrow = $0 }
+        // "Brake" (DJ stop effect) — "Stop" collided with the transport
+        // stop one row below; this momentarily halts playback rate.
+        fxHoldPad("Brake", system: "stop.fill",
+                  engaged: perfFX.stopper) { perfFX.stopper = $0 }
     }
 
     /// A momentary FX pad: engaged while held, released on lift.

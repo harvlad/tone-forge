@@ -257,6 +257,25 @@ public final class AppState: ObservableObject {
     /// selected.
     public private(set) var lastPerformanceTab: AppTab = .perform
 
+    /// Immersive Perform takeover: the tab bar slides away so fast
+    /// play near the bottom edge can't fat-finger a tab switch, the
+    /// transport anchors to the bottom safe area, and landscape
+    /// unlocks. Exit restores the portrait-only contract.
+    @Published public var isPerforming = false {
+        didSet {
+            #if canImport(UIKit)
+            AppDelegate.allowLandscape = isPerforming
+            if !isPerforming {
+                // Rotate back: the rest of the app is portrait-only.
+                let scene = UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }.first
+                scene?.requestGeometryUpdate(
+                    .iOS(interfaceOrientations: .portrait))
+            }
+            #endif
+        }
+    }
+
     /// Jump to a performance tab (Library song activation). Keeps the
     /// current tab when it already hosts a playing surface.
     public func showPerformanceTab() {

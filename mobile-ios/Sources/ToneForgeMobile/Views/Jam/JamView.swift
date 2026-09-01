@@ -983,24 +983,56 @@ struct FilterXYPad: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
+            // Puck rests center until touched — an empty box read as
+            // dead UI; the grid + crosshairs + glowing puck say "drag
+            // here" before the first touch.
+            let px = (engaged ? x : 0.5) * w
+            let py = (1 - (engaged ? y : 0.5)) * h
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(engaged ? TFTheme.faderTint.opacity(0.35) : TFTheme.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(engaged ? TFTheme.faderTint : TFTheme.stroke, lineWidth: 1)
-                    )
-                if engaged {
-                    Circle()
-                        .fill(TFTheme.faderTint)
-                        .frame(width: 12, height: 12)
-                        .position(x: x * w, y: (1 - y) * h)
+
+                // Quarter grid — the surface reads as a control field.
+                Path { p in
+                    for f in [0.25, 0.5, 0.75] {
+                        p.move(to: CGPoint(x: f * w, y: 0))
+                        p.addLine(to: CGPoint(x: f * w, y: h))
+                        p.move(to: CGPoint(x: 0, y: f * h))
+                        p.addLine(to: CGPoint(x: w, y: f * h))
+                    }
                 }
+                .stroke(TFTheme.stroke.opacity(engaged ? 0.5 : 0.35),
+                        lineWidth: 0.5)
+
+                // Crosshairs through the puck.
+                Path { p in
+                    p.move(to: CGPoint(x: px, y: 0))
+                    p.addLine(to: CGPoint(x: px, y: h))
+                    p.move(to: CGPoint(x: 0, y: py))
+                    p.addLine(to: CGPoint(x: w, y: py))
+                }
+                .stroke(TFTheme.faderTint.opacity(engaged ? 0.7 : 0.3),
+                        lineWidth: 1)
+
+                // Glowing puck.
+                Circle()
+                    .fill(TFTheme.faderTint.opacity(engaged ? 1.0 : 0.55))
+                    .frame(width: engaged ? 14 : 12,
+                           height: engaged ? 14 : 12)
+                    .shadow(color: TFTheme.faderTint.opacity(0.8),
+                            radius: engaged ? 8 : 4)
+                    .position(x: px, y: py)
+
                 Text("Filter")
                     .font(.caption2)
                     .foregroundStyle(engaged ? TFTheme.textPrimary : TFTheme.textSecondary)
                     .padding(4)
+
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(engaged ? TFTheme.faderTint : TFTheme.stroke,
+                            lineWidth: 1)
             }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
             .contentShape(RoundedRectangle(cornerRadius: 10))
             .gesture(
                 DragGesture(minimumDistance: 0)
