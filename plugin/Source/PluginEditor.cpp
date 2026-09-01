@@ -1,4 +1,9 @@
 // PluginEditor.cpp — see PluginEditor.h.
+//
+// Valhalla-grade skin, jamn palette: indigo section panels on
+// near-black, black knobs with a white pointer + value readouts, the
+// JamN logo (gradient waveform bars) drawn vectorially, pad waveforms
+// with live playheads, and a MODE/PRESET-style footer strip.
 
 #include "PluginEditor.h"
 
@@ -7,11 +12,15 @@
 namespace theme
 {
 const juce::Colour background { 0xff0b0b0f };
+const juce::Colour panel { 0xff262157 };        // indigo section block
+const juce::Colour panelDeep { 0xff1b1740 };
+const juce::Colour panelStroke { 0xff4a44a8 };
 const juce::Colour surface { 0xff17171d };
 const juce::Colour stroke { 0xff2a2a33 };
-const juce::Colour textPrimary { 0xffe8e8ee };
-const juce::Colour textSecondary { 0xff8b8b97 };
+const juce::Colour textPrimary { 0xffeef0ff };
+const juce::Colour textSecondary { 0xff9aa0c0 };
 const juce::Colour accent { 0xff8b5cf6 };
+const juce::Colour accentBlue { 0xff3b82f6 };
 const juce::Colour armedAmber { 0xfff59e0b };
 
 const juce::Colour previewRows[4] = {
@@ -19,26 +28,109 @@ const juce::Colour previewRows[4] = {
     juce::Colour(0xfff59e0b), juce::Colour(0xfff97316),
 };
 
-// Layout metrics (logical; editor is resizable).
-constexpr int margin = 20;
-constexpr int headerH = 56;
-constexpr int clockH = 30;
-constexpr int knobRowH = 74;
-constexpr int footerH = 28;
+constexpr int margin = 18;
+constexpr int headerH = 64;
+constexpr int clockH = 26;
+constexpr int knobPanelH = 96;
+constexpr int footerH = 30;
 constexpr int gapS = 8, gapM = 12;
 }  // namespace theme
+
+// MARK: - Look & feel (black Valhalla-style knobs)
+
+namespace
+{
+struct JamnLookAndFeel : juce::LookAndFeel_V4
+{
+    JamnLookAndFeel()
+    {
+        setColour(juce::PopupMenu::backgroundColourId, theme::panelDeep);
+        setColour(juce::PopupMenu::textColourId, theme::textPrimary);
+        setColour(juce::PopupMenu::highlightedBackgroundColourId,
+                  theme::accent.withAlpha(0.4f));
+    }
+
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h,
+                          float pos, float startAngle, float endAngle,
+                          juce::Slider&) override
+    {
+        auto bounds = juce::Rectangle<float>((float) x, (float) y,
+                                             (float) w, (float) h)
+                          .reduced(3.0f);
+        const float size = juce::jmin(bounds.getWidth(), bounds.getHeight());
+        auto knob = bounds.withSizeKeepingCentre(size, size);
+
+        // Value arc behind the knob.
+        const float angle = startAngle + pos * (endAngle - startAngle);
+        juce::Path arc;
+        arc.addCentredArc(knob.getCentreX(), knob.getCentreY(),
+                          size * 0.5f, size * 0.5f, 0.0f,
+                          startAngle, angle, true);
+        g.setColour(theme::accent.withAlpha(0.9f));
+        g.strokePath(arc, juce::PathStrokeType(2.4f,
+                                               juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+
+        // Black body.
+        auto body = knob.reduced(size * 0.10f);
+        g.setColour(juce::Colour(0xff0a0a10));
+        g.fillEllipse(body);
+        g.setColour(juce::Colours::white.withAlpha(0.16f));
+        g.drawEllipse(body, 1.0f);
+
+        // White pointer.
+        const float r = body.getWidth() * 0.5f;
+        juce::Path pointer;
+        pointer.addRoundedRectangle(-1.4f, -r + 3.0f, 2.8f, r * 0.55f, 1.4f);
+        g.setColour(juce::Colours::white);
+        g.fillPath(pointer, juce::AffineTransform::rotation(angle)
+                                .translated(body.getCentreX(),
+                                            body.getCentreY()));
+    }
+};
+
+JamnLookAndFeel& lookAndFeel()
+{
+    static JamnLookAndFeel lnf;
+    return lnf;
+}
+
+/// The JamN mark: gradient waveform bars, drawn vectorially so it is
+/// crisp at any size. `area` is the square-ish glyph region.
+void drawJamnBars(juce::Graphics& g, juce::Rectangle<float> area)
+{
+    static const float heights[] = { 0.38f, 0.66f, 1.0f, 0.80f,
+                                     0.55f, 0.72f, 0.40f };
+    constexpr int n = (int) std::size(heights);
+    const float bw = area.getWidth() / (n * 1.6f);
+    const float step = area.getWidth() / (float) n;
+    juce::ColourGradient grad(theme::accent, area.getX(), 0,
+                              theme::accentBlue, area.getRight(), 0, false);
+    for (int i = 0; i < n; ++i)
+    {
+        const float h = heights[i] * area.getHeight();
+        juce::Rectangle<float> bar(
+            area.getX() + step * (float) i + (step - bw) * 0.5f,
+            area.getCentreY() - h * 0.5f, bw, h);
+        g.setColour(grad.getColourAtPosition(
+            (bar.getCentreX() - area.getX()) / area.getWidth()));
+        g.fillRoundedRectangle(bar, bw * 0.5f);
+    }
+}
+}  // namespace
 
 static void themeKnob(juce::Slider& s, juce::Label& l, const juce::String& name)
 {
     s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    s.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-    s.setColour(juce::Slider::rotarySliderFillColourId, theme::accent);
-    s.setColour(juce::Slider::rotarySliderOutlineColourId, theme::stroke);
-    s.setColour(juce::Slider::thumbColourId, theme::textPrimary);
+    s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 64, 14);
+    s.setColour(juce::Slider::textBoxTextColourId, theme::textSecondary);
+    s.setColour(juce::Slider::textBoxOutlineColourId,
+                juce::Colours::transparentBlack);
+    s.setLookAndFeel(&lookAndFeel());
     l.setText(name, juce::dontSendNotification);
     l.setJustificationType(juce::Justification::centred);
-    l.setColour(juce::Label::textColourId, theme::textSecondary);
-    l.setFont(juce::Font(juce::FontOptions(10.0f)));
+    l.setColour(juce::Label::textColourId, theme::textPrimary);
+    l.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
 }
 
 JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
@@ -47,13 +139,13 @@ JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
     for (auto* b : { &openButton, &browseButton })
     {
         addAndMakeVisible(*b);
-        b->setColour(juce::TextButton::buttonColourId, theme::surface);
+        b->setColour(juce::TextButton::buttonColourId, theme::panelDeep);
         b->setColour(juce::TextButton::textColourOffId, theme::textPrimary);
     }
     openButton.onClick = [this] { openPackChooser(); };
     browseButton.onClick = [this] { browseBackend(); };
     browseButton.setColour(juce::TextButton::buttonColourId,
-                           theme::accent.withAlpha(0.35f));
+                           theme::accent.withAlpha(0.45f));
 
     addAndMakeVisible(urlEditor);
     urlEditor.setColour(juce::TextEditor::backgroundColourId, theme::surface);
@@ -79,13 +171,15 @@ JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
     attGain = std::make_unique<Attachment>(processor.apvts, "gain", knobGain);
 
     setResizable(true, true);
-    setResizeLimits(440, 520, 1100, 1400);
-    setSize(520, 680);
+    setResizeLimits(440, 560, 1100, 1400);
+    setSize(520, 700);
     startTimerHz(30);
 }
 
 JamnKitEditor::~JamnKitEditor()
 {
+    for (auto* s : { &knobFilter, &knobSpace, &knobDrive, &knobGain })
+        s->setLookAndFeel(nullptr);
     if (worker != nullptr && worker->joinable())
         worker->join();
 }
@@ -95,24 +189,24 @@ void JamnKitEditor::resized()
     using namespace theme;
     auto area = getLocalBounds().reduced(margin);
     auto header = area.removeFromTop(headerH);
-    auto buttons = header.removeFromRight(180).withSizeKeepingCentre(180, 30);
-    browseButton.setBounds(buttons.removeFromLeft(84));
+    auto buttons = header.removeFromRight(170).withSizeKeepingCentre(170, 28);
+    browseButton.setBounds(buttons.removeFromLeft(80));
     buttons.removeFromLeft(8);
     openButton.setBounds(buttons);
 
     area.removeFromTop(gapS + clockH + gapM);
-    auto knobRow = area.removeFromTop(knobRowH);
+    auto knobPanel = area.removeFromTop(knobPanelH).reduced(6, 8);
     urlEditor.setBounds(getLocalBounds()
                             .removeFromBottom(footerH)
-                            .reduced(margin, 2)
-                            .removeFromLeft(220));
-    const int kw = knobRow.getWidth() / 4;
+                            .reduced(margin, 4)
+                            .removeFromLeft(210));
+    const int kw = knobPanel.getWidth() / 4;
     auto place = [&](juce::Slider& s, juce::Label& l, int i) {
-        auto cell = juce::Rectangle<int>(knobRow.getX() + i * kw,
-                                         knobRow.getY(), kw, knobRowH);
-        l.setBounds(cell.removeFromBottom(14));
-        s.setBounds(cell.withSizeKeepingCentre(
-            juce::jmin(cell.getWidth(), 56), juce::jmin(cell.getHeight(), 56)));
+        auto cell = juce::Rectangle<int>(knobPanel.getX() + i * kw,
+                                         knobPanel.getY(), kw,
+                                         knobPanel.getHeight());
+        l.setBounds(cell.removeFromTop(13));
+        s.setBounds(cell);
     };
     place(knobFilter, labelFilter, 0);
     place(knobSpace, labelSpace, 1);
@@ -126,7 +220,7 @@ void JamnKitEditor::openPackChooser()
 {
     statusLine.clear();
     chooser = std::make_unique<juce::FileChooser>(
-        "Open a jamn Kit pack (folder or zip)",
+        "Open a JamN Kit pack (folder or zip)",
         juce::File::getSpecialLocation(juce::File::userHomeDirectory),
         "*.zip");
     const auto flags = juce::FileBrowserComponent::openMode
@@ -147,6 +241,7 @@ void JamnKitEditor::browseBackend()
         return;
     statusLine = "fetching songs...";
     busy = true;
+    busyStartMs = juce::Time::currentTimeMillis();
     const juce::String base = processor.backendUrl();
     auto self = juce::Component::SafePointer<JamnKitEditor>(this);
 
@@ -155,13 +250,15 @@ void JamnKitEditor::browseBackend()
     worker = std::make_unique<std::thread>([self, base] {
         juce::URL url(base + "/api/history?limit=25");
         juce::String body;
+        int statusCode = 0;
         if (auto stream = url.createInputStream(
                 juce::URL::InputStreamOptions(
                     juce::URL::ParameterHandling::inAddress)
-                    .withConnectionTimeoutMs(8000)))
+                    .withConnectionTimeoutMs(8000)
+                    .withStatusCode(&statusCode)))
             body = stream->readEntireStreamAsString();
 
-        juce::MessageManager::callAsync([self, body] {
+        juce::MessageManager::callAsync([self, body, statusCode, base] {
             if (self == nullptr)
                 return;
             self->busy = false;
@@ -169,7 +266,17 @@ void JamnKitEditor::browseBackend()
             auto* history = parsed.getProperty("history", {}).getArray();
             if (history == nullptr || history->isEmpty())
             {
-                self->statusLine = "no songs (check backend URL)";
+                // Distinguish "server down" from "server empty" — the
+                // blended message sent people hunting a URL typo when
+                // the backend was just restarting.
+                if (statusCode == 0)
+                    self->statusLine = "backend unreachable: " + base
+                        + " (is it running?)";
+                else if (statusCode != 200)
+                    self->statusLine = "backend error http "
+                        + juce::String(statusCode);
+                else
+                    self->statusLine = "backend has no analyzed songs yet";
                 self->repaint();
                 return;
             }
@@ -253,23 +360,35 @@ juce::Rectangle<int> JamnKitEditor::gridArea() const
 {
     using namespace theme;
     auto area = getLocalBounds().reduced(margin);
-    area.removeFromTop(headerH + gapS + clockH + gapM + knobRowH + gapM);
-    area.removeFromBottom(footerH);
+    area.removeFromTop(headerH + gapS + clockH + gapM + knobPanelH + gapM);
+    area.removeFromBottom(footerH + gapS);
     return area;
+}
+
+/// Square pad cell geometry, CENTERED in the pads panel so leftover
+/// space splits evenly instead of piling up on the right.
+static void padCellGeometry(juce::Rectangle<int> panel, int& cell,
+                            int& x0, int& y0, int gap = 8)
+{
+    const auto area = panel.reduced(10);
+    cell = juce::jmin((area.getWidth() - 3 * gap) / 4,
+                      (area.getHeight() - 3 * gap) / 4);
+    const int gridW = 4 * cell + 3 * gap;
+    const int gridH = gridW;
+    x0 = area.getX() + (area.getWidth() - gridW) / 2;
+    y0 = area.getY() + (area.getHeight() - gridH) / 2;
 }
 
 int JamnKitEditor::padIndexAt(juce::Point<int> pos) const
 {
-    const auto area = gridArea();
-    const int gap = 10;
-    const int cell = juce::jmin((area.getWidth() - 3 * gap) / 4,
-                                (area.getHeight() - 3 * gap) / 4);
+    int cell = 0, x0 = 0, y0 = 0;
+    const int gap = 8;
+    padCellGeometry(gridArea(), cell, x0, y0, gap);
     for (int row = 0; row < 4; ++row)
         for (int col = 0; col < 4; ++col)
         {
-            juce::Rectangle<int> r(area.getX() + col * (cell + gap),
-                                   area.getY() + row * (cell + gap),
-                                   cell, cell);
+            juce::Rectangle<int> r(x0 + col * (cell + gap),
+                                   y0 + row * (cell + gap), cell, cell);
             if (r.contains(pos))
                 return (3 - row) * 4 + col;
         }
@@ -302,35 +421,56 @@ void JamnKitEditor::paint(juce::Graphics& g)
     auto area = getLocalBounds().reduced(margin);
     const auto pack = processor.currentPack();
 
-    // Header.
+    // Header panel: logo left, song + version right.
     auto header = area.removeFromTop(headerH);
-    g.setColour(textPrimary);
-    g.setFont(juce::Font(juce::FontOptions(34.0f, juce::Font::bold)));
-    g.drawText("jamn", header.removeFromLeft(110),
-               juce::Justification::centredLeft);
-    g.setColour(textSecondary);
-    g.setFont(juce::Font(juce::FontOptions(12.0f)));
-    g.drawText(pack != nullptr ? pack->songName : juce::String("no pack"),
-               header.withTrimmedRight(190),
-               juce::Justification::centredRight);
+    {
+        juce::ColourGradient grad(panel, (float) header.getX(),
+                                  (float) header.getY(), panelDeep,
+                                  (float) header.getX(),
+                                  (float) header.getBottom(), false);
+        g.setGradientFill(grad);
+        g.fillRoundedRectangle(header.toFloat(), 10.0f);
+        g.setColour(panelStroke);
+        g.drawRoundedRectangle(header.toFloat(), 10.0f, 1.0f);
+
+        auto inner = header.reduced(14, 10);
+        auto glyph = inner.removeFromLeft(40).toFloat().reduced(2.0f, 6.0f);
+        drawJamnBars(g, glyph);
+        inner.removeFromLeft(10);
+        auto words = inner.removeFromLeft(120);
+        g.setColour(textPrimary);
+        g.setFont(juce::Font(juce::FontOptions(24.0f, juce::Font::bold)));
+        g.drawText("JamN", words.removeFromTop(26),
+                   juce::Justification::bottomLeft);
+        g.setColour(textSecondary);
+        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.drawText("jamn.app", words, juce::Justification::topLeft);
+
+        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.drawText(pack != nullptr ? pack->songName : juce::String("no pack"),
+                   inner.withTrimmedRight(178),
+                   juce::Justification::centredRight);
+    }
 
     area.removeFromTop(gapS);
 
-    // Host clock row + live bar sweep (LoopCycleStrip, DAW edition).
+    // Clock strip with live bar sweep.
     auto clockRow = area.removeFromTop(clockH);
     const auto c = processor.hostClock();
-    g.setColour(surface);
-    g.fillRoundedRectangle(clockRow.toFloat(), 8.0f);
+    g.setColour(panelDeep);
+    g.fillRoundedRectangle(clockRow.toFloat(), 7.0f);
     if (c.playing)
     {
-        g.setColour(accent.withAlpha(0.25f));
+        g.setColour(accent.withAlpha(0.30f));
         g.fillRoundedRectangle(
             clockRow.toFloat().withWidth(
                 (float) clockRow.getWidth() * (float) c.barPhase),
-            8.0f);
+            7.0f);
     }
-    g.setColour(c.playing ? accent : textSecondary);
-    g.setFont(juce::Font(juce::FontOptions(13.0f)));
+    g.setColour(panelStroke.withAlpha(0.6f));
+    g.drawRoundedRectangle(clockRow.toFloat(), 7.0f, 1.0f);
+    g.setColour(c.playing ? textPrimary : textSecondary);
+    g.setFont(juce::Font(juce::FontOptions(12.0f)));
     juce::String status = c.bpm > 0
         ? juce::String(c.bpm, 1) + " BPM  |  beat "
               + juce::String(c.ppqPosition, 1) + (c.playing ? "  >" : "  ||")
@@ -340,20 +480,41 @@ void JamnKitEditor::paint(juce::Graphics& g)
     g.drawText(status, clockRow.reduced(12, 0),
                juce::Justification::centredLeft);
 
-    // Pad grid.
-    const auto grid = gridArea();
-    const int gap = 10;
-    const int cell = juce::jmin((grid.getWidth() - 3 * gap) / 4,
-                                (grid.getHeight() - 3 * gap) / 4);
+    area.removeFromTop(gapM);
+
+    // Macro panel behind the knobs.
+    auto knobPanel = area.removeFromTop(knobPanelH);
+    g.setColour(panel.withAlpha(0.85f));
+    g.fillRoundedRectangle(knobPanel.toFloat(), 10.0f);
+    g.setColour(panelStroke);
+    g.drawRoundedRectangle(knobPanel.toFloat(), 10.0f, 1.0f);
+    for (int i = 1; i < 4; ++i)
+    {
+        const float x = (float) knobPanel.getX()
+            + (float) knobPanel.getWidth() * (float) i / 4.0f;
+        g.setColour(panelStroke.withAlpha(0.35f));
+        g.drawLine(x, (float) knobPanel.getY() + 10.0f, x,
+                   (float) knobPanel.getBottom() - 10.0f, 1.0f);
+    }
+
+    // Pads panel.
+    const auto gridPanel = gridArea();
+    g.setColour(panelDeep.withAlpha(0.55f));
+    g.fillRoundedRectangle(gridPanel.toFloat(), 10.0f);
+    g.setColour(panelStroke.withAlpha(0.5f));
+    g.drawRoundedRectangle(gridPanel.toFloat(), 10.0f, 1.0f);
+
+    int cell = 0, x0 = 0, y0 = 0;
+    const int gap = 8;
+    padCellGeometry(gridPanel, cell, x0, y0, gap);
     for (int row = 0; row < 4; ++row)
     {
         for (int col = 0; col < 4; ++col)
         {
             const int padIdx = (3 - row) * 4 + col;
             const int note = JamnKitProcessor::kFirstNote + padIdx;
-            juce::Rectangle<int> r(grid.getX() + col * (cell + gap),
-                                   grid.getY() + row * (cell + gap),
-                                   cell, cell);
+            juce::Rectangle<int> r(x0 + col * (cell + gap),
+                                   y0 + row * (cell + gap), cell, cell);
 
             const KitPadSample* pad =
                 pack != nullptr ? pack->padForNote(note) : nullptr;
@@ -367,10 +528,9 @@ void JamnKitEditor::paint(juce::Graphics& g)
                 base = surface;
 
             g.setColour(
-                base.withAlpha(active ? 0.60f : (armed ? 0.42f : 0.26f)));
-            g.fillRoundedRectangle(r.toFloat(), 10.0f);
+                base.withAlpha(active ? 0.58f : (armed ? 0.40f : 0.24f)));
+            g.fillRoundedRectangle(r.toFloat(), 9.0f);
 
-            // Waveform thumbnail across the lower half.
             if (pad != nullptr && !pad->peaks.empty())
             {
                 auto wf = r.reduced(8).removeFromBottom(r.getHeight() / 2 - 6);
@@ -385,7 +545,6 @@ void JamnKitEditor::paint(juce::Graphics& g)
                                (float) wf.getCentreY() - h * 0.5f,
                                juce::jmax(1.0f, bw - 1.0f), h);
                 }
-                // Loop playhead sweep.
                 const float phase =
                     processor.padPhase(note - JamnKitProcessor::kFirstNote);
                 if (phase >= 0.0f)
@@ -400,12 +559,12 @@ void JamnKitEditor::paint(juce::Graphics& g)
 
             const juce::Colour ring = active
                 ? juce::Colours::white.withAlpha(0.85f)
-                : (armed ? armedAmber : stroke);
+                : (armed ? armedAmber : panelStroke.withAlpha(0.5f));
             g.setColour(ring);
-            g.drawRoundedRectangle(r.toFloat(), 10.0f,
+            g.drawRoundedRectangle(r.toFloat(), 9.0f,
                                    (active || armed) ? 1.6f : 1.0f);
 
-            g.setColour(textPrimary.withAlpha(empty ? 0.35f : 0.9f));
+            g.setColour(textPrimary.withAlpha(empty ? 0.35f : 0.92f));
             g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
             juce::String label = pad != nullptr
                 ? pad->name
@@ -416,11 +575,8 @@ void JamnKitEditor::paint(juce::Graphics& g)
         }
     }
 
-    // Footer status (right of the URL editor).
-    g.setColour(statusLine.isNotEmpty() && !busy
-                    ? juce::Colour(0xffef4444)
-                    : textSecondary);
-    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+    // Footer strip (MODE/PRESET row, jamn edition): URL field lives
+    // left; status text right.
     juce::String footer = statusLine.isNotEmpty()
         ? statusLine
         : (pack != nullptr ? juce::String("tap pads: loops land on the bar")
@@ -431,13 +587,16 @@ void JamnKitEditor::paint(juce::Graphics& g)
             (juce::Time::currentTimeMillis() - busyStartMs) / 1000;
         footer << "  " << juce::String(secs) << "s";
         if (secs > 15)
-            footer << " (first export of a song renders server-side"
-                      " - can take minutes; repeats are instant)";
+            footer << " (first export renders server-side; repeats instant)";
     }
+    g.setColour(statusLine.isNotEmpty() && !busy
+                    ? juce::Colour(0xffef4444)
+                    : textSecondary);
+    g.setFont(juce::Font(juce::FontOptions(11.0f)));
     g.drawText(footer,
                getLocalBounds()
                    .removeFromBottom(footerH)
                    .reduced(margin, 0)
-                   .withTrimmedLeft(230),
+                   .withTrimmedLeft(220),
                juce::Justification::centredRight);
 }

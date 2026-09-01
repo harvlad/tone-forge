@@ -55,6 +55,7 @@ struct LaunchpadPanelView: View {
         VStack(spacing: 12) {
             header
             controls
+            controlsRow2
             // The visible musical clock (UX audit fix #1): sweep of the
             // shared loop cycle + countdown to the next lock boundary, so
             // "why is my pad waiting" reads as timing, not lag.
@@ -77,8 +78,9 @@ struct LaunchpadPanelView: View {
         .padding(20)
         // FIXED size: as a floating overlay the panel must not negotiate
         // with the window's proposal at all — min/ideal/max still let it
-        // stretch in practice. One deterministic footprint.
-        .frame(width: 1220, height: 880)
+        // stretch in practice. One deterministic footprint, sized so the
+        // 8×8 grid FILLS the panel width (controls wrap to two rows).
+        .frame(width: 800, height: 952)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
@@ -502,6 +504,16 @@ struct LaunchpadPanelView: View {
             }
             .help("Quantize")
 
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// Second control row: chop-source pickers + performance actions.
+    /// Split from `controls` so the panel can be GRID-WIDTH — one long
+    /// row forced a 1220pt panel and the square grid floated between
+    /// dead side margins ("grid isn't filling the box").
+    private var controlsRow2: some View {
+        HStack(spacing: 12) {
             HStack(spacing: 5) {
                 pickerCaption("Stem")
                 Picker("Stem", selection: $selectedStem) {

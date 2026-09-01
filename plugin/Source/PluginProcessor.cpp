@@ -14,19 +14,29 @@ juce::AudioProcessorValueTreeState::ParameterLayout
 JamnKitProcessor::parameterLayout()
 {
     using P = juce::AudioParameterFloat;
+    // Display formatting lives on the PARAMETERS — SliderAttachment
+    // overwrites any slider-level textFromValueFunction with these.
+    const auto pct = juce::AudioParameterFloatAttributes()
+        .withStringFromValueFunction([](float v, int) {
+            return juce::String(juce::roundToInt(v * 100.0f)) + " %";
+        });
+    const auto db = juce::AudioParameterFloatAttributes()
+        .withStringFromValueFunction([](float v, int) {
+            return juce::String(v, 1) + " dB";
+        });
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
     layout.add(std::make_unique<P>("filter", "Filter",
                                    juce::NormalisableRange<float>(0.f, 1.f),
-                                   1.0f));
+                                   1.0f, pct));
     layout.add(std::make_unique<P>("space", "Space",
                                    juce::NormalisableRange<float>(0.f, 1.f),
-                                   0.0f));
+                                   0.0f, pct));
     layout.add(std::make_unique<P>("drive", "Drive",
                                    juce::NormalisableRange<float>(0.f, 1.f),
-                                   0.0f));
+                                   0.0f, pct));
     layout.add(std::make_unique<P>(
         "gain", "Gain",
-        juce::NormalisableRange<float>(-24.0f, 6.0f, 0.1f), 0.0f));
+        juce::NormalisableRange<float>(-24.0f, 6.0f, 0.1f), 0.0f, db));
     return layout;
 }
 
