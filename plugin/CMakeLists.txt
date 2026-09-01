@@ -44,6 +44,11 @@ target_sources(JamnKit PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
 
+# Vendored signalsmith-stretch (MIT) + signalsmith-linear (MIT):
+# header-only time-stretch for the per-pad Stretch warp mode.
+target_include_directories(JamnKit PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith)
+
 target_compile_definitions(JamnKit PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
