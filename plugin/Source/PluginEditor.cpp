@@ -372,6 +372,22 @@ JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
         "launch together when the transport starts");
     attArm = std::make_unique<BtnAttachment>(processor.apvts, "arm", armButton);
 
+    // Learn toggle: usage reporting on/off (off = fully silent).
+    addAndMakeVisible(learnButton);
+    learnButton.setClickingTogglesState(true);
+    learnButton.setColour(juce::TextButton::buttonColourId, theme::panelDeep);
+    learnButton.setColour(juce::TextButton::buttonOnColourId,
+                          theme::accent.withAlpha(0.55f));
+    learnButton.setColour(juce::TextButton::textColourOffId,
+                          theme::textSecondary);
+    learnButton.setColour(juce::TextButton::textColourOnId,
+                          juce::Colours::white);
+    learnButton.setTooltip(
+        "Learn From Playing: report pad play/skip usage so future kits "
+        "rank around what you actually play. Off = nothing is sent.");
+    attLearn = std::make_unique<BtnAttachment>(processor.apvts, "learn",
+                                               learnButton);
+
     attFilter = std::make_unique<Attachment>(processor.apvts, "filter", knobFilter);
     attSpace = std::make_unique<Attachment>(processor.apvts, "space", knobSpace);
     attDrive = std::make_unique<Attachment>(processor.apvts, "drive", knobDrive);
@@ -409,6 +425,8 @@ void JamnKitEditor::resized()
     auto clockRow = area.removeFromTop(clockH);
     armButton.setBounds(
         clockRow.removeFromRight(64).reduced(4, 3));
+    learnButton.setBounds(
+        clockRow.removeFromRight(70).reduced(4, 3));
     area.removeFromTop(gapM);
     auto knobPanel = area.removeFromTop(knobPanelH).reduced(6, 8);
     urlEditor.setBounds(getLocalBounds()

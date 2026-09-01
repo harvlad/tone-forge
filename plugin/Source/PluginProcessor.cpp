@@ -41,6 +41,10 @@ JamnKitProcessor::parameterLayout()
     // and all launch together on the first bar when the host starts.
     layout.add(std::make_unique<juce::AudioParameterBool>(
         "arm", "Arm & Wait", true));
+    // Learn: report pad play/skip usage so kits re-rank around what
+    // you actually play. Off = nothing leaves the plugin.
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "learn", "Learn From Playing", true));
     return layout;
 }
 
@@ -60,6 +64,7 @@ JamnKitProcessor::JamnKitProcessor()
     pDrive = apvts.getRawParameterValue("drive");
     pGain = apvts.getRawParameterValue("gain");
     pArm = apvts.getRawParameterValue("arm");
+    pLearn = apvts.getRawParameterValue("learn");
 }
 
 void JamnKitProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -191,6 +196,8 @@ void JamnKitProcessor::pushFeedback(const juce::String& assetId,
 {
     if (assetId.isEmpty())
         return;  // legacy pack — nothing to key on
+    if (pLearn != nullptr && pLearn->load() < 0.5f)
+        return;  // Learn toggled off — report nothing
     const juce::SpinLock::ScopedTryLockType lock(feedbackLock);
     if (!lock.isLocked() || pendingFeedback.size() >= 256)
         return;  // contended/full: drop — feedback is best-effort

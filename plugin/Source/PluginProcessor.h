@@ -207,6 +207,7 @@ private:
     std::atomic<float>* pDrive = nullptr;
     std::atomic<float>* pGain = nullptr;
     std::atomic<float>* pArm = nullptr;
+    std::atomic<float>* pLearn = nullptr;
     bool wasPlaying = false;
 
     /// Feedback loop plumbing. Push is audio-thread (event-rate only,
