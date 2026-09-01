@@ -153,6 +153,7 @@ juce::String JamnKitProcessor::loadPack(const juce::File& source)
             n.store(false);
     }
     editorPack = pack;
+    packTempoBpm.store(pack->tempoBpm > 0 ? pack->tempoBpm : 0.0);
     return {};
 }
 
@@ -341,18 +342,29 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
         }
         const float* srcL = audio.getReadPointer(0);
         const float* srcR = channels > 1 ? audio.getReadPointer(1) : srcL;
-        // Loop REGION, read LIVE each block (drag-trim updates a
-        // looping pad in place): [startBars, startBars+lengthBars] in
-        // host bars, welded to the DAW grid. The untrimmed full buffer
-        // keeps its baked crossfade seam.
+
+        // RATE-MATCH: content is bar-snapped at the SONG tempo; playing
+        // it at hostBpm/songBpm makes N song-bars exactly N host-bars,
+        // so wraps land on the grid with zero drift (varispeed pitch
+        // shift is the deliberate, turntable-style tradeoff).
+        const double songBpm = packTempoBpm.load();
+        double rate = 1.0;
+        if (songBpm > 0.0 && lastBpm > 0.0)
+            rate = juce::jlimit(0.25, 4.0, lastBpm / songBpm);
+        v.step = (v.pad->sourceSampleRate / currentSampleRate) * rate;
+
+        // Loop REGION in SONG bars (content domain — with rate-match a
+        // content bar IS a host bar). Live-read so drag-trim re-wraps
+        // a looping pad in place.
+        const double barFrames = songBpm > 0.0
+            ? (60.0 / songBpm) * 4.0 * v.pad->sourceSampleRate
+            : 0.0;
         double wrapStart = 0.0;
         double wrapAt = (double) (length - 1);
         const int startBars = padStart(slot);
         const int trimBars = padDivision(slot);
-        if (lastBpm > 0.0 && (startBars > 0 || trimBars > 0))
+        if (barFrames > 1.0 && (startBars > 0 || trimBars > 0))
         {
-            const double barFrames = (lastBarPpq * 60.0 / lastBpm)
-                * v.pad->sourceSampleRate;
             if (startBars > 0)
                 wrapStart = juce::jmin((double) (length - 2),
                                        startBars * barFrames);
@@ -372,16 +384,22 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
             v.wrapRamp = 256;
         }
 
+        // Seam: runtime dual-read equal-power crossfade over the last
+        // ~15 ms of the loop — EXACT length is preserved (the old
+        // baked seam trimmed the buffer and made every wrap skip).
+        const double fade = juce::jlimit(
+            0.0, (wrapAt - wrapStart) * 0.25,
+            0.015 * v.pad->sourceSampleRate);
+        const double fadeStart = wrapAt - fade;
+
         for (int i = start; i < numSamples; ++i)
         {
             if (v.position >= wrapAt)
             {
                 if (v.pad->loopable)
-                {
-                    v.position = wrapStart;
-                    if (wrapAt < (double) (length - 1) || wrapStart > 0.0)
-                        v.wrapRamp = 256;  // trim points have no baked seam
-                }
+                    // The crossfade already blended in the head's first
+                    // `fade` frames — resume just past them.
+                    v.position = wrapStart + (v.position - wrapAt) + fade;
                 else
                 {
                     v = {};
@@ -391,6 +409,27 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
             }
             const int idx = (int) v.position;
             const float frac = (float) (v.position - idx);
+            float sampleL = srcL[idx] + frac * (srcL[idx + 1] - srcL[idx]);
+            float sampleR = srcR[idx] + frac * (srcR[idx + 1] - srcR[idx]);
+
+            if (v.pad->loopable && fade > 1.0 && v.position >= fadeStart
+                && v.state != Voice::State::releasing)
+            {
+                const double t = (v.position - fadeStart) / fade;
+                const double headPos = wrapStart + (v.position - fadeStart);
+                const int hIdx =
+                    juce::jmin(length - 2, (int) headPos);
+                const float hFrac = (float) (headPos - hIdx);
+                const float outG = (float) std::sqrt(1.0 - t);
+                const float inG = (float) std::sqrt(t);
+                sampleL = sampleL * outG
+                    + (srcL[hIdx] + hFrac * (srcL[hIdx + 1] - srcL[hIdx]))
+                        * inG;
+                sampleR = sampleR * outG
+                    + (srcR[hIdx] + hFrac * (srcR[hIdx + 1] - srcR[hIdx]))
+                        * inG;
+            }
+
             float gain = 1.0f;
             if (v.wrapRamp > 0)
             {
@@ -408,10 +447,9 @@ void JamnKitProcessor::renderVoice(Voice& v, int slot, float* left,
                 }
                 gain *= v.releaseGain;
             }
-            left[i] += gain * (srcL[idx] + frac * (srcL[idx + 1] - srcL[idx]));
+            left[i] += gain * sampleL;
             if (right != left)
-                right[i] +=
-                    gain * (srcR[idx] + frac * (srcR[idx + 1] - srcR[idx]));
+                right[i] += gain * sampleR;
             v.position += v.step;
         }
         return;

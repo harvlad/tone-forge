@@ -658,17 +658,19 @@ double JamnKitEditor::padFracAt(int pad, juce::Point<int> pos) const
 void JamnKitEditor::applyTrimDrag(int pad, juce::Point<int> pos)
 {
     const auto pack = processor.currentPack();
-    const double bpm = processor.hostBpm();
-    if (pack == nullptr || bpm <= 0.0)
-        return;  // no tempo yet — press play in the host once
+    if (pack == nullptr || pack->tempoBpm <= 0.0)
+        return;
     const auto* sample =
         pack->padForNote(JamnKitProcessor::kFirstNote + pad);
     if (sample == nullptr || sample->audio.getNumSamples() < 2)
         return;
 
+    // SONG bars (content domain): rate-matching makes a content bar a
+    // host bar, and the song tempo is always known — no need to have
+    // pressed play in the host first.
     const double padSeconds =
         sample->audio.getNumSamples() / sample->sourceSampleRate;
-    const double barSeconds = processor.hostBarBeats() * 60.0 / bpm;
+    const double barSeconds = 60.0 / pack->tempoBpm * 4.0;
     const int totalBars =
         juce::jmax(1, (int) std::floor(padSeconds / barSeconds));
 
@@ -840,13 +842,13 @@ void JamnKitEditor::paint(juce::Graphics& g)
                 // (alt-drag sweeps the region; right-click cycles).
                 const int division = processor.padDivision(padIdx);
                 const int startBars = processor.padStart(padIdx);
-                const double bpm = processor.hostBpm();
-                if ((division > 0 || startBars > 0) && bpm > 0.0)
+                const double songBpm =
+                    pack != nullptr ? pack->tempoBpm : 0.0;
+                if ((division > 0 || startBars > 0) && songBpm > 0.0)
                 {
                     const double padSeconds =
                         pad->audio.getNumSamples() / pad->sourceSampleRate;
-                    const double barSec =
-                        processor.hostBarBeats() * 60.0 / bpm;
+                    const double barSec = 60.0 / songBpm * 4.0;
                     const double startFrac = juce::jlimit(
                         0.0, 1.0,
                         startBars * barSec / juce::jmax(0.001, padSeconds));

@@ -184,6 +184,8 @@ private:
     std::array<std::atomic<int>, kVoices> padStarts {};
     /// Host clock cached for noteOn-time trim math.
     double lastBpm = 0.0, lastBarPpq = 4.0;
+    /// Loaded pack's song tempo (0 = unknown) — drives rate-matching.
+    std::atomic<double> packTempoBpm { 0.0 };
 
     // Macro DSP: soft drive -> lowpass -> reverb wet -> master gain.
     juce::dsp::StateVariableTPTFilter<float> lowpass;

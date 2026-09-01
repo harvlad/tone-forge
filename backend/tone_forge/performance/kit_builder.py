@@ -280,7 +280,7 @@ class AutoKitBuilder:
             # key, so bumping it invalidates stale cached kits.
             "provenance": (
                 f"performance_intelligence graph={graph.graph_hash} "
-                f"module={graph.module_version} kit=2 skill={skill}"
+                f"module={graph.module_version} kit=3 skill={skill}"
             ),
         }
 

@@ -148,16 +148,31 @@ struct LaunchpadPanelView: View {
         }
         .overlay {
             if let state = radialMenuState {
-                PadRadialMenu(
-                    state: state,
-                    onAction: { action in
-                        handleRadialAction(action, state: state)
-                        radialMenuState = nil
-                    },
-                    onDismiss: {
-                        radialMenuState = nil
-                    }
-                )
+                // ALWAYS center the wheel in the panel — anchoring it on
+                // the pressed pad clipped the ring off the panel edge
+                // for corner pads.
+                GeometryReader { geo in
+                    let centered = PadRadialMenuState(
+                        gridRow: state.gridRow,
+                        gridCol: state.gridCol,
+                        center: CGPoint(x: geo.size.width / 2,
+                                        y: geo.size.height / 2),
+                        hasAssignment: state.hasAssignment,
+                        isSequencePad: state.isSequencePad,
+                        isPackPad: state.isPackPad,
+                        hasLoop: state.hasLoop
+                    )
+                    PadRadialMenu(
+                        state: centered,
+                        onAction: { action in
+                            handleRadialAction(action, state: centered)
+                            radialMenuState = nil
+                        },
+                        onDismiss: {
+                            radialMenuState = nil
+                        }
+                    )
+                }
             }
         }
         .sheet(isPresented: $showSequencerEditor) {

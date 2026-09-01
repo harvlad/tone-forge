@@ -396,6 +396,15 @@ def build_ableton_kit_zip(
             end = pad.get("loopEndSec", slice_.get("endSec"))
             if start is None or end is None:
                 continue
+            # Bar-snap loopable slices at the SONG tempo (what mobile
+            # does at decode): a raw 8.000s window is 4.35 bars at 130
+            # BPM — it can never loop on a musical boundary. Whole-bar
+            # content is what lets the plugin rate-match it onto the
+            # host grid with zero drift.
+            if pad.get("loopable", True) and tempo and float(tempo) > 0:
+                bar_sec = (60.0 / float(tempo)) * 4.0
+                bars = max(1, round((float(end) - float(start)) / bar_sec))
+                end = float(start) + bars * bar_sec
             fname = _sample_filename(len(rendered), pad)
             dest = scratch / fname
             meta = _render_slice(stem, float(start), float(end), dest)

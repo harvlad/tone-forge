@@ -23,31 +23,6 @@ juce::Colour KitPadSample::colour() const
 namespace kitpack
 {
 
-/// Bake a ~15 ms equal-power crossfade into a loop buffer: the tail is
-/// blended into the head and then trimmed, so a hard wrap at the new
-/// end is seamless (same idea as the app's SeamlessLoop).
-static void bakeLoopCrossfade(juce::AudioBuffer<float>& audio,
-                              double sampleRate)
-{
-    const int fade = juce::jmin((int) (0.015 * sampleRate),
-                                audio.getNumSamples() / 4);
-    if (fade < 8)
-        return;
-    const int newLength = audio.getNumSamples() - fade;
-    for (int ch = 0; ch < audio.getNumChannels(); ++ch)
-    {
-        auto* data = audio.getWritePointer(ch);
-        for (int i = 0; i < fade; ++i)
-        {
-            const float t = (float) i / (float) fade;
-            const float in = std::sqrt(t);
-            const float out = std::sqrt(1.0f - t);
-            data[i] = data[i] * in + data[newLength + i] * out;
-        }
-    }
-    audio.setSize(audio.getNumChannels(), newLength, true, true, true);
-}
-
 /// Normalized max-abs peak envelope for pad thumbnails.
 static std::vector<float> computePeaks(const juce::AudioBuffer<float>& audio,
                                        int bins)
@@ -156,8 +131,10 @@ std::shared_ptr<const LoadedPack> load(const juce::File& source,
                           (int) reader->lengthInSamples);
         reader->read(&pad.audio, 0, (int) reader->lengthInSamples, 0,
                      true, true);
-        if (pad.loopable)
-            bakeLoopCrossfade(pad.audio, pad.sourceSampleRate);
+        // NOTE: no baked crossfade — trimming the buffer to hide the
+        // seam shortened every loop by ~15 ms and made wraps SKIP
+        // against the grid. The seam is now a runtime dual-read
+        // crossfade in the processor, which preserves exact length.
         // Loudness-normalize to -4 dBFS peak (the app scheduler's
         // target): raw stem slices vary wildly, and the per-pad
         // NORMALIZED thumbnails made whisper-quiet pads look full —
