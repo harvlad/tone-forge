@@ -654,7 +654,8 @@ struct LibraryView: View {
             entries = try await client.fetch(
                 baseURL: appState.backendBaseURL,
                 query: q.isEmpty ? nil : q,
-                limit: 50
+                limit: 50,
+                scope: "mine"
             )
             // Online: history rows cover the same songs, so only keep
             // cached bundles the server no longer lists.

@@ -96,13 +96,21 @@ struct SignInGateView: View {
                 request.requestedScopes = [.email, .fullName]
                 request.nonce = account.prepareNonce()
             } onCompletion: { result in
-                guard
-                    case .success(let authorization) = result,
-                    let credential = authorization.credential
+                switch result {
+                case .failure(let error):
+                    account.surfaceAuthorizationFailure(error)
+                case .success(let authorization):
+                    guard let credential = authorization.credential
                         as? ASAuthorizationAppleIDCredential
-                else { return }
-                Task {
-                    await account.signIn(credential: credential, baseURL: baseURL)
+                    else {
+                        account.surfaceAuthorizationFailure(
+                            ASAuthorizationError(.failed))
+                        return
+                    }
+                    Task {
+                        await account.signIn(
+                            credential: credential, baseURL: baseURL)
+                    }
                 }
             }
             .signInWithAppleButtonStyle(.white)

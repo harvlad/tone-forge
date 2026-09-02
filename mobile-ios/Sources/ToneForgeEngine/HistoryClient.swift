@@ -97,7 +97,8 @@ public struct HistoryClient: Sendable {
     public func fetch(
         baseURL: URL,
         query: String? = nil,
-        limit: Int = 50
+        limit: Int = 50,
+        scope: String? = nil
     ) async throws -> [HistoryEntry] {
         var components = URLComponents(
             url: baseURL.appendingPathComponent("api/history"),
@@ -106,6 +107,11 @@ public struct HistoryClient: Sendable {
         var items: [URLQueryItem] = [URLQueryItem(name: "limit", value: String(limit))]
         if let q = query, !q.isEmpty {
             items.append(URLQueryItem(name: "q", value: q))
+        }
+        // "mine" = only the signed-in user's (or this device's)
+        // analyses — the Library must never show other testers' songs.
+        if let scope, !scope.isEmpty {
+            items.append(URLQueryItem(name: "scope", value: scope))
         }
         components?.queryItems = items
 

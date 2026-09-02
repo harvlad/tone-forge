@@ -156,6 +156,19 @@ public final class AccountStore: ObservableObject {
         lastError = nil
     }
 
+    /// Surface a SIWA authorization failure (the button otherwise
+    /// fails in silence — e.g. simulator with no Apple ID signed in).
+    /// User-initiated cancel stays quiet.
+    public func surfaceAuthorizationFailure(_ error: Error) {
+        if let asError = error as? ASAuthorizationError,
+           asError.code == .canceled {
+            return
+        }
+        lastError = "Sign in with Apple failed. "
+            + "On a simulator, sign into an Apple ID in Settings first. "
+            + "(\((error as NSError).code))"
+    }
+
     /// Step 1: ask the backend to email a sign-in code. Errors surface
     /// via `lastError`; success is silent (no enumeration).
     public func requestEmailCode(email: String, baseURL: URL) async {

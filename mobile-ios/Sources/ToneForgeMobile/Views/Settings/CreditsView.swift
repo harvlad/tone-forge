@@ -87,7 +87,8 @@ struct CreditsView: View {
         do {
             let client = HistoryClient(timeout: AppConfig.historyTimeout)
             let entries = try await client.fetch(
-                baseURL: appState.backendBaseURL, limit: 200
+                baseURL: appState.backendBaseURL, limit: 200,
+                scope: "mine"
             )
             licensedSongs = entries.filter { !($0.license ?? "").isEmpty }
         } catch {
