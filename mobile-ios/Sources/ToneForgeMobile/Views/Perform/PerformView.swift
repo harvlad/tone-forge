@@ -46,7 +46,6 @@ struct PerformView: View {
         VStack(spacing: TFTheme.Spacing.md) {
             headerRow
             sectionStrip
-            chordContext
 
             playSurface
                 .padding(.horizontal, TFTheme.Spacing.md)
@@ -67,7 +66,6 @@ struct PerformView: View {
             VStack(spacing: TFTheme.Spacing.sm) {
                 headerRow
                 sectionStrip
-                chordContext
                 Spacer(minLength: 0)
                 fxColumn
             }
@@ -118,6 +116,8 @@ struct PerformView: View {
             }
 
             Spacer(minLength: 0)
+
+            latchChip
 
             if appState.isPerforming {
                 // High-contrast exit — restores the tab bar.
@@ -170,24 +170,33 @@ struct PerformView: View {
         }
     }
 
-    // MARK: - Chord context (shared by both layouts)
+    // MARK: - Latch chip (chord strip removed from Perform — the row
+    // cost a full pad-height of vertical space; Latch was the only
+    // part used mid-performance, so it lives in the header now)
 
     @ViewBuilder
-    private var chordContext: some View {
+    private var latchChip: some View {
         if let latch = latchBinding {
-            ChordContext(
-                current: controller.currentChordSymbol,
-                next: controller.suggestedChords.map(\.symbol),
-                onSelectNext: { controller.trigger(symbol: $0) },
-                latchOn: latch.on,
-                onToggleLatch: latch.toggle
-            )
-        } else {
-            ChordContext(
-                current: controller.currentChordSymbol,
-                next: controller.suggestedChords.map(\.symbol),
-                onSelectNext: { controller.trigger(symbol: $0) }
-            )
+            Button {
+                Haptics.toggle()
+                latch.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: latch.on ? "pin.fill" : "pin")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("Latch")
+                        .font(.caption2.weight(.semibold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .foregroundStyle(
+                    latch.on ? TFTheme.accent : TFTheme.textSecondary)
+                .background(
+                    latch.on ? TFTheme.accent.opacity(0.20) : TFTheme.chipFill,
+                    in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Latch \(latch.on ? "on" : "off")"))
         }
     }
 

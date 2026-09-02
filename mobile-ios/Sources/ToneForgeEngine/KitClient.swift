@@ -54,6 +54,9 @@ public struct KitClient: Sendable {
         guard let url = components?.url else { throw KitClientError.invalidURL }
 
         var request = URLRequest(url: url)
+        // The kit re-ranks server-side (usage feedback, kit-builder
+        // changes) — iOS heuristic caching must never serve a stale one.
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         AuthContext.shared.apply(to: &request)
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse,
