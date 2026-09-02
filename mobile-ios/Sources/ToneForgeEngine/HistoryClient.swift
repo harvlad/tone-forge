@@ -147,8 +147,11 @@ public struct HistoryClient: Sendable {
         public let queuePosition: Int?
 
         public var id: String { jobId }
+        /// Backend vocabulary (analysis_jobs._TERMINAL): "done" |
+        /// "error". Extra synonyms kept defensively — a mismatch here
+        /// leaves a phantom 100% "Analyzing" row that never clears.
         public var isTerminal: Bool {
-            status == "complete" || status == "error" || status == "failed"
+            ["done", "error", "complete", "failed"].contains(status)
         }
 
         enum CodingKeys: String, CodingKey {
