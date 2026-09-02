@@ -102,6 +102,11 @@ public final class ModeCoordinator: ObservableObject {
     /// rawValue (row*10+col). Drives the grid's loop-pulse animation so
     /// sequence pads visibly advance in lock with their tempo.
     @Published public private(set) var sequencePulses: [Int: SequencePulse] = [:]
+    /// Sequence pads armed for the next shared loop boundary (launch
+    /// quantize) — grid shows the same hourglass as armed sample pads.
+    @Published public private(set) var armedSequencePads: Set<Int> = []
+    /// Cancellable deferred starts, keyed by grid padIdx.
+    private var pendingSequenceStarts: [Int: DispatchWorkItem] = [:]
 
     // MARK: - Shared state (internal: the +Concern files read/write these)
 
@@ -410,22 +415,53 @@ public final class ModeCoordinator: ObservableObject {
     private func handleSequencePadDown(patternId: UUID, padIdx: Int) {
         let bpm = app.currentBundle?.meta.tempoBpm ?? app.sketchSettings.tempoBpm
         if sequenceLatched {
-            if sequencePadManager.isActive(padIdx: padIdx) {
+            if armedSequencePads.contains(padIdx) {
+                cancelPendingSequenceStart(padIdx: padIdx)  // change of mind
+            } else if sequencePadManager.isActive(padIdx: padIdx) {
                 sequencePadManager.stop(padIdx: padIdx)
             } else {
-                sequencePadManager.start(patternId: patternId, padIdx: padIdx, songBPM: bpm)
+                startSequenceOnGrid(patternId: patternId, padIdx: padIdx, bpm: bpm)
             }
         } else {
-            sequencePadManager.start(patternId: patternId, padIdx: padIdx, songBPM: bpm)
+            startSequenceOnGrid(patternId: patternId, padIdx: padIdx, bpm: bpm)
         }
     }
 
-    /// Pad-up on a sequence pad. Unlatched: stop. Latched: no-op
-    /// (next tap stops it).
+    /// Pad-up on a sequence pad. Unlatched: stop (and cancel a still-
+    /// armed launch). Latched: no-op (next tap stops it).
     private func handleSequencePadUp(padIdx: Int) {
         if !sequenceLatched {
+            cancelPendingSequenceStart(padIdx: padIdx)
             sequencePadManager.stop(padIdx: padIdx)
         }
+    }
+
+    /// Launch-quantize sequences to the SAME shared loop-cycle
+    /// boundary the sample loops lock to — a beat tapped mid-cycle
+    /// waits (armed) and drops in phase with everything already
+    /// running. Instant when the transport is stopped or loop-lock
+    /// is off.
+    private func startSequenceOnGrid(patternId: UUID, padIdx: Int, bpm: Double) {
+        cancelPendingSequenceStart(padIdx: padIdx)
+        guard let delay = app.sampleScheduler.secondsToNextLoopLaunch() else {
+            sequencePadManager.start(patternId: patternId, padIdx: padIdx, songBPM: bpm)
+            return
+        }
+        armedSequencePads.insert(padIdx)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.armedSequencePads.remove(padIdx)
+            self.pendingSequenceStarts[padIdx] = nil
+            self.sequencePadManager.start(
+                patternId: patternId, padIdx: padIdx, songBPM: bpm)
+        }
+        pendingSequenceStarts[padIdx] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func cancelPendingSequenceStart(padIdx: Int) {
+        pendingSequenceStarts.removeValue(forKey: padIdx)?.cancel()
+        armedSequencePads.remove(padIdx)
     }
 
     // MARK: - Bus handling + execution

@@ -42,9 +42,11 @@ struct TransportRow: View {
             // Full transport stop (halt + rewind + stop samples)
             stopButton
 
-            // Record toggle
+            // Record toggle. NEVER fixedSize: the armed label ("Ready —
+            // start playing") is wider than the remaining row space and
+            // a fixed-size pill overflowed the HStack, shifting the
+            // ENTIRE screen sideways whenever the transport armed.
             RecordToggle()
-                .fixedSize(horizontal: true, vertical: false)
 
             Spacer()
 

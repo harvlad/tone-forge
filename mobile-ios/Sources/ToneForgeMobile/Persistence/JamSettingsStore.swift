@@ -150,8 +150,11 @@ public final class JamSettingsStore: ObservableObject {
     /// while held). Shared so on-screen + Launchpad hardware agree.
     /// Persisted (UserDefaults, independent of the settings blob so no
     /// migration surgery). Defaults to Latch.
+    // Default OFF (Tap): with latch on, a fresh install tapping a
+    // starter one-shot retriggered like a machine gun before any song
+    // loaded. Latch is an opt-in performance mode, not the baseline.
     @Published public var sampleLatch: Bool =
-        (UserDefaults.standard.object(forKey: "jam.sampleLatch") as? Bool) ?? true {
+        (UserDefaults.standard.object(forKey: "jam.sampleLatch") as? Bool) ?? false {
         didSet { UserDefaults.standard.set(sampleLatch, forKey: "jam.sampleLatch") }
     }
 

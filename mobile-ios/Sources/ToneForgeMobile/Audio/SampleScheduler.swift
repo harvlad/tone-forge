@@ -248,6 +248,17 @@ public final class SampleScheduler: ObservableObject {
         return k * L
     }
 
+    /// Seconds until the shared loop-cycle boundary that looping pads
+    /// launch on, or nil when launches are instant (transport stopped
+    /// or loop-lock off). Sequence pads use this so a tapped beat
+    /// lands phase-locked with the sample loops already running.
+    public func secondsToNextLoopLaunch() -> Double? {
+        guard loopLock, engine?.clock.state == .playing else { return nil }
+        let now = nowSongSeconds()
+        let dt = nextLoopBoundary(after: now) - now
+        return dt > 0.05 ? dt : nil
+    }
+
     public func updateSyntheticContext(tempoBpm: Double?) {
         self.beats = []
         self.downbeats = []

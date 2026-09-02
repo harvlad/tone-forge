@@ -382,7 +382,9 @@ struct SamplePadGrid4x4: View {
                             pressed: coordinator.pressedPads.contains(
                                 gridRow * 10 + gridCol),
                             ringing: ringing.contains(gridRow * 10 + gridCol),
-                            armed: armed.contains(gridRow * 10 + gridCol),
+                            armed: armed.contains(gridRow * 10 + gridCol)
+                                || coordinator.armedSequencePads.contains(
+                                    gridRow * 10 + gridCol),
                             pulse: coordinator.sequencePulses[gridRow * 10 + gridCol],
                             padKey: padKey(gridRow: gridRow, gridCol: gridCol),
                             steps: sequenceStepFlags(

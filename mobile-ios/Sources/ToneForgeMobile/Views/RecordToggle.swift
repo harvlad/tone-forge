@@ -49,7 +49,10 @@ struct RecordToggle: View {
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(labelColor)
                     .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                    // Shrink before overflowing — a fixed-size label
+                    // pushed the whole transport row off-screen when
+                    // the armed copy got long.
+                    .minimumScaleFactor(0.6)
             }
             if !compact {
                 Spacer()
