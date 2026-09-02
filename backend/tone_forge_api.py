@@ -469,11 +469,27 @@ def _stamp_attribution(entry: dict, meta: dict | None) -> None:
 
 
 def _get_history_item(entry_id: str) -> dict | None:
-    """Get a specific history entry by ID."""
+    """Get a specific history entry by ID.
+
+    Miss + R2 configured → bust the 30s history cache and retry once:
+    a client asking for an id it JUST received (job completion SSE)
+    can race a stale cache when a different process wrote the entry —
+    surfaced as spurious 404s from /kit and /bundle right after an
+    analysis finished.
+    """
     history = _load_history()
     for entry in history:
         if entry.get("id") == entry_id:
             return entry
+    try:
+        from tone_forge import r2_storage
+        if r2_storage.is_configured():
+            r2_storage.invalidate_history_cache()
+            for entry in _load_history():
+                if entry.get("id") == entry_id:
+                    return entry
+    except Exception:
+        pass
     return None
 
 
@@ -4505,27 +4521,58 @@ async def get_debug_sessions() -> JSONResponse:
     return JSONResponse(_convert_numpy_types({"sessions": sessions}))
 
 
+async def _caller_identity(request: Request) -> tuple[str | None, str | None]:
+    """(device_id, user_id) of the caller — deletion scoping."""
+    from tone_forge.auth.deps import current_user
+
+    device_id = (request.headers.get("x-device-id") or "").strip() or None
+    user = await current_user(request)
+    return device_id, (user.id if user else None)
+
+
+def _caller_owns(entry: dict, device_id: str | None, user_id: str | None) -> bool:
+    """True when the caller may delete this entry. Unstamped legacy
+    entries stay deletable by anyone (local dev / pre-auth clients);
+    stamped entries require the matching device or account."""
+    owner = entry.get("owner_id")
+    device = entry.get("device_id")
+    if owner is None and device is None:
+        return True
+    return (user_id is not None and owner == user_id) \
+        or (device_id is not None and device == device_id)
+
+
 @app.delete("/api/history")
-async def clear_history() -> JSONResponse:
-    """Clear all history, purging server-side audio for every entry."""
+async def clear_history(request: Request) -> JSONResponse:
+    """Clear the CALLER'S history (their account's or device's entries
+    plus unstamped legacy rows) — never a global wipe: any TestFlight
+    tester could otherwise erase every user's analyses."""
+    device_id, user_id = await _caller_identity(request)
     with _HISTORY_LOCK:
         history = _load_history()
-        _save_history([])
-    for entry in history:
+        mine = [e for e in history if _caller_owns(e, device_id, user_id)]
+        _save_history([e for e in history
+                       if not _caller_owns(e, device_id, user_id)])
+    for entry in mine:
         await asyncio.to_thread(_deep_delete_entry, entry)
-    return JSONResponse({"status": "cleared"})
+    return JSONResponse({"status": "cleared", "deleted": len(mine)})
 
 
 @app.delete("/api/history/{entry_id}")
-async def delete_history_entry(entry_id: str) -> JSONResponse:
+async def delete_history_entry(entry_id: str, request: Request) -> JSONResponse:
     """Delete a history entry and purge its stems, R2 objects, and layers.
 
-    The history write commits first; file/object deletion is best-effort
-    afterwards so a partial failure can't resurrect the entry.
+    Scoped: stamped entries are deletable only by their owning account
+    or device. The history write commits first; file/object deletion is
+    best-effort afterwards so a partial failure can't resurrect the
+    entry.
     """
+    device_id, user_id = await _caller_identity(request)
     with _HISTORY_LOCK:
         history = _load_history()
         target = next((e for e in history if e.get("id") == entry_id), None)
+        if target is not None and not _caller_owns(target, device_id, user_id):
+            raise HTTPException(status_code=403, detail="Not your analysis")
         history = [e for e in history if e.get("id") != entry_id]
         _save_history(history)
     if target:

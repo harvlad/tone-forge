@@ -71,7 +71,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: ToneForge
+        CFBundleDisplayName: Jamn
         # Resolve from the version build settings (single source of
         # truth) so the Learn welcome screen reports real numbers. The
         # postBuildScript later overwrites CFBundleVersion with the git
@@ -90,20 +90,27 @@ targets:
         # Music-library import: only unprotected, downloaded tracks
         # the user owns are analysable (DRM items are filtered out).
         NSAppleMusicUsageDescription: >-
-          ToneForge lists your music library so you can analyse songs
+          Jamn lists your music library so you can analyse songs
           you own for practice. DRM-protected tracks are never uploaded.
         # P3 mic-as-pad-source pipeline: recordings become playable
         # pads. They are stored on-device only and never uploaded
         # (PadSampleMetadata.neverUpload, ComplianceTests).
         NSMicrophoneUsageDescription: >-
-          ToneForge records short samples from the microphone so you
+          Jamn records short samples from the microphone so you
           can play them on the pads. Recordings stay on this device
           and are never uploaded.
         # Keep stems/practice audio playing when the app is backgrounded
         # or the screen locks mid-session.
         UIBackgroundModes: [audio]
+        # No encryption beyond HTTPS: pre-answers the TestFlight
+        # export-compliance question.
+        ITSAppUsesNonExemptEncryption: false
+        # iPhone landscape stays listed here; the AppDelegate gate
+        # keeps the app portrait-only EXCEPT immersive Perform.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
@@ -124,13 +131,14 @@ targets:
       - package: ToneForgeMobilePackage
         product: ToneForgeML
     # Sign in with Apple. Automatic signing (team below) adds the
-    # capability to the App ID on first device build.
-    # TEMP: disabled for free personal-team on-device build (free teams
-    # cannot use the applesignin capability). Re-enable on a paid team.
-    # entitlements:
-    #   path: App/ToneForgeMobileApp.entitlements
-    #   properties:
-    #     com.apple.developer.applesignin: [Default]
+    # capability to the App ID on first device build. Re-enabled
+    # 2026-09-02 on the paid team H887LZYZ3M — without this every
+    # build ships UNSIGNED for SIWA and the button dies with
+    # ASAuthorizationError 1000 on device.
+    entitlements:
+      path: App/ToneForgeMobileApp.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.harvlad.toneforge.mobile

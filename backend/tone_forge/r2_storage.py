@@ -398,6 +398,15 @@ def upload_stem(
 # ---------------------------------------------------------------------------
 
 
+def invalidate_history_cache() -> None:
+    """Force the next load_history() to hit R2. Used when a lookup
+    misses on an id the client just received — a freshly-completed
+    analysis may have been written by ANOTHER backend process inside
+    our 30s cache window."""
+    with _history_cache["lock"]:
+        _history_cache["fetched_at"] = 0.0
+
+
 def load_history() -> Optional[list]:
     """Load history from R2, with in-memory caching.
 

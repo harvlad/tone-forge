@@ -132,6 +132,48 @@ public struct HistoryClient: Sendable {
         return decoded.history
     }
 
+    /// An in-flight (or just-finished) analysis job, from GET
+    /// /api/jobs — device/owner-scoped server-side. Drives the
+    /// Library's "Analyzing…" rows so an uploaded song never vanishes
+    /// while it processes.
+    public struct ActiveJob: Decodable, Identifiable, Sendable {
+        public let jobId: String
+        public let status: String
+        public let percent: Double
+        public let message: String?
+        public let historyId: String?
+        public let error: String?
+        public let filename: String?
+        public let queuePosition: Int?
+
+        public var id: String { jobId }
+        public var isTerminal: Bool {
+            status == "complete" || status == "error" || status == "failed"
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case jobId = "job_id", status, percent, message
+            case historyId = "history_id", error, filename
+            case queuePosition = "queue_position"
+        }
+    }
+
+    /// Fetch the caller's analysis jobs (in progress + recent).
+    public func fetchJobs(baseURL: URL) async throws -> [ActiveJob] {
+        var request = URLRequest(
+            url: baseURL.appendingPathComponent("api/jobs"))
+        request.timeoutInterval = timeout
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        AuthContext.shared.apply(to: &request)
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse,
+           !(200..<300).contains(http.statusCode) {
+            throw HistoryClientError.httpStatus(http.statusCode)
+        }
+        struct Wrapper: Decodable { let jobs: [ActiveJob] }
+        return try JSONDecoder().decode(Wrapper.self, from: data).jobs
+    }
+
     /// DELETE /api/history/{id} — removes the entry and deep-deletes
     /// its server-side artifacts (stems, R2 objects, layers).
     public func delete(baseURL: URL, entryId: String) async throws {

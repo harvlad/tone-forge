@@ -122,6 +122,11 @@ struct LibraryView: View {
     @State private var segment: LibrarySegment = .songs
     @State private var query: String = ""
     @State private var entries: [HistoryEntry] = []
+    /// In-flight analyses (GET /api/jobs, caller-scoped): an uploaded
+    /// song shows an "Analyzing…" row with live percent instead of
+    /// vanishing until the history entry lands.
+    @State private var activeJobs: [HistoryClient.ActiveJob] = []
+    @State private var jobsTicker: Timer? = nil
     /// Locally cached bundles. Populated eagerly at the top of
     /// reload() so downloaded songs are tappable even while the
     /// history fetch is still in flight; after a successful fetch the
@@ -248,6 +253,11 @@ struct LibraryView: View {
     private var songsList: some View {
             List {
                 uitestStubImportSection
+
+                ForEach(activeJobs.filter { !$0.isTerminal }) { job in
+                    analyzingRow(job)
+                        .tfLibraryRowChrome()
+                }
 
                 if !entries.isEmpty {
                     ForEach(entries) { entry in
@@ -639,10 +649,65 @@ struct LibraryView: View {
         }
     }
 
+    /// "Analyzing…" row for an in-flight job. Tapping is a no-op (the
+    /// song isn't playable yet) — the row itself IS the progress view;
+    /// when the job completes the next refresh replaces it with the
+    /// real history entry.
+    private func analyzingRow(_ job: HistoryClient.ActiveJob) -> some View {
+        HStack(spacing: 12) {
+            ProgressView(value: max(0.0, min(1.0, job.percent / 100.0)))
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(job.filename ?? "Analyzing…")
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(jobStatusLine(job))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(Int(job.percent)) %")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(TFTheme.accent)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func jobStatusLine(_ job: HistoryClient.ActiveJob) -> String {
+        if let pos = job.queuePosition, pos > 0 {
+            return "In queue (#\(pos)) — starting a GPU worker"
+        }
+        if let msg = job.message, !msg.isEmpty { return msg }
+        return "Analyzing…"
+    }
+
+    /// Poll jobs every 5s while any are running so the percent moves
+    /// and completion swaps the row for the real entry.
+    private func refreshJobs() async {
+        let jobs = (try? await client.fetchJobs(
+            baseURL: appState.backendBaseURL)) ?? []
+        let running = jobs.filter { !$0.isTerminal }
+        // A job finishing since the last poll means a new history row.
+        let finished = activeJobs.contains { !$0.isTerminal }
+            && running.count < activeJobs.filter { !$0.isTerminal }.count
+        activeJobs = jobs
+        if finished { await reload() }
+        jobsTicker?.invalidate()
+        if !running.isEmpty {
+            jobsTicker = Timer.scheduledTimer(
+                withTimeInterval: 5, repeats: false
+            ) { _ in
+                Task { @MainActor in await refreshJobs() }
+            }
+        }
+    }
+
     private func reload() async {
         isLoading = true
         fetchError = nil
         defer { isLoading = false }
+        Task { await refreshJobs() }
         // Surface the on-device cache immediately — before the network
         // round-trip — so downloaded songs are tappable even while the
         // history fetch is in flight (or hanging against an
