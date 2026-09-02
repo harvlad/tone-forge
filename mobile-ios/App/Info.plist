@@ -37,6 +37,8 @@
 	<string>Jamn lists your music library so you can analyse songs you own for practice. DRM-protected tracks are never uploaded.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Jamn records short samples from the microphone so you can play them on the pads. Recordings stay on this device and are never uploaded.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
