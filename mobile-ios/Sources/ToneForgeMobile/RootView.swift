@@ -675,10 +675,14 @@ struct LibraryView: View {
     }
 
     private func jobStatusLine(_ job: HistoryClient.ActiveJob) -> String {
+        // Raw engine messages are internal chatter ("skipping role
+        // classification") — never user-facing. Percent carries the
+        // progress; words only cover the two states that need
+        // explaining.
         if let pos = job.queuePosition, pos > 0 {
-            return "In queue (#\(pos)) — starting a GPU worker"
+            return "Waking up an analysis worker — first song takes a few minutes"
         }
-        if let msg = job.message, !msg.isEmpty { return msg }
+        if job.percent < 5 { return "Starting analysis…" }
         return "Analyzing…"
     }
 
