@@ -134,7 +134,9 @@ extension ModeCoordinator {
                     continue
                 }
                 let grid = PadIndex.at(
-                    row: 8 - pad.padIdx / 4,
+                    // Hardware-launchpad orientation (matches the jamn
+                    // Kit plugin): pad 0 lands BOTTOM-left, rows climb.
+                    row: 5 + pad.padIdx / 4,
                     col: pad.padIdx % 4 + 1
                 )
                 padBindings[grid.rawValue] = (packId: packId, padIdx: pad.padIdx)

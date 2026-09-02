@@ -371,7 +371,8 @@ struct SamplePadGrid4x4: View {
         // of "broken silence" (UX audit fix #1).
         let armed = coordinator.ringingGridPads(
             from: appState.sampleVoicePool.pendingPadKeys)
-        // Screen top row = grid row 8 (pack padIdx 0–3).
+        // Screen top row = grid row 8 (pack padIdx 12–15); pad 0 sits
+        // bottom-left — hardware-launchpad orientation, plugin parity.
         return VStack(spacing: 6) {
             ForEach([8, 7, 6, 5], id: \.self) { gridRow in
                 HStack(spacing: 6) {
@@ -394,11 +395,12 @@ struct SamplePadGrid4x4: View {
     }
 
     /// The active pack's SamplePadKey for a sample-quadrant grid cell
-    /// (rows 5–8, cols 1–4). Pack padIdx = (8-row)*4 + (col-1) — the inverse
-    /// of the quadrant mapping. Nil when no pack is active.
+    /// (rows 5–8, cols 1–4). Pack padIdx = (row-5)*4 + (col-1) — the
+    /// hardware-launchpad orientation (pad 0 bottom-left, rows climb),
+    /// matching the jamn Kit plugin. Nil when no pack is active.
     private func padKey(gridRow: Int, gridCol: Int) -> SamplePadKey? {
         guard let packId = appState.activeSamplePack?.pack.packId else { return nil }
-        let padIdx = (8 - gridRow) * 4 + (gridCol - 1)
+        let padIdx = (gridRow - 5) * 4 + (gridCol - 1)
         return SamplePadKey(packId: packId, padIdx: padIdx)
     }
 

@@ -253,7 +253,7 @@ extension ModeCoordinator {
     /// (padIdx 0..15 fill the top-left 4×4 quadrant, rows 8→5).
     private func nativeHomeCell(padIdx: Int) -> Int? {
         guard (0..<16).contains(padIdx) else { return nil }
-        return PadIndex.at(row: 8 - padIdx / 4, col: padIdx % 4 + 1).rawValue
+        return PadIndex.at(row: 5 + padIdx / 4, col: padIdx % 4 + 1).rawValue
     }
 
     /// Trimmer target for a grid pad: provides sample info for waveform trimming.
