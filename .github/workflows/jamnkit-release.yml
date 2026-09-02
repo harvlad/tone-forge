@@ -18,12 +18,12 @@
 #   APPLE_INSTALLER_CERT_P12          — base64 Developer ID Installer .p12
 #   APPLE_INSTALLER_CERT_P12_PASSWORD — its passphrase
 #
-# LICENSING GATE — do NOT tag a public release until:
-#   1. JUCE license tier bought (repo builds against GPLv3 JUCE today;
-#      JUCE_DISPLAY_SPLASH_SCREEN=1 in plugin/CMakeLists.txt).
-#   2. Ableton Link agreement signed IF the plugin ever links Link
-#      (jam-desktop vendors it; the plugin currently does not).
-# This workflow is infrastructure, not permission.
+# LICENSING — JUCE 8 Personal tier (free EULA) covers closed-source
+# distribution with the splash screen (JUCE_DISPLAY_SPLASH_SCREEN=1 in
+# plugin/CMakeLists.txt) up to ~$50k/yr revenue: beta releases are
+# CLEAR to tag. Upgrade to Indie to drop the splash or when revenue
+# nears the cap (verify current terms at juce.com/legal). Ableton Link
+# (GPLv2+) is jam-desktop only — the plugin does not link it.
 
 name: jamnkit-release
 
