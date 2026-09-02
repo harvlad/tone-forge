@@ -400,23 +400,30 @@ public final class ModeCoordinator: ObservableObject {
     }
 
     /// Pad-down on a sequence pad. Toggle: flip run state. Hold: start.
+    /// Sequences follow the SAME Latch chip as sample pads
+    /// (jamSettings.sampleLatch) — they used to read the Contribute-era
+    /// sampleSettings.holdMode (default hold), so a tap ran the
+    /// sequence only while the finger was down: "plays one shot, not
+    /// the beat", regardless of the visible Latch state.
+    private var sequenceLatched: Bool { app.jamSettings.sampleLatch }
+
     private func handleSequencePadDown(patternId: UUID, padIdx: Int) {
         let bpm = app.currentBundle?.meta.tempoBpm ?? app.sketchSettings.tempoBpm
-        switch app.sampleSettings.holdMode {
-        case .toggle:
+        if sequenceLatched {
             if sequencePadManager.isActive(padIdx: padIdx) {
                 sequencePadManager.stop(padIdx: padIdx)
             } else {
                 sequencePadManager.start(patternId: patternId, padIdx: padIdx, songBPM: bpm)
             }
-        case .hold:
+        } else {
             sequencePadManager.start(patternId: patternId, padIdx: padIdx, songBPM: bpm)
         }
     }
 
-    /// Pad-up on a sequence pad. Hold: stop. Toggle: no-op.
+    /// Pad-up on a sequence pad. Unlatched: stop. Latched: no-op
+    /// (next tap stops it).
     private func handleSequencePadUp(padIdx: Int) {
-        if app.sampleSettings.holdMode == .hold {
+        if !sequenceLatched {
             sequencePadManager.stop(padIdx: padIdx)
         }
     }
