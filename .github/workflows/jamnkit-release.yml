@@ -100,8 +100,20 @@ jobs:
           mkdir -p ~/Library/Audio/Plug-Ins/Components
           cp -R "plugin/build/JamnKit_artefacts/Release/AU/jamn Kit.component" \
             ~/Library/Audio/Plug-Ins/Components/
-          killall -q AudioComponentRegistrar || true
-          auval -v aumu Jkit Jamn
+          # Headless runners register user-dir AUs lazily: kick the
+          # registrar, force a full scan with `auval -a`, and retry —
+          # first attempts commonly report "didn't find the component".
+          for i in 1 2 3 4 5; do
+            killall -q AudioComponentRegistrar || true
+            auval -a > /dev/null 2>&1 || true
+            if auval -v aumu Jkit Jamn; then
+              exit 0
+            fi
+            echo "auval attempt $i failed; rescanning..."
+            sleep 10
+          done
+          echo "::error::AU never validated on the runner"
+          exit 1
 
       - name: Notarize + staple
         env:
