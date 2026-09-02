@@ -101,7 +101,10 @@ extension ModeCoordinator {
             chord: []
         )
 
-        // FUTURE: Clear trim settings once SampleTrimStore is implemented
+        // Clear the committed trim (full range = untrimmed).
+        app.sampleScheduler.setPadTrim(
+            packId: binding.packId, padIdx: binding.padIdx,
+            startFraction: 0, endFraction: 1)
     }
 
     // MARK: - Pad preview (pack browser)
@@ -265,10 +268,15 @@ extension ModeCoordinator {
         // Real waveform from the resident buffer (same transform-
         // resolved audio previewTrimmed plays). No buffer loaded means
         // nothing to trim — don't open the sheet on a fake waveform.
+        // FULL (untrimmed) waveform: the committed trim is expressed
+        // by the sheet's initial handle positions, not by the peaks.
         guard let waveform = app.sampleScheduler.padWaveform(
-            packId: binding.packId, padIdx: binding.padIdx
+            packId: binding.packId, padIdx: binding.padIdx,
+            includeTrim: false
         ) else { return nil }
 
+        let existing = app.sampleScheduler.padTrim(
+            packId: binding.packId, padIdx: binding.padIdx)
         return SampleTrimmerTarget(
             packId: binding.packId,
             padIdx: binding.padIdx,
@@ -276,7 +284,20 @@ extension ModeCoordinator {
             gridRow: row,
             gridCol: col,
             durationSec: waveform.durationSec,
-            peaks: waveform.peaks
+            peaks: waveform.peaks,
+            initialStart: existing?.lowerBound ?? 0,
+            initialEnd: existing?.upperBound ?? 1
         )
+    }
+
+    /// Commit a trim from the trimmer sheet's Apply — scheduler slices
+    /// playback AND the pad waveform from here on.
+    func commitPadTrim(
+        packId: String, padIdx: Int, start: Double, end: Double
+    ) {
+        app.sampleScheduler.setPadTrim(
+            packId: packId, padIdx: padIdx,
+            startFraction: start, endFraction: end)
+        objectWillChange.send()
     }
 }

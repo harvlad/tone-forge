@@ -434,6 +434,105 @@ public final class SampleScheduler: ObservableObject {
         return loadedPacks[packId]?.buffers[padIdx]
     }
 
+    // MARK: - Committed pad trims
+
+    /// User-committed playback region per pad, as fractions of the
+    /// transform-resolved buffer (the trimmer's Apply sets it). Every
+    /// playback path AND the pad waveform read through the trimmed
+    /// buffer, so pads always show exactly what plays.
+    @Published public private(set) var padTrims: [SamplePadKey: ClosedRange<Double>] = [:]
+    /// Bumped on every trim change — UI peak caches key on it.
+    public private(set) var trimRevision: Int = 0
+
+    public func setPadTrim(
+        packId: String, padIdx: Int,
+        startFraction: Double, endFraction: Double
+    ) {
+        let key = SamplePadKey(packId: packId, padIdx: padIdx)
+        let lo = max(0.0, min(startFraction, endFraction))
+        let hi = min(1.0, max(startFraction, endFraction))
+        if lo <= 0.001 && hi >= 0.999 {
+            padTrims[key] = nil  // full range = untrimmed
+        } else if hi - lo > 0.005 {
+            padTrims[key] = lo...hi
+        }
+        trimRevision += 1
+        persistTrims()
+    }
+
+    private static let trimsDefaultsKey = "toneforge.padTrims"
+
+    private func persistTrims() {
+        var raw: [String: [Double]] = [:]
+        for (k, v) in padTrims {
+            raw["\(k.packId)#\(k.padIdx)"] = [v.lowerBound, v.upperBound]
+        }
+        UserDefaults.standard.set(raw, forKey: Self.trimsDefaultsKey)
+    }
+
+    /// Restore committed trims (call once at startup — trims survive
+    /// relaunch; keys are pack-scoped so stale packs are inert).
+    public func restorePersistedTrims() {
+        guard let raw = UserDefaults.standard.dictionary(
+            forKey: Self.trimsDefaultsKey) as? [String: [Double]]
+        else { return }
+        for (key, bounds) in raw {
+            guard bounds.count == 2,
+                  let hash = key.lastIndex(of: "#"),
+                  let padIdx = Int(key[key.index(after: hash)...])
+            else { continue }
+            let packId = String(key[..<hash])
+            let lo = max(0.0, min(bounds[0], bounds[1]))
+            let hi = min(1.0, max(bounds[0], bounds[1]))
+            if hi - lo > 0.005 && (lo > 0.001 || hi < 0.999) {
+                padTrims[SamplePadKey(packId: packId, padIdx: padIdx)] = lo...hi
+            }
+        }
+        trimRevision += 1
+    }
+
+    public func padTrim(packId: String, padIdx: Int) -> ClosedRange<Double>? {
+        padTrims[SamplePadKey(packId: packId, padIdx: padIdx)]
+    }
+
+    #if canImport(AVFoundation)
+    /// Transform + committed-trim resolution — the ONE seam every
+    /// trigger/waveform path goes through so audio and UI can't
+    /// disagree. Slicing is a plain frame copy (a few ms at trigger
+    /// rate; the UI caches peaks above this, keyed on trimRevision).
+    private func resolvedBuffer(
+        _ base: AVAudioPCMBuffer, packId: String, padIdx: Int
+    ) -> AVAudioPCMBuffer {
+        let transformed = transformResolver?(base, packId, padIdx) ?? base
+        guard let trim = padTrim(packId: packId, padIdx: padIdx),
+              let sliced = Self.slice(
+                  transformed, from: trim.lowerBound, to: trim.upperBound)
+        else { return transformed }
+        return sliced
+    }
+
+    private static func slice(
+        _ buffer: AVAudioPCMBuffer, from: Double, to: Double
+    ) -> AVAudioPCMBuffer? {
+        let total = Int(buffer.frameLength)
+        let start = max(0, min(total - 1, Int(Double(total) * from)))
+        let end = max(start + 1, min(total, Int(Double(total) * to)))
+        let frames = end - start
+        guard frames > 32,
+              let out = AVAudioPCMBuffer(
+                  pcmFormat: buffer.format,
+                  frameCapacity: AVAudioFrameCount(frames)),
+              let src = buffer.floatChannelData,
+              let dst = out.floatChannelData
+        else { return nil }
+        for ch in 0..<Int(buffer.format.channelCount) {
+            dst[ch].update(from: src[ch] + start, count: frames)
+        }
+        out.frameLength = AVAudioFrameCount(frames)
+        return out
+    }
+    #endif
+
     /// Playback length (seconds) of a pad's one-shot buffer, for UI
     /// auto-reset after a preview. Returns nil for looping pads (no
     /// natural end — they stop only on manual release) or when the pad
@@ -457,12 +556,17 @@ public final class SampleScheduler: ObservableObject {
     /// normalized to 0–1 (ChopWaveformView's contract). nil when the
     /// pad's buffer isn't resident.
     public func padWaveform(
-        packId: String, padIdx: Int, binCount: Int = 100
+        packId: String, padIdx: Int, binCount: Int = 100,
+        includeTrim: Bool = true
     ) -> (peaks: [Float], durationSec: Double)? {
         guard binCount > 0,
               let base = baseBuffer(packId: packId, padIdx: padIdx)
         else { return nil }
-        let buffer = transformResolver?(base, packId, padIdx) ?? base
+        // includeTrim:false = the trimmer sheet's FULL waveform (its
+        // handles express the trim); true = pads showing what plays.
+        let buffer = includeTrim
+            ? resolvedBuffer(base, packId: packId, padIdx: padIdx)
+            : (transformResolver?(base, packId, padIdx) ?? base)
         let frames = Int(buffer.frameLength)
         let sr = buffer.format.sampleRate
         guard frames > 0, sr > 0,
@@ -663,7 +767,7 @@ public final class SampleScheduler: ObservableObject {
 
         #if canImport(AVFoundation)
         guard let baseBuffer = entry.buffers[padIdx] else { return .padNotFound }
-        let buffer = transformResolver?(baseBuffer, pid, padIdx) ?? baseBuffer
+        let buffer = resolvedBuffer(baseBuffer, packId: pid, padIdx: padIdx)
 
         // Hold mode retrigger: stop any existing voice for this pad before
         // firing a new one. This gives "self-choke" behavior — rapid taps
@@ -738,8 +842,8 @@ public final class SampleScheduler: ObservableObject {
             return .gated
         }
 
-        let buffer = transformResolver?(local.buffer, Self.localPackId, padIdx)
-            ?? local.buffer
+        let buffer = resolvedBuffer(
+            local.buffer, packId: Self.localPackId, padIdx: padIdx)
 
         // Hold mode retrigger: stop any existing voice for this pad before
         // firing a new one (self-choke).
@@ -793,8 +897,8 @@ public final class SampleScheduler: ObservableObject {
         if packId == nil || packId == Self.localPackId,
            let local = localBuffers[padIdx] {
             let padKey = SamplePadKey(packId: Self.localPackId, padIdx: padIdx)
-            let buffer = transformResolver?(local.buffer, Self.localPackId, padIdx)
-                ?? local.buffer
+            let buffer = resolvedBuffer(
+                local.buffer, packId: Self.localPackId, padIdx: padIdx)
             let effects = effectsResolver?(Self.localPackId, padIdx, nil) ?? .neutral
             let req = SampleTrigger(
                 padKey: padKey,
@@ -817,7 +921,7 @@ public final class SampleScheduler: ObservableObject {
 
         #if canImport(AVFoundation)
         guard let baseBuffer = entry.buffers[padIdx] else { return .padNotFound }
-        let buffer = transformResolver?(baseBuffer, pid, padIdx) ?? baseBuffer
+        let buffer = resolvedBuffer(baseBuffer, packId: pid, padIdx: padIdx)
         let effects = effectsResolver?(pid, padIdx, pad.effects)
             ?? pad.effects
             ?? .neutral

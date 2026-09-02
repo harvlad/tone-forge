@@ -18,6 +18,9 @@ struct SampleTrimmerTarget: Identifiable, Equatable {
     let durationSec: Double
     /// Peak data for waveform display (if available).
     let peaks: [Float]
+    /// Committed trim the sheet opens with (handles start here).
+    var initialStart: Double = 0
+    var initialEnd: Double = 1
 
     static func == (lhs: SampleTrimmerTarget, rhs: SampleTrimmerTarget) -> Bool {
         lhs.id == rhs.id
@@ -28,11 +31,15 @@ struct SampleTrimmerSheet: View {
     let target: SampleTrimmerTarget
     /// Called when the user taps preview or the waveform, with the current trim bounds.
     let onPreview: (Double, Double) -> Void
+    /// Commits the trim (scheduler stores it; pads play + draw the
+    /// trimmed region). nil hides the Apply button.
+    var onApply: ((Double, Double) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
     @State private var startFraction: Double = 0
     @State private var endFraction: Double = 1
+    @State private var seeded = false
 
     var body: some View {
         NavigationStack {
@@ -133,23 +140,25 @@ struct SampleTrimmerSheet: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Cancel") { dismiss() }
                 }
-                // HONESTY (UX audit fix #2): trim persistence isn't built yet
-                // (no SampleTrimStore). The old "Apply" button confirmed then
-                // silently discarded the trim — worse than no button. Preview
-                // works; a visible note says saving is coming.
                 ToolbarItem(placement: .confirmationAction) {
-                    Text("Preview only")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // Real persistence now exists (scheduler padTrims,
+                    // survives relaunch) — Apply is honest again.
+                    if let onApply {
+                        Button("Apply") {
+                            onApply(startFraction, endFraction)
+                            dismiss()
+                        }
+                        .fontWeight(.semibold)
+                    }
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                Text("Trims preview but don't save yet — saving is coming soon.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 8)
+            .onAppear {
+                guard !seeded else { return }
+                seeded = true
+                startFraction = target.initialStart
+                endFraction = target.initialEnd
             }
         }
     }

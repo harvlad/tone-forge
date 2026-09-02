@@ -402,8 +402,12 @@ public final class AppState: ObservableObject {
     public lazy var sampleBus: SampleBus = SampleBus(engine: audioEngine)
     public lazy var sampleVoicePool: SampleVoicePool =
         SampleVoicePool(engine: audioEngine, bus: sampleBus)
-    public lazy var sampleScheduler: SampleScheduler =
-        SampleScheduler(engine: audioEngine, bus: sampleBus, pool: sampleVoicePool)
+    public lazy var sampleScheduler: SampleScheduler = {
+        let s = SampleScheduler(
+            engine: audioEngine, bus: sampleBus, pool: sampleVoicePool)
+        s.restorePersistedTrims()  // committed pad trims survive relaunch
+        return s
+    }()
     public let sampleBank: SampleBank? = try? SampleBank.defaultBank()
     public let sampleSettings = SampleSettingsStore()
 

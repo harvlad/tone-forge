@@ -164,7 +164,13 @@ struct SamplePadGrid4x4: View {
             case .trimmer(let target):
                 SampleTrimmerSheet(
                     target: target,
-                    onPreview: previewTrimmed(target: target)
+                    onPreview: previewTrimmed(target: target),
+                    onApply: { start, end in
+                        coordinator.commitPadTrim(
+                            packId: target.packId,
+                            padIdx: target.padIdx,
+                            start: start, end: end)
+                    }
                 )
             }
         }
@@ -377,7 +383,9 @@ struct SamplePadGrid4x4: View {
                             ringing: ringing.contains(gridRow * 10 + gridCol),
                             armed: armed.contains(gridRow * 10 + gridCol),
                             pulse: coordinator.sequencePulses[gridRow * 10 + gridCol],
-                            padKey: padKey(gridRow: gridRow, gridCol: gridCol)
+                            padKey: padKey(gridRow: gridRow, gridCol: gridCol),
+                            steps: sequenceStepFlags(
+                                gridRow: gridRow, gridCol: gridCol)
                         )
                     }
                 }
@@ -394,6 +402,41 @@ struct SamplePadGrid4x4: View {
         return SamplePadKey(packId: packId, padIdx: padIdx)
     }
 
+    /// Static step flags for a sequence pad (union of all tracks'
+    /// active steps) — pads show their pattern even while idle.
+    private func sequenceStepFlags(gridRow: Int, gridCol: Int) -> [Bool]? {
+        guard let pid = coordinator.assignedSequenceId(
+                  row: gridRow, col: gridCol),
+              let pattern = appState.sequencerPatternStore.pattern(id: pid)
+        else { return nil }
+        let count = pattern.stepCount.rawValue
+        var flags = [Bool](repeating: false, count: count)
+        for track in pattern.tracks {
+            for (i, step) in track.steps.enumerated()
+            where i < count && step.isActive {
+                flags[i] = true
+            }
+        }
+        return flags
+    }
+
+    /// Peak cache for the on-pad waveforms, keyed by pad + trim
+    /// revision so a committed trim redraws while repeat renders stay
+    /// free. Main-thread only (SwiftUI render path).
+    private static var peaksCache: [String: [Float]] = [:]
+
+    private func padPeaks(padKey: SamplePadKey) -> [Float]? {
+        let rev = appState.sampleScheduler.trimRevision
+        let key = "\(padKey.packId)#\(padKey.padIdx)#\(rev)"
+        if let hit = Self.peaksCache[key] { return hit }
+        guard let wf = appState.sampleScheduler.padWaveform(
+            packId: padKey.packId, padIdx: padKey.padIdx, binCount: 44)
+        else { return nil }
+        if Self.peaksCache.count > 256 { Self.peaksCache.removeAll() }
+        Self.peaksCache[key] = wf.peaks
+        return wf.peaks
+    }
+
     @ViewBuilder
     private func tile(
         visual: PadVisual,
@@ -401,7 +444,8 @@ struct SamplePadGrid4x4: View {
         ringing: Bool,
         armed: Bool = false,
         pulse: SequencePulse? = nil,
-        padKey: SamplePadKey? = nil
+        padKey: SamplePadKey? = nil,
+        steps: [Bool]? = nil
     ) -> some View {
         let tint = Self.color(fromHex: visual.colorHint)
         ZStack(alignment: .topLeading) {
@@ -456,12 +500,26 @@ struct SamplePadGrid4x4: View {
                             radius: 1.5, y: 1)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
-                    Spacer(minLength: 0)
-                    // Level-bar accent from the mockup — the pad's
-                    // family tint as a short underline.
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(tint.opacity(0.9))
-                        .frame(width: 26, height: 3)
+                    Spacer(minLength: 2)
+                    // Plugin-style pad body: sequence pads show their
+                    // step pattern; sample pads show the (trimmed)
+                    // waveform — the drawn audio IS what plays, since
+                    // peaks come from the same resolved buffer the
+                    // trigger path uses.
+                    if let steps {
+                        PadStepGrid(
+                            steps: steps, tint: tint,
+                            currentStep: pulse?.step)
+                            .frame(height: 24)
+                    } else if let padKey, let peaks = padPeaks(padKey: padKey) {
+                        PadWaveformBars(peaks: peaks, tint: tint)
+                            .frame(height: 30)
+                    } else {
+                        // Fallback accent underline (no buffer resident).
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(tint.opacity(0.9))
+                            .frame(width: 26, height: 3)
+                    }
                 }
                 .padding(8)
             }
@@ -681,6 +739,67 @@ struct SamplePadGrid4x4: View {
 /// step (8/16/32) so the loop length reads at a glance; the current
 /// segment lights white and advances in lock with the loop tempo,
 /// trailing segments hold the pad tint.
+/// Mirrored waveform bars for a sample pad (the plugin's pad look).
+/// Peaks arrive pre-trimmed, so a trimmed pad draws only the region
+/// that plays.
+private struct PadWaveformBars: View {
+    let peaks: [Float]
+    let tint: Color
+
+    var body: some View {
+        Canvas { ctx, size in
+            let n = peaks.count
+            guard n > 0 else { return }
+            let bw = size.width / CGFloat(n)
+            for i in 0..<n {
+                let h = max(1.5, CGFloat(peaks[i]) * size.height)
+                let rect = CGRect(
+                    x: CGFloat(i) * bw + bw * 0.15,
+                    y: (size.height - h) / 2,
+                    width: max(0.6, bw * 0.7),
+                    height: h)
+                ctx.fill(
+                    Path(roundedRect: rect, cornerRadius: bw * 0.25),
+                    with: .color(tint))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Static step grid for a sequence pad: active steps lit in the pad
+/// tint, current step (while running) flips white. 8/16 render one
+/// row of 8 columns per 8 steps; 32 wraps to four rows.
+private struct PadStepGrid: View {
+    let steps: [Bool]
+    let tint: Color
+    let currentStep: Int?
+
+    var body: some View {
+        Canvas { ctx, size in
+            let n = max(1, steps.count)
+            let cols = 8
+            let rows = max(1, (n + cols - 1) / cols)
+            let cw = size.width / CGFloat(cols)
+            let ch = size.height / CGFloat(rows)
+            for i in 0..<n {
+                let rect = CGRect(
+                    x: CGFloat(i % cols) * cw + 1,
+                    y: CGFloat(i / cols) * ch + 1,
+                    width: max(1, cw - 2),
+                    height: max(1, ch - 2))
+                let color: Color = (i == currentStep)
+                    ? .white
+                    : tint.opacity(steps[i] ? 0.95 : 0.22)
+                ctx.fill(
+                    Path(roundedRect: rect, cornerRadius: 2),
+                    with: .color(color))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 private struct SequenceLoopMeter: View {
     let pulse: SequencePulse
     let tint: Color
