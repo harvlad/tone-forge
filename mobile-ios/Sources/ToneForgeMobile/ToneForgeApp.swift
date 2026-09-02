@@ -129,7 +129,11 @@ public struct ToneForgeScene: Scene {
 
     public var body: some Scene {
         WindowGroup {
-            RootView()
+            // SIGN-IN GATE: the app requires an account (Apple ID or
+            // email code) before any use. A valid cached session
+            // restored below skips the gate without flashing it.
+            GatedRoot(account: appState.accountStore,
+                      baseURL: appState.backendBaseURL)
                 .environmentObject(appState)
                 .preferredColorScheme(.dark)
                 .task {
