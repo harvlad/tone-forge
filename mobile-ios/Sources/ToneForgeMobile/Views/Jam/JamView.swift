@@ -582,20 +582,32 @@ struct JamView: View {
             }
             .padding(.horizontal, 24)
         } else if appState.autoKitError != nil {
+            // No song open isn't a failure — it's an invitation. Only a
+            // real fetch/build error gets the warning treatment.
+            let noSong = appState.currentBundle == nil
             HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle")
+                Image(systemName: noSong ? "music.note"
+                                         : "exclamationmark.triangle")
                     .font(.caption)
-                Text("Jam kit unavailable")
+                Text(noSong ? "Open a song to build your kit"
+                            : "Jam kit unavailable")
                     .font(.caption)
                 Spacer()
-                Button("Retry") { appState.loadAutoKit() }
-                    .font(.caption.weight(.semibold))
+                if noSong {
+                    Button("Library") { appState.selectedTab = .library }
+                        .font(.caption.weight(.semibold))
+                } else {
+                    Button("Retry") { appState.loadAutoKit() }
+                        .font(.caption.weight(.semibold))
+                }
             }
             .foregroundStyle(TFTheme.textPrimary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(Color.orange.opacity(0.25),
-                        in: RoundedRectangle(cornerRadius: 8))
+            .background(
+                noSong ? TFTheme.accent.opacity(0.20)
+                       : Color.orange.opacity(0.25),
+                in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 12)
         } else if appState.autoKitLoading {
             HStack(spacing: 8) {
