@@ -154,6 +154,10 @@ public final class SampleVoicePool: ObservableObject {
         /// the deferred play() lands on an already-stopped player with
         /// a muted mixer and produces silence.
         var pendingPlayItem: DispatchWorkItem?
+        /// Host time the pending play fires at — the armed indicator
+        /// only shows for waits a human can perceive (>120 ms), not
+        /// the few-ms scheduling hop of an unquantized tap.
+        var pendingStartHostTime: UInt64 = 0
     }
 
     private var slots: [Slot] = []
@@ -385,6 +389,7 @@ public final class SampleVoicePool: ObservableObject {
                     }
                 }
                 slot.pendingPlayItem = item
+                slot.pendingStartHostTime = futureHost
                 DispatchQueue.global(qos: .userInteractive)
                     .asyncAfter(deadline: .now() + delaySec, execute: item)
             } else {
@@ -627,9 +632,19 @@ public final class SampleVoicePool: ObservableObject {
             slot.isActive && slot.isLooping ? slot.padKey : nil
         })
         if now != ringingPadKeys { ringingPadKeys = now }
-        // Armed = a future-time play still pending on the slot.
-        let pending = Set(slots.compactMap { slot in
-            slot.pendingPlayItem != nil ? slot.padKey : nil
+        // Armed = a future-time play still pending on the slot — but
+        // only when the wait is perceivable. Unquantized taps also
+        // schedule a few ms out (the play() dispatch hop) and were
+        // flashing the hourglass on every tap.
+        let nowHost = mach_absolute_time()
+        let minArmedTicks =
+            UInt64(0.12 * TransportClock.ticksPerSecond())
+        let pending = Set(slots.compactMap { slot -> SamplePadKey? in
+            guard slot.pendingPlayItem != nil,
+                  slot.pendingStartHostTime > nowHost,
+                  slot.pendingStartHostTime - nowHost > minArmedTicks
+            else { return nil }
+            return slot.padKey
         })
         if pending != pendingPadKeys { pendingPadKeys = pending }
     }

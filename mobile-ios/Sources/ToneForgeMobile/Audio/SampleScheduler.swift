@@ -742,7 +742,19 @@ public final class SampleScheduler: ObservableObject {
         // land together. Quantize `.off` (the default) keeps the instant
         // drum-machine feel, so this only changes behavior when the user
         // has explicitly asked for a grid.
-        let effectiveQuantize: QuantizeMode = transportRunning
+        // TAP MODE IS INSTANT: an unlatched one-shot tap (hold mode,
+        // nothing that will loop, no explicit global grid) fires NOW —
+        // the drum-machine feel wins over the pad's manifest
+        // defaultQuantize. Loops and latched pads keep quantize so
+        // they land on the grid.
+        let tapModeInstant = holdMode == .hold
+            && quantize == .off
+            && !loopOverride
+            && pad.loopPointSec == nil
+            && !(pad.loopable ?? false)
+            && !(padLoopOverrides[padKey] ?? false)
+            && !(loopResolver?(pid, padIdx) ?? false)
+        let effectiveQuantize: QuantizeMode = (transportRunning && !tapModeInstant)
             ? (pad.defaultQuantize ?? quantize)
             : .off
         // Will this trigger loop? (Same predicate as the SampleTrigger below.)

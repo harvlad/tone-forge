@@ -717,7 +717,12 @@ struct LibraryView: View {
         // history fetch is in flight (or hanging against an
         // unreachable debug host, see D-021).
         let cached = (try? appState.bundleStore.listLocalBundles()) ?? []
-        localBundles = cached
+        // Filter against the CURRENT entries too — seeding the raw
+        // cache while last fetch's rows are still on screen briefly
+        // duplicated every downloaded song ("shows twice until the
+        // refresh completes").
+        let listed = Set(entries.map(\.id))
+        localBundles = cached.filter { !listed.contains($0.analysisId) }
         do {
             let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
             entries = try await client.fetch(
