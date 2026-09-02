@@ -269,10 +269,16 @@ public final class AppState: ObservableObject {
         didSet {
             #if canImport(UIKit)
             AppDelegate.allowLandscape = isPerforming
+            let scene = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }.first
+            // iOS 16+: flipping the delegate gate is NOT enough — the
+            // system caches supported orientations until the root VC
+            // is told to re-query. Without this, Go Live "allows"
+            // landscape but the device never actually rotates.
+            scene?.keyWindow?.rootViewController?
+                .setNeedsUpdateOfSupportedInterfaceOrientations()
             if !isPerforming {
                 // Rotate back: the rest of the app is portrait-only.
-                let scene = UIApplication.shared.connectedScenes
-                    .compactMap { $0 as? UIWindowScene }.first
                 scene?.requestGeometryUpdate(
                     .iOS(interfaceOrientations: .portrait))
             }
