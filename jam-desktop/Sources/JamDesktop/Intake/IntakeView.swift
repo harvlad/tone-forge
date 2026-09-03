@@ -131,12 +131,17 @@ struct IntakeView: View {
             }
         }
         .task {
-            await history.refresh(baseURL: model.backendBaseURL)
-            // Engine status was a one-shot: a backend/worker restart
-            // during launch pinned "Offline" on screen forever even
-            // after the engine came back. Poll while the view lives.
+            // Both were one-shots: engine status pinned "Offline"
+            // across a backend restart, and songs uploaded from the
+            // PHONE never appeared until app relaunch. Poll while the
+            // view lives (status every 10s, history every 30s).
+            var tick = 0
             while !Task.isCancelled {
                 await intake.refreshEngineStatus(baseURL: model.backendBaseURL)
+                if tick % 3 == 0 {
+                    await history.refresh(baseURL: model.backendBaseURL)
+                }
+                tick += 1
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
             }
         }
