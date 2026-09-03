@@ -130,3 +130,74 @@ def test_auto_kit_builder_emits_sample_pack(tmp_path):
     # dict here fails the whole kit decode in the app with a typeMismatch.
     assert isinstance(kit["provenance"], str)
     assert "performance_intelligence" in kit["provenance"]
+
+
+def _asset(stem, ctype, *, start, loop_conf, score, pattern=None, difficulty=0.3):
+    """A PerformanceAsset positioned on the bar grid, with scores pinned."""
+    return PerformanceAsset(
+        stem=stem,
+        source_id=f"{stem}-{start}",
+        pos=_grid().make_pos(start, start + 8 * BP, snap="bar"),
+        content_type=ctype,
+        performance_score=score,
+        difficulty=difficulty,
+        loopable=loop_conf >= 0.55,
+        loop_confidence=loop_conf,
+        pattern_id=pattern,
+    ).with_id()
+
+
+def test_drum_anchor_survives_the_usable_gate():
+    """A drums asset scoring below `usable` still earns its pad.
+
+    Regression for kits arriving with no drum pad at all. The anchor used to
+    select from the post-gate pool, so percussion — which scores worst on
+    exactly the two numbers that gate cuts on — was already discarded by the
+    time the anchor looked for it. Drums here sit under BOTH thresholds
+    (loop_confidence <= 0.2 and performance_score <= 0.4) while the melodic
+    material clears them comfortably.
+    """
+    drums = _asset("drums", ContentType.RHYTHM_LOOP, start=8.0,
+                   loop_conf=0.12, score=0.28)
+    others = [
+        _asset("other", ContentType.CHORD_LOOP, start=16.0, loop_conf=0.8, score=0.9),
+        _asset("bass", ContentType.BASS_GROOVE, start=24.0, loop_conf=0.7, score=0.8),
+        _asset("other", ContentType.LEAD_LOOP, start=32.0, loop_conf=0.75, score=0.75),
+    ]
+    g = MusicalGraph(
+        song_id="s", content_hash="h", module_version="test",
+        config_hash="cfg", grid_tempo_bpm=BPM, time_signature=(4, 4),
+        assets=tuple([drums] + others),
+    )
+
+    kit = AutoKitBuilder().build(g, skill="intermediate", pads=4)
+    cats = [p.get("category") for p in kit["pads"]]
+    assert "DRUMS" in cats, f"kit lost the only drums asset: {cats}"
+
+
+def test_percussion_loop_confidence_ignores_harmonic_carryover():
+    """Percussion is scored on grid + level, not on head/tail tone match.
+
+    A bar of drums that opens on a kick and closes on a hat has almost no
+    spectral carry-over by construction. Under the pitched weighting that
+    reads as an unloopable seam; under the percussion weighting the same
+    window scores as the solid bar-aligned loop it audibly is.
+    """
+    sr = 22050
+    g = _grid()
+    rs = np.random.RandomState(0)
+    dur = 4 * BP  # one bar
+    y = np.zeros(int(sr * 32))
+    # kick on beats, a bright hat between them — different spectra head vs tail
+    for i in range(64):
+        at = int(i * BP * sr)
+        y[at:at + int(sr * 0.05)] += rs.randn(int(sr * 0.05)) * 0.05 + 0.5
+        mid = at + int(BP * sr / 2)
+        y[mid:mid + int(sr * 0.02)] += rs.randn(int(sr * 0.02)) * 0.4
+    pos = g.make_pos(4.0, 4.0 + dur, snap="bar")
+    la = LoopAnalyzer()
+    as_pitched = la.analyze(y, sr, pos, pitched=True).confidence
+    as_perc = la.analyze(y, sr, pos, pitched=False).confidence
+    assert as_perc > as_pitched
+    # and it must clear the kit's `usable` gate on its own merit
+    assert as_perc > 0.2

@@ -22,6 +22,7 @@ librosa on the backend.
 """
 from __future__ import annotations
 
+import logging
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -37,7 +38,9 @@ from .graph import (
 from .grid import MusicalGrid
 from .loop_analyzer import LoopAnalyzer
 from .pattern_discovery import PatternDiscovery
-from .phrase_analyzer import PhraseAnalyzer
+from .phrase_analyzer import _PITCHED_STEMS, PhraseAnalyzer
+
+logger = logging.getLogger(__name__)
 
 try:
     from lab.hashing import config_hash  # type: ignore
@@ -114,18 +117,33 @@ class PerformanceBuilder:
         for stem, path in stem_paths.items():
             try:
                 y, sr = self.load_stem(path)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                # Was a bare `continue`: a stem that failed to decode dropped
+                # out of the graph with no trace, and the only symptom was a
+                # kit missing that instrument's pads. Log it -- an unreadable
+                # drums stem and a drums stem that scores badly produce the
+                # same empty pad grid, and they need opposite fixes.
+                logger.warning(
+                    "[graph] stem %r failed to load (%s): %s", stem, path, exc
+                )
                 continue
             if y is None or len(y) == 0:
+                logger.warning("[graph] stem %r decoded empty: %s", stem, path)
                 continue
 
+            pitched = stem in _PITCHED_STEMS
             phrases = self.phraser.analyze(y, sr, grid, stem, sections)
             if not phrases:
+                logger.warning(
+                    "[graph] stem %r produced 0 phrases (grid/sections too "
+                    "short?)", stem
+                )
                 continue
             # loop score per phrase (phrase window = loop candidate)
             loops_by_phrase: Dict[str, Loop] = {}
             for ph in phrases:
-                q = self.looper.analyze(y, sr, ph.pos, optimize=True)
+                q = self.looper.analyze(y, sr, ph.pos, optimize=True,
+                                        pitched=pitched)
                 lp = Loop(phrase_id=ph.id, stem=stem, pos=ph.pos, quality=q).with_id()
                 loops_by_phrase[ph.id] = lp
                 all_loops.append(lp)
