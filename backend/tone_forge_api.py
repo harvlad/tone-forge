@@ -2669,6 +2669,13 @@ async def engine_job_stem_targets_endpoint(job_id: str, request: Request) -> JSO
     _require_engine_auth(request)
     _engine_job_or_404(job_id)
     _mark_engine_seen()
+    # Function-local, matching every other r2_storage use in this module —
+    # there is no module-level import, so the three references below were
+    # undefined names. The `or` short-circuits when STEM_DIRECT_R2 is unset,
+    # which is why this never fired in the default config and reached prod:
+    # the NameError only surfaces on the direct-to-R2 upload path.
+    from tone_forge import r2_storage
+
     if os.environ.get("STEM_DIRECT_R2") != "1" or not r2_storage.is_configured():
         return JSONResponse({"enabled": False, "targets": {}})
     try:

@@ -12,3 +12,13 @@ playwright>=1.61.0
 # Async fixtures for the pytest suite (tests/test_auth_pg.py imports
 # pytest_asyncio) — without it collection errors with exit code 2.
 pytest-asyncio>=0.23
+
+# tests/lab_infra/ exercises the Riley lab's cache/corpus/matching layer,
+# which is DataFrame-backed and persists its prediction cache as parquet.
+# Undeclared, these four modules raised at COLLECTION, which pytest treats
+# as exit code 2 — the whole backend suite aborted before running a single
+# test, so `backend-tests` was red on main while reporting nothing about
+# the code under test. pyarrow is the parquet engine pandas needs; without
+# it the failure just moves from collection to every cache-touching test.
+pandas>=2.0
+pyarrow>=14.0
