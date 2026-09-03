@@ -40,7 +40,17 @@ SUBSYSTEMS: dict[str, Set[str]] = {
     "tone": set(),
     "monitor": set(),
     "devices": set(),
-    "session": set(),
+    # EXECUTION_PLAN §2 boundary rule 1 names ``session.bundle.build_session``
+    # a composition point ALONGSIDE ``tone_forge_api`` — "Composition lives in
+    # tone_forge_api.py (and in session.bundle.build_session for Jam's
+    # specific composition)". So the bundle assembler may read Riley's
+    # Musical Graph to fill SongUnderstanding.motifs, which had no other
+    # producer. It still hands back a frozen ``contracts.Motif``; the graph
+    # never escapes this seam. This entry records that documented exception
+    # rather than granting a new one — anything else session reaches for
+    # still fails here.
+    # (bare package name — the allowlist prefixes ``tone_forge.`` itself)
+    "session": {"performance"},
     "guidance": set(),
     "notation": set(),
 }

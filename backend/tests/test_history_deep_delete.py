@@ -178,7 +178,10 @@ def test_clear_history_purges_every_entry(storage):
     resp = client.delete("/api/history")
 
     assert resp.status_code == 200
-    assert resp.json() == {"status": "cleared"}
+    # `deleted` is the caller-scoped count, added when DELETE /api/history
+    # stopped being a global wipe (d3eaca5). Both seeded rows are unstamped
+    # legacy entries, so _caller_owns admits both and the caller clears 2.
+    assert resp.json() == {"status": "cleared", "deleted": 2}
     assert not seeded["stems_dir"].exists()
     assert sorted(storage["r2_calls"]) == [ENTRY_ID, "second01"]
     assert json.loads((storage["tmp"] / "history.json").read_text()) == []
