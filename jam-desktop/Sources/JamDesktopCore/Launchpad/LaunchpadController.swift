@@ -302,6 +302,9 @@ public final class LaunchpadController {
     /// immediately, so loops free-ran at their press phases (the "are you
     /// sure it's synced?" bug).
     @ObservationIgnored public var onLoopArm: (() -> Void)?
+    /// Whether the song transport is rolling — quantize/phase-lock
+    /// applies only then; stopped = pads fire immediately.
+    @ObservationIgnored public var isTransportPlaying: (() -> Bool)?
 
     /// Hard-stop EVERY sounding voice unconditionally (ChopPlayer.stopAll),
     /// not just the ones the current assignments can name. Used before a
@@ -518,17 +521,22 @@ public final class LaunchpadController {
             onRelease?(pad, assignment)   // stop the loop
             return
         }
-        // Starting a loop with the transport stopped = quantizing against a
-        // frozen clock (everything fires immediately, phases free-run). Let
-        // the host start the transport BEFORE we read the clock.
-        if playbackMode == .loop { onLoopArm?() }
         let now = nowProvider()
+        // Transport STOPPED: loops fire immediately and free-run
+        // (mobile parity). Auto-starting the transport for a clock
+        // made the first loop tap visibly toggle Play and start the
+        // whole song underneath — jarring, and not what a pad tap
+        // means. Phase-locking applies only when the song is
+        // actually rolling.
+        let transportRolling = isTransportPlaying?() ?? false
         // Loop + lock: start on the next SHARED loop-cycle boundary so every
         // pad is phase-locked to one 8 s grid and they stack coherently. With
         // lock off (or in Tap mode) fall back to bar-quantize / the Quantize
         // control so a single hit still lands on the beat.
         let fireAt: Double
-        if playbackMode == .loop && loopLockEnabled {
+        if !transportRolling {
+            fireAt = now
+        } else if playbackMode == .loop && loopLockEnabled {
             fireAt = nextLoopBoundary(after: now)
         } else {
             let effectiveQuantize: QuantizeMode =

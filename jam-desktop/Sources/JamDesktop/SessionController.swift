@@ -424,15 +424,12 @@ final class SessionController: ObservableObject {
         // loops belong to the song's grid; without a rolling clock they
         // free-ran at their press phases. (Move-style: the first loop
         // starts the music.)
-        launchpad.onLoopArm = { [weak self] in
-            guard let self, !self.transport.isPlaying else { return }
-            // The transport starts ONLY to give loops a running clock
-            // to quantize against — launching your first loop must not
-            // audibly start the whole song underneath it. Zero the
-            // song fader (visible in the mixer; raise it to blend the
-            // original back in).
-            self.mix.songGain = 0
-            self.transport.play()
+        // Loop taps NO LONGER auto-start the transport (it visibly
+        // toggled Play and ran the whole song under the first loop).
+        // Stopped transport = loops fire instantly, free-running;
+        // quantize/phase-lock engages only while the song plays.
+        launchpad.isTransportPlaying = { [weak self] in
+            self?.transport.isPlaying ?? false
         }
         launchpad.onLocalSampleTrigger = { [weak self] id in
             guard let self, let url = try? self.padSampleStore.wavURL(id: id) else { return }
