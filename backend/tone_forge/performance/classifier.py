@@ -32,6 +32,15 @@ _COLOR = {
 }
 
 
+# Clarity envelope (see performance_score). Below the floor a phrase is
+# effectively silent; above HOT it is hotter than a well-levelled stem but
+# still perfectly playable, so it tapers toward — never to — zero.
+_CLARITY_FLOOR = 0.02
+_CLARITY_HOT = 0.45
+_CLARITY_HOT_SPAN = 0.55
+_CLARITY_HOT_FLOOR = 0.6
+
+
 def classify(
     stem: str,
     phrase: Phrase,
@@ -86,10 +95,23 @@ def performance_score(
     rep = 0.0
     if pattern:
         rep = min(1.0, (pattern.recurrence_count - 1) / 6.0)
-    # clarity/energy: audible but not clipping
+    # clarity/energy: audible, and not so hot it is certainly clipped.
+    #
+    # This was a symmetric triangle peaking at RMS 0.15 and hitting exactly
+    # 0.0 at 0.3 — which scored a healthy, loud stem as harshly as silence.
+    # 0.3 RMS is a normal drum bus, not a defect, so the loudest and most
+    # obviously usable material in the mix was handed a zero on this term.
+    # Now: ramp out of inaudibility, a wide plateau over everything that is
+    # simply "a good level", and a GENTLE taper for genuinely hot material
+    # (never to zero — too loud is a mix opinion, silence is disqualifying).
     energy = phrase.energy
-    clarity = 1.0 - abs(min(energy, 0.3) - 0.15) / 0.15  # sweet spot ~0.15
-    clarity = max(0.0, clarity)
+    if energy < _CLARITY_FLOOR:
+        clarity = energy / _CLARITY_FLOOR
+    elif energy <= _CLARITY_HOT:
+        clarity = 1.0
+    else:
+        clarity = max(_CLARITY_HOT_FLOOR,
+                      1.0 - (energy - _CLARITY_HOT) / _CLARITY_HOT_SPAN)
     # usefulness by type (loops > one-shots for "perform the song")
     useful = {
         ContentType.RHYTHM_LOOP: 1.0, ContentType.CHORD_LOOP: 0.95,

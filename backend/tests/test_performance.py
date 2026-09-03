@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from tone_forge.performance.grid import MusicalGrid
-from tone_forge.performance.graph import ContentType, MusicalGraph, PerformanceAsset
+from tone_forge.performance.graph import ContentType, MusicalGraph, PerformanceAsset, Phrase
 from tone_forge.performance.loop_analyzer import LoopAnalyzer
 from tone_forge.performance.phrase_analyzer import PhraseAnalyzer
 from tone_forge.performance.pattern_discovery import PatternDiscovery
@@ -201,3 +201,33 @@ def test_percussion_loop_confidence_ignores_harmonic_carryover():
     assert as_perc > as_pitched
     # and it must clear the kit's `usable` gate on its own merit
     assert as_perc > 0.2
+
+
+def test_clarity_does_not_punish_a_loud_stem_like_silence():
+    """A well-levelled loud phrase must outrank a silent one.
+
+    `clarity` was a symmetric triangle peaking at RMS 0.15 and reaching
+    exactly 0.0 at 0.3 — so a normal drum bus scored identically to silence
+    on that term. Drums were the routine victim, being the hottest stem in
+    most mixes.
+    """
+    from tone_forge.performance.classifier import performance_score
+
+    def _phrase_at(energy):
+        return Phrase(
+            stem="drums",
+            pos=_grid().make_pos(8.0, 8.0 + 8 * BP, snap="bar"),
+            onset_density=2.0,
+            pitched=False,
+            energy=energy,
+        ).with_id()
+
+    args = (None, None, ContentType.RHYTHM_LOOP)
+    silent = performance_score(_phrase_at(0.0), *args)
+    healthy = performance_score(_phrase_at(0.15), *args)
+    loud = performance_score(_phrase_at(0.32), *args)
+
+    assert loud > silent, "a loud stem scored no better than silence"
+    assert loud == pytest.approx(healthy), "0.32 RMS is a good level, not a defect"
+    # genuinely hot material is nudged, never zeroed
+    assert silent < performance_score(_phrase_at(0.9), *args) < loud
