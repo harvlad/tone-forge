@@ -328,6 +328,28 @@ final class SessionController: ObservableObject {
 
         launchpad.sequencePadManager = sequencePadManager
         launchpad.padAssignmentStore = padAssignmentStore
+        // On-pad waveforms + sequence step dots (mobile/plugin parity).
+        launchpad.padPeaksProvider = { [weak self] pad in
+            guard let self, let a = self.launchpad.assignments[pad]
+            else { return nil }
+            return self.chopPlayer.peaks(for: a)
+        }
+        launchpad.padStepFlagsProvider = { [weak self] padIdx in
+            guard let self,
+                  case .sequence(let patternId)? =
+                      self.padAssignmentStore.slot(padIdx: padIdx),
+                  let pattern = self.patternStore.pattern(id: patternId)
+            else { return nil }
+            let count = pattern.stepCount.rawValue
+            var flags = [Bool](repeating: false, count: count)
+            for track in pattern.tracks {
+                for (i, step) in track.steps.enumerated()
+                where i < count && step.isActive {
+                    flags[i] = true
+                }
+            }
+            return flags
+        }
         // Sequencer follows the shared Link tempo the moment it moves.
         linkSync.onTempoChanged = { [weak self] bpm in
             self?.sequencer.songBPM = bpm

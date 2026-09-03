@@ -138,7 +138,48 @@ public final class ChopPlayer {
         regionCache.removeAll()
     }
 
+    /// 44-bin peak envelope for a pad's chop — the grid tiles draw
+    /// mobile/plugin-style waveforms from this. Reads the SAME cached
+    /// region buffer playback uses (post-normalize), so the drawn
+    /// shape is exactly what sounds. Cached per chop.
+    private var peaksCache: [String: [Float]] = [:]
+
+    public func peaks(for assignment: PadAssignment, bins: Int = 44) -> [Float]? {
+        let chop = assignment.chop
+        let key = "\(assignment.stem)#\(chop.idx)#\(bins)"
+        if let hit = peaksCache[key] { return hit }
+        guard bins > 0, let file = files[assignment.stem] else { return nil }
+        let sr = file.processingFormat.sampleRate
+        let startFrame = AVAudioFramePosition(max(0, chop.startSec * sr))
+        let frameCount = AVAudioFrameCount(max(1, (chop.endSec - chop.startSec) * sr))
+        guard let buf = regionBuffer(file: file, startFrame: startFrame,
+                                     frameCount: frameCount),
+              let ch = buf.floatChannelData else { return nil }
+        let frames = Int(buf.frameLength)
+        guard frames > 0 else { return nil }
+        let channels = Int(buf.format.channelCount)
+        let per = max(1, frames / bins)
+        var out = [Float](repeating: 0, count: bins)
+        for b in 0..<bins {
+            let s = b * per
+            let e = min(frames, s + per)
+            guard s < e else { break }
+            var peak: Float = 0
+            for c in 0..<channels {
+                let p = ch[c]
+                for i in s..<e { peak = max(peak, abs(p[i])) }
+            }
+            out[b] = peak
+        }
+        if let m = out.max(), m > 0 {
+            for i in 0..<bins { out[i] /= m }
+        }
+        peaksCache[key] = out
+        return out
+    }
+
     public func unload() {
+        peaksCache.removeAll()
         stopAll()
         files.removeAll()
         fileCache.removeAll()

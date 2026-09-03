@@ -894,9 +894,26 @@ private struct PadCell: View {
         if let pulse = sequencePulse {
             sequencePulseOverlay(pulse: pulse)
         } else if isSequencePad {
-            Image(systemName: "waveform")
-                .font(.body)
-                .foregroundStyle(.white.opacity(0.6))
+            // Static step pattern (mobile/plugin parity) — the pad
+            // shows its beat even while idle. Icon fallback when the
+            // pattern can't be resolved.
+            if let flags = launchpad.padStepFlagsProvider?(padIdx) {
+                stepDots(flags: flags)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 12)
+            } else {
+                Image(systemName: "waveform")
+                    .font(.body)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+        } else if launchpad.assignments[pad] != nil,
+                  let peaks = launchpad.padPeaksProvider?(pad) {
+            // Mirrored waveform bars from the SAME buffer playback
+            // reads — the jamn Kit plugin's pad look, on desktop.
+            waveformBars(peaks: peaks)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 14)
+                .allowsHitTesting(false)
         } else if isPackPad {
             Image(systemName: "speaker.wave.2.fill")
                 .font(.body)
@@ -905,6 +922,41 @@ private struct PadCell: View {
             Image(systemName: "mic.fill")
                 .font(.body)
                 .foregroundStyle(.white.opacity(0.6))
+        }
+    }
+
+    private func waveformBars(peaks: [Float]) -> some View {
+        Canvas { ctx, size in
+            let n = peaks.count
+            guard n > 0 else { return }
+            let bw = size.width / CGFloat(n)
+            for i in 0..<n {
+                let h = max(1.5, CGFloat(peaks[i]) * size.height)
+                let rect = CGRect(
+                    x: CGFloat(i) * bw + bw * 0.15,
+                    y: (size.height - h) / 2,
+                    width: max(0.6, bw * 0.7), height: h)
+                ctx.fill(Path(roundedRect: rect, cornerRadius: bw * 0.25),
+                         with: .color(.white.opacity(0.75)))
+            }
+        }
+    }
+
+    private func stepDots(flags: [Bool]) -> some View {
+        Canvas { ctx, size in
+            let n = max(1, flags.count)
+            let cols = 8
+            let rows = max(1, (n + cols - 1) / cols)
+            let cw = size.width / CGFloat(cols)
+            let chh = size.height / CGFloat(rows)
+            for i in 0..<n {
+                let rect = CGRect(
+                    x: CGFloat(i % cols) * cw + 1,
+                    y: CGFloat(i / cols) * chh + 1,
+                    width: max(1, cw - 2), height: max(1, chh - 2))
+                ctx.fill(Path(roundedRect: rect, cornerRadius: 2),
+                         with: .color(.white.opacity(flags[i] ? 0.85 : 0.18)))
+            }
         }
     }
 

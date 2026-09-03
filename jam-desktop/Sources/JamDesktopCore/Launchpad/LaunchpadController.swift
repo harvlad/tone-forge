@@ -254,6 +254,15 @@ public final class LaunchpadController {
         return k * L
     }
     public private(set) var assignments: [LaunchpadPad: PadAssignment] = [:]
+
+    /// Peak envelope for a pad's chop, or nil. Set by SessionController
+    /// (queries ChopPlayer's cached region buffers) — drives the
+    /// on-pad waveforms, same look as mobile + the jamn Kit plugin.
+    public var padPeaksProvider: ((LaunchpadPad) -> [Float]?)?
+    /// Static step flags for a sequence pad (union of active steps),
+    /// or nil for non-sequence pads. Set by SessionController from the
+    /// pattern store — pads show their pattern even while idle.
+    public var padStepFlagsProvider: ((Int) -> [Bool]?)?
     /// Pads currently sounding (pressed, or latched until release).
     public private(set) var activePads: Set<LaunchpadPad> = []
     /// Source of the current grid.
