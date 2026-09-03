@@ -95,10 +95,48 @@ struct TransportBar: View {
 
             Divider().frame(height: 20)
 
+            masterControls
+
+            Divider().frame(height: 20)
+
             RecordToggle(recorder: session.recording.recorder)
 
             Spacer()
         }
+    }
+
+    /// Master musical volume + mute — one grab for "everything is too
+    /// loud" without opening the mixer.
+    @State private var preMuteVolume: Float = 1
+    private var masterControls: some View {
+        HStack(spacing: 6) {
+            Button {
+                let bus = session.engine.musicBus
+                if bus.masterVolume > 0 {
+                    preMuteVolume = bus.masterVolume
+                    bus.masterVolume = 0
+                } else {
+                    bus.masterVolume = max(0.05, preMuteVolume)
+                }
+            } label: {
+                Image(systemName: session.engine.musicBus.masterVolume > 0
+                      ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                    .foregroundStyle(
+                        session.engine.musicBus.masterVolume > 0
+                            ? Color.secondary : Color.orange)
+            }
+            .buttonStyle(.plain)
+            .help("Mute all music")
+            Slider(
+                value: Binding(
+                    get: { Double(session.engine.musicBus.masterVolume) },
+                    set: { session.engine.musicBus.masterVolume = Float($0) }
+                ),
+                in: 0...1
+            )
+            .frame(width: 110)
+        }
+        .help("Master volume (stems + pads + sequencer)")
     }
 
     private var tempoControls: some View {

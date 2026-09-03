@@ -398,6 +398,9 @@ struct LaunchpadPanelView: View {
         Text(title)
             .font(.caption2)
             .foregroundStyle(.secondary)
+            // Width-starved captions wrapped one CHARACTER per line
+            // ("Stem" rendered vertically beside the picker).
+            .fixedSize()
     }
 
     /// Shared loop-cycle strip: elapsed sweep of the current cycle, a flash

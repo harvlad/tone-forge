@@ -30,6 +30,14 @@ public final class MusicBus {
     /// The mixer musical sources connect into.
     public let input = AVAudioMixerNode()
 
+    /// Master musical volume (stems + chops + sequencer together),
+    /// 0…1 — the transport bar's master fader. Monitor/guitar path
+    /// is untouched.
+    public var masterVolume: Float {
+        get { input.outputVolume }
+        set { input.outputVolume = max(0, min(1, newValue)) }
+    }
+
     private let eq = AVAudioUnitEQ(numberOfBands: 3)
     private let comp: AVAudioUnitEffect
     /// Always-on safety brickwall limiter after the user comp — catches

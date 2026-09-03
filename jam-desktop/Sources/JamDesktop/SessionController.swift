@@ -426,6 +426,12 @@ final class SessionController: ObservableObject {
         // starts the music.)
         launchpad.onLoopArm = { [weak self] in
             guard let self, !self.transport.isPlaying else { return }
+            // The transport starts ONLY to give loops a running clock
+            // to quantize against — launching your first loop must not
+            // audibly start the whole song underneath it. Zero the
+            // song fader (visible in the mixer; raise it to blend the
+            // original back in).
+            self.mix.songGain = 0
             self.transport.play()
         }
         launchpad.onLocalSampleTrigger = { [weak self] id in
