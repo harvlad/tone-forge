@@ -4,6 +4,10 @@ becomes self-directing (coverage gap -> commissioning brief).
 
 Dimensions (Phase 3): genre, gain, guitar_type, pickup, tempo, key, masking_level,
 recording_style, acoustic_vs_electric, difficulty, synthetic_vs_real, license_class.
+
+Synth dimensions read the same vocabulary ``SynthDescriptor`` produces
+(synth_analyzer), so a manufactured synth asset can be stamped straight from a
+real analysis rather than from hand-typed tags.
 """
 from __future__ import annotations
 
@@ -61,6 +65,30 @@ DIMENSIONS: dict[str, Callable[[Asset], str]] = {
     "difficulty": lambda a: _bucket01(a.metadata.get("difficulty")),
     "synthetic_vs_real": lambda a: a.metadata.get("synthetic_real", _UNK),
     "license_class": _license_class,
+    # --- synth coverage -------------------------------------------------
+    # Five dimensions, chosen because each one predicts a DIFFERENT failure
+    # mode for a synth separator, not because they describe a patch well:
+    #
+    #   synth_role     where it sits in the arrangement. A lead competes
+    #                  with vocals, a pad with guitar; a separator good at
+    #                  one is routinely bad at the other.
+    #   oscillator     spectral identity. A saw is harmonically dense like
+    #                  a distorted guitar; a sine is nearly a pure tone
+    #                  hiding under a bass. Opposite confusions.
+    #   brightness     how far up the spectrum it lives, i.e. what it
+    #                  collides with — cymbals up top, bass down low.
+    #   movement       filter sweeps and LFO. Non-stationary timbre is the
+    #                  hard case: a separator trained on static pads
+    #                  smears anything that moves.
+    #   stereo_width   wide detuned pads defeat pan-based cues, which is
+    #                  exactly what the existing multi-guitar split leans
+    #                  on. A corpus of mono synths would hide that.
+    "synth_role": lambda a: a.metadata.get("synth_role", _UNK),
+    "oscillator": lambda a: a.metadata.get("oscillator", _UNK),
+    "brightness": lambda a: _bucket01(a.metadata.get("brightness")),
+    "movement": lambda a: _bucket01(a.metadata.get("movement")),
+    "stereo_width": lambda a: _bucket01(a.metadata.get("stereo_width"),
+                                        lo="mono", mid="narrow", hi="wide"),
 }
 
 
