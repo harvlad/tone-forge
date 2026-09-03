@@ -173,6 +173,19 @@ def _build_stem_records(
         "bass": StemRole.BASS,
         "vocals": StemRole.VOCALS,
         "other": StemRole.HARMONIC,
+        # htdemucs_6s extras. Without these two the 6-stem model's own
+        # guitar/piano stems fell through to StemRole.UNKNOWN, which the
+        # session engine cannot route to any slot -- the stems existed and
+        # were unreachable.
+        #
+        # guitar -> HARMONIC, not LEAD/RHYTHM: those mean "a classifier
+        # decided", and nothing has run here. HARMONIC is in
+        # GUITAR_FAMILY_ROLES so the user slot still picks it up, and it
+        # already displays as "Guitar".
+        "guitar": StemRole.HARMONIC,
+        # KEYS is deliberately outside GUITAR_FAMILY_ROLES -- a keyboardist
+        # plays the keys role (see stem_model).
+        "piano": StemRole.KEYS,
     }
 
     for name, path in stems.items():
@@ -232,8 +245,13 @@ def _build_stems_dict(stems: dict, detected_type: str, guitar_parts: dict) -> di
         if name == "other" and has_split:
             for part_key, part_path in guitar_parts.items():
                 out[part_key] = f"{base}{str(part_path)}"
-        elif name == "other" and detected_type == "guitar":
-            # Legacy single-slot rename when no usable split.
+        elif (name == "other" and detected_type == "guitar"
+                and "guitar" not in stems):
+            # Legacy single-slot rename when no usable split. Skipped when
+            # the separator already produced a real `guitar` stem
+            # (htdemucs_6s): writing `other` into out["guitar"] would
+            # silently replace the actual guitar with the residual bucket,
+            # and which one won depended on dict ordering.
             out["guitar"] = f"{base}{str(path)}"
         else:
             out[name] = f"{base}{str(path)}"
@@ -449,18 +467,26 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 }
 
         _st = time.perf_counter()
-        if _specialist_decision is not None:
-            # Experimental engine separates with htdemucs_6s (MIT, already an
-            # approved repo model) so guitar/piano family stems exist; the
-            # current engine's 4-stem behavior is untouched. Fall back to the
-            # default model on failure so analysis never dies here.
-            try:
-                stems = separate_all_stems(audio_path, model_name="htdemucs_6s")
-            except Exception as e:
-                logger.warning("htdemucs_6s failed (%s); falling back to htdemucs", e)
-                _specialist_provenance["separator_fallback"] = str(e)[:200]
-                stems = separate_all_stems(audio_path)
-        else:
+        # htdemucs_6s (MIT, already an approved repo model) is now the default
+        # for EVERY engine, not just the experimental specialist. The 4-stem
+        # model buckets guitar, keys, synth, strings and pads into one `other`
+        # stem, so every downstream consumer -- pads, kits, chord detection,
+        # tone retrieval -- was reading a blend. 6s pulls guitar and piano out,
+        # which also makes the residual `other` a far better proxy for synth
+        # content on electronic material.
+        #
+        # It is slower and costs more GPU time per song. The 4-stem model
+        # remains the fallback so analysis never dies here, and the fallback
+        # is recorded in provenance rather than passing silently.
+        try:
+            stems = separate_all_stems(audio_path, model_name="htdemucs_6s")
+        except Exception as e:
+            logger.warning("htdemucs_6s failed (%s); falling back to htdemucs", e)
+            # Always a dict (initialised above), and a non-empty provenance
+            # bag is itself what makes the record get attached downstream --
+            # so a 6s fallback now surfaces even on the "current" engine,
+            # where provenance was previously omitted entirely.
+            _specialist_provenance["separator_fallback"] = str(e)[:200]
             stems = separate_all_stems(audio_path)
         stem_time = time.time() - start_time
         _record_stage("stem_separation", _st, time.perf_counter())
@@ -813,7 +839,15 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         # downstream code keeps working unchanged.
         guitar_parts: dict = {}
         _st_mg = time.perf_counter()
-        if stems.get("other") is not None:
+        # Split the GUITAR stem when the separator gave us one (htdemucs_6s),
+        # falling back to `other`. Under 6s, `other` is the residual AFTER
+        # guitar and piano are pulled out, so pan-splitting it and labelling
+        # the halves guitar_lead / guitar_rhythm mislabels synth, strings and
+        # pad content as guitar. `other` stays the input under the 4-stem
+        # model, where it is genuinely the guitar's bucket.
+        _split_src_name = "guitar" if stems.get("guitar") is not None else "other"
+        _split_src = stems.get(_split_src_name)
+        if _split_src is not None:
             try:
                 from tone_forge.stem_separator import split_stem_by_pan
                 from tone_forge.reconstruction.role_classifier import (
@@ -822,7 +856,8 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
 
                 send_progress(queue, "multiguitar", 0.78,
                               "Identifying guitar parts...")
-                split = split_stem_by_pan(stems["other"])
+                logger.info("multi-guitar split reading %r stem", _split_src_name)
+                split = split_stem_by_pan(_split_src)
 
                 def _role_to_label(role) -> Optional[str]:
                     # Map the broader MusicalRole enum to the three
