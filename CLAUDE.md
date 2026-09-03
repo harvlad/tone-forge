@@ -162,9 +162,9 @@ app imports; keep that ordering if you touch conftest.
   real audio, never a metric alone.
 - Legal placeholders in `mobile-ios/.../LegalSheets.swift` block public
   release (`OUTSTANDING.md` §2).
-- `README.md` still has stale corners outside the (now-corrected) layout
-  section: its Architecture list names `pedal_translator.py`,
-  `bass_translator.py` and `drum_translator.py`, none of which exist, and its
-  Development section suggests `mypy` + `black`, neither of which is installed
-  or configured anywhere — the lint gate is ruff. Trust this file and
-  `EXECUTION_PLAN.md` over the README.
+- Translator surface: `translator.py` is the platform-agnostic renderer
+  (helix / boss / kemper / fractal / neural_dsp / pedals / synth) and
+  `helix_translator.py` builds Helix chains; `synth_hardware.py` does hardware
+  synth matching. Dedicated `pedal_translator.py`, `bass_translator.py` and
+  `drum_translator.py` are planned work, not missing files — don't go looking
+  for them.
