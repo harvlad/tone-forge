@@ -104,12 +104,23 @@ struct SettingsView: View {
                     if let report = session.monitor.latestLatency,
                        let roundTrip = report.measuredRoundTripMs
                         ?? report.estimatedRoundTripMs {
-                        Text(String(format: "%.1f ms round trip", roundTrip))
+                        // 0.0 = the probe tone never reached the mic
+                        // (muted input, no permission, headphones) —
+                        // an honest "no signal" beats a fake number.
+                        Text(roundTrip < 0.5
+                             ? "no signal — check mic input"
+                             : String(format: "%.1f ms round trip", roundTrip))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("Engine", value: session.monitor.engineStateName)
+                // "stopped" reads as breakage; the engine starts
+                // lazily with the first sound.
+                LabeledContent(
+                    "Engine",
+                    value: session.monitor.engineStateName == "stopped"
+                        ? "idle — starts with first sound"
+                        : session.monitor.engineStateName)
             }
 
             Section("Studio (admin)") {
