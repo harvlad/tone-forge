@@ -69,11 +69,16 @@ Automatically detects whether audio contains guitar, bass, synth, or drums and r
   - `DrumDescriptor` — Kick/snare/hihat characteristics
 
 - **Translators** — Convert descriptors to gear recommendations
-  - `helix_translator.py` — Line 6 Helix/HX
-  - `pedal_translator.py` — Real pedal recommendations
-  - `synth_translator.py` — Hardware synth matching
-  - `bass_translator.py` — Bass gear
-  - `drum_translator.py` — Drum machines
+  - `translator.py` — Platform-agnostic signal chain; renders for helix,
+    boss, kemper, fractal, neural_dsp, pedals, synth. Optional LightGBM
+    ranking for block selection, rule-based fallback.
+  - `helix_translator.py` — Line 6 Helix/HX chain builder
+  - `synth_hardware.py` — Hardware synth matching + control-range mapping
+
+  Planned, not yet built: dedicated `pedal_translator.py`,
+  `bass_translator.py` and `drum_translator.py`. Pedal and synth output
+  currently comes from `translator.py`'s platform rendering; bass and drum
+  recommendations are still driven from their analyzers.
 
 ## Riley Data Factory
 
@@ -142,7 +147,7 @@ backend/
 │   ├── als_template.py       # Ableton Live Set generation
 │   ├── preset_export.py      # All export formats
 │   ├── helix_translator.py   # Helix chain builder
-│   ├── synth_translator.py   # Synth matcher
+│   ├── translator.py         # Platform-agnostic descriptor → signal chain
 │   ├── synth_hardware.py     # Hardware synth database + control mapping
 │   ├── descriptor.py         # Data classes
 │   ├── unified_pipeline.py   # Legacy orchestrator (thinning out as packages land)
@@ -275,16 +280,22 @@ The MIDI extractor has genre-specific profiles. Synthwave mode:
 ## Development
 
 ```bash
-# Run tests
 cd backend
-pytest tests/ -v
+pip install -r requirements.txt -r requirements-dev.txt
 
-# Type checking
-mypy tone_forge/
+# Tests — as CI runs them
+python -m pytest tests -q
 
-# Format
-black tone_forge/
+# Lint gate — as CI runs it
+ruff check tone_forge tone_forge_api.py local_engine tests cli.py
 ```
+
+The ruff gate is deliberately narrow (`E9`, `F63`, `F7`, `F82` — syntax
+errors, undefined names, comparison bugs), configured in
+`backend/pyproject.toml`. The legacy codebase carries too many style
+violations to gate on the full rule set; expand the `select` list as
+modules are genuinely cleaned up rather than fixing unrelated style noise
+in a feature change. There is no type-checker or formatter in the toolchain.
 
 ## License
 
