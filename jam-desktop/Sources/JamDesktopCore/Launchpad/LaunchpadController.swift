@@ -305,6 +305,15 @@ public final class LaunchpadController {
     /// Whether the song transport is rolling — quantize/phase-lock
     /// applies only then; stopped = pads fire immediately.
     @ObservationIgnored public var isTransportPlaying: (() -> Bool)?
+    /// Wall-clock anchor for the stopped-transport loop grid (host
+    /// ticks of the first loop's launch; 0 = no grid yet).
+    @ObservationIgnored private var freerunAnchorHost: UInt64 = 0
+    /// mach_absolute_time ticks -> seconds.
+    private static let hostTickSeconds: Double = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return Double(info.numer) / Double(info.denom) / 1_000_000_000
+    }()
 
     /// Hard-stop EVERY sounding voice unconditionally (ChopPlayer.stopAll),
     /// not just the ones the current assignments can name. Used before a
@@ -535,7 +544,28 @@ public final class LaunchpadController {
         // control so a single hit still lands on the beat.
         let fireAt: Double
         if !transportRolling {
-            fireAt = now
+            // FREE-RUN GRID: the first loop fires immediately and
+            // anchors a wall-clock cycle; later loop taps queue to
+            // that anchor so they stack in phase — the queuing feel,
+            // without auto-starting the transport. Tap mode and
+            // lock-off stay instant.
+            if playbackMode == .loop && loopLockEnabled {
+                let hostNow = mach_absolute_time()
+                if activePads.isEmpty || freerunAnchorHost == 0 {
+                    freerunAnchorHost = hostNow
+                    fireAt = now
+                } else {
+                    let L = loopLengthSeconds
+                    let elapsed =
+                        Double(hostNow - freerunAnchorHost) * Self.hostTickSeconds
+                    let intoCycle = elapsed.truncatingRemainder(dividingBy: L)
+                    // Small grace: a tap RIGHT on the boundary fires now.
+                    let delay = intoCycle < 0.08 ? 0 : (L - intoCycle)
+                    fireAt = now + delay
+                }
+            } else {
+                fireAt = now
+            }
         } else if playbackMode == .loop && loopLockEnabled {
             fireAt = nextLoopBoundary(after: now)
         } else {
