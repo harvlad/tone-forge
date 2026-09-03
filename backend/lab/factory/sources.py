@@ -58,21 +58,36 @@ def _first_existing(dir_path: Path, stem: str) -> Path | None:
 
 
 class SlakhSource:
-    """Slakh2100 layout: <root>/<Track#####>/{guitar,mixture,...}.{wav,flac}.
-    Emits the guitar STEM (Riley's target) and, when present, the MIXTURE."""
+    """Slakh2100 layout: <root>/<Track#####>/{guitar,synth,mixture,...}.{wav,flac}.
+    Emits one target STEM per track and, when present, the MIXTURE.
+
+    ``stem_role`` selects which target to read. It defaults to guitar —
+    Riley's original target — so existing callers are unchanged. Slakh is
+    rendered from MIDI against General MIDI instrument classes, so its
+    per-instrument stems are exactly labelled by construction, which makes
+    it the one registered dataset that can supply abundant synth targets
+    with trustworthy ground truth (CC BY 4.0, see training_data).
+
+    The stem FILENAME is taken from the role by default and overridable via
+    ``stem_filename``, because the on-disk name depends on how a given Slakh
+    checkout was flattened — this class never had a way to express that.
+    """
     dataset_key = "slakh2100"
 
     def __init__(self, root: str | Path, id: str = "slakh2100",
-                 synthetic_real: str = "synthetic", emit_mixture: bool = True):
+                 synthetic_real: str = "synthetic", emit_mixture: bool = True,
+                 stem_role: str = Role.GUITAR, stem_filename: str | None = None):
         self.id = id
         self._root = Path(root)
         self._synth = synthetic_real
         self._emit_mixture = emit_mixture
+        self._stem_role = stem_role
+        self._stem_filename = stem_filename or stem_role
 
     def capabilities(self) -> SourceCapabilities:
         return SourceCapabilities(
             kinds=frozenset({Kind.STEM} | ({Kind.MIXTURE} if self._emit_mixture else set())),
-            roles=frozenset({Role.GUITAR, Role.MIX}),
+            roles=frozenset({self._stem_role, Role.MIX}),
             synthetic_real=self._synth, has_mixture=self._emit_mixture)
 
     def health(self) -> bool:
@@ -80,9 +95,9 @@ class SlakhSource:
 
     def iter_assets(self) -> Iterable[RawAsset]:
         for track_dir in sorted(p for p in self._root.iterdir() if p.is_dir()):
-            g = _first_existing(track_dir, "guitar")
+            g = _first_existing(track_dir, self._stem_filename)
             if g is not None:
-                yield RawAsset(str(g), kind=Kind.STEM, role=Role.GUITAR,
+                yield RawAsset(str(g), kind=Kind.STEM, role=self._stem_role,
                                source_tags={"track": track_dir.name, "synthetic_real": self._synth,
                                             "recording_type": "synthetic"})
             if self._emit_mixture:

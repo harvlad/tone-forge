@@ -71,9 +71,21 @@ class StudioReport:
 
 class VirtualStudio:
     def __init__(self, catalog: AssetCatalog, runner: PipelineRunner,
-                 out_dir: Optional[Path] = None, segment_seconds: Optional[float] = None):
+                 out_dir: Optional[Path] = None, segment_seconds: Optional[float] = None,
+                 target_role: str = Role.GUITAR):
         self.catalog = catalog
         self.runner = runner
+        # Which instrument the manufactured pair is a target FOR. The mixing
+        # maths is role-agnostic — a linear sum whose ground truth is exact by
+        # construction — but the emitted filename, asset role and provenance
+        # label were hardcoded to guitar, so the studio could not express a
+        # (mixture, synth_target) pair at all. Defaults to GUITAR, and for
+        # GUITAR every emitted path, role and provenance value is byte-for-byte
+        # what it was: `guitar_target.wav`, Role.GUITAR, "guitar_in_mix".
+        # That matters more than usual here — corpora are content-addressed, so
+        # a changed output path would silently invalidate every frozen
+        # corpus_hash.
+        self.target_role = target_role
         self.out = Path(out_dir) if out_dir else (config.FACTORY_DIR / "studio")
         # optional deterministic segmentation: take a seeded fixed-length excerpt of the
         # guitar (and mix to that length). Controls disk/compute at scale AND adds
@@ -125,7 +137,7 @@ class VirtualStudio:
         base = self.out / scenario.name / guitar.asset_id[:12]
         base.mkdir(parents=True, exist_ok=True)
         mix_path = base / "mixture.wav"
-        tgt_path = base / "guitar_target.wav"
+        tgt_path = base / f"{self.target_role}_target.wav"
         _atomic_write(mix_path, mix, sr)      # temp+rename -> no truncated/partial files
         _atomic_write(tgt_path, gt, sr)
 
@@ -144,8 +156,9 @@ class VirtualStudio:
         pair_id = f"{scenario.signature()}:{guitar.asset_id}"
 
         target = guitar.derive(tgt_path, stage=f"scenario_target:{scenario.label}",
-                               params={**prov, "pair_id": pair_id, "role": "guitar_in_mix"},
-                               kind=Kind.STEM, role=Role.GUITAR)
+                               params={**prov, "pair_id": pair_id,
+                                       "role": f"{self.target_role}_in_mix"},
+                               kind=Kind.STEM, role=self.target_role)
         tmd = dict(target.metadata); tmd.update({"scenario": scenario.name,
                     "scenario_version": scenario.version, "benchmark_regime": scenario.benchmark_regime,
                     "pair_id": pair_id})
@@ -159,7 +172,7 @@ class VirtualStudio:
                     "pair_id": pair_id, "roles": [r.role for r in scenario.roles]})
         mixture = mixture.evolve(stage="tag", metadata=mmd)
 
-        # audit the guitar TARGET (the thing whose quality gates the pair)
+        # audit the TARGET (the thing whose quality gates the pair)
         target = self.runner.audit(target)
         return mixture, target
 

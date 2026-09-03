@@ -49,6 +49,14 @@ class Role:
     DRUMS = "drums"
     BASS = "bass"
     KEYS = "keys"
+    # SYNTH is deliberately distinct from KEYS. KEYS means a played
+    # keyboard instrument (piano, organ, Rhodes) — struck strings or
+    # tonewheels, a fixed timbre. SYNTH means oscillator-derived timbre
+    # whose spectrum is the instrument's identity: a saw pad and a piano
+    # share a role only if the taxonomy has given up on telling them
+    # apart, which is exactly the conflation that leaves synth content
+    # unrecoverable inside demucs' `other` bucket.
+    SYNTH = "synth"
     OTHER = "other"
     MIX = "mix"
     NONE = "none"
