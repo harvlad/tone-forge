@@ -36,13 +36,27 @@ struct AccountView: View {
                 Button("Sign out") { signOut() }
                     .disabled(busy)
             } else {
-                SignInWithAppleButton(.signIn) { request in
-                    request.requestedScopes = [.fullName, .email]
-                } onCompletion: { result in
-                    handle(result)
+                // Sign in with Apple on macOS requires a SIGNED app
+                // with an embedded provisioning profile carrying the
+                // capability — dev builds (build_app.sh, ad-hoc) can
+                // only ever produce AuthorizationError 1000. Show the
+                // button only when the profile is present; email code
+                // is the dev-build path.
+                if Bundle.main.path(
+                    forResource: "embedded", ofType: "provisionprofile"
+                ) != nil {
+                    SignInWithAppleButton(.signIn) { request in
+                        request.requestedScopes = [.fullName, .email]
+                    } onCompletion: { result in
+                        handle(result)
+                    }
+                    .frame(width: 200, height: 30)
+                    .disabled(busy)
+                } else {
+                    Text("Sign in with Apple needs the signed release build — use email below.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .frame(width: 200, height: 30)
-                .disabled(busy)
 
                 emailCodeFlow
             }
