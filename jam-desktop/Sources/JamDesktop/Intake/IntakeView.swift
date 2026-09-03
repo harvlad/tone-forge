@@ -127,8 +127,14 @@ struct IntakeView: View {
             }
         }
         .task {
-            await intake.refreshEngineStatus(baseURL: model.backendBaseURL)
             await history.refresh(baseURL: model.backendBaseURL)
+            // Engine status was a one-shot: a backend/worker restart
+            // during launch pinned "Offline" on screen forever even
+            // after the engine came back. Poll while the view lives.
+            while !Task.isCancelled {
+                await intake.refreshEngineStatus(baseURL: model.backendBaseURL)
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+            }
         }
     }
 
