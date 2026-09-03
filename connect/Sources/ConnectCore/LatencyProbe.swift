@@ -71,10 +71,15 @@ public final class LatencyProbe {
         try engine.start()
 
         // Build a brief 1 kHz tone burst (~5 ms) — narrow enough to peak,
-        // wide enough to survive a noisy mic.
-        let burstFrames = AVAudioFrameCount(format.sampleRate * 0.005)
-        guard let burst = AVAudioPCMBuffer(
-            pcmFormat: format,
+        // wide enough to survive a noisy mic. The buffer MUST be in the
+        // PLAYER's connection format (the output-side format from init),
+        // not the input format: scheduling a mono-input-format buffer
+        // on a stereo-connected player throws an ObjC NSException that
+        // crashes the app (SIGABRT from Settings > Measure Latency).
+        let playFormat = engine.outputNode.outputFormat(forBus: 0)
+        let burstFrames = AVAudioFrameCount(playFormat.sampleRate * 0.005)
+        guard burstFrames > 0, let burst = AVAudioPCMBuffer(
+            pcmFormat: playFormat,
             frameCapacity: burstFrames
         ) else {
             engine.inputNode.removeTap(onBus: 0)
@@ -82,10 +87,12 @@ public final class LatencyProbe {
             throw NSError(domain: "LatencyProbe", code: 1)
         }
         burst.frameLength = burstFrames
-        if let ch = burst.floatChannelData?[0] {
-            for i in 0..<Int(burstFrames) {
-                let phase = 2.0 * .pi * 1000.0 * Double(i) / format.sampleRate
-                ch[i] = Float(sin(phase)) * 0.5
+        if let chans = burst.floatChannelData {
+            for c in 0..<Int(playFormat.channelCount) {
+                for i in 0..<Int(burstFrames) {
+                    let phase = 2.0 * .pi * 1000.0 * Double(i) / playFormat.sampleRate
+                    chans[c][i] = Float(sin(phase)) * 0.5
+                }
             }
         }
 
