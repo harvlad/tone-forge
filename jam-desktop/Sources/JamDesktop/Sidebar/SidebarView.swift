@@ -270,7 +270,10 @@ private struct RecentSongRow: View {
                         .fontWeight(.medium)
                         .foregroundStyle(.white)
                         .lineLimit(1)
-                    Text("\(entry.artist ?? "Unknown") • \(formatDuration(entry.duration))")
+                    // Uploads rarely carry artist tags — fall back to
+                    // the detected instrument (mobile Library parity)
+                    // before admitting "Unknown".
+                    Text("\(entry.artist ?? entry.detectedType?.capitalized ?? "Unknown") • \(formatDuration(entry.duration))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

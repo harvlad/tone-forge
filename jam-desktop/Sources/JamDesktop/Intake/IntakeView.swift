@@ -72,7 +72,11 @@ struct IntakeView: View {
                             .foregroundStyle(.white)
                     }
 
-                    Text("Audio stays on your computer.")
+                    // Honest per-backend: the local-analysis promise is
+                    // only true when the backend IS this computer.
+                    Text(isLocalBackend
+                         ? "Audio stays on your computer."
+                         : "Uploads securely to your Jamn server for analysis.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -142,6 +146,11 @@ struct IntakeView: View {
 
     private var engineOnline: Bool {
         intake.engineStatus?.online ?? true
+    }
+
+    private var isLocalBackend: Bool {
+        let host = model.backendBaseURL.host ?? ""
+        return host == "127.0.0.1" || host == "localhost"
     }
 
     // MARK: - Flow starts

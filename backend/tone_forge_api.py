@@ -2534,10 +2534,28 @@ async def engine_heartbeat_endpoint(request: Request) -> JSONResponse:
 @app.get("/api/engine/status")
 async def engine_status_endpoint() -> JSONResponse:
     """Public presence probe — the jam page's banner on non-localhost
-    hosts polls this instead of http://127.0.0.1:7777/health."""
+    hosts polls this instead of http://127.0.0.1:7777/health.
+
+    Autoscale-aware: with scale-to-zero, "no worker alive right now"
+    is the NORMAL idle state, not an outage — a submitted job spins
+    one up. Reporting offline at idle pinned every client's status
+    pill orange forever.
+    """
+    online = _engine_online()
+    mode = "worker"
+    if not online:
+        try:
+            from local_engine import runpod_autoscaler as _autoscale
+
+            if _autoscale.enabled():
+                online = True
+                mode = "autoscale"
+        except Exception:  # noqa: BLE001
+            pass
     return JSONResponse({
-        "online": _engine_online(),
+        "online": online,
         "device": _ENGINE_PRESENCE["device"] or None,
+        "mode": mode,
     })
 
 

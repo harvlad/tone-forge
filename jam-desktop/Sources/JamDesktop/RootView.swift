@@ -59,6 +59,43 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(JamTheme.background)
+        // Sidebar song taps previously loaded with NO feedback in the
+        // Intake view — a slow prod stem download or a failure read as
+        // a dead click. Root-level overlay covers every view.
+        .overlay {
+            if model.isLoadingSession {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text(model.loadProgress.map {
+                        "Loading song… \(Int($0 * 100)) %"
+                    } ?? "Loading song…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(28)
+                .background(.ultraThinMaterial,
+                            in: RoundedRectangle(cornerRadius: 14))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if model.view == .intake, let err = model.sessionError {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Couldn't load song: \(err)")
+                        .font(.callout)
+                        .lineLimit(2)
+                    Button("Dismiss") { model.sessionError = nil }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(JamTheme.accent)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial,
+                            in: RoundedRectangle(cornerRadius: 10))
+                .padding(.bottom, 18)
+            }
+        }
         .foregroundStyle(JamTheme.textPrimary)
         .environmentObject(intake)
         .environmentObject(history)
