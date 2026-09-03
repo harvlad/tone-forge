@@ -27,6 +27,7 @@ import logging
 import multiprocessing
 import os
 import socket
+import subprocess
 import tempfile
 import time
 import uuid
@@ -270,17 +271,51 @@ class RemoteWorker:
                 job_id, 95 + 4 * (i / max(1, len(roles))),
                 f"Saving stems {i + 1}/{len(roles)} ({role})…",
             )
-            self._upload_stem_with_retry(job_id, role, local)
+            self._upload_stem_with_retry(
+                job_id, role, self._compress_lossless(local))
+
+    @staticmethod
+    def _compress_lossless(local: Path) -> Path:
+        """LOSSLESS-compress a WAV stem to FLAC before upload — ~55% of
+        the bytes, bit-identical audio (24-bit, the float32 mantissa's
+        own precision floor). Raw float32 WAVs shipped 45 MB per stem
+        (317 MB per 7-stem song) and made every client sit minutes on
+        "Preparing audio". Falls back to the WAV on any ffmpeg problem
+        — compression must never block a result. libsndfile AND
+        AVAudioFile both read FLAC natively, so server-side slicing and
+        mobile/desktop playback need no changes."""
+        if local.suffix.lower() != ".wav":
+            return local
+        dst = local.with_suffix(".flac")
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-nostdin",
+                 "-i", str(local),
+                 "-c:a", "flac", "-sample_fmt", "s32",
+                 "-compression_level", "5",
+                 str(dst)],
+                check=True, capture_output=True, timeout=600,
+            )
+            if dst.is_file() and dst.stat().st_size > 0:
+                return dst
+        except Exception as e:  # noqa: BLE001
+            logger.warning("flac compress failed for %s (%s) — uploading wav",
+                           local.name, e)
+        return local
 
     def _upload_stem_with_retry(self, job_id: str, role: str, local: Path) -> None:
         last_exc: Optional[Exception] = None
         for attempt in range(1, _UPLOAD_ATTEMPTS + 1):
             try:
+                mime = {
+                    ".flac": "audio/flac",
+                    ".m4a": "audio/mp4",
+                }.get(local.suffix.lower(), "audio/wav")
                 with local.open("rb") as f:
                     resp = self.session.post(
                         self._url(f"/api/engine/job/{job_id}/stem"),
                         data={"role": role},
-                        files={"file": (local.name, f, "audio/wav")},
+                        files={"file": (local.name, f, mime)},
                         timeout=_UPLOAD_TIMEOUT_SEC,
                     )
                 resp.raise_for_status()
