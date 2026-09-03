@@ -66,8 +66,14 @@ struct RootView: View {
             if model.isLoadingSession {
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text(model.loadProgress.map {
-                        "Loading song… \(Int($0 * 100)) %"
+                    // Fractions only track the stem DOWNLOADS; after
+                    // they complete the app still decodes six m4a
+                    // stems to PCM (the real minute). "100 %" while
+                    // that runs read as a hang — say what's happening.
+                    Text(model.loadProgress.map { p in
+                        p >= 0.995
+                            ? "Preparing audio…"
+                            : "Downloading stems… \(Int(p * 100)) %"
                     } ?? "Loading song…")
                         .font(.callout)
                         .foregroundStyle(.secondary)
