@@ -52,13 +52,12 @@ struct AccountView: View {
                     }
                     .frame(width: 200, height: 30)
                     .disabled(busy)
+                    emailCodeFlow(header: "or sign in with email")
                 } else {
-                    Text("Sign in with Apple needs the signed release build — use email below.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // Dev build: email code IS the sign-in — no dead
+                    // Apple button, no "or", no apology text.
+                    emailCodeFlow(header: "Sign in with your email — we'll send a 6-digit code.")
                 }
-
-                emailCodeFlow
             }
 
             if let errorMessage {
@@ -72,10 +71,10 @@ struct AccountView: View {
 
     // MARK: - Email code UI
 
-    /// Or sign in with an emailed 6-digit code.
+    /// Sign in with an emailed 6-digit code.
     @ViewBuilder
-    private var emailCodeFlow: some View {
-        Text("or sign in with email")
+    private func emailCodeFlow(header: String) -> some View {
+        Text(header)
             .font(.caption)
             .foregroundStyle(.secondary)
         if !codeSent {
