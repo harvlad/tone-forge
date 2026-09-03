@@ -180,7 +180,15 @@ class JobRegistry:
                 import threading
 
                 _autoscale.note_activity()
-                threading.Thread(target=_autoscale.ensure_worker, daemon=True).start()
+                depth = sum(
+                    1 for j in self._jobs.values()
+                    if j.kind == "engine" and j.status == "queued"
+                )
+                threading.Thread(
+                    target=_autoscale.ensure_worker,
+                    args=(max(1, depth),),
+                    daemon=True,
+                ).start()
         except Exception:
             pass
         return job

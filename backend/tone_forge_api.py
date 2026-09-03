@@ -672,16 +672,29 @@ async def _autoscale_loop() -> None:
 
             if not _autoscale.enabled():
                 continue
-            pending = any(
-                j.kind == "engine" and j.status in ("queued", "running")
+            queued = sum(
+                1 for j in _JOBS.all()
+                if j.kind == "engine" and j.status == "queued"
+            )
+            pending = queued > 0 or any(
+                j.kind == "engine" and j.status == "running"
                 for j in _JOBS.all()
             )
-            # NOTE: deliberately NO ensure_worker here. A loop-based self-heal
-            # (respawn when pending + no live worker) turned a crashing-pod
-            # bootstrap into a spawn-every-60s runaway (244 pods). ensure_worker
-            # now ONLY fires on job submit and is itself hard-capped +
-            # cooldown-guarded. If jobs strand, that's a visible failure to fix,
-            # not something to paper over by spawning pods on a timer.
+            # SELF-HEAL (bounded): queued jobs + no live worker = the
+            # submit-time spawn failed (RunPod hiccup, crashed pod).
+            # This stranded two overnight jobs for 13h on 2026-09-03.
+            # Safe now because ensure_worker itself enforces the live
+            # cap, a 5-min create cooldown, and a per-process create
+            # backstop — the 244-pod runaway predates those guards; the
+            # worst this loop can do is one create per 5 minutes, 12
+            # per process, all logged.
+            if queued:
+                spawned = await asyncio.to_thread(
+                    _autoscale.ensure_worker, queued)
+                if spawned not in (None, "existing"):
+                    logger.warning(
+                        "autoscale self-heal: spawned worker %s for %d queued",
+                        spawned, queued)
             await asyncio.to_thread(_autoscale.scale_down_if_idle, pending)
         except Exception:  # noqa: BLE001
             logger.exception("autoscale tick failed")

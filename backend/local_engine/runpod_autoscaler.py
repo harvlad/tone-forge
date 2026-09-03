@@ -29,9 +29,12 @@ it can't affect the existing claim-worker path until deliberately enabled.
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import List, Optional
+
+logger = logging.getLogger("toneforge.autoscale")
 
 try:
     import requests
@@ -108,7 +111,16 @@ def _has_live_worker() -> bool:
 # --- HARD guardrails so a crash-looping bootstrap can never runaway-spawn ---
 # (A missing cap once created 244 pods in 4.5h.) Every one of these must pass
 # before a pod is created.
-_MAX_LIVE_PODS = 1              # never more than one live worker
+def _max_live_pods() -> int:
+    """Concurrency cap: RUNPOD_MAX_WORKERS live pods (default 2 — two
+    songs analyze in parallel; each extra pod is another ~$0.05-0.44/hr
+    only while jobs run). Hard-clamped to 4."""
+    try:
+        return max(1, min(4, int(os.environ.get("RUNPOD_MAX_WORKERS", "2"))))
+    except ValueError:
+        return 2
+
+
 _CREATE_COOLDOWN_SEC = 300     # >= 5 min between ANY two create attempts
 _MAX_CREATES_PER_PROCESS = 12  # absolute backstop; a runaway trips this, then
                                # STOPS until the backend is restarted
@@ -131,10 +143,13 @@ def _reap_exited_pods() -> None:
                     pass
 
 
-def ensure_worker() -> Optional[str]:
-    """Create a GPU worker pod if none is live — guarded by a hard live cap,
-    a create cooldown, and a per-process create backstop so a failing bootstrap
-    can never spawn a runaway fleet. Returns the pod id, "existing", or None."""
+def ensure_worker(queue_depth: int = 1) -> Optional[str]:
+    """Create a GPU worker pod if the queue outnumbers live workers —
+    guarded by a hard live cap, a create cooldown, and a per-process
+    create backstop so a failing bootstrap can never spawn a runaway
+    fleet. `queue_depth` scales concurrency: with 2 queued jobs and the
+    default RUNPOD_MAX_WORKERS=2 a second pod spins up. Returns the pod
+    id, "existing", or None."""
     global _last_create_ts, _creates_this_process
     if not enabled() or requests is None:
         return None
@@ -145,13 +160,16 @@ def ensure_worker() -> Optional[str]:
         p for p in list_worker_pods()
         if str(p.get("desiredStatus", "")).upper() in ("RUNNING", "PENDING", "CREATED")
     ]
-    if len(live) >= _MAX_LIVE_PODS:
+    want = min(_max_live_pods(), max(1, queue_depth))
+    if len(live) >= want:
         return "existing"
     now = time.time()
     if now - _last_create_ts < _CREATE_COOLDOWN_SEC:
+        logger.info("autoscale: create suppressed by cooldown (%ds left)",
+                    int(_CREATE_COOLDOWN_SEC - (now - _last_create_ts)))
         return None  # cooldown — a fast-exiting pod cannot be respawned rapidly
     if _creates_this_process >= _MAX_CREATES_PER_PROCESS:
-        print("[autoscaler] create backstop hit — refusing; restart to reset")
+        logger.error("autoscale: create backstop hit — refusing; restart to reset")
         return None
     # Record the attempt BEFORE the POST so a create that succeeds-but-then-
     # exits still counts against the cooldown/backstop.
@@ -204,9 +222,16 @@ def ensure_worker() -> Optional[str]:
     try:
         r = requests.post(f"{_REST}/pods", headers=_headers(), json=body, timeout=40)
         if r.status_code in (200, 201):
-            return (r.json() or {}).get("id")
+            pod_id = (r.json() or {}).get("id")
+            logger.warning("autoscale: created worker pod %s (live=%d queued~%d)",
+                           pod_id, len(live), queue_depth)
+            return pod_id
+        # THE overnight-strand failure mode: a create that fails here
+        # used to vanish without a trace. Log status + body, always.
+        logger.error("autoscale: pod create FAILED HTTP %s: %s",
+                     r.status_code, r.text[:400])
     except Exception:
-        pass
+        logger.exception("autoscale: pod create raised")
     return None
 
 
