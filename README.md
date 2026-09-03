@@ -102,41 +102,84 @@ The loop, now operational: **Benchmark → Coverage Planner → manufacture → 
 
 ## Repo Layout
 
+A monorepo: one Python backend plus the native clients that consume it.
+
 ```
 tone-forge/
-├── backend/
-│   ├── tone_forge/
-│   │   ├── analyzer.py           # Guitar tone analysis
-│   │   ├── synth_analyzer.py     # Synth analysis
-│   │   ├── bass_analyzer.py      # Bass analysis
-│   │   ├── drum_analyzer.py      # Drum analysis
-│   │   ├── auto_detect.py        # Instrument detection
-│   │   ├── midi_extractor.py     # Audio → MIDI
-│   │   ├── stem_separator.py     # Demucs integration
-│   │   ├── als_template.py       # Ableton Live Set generation
-│   │   ├── preset_export.py      # All export formats
-│   │   ├── helix_translator.py   # Helix chain builder
-│   │   ├── synth_translator.py   # Synth matcher
-│   │   └── descriptor.py         # Data classes
-│   ├── lab/
-│   │   └── factory/              # Riley Data Factory (Asset/VirtualStudio/Planner/Validator)
-│   ├── lab_data/factory/         # frozen corpora, campaigns, benchmarks (indexes + hashes)
-│   ├── data/
-│   │   ├── helix_blocks.json     # Helix amp/cab/fx catalog
-│   │   ├── hardware_synths.json  # Synth database
-│   │   ├── bass_blocks.json      # Bass gear catalog
-│   │   └── drum_machines.json    # Drum machine database
-│   ├── static/                   # Web UI
-│   │   ├── index.html
-│   │   ├── style.css
-│   │   ├── app.js
-│   │   └── synth-panels/         # SVG synth visualizations
-│   ├── tests/
-│   ├── cli.py                    # Command-line interface
-│   ├── tone_forge_api.py         # FastAPI server
-│   └── requirements.txt
-└── frontend/                     # (Future React app)
+├── backend/           # Python 3.10+ / FastAPI — analysis, jobs, auth, exports, web UI
+├── connect/           # Swift — macOS CoreAudio companion (low-latency monitoring, tone chains)
+├── jam-desktop/       # Swift/SwiftUI — native macOS Jam app (stems, tempo-stretch, Launchpad Pro MK3)
+├── jam-app/           # DEPRECATED — WKWebView wrapper; removed at jam-desktop parity
+├── mobile-ios/        # Swift/SwiftUI — iOS app (ToneForgeEngine / ToneForgeML / ToneForgeMobile)
+├── plugin/            # C++20 / JUCE 8 — "jamn Kit" AU + VST3 + Standalone sampler
+├── tools/             # BeatModelTrainer (CoreML), handrig (Blender hand-rig research)
+├── scripts/           # deploy + beat-model train/publish
+├── docs/              # active documentation (`_archive/` is historical)
+├── CLAUDE.md          # working notes for agents: commands, boundaries, gotchas
+└── EXECUTION_PLAN.md  # the execution surface — supersedes archived strategy docs
 ```
+
+The clients share algorithms by path dependency rather than duplication:
+`jam-desktop` depends on `connect` (ConnectCore) and `mobile-ios`
+(ToneForgeEngine), and `ToneForgeEngine` is the Swift port of
+`backend/static/launchpad.js` — the two are meant to change together.
+
+### Backend
+
+```
+backend/
+├── tone_forge_api.py         # FastAPI server — the only composition point between subsystems
+├── cli.py                    # Command-line interface
+├── tone_forge/
+│   ├── contracts.py          # the only types allowed to cross a subsystem boundary
+│   ├── analyzer.py           # Guitar tone analysis
+│   ├── synth_analyzer.py     # Synth analysis
+│   ├── bass_analyzer.py      # Bass analysis
+│   ├── drum_analyzer.py      # Drum analysis
+│   ├── auto_detect.py        # Instrument detection
+│   ├── midi_extractor.py     # Audio → MIDI
+│   ├── stem_separator.py     # Demucs integration
+│   ├── als_template.py       # Ableton Live Set generation
+│   ├── preset_export.py      # All export formats
+│   ├── helix_translator.py   # Helix chain builder
+│   ├── synth_translator.py   # Synth matcher
+│   ├── synth_hardware.py     # Hardware synth database + control mapping
+│   ├── descriptor.py         # Data classes
+│   ├── unified_pipeline.py   # Legacy orchestrator (thinning out as packages land)
+│   ├── analysis/             # Song Understanding → tempo / key / sections / chords
+│   ├── session/              # Session Engine — canonical TransportState owner
+│   ├── tone/                 # Tone retrieval, tier-aware ToneMatch
+│   ├── monitor/              # Monitor Chain Bank (curated YAML chains)
+│   ├── devices/              # Device discovery → DeviceCaps + integration adapters
+│   ├── performance/          # Performance Intelligence — the Unified Musical Graph
+│   ├── separation/           # Pluggable separator providers (local htdemucs, APIs)
+│   ├── auth/                 # Magic-link email + Sign in with Apple + device claim
+│   ├── midi/                 # Frozen — MIDI extraction internals
+│   ├── reconstruction/       # Frozen — contamination-aware reconstruction
+│   ├── preset_catalog/       # Frozen — preset catalog + retrieval
+│   └── evaluation/           # Frozen — metrics, benchmarks, QA harnesses
+├── local_engine/             # GPU analysis worker, RunPod autoscaler, tray app
+├── lab/factory/              # Riley Data Factory (Asset/VirtualStudio/Planner/Validator)
+├── lab_data/factory/         # frozen corpora, campaigns, benchmarks (indexes + hashes)
+├── data/
+│   ├── helix_blocks.json     # Helix amp/cab/fx catalog
+│   ├── bass_blocks.json      # Bass gear catalog
+│   ├── pedals_blocks.json    # Pedal catalog
+│   └── drum_machines.json    # Drum machine database
+├── static/                   # Web UI
+│   ├── jam.html              # Jam — the default home page (`/`)
+│   ├── index.html            # Guitar tone analysis (`/guitar`)
+│   ├── studio.html           # Admin/operator UI (`/studio`, token-gated)
+│   ├── launchpad.js          # Pad engine — reference implementation for the Swift port
+│   └── synth-panels/         # SVG synth visualizations
+├── deploy/                   # nginx config + systemd unit
+├── tests/
+└── requirements.txt
+```
+
+Subsystem packages talk to each other only through `contracts.py`, composed in
+`tone_forge_api.py`; `tests/test_subsystem_boundaries.py` enforces this in CI.
+Packages marked **Frozen** take bug fixes only — see `EXECUTION_PLAN.md` §1–§2.
 
 ## Quickstart
 
