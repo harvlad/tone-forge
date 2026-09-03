@@ -71,7 +71,21 @@ class LoopAnalyzer:
         sr: int,
         pos: GridPos,
         optimize: bool = True,
+        pitched: bool = True,
     ) -> LoopQuality:
+        """``pitched=False`` scores the window as PERCUSSION.
+
+        The default weighting spends ~0.56 of its mass on head/tail sameness
+        (spectral + harmonic continuity, zero-crossing, phase). That is the
+        right question for sustained pitched material, where a good seam means
+        the tone carries over. It is the wrong question for drums: a bar that
+        opens on a kick and ends on a hat has, correctly, almost no spectral
+        carry-over, and its sample-level phase correlation is noise. Drums were
+        therefore scored near-zero on exactly the axis that decides whether a
+        pad survives, and the loudest, most obviously loopable stem in the mix
+        kept losing its slot to a sustained pad. For percussion the seam that
+        matters is rhythmic: land on the grid, don't cut a ringing tail.
+        """
         if y.ndim > 1:
             y = y.mean(axis=1)
         y = np.asarray(y, dtype=np.float64)
@@ -130,20 +144,38 @@ class LoopAnalyzer:
         if seam_gap > 0.02 * (_rms(y) + _EPS) + 0.001:
             crossfade_ms = min(30.0, self.frame_ms)
 
-        confidence = float(
-            np.clip(
-                0.22 * spectral_continuity
-                + 0.16 * harmonic_continuity
-                + 0.16 * attack_stability
-                + 0.12 * zero_crossing
-                + 0.12 * beat_alignment
-                + 0.10 * tail_decay
-                + 0.06 * phase_continuity
-                + 0.06 * release_stability,
-                0,
-                1,
+        if pitched:
+            confidence = float(
+                np.clip(
+                    0.22 * spectral_continuity
+                    + 0.16 * harmonic_continuity
+                    + 0.16 * attack_stability
+                    + 0.12 * zero_crossing
+                    + 0.12 * beat_alignment
+                    + 0.10 * tail_decay
+                    + 0.06 * phase_continuity
+                    + 0.06 * release_stability,
+                    0,
+                    1,
+                )
             )
-        )
+        else:
+            # Percussion: grid alignment and level continuity carry the score.
+            # harmonic_continuity and phase_continuity are dropped outright --
+            # for noise-like transient content they measure nothing. Spectral
+            # continuity keeps a small share: it still catches a window cut
+            # mid-crash, where the tail is a decaying cymbal the head lacks.
+            confidence = float(
+                np.clip(
+                    0.34 * beat_alignment
+                    + 0.24 * attack_stability
+                    + 0.18 * tail_decay
+                    + 0.14 * release_stability
+                    + 0.10 * spectral_continuity,
+                    0,
+                    1,
+                )
+            )
 
         return LoopQuality(
             confidence=confidence,

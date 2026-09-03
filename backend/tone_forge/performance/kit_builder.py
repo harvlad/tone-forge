@@ -158,7 +158,17 @@ class AutoKitBuilder:
         # drums pad that just plays through. Steadiness proxy =
         # loop_confidence (seamless/regular) weighted over raw score,
         # with intro/outro/ending material heavily penalized.
-        drum_pool = [a for a in pool if a.stem == "drums"]
+        #
+        # Drawn from ALL ranked assets, not from `pool`. The anchor used to
+        # select post-gate, which made it a no-op in exactly the case it was
+        # written for: `usable` cuts on loop_confidence/performance_score, the
+        # two numbers percussion scored worst on, so the drums were already
+        # gone by the time the anchor looked for them and the kit came back
+        # with no drum pad at all. A song that HAS drums gets a drums pad; the
+        # gate still governs the seven generic slots below.
+        drum_pool = self._one_per_pattern(
+            [a for a in graph.ranked_assets() if a.stem == "drums"]
+        )
         if drum_pool:
             def _groove_key(a) -> float:
                 sec = _section_at(sections or [], a.pos.start_s).lower()
