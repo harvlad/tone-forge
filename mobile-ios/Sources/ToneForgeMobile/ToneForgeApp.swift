@@ -747,6 +747,15 @@ public final class AppState: ObservableObject {
     private let chopsClient = ChopsClient()
     private let packClient = PackClient()
     private var advancer = ChordAdvancer(chords: [])
+    /// Song-melody follow-along: the server-extracted MelodySequence on
+    /// the bundle, played on the wavetable synth when the guide toggle
+    /// is on. nil when the song has no usable melody lane (old cached
+    /// bundles, melody-less songs) — UI affordances hide themselves.
+    @Published public private(set) var melodySequence: MelodySequence?
+    @Published public var melodyGuideEnabled = false {
+        didSet { if !melodyGuideEnabled { melodyPlayer?.stop() } }
+    }
+    private var melodyPlayer: MelodySequencePlayer?
     private var tickTimer: Timer?
     private var settingsCancellables: Set<AnyCancellable> = []
 
@@ -1756,6 +1765,15 @@ public final class AppState: ObservableObject {
         onReady: (() -> Void)? = nil
     ) async {
         currentBundle = bundle
+        // Melody follow-along: rebuild the player for the new song.
+        // gainScale trims the synth under the stems.
+        melodyPlayer?.stop()
+        melodySequence = MelodySequence(bundle: bundle.melody)
+        melodyPlayer = melodySequence.map {
+            let player = MelodySequencePlayer(sequence: $0, voice: wavetableSynthNode)
+            player.gainScale = 0.7
+            return player
+        }
         // Song-derived pad-synth patch (additive; absent on old cached
         // bundles → keep current knobs). masterGain stays the fixed
         // loudness-calibrated trim — only sound-shaping fields follow
@@ -2643,6 +2661,16 @@ public final class AppState: ObservableObject {
 
     private func tick() {
         songSeconds = audioEngine.clock.nowSongSeconds
+        // Melody follow-along: emit noteOn/noteOff edges on the synth
+        // as the playhead crosses note boundaries. Paused ticks silence
+        // any held note (stop() no-ops once silent).
+        if melodyGuideEnabled {
+            if isPlaying {
+                melodyPlayer?.advance(to: songSeconds)
+            } else {
+                melodyPlayer?.stop()
+            }
+        }
         // A/B loop wrap (redesign Phase 5): tick-driven (≤33 ms
         // jitter, fine for practice). Wrapping through the regular
         // seek path re-anchors stems/layers/chords together; a

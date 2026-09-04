@@ -135,3 +135,7 @@ public final class DesktopSynthNode {
         synth?.setParams(params)
     }
 }
+
+/// Melody follow-along voice seam — the note methods above already
+/// match the protocol exactly.
+extension DesktopSynthNode: MelodyVoice {}

@@ -463,6 +463,18 @@
   // api.onBeatTick({ beatIdx, beatsUntilNextChord, nextSymbol }).
   let _beat = { beatIdx: 0, beatsUntilNext: null, nextSymbol: null };
 
+  // Song-melody follow-along state. jam.js pushes the server-extracted
+  // MelodySequence notes ({pitch, start, end, velocity}, absolute
+  // seconds, strictly monophonic) via api.onMelodyLoaded and the
+  // playhead via api.onMelodyPosition. The instrument-melody painter
+  // overlays "play this pad NOW" / "this pad is NEXT" on top of the
+  // chord-tone grid. Empty list = no melody lane (legacy sessions,
+  // songs with no usable melody) — the submode paints exactly as
+  // before, so the feature is strictly additive.
+  let _songMelody = [];
+  let _melodyNowIdx = -1;   // index of the sounding note, -1 in gaps
+  let _melodyNextIdx = -1;  // index of the first upcoming note, -1 at end
+
   // Mirror of the last-painted pad colors, indexed by Programmer-Mode
   // padIdx (11..88). Entries are { r, g, b, kind } where kind is one of
   // 'off' | 'static' | 'pulse' | 'active'. Unused slots (10, 19, 20…)
@@ -1273,7 +1285,68 @@
       if (pulseSpecs.length) _sendLedSpecs(pulseSpecs);
     }
     _sendLedSpecs(specs);
+    // Melody follow-along paints last so chord-tone repaints (beat
+    // ticks, chord changes) never bury the "play this now" pad.
+    _paintMelodyOverlayLeds();
     _afterPaint();
+  }
+
+  // ------------------------------------------------------------------
+  // Song-melody follow-along overlay (instrument-melody submode)
+  // ------------------------------------------------------------------
+
+  const MELODY_NOW_RGB = [127, 127, 127];  // white: play this pad now
+  const MELODY_NEXT_RGB = [45, 45, 45];    // dim white: this pad is next
+
+  // Reverse of _midiForPad. Fourths tuning duplicates most pitches on
+  // several pads; pick the candidate nearest the grid's middle rows so
+  // consecutive melody notes stay in one hand position instead of
+  // ping-ponging between extreme rows. Out-of-range pitches (vocal
+  // melodies routinely sit above A#5) are octave-shifted into the
+  // grid's span first — the pitch CLASS is what the player needs.
+  function _padForMidi(midi) {
+    let m = midi | 0;
+    const lo = OPEN_JAM_BASE_MIDI;              // E2 = 40
+    const hi = OPEN_JAM_BASE_MIDI + 7 * 5 + 7;  // 82
+    while (m < lo) m += 12;
+    while (m > hi) m -= 12;
+    if (m < lo) return null; // pitch class unreachable after shifting
+    let best = null;
+    for (let r = 0; r < 8; r++) {
+      const c = m - (OPEN_JAM_BASE_MIDI + r * 5);
+      if (c < 0 || c > 7) continue;
+      const dist = Math.abs(r - 3.5);
+      if (!best || dist < best.dist) best = { r, c, dist };
+    }
+    return best ? _padIdx(best.r, best.c) : null;
+  }
+
+  // Overlay the current/next melody pads. Called at the tail of
+  // _paintInstrumentFull (so chord repaints don't wipe the overlay)
+  // and from onMelodyPosition when the note index changes. Sends at
+  // most two extra LED specs on top of the base grid.
+  function _paintMelodyOverlayLeds() {
+    if (_mode !== 'instrument-melody' || !_songMelody.length) return;
+    if (_assistLevel >= 4) return; // Blind: paint nothing, like the base grid
+    const specs = [];
+    if (_melodyNowIdx >= 0) {
+      const idx = _padForMidi(_songMelody[_melodyNowIdx].pitch);
+      if (idx !== null) {
+        specs.push(_rgbSpec(idx, MELODY_NOW_RGB[0], MELODY_NOW_RGB[1], MELODY_NOW_RGB[2]));
+        _recordPad(idx, MELODY_NOW_RGB[0], MELODY_NOW_RGB[1], MELODY_NOW_RGB[2], 'active');
+      }
+    }
+    // Guided and above shows the upcoming note; Performance (3) shows
+    // current only, mirroring the assist-level chord semantics.
+    if (_assistLevel <= 2 && _melodyNextIdx >= 0) {
+      const idx = _padForMidi(_songMelody[_melodyNextIdx].pitch);
+      if (idx !== null && (_melodyNowIdx < 0
+          || idx !== _padForMidi(_songMelody[_melodyNowIdx].pitch))) {
+        specs.push(_rgbSpec(idx, MELODY_NEXT_RGB[0], MELODY_NEXT_RGB[1], MELODY_NEXT_RGB[2]));
+        _recordPad(idx, MELODY_NEXT_RGB[0], MELODY_NEXT_RGB[1], MELODY_NEXT_RGB[2], 'pulse');
+      }
+    }
+    if (specs.length) _sendLedSpecs(specs);
   }
 
   // Drum stub — a 4×4 in the bottom-left corner, distinct colors per
@@ -1827,6 +1900,39 @@
       }
     },
 
+    // ---- Song melody follow-along ----
+    // jam.js pushes the server-extracted melody line (bundle.melody
+    // .notes — absolute-time monophonic {pitch, start, end, velocity}
+    // dicts) once per song load. Empty / missing input clears the lane.
+    onMelodyLoaded(notes) {
+      _songMelody = Array.isArray(notes)
+        ? notes.filter((n) => n && typeof n.pitch === 'number'
+            && typeof n.start === 'number' && typeof n.end === 'number')
+        : [];
+      _melodyNowIdx = -1;
+      _melodyNextIdx = -1;
+      if (_mode === 'instrument-melody') _paintInstrumentFull();
+    },
+
+    // Per-RAF playhead push from jam.js. Cheap: binary-search the
+    // monophonic note list, repaint only when the (now, next) pair
+    // actually changes — a few times a second at melody note rate.
+    onMelodyPosition(t) {
+      if (!_songMelody.length || typeof t !== 'number') return;
+      let lo = 0, hi = _songMelody.length - 1, last = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (_songMelody[mid].start <= t) { last = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      const nowIdx = (last >= 0 && t < _songMelody[last].end) ? last : -1;
+      const nextIdx = (last + 1 < _songMelody.length) ? last + 1 : -1;
+      if (nowIdx === _melodyNowIdx && nextIdx === _melodyNextIdx) return;
+      _melodyNowIdx = nowIdx;
+      _melodyNextIdx = nextIdx;
+      if (_mode === 'instrument-melody') _paintInstrumentFull();
+    },
+
     // ---- Song mode ----
     onChordsLoaded(chords) {
       _songChords = Array.isArray(chords) ? chords : [];
@@ -1876,6 +1982,9 @@
     },
 
     onSongUnloaded() {
+      _songMelody = [];
+      _melodyNowIdx = -1;
+      _melodyNextIdx = -1;
       _songChords = [];
       _assignment = new Map();
       _reverse = new Map();
@@ -2152,17 +2261,26 @@
         const captions = {
           synth:  'Chord tones lit under your fingers; next-chord tones pulse in as the transition approaches.',
           bass:   'Roots + fifths on the bottom half of the grid. Next chord anticipates.',
-          melody: 'Root, third, fifth landmarks. Ideal for improvising over the changes.',
+          melody: _songMelody.length
+            ? 'White pad = the song\'s melody note NOW; dim white = next. Landmarks stay lit for improvising.'
+            : 'Root, third, fifth landmarks. Ideal for improvising over the changes.',
         };
-        return {
-          kind: 'instrument',
-          chips: [
+        const chips = [
             { name: 'Key root',   rgb: ROOT_RGB },
             { name: 'Chord tone', rgb: CHORD_TONE_RGB },
             { name: 'Next-chord', rgb: PULSE_PALETTE_RGB[13] },
             { name: 'Scale',      rgb: DEGREE_RGB[1] },
             { name: 'Out of key', rgb: _outOfKeyMode === 'off' ? [0, 0, 0] : CHROMATIC_DIM_RGB },
-          ],
+        ];
+        if (sub === 'melody' && _songMelody.length) {
+          chips.unshift(
+            { name: 'Melody now',  rgb: MELODY_NOW_RGB },
+            { name: 'Melody next', rgb: MELODY_NEXT_RGB },
+          );
+        }
+        return {
+          kind: 'instrument',
+          chips,
           caption: captions[sub] || 'Instrument mode.',
         };
       }

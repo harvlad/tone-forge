@@ -84,6 +84,15 @@ final class SessionController: ObservableObject {
     /// Wavetable synth on musicBus — jam pads + sequencer synthChord.
     private(set) lazy var synthNode = DesktopSynthNode(
         avEngine: engine.engine.avEngine)
+    /// Song-melody follow-along: the server-extracted MelodySequence on
+    /// the bundle, playable on the wavetable synth. nil when the song
+    /// has no usable melody lane (legacy caches, melody-less songs) —
+    /// the toolbar toggle hides itself then.
+    @Published private(set) var melodySequence: ToneForgeEngine.MelodySequence?
+    @Published var melodyGuideEnabled = false {
+        didSet { if !melodyGuideEnabled { melodyPlayer?.stop() } }
+    }
+    private var melodyPlayer: MelodySequencePlayer?
     /// Pack pad playback through the chop voice pool.
     private(set) lazy var packPlayer = PackPadPlayer(sink: chopPlayer)
     /// Sounds replayed bus events through the chop voice pool.
@@ -551,6 +560,16 @@ final class SessionController: ObservableObject {
         }
         // No-op when the sequencer is standalone (own driver) or stopped.
         sequencer.tick(songSeconds: transport.positionSeconds)
+        // Melody follow-along: emit noteOn/noteOff edges on the synth as
+        // the playhead crosses note boundaries. Paused ticks silence any
+        // held note (stop() is a no-op once silent).
+        if melodyGuideEnabled {
+            if transport.isPlaying {
+                melodyPlayer?.advance(to: transport.positionSeconds)
+            } else {
+                melodyPlayer?.stop()
+            }
+        }
         if transport.isPlaying {
             sendTransportState(discrete: false)
         }
@@ -568,6 +587,7 @@ final class SessionController: ObservableObject {
         transport.pause()
         pendingSequencerStartSec = nil
         sequencer.stop()
+        melodyPlayer?.stop()
         launchpad.stopAllPads()   // → ChopPlayer.stopAll + endTakeover
         mix.clearTakeover()
     }
@@ -638,6 +658,16 @@ final class SessionController: ObservableObject {
         linkSync.seedTempoIfAlone(session.bundle.meta.tempoBpm ?? 120)
         attachedBundle = session.bundle
         attachedStemURLs = session.stemURLs
+        // Melody follow-along: rebuild the player for the new song.
+        // gainScale trims the synth under the stems — full-scale hits
+        // would swamp the mix.
+        melodyPlayer?.stop()
+        melodySequence = ToneForgeEngine.MelodySequence(bundle: session.bundle.melody)
+        melodyPlayer = melodySequence.map {
+            let player = MelodySequencePlayer(sequence: $0, voice: synthNode)
+            player.gainScale = 0.7
+            return player
+        }
         // Song-derived synth patch: color the jam-pad/sequencer synth
         // like the song's synth stem. masterGain is preserved from the
         // current params (loudness staging is never song-derived).

@@ -4707,11 +4707,17 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
         # Never let a fixup failure block bundle assembly. The bundle
         # will simply reflect the persisted shape as-is.
         pass
+    # Decode per-stem MIDI binaries once — feeds both the melody
+    # sequence below and the ``legacy_midi_stems`` sidecar.
+    decoded_midi_stems = _decode_midi_stems_for_payload(
+        result.get("midi_stems") or {}
+    )
     bundle = build_session_bundle(
         result,
         session_id=entry_id,
         tone_match=tone_match,
         device_caps=device_caps,
+        melody=_build_melody_for_session(result, decoded_midi_stems),
     )
     payload = serialize_session_bundle(bundle)
 
@@ -4735,9 +4741,7 @@ async def get_session_bundle(entry_id: str) -> JSONResponse:
     # client gets nothing to render and the lane shows the empty
     # placeholder. Live-analyze flow already ships ``midi_stems``
     # directly through SSE, so this only matters on deep-link reload.
-    payload["legacy_midi_stems"] = _decode_midi_stems_for_payload(
-        result.get("midi_stems") or {}
-    )
+    payload["legacy_midi_stems"] = decoded_midi_stems
     # Attribution metadata (D-024) lives on the history ENTRY, not the
     # result blob the bundle is built from — surface it as a sidecar so
     # the Jam client can render the credit line on /jam/:id loads.
@@ -5513,6 +5517,36 @@ async def get_song_bundle(entry_id: str) -> JSONResponse:
         payload["guitarTone"] = guitar_tone
     if synth_patch is not None:
         payload["synthPatch"] = synth_patch
+    # Melody sequence (additive — bundles cached before this key still
+    # decode; mobile treats absence as "no melody lane"). camelCase to
+    # match the SongBundle wire convention, unlike the Jam session
+    # bundle which serializes the contract dataclass verbatim.
+    melody = _build_melody_for_session(
+        result, _decode_midi_stems_for_payload(result.get("midi_stems") or {})
+    )
+    if melody is not None:
+        payload["melody"] = {
+            "sourceStem": melody.source_stem,
+            "confidence": melody.confidence,
+            "notes": [
+                {
+                    "start": n["start"],
+                    "end": n["end"],
+                    "pitch": n["pitch"],
+                    "velocity": n["velocity"],
+                }
+                for n in melody.notes
+            ],
+            "phrases": [
+                {
+                    "start": p.start_s,
+                    "end": p.end_s,
+                    "sectionLabel": p.section_label,
+                    "noteCount": len(p.notes),
+                }
+                for p in melody.phrases
+            ],
+        }
     return JSONResponse(_convert_numpy_types(payload))
 
 
@@ -5939,6 +5973,49 @@ def _decode_midi_stems_for_payload(midi_stems: dict) -> dict:
         out["notes"] = notes_out
         decoded[stem_key] = out
     return decoded
+
+
+def _build_melody_for_session(result: dict, decoded_midi_stems: dict):
+    """Compose the ``MelodySequence`` for the session bundle, or None.
+
+    Composition-layer glue: ``analysis.melody_sequence`` may not import
+    the frozen ``midi/`` package, so the role splitter is injected here.
+    Note sourcing prefers the persisted JSON notes on
+    ``result["midi_stems"]`` (the unified-pipeline / remote-worker
+    paths write them WITH ``role`` tags) and falls back to the
+    binary-MIDI decode (streaming-upload path persists only base64 —
+    those notes carry no roles, which is exactly why ``annotate`` is
+    passed). Any failure yields None: the melody lane is additive and
+    must never block bundle assembly.
+    """
+    try:
+        from tone_forge.analysis.melody_sequence import build_melody_sequence
+        from tone_forge.midi.melody_split import annotate_roles
+
+        melody_stems: dict = {}
+        raw_stems = result.get("midi_stems")
+        raw_stems = raw_stems if isinstance(raw_stems, dict) else {}
+        for stem_key in set(raw_stems) | set(decoded_midi_stems or {}):
+            raw = raw_stems.get(stem_key)
+            raw = raw if isinstance(raw, dict) else {}
+            notes = raw.get("notes")
+            if not notes:
+                fallback = (decoded_midi_stems or {}).get(stem_key)
+                notes = fallback.get("notes") if isinstance(fallback, dict) else None
+            if not notes:
+                continue
+            melody_stems[stem_key] = {
+                "notes": notes,
+                "overall_confidence": raw.get("overall_confidence"),
+            }
+        return build_melody_sequence(
+            melody_stems,
+            result.get("sections"),
+            annotate=annotate_roles,
+        )
+    except Exception as exc:
+        logger.warning(f"[session] melody sequence build failed: {exc}")
+        return None
 
 
 def _device_caps_for_session():

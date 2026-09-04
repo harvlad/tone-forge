@@ -45,6 +45,7 @@ from tone_forge.contracts import (
     DeviceClass,
     GuidanceTrack,
     InstrumentMIDI,
+    MelodySequence,
     Motif,
     Section,
     SessionBundle,
@@ -70,6 +71,7 @@ def build(
     device_caps: Optional[DeviceCaps] = None,
     initial_transport: Optional[TransportState] = None,
     tone_match: Optional[ToneMatch] = None,
+    melody: Optional[MelodySequence] = None,
 ) -> SessionBundle:
     """Assemble a ``SessionBundle`` from a persisted ``AnalysisResult`` dict.
 
@@ -96,6 +98,13 @@ def build(
     the session/ subsystem from importing tone/. When ``None`` (no
     injection), the assembler falls back to a conservative UNKNOWN
     tier so legacy callers still get a renderable bundle.
+
+    ``melody`` is likewise injected from the API edge, where
+    ``analysis.melody_sequence.build_melody_sequence`` runs (this
+    subsystem may not import analysis/). ``None`` means no usable
+    melody lane; when present the guidance track's ``note_highway``
+    mirrors ``melody.notes`` so Phase-3 clients that only read the
+    guidance surface get the line for free.
     """
 
     resolved_role = user_role or _resolve_user_role(result)
@@ -110,9 +119,10 @@ def build(
         user_role=resolved_role,
         user_midi=_build_user_midi(result, resolved_role),
         tone=tone_match if tone_match is not None else _build_tone(result, resolved_role),
-        guidance=_build_guidance(result),
+        guidance=_build_guidance(result, melody),
         device_caps=resolved_caps,
         initial_transport=resolved_transport,
+        melody=melody,
     )
 
 
@@ -398,10 +408,14 @@ def _build_tone(result: Mapping[str, Any], role: UserRole) -> ToneMatch:
     )
 
 
-def _build_guidance(result: Mapping[str, Any]) -> GuidanceTrack:
+def _build_guidance(
+    result: Mapping[str, Any],
+    melody: Optional[MelodySequence] = None,
+) -> GuidanceTrack:
     return GuidanceTrack(
         sections=tuple(_iter_sections(result.get("sections"))),
         chord_lane=tuple(_iter_chords(result.get("chords"))),
+        note_highway=melody.notes if melody is not None else (),
     )
 
 

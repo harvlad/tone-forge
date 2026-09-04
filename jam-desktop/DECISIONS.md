@@ -255,3 +255,26 @@ check) then `./build_app.sh` (~65s, full app bundle to `dist/Jamn.app`).
 full release compilation and bundle assembly. build_app.sh produces the
 actual testable app with resources (ML models, samples, audio bundles)
 and ad-hoc signing. Both steps required for complete verification.
+
+## D-016: Melody guide on the wavetable synth
+
+**Date:** 2026-09-04
+**Decision:** the server-extracted song melody
+(`SongBundle.melody`, additive) becomes a desktop "Melody" toolbar
+toggle: `SessionController` builds a
+`ToneForgeEngine.MelodySequencePlayer` at session attach with
+`DesktopSynthNode` as the voice (it already matched the `MelodyVoice`
+protocol; conformance is an empty extension) and advances it from the
+existing 30 Hz display pump (`tick()`), `gainScale` 0.7 so the synth
+sits under the stems. `stopEverything()` and paused ticks silence it;
+the toggle hides when the bundle has no melody lane.
+**Alternatives:** a dedicated melody clock (rejected: the display pump
+already drives sequencer sync at the right cadence); a separate synth
+voice (rejected: the jam-pad wavetable synth carries the song-derived
+patch, which is exactly the tone the melody should have).
+**Why:** playback is note-edge diffing over a monophonic sequence —
+cheap enough for the pump, and the same code path the mobile client
+uses, keeping the two ports in lock-step. NB: the RootView toolbar
+builder is at SwiftUI's 10-element cap — Melody lives inside a
+`ToolbarItemGroup` with Beat; a new top-level `ToolbarItem` breaks the
+build with "extra argument in call".

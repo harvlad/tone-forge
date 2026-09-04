@@ -169,7 +169,23 @@ struct RootView: View {
                     .help("Stop everything — song, sequencer, and all pads")
                 }
             }
-            ToolbarItem(placement: .automatic) {
+            // One ToolbarItemGroup, not two ToolbarItems: the toolbar builder
+            // caps at 10 elements and viewSwitcher + the items below already
+            // fill it — adding Melody as its own item broke the build with
+            // "extra argument in call".
+            ToolbarItemGroup(placement: .automatic) {
+                // Hidden when the song has no extracted melody lane.
+                if session.melodySequence != nil {
+                    Button {
+                        session.melodyGuideEnabled.toggle()
+                    } label: {
+                        Label("Melody", systemImage: "music.note")
+                            .foregroundStyle(session.melodyGuideEnabled ? .green : .primary)
+                    }
+                    .help(session.melodyGuideEnabled
+                        ? "Melody guide on — the song's melody line plays on the synth"
+                        : "Play the song's extracted melody line on the synth")
+                }
                 Button {
                     showBeatCapture.toggle()
                 } label: {

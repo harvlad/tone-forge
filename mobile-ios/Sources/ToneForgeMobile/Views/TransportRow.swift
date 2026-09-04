@@ -48,6 +48,22 @@ struct TransportRow: View {
             // ENTIRE screen sideways whenever the transport armed.
             RecordToggle()
 
+            // Melody guide: play the song's extracted melody line on the
+            // wavetable synth in time with the transport. Hidden when the
+            // bundle carries no melody lane.
+            if appState.melodySequence != nil {
+                Button {
+                    appState.melodyGuideEnabled.toggle()
+                } label: {
+                    Image(systemName: "music.note")
+                        .font(.title3)
+                        .foregroundStyle(appState.melodyGuideEnabled
+                                         ? TFTheme.accent : TFTheme.textSecondary)
+                }
+                .accessibilityLabel(appState.melodyGuideEnabled
+                                    ? "Melody guide on" : "Melody guide off")
+            }
+
             Spacer()
 
             Text(readout)

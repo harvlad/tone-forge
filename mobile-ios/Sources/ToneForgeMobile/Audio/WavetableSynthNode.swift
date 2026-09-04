@@ -110,6 +110,12 @@ public final class WavetableSynthNode: ObservableObject {
         synth?.allNotesOff()
     }
 
+    /// Melody follow-along voice seam (MelodyVoice) — the engine
+    /// protocol's Float velocity maps onto this node's Double API.
+    public func noteOn(midi: Int, velocity: Float) {
+        noteOn(midi: midi, velocity: Double(velocity))
+    }
+
     // MARK: - Parameters
 
     /// Replace live params. Applied atomically at the next render
@@ -120,3 +126,7 @@ public final class WavetableSynthNode: ObservableObject {
         synth?.setParams(params)
     }
 }
+
+/// Melody follow-along voice seam — noteOff/allNotesOff match the
+/// protocol directly; the Float noteOn overload above bridges velocity.
+extension WavetableSynthNode: MelodyVoice {}

@@ -820,3 +820,28 @@ attribution pipeline for future licensed catalogs.
 - Aggregate Credits screen: Settings → Legal & compliance → "Credits &
   licenses" (licensed songs from history + sample-pack
   license/provenance from manifests).
+
+## D-025: Song melody as a playable sequence (MelodySequence)
+
+**Date:** 2026-09-04
+**Decision:** the backend extracts the song's melody line once
+(`analysis/melody_sequence.py`: vocals stem wins outright, else
+`role == "melody"` notes from the polyphonic stems, duration-scored,
+mono-trimmed) and ships it additively on both wire surfaces:
+`melody` on `/api/song/{id}/bundle` (camelCase — `BundleMelody`) and
+`melody` on `/api/session/{id}` (contract `MelodySequence` DTO,
+mirrored into `guidance.note_highway`). The engine gains
+`MelodySequence` (cursor/binary-search + phrase slicing) and
+`MelodySequencePlayer` (host-transport-driven noteOn/noteOff edges via
+the `MelodyVoice` seam; `WavetableSynth` conforms for free). AppState
+builds the player at `activate(bundle:)`, drives it from the 30 Hz
+tick, and `TransportRow` shows a music-note toggle only when the
+bundle carries a melody.
+**Alternatives:** client-side melody derivation from `midi_stems`
+(rejected: three clients re-deriving = drift); duplicating phrase
+notes on the wire (rejected: phrases carry windows only, clients
+slice the full note list).
+**Why:** the cursor semantics intentionally mirror launchpad.js
+(`onMelodyPosition` / `_padForMidi`) — the engine-port rule applies,
+change both in the same commit. Player is edge-driven and idempotent
+per cursor state, so seeks and paused ticks need no special casing.

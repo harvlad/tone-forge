@@ -2194,6 +2194,7 @@
     state.stems.clear();
     state.sections = [];
     state.chords = [];
+    state.melody = null;
     state.rawChords = { fixed: [], snapped: null };
     // Reset Launchpad grid + verify-mode press ring buffer for the next jam.
     try { window.Launchpad && window.Launchpad.onSongUnloaded(); } catch (_) {}
@@ -2856,6 +2857,17 @@
     // for this region)" placeholder, which is the correct degenerate
     // behaviour rather than throwing.
     state.leadMidiNotes = _pickLeadMidiNotes(result);
+    // Server-extracted melody sequence (bundle.melody via the session
+    // route). Absent on live-SSE results and legacy sessions — the
+    // Launchpad melody submode then paints landmarks only, exactly as
+    // before. Notes are absolute-time monophonic dicts; phrases carry
+    // the per-section slices for future loop-practice UI.
+    state.melody = (result.melody && Array.isArray(result.melody.notes)
+      && result.melody.notes.length > 0) ? result.melody : null;
+    try {
+      window.Launchpad && window.Launchpad.onMelodyLoaded(
+        state.melody ? state.melody.notes : []);
+    } catch (_) {}
     syncChordSnapToggleVisibility();
     syncChordLaneStemSelect();
     buildChordRibbon(activeChordArray());
@@ -5443,6 +5455,9 @@
       // tab lane gets the same nudge so paused scrub-clicks reposition
       // the scrolling notes; no-op when the lane isn't built.
       updateChordPlayhead(target);
+      if (state.melody) {
+        try { window.Launchpad && window.Launchpad.onMelodyPosition(target); } catch (_) {}
+      }
       if (state.tabLane) {
         try { state.tabLane.update(target); } catch (_) {}
       }
@@ -5457,6 +5472,12 @@
     // JAM Alpha chord ribbon: cheap per-frame update (O(log n) binary
     // search + one style write). No-op when state.chords is empty.
     updateChordPlayhead(t);
+    // Launchpad melody follow-along. Cheap: binary search inside the
+    // module, repaints only on note-boundary crossings. No-op when no
+    // melody was loaded or the melody submode isn't active.
+    if (state.melody) {
+      try { window.Launchpad && window.Launchpad.onMelodyPosition(t); } catch (_) {}
+    }
     // Picking-tab-lane: shift the notes group transform so the
     // playhead-anchored note window matches t. One SVG attribute
     // write — cheaper than the ribbon update. No-op when the lane
@@ -5851,6 +5872,13 @@
       midi_stems: bundle.legacy_midi_stems && typeof bundle.legacy_midi_stems === 'object'
         ? bundle.legacy_midi_stems
         : {},
+      // Song melody sequence (contracts.MelodySequence, serialized).
+      // First-class on the bundle — passed through so the ingest above
+      // can push it to the Launchpad follow-along without re-deriving
+      // the melody client-side.
+      melody: bundle.melody && typeof bundle.melody === 'object'
+        ? bundle.melody
+        : null,
       // Tone — carries the persisted ``to_wire_dict`` payload so
       // renderToneCard can re-render the SUGGESTED chain after refresh.
       tone,

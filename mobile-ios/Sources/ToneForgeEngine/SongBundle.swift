@@ -46,6 +46,11 @@ public struct SongBundle: Codable, Sendable, Equatable {
     /// Analyzed guitar tone summary (additive; nil when the song has no
     /// detected guitar). Full descriptor stays server-side.
     public let guitarTone: BundleGuitarTone?
+    /// Server-extracted song melody as a playable monophonic sequence
+    /// (additive; nil on bundles cached before the server emitted it,
+    /// and on songs with no usable melody). See
+    /// backend/tone_forge/analysis/melody_sequence.py.
+    public let melody: BundleMelody?
 
     public init(
         bundleVersion: Int,
@@ -55,7 +60,8 @@ public struct SongBundle: Codable, Sendable, Equatable {
         stems: [BundleStem],
         presets: [String: BundlePreset],
         synthPatch: BundleSynthPatch? = nil,
-        guitarTone: BundleGuitarTone? = nil
+        guitarTone: BundleGuitarTone? = nil,
+        melody: BundleMelody? = nil
     ) {
         self.bundleVersion = bundleVersion
         self.analysisId = analysisId
@@ -65,6 +71,7 @@ public struct SongBundle: Codable, Sendable, Equatable {
         self.presets = presets
         self.synthPatch = synthPatch
         self.guitarTone = guitarTone
+        self.melody = melody
     }
 }
 
@@ -276,6 +283,62 @@ public struct BundleGuitarTone: Codable, Sendable, Equatable {
     public init(ampFamily: String? = nil, gain: Double? = nil) {
         self.ampFamily = ampFamily
         self.gain = gain
+    }
+}
+
+// MARK: - Melody (additive)
+
+/// The song's melody line — strictly monophonic, absolute-time note
+/// events ordered by onset with overlaps already trimmed server-side,
+/// so playback needs no voice-stealing logic. Wire shape is the
+/// camelCase `melody` block on /api/song/{id}/bundle.
+public struct BundleMelody: Codable, Sendable, Equatable {
+    /// Which stem won the melody pick (vocals / other / guitar_* / piano).
+    public let sourceStem: String
+    public let confidence: Double
+    public let notes: [BundleMelodyNote]
+    /// Per-section slices for loop practice. Phrase note events are not
+    /// duplicated on the wire — slice `notes` by [start, end) locally.
+    public let phrases: [BundleMelodyPhrase]
+
+    public init(
+        sourceStem: String,
+        confidence: Double,
+        notes: [BundleMelodyNote],
+        phrases: [BundleMelodyPhrase] = []
+    ) {
+        self.sourceStem = sourceStem
+        self.confidence = confidence
+        self.notes = notes
+        self.phrases = phrases
+    }
+}
+
+public struct BundleMelodyNote: Codable, Sendable, Equatable {
+    public let start: Double
+    public let end: Double
+    public let pitch: Int
+    public let velocity: Int
+
+    public init(start: Double, end: Double, pitch: Int, velocity: Int) {
+        self.start = start
+        self.end = end
+        self.pitch = pitch
+        self.velocity = velocity
+    }
+}
+
+public struct BundleMelodyPhrase: Codable, Sendable, Equatable {
+    public let start: Double
+    public let end: Double
+    public let sectionLabel: String
+    public let noteCount: Int
+
+    public init(start: Double, end: Double, sectionLabel: String, noteCount: Int) {
+        self.start = start
+        self.end = end
+        self.sectionLabel = sectionLabel
+        self.noteCount = noteCount
     }
 }
 

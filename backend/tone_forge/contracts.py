@@ -355,6 +355,47 @@ class InstrumentMIDI:
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class MelodyPhrase:
+    """One section-sized slice of the song melody.
+
+    ``notes`` use the same absolute-time dict shape as the full
+    sequence (``{pitch, start, end, velocity}``, seconds from song
+    start) — clients that loop a phrase subtract ``start_s`` locally.
+    ``section_label`` mirrors the ``Section.label`` the slice came
+    from so UIs can title practice loops without re-joining against
+    ``sections`` by timestamp.
+    """
+
+    start_s: float
+    end_s: float
+    section_label: str = ""
+    notes: Tuple[Dict[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class MelodySequence:
+    """The song's melody line as a playable, strictly monophonic sequence.
+
+    Produced by ``analysis.melody_sequence.build_melody_sequence`` from
+    the per-stem MIDI extraction plus the melody/accompaniment role
+    split. ``notes`` is the full-song line ordered by onset with
+    overlaps trimmed (mono legato) so a step/sequence player can walk
+    it without voice-stealing logic; ``phrases`` is the same material
+    sliced per arrangement section for loopable practice. Both carry
+    the plain ``{pitch, start, end, velocity}`` dicts every existing
+    note surface uses (landmark_notes, note_highway, midi_stems).
+
+    ``source_stem`` records which stem won the melody pick (vocals /
+    other / guitar_* / piano) so clients can label the lane honestly.
+    """
+
+    source_stem: str
+    notes: Tuple[Dict[str, Any], ...] = ()
+    phrases: Tuple[MelodyPhrase, ...] = ()
+    confidence: float = 0.0
+
+
 # ---------------------------------------------------------------------------
 # Tone (retrieval + monitor chains)
 # ---------------------------------------------------------------------------
@@ -635,3 +676,9 @@ class SessionBundle:
     guidance: GuidanceTrack
     device_caps: DeviceCaps
     initial_transport: TransportState
+    # Extracted song melody as a playable sequence (full line +
+    # per-section phrases). Injected at the API edge like ``tone`` —
+    # the session subsystem may not import analysis/. ``None`` keeps
+    # legacy bundle construction and old clients unchanged; when
+    # present, ``guidance.note_highway`` mirrors ``melody.notes``.
+    melody: Optional[MelodySequence] = None
