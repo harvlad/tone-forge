@@ -260,6 +260,33 @@ def terminate_worker() -> None:
                 pass
 
 
+# --- presence-based pre-warm -------------------------------------------
+# App-open signals (Library/history fetch, engine-status poll) pre-warm
+# a worker BEFORE the user uploads: by the time they picked a song the
+# pod is hot. Debounced so chatty polls cost one RunPod API call per
+# 2 minutes; every create guard (cap, cooldown, backstop) still applies.
+# Presence also counts as activity, so the idle teardown clock only
+# starts once every app has gone quiet.
+_last_prewarm_ts = 0.0
+_PREWARM_DEBOUNCE_SEC = 120.0
+
+
+def prewarm_async() -> None:
+    global _last_prewarm_ts
+    if not enabled():
+        return
+    now = time.time()
+    if now - _last_prewarm_ts < _PREWARM_DEBOUNCE_SEC:
+        return
+    _last_prewarm_ts = now
+    note_activity()  # user is here — hold the idle teardown
+    import threading
+
+    threading.Thread(
+        target=lambda: ensure_worker(1), daemon=True
+    ).start()
+
+
 # --- idle tracking: terminate after RUNPOD_IDLE_MINUTES with no queued/running jobs ---
 _last_active_ts = time.time()
 

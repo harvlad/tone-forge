@@ -2545,15 +2545,17 @@ async def engine_status_endpoint() -> JSONResponse:
     """
     online = _engine_online()
     mode = "worker"
-    if not online:
-        try:
-            from local_engine import runpod_autoscaler as _autoscale
+    try:
+        from local_engine import runpod_autoscaler as _autoscale
 
-            if _autoscale.enabled():
-                online = True
-                mode = "autoscale"
-        except Exception:  # noqa: BLE001
-            pass
+        # Presence signal: clients poll this from their upload/intake
+        # surfaces — pre-warm so the worker is hot before the upload.
+        _autoscale.prewarm_async()
+        if not online and _autoscale.enabled():
+            online = True
+            mode = "autoscale"
+    except Exception:  # noqa: BLE001
+        pass
     return JSONResponse({
         "online": online,
         "device": _ENGINE_PRESENCE["device"] or None,
@@ -4327,6 +4329,14 @@ async def get_history(
     Returns lightweight metadata rows by default. Pass ``full=1`` to
     embed each entry's complete ``result`` blob (debug History tab).
     """
+    # App-open presence signal: someone browsing their Library is a
+    # strong predictor of an upload — pre-warm a worker (debounced,
+    # fire-and-forget, all create guards apply).
+    try:
+        from local_engine import runpod_autoscaler as _autoscale
+        _autoscale.prewarm_async()
+    except Exception:  # noqa: BLE001
+        pass
     history = _load_history()
 
     if scope == "mine":
