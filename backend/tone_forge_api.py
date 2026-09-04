@@ -688,13 +688,15 @@ async def _autoscale_loop() -> None:
             # backstop — the 244-pod runaway predates those guards; the
             # worst this loop can do is one create per 5 minutes, 12
             # per process, all logged.
-            if queued:
-                spawned = await asyncio.to_thread(
-                    _autoscale.ensure_worker, queued)
-                if spawned not in (None, "existing"):
-                    logger.warning(
-                        "autoscale self-heal: spawned worker %s for %d queued",
-                        spawned, queued)
+            # Runs every tick (not just when queued): ensure_worker also
+            # maintains the RUNPOD_MIN_WARM floor and no-ops instantly
+            # when the floor and queue are both satisfied.
+            spawned = await asyncio.to_thread(
+                _autoscale.ensure_worker, queued)
+            if spawned not in (None, "existing"):
+                logger.warning(
+                    "autoscale: spawned worker %s (queued=%d)",
+                    spawned, queued)
             await asyncio.to_thread(_autoscale.scale_down_if_idle, pending)
         except Exception:  # noqa: BLE001
             logger.exception("autoscale tick failed")

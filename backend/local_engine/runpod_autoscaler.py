@@ -111,6 +111,17 @@ def _has_live_worker() -> bool:
 # --- HARD guardrails so a crash-looping bootstrap can never runaway-spawn ---
 # (A missing cap once created 244 pods in 4.5h.) Every one of these must pass
 # before a pod is created.
+def _min_warm() -> int:
+    """RUNPOD_MIN_WARM pods stay alive even when the queue is empty
+    (default 0 = strict scale-to-zero). 1 kills the first-song-of-the-
+    session cold start (image pull can cost minutes on a fresh host)
+    at ~1 pod-hour of standing cost. Clamped to 2."""
+    try:
+        return max(0, min(2, int(os.environ.get("RUNPOD_MIN_WARM", "0"))))
+    except ValueError:
+        return 0
+
+
 def _max_live_pods() -> int:
     """Concurrency cap: RUNPOD_MAX_WORKERS live pods (default 2 — two
     songs analyze in parallel; each extra pod is another ~$0.05-0.44/hr
@@ -160,8 +171,10 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
         p for p in list_worker_pods()
         if str(p.get("desiredStatus", "")).upper() in ("RUNNING", "PENDING", "CREATED")
     ]
-    want = min(_max_live_pods(), max(1, queue_depth))
-    if len(live) >= want:
+    # Queue depth drives scale-up; the min-warm floor holds even at
+    # queue 0 so the next session's first song claims instantly.
+    want = min(_max_live_pods(), max(queue_depth, _min_warm()))
+    if want <= 0 or len(live) >= want:
         return "existing"
     now = time.time()
     if now - _last_create_ts < _CREATE_COOLDOWN_SEC:
@@ -257,8 +270,9 @@ def note_activity() -> None:
 
 
 def scale_down_if_idle(has_pending_or_running: bool) -> None:
-    """Call periodically. Keeps the worker while jobs exist; terminates it after
-    the idle window once the queue is empty."""
+    """Call periodically. Keeps workers while jobs exist; after the
+    idle window, terminates down to the RUNPOD_MIN_WARM floor (0 =
+    full scale-to-zero)."""
     if not enabled():
         return
     if has_pending_or_running:
@@ -266,5 +280,23 @@ def scale_down_if_idle(has_pending_or_running: bool) -> None:
         return
     idle_min = float(os.environ.get("RUNPOD_IDLE_MINUTES", "10"))
     if (time.time() - _last_active_ts) >= idle_min * 60:
-        terminate_worker()
+        keep = _min_warm()
+        if keep <= 0:
+            terminate_worker()
+        else:
+            live = [
+                p for p in list_worker_pods()
+                if str(p.get("desiredStatus", "")).upper()
+                in ("RUNNING", "PENDING", "CREATED")
+            ]
+            for p in live[keep:]:
+                pid = p.get("id")
+                if pid and requests is not None:
+                    try:
+                        requests.delete(f"{_REST}/pods/{pid}",
+                                        headers=_headers(), timeout=20)
+                        logger.info("autoscale: idle scale-down terminated %s "
+                                    "(keeping %d warm)", pid, keep)
+                    except Exception:
+                        pass
         note_activity()  # reset so we don't re-terminate every tick
