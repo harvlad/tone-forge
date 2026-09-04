@@ -38,7 +38,13 @@ SUBSYSTEMS: dict[str, Set[str]] = {
     "analysis": set(),
     "stems": set(),
     "tone": set(),
-    "monitor": set(),
+    # ``ir_match`` is a top-level shared DSP utility (minimum-phase
+    # spectral matching), not a subsystem. ``monitor.tuner`` reuses its
+    # magnitude/smoothing primitives so the per-song EQ derivation and
+    # the match-IR export measure spectra with identical math —
+    # duplicating them would let the two silently drift. Types crossing
+    # the seam are numpy arrays and a Path; no subsystem internals.
+    "monitor": {"ir_match"},
     "devices": set(),
     # EXECUTION_PLAN §2 boundary rule 1 names ``session.bundle.build_session``
     # a composition point ALONGSIDE ``tone_forge_api`` — "Composition lives in

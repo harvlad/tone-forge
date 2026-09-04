@@ -471,7 +471,13 @@ class ToneRecFallback:
 
 @dataclass(frozen=True)
 class ToneRecAlternate:
-    """Runner-up shown when tier is MEDIUM."""
+    """Alternate chain the user can apply with one tap.
+
+    MEDIUM carries the top runner-ups; LOW carries the full ranked
+    bank (minus the fallback) so the card degrades into a pick-by-ear
+    picker — retrieval distance measured ~0.5 AUC against ear-judged
+    fit, so on the LOW path ordering is all the ranking is good for.
+    """
 
     chain_id: str
     display_name: str

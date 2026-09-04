@@ -599,18 +599,14 @@ def _znorm_l2(
     return d
 
 
-def _calibrate(distance: float) -> float:
+def _placeholder_calibrate(distance: float) -> float:
     """``exp(-distance / DISTANCE_TAU)`` clamped to ``[0, 1]``.
 
-    Intentionally *not* capped below HIGH_CONFIDENCE_MIN. The calibration
-    placeholder in ``tone.calibration`` caps to defend the synth path
-    against premature HIGH; here, we already require the margin check
-    in ``tiers.classify``, and the directional verification showed the
-    Alcest example produces a 0.47 margin (>0.20) — so we want to allow
-    a HIGH tier when both signals agree. The pre-render fingerprints
-    being hand-authored estimates is documented in the source_note of
-    every fingerprint JSON, which is the audit trail for that
-    permissiveness.
+    Fallback only — active when no fitted guitar artifact is on disk.
+    Known to over-claim: the 89-clip blind-label audit (2026-09)
+    measured 6.7% top-1 accuracy while this curve emitted HIGH on 8 of
+    the first 10 corpus clips. The fitted isotonic below replaces it
+    wherever the artifact ships.
     """
     if not math.isfinite(distance) or distance < 0.0:
         return 0.0
@@ -620,6 +616,38 @@ def _calibrate(distance: float) -> float:
     if raw > 1.0:
         return 1.0
     return raw
+
+
+_GUITAR_ARTIFACT = Path(__file__).resolve().parent / "calibration_guitar_v1.joblib"
+
+
+def _try_load_guitar_calibrator():
+    """Load the guitar-bank isotonic artifact, or ``None`` to keep the
+    placeholder.
+
+    Separate artifact from ``calibration_v1.joblib`` deliberately: that
+    one is fitted on synth preset-catalog distances (~15 scale), this
+    bank's z-normalized distances live near ~1.5 — one curve cannot
+    serve both. Mirrors ``calibration._try_load_fitted_calibrator``:
+    never raises, warns and degrades on any load failure.
+    """
+    try:
+        from tone_forge.tone.calibration import IsotonicCalibrator
+        return IsotonicCalibrator.load_from_joblib(_GUITAR_ARTIFACT)
+    except Exception as exc:
+        logger.warning(
+            "guitar_catalog: no fitted calibrator (%s); using placeholder", exc,
+        )
+        return None
+
+
+_CALIBRATOR = _try_load_guitar_calibrator()
+
+
+def _calibrate(distance: float) -> float:
+    if _CALIBRATOR is not None:
+        return _CALIBRATOR(distance)
+    return _placeholder_calibrate(distance)
 
 
 # ---------------------------------------------------------------------------
@@ -716,7 +744,12 @@ def recommend(
 
     confidence = _calibrate(top_distance)
     margin = _compute_margin(distances)
-    tier = tiers.classify(confidence, margin)
+    # With a fitted calibrator, tier rides on measured P(correct)
+    # alone. The margin OR-clause in tiers.classify exists for the
+    # uncalibrated case; here it would re-admit MEDIUM/HIGH from the
+    # same geometry the blind audit measured at chance (AUC 0.506) —
+    # margin stays in `debug`, not in the gate.
+    tier = tiers.classify(confidence, None if _CALIBRATOR else margin)
 
     debug = {
         "tau": DISTANCE_TAU,
@@ -740,10 +773,15 @@ def recommend(
 
     if tier in (ConfidenceTier.LOW, ConfidenceTier.UNKNOWN):
         # Top of the bank scored, but neither confidence nor margin
-        # cleared MEDIUM. Hand off to the curated fallback while
-        # preserving the ranking for telemetry.
+        # cleared MEDIUM. Hand off to the curated fallback — carrying
+        # the full ranked bank as alternates. Blind-label audit
+        # (89 clips, 2026-09) put ranking AUC at 0.506: distance does
+        # not predict ear-judged fit, so on the LOW path the card is a
+        # picker, not a recommender — the user's ear does the choosing
+        # and every tap is a clean label for the refit corpus.
         return _low_confidence_fallback(
-            fallback_chain_id, understanding, confidence, margin, debug
+            fallback_chain_id, understanding, confidence, margin, debug,
+            ranked=ranked,
         )
 
     match = ToneRecMatch(
@@ -917,15 +955,27 @@ def _low_confidence_fallback(
     confidence: float,
     margin: Optional[float],
     debug: Dict[str, object],
+    ranked: Optional[List[Tuple["_CatalogEntry", float]]] = None,
 ) -> ToneRecommendation:
     display_name, archetype = _resolve_fallback_meta(fallback_chain_id)
-    margin_str = "n/a" if margin is None else f"{margin:.2f}"
+    # The numbers stay in `debug` for telemetry; the rationale is
+    # user-facing copy, and "confidence 0.10 (margin=0.02)" is a
+    # debugging string wearing a UI hat.
+    alternates = tuple(
+        ToneRecAlternate(
+            chain_id=entry.chain_id,
+            display_name=entry.display_name,
+            archetype=entry.family.value,
+            distance=round(d, 4),
+        )
+        for entry, d in (ranked or [])
+        if entry.chain_id != fallback_chain_id
+    )
     return ToneRecommendation(
         tier=ConfidenceTier.LOW,
         rationale=(
-            f"Top catalog match confidence {confidence:.2f} "
-            f"(margin={margin_str}) too low to suggest; "
-            f"using curated fallback {display_name!r}."
+            f"No confident match for this song — pick by ear. "
+            f"Starting you on {display_name}."
         ),
         apply=ToneRecApply(chain_id=fallback_chain_id),
         match=None,
@@ -935,7 +985,7 @@ def _low_confidence_fallback(
             archetype=archetype,
             reason="low_confidence",
         ),
-        alternates=(),
+        alternates=alternates,
         preview_url=None,
         debug=debug,
     )
@@ -967,17 +1017,13 @@ def _match_rationale(
     confidence: float,
     margin: Optional[float],
 ) -> str:
-    margin_str = "n/a" if margin is None else f"{margin:.2f}"
+    # User-facing copy — confidence/margin live in `debug`, the tier
+    # badge already encodes strength. Numbers in the rationale were
+    # debug output wearing a UI hat.
     if tier == ConfidenceTier.HIGH:
-        return (
-            f"Confident match: {display_name} "
-            f"(confidence={confidence:.2f}, margin={margin_str})."
-        )
+        return f"{display_name} fits this song."
     if tier == ConfidenceTier.MEDIUM:
-        return (
-            f"Suggested match: {display_name} "
-            f"(confidence={confidence:.2f}, margin={margin_str})."
-        )
+        return f"{display_name} looks like a fit — trust your ear."
     return f"{tier.value} tier match: {display_name}."
 
 
