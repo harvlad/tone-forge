@@ -245,8 +245,15 @@ public final class SampleBank: @unchecked Sendable {
     /// metadata, so — unlike ``songDerived`` — there's no chop→pad mapping; the
     /// pack is ready to activate and the audio is materialized from the song's
     /// stems by the scheduler at preload time (same path as song-derived packs).
-    public static func autoKit(_ pack: SamplePack) -> ResolvedSamplePack {
-        ResolvedSamplePack(pack: pack, padFileURLs: [:])
+    /// ``padFileURLs`` carries server-rendered cleaned samples (drum kit
+    /// composites) already downloaded to disk — the scheduler prefers a
+    /// pad's file over its stemSlice, so pads with an entry play the clean
+    /// composite and the rest decode from the stem as before.
+    public static func autoKit(
+        _ pack: SamplePack,
+        padFileURLs: [Int: URL] = [:]
+    ) -> ResolvedSamplePack {
+        ResolvedSamplePack(pack: pack, padFileURLs: padFileURLs)
     }
 
     // MARK: - Private

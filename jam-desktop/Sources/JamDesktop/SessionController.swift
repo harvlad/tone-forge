@@ -324,6 +324,9 @@ final class SessionController: ObservableObject {
         // user actually plays (same loop as the jamn Kit plugin).
         launchpad.onPadUsage = { [weak self] assetId, kind in
             guard let self else { return }
+            // `drumfile:` is a local routing sentinel, not a graph-asset id —
+            // it means nothing to the server's ranking loop.
+            guard !assetId.hasPrefix("drumfile:") else { return }
             self.padUsageEvents.append((assetId, kind))
             if self.padUsageEvents.count > 256 {
                 self.padUsageEvents.removeFirst()
@@ -368,6 +371,24 @@ final class SessionController: ObservableObject {
             print("[Trigger] pad=\(pad) stem=\(assignment.stem) chopIdx=\(assignment.chop.idx)")
             let rate = max(0.1, self.transport.tempoPct)
             var delay = max(0, fireAt - clock.nowSongSeconds) / rate
+            // Drum-kit pad with a downloaded clean composite: play the FILE
+            // (median-stacked, faded, latency-trimmed), not the raw stem
+            // window. Always a one-shot — a lone drum hit has nothing to
+            // loop; the kit's groove pads stay on the chop path below.
+            if let aid = assignment.chop.assetId, aid.hasPrefix("drumfile:"),
+               let url = self.drumKitSampleFiles[assignment.chop.idx] {
+                self.chopPlayer.trigger(
+                    file: url, startSec: nil, endSec: nil, afterSeconds: delay)
+                if let coords = PadEventMapping.eventCoordinates(for: pad) {
+                    self.eventBus.publish(ContributionEvent(
+                        source: .launchpad,
+                        kind: .padDown(row: coords.row, col: coords.col),
+                        timestamp: fireAt,
+                        hostTime: mach_absolute_time()
+                    ))
+                }
+                return
+            }
             // Link session with peers: loops land on the NEXT LINK BAR
             // (Live's grid), not the song transport's — pads fired here
             // stack in phase with clips playing in the DAW.
@@ -691,7 +712,9 @@ final class SessionController: ObservableObject {
             .map { (chop: $0.chop, stem: $0.stem) }
         Task { [weak self] in
             await self?.chopPlayer.prewarm(presetAssignments)
-            await self?.loadAutoKit()
+            // kind explicit: every song opens on the Auto Kit — a Drum Kit
+            // choice on the previous song must not leak across songs.
+            await self?.loadAutoKit(kind: "auto")
         }
     }
 
@@ -727,9 +750,16 @@ final class SessionController: ObservableObject {
     /// loopable performance assets, one tap to load.
     @Published private(set) var autoKitLoading = false
     @Published private(set) var autoKitError: String?
+    /// Kit kind of the last request ("auto" | "drums") — the error-banner
+    /// Retry reloads what the user last asked for, not silently the Auto Kit.
+    private(set) var lastKitKind: String = "auto"
+    /// padIdx → downloaded clean composite (drum kit `sampleUrl` pads).
+    /// Only consulted for assignments whose chop carries the `drumfile:`
+    /// sentinel assetId, so stale entries can never hijack preset chops.
+    private var drumKitSampleFiles: [Int: URL] = [:]
 
     @MainActor
-    func loadAutoKit(skill: String = "intermediate") async {
+    func loadAutoKit(skill: String = "intermediate", kind: String? = nil) async {
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL else {
             autoKitError = "No song loaded."
             return
@@ -737,18 +767,26 @@ final class SessionController: ObservableObject {
         guard !autoKitLoading else { return }
         autoKitLoading = true
         autoKitError = nil
+        let kitKind = kind ?? lastKitKind
+        lastKitKind = kitKind
         defer { autoKitLoading = false }
         do {
             // 16 ranked pads (the builder's named role slots + top-ups) —
             // the default 8 under-filled a 64-cell grid. Retries transient
             // failures with a short backoff before surfacing the error.
             let pack = try await Self.fetchKitWithRetry(
-                base: base, analysisId: analysisId, skill: skill,
+                base: base, analysisId: analysisId, skill: skill, kind: kitKind,
                 stillCurrent: { [weak self] in
                     self?.attachedAnalysisId == analysisId
                 })
             // Song changed while fetching — never adopt a stale kit.
             guard attachedAnalysisId == analysisId else { return }
+            // Server-rendered cleaned composites (drum kit): download once;
+            // pads whose file landed get a `drumfile:` sentinel assetId and
+            // onTrigger plays the file. Failures keep the stemSlice path.
+            let sampleFiles = await Self.downloadKitSamples(pack: pack, base: base)
+            guard attachedAnalysisId == analysisId else { return }
+            drumKitSampleFiles = sampleFiles
             // The kit's pads are stem slices, not files — so drive the chop-based
             // Launchpad grid: each pad → (Chop, stem). Loopable pads get kind
             // "phrase" so onTrigger loops them seamlessly (SeamlessLoop crossfade).
@@ -774,8 +812,12 @@ final class SessionController: ObservableObject {
                     // Carry the analyzer's measured seam crossfade so held
                     // loops use it (else SessionController's 15 ms floor).
                     crossfadeMs: pad.crossfadeMs,
-                    // Usage feedback loop keys on the graph-asset id.
-                    assetId: pad.assetId
+                    // Usage feedback loop keys on the graph-asset id. Kit
+                    // pads with a downloaded clean composite carry the
+                    // `drumfile:` sentinel instead — onTrigger routes them
+                    // to the file player, and pad-usage skips them.
+                    assetId: sampleFiles[pad.padIdx] != nil
+                        ? "drumfile:\(pad.padIdx)" : pad.assetId
                 )
                 return (chop, slice.stemRole)
             }
@@ -791,11 +833,52 @@ final class SessionController: ObservableObject {
         }
     }
 
+    /// Download a kit's server-rendered cleaned samples (pads carrying
+    /// `sampleUrl` — the drum kit's median-stacked composites) into the
+    /// caches dir, keyed by the versioned server filename so an algorithm
+    /// bump re-downloads instead of serving stale audio. Misses just keep
+    /// that pad on its raw stemSlice window.
+    private static func downloadKitSamples(
+        pack: SamplePack, base: URL
+    ) async -> [Int: URL] {
+        let withUrls = pack.pads.filter { $0.sampleUrl != nil }
+        guard !withUrls.isEmpty else { return [:] }
+        let fm = FileManager.default
+        guard let caches = fm.urls(for: .cachesDirectory,
+                                   in: .userDomainMask).first else { return [:] }
+        let dir = caches.appendingPathComponent(
+            "jamn/kit-samples/\(pack.packId)", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        var out: [Int: URL] = [:]
+        for pad in withUrls {
+            guard let rel = pad.sampleUrl,
+                  let remote = URL(string: rel, relativeTo: base),
+                  !remote.lastPathComponent.isEmpty else { continue }
+            let dest = dir.appendingPathComponent(remote.lastPathComponent)
+            if fm.fileExists(atPath: dest.path) {
+                out[pad.padIdx] = dest
+                continue
+            }
+            var request = URLRequest(url: remote)
+            AuthContext.shared.apply(to: &request)
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let http = response as? HTTPURLResponse,
+                   !(200..<300).contains(http.statusCode) { continue }
+                guard !data.isEmpty else { continue }
+                try data.write(to: dest, options: .atomic)
+                out[pad.padIdx] = dest
+            } catch { continue }
+        }
+        return out
+    }
+
     /// KitClient fetch with 3 attempts and a short backoff for transient
     /// failures. Throws `CancellationError` (silently handled above) the
     /// moment `stillCurrent` reports the song changed.
     private static func fetchKitWithRetry(
-        base: URL, analysisId: String, skill: String,
+        base: URL, analysisId: String, skill: String, kind: String,
         stillCurrent: @escaping () -> Bool?
     ) async throws -> SamplePack {
         var lastError: Error = URLError(.unknown)
@@ -806,7 +889,8 @@ final class SessionController: ObservableObject {
             guard stillCurrent() == true else { throw CancellationError() }
             do {
                 return try await KitClient().fetchKit(
-                    baseURL: base, analysisId: analysisId, skill: skill, pads: 16)
+                    baseURL: base, analysisId: analysisId, skill: skill,
+                    pads: 16, kind: kind)
             } catch {
                 lastError = error
             }

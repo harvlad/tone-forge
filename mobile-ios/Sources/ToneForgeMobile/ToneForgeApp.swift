@@ -548,10 +548,13 @@ public final class AppState: ObservableObject {
         public var id: String { "\(packId)#\(padIdx)" }
     }
 
-    /// True when the current active pack is a Performance-Intelligence
-    /// Auto Kit (packId `auto-…`) — the categorized, color-coded rack.
+    /// True when the current active pack is a server-built kit — the
+    /// Performance-Intelligence Auto Kit (packId `auto-…`) or the Drum Kit
+    /// (`drumkit-…`). Both are categorized, color-coded racks that should
+    /// front the Jam grid.
     public var activeKitIsAutoKit: Bool {
-        activeSamplePack?.pack.packId.hasPrefix("auto-") ?? false
+        guard let id = activeSamplePack?.pack.packId else { return false }
+        return id.hasPrefix("auto-") || id.hasPrefix("drumkit-")
     }
 
     public var jamSampleFlatPads: [JamSamplePad] {
@@ -1921,7 +1924,9 @@ public final class AppState: ObservableObject {
             // Jam launchpad opens as the color-coded drums/bass/chords/lead
             // rack. Needs stems on the backend; on failure the grid keeps the
             // song-DNA pack activated above and autoKitError carries why.
-            if !localURLs.isEmpty { loadAutoKit() }
+            // kind explicit: every song opens on the Auto Kit — a Drum Kit
+            // choice on the previous song must not leak across songs.
+            if !localURLs.isEmpty { loadAutoKit(kind: "auto") }
             // Surface a "no audio" state when the song expected stems but
             // none downloaded (backend/R2 unavailable — e.g. jamn.app
             // analyses with no stored stems). The bundled demo is offline
@@ -1975,10 +1980,17 @@ public final class AppState: ObservableObject {
     /// Whether the auto-kit fetch is in flight, and the last error (for UI).
     @Published public private(set) var autoKitLoading = false
     @Published public private(set) var autoKitError: String?
+    /// Kit kind of the last request ("auto" | "drums") — parameterless
+    /// retry paths (JamView's error banner) reload the same kind the user
+    /// last asked for instead of silently reverting to the Auto Kit.
+    public private(set) var lastKitKind: String = "auto"
 
     /// Fetch the song's auto-built kit (GET /api/song/{id}/kit) and activate it
     /// as the sample pack — its stem-slice pads decode via the scheduler and
     /// loop seamlessly (loopScore → crossfade). One tap, best material first.
+    /// `kind: "drums"` loads the Drum Kit instead — the song's drum stem as
+    /// classified one-shot hits (kick/snare/hats/…) plus groove loops.
+    /// `kind: nil` repeats the last requested kind (retry paths).
     ///
     /// Resilience: retries transient fetch failures (3 attempts, short
     /// backoff) before surfacing `autoKitError`; every await is guarded
@@ -1986,7 +1998,7 @@ public final class AppState: ObservableObject {
     /// clobber the next song's pack. Buffers are decoded BEFORE the kit
     /// fronts the grid, so the DNA→kit swap has no silent-tap window —
     /// the song-DNA pack keeps playing until the kit is actually ready.
-    public func loadAutoKit(skill: String = "intermediate") {
+    public func loadAutoKit(skill: String = "intermediate", kind: String? = nil) {
         guard let analysisId = currentBundle?.analysisId else {
             autoKitError = "No song loaded."
             return
@@ -1994,6 +2006,8 @@ public final class AppState: ObservableObject {
         guard !autoKitLoading else { return }
         autoKitLoading = true
         autoKitError = nil
+        let kitKind = kind ?? lastKitKind
+        lastKitKind = kitKind
         let base = backendBaseURL
         let stems = currentStemLocalURLs
         Task { @MainActor in
@@ -2006,8 +2020,16 @@ public final class AppState: ObservableObject {
                 guard self.currentBundle?.analysisId == analysisId else { return }
                 do {
                     let pack = try await KitClient().fetchKit(
-                        baseURL: base, analysisId: analysisId, skill: skill, pads: 16)
-                    let resolved = SampleBank.autoKit(pack)
+                        baseURL: base, analysisId: analysisId, skill: skill,
+                        pads: 16, kind: kitKind)
+                    // Server-rendered cleaned composites (drum kit): download
+                    // once, then the scheduler plays the file instead of the
+                    // raw stem window. Any failed download just leaves that
+                    // pad on its stemSlice fallback.
+                    let sampleFiles = await Self.downloadKitSamples(
+                        pack: pack, base: base)
+                    let resolved = SampleBank.autoKit(
+                        pack, padFileURLs: sampleFiles)
                     await self.sampleScheduler.preloadPackAsync(
                         resolved, stemFiles: stems)
                     guard self.currentBundle?.analysisId == analysisId else { return }
@@ -2020,6 +2042,48 @@ public final class AppState: ObservableObject {
             guard self.currentBundle?.analysisId == analysisId else { return }
             self.autoKitError = lastError?.localizedDescription ?? "Kit unavailable."
         }
+    }
+
+    /// Download a kit's server-rendered cleaned samples (pads carrying
+    /// `sampleUrl` — the drum kit's median-stacked composites) into the
+    /// caches dir, keyed by the versioned server filename so an algorithm
+    /// bump re-downloads instead of serving stale audio. Returns
+    /// padIdx → local file URL for whatever succeeded; misses fall back to
+    /// the pad's stemSlice.
+    private static func downloadKitSamples(
+        pack: SamplePack, base: URL
+    ) async -> [Int: URL] {
+        let withUrls = pack.pads.filter { $0.sampleUrl != nil }
+        guard !withUrls.isEmpty else { return [:] }
+        let fm = FileManager.default
+        guard let caches = fm.urls(for: .cachesDirectory,
+                                   in: .userDomainMask).first else { return [:] }
+        let dir = caches.appendingPathComponent(
+            "toneforge/kit-samples/\(pack.packId)", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        var out: [Int: URL] = [:]
+        for pad in withUrls {
+            guard let rel = pad.sampleUrl,
+                  let remote = URL(string: rel, relativeTo: base),
+                  !remote.lastPathComponent.isEmpty else { continue }
+            let dest = dir.appendingPathComponent(remote.lastPathComponent)
+            if fm.fileExists(atPath: dest.path) {
+                out[pad.padIdx] = dest
+                continue
+            }
+            var request = URLRequest(url: remote)
+            AuthContext.shared.apply(to: &request)
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let http = response as? HTTPURLResponse,
+                   !(200..<300).contains(http.statusCode) { continue }
+                guard !data.isEmpty else { continue }
+                try data.write(to: dest, options: .atomic)
+                out[pad.padIdx] = dest
+            } catch { continue }
+        }
+        return out
     }
 
     /// Instant Groove: fire the single best-scoring loop in each core category

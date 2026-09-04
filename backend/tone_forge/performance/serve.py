@@ -131,19 +131,29 @@ def derive_and_attach(entry_id: str, result: Dict) -> bool:
     guarded — never fails the analysis. Returns True if a graph was attached."""
     import logging
     _log = logging.getLogger(__name__)
+    attached = False
     try:
         g = build_graph(entry_id, result)
         if g.assets:
             result[GRAPH_RESULT_KEY] = g.to_dict()
-            return True
-        _log.info(
-            "performance graph derived but EMPTY (phrases=%d loops=%d assets=%d) "
-            "— check stem paths were local/loadable",
-            len(g.phrases), len(g.loops), len(g.assets),
-        )
+            attached = True
+        else:
+            _log.info(
+                "performance graph derived but EMPTY (phrases=%d loops=%d assets=%d) "
+                "— check stem paths were local/loadable",
+                len(g.phrases), len(g.loops), len(g.assets),
+            )
     except Exception as exc:  # noqa: BLE001
         _log.info("performance graph derivation failed: %s", exc, exc_info=True)
-    return False
+    # Drum-hits table for the kind=drums kit — same rationale as the graph:
+    # derive where stems are local so the prod box serves it audio-free.
+    try:
+        from .drum_kit import ensure_drum_hits
+
+        ensure_drum_hits(entry_id, result)
+    except Exception as exc:  # noqa: BLE001
+        _log.info("drum hits derivation failed: %s", exc, exc_info=True)
+    return attached
 
 
 def performance_payload(entry_id: str, result: Dict) -> Dict:
@@ -188,6 +198,20 @@ def kit_payload(entry_id: str, result: Dict, skill: str = "intermediate", pads: 
         # Feedback loop: fold recorded play/skip counts into ranking so
         # kits learn what this user actually reaches for.
         usage=pad_usage.load(entry_id))
+    kit["analysisId"] = entry_id
+    return kit
+
+
+def drum_kit_payload(entry_id: str, result: Dict,
+                     sample_files: Optional[Dict[int, str]] = None) -> Dict:
+    """The song's drum stem as a playable 16-pad kit (classified one-shot
+    hits + groove loops). Needs the hits table attached (analysis worker or
+    the /kit route's backfill) — raises ValueError when it's absent/empty.
+    ``sample_files`` attaches cleaned median-stacked composites (sampleUrl)
+    to the one-shot pads; without it pads serve raw stemSlice windows."""
+    from .drum_kit import build_drum_kit
+
+    kit = build_drum_kit(entry_id, result, sample_files=sample_files)
     kit["analysisId"] = entry_id
     return kit
 

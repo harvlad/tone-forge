@@ -34,11 +34,14 @@ public struct KitClient: Sendable {
     ///   - skill: `"beginner" | "intermediate" | "advanced"` — filters pad
     ///     difficulty / loop preference.
     ///   - pads: kit size (1…16).
+    ///   - kind: `"auto"` (mixed performance kit) or `"drums"` (the song's
+    ///     drum stem as classified one-shot hits + groove loops).
     public func fetchKit(
         baseURL: URL,
         analysisId: String,
         skill: String = "intermediate",
-        pads: Int = 8
+        pads: Int = 8,
+        kind: String = "auto"
     ) async throws -> SamplePack {
         var components = URLComponents(
             url: baseURL
@@ -50,6 +53,7 @@ public struct KitClient: Sendable {
         components?.queryItems = [
             URLQueryItem(name: "skill", value: skill),
             URLQueryItem(name: "pads", value: String(pads)),
+            URLQueryItem(name: "kind", value: kind),
         ]
         guard let url = components?.url else { throw KitClientError.invalidURL }
 

@@ -583,13 +583,24 @@ struct LaunchpadPanelView: View {
             // Performance Intelligence: one tap loads the auto-built, seamlessly-
             // loopable kit for this song (GET /api/song/{id}/kit).
             Button {
-                Task { await session.loadAutoKit() }
+                Task { await session.loadAutoKit(kind: "auto") }
             } label: {
                 Label("Auto Kit", systemImage: "wand.and.stars")
                     .font(.caption)
             }
             .disabled(session.autoKitLoading)
             .help("Auto Kit — load the auto-built Launchpad kit for this song")
+
+            // Drum Kit: the song's drum stem as classified one-shot hits
+            // (kick/snare/hats/…) + groove loops (kind=drums on the same route).
+            Button {
+                Task { await session.loadAutoKit(kind: "drums") }
+            } label: {
+                Label("Drum Kit", systemImage: "circle.grid.3x3.fill")
+                    .font(.caption)
+            }
+            .disabled(session.autoKitLoading)
+            .help("Drum Kit — the song's own kick, snare, hats and grooves on the pads")
             if session.autoKitLoading {
                 ProgressView().controlSize(.small)
             }

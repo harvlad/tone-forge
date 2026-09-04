@@ -182,6 +182,12 @@ public struct SamplePad: Codable, Sendable, Equatable {
     /// Stable graph-asset id — the usage feedback loop keys play/skip
     /// events on this. nil on non-kit packs.
     public let assetId: String?
+    /// Backend URL (path, relative to the API base) of a server-rendered
+    /// CLEANED sample for this pad — e.g. the drum kit's median-stacked
+    /// one-shot composites. Clients that download it play the file
+    /// (padFileURLs wins over stemSlice in the scheduler); everyone else
+    /// falls back to the raw `stemSlice` window. Additive/optional.
+    public let sampleUrl: String?
 
     public init(
         padIdx: Int,
@@ -204,7 +210,8 @@ public struct SamplePad: Codable, Sendable, Equatable {
         difficulty: Double? = nil,
         category: String? = nil,
         crossfadeMs: Double? = nil,
-        assetId: String? = nil
+        assetId: String? = nil,
+        sampleUrl: String? = nil
     ) {
         self.padIdx = padIdx
         self.name = name
@@ -227,6 +234,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.category = category
         self.crossfadeMs = crossfadeMs
         self.assetId = assetId
+        self.sampleUrl = sampleUrl
     }
 
     // Custom decoding to default `gainDb` when the key is absent.
@@ -237,7 +245,8 @@ public struct SamplePad: Codable, Sendable, Equatable {
         case padIdx, name, family, colorHint, filename, chokeGroup,
              loopPointSec, gainDb, defaultQuantize, stemSlice, effects,
              loopStartSec, loopEndSec, loopScore, loopable, contentType,
-             performanceScore, difficulty, category, crossfadeMs, assetId
+             performanceScore, difficulty, category, crossfadeMs, assetId,
+             sampleUrl
     }
 
     public init(from decoder: Decoder) throws {
@@ -263,6 +272,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.category = try c.decodeIfPresent(String.self, forKey: .category)
         self.crossfadeMs = try c.decodeIfPresent(Double.self, forKey: .crossfadeMs)
         self.assetId = try c.decodeIfPresent(String.self, forKey: .assetId)
+        self.sampleUrl = try c.decodeIfPresent(String.self, forKey: .sampleUrl)
     }
 }
 

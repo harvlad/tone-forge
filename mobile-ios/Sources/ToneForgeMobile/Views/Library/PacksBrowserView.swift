@@ -232,6 +232,22 @@ struct PacksBrowserView: View {
             .disabled(appState.currentBundle == nil || appState.autoKitLoading)
             .tfLibraryRowChrome()
 
+            // The song's whole drum kit on the pads: classified one-shot
+            // hits (kick/snare/hats/…) + a row of groove loops.
+            Button {
+                appState.loadAutoKit(kind: "drums")
+                onActivated?()
+            } label: {
+                HStack {
+                    Label("Drum Kit", systemImage: "circle.grid.3x3.fill")
+                    Spacer()
+                    if appState.autoKitLoading { ProgressView() }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.currentBundle == nil || appState.autoKitLoading)
+            .tfLibraryRowChrome()
+
             // One-tap groove: fire the best loop of each category, bar-synced.
             Button {
                 appState.instantGroove()
@@ -268,7 +284,7 @@ struct PacksBrowserView: View {
             // Perform TAB while actually building the kit the Jam tab plays.
             Text("Jam Kit")
         } footer: {
-            Text("Auto Kit builds a labelled, color-coded rack of this song's best material for the Jam tab. Instant Groove fires the best loop of each category, locked to the grid — one tap to jam.")
+            Text("Auto Kit builds a labelled, color-coded rack of this song's best material for the Jam tab. Drum Kit lays the song's own drum hits on the pads — kick, snare, hats and grooves. Instant Groove fires the best loop of each category, locked to the grid — one tap to jam.")
         }
     }
 

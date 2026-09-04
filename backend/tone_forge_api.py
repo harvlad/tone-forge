@@ -5575,10 +5575,13 @@ async def get_song_kit(
     entry_id: str,
     skill: str = Query("intermediate", description="beginner|intermediate|advanced"),
     pads: int = Query(8, ge=1, le=16),
+    kind: str = Query("auto", description="auto (mixed performance kit) | drums (one-shot drum kit)"),
 ) -> JSONResponse:
     """Auto-built Launchpad kit for a song — a SamplePack manifest the existing
-    Launchpad UI consumes directly, sourced from the graph's ranked, seamlessly-
-    loopable performance assets."""
+    Launchpad UI consumes directly. ``kind=auto`` is the mixed performance kit
+    sourced from the graph's ranked loopable assets; ``kind=drums`` slices the
+    drum stem into classified one-shot hits (kick/snare/hats/…) plus groove
+    loops — the song's whole drum kit on the pads."""
     from tone_forge.performance import serve as _perf
 
     entry = _get_history_item(entry_id)
@@ -5588,6 +5591,30 @@ async def get_song_kit(
     if not isinstance(result, dict):
         raise HTTPException(status_code=422, detail="Song has no analysis result")
     _refresh_r2_stem_urls(result)
+
+    if kind == "drums":
+        from tone_forge.performance.drum_kit import DRUM_HITS_RESULT_KEY
+        from tone_forge.performance.drum_kit_render import (
+            ensure_kit_job, load_manifest)
+        # Same backfill shape as the graph below: hit detection + composite
+        # rendering are GIL-heavy DSP (and may download the drum stem from
+        # R2), so they run once in a worker process — table persists with the
+        # result, rendered samples in the on-disk cache.
+        sample_files = load_manifest(entry_id)
+        if DRUM_HITS_RESULT_KEY not in result or sample_files is None:
+            table, sample_files = await asyncio.get_running_loop().run_in_executor(
+                _render_pool(), ensure_kit_job, entry_id, result)
+            if isinstance(table, dict):
+                result[DRUM_HITS_RESULT_KEY] = table
+                await asyncio.to_thread(
+                    _persist_backfilled_result_key,
+                    entry_id, result, DRUM_HITS_RESULT_KEY)
+        try:
+            return JSONResponse(_perf.drum_kit_payload(
+                entry_id, result, sample_files=sample_files))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
     # Backfill legacy entries (analyzed before derive_and_attach): fetch
     # stems + derive the graph once, persist, then serve the kit. Runs
     # in a WORKER PROCESS — the derivation's GIL-heavy DSP starved the
@@ -5625,21 +5652,48 @@ def _persist_backfilled_graph(entry_id: str, result: dict) -> None:
     the stem fetch + derivation runs once per song, not per request."""
     from tone_forge.performance import serve as _perf
 
-    graph = result.get(_perf.GRAPH_RESULT_KEY)
-    if not isinstance(graph, dict):
+    _persist_backfilled_result_key(entry_id, result, _perf.GRAPH_RESULT_KEY)
+
+
+def _persist_backfilled_result_key(entry_id: str, result: dict, key: str) -> None:
+    """Persist one just-backfilled ``result[key]`` (graph, drum-hits table)
+    into the history entry so the heavy derivation runs once per song."""
+    value = result.get(key)
+    if not isinstance(value, dict):
         return
     try:
         history = _load_history()
         for e in history:
             if e.get("id") == entry_id and isinstance(e.get("result"), dict):
-                e["result"][_perf.GRAPH_RESULT_KEY] = graph
+                e["result"][key] = value
                 break
         else:
             return
         _save_history(history)
-        logger.info("performance graph backfilled + persisted for %s", entry_id)
+        logger.info("%s backfilled + persisted for %s", key, entry_id)
     except Exception:
-        logger.warning("graph backfill persist failed for %s", entry_id, exc_info=True)
+        logger.warning("%s backfill persist failed for %s", key, entry_id, exc_info=True)
+
+
+@app.get("/api/song/{entry_id}/drum-sample/{fname}")
+async def get_drum_sample(entry_id: str, fname: str) -> FileResponse:
+    """Serve one rendered drum-kit composite (median-stacked one-shot WAV)
+    from the render cache. Filenames are builder-generated
+    (``padNN_<class>.wav``) — the strict pattern check means no path
+    component from the client ever touches the filesystem."""
+    import re
+
+    from tone_forge.performance.drum_kit_render import sample_path
+
+    # entry_id names the cache subdirectory — reject anything that isn't a
+    # plain history id so no traversal sequence can reach the filesystem.
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", entry_id) \
+            or not re.fullmatch(r"pad\d{2}_[a-z_]+_v[0-9.-]+\.wav", fname):
+        raise HTTPException(status_code=404, detail="No such sample")
+    path = sample_path(entry_id, fname)
+    if path is None:
+        raise HTTPException(status_code=404, detail="No such sample")
+    return FileResponse(str(path), media_type="audio/wav")
 
 
 @app.post("/api/song/{entry_id}/pad-feedback")
