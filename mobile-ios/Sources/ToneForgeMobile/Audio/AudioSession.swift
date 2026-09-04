@@ -37,6 +37,11 @@ public final class AudioSessionController: ObservableObject {
         case interruptionEndedShouldResume
         case interruptionEndedNoResume
         case routeChanged(reason: RouteChangeReason)
+        /// The system audio daemon restarted (mediaserverd crash, heavy
+        /// backgrounding, CarPlay/BT churn). Every audio object is
+        /// invalid; the engine must reactivate the session and restart
+        /// or the app plays silence until relaunch.
+        case mediaServicesReset
     }
 
     /// Subset of `AVAudioSession.RouteChangeReason` we actually care
@@ -59,6 +64,7 @@ public final class AudioSessionController: ObservableObject {
     #if os(iOS)
     private var interruptionObserver: NSObjectProtocol?
     private var routeObserver: NSObjectProtocol?
+    private var mediaResetObserver: NSObjectProtocol?
     #endif
 
     public init() {
@@ -166,8 +172,12 @@ public final class AudioSessionController: ObservableObject {
         if let obs = routeObserver {
             NotificationCenter.default.removeObserver(obs)
         }
+        if let obs = mediaResetObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
         interruptionObserver = nil
         routeObserver = nil
+        mediaResetObserver = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
         #endif
     }
@@ -226,6 +236,16 @@ public final class AudioSessionController: ObservableObject {
             queue: .main
         ) { [weak self] note in
             self?.handleRouteChange(note)
+        }
+        // Not scoped to `session`: the reset notification's object is
+        // the daemon connection, not the session instance — filtering
+        // on object silently drops it.
+        mediaResetObserver = center.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.eventsContinuation.yield(.mediaServicesReset)
         }
     }
 

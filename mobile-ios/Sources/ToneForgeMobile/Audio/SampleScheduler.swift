@@ -701,6 +701,10 @@ public final class SampleScheduler: ObservableObject {
             "SampleScheduler.trigger must be reached via ContributionEventBus → ModeCoordinator"
         )
         #if canImport(AVFoundation)
+        // A stopped engine (config change, media reset) accepts player
+        // schedules silently — pads "work" but make no sound. Revive
+        // before every audible trigger.
+        engine?.ensureEngineRunning()
         // Local samples shadow pack pads at the same index: consulted
         // BEFORE pack lookup. One-shot unless the transform chain
         // contains `.loop` (loopResolver).

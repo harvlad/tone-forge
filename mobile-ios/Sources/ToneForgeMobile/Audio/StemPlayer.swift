@@ -235,6 +235,11 @@ public final class StemPlayer: ObservableObject {
     public func play(atSongSeconds seconds: Double) {
         #if canImport(AVFoundation)
         guard let engine = engine else { return }
+        // Song switches can stop the engine (configuration change on a
+        // sample-rate boundary); without a revive here the per-channel
+        // isRunning gate below skips play() silently — "switched song,
+        // lost sound".
+        engine.ensureEngineRunning()
         for ch in channels {
             let sampleRate = ch.fileSampleRate
             let startFrame = AVAudioFramePosition(max(0, seconds) * sampleRate)

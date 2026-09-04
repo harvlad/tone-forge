@@ -430,6 +430,7 @@ public final class AudioEngine: ObservableObject {
     /// Consumers of session events subscribe here so they can pause on
     /// interruption etc. Kicked off in ``start()``.
     private var sessionEventTask: Task<Void, Never>?
+    private var configChangeObserver: NSObjectProtocol?
 
     public init(session: AudioSessionController? = nil) {
         // The default arg can't call a `@MainActor` init from an
@@ -485,6 +486,37 @@ public final class AudioEngine: ObservableObject {
         session.deactivate()
         sessionEventTask?.cancel()
         sessionEventTask = nil
+        if let obs = configChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            configChangeObserver = nil
+        }
+    }
+
+    /// Revive a stopped engine before audible work. AVAudioEngine
+    /// stops itself on configuration changes (song switch to a
+    /// different sample rate, route swap) and after media-services
+    /// resets; callers that gate on `engine.isRunning` then skip
+    /// playback silently — the desktop had this exact bug
+    /// (`ensureEngineStarted`, b459b853). Returns true when the
+    /// engine is running on exit.
+    @discardableResult
+    public func ensureEngineRunning() -> Bool {
+        #if canImport(AVFoundation)
+        if engine.isRunning { return true }
+        session.activate()
+        _ = engine.mainMixerNode
+        do {
+            try engine.start()
+            isRunning = true
+            return true
+        } catch {
+            print("[AudioEngine] ensureEngineRunning failed: \(error)")
+            isRunning = false
+            return false
+        }
+        #else
+        return true
+        #endif
     }
 
     // MARK: - Transport surface
@@ -838,6 +870,30 @@ public final class AudioEngine: ObservableObject {
                 self.handle(event)
             }
         }
+        #if canImport(AVFoundation)
+        // AVAudioEngine stops ITSELF on a configuration change (route
+        // swap, hardware sample-rate change) and does not restart. A
+        // stopped engine accepts trigger schedules silently — same
+        // total-silence symptom as a media-services reset, different
+        // trigger. Restart if we believe we should be running.
+        if configChangeObserver == nil {
+            configChangeObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange,
+                object: engine,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.isRunning, !self.engine.isRunning else { return }
+                    do {
+                        try self.engine.start()
+                    } catch {
+                        print("[AudioEngine] config-change restart failed: \(error)")
+                        self.isRunning = false
+                    }
+                }
+            }
+        }
+        #endif
     }
 
     private func handle(_ event: AudioSessionController.Event) {
@@ -856,6 +912,32 @@ public final class AudioEngine: ObservableObject {
                 // iOS convention.
                 pause()
             }
+        case .mediaServicesReset:
+            recoverFromMediaServicesReset()
         }
+    }
+
+    /// mediaserverd restarted: the session is deactivated and the
+    /// engine's underlying AudioUnits are invalid. Without this, every
+    /// pad trigger and player schedules into a dead engine — app-wide
+    /// silence until relaunch (the exact bug: "samples have no audio…
+    /// not just samples, audio in general; restart fixes it").
+    /// AVAudioEngine re-instantiates its AUs on the next start(), so
+    /// stop → reactivate session → start recovers the whole graph
+    /// without re-attaching nodes.
+    private func recoverFromMediaServicesReset() {
+        #if canImport(AVFoundation)
+        let wasPlaying = clock.state == .playing
+        engine.stop()
+        session.activate()
+        do {
+            try engine.start()
+            isRunning = true
+            if wasPlaying { clock.play() }
+        } catch {
+            print("[AudioEngine] media-reset recovery failed: \(error)")
+            isRunning = false
+        }
+        #endif
     }
 }
