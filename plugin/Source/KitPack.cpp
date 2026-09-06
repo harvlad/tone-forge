@@ -144,8 +144,10 @@ std::shared_ptr<const LoadedPack> load(const juce::File& source,
         {
             const float peak = pad.audio.getMagnitude(
                 0, pad.audio.getNumSamples());
+            // Boost cap +12 dB (app parity): un-capped normalize made
+            // bleed-only quiet slices read as foreground fuzz.
             if (peak > 1.0e-4f)
-                pad.audio.applyGain(0.63f / peak);
+                pad.audio.applyGain(juce::jmin(0.63f / peak, 4.0f));
         }
         pad.peaks = computePeaks(pad.audio, 64);
         pack->pads.push_back(std::move(pad));

@@ -452,7 +452,9 @@ public final class ChopPlayer {
             }
         }
         guard peak > 1e-4 else { return }
-        let gain = 0.63 / peak
+        // Boost cap +12 dB (mobile parity): un-capped normalize turned
+        // bleed-only quiet slices into foreground fuzz.
+        let gain = min(0.63 / peak, 4.0)
         guard abs(gain - 1.0) > 0.01 else { return }
         for c in 0..<channelCount {
             let ptr = channels[c]

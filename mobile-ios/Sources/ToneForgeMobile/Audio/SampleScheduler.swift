@@ -1223,7 +1223,11 @@ public final class SampleScheduler: ObservableObject {
             }
         }
         guard peak > 1e-6 else { return }
-        let gain = normalizeTargetPeak / peak
+        // Boost CAP (+12 dB): un-capped normalize dragged whisper-quiet
+        // slices — mostly separation bleed — up ~30 dB into audible
+        // mush ("fuzzy samples"). Quiet slices stay quiet; attenuation
+        // (peak above target) remains uncapped.
+        let gain = min(normalizeTargetPeak / peak, 4.0)
         // Skip if the file was already near target — avoids wasting
         // cycles multiplying every sample by ~1.0.
         guard abs(gain - 1.0) > 0.01 else { return }
