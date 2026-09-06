@@ -126,6 +126,8 @@ struct LibraryView: View {
     /// song shows an "Analyzing…" row with live percent instead of
     /// vanishing until the history entry lands.
     @State private var activeJobs: [HistoryClient.ActiveJob] = []
+    /// Failed-job rows the user has dismissed this session.
+    @State private var dismissedJobIds: Set<String> = []
     @State private var jobsTicker: Timer? = nil
     /// Locally cached bundles. Populated eagerly at the top of
     /// reload() so downloaded songs are tappable even while the
@@ -256,6 +258,11 @@ struct LibraryView: View {
 
                 ForEach(activeJobs.filter { !$0.isTerminal }) { job in
                     analyzingRow(job)
+                        .tfLibraryRowChrome()
+                }
+
+                ForEach(recentFailures()) { job in
+                    failedRow(job)
                         .tfLibraryRowChrome()
                 }
 
@@ -677,13 +684,64 @@ struct LibraryView: View {
     private func jobStatusLine(_ job: HistoryClient.ActiveJob) -> String {
         // Raw engine messages are internal chatter ("skipping role
         // classification") — never user-facing. Percent carries the
-        // progress; words only cover the two states that need
-        // explaining.
+        // progress; words only cover the states that need explaining.
         if let pos = job.queuePosition, pos > 0 {
+            let waited = job.queuedForS ?? 0
+            // "Waking up a worker" stayed on screen unchanged through a
+            // ten-minute stall, so a booting worker and a dead one read
+            // identically. Past a plausible cold boot with nothing
+            // checking in, say what is actually true.
+            if waited >= 300, job.workerOnline != true {
+                return "Still no analysis worker after \(Int(waited / 60)) min "
+                    + "— retrying automatically"
+            }
+            // A worker IS alive; this job is simply behind other work.
+            // Deliberately uncounted — queue_position counts queued jobs
+            // only, so "behind N songs" undercounts by the one currently
+            // running.
+            if job.workerOnline == true {
+                return "In the queue — waiting for a free worker"
+            }
             return "Waking up an analysis worker — first song takes a few minutes"
         }
         if job.percent < 5 { return "Starting analysis…" }
         return "Analyzing…"
+    }
+
+    /// A job that failed in the last half hour, shown so a stranded
+    /// analysis explains itself instead of the row silently vanishing.
+    /// Older failures are dropped — jobs live 7 days server-side and a
+    /// week-old error is noise, not news.
+    private func recentFailures() -> [HistoryClient.ActiveJob] {
+        let cutoff = Date().timeIntervalSince1970 - 1800
+        return activeJobs.filter {
+            $0.status == "error" && ($0.updatedAt ?? 0) >= cutoff
+                && !dismissedJobIds.contains($0.jobId)
+        }
+    }
+
+    private func failedRow(_ job: HistoryClient.ActiveJob) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(job.filename ?? "Analysis failed")
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(job.error ?? "Analysis failed")
+                    .font(.caption)
+                    .foregroundStyle(TFTheme.textSecondary)
+            }
+            Spacer()
+            Button {
+                dismissedJobIds.insert(job.jobId)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(TFTheme.textSecondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 4)
     }
 
     /// Poll jobs every 5s while any are running so the percent moves

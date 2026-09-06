@@ -654,6 +654,79 @@ async def _retention_loop() -> None:
 
 
 _AUTOSCALE_TICK_SEC = 60
+# How long total engine silence (no claim, no heartbeat) with work
+# queued means the worker situation is broken rather than merely cold.
+# A RunPod cold boot is ~30-60s on the prebuilt image and 2-3min on the
+# base image, so 5 minutes clears an honest boot with room to spare.
+_WORKER_STALL_GRACE_SEC = 300.0
+
+
+def _engine_silent_sec() -> float:
+    """Seconds since ANY worker last claimed, heartbeat, or posted
+    progress. The one liveness signal that cannot lie — a pod RunPod
+    calls RUNNING proves nothing about whether a worker is inside it."""
+    return time.time() - _ENGINE_PRESENCE["last_seen"]
+
+
+def _oldest_queued_engine_age() -> float:
+    now = time.time()
+    ages = [
+        now - j.created_at
+        for j in _JOBS.all()
+        if j.kind == "engine" and j.status == "queued"
+    ]
+    return max(ages) if ages else 0.0
+
+
+def _stranded_job_timeout_sec() -> float:
+    """TONEFORGE_STRANDED_JOB_MIN minutes (default 15, 0 disables)."""
+    try:
+        minutes = float(os.environ.get("TONEFORGE_STRANDED_JOB_MIN", "15"))
+    except ValueError:
+        minutes = 15.0
+    return max(0.0, minutes) * 60.0
+
+
+async def _fail_stranded_engine_jobs() -> int:
+    """Error out queued engine jobs no worker could ever have claimed.
+
+    A queued job with nothing to claim it polled forever: the client
+    shows "Waking up an analysis worker" at 0% with no timeout and no
+    way to tell a slow boot from a dead one. Silence is the whole test —
+    if a worker checked in at ANY point after the job was created the
+    job is legitimately behind other work and is left alone, however
+    long that takes.
+    """
+    limit = _stranded_job_timeout_sec()
+    if limit <= 0:
+        return 0
+    now = time.time()
+    last_seen = _ENGINE_PRESENCE["last_seen"]
+    failed = 0
+    for job in _JOBS.all():
+        if job.kind != "engine" or job.status != "queued":
+            continue
+        if now - job.created_at < limit:
+            continue
+        if last_seen > job.created_at:
+            continue  # a worker was alive while this waited — a real queue
+        await _JOBS.update(
+            job.id,
+            status="error",
+            percent=0,
+            message="No analysis worker available",
+            error=(
+                "No analysis worker picked this up after "
+                f"{int(limit // 60)} minutes. The song is still uploaded — "
+                "try analysing it again."
+            ),
+        )
+        failed += 1
+        logger.error(
+            "stranded engine job %s failed after %.0fs queued with no worker "
+            "contact", job.id, now - job.created_at,
+        )
+    return failed
 
 
 async def _autoscale_loop() -> None:
@@ -667,6 +740,13 @@ async def _autoscale_loop() -> None:
     """
     while True:
         await asyncio.sleep(_AUTOSCALE_TICK_SEC)
+        # Runs whether or not autoscale is on: a developer Mac worker
+        # that never comes back strands a job exactly the same way a
+        # dead pod does, and the client spins identically for both.
+        try:
+            await _fail_stranded_engine_jobs()
+        except Exception:  # noqa: BLE001
+            logger.exception("stranded-job sweep failed")
         try:
             from local_engine import runpod_autoscaler as _autoscale
 
@@ -680,6 +760,28 @@ async def _autoscale_loop() -> None:
                 j.kind == "engine" and j.status == "running"
                 for j in _JOBS.all()
             )
+            # ZOMBIE REAP — the gap the 2026-09-03 self-heal left open.
+            # That fix covered "no pod at all"; this covers "a pod RunPod
+            # calls RUNNING that no worker ever booted inside" (bad deploy
+            # ref, failed pip install, wedged image pull, engine-token
+            # mismatch so every claim 404s). Such a pod fills the live cap,
+            # ensure_worker answers "existing" forever, and the job sits at
+            # 0% — the 10-minute stall reported 2026-09-06. Total engine
+            # silence across the whole time work has been waiting is the
+            # proof; the pod-age gate inside reap_stalled_workers keeps a
+            # genuinely booting pod safe. Runs BEFORE ensure_worker so the
+            # freed cap slot is refilled on the same tick.
+            if (queued > 0
+                    and _engine_silent_sec() >= _WORKER_STALL_GRACE_SEC
+                    and _oldest_queued_engine_age() >= _WORKER_STALL_GRACE_SEC):
+                reaped = await asyncio.to_thread(
+                    _autoscale.reap_stalled_workers, _WORKER_STALL_GRACE_SEC)
+                if reaped:
+                    logger.error(
+                        "autoscale: replaced %d stalled worker(s) — %d job(s) "
+                        "queued with no engine contact for %.0fs",
+                        reaped, queued, _engine_silent_sec(),
+                    )
             # SELF-HEAL (bounded): queued jobs + no live worker = the
             # submit-time spawn failed (RunPod hiccup, crashed pod).
             # This stranded two overnight jobs for 13h on 2026-09-03.
@@ -2200,11 +2302,18 @@ async def list_jobs_endpoint(
     ]
     mine.sort(key=lambda j: j.created_at, reverse=True)
     positions = _JOBS.queued_engine_positions()
+    now = time.time()
+    # Clients can only be honest about a wait if they can see how long
+    # it has been and whether anything is actually out there to claim
+    # the job — "Waking up a worker" is a lie by minute ten.
+    worker_online = _engine_online()
     rows = []
     for j in mine[:limit]:
         row = j.public_dict()
         if j.id in positions:
             row["queue_position"] = positions[j.id]
+            row["queued_for_s"] = max(0.0, now - j.created_at)
+            row["worker_online"] = worker_online
         rows.append(row)
     return JSONResponse({"jobs": rows})
 
@@ -4546,6 +4655,50 @@ async def get_debug_corpus() -> JSONResponse:
     if not _CORPUS_PATH.exists():
         raise HTTPException(status_code=404, detail="Corpus fixture not found")
     return JSONResponse(json.loads(_CORPUS_PATH.read_text()))
+
+
+@app.get("/api/debug/engine")
+async def get_debug_engine() -> JSONResponse:
+    """Why is a job sitting at 0%? One admin-guarded call, every fact.
+
+    ``engine.silent_for_s`` is the load-bearing number: a worker claims
+    or heartbeats at least every 20s, so anything past ~40s means no
+    worker is reachable no matter what RunPod says about its pods.
+    Cross-reference it with ``autoscale.pods`` — a RUNNING pod alongside
+    minutes of silence is a bootstrap that died, which the autoscale
+    loop reaps at _WORKER_STALL_GRACE_SEC.
+    """
+    now = time.time()
+    engine_jobs = [j for j in _JOBS.all() if j.kind == "engine"]
+    queued = [j for j in engine_jobs if j.status == "queued"]
+    autoscale_info: dict = {"enabled": False}
+    try:
+        from local_engine import runpod_autoscaler as _autoscale
+
+        autoscale_info = await asyncio.to_thread(_autoscale.diagnostics)
+    except Exception as exc:  # noqa: BLE001
+        autoscale_info = {"enabled": False, "error": str(exc)}
+    return JSONResponse({
+        "engine": {
+            "online": _engine_online(),
+            "silent_for_s": round(_engine_silent_sec(), 1),
+            "worker_id": _ENGINE_PRESENCE["worker_id"] or None,
+            "device": _ENGINE_PRESENCE["device"] or None,
+        },
+        "jobs": {
+            "queued": len(queued),
+            "running": sum(1 for j in engine_jobs if j.status == "running"),
+            "oldest_queued_age_s": round(_oldest_queued_engine_age(), 1),
+            "queued_ids": [j.id for j in queued],
+        },
+        "thresholds": {
+            "stall_grace_s": _WORKER_STALL_GRACE_SEC,
+            "stranded_job_timeout_s": _stranded_job_timeout_sec(),
+            "online_window_s": _ENGINE_ONLINE_WINDOW_SEC,
+        },
+        "autoscale": autoscale_info,
+        "now": now,
+    })
 
 
 @app.get("/api/debug/sessions")

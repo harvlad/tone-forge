@@ -88,6 +88,13 @@ def _worker_env() -> dict:
     return {k: os.environ[k] for k in passthrough if os.environ.get(k)}
 
 
+# pod id -> first time THIS process saw it. RunPod's own createdAt is
+# preferred when parseable; this is the fallback so a pod with a missing
+# or malformed timestamp still ages (an un-ageable pod could never be
+# reaped, which is the exact hole a zombie hides in).
+_pod_first_seen: dict = {}
+
+
 def list_worker_pods() -> List[dict]:
     if not enabled() or requests is None:
         return []
@@ -95,10 +102,42 @@ def list_worker_pods() -> List[dict]:
         r = requests.get(f"{_REST}/pods", headers=_headers(), timeout=20)
         if r.status_code != 200:
             return []
-        pods = r.json() if isinstance(r.json(), list) else r.json().get("pods", [])
-        return [p for p in pods if p.get("name") == _POD_NAME]
+        body = r.json()
+        pods = body if isinstance(body, list) else body.get("pods", [])
+        mine = [p for p in pods if p.get("name") == _POD_NAME]
     except Exception:
         return []
+    now = time.time()
+    live_ids = set()
+    for p in mine:
+        pid = p.get("id")
+        if pid:
+            live_ids.add(pid)
+            _pod_first_seen.setdefault(pid, now)
+    for pid in [k for k in _pod_first_seen if k not in live_ids]:
+        _pod_first_seen.pop(pid, None)
+    return mine
+
+
+def _pod_age_sec(pod: dict) -> float:
+    """Seconds since the pod was created. RunPod's createdAt when it
+    parses, else how long this process has seen the pod (which restarts
+    the clock on a backend restart — deliberately conservative: a fresh
+    grace window is better than reaping a pod that is genuinely booting)."""
+    raw = pod.get("createdAt") or pod.get("created_at")
+    if isinstance(raw, str) and raw:
+        try:
+            from datetime import datetime, timezone
+
+            stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            return max(0.0, time.time() - stamp.timestamp())
+        except ValueError:
+            pass
+    pid = pod.get("id")
+    first = _pod_first_seen.get(pid) if pid else None
+    return max(0.0, time.time() - first) if first else 0.0
 
 
 def _has_live_worker() -> bool:
@@ -246,6 +285,81 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
     except Exception:
         logger.exception("autoscale: pod create raised")
     return None
+
+
+def reap_stalled_workers(min_age_sec: float) -> int:
+    """Terminate live-looking pods older than ``min_age_sec``. Returns the
+    number terminated.
+
+    THE hole the previous self-heal left open. ``ensure_worker`` judges
+    liveness by RunPod's ``desiredStatus``, which says RUNNING for a pod
+    whose bootstrap died — bad git ref, failed pip install, image pull
+    wedged, wrong TONEFORGE_ENGINE_TOKEN so every claim 404s. The pod
+    therefore counts against the live cap forever, ``ensure_worker``
+    answers "existing" on every tick, and the queued job sits at 0%
+    until someone notices. The only honest liveness signal is a claim or
+    heartbeat actually reaching the backend, which lives in the API
+    process — so the caller supplies the verdict (it only calls this
+    after minutes of total engine silence with work queued) and this
+    function supplies the pod age, so a pod that is merely still booting
+    is never killed.
+
+    Terminating also clears the create cooldown: a reap is proof the
+    previous create produced nothing, and the pod-age gate already paces
+    this to at most one reap per grace window. The per-process create
+    backstop is untouched and still ends a true crash-loop.
+    """
+    global _last_create_ts
+    if not enabled() or requests is None:
+        return 0
+    killed = 0
+    for p in list_worker_pods():
+        if str(p.get("desiredStatus", "")).upper() not in ("RUNNING", "PENDING", "CREATED"):
+            continue
+        age = _pod_age_sec(p)
+        if age < min_age_sec:
+            continue
+        pid = p.get("id")
+        if not pid:
+            continue
+        try:
+            requests.delete(f"{_REST}/pods/{pid}", headers=_headers(), timeout=20)
+            killed += 1
+            logger.error(
+                "autoscale: reaped stalled worker %s (age %.0fs, never claimed "
+                "a job) — replacing", pid, age)
+        except Exception:
+            logger.exception("autoscale: reap of %s failed", pid)
+    if killed:
+        _last_create_ts = 0.0
+    return killed
+
+
+def diagnostics() -> dict:
+    """Everything needed to tell the stall cases apart from a single
+    admin call: a pod that never booted a worker, a create that keeps
+    failing, a cooldown or backstop holding the line, or autoscale
+    simply being off. Guessing from a screenshot cost two rounds of
+    "you said you fixed it" — this is the answer in one request."""
+    info = {
+        "enabled": enabled(),
+        "min_warm": _min_warm(),
+        "max_live_pods": _max_live_pods(),
+        "creates_this_process": _creates_this_process,
+        "create_cooldown_remaining_s": max(
+            0.0, _CREATE_COOLDOWN_SEC - (time.time() - _last_create_ts)
+        ) if _last_create_ts else 0.0,
+        "create_backstop": _MAX_CREATES_PER_PROCESS,
+        "compute": os.environ.get("RUNPOD_COMPUTE", "GPU").upper(),
+        "pods": [],
+    }
+    for p in list_worker_pods():
+        info["pods"].append({
+            "id": p.get("id"),
+            "desired_status": p.get("desiredStatus"),
+            "age_s": round(_pod_age_sec(p), 1),
+        })
+    return info
 
 
 def terminate_worker() -> None:

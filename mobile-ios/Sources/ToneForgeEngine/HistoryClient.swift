@@ -145,6 +145,13 @@ public struct HistoryClient: Sendable {
         public let error: String?
         public let filename: String?
         public let queuePosition: Int?
+        /// Seconds this job has been queued, and whether any worker is
+        /// currently checking in. Present only on queued engine jobs —
+        /// the pair is what lets the UI distinguish a cold start from a
+        /// worker that is never coming.
+        public let queuedForS: Double?
+        public let workerOnline: Bool?
+        public let updatedAt: Double?
 
         public var id: String { jobId }
         /// Backend vocabulary (analysis_jobs._TERMINAL): "done" |
@@ -158,6 +165,9 @@ public struct HistoryClient: Sendable {
             case jobId = "job_id", status, percent, message
             case historyId = "history_id", error, filename
             case queuePosition = "queue_position"
+            case queuedForS = "queued_for_s"
+            case workerOnline = "worker_online"
+            case updatedAt = "updated_at"
         }
     }
 
