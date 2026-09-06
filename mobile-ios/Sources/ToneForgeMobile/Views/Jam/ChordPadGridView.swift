@@ -174,7 +174,7 @@ private struct ChordPadTile: View {
             // the loaded song's actual progression, not just the key.
             if inSong {
                 Circle()
-                    .fill(TFTheme.brandGreenLight)
+                    .fill(TFTheme.brandLight)
                     .frame(width: 7, height: 7)
                     .padding(6)
             }

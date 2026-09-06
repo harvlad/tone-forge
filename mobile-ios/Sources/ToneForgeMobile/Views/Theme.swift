@@ -54,11 +54,13 @@ enum TFTheme {
     /// Active segmented-control fill.
     static let segmentActiveFill = accent.opacity(0.30)
 
-    /// Jam brand green (waveform logo, Open Library CTA).
-    static let brandGreenLight = color(hex: 0xC6F24E)
-    static let brandGreenDark = color(hex: 0x36C81A)
+    /// Jamn brand mark (waveform logo, Open Library CTA). Purple —
+    /// matches the sign-in gate, the app icon, and the jamn Kit
+    /// plugin header (the green era predated the platform identity).
+    static let brandLight = color(hex: 0x8C59F2)
+    static let brandDark = color(hex: 0x4073F2)
     static let brandGradient = LinearGradient(
-        colors: [brandGreenLight, brandGreenDark],
+        colors: [brandLight, brandDark],
         startPoint: .top,
         endPoint: .bottom
     )

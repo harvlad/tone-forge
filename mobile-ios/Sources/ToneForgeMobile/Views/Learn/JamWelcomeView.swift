@@ -77,10 +77,10 @@ struct JamWelcomeView: View {
         HStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.body)
-                .foregroundStyle(TFTheme.brandGreenDark)
+                .foregroundStyle(TFTheme.brandDark)
                 .frame(width: 24, alignment: .center)
             (Text(accent)
-                .foregroundStyle(TFTheme.brandGreenLight)
+                .foregroundStyle(TFTheme.brandLight)
                 .fontWeight(.semibold)
                 + Text(rest)
                 .foregroundStyle(.white))
