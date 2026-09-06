@@ -18,6 +18,11 @@ struct SettingsView: View {
 
     @State private var backendText: String = ""
 
+    /// Gates the pad play/skip usage reports (handlePadFeedback in
+    /// ToneForgeApp). Same key + default-true as the read site, so
+    /// this toggle stays in sync without a migration.
+    @AppStorage("learnFromPlaying") private var learnFromPlaying = true
+
     // Legal & compliance + Data sections.
     @StateObject private var attestation = AttestationStore()
     // Storage browsers (P7). Sample + session stores live on
@@ -144,6 +149,8 @@ struct SettingsView: View {
                 // the user has logged at least one correction.
                 BeatTrainingSection(store: appState.beatTrainingStore)
 
+                learningSection
+
                 // Storage browsers (P7): samples / sessions /
                 // bounces, each with per-row delete + delete-all.
                 StorageSection(
@@ -193,6 +200,19 @@ struct SettingsView: View {
             } message: {
                 Text("Removes every analysed song, its stems and layers from the server and this device. This can't be undone.")
             }
+        }
+    }
+
+    // MARK: - Kit learning
+
+    private var learningSection: some View {
+        Section {
+            Toggle("Learn from playing", isOn: $learnFromPlaying)
+                .accessibilityIdentifier("settings-learn-from-playing")
+        } header: {
+            Text("Kit learning")
+        } footer: {
+            Text("Pads you play or skip tune future kits. When off, nothing leaves the device.")
         }
     }
 

@@ -506,8 +506,16 @@ public final class ModeCoordinator: ObservableObject {
                 }
                 return
             case .padUp(let row, let col):
+                // Tap mode: one-shots PLAY THROUGH (drum-machine feel;
+                // releasing on finger-lift cut a quick tap to ~50 ms of
+                // audio — "taps don't tap", worst right after switching
+                // from Latch while loops still ring). Release only a
+                // voice that is actually LOOPING on this pad — i.e. a
+                // leftover latched loop, which finger-lift may stop.
                 if !app.jamSettings.sampleLatch,
-                   let t = target(row: row, col: col) {
+                   let t = target(row: row, col: col),
+                   app.sampleVoicePool.ringingPadKeys.contains(
+                       SamplePadKey(packId: t.packId, padIdx: t.padIdx)) {
                     releaseJamSample(padIdx: t.padIdx, packId: t.packId)
                 }
                 return
