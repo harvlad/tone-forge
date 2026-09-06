@@ -237,11 +237,23 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
         "env": _worker_env(),
         "dockerStartCmd": _start_argv(),
     }
-    # CPU vs GPU worker. The analysis pipeline is ~90% CPU-bound (only Demucs
-    # separation uses the GPU, ~11s of a ~4min run), so a CPU pod is far
-    # cheaper (~$0.05-0.10/hr vs $0.44) AND sidesteps every GPU failure mode
-    # (CUDA-fork crash, driver mismatch, torchcrepe-on-GPU). Separation just
-    # runs slower on CPU. Set RUNPOD_COMPUTE=CPU for the mobile backend.
+    # CPU vs GPU worker. On a RunPod (Linux/CUDA) host, separation is the only
+    # stage a GPU actually accelerates — but NOT because it is the only
+    # GPU-capable one. torchcrepe MIDI extraction is ~62% of a run and is the
+    # heaviest stage by far, and `midi/gpu_extractor.py` never asks for CUDA:
+    # its device is `"mps" if MPS_AVAILABLE else "cpu"` and no call site
+    # overrides it, so on a CUDA host that stage runs on CPU whatever pod you
+    # rent. Only `stem_separator.py` does CUDA > MPS > CPU.
+    #
+    # So the "~90% CPU-bound" that once justified this flag is a property of
+    # that gap, not of the pipeline: renting a GPU here currently buys the
+    # separation stage and nothing else, which makes a CPU pod the better
+    # trade at ~$0.05-0.10/hr vs $0.44 — and it sidesteps the GPU failure
+    # modes (CUDA-fork crash, driver/runtime mismatch silently dropping the
+    # device). Wiring CUDA into gpu_extractor would invert this: the 62%
+    # stage would move onto the GPU and a GPU pod would start earning its
+    # price. Re-measure before flipping back on that basis alone.
+    # Set RUNPOD_COMPUTE=CPU for the mobile backend.
     if os.environ.get("RUNPOD_COMPUTE", "GPU").upper() == "CPU":
         body["computeType"] = "CPU"
         body["cpuFlavorIds"] = [
