@@ -55,6 +55,15 @@ _CATEGORY_HEX = {
     "VOCAL": "#EC4899", "RHYTHM": "#3B82F6", "TEXTURE": "#06B6D4", "FX": "#A855F7",
     "STAB": "#8B5CF6", "SAMPLE": "#64748B",
 }
+# Grid layout row order: pads are GROUPED by category in the final padIdx
+# assignment (drums together, then bass, then harmonic material, then
+# lead/vocal, then texture/FX) instead of landing in raw ranking order and
+# scattering categories across the grid. Backend-side so every surface —
+# mobile 4x4, desktop 8x8, plugin — inherits the same grouped rack.
+_CATEGORY_GROUP_ORDER = {
+    "DRUMS": 0, "BASS": 1, "CHORDS": 2, "RHYTHM": 3, "LEAD": 4, "VOCAL": 5,
+    "TEXTURE": 6, "STAB": 7, "FX": 8, "SAMPLE": 9,
+}
 _INSTRUMENT = {
     "drums": "Drums", "bass": "Bass", "vocals": "Vocal",
     "other": "Guitar", "guitar": "Guitar", "guitar_center": "Guitar",
@@ -195,6 +204,14 @@ class AutoKitBuilder:
                 continue
             chosen.append(a); self._mark(a, used_ids, used_patterns, stem_counts)
 
+        # Layout pass, AFTER selection: group pads by category in a stable,
+        # musical row order (drums → bass → chords → riffs → lead/vocal →
+        # texture/FX). The sort is stable, so relative rank within a category
+        # is preserved, and the drum-groove anchor keeps pad 0 — it was chosen
+        # first and DRUMS is row 0. Selection/ranking above is untouched.
+        chosen.sort(key=lambda a: _CATEGORY_GROUP_ORDER.get(
+            _category_for(a), len(_CATEGORY_GROUP_ORDER)))
+
         from tone_forge import pad_usage as _pu
         return self._to_sample_pack(
             # Human name — song_id is an analysis hash, never show it in UI.
@@ -310,9 +327,10 @@ class AutoKitBuilder:
             # kit=… versions the BUILDER logic (drum-groove anchor etc.)
             # separately from the graph — it feeds the export zip-cache
             # key, so bumping it invalidates stale cached kits.
+            # kit=5: category-grouped pad layout (padIdx rows by category).
             "provenance": (
                 f"performance_intelligence graph={graph.graph_hash} "
-                f"module={graph.module_version} kit=4 use={use_digest} "
+                f"module={graph.module_version} kit=5 use={use_digest} "
                 f"skill={skill}"
             ),
         }

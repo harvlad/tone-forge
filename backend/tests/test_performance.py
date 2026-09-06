@@ -175,6 +175,51 @@ def test_drum_anchor_survives_the_usable_gate():
     assert "DRUMS" in cats, f"kit lost the only drums asset: {cats}"
 
 
+def test_kit_pads_are_grouped_by_category():
+    """Final padIdx assignment lands in category rows, not ranking order.
+
+    Ranking order scattered categories across the grid (the top-scoring chord
+    loop grabbed pad 0, the second bass groove landed wherever the top-up left
+    it). The layout pass groups pads per category — drums, bass, chords,
+    lead, texture — while the drum anchor keeps pad 0 and relative rank
+    within each category is preserved.
+    """
+    from tone_forge.performance.kit_builder import _CATEGORY_GROUP_ORDER
+
+    drums_a = _asset("drums", ContentType.RHYTHM_LOOP, start=8.0, loop_conf=0.6, score=0.5)
+    drums_b = _asset("drums", ContentType.RHYTHM_LOOP, start=12.0, loop_conf=0.5, score=0.45)
+    bass_a = _asset("bass", ContentType.BASS_GROOVE, start=4.0, loop_conf=0.7, score=0.9)
+    bass_b = _asset("bass", ContentType.BASS_GROOVE, start=20.0, loop_conf=0.65, score=0.6)
+    # Top-scoring asset overall — under ranking-order layout it took pad 0.
+    chords = _asset("other", ContentType.CHORD_LOOP, start=16.0, loop_conf=0.8, score=0.95)
+    lead = _asset("other", ContentType.LEAD_LOOP, start=0.0, loop_conf=0.75, score=0.85)
+    texture = _asset("other", ContentType.TEXTURE, start=24.0, loop_conf=0.6, score=0.4)
+    g = MusicalGraph(
+        song_id="s", content_hash="h", module_version="test",
+        config_hash="cfg", grid_tempo_bpm=BPM, time_signature=(4, 4),
+        assets=(chords, bass_a, lead, bass_b, drums_a, drums_b, texture),
+    )
+
+    kit = AutoKitBuilder().build(g, skill="intermediate", pads=8)
+    pads = kit["pads"]
+    cats = [p["category"] for p in pads]
+
+    # Drum-groove anchor invariant: pad 0 is still the steadiest drum groove.
+    assert pads[0]["assetId"] == drums_a.id
+    # Categories form contiguous blocks — no category split across the grid.
+    blocks = [c for i, c in enumerate(cats) if i == 0 or cats[i - 1] != c]
+    assert len(blocks) == len(set(blocks)), f"category split across grid: {cats}"
+    # Blocks follow the musical row order (drums → bass → chords → lead → …).
+    rows = [_CATEGORY_GROUP_ORDER[c] for c in blocks]
+    assert rows == sorted(rows), f"rows out of order: {cats}"
+    # Relative rank within a category is preserved (bass 0.9 before bass 0.6).
+    bass_ids = [p["assetId"] for p in pads if p["category"] == "BASS"]
+    assert bass_ids == [bass_a.id, bass_b.id]
+    # padIdx matches the grouped order and the layout bump busts kit caches.
+    assert [p["padIdx"] for p in pads] == list(range(len(pads)))
+    assert "kit=5" in kit["provenance"]
+
+
 def test_percussion_loop_confidence_ignores_harmonic_carryover():
     """Percussion is scored on grid + level, not on head/tail tone match.
 

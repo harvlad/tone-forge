@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lab.factory.asset import Asset, Kind, Role
+from lab.factory.asset import Asset, Kind, Role, Status
 from lab.factory.coverage import DIMENSIONS, coverage_report
 from lab.factory.sources import SlakhSource
 
@@ -184,3 +184,87 @@ def test_studio_emitted_names_track_the_role(tmp_path):
     assert f"{_studio(tmp_path).target_role}_in_mix" == "guitar_in_mix"
     synth = _studio(tmp_path, target_role=Role.SYNTH)
     assert f"{synth.target_role}_target.wav" == "synth_target.wav"
+
+
+# --------------------------------------------------------------------------
+# Manifest target_stem derives from the asset role
+# --------------------------------------------------------------------------
+
+def _pair(role):
+    """A (mixture, target) catalog pair as the studio would emit it: the
+    studio stamps target_role onto the target asset's role at derive() time,
+    so the manifest builders only see the asset."""
+    pid = "deadbeef:asset1"
+    target = Asset(
+        asset_id="t1", content_hash="ht", path="/t/target.wav",
+        kind=Kind.STEM, role=role, source_id="slakh2100",
+        dataset_key="slakh2100", provenance={}, lineage=(),
+        metadata={"pair_id": pid},
+    )
+    mixture = Asset(
+        asset_id="m1", content_hash="hm", path="/t/mixture.wav",
+        kind=Kind.MIXTURE, role=Role.MIX, source_id="slakh2100",
+        dataset_key="slakh2100", provenance={}, lineage=(),
+        metadata={"pair_id": pid},
+    )
+    return [mixture, target]
+
+
+def _supervised_tracks(role, tmp_path):
+    import json
+    from lab.factory.studio import build_supervised_manifest
+    path = build_supervised_manifest(_Catalog(_pair(role)), f"m_{role}",
+                                     tmp_path, intended_use="research_only")
+    return json.loads(path.read_text())["tracks"]
+
+
+def test_supervised_manifest_target_stem_tracks_the_role(tmp_path):
+    """build_supervised_manifest stamped every track "guitar" regardless of
+    the studio's target_role, so a synth corpus would have trained as
+    mislabelled guitar data."""
+    tracks = _supervised_tracks(Role.SYNTH, tmp_path)
+    assert len(tracks) == 1
+    assert tracks[0]["target_stem"] == "synth"
+
+
+def test_supervised_manifest_guitar_serialization_is_unchanged(tmp_path):
+    """The derived value must be indistinguishable from the old "guitar"
+    literal — frozen corpus hashes (riley_corpus_v1.0) serialize against it.
+    Role members are plain str, so JSON output is byte-identical."""
+    tracks = _supervised_tracks(Role.GUITAR, tmp_path)
+    assert len(tracks) == 1
+    stem = tracks[0]["target_stem"]
+    assert stem == "guitar" and type(stem) is str
+
+
+def _manufactured(role) -> Asset:
+    """A recipe-tagged, audit-passed asset as manufacture() would catalog it.
+    Role is stamped at ingest and inherited through derive()."""
+    return Asset(
+        asset_id="a1", content_hash="h1", path="/t/di.wav",
+        kind=Kind.STEM, role=role, source_id="slakh2100",
+        dataset_key="slakh2100", provenance={}, lineage=(),
+        metadata={"recipe": "r1"}, audit_status=Status.PASS,
+    )
+
+
+def _manufactured_tracks(role, tmp_path):
+    import json
+    from lab.factory.manufacture import build_manufactured_manifest
+    path = build_manufactured_manifest(_Catalog([_manufactured(role)]),
+                                       f"mm_{role}", tmp_path,
+                                       intended_use="research_only")
+    return json.loads(path.read_text())["tracks"]
+
+
+def test_manufactured_manifest_target_stem_tracks_the_role(tmp_path):
+    tracks = _manufactured_tracks(Role.SYNTH, tmp_path)
+    assert len(tracks) == 1
+    assert tracks[0]["target_stem"] == "synth"
+
+
+def test_manufactured_manifest_guitar_serialization_is_unchanged(tmp_path):
+    tracks = _manufactured_tracks(Role.GUITAR, tmp_path)
+    assert len(tracks) == 1
+    stem = tracks[0]["target_stem"]
+    assert stem == "guitar" and type(stem) is str

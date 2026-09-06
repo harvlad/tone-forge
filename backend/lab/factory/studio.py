@@ -256,10 +256,14 @@ def build_supervised_manifest(catalog: AssetCatalog, name: str, out_dir: Path, *
         if tgt is None or tgt.audit_status == Status.REJECT:
             continue
         tracks.append({
-            "dataset": a.dataset_key,                 # guitar source (licensable); backing gated separately
+            "dataset": a.dataset_key,                 # target source (licensable); backing gated separately
             "backing_dataset": _backing_ds(a),
             "track_id": pid,
-            "target_stem": "guitar",
+            # The studio stamps its target_role onto the target asset's role at
+            # derive() time, so the asset — not a literal — is authoritative.
+            # Guitar targets carry Role.GUITAR == "guitar": byte-identical to
+            # the old hardcode, which frozen corpus hashes depend on.
+            "target_stem": tgt.role,
             "mixture_path": a.path,
             "target_path": tgt.path,
             "scenario": a.metadata.get("scenario"),

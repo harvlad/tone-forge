@@ -92,7 +92,12 @@ def build_manufactured_manifest(catalog: AssetCatalog, name: str, out_dir: Path,
             tracks.append({
                 "dataset": a.dataset_key,
                 "track_id": a.asset_id,
-                "target_stem": "guitar",
+                # Role is stamped at ingest and inherited through derive(), so
+                # the manufactured asset already knows what instrument it is; a
+                # "guitar" literal here mislabelled every non-guitar campaign.
+                # Guitar assets carry Role.GUITAR == "guitar" — byte-identical
+                # to the old hardcode, which frozen corpus hashes depend on.
+                "target_stem": a.role,
                 "target_path": a.path,
                 "mixture_path": None,           # <- requires Mix Generator (later milestone)
                 "recipe": a.metadata["recipe"],
