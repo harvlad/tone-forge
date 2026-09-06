@@ -42,6 +42,10 @@ _CONFIG_PATH = Path.home() / ".toneforge" / "engine.json"
 _CLAIM_WAIT_SEC = 20.0
 _CLAIM_TIMEOUT_SEC = 35.0
 _RETRY_SLEEP_SEC = 5.0
+# Minimum gap between progress posts. Each post costs a job version bump
+# and an SSE fan-out, so the rate stays capped — but events inside the
+# window are now coalesced rather than discarded (see _flush_progress).
+_PROGRESS_MIN_INTERVAL_SEC = 2.0
 # Stem files are large float32 wavs (~80 MB for a 4-minute song); on a
 # contended uplink a single socket write can stall for minutes. Give
 # uploads a long timeout and retry transient network failures instead
@@ -393,12 +397,46 @@ class RemoteWorker:
 
             result_data: Optional[dict] = None
             last_sent = 0.0
+            # Newest progress not yet posted, and the highest percent ever
+            # posted for this job. See _flush_progress.
+            pending: Optional[tuple] = None
+            high_water = 2.0  # the claim already posted 2%
             started = time.time()
             last_event = started
+
+            def _flush_progress() -> None:
+                """Post the newest pending progress once the rate window
+                opens — COALESCING, not dropping.
+
+                The old throttle discarded any event arriving inside the
+                2s window, and the pipeline emits its stage markers in
+                bursts: 0.05/0.07/0.10 fire back-to-back at startup and
+                the parallel MIDI stems all announce themselves within
+                milliseconds of "Stems separated". Every one of those was
+                dropped, so the bar posted 9% and then sat there for the
+                whole separation stage, then posted 50% and sat there for
+                the whole MIDI stage — minutes of a frozen number on a
+                CPU pod, which read as a hang. Keeping the newest event
+                instead costs the same one post per 2s and lands on the
+                right value.
+                """
+                nonlocal pending, last_sent
+                if pending is None or time.time() - last_sent < _PROGRESS_MIN_INTERVAL_SEC:
+                    return
+                last_sent = time.time()
+                pct, message = pending
+                pending = None
+                self.post_progress(job_id, pct, message)
+
             while True:
                 try:
                     event = queue.get(timeout=1.0)
                 except Exception:  # noqa: BLE001  (queue.Empty)
+                    # The 1s poll doubles as the flush tick: a burst that
+                    # arrives mid-window still reaches the client a second
+                    # later instead of waiting for the next event, which
+                    # during MIDI extraction can be minutes away.
+                    _flush_progress()
                     if not process.is_alive():
                         break
                     now = time.time()
@@ -424,16 +462,19 @@ class RemoteWorker:
                 etype = event.get("type")
                 if etype == "progress":
                     # Pipeline occupies 5–95 of the job bar (claim=2,
-                    # stem upload=95–99, complete=100). Throttle to
-                    # ~1 post/2 s — the SSE fan-out costs a version
-                    # bump per update.
-                    now = time.time()
-                    if now - last_sent >= 2.0:
-                        last_sent = now
-                        pct = 5 + 90 * float(event.get("progress") or 0)
-                        self.post_progress(
-                            job_id, pct, event.get("message") or "Processing…"
-                        )
+                    # stem upload=95–99, complete=100). Rate-limited to
+                    # ~1 post/2 s — the SSE fan-out costs a version bump
+                    # per update.
+                    pct = 5 + 90 * float(event.get("progress") or 0)
+                    # Never let the bar run backwards. MIDI stems extract
+                    # in parallel and report per-stem bands on completion,
+                    # so a fast stem finishing (drums, 0.58) lands after a
+                    # slow one has already announced its band (other,
+                    # 0.66) — a visible backwards jump on every run.
+                    pct = max(pct, high_water)
+                    high_water = pct
+                    pending = (pct, event.get("message") or "Processing…")
+                    _flush_progress()
                 elif etype == "result":
                     result_data = event.get("data") or {}
                 elif etype == "error":

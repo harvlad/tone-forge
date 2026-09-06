@@ -548,16 +548,17 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             "vocals": "vocals",
         }
 
-        # Progress ranges for each stem (50% to 80%)
-        stem_progress = {
-            "drums": (0.52, 0.58),
-            "bass": (0.58, 0.66),
-            "other": (0.66, 0.76),
-            "guitar": (0.66, 0.76),
-            # Runs concurrently with other/guitar; the wall time is
-            # bounded by the slowest of the parallel workers.
-            "vocals": (0.66, 0.76),
-        }
+        # Progress band for the whole MIDI stage. Previously each stem
+        # owned a sub-band (drums 0.52-0.58, bass 0.58-0.66, other
+        # 0.66-0.76) and announced its own start and end. Because the
+        # stems extract in PARALLEL, every start fired at once — the bar
+        # jumped straight to the highest band and then sat there — and
+        # the ends arrived in completion order, so a fast stem finishing
+        # after a slow one had started reported a LOWER percent and the
+        # bar ran backwards. Progress is now driven by how many stems
+        # have actually finished, which is monotonic by construction and
+        # is the only honest signal available while they run concurrently.
+        _MIDI_FLOOR, _MIDI_CEIL = 0.52, 0.76
 
         # MIDI extraction — parallelized across stems.
         #
@@ -642,10 +643,9 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                         preset_name=stem_name)
                     _specialist_provenance.update({
                         "routed": True, "target_family": _family, **prov})
-                    send_progress(
-                        queue, "midi",
-                        stem_progress.get(stem_name, (0.66, 0.76))[1],
-                        f"{stem_name.capitalize()} MIDI done ({midi_result['method']})")
+                    # Completion percent is emitted by the as_completed
+                    # loop, which is the only place that knows how many
+                    # of the parallel stems have landed.
                     return (stem_name, midi_result, time.time() - wall_start,
                             _st, time.perf_counter())
                 except Exception as e:
@@ -659,12 +659,13 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                     })
                     # fall through to the current path below
             stem_type = stem_types.get(stem_name, "other")
-            start_pct, end_pct = stem_progress.get(stem_name, (0.6, 0.7))
             if stem_type in ("bass", "lead", "vocals"):
                 method_hint = "GPU" if torch.backends.mps.is_available() else "CPU"
             else:
                 method_hint = "polyphonic"
-            send_progress(queue, "midi", start_pct,
+            # Floor, not a per-stem band: these all fire at once, so the
+            # message is the useful part and the percent must not move.
+            send_progress(queue, "midi", _MIDI_FLOOR,
                           f"Extracting {stem_name} MIDI ({method_hint})...")
             _st = time.perf_counter()
             wall_start = time.time()
@@ -691,9 +692,6 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 logger.warning(f"MIDI extraction failed for {stem_name}: {e}")
                 return stem_name, None, time.time() - wall_start, _st, time.perf_counter()
             elapsed = time.time() - wall_start
-            method_used = midi_result.get("method", "unknown")
-            send_progress(queue, "midi", end_pct,
-                          f"{stem_name.capitalize()} MIDI done ({method_used})")
             return stem_name, midi_result, elapsed, _st, time.perf_counter()
 
         midi_tasks = [
@@ -715,6 +713,7 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 executor.submit(_extract_one_stem, name, path)
                 for name, path in midi_tasks
             ]
+            _midi_done = 0
             for fut in concurrent.futures.as_completed(futures):
                 stem_name, midi_result, elapsed, t0, t1 = fut.result()
                 with _midi_lock:
@@ -722,6 +721,15 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                     if midi_result is not None:
                         midi_stems[stem_name] = midi_result
                     _record_stage(f"midi_extraction.{stem_name}", t0, t1)
+                _midi_done += 1
+                _method = (midi_result or {}).get("method", "no notes")
+                send_progress(
+                    queue, "midi",
+                    _MIDI_FLOOR + (_MIDI_CEIL - _MIDI_FLOOR) * (
+                        _midi_done / max(1, len(futures))),
+                    f"{stem_name.capitalize()} MIDI done ({_method}) — "
+                    f"{_midi_done}/{len(futures)} stems",
+                )
         _record_stage("midi_extraction_wallclock",
                       _st_midi_wall, time.perf_counter())
 
