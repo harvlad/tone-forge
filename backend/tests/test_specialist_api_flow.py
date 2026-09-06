@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fastapi.testclient import TestClient
 
 import tone_forge_api
+from tone_forge.analysis_jobs import JobRegistry
 from tone_forge.specialist import feedback as fb
 
 client = TestClient(tone_forge_api.app)
@@ -33,12 +34,24 @@ client = TestClient(tone_forge_api.app)
 
 @pytest.fixture(autouse=True)
 def _isolated_storage(tmp_path, monkeypatch):
-    """Never touch the real shared history.json (R2-synced) or uploads
-    dir from tests — same isolation pattern as test_history_*.py."""
+    """Never touch the real shared history.json (R2-synced), uploads dir
+    or job registry from tests — same isolation pattern as
+    test_history_*.py.
+
+    The registry matters as much as the rest: these tests assert that a
+    claim returns THEIR job, which only holds if nothing else is queued.
+    Against the global registry they wrote job files into the real
+    ``data/jobs/`` and, since ``recover()`` requeues persisted engine
+    jobs on lifespan startup, a second local run of the suite inherited
+    the first run's queue and the claims came back with a stranger's
+    job id. CI never saw it — ``data/jobs/`` is gitignored, so it starts
+    empty — but a developer running the suite twice did.
+    """
     monkeypatch.setattr(tone_forge_api, "_HISTORY_FILE", tmp_path / "history.json")
     up = tmp_path / "uploads"
     up.mkdir()
     monkeypatch.setattr(tone_forge_api, "_UPLOADS_DIR", up)
+    monkeypatch.setattr(tone_forge_api, "_JOBS", JobRegistry(tmp_path / "jobs"))
 
 
 def _tiny_wav() -> bytes:
