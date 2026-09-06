@@ -123,17 +123,30 @@ public final class ChopPlayer {
     /// is safe). Replaces any previous session's files.
     public func load(stemURLs: [String: URL]) async {
         stopAll()
-        let opened = await Task.detached {
-            var out: [String: AVAudioFile] = [:]
+        // One task PER stem, not one detached task for all: each open
+        // pays CoreAudio's whole-file frame-table scan on compressed
+        // stems, and six of those back to back were the bulk of the
+        // post-download "Preparing audio…" stall. Each reader is
+        // created and finished inside its own child task, so nothing
+        // is shared until the merge here (DesktopStemPlayer's
+        // openStemFiles uses the same pattern).
+        let opened = await withTaskGroup(
+            of: (String, AVAudioFile)?.self
+        ) { group -> [String: AVAudioFile] in
             for (role, url) in stemURLs {
-                do {
-                    out[role] = try AVAudioFile(forReading: url)
-                } catch {
-                    print("[ChopPlayer] failed to open \(role) at \(url.path): \(error)")
+                group.addTask {
+                    do {
+                        return (role, try AVAudioFile(forReading: url))
+                    } catch {
+                        print("[ChopPlayer] failed to open \(role) at \(url.path): \(error)")
+                        return nil
+                    }
                 }
             }
+            var out: [String: AVAudioFile] = [:]
+            for await r in group { if let r { out[r.0] = r.1 } }
             return out
-        }.value
+        }
         files = opened
         regionCache.removeAll()
     }
