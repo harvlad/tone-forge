@@ -118,6 +118,7 @@ public struct RootView: View {
 /// Recordings lists saved layers + sketches (ex-ProfileView).
 struct LibraryView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var segment: LibrarySegment = .songs
     @State private var query: String = ""
@@ -128,7 +129,6 @@ struct LibraryView: View {
     @State private var activeJobs: [HistoryClient.ActiveJob] = []
     /// Failed-job rows the user has dismissed this session.
     @State private var dismissedJobIds: Set<String> = []
-    @State private var jobsTicker: Timer? = nil
     /// Locally cached bundles. Populated eagerly at the top of
     /// reload() so downloaded songs are tappable even while the
     /// history fetch is still in flight; after a successful fetch the
@@ -187,7 +187,40 @@ struct LibraryView: View {
             #endif
             .sheet(isPresented: $showSettings) { SettingsView() }
             .task {
-                if entries.isEmpty { await reload() }
+                if entries.isEmpty {
+                    await reload()
+                } else {
+                    // Tab revisit: entries are stale-but-present; a jobs
+                    // poll is cheap and picks up anything analyzing.
+                    await refreshJobs()
+                }
+                // Persistent poll loop, scoped to this view's lifetime
+                // (SwiftUI cancels the task on disappear). Replaces the
+                // old self-extinguishing one-shot Timer: that ticker died
+                // whenever a poll found no running jobs and NOTHING
+                // restarted it on upload — the "Analyzing…" row never
+                // appeared until pull-to-refresh (library-staleness RCA,
+                // 2026-09-07). 5 s while jobs run, 20 s idle.
+                while !Task.isCancelled {
+                    let hasRunning = activeJobs.contains { !$0.isTerminal }
+                    try? await Task.sleep(
+                        nanoseconds: (hasRunning ? 5 : 20) * 1_000_000_000)
+                    if Task.isCancelled { break }
+                    await refreshJobs()
+                }
+            }
+            // Foreground pickup: songs analyzed on another device (or
+            // finished while backgrounded) appear without pull-to-refresh.
+            // Also the mobile pre-warm the backend expects: reload() hits
+            // /api/history, which triggers the engine pre-warm server-side.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await reload() } }
+            }
+            // Upload submitted (or import sheet state changed): poll jobs
+            // immediately so the Analyzing… row shows the moment the job
+            // exists, even if the user dismisses the import sheet.
+            .onReceive(importer.$phase) { _ in
+                Task { await refreshJobs() }
             }
             // Cross-device pickup: signing in (or out) changes what
             // the backend returns for this bearer, so refresh.
@@ -744,8 +777,10 @@ struct LibraryView: View {
         .padding(.vertical, 4)
     }
 
-    /// Poll jobs every 5s while any are running so the percent moves
-    /// and completion swaps the row for the real entry.
+    /// One jobs poll. The persistent .task loop on songsList owns the
+    /// cadence (5 s while running, 20 s idle) — this used to reschedule
+    /// itself via a one-shot Timer that silently died the first time no
+    /// jobs were running.
     private func refreshJobs() async {
         let jobs = (try? await client.fetchJobs(
             baseURL: appState.backendBaseURL)) ?? []
@@ -755,14 +790,6 @@ struct LibraryView: View {
             && running.count < activeJobs.filter { !$0.isTerminal }.count
         activeJobs = jobs
         if finished { await reload() }
-        jobsTicker?.invalidate()
-        if !running.isEmpty {
-            jobsTicker = Timer.scheduledTimer(
-                withTimeInterval: 5, repeats: false
-            ) { _ in
-                Task { @MainActor in await refreshJobs() }
-            }
-        }
     }
 
     private func reload() async {

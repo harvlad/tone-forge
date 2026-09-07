@@ -504,6 +504,11 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                 "type": "stems_partial",
                 "stem_records": _build_stem_records(stems, "unknown", {}, {}),
                 "stems": _build_stems_dict(stems, "unknown", {}),
+                # Local paths so the remote worker can START UPLOADING the
+                # base stems now, overlapping the whole MIDI/sections phase
+                # instead of serializing compress+upload after everything
+                # ("Saving stems 1/6…" tail).
+                "stems_paths": {k: str(v) for k, v in stems.items()},
             })
         except Exception as e:
             logger.warning(f"stems_partial emit failed: {e}")
@@ -676,15 +681,15 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             # there. The "guitar" branch is the post-rename alias
             # used when detected_type=="guitar" — same underlying
             # extractor, same kwarg.
+            # harm_ratio prewarm REMOVED from this path (2026-09-07): the
+            # kwarg was forwarded for other/guitar, but those route as
+            # stem_type="other" -> the polyphonic extractor, which never
+            # reads harm_ratio (only the lead/vocals ensemble does). Net
+            # effect of the old gate: the two HEAVIEST stems blocked up to
+            # 60 s on _harm_future.result() to compute a value that was
+            # then discarded. The prewarm future still exists for any
+            # caller that genuinely consumes it.
             extra_kwargs = {}
-            if stem_name in ("other", "guitar") and _harm_future is not None:
-                try:
-                    extra_kwargs["harm_ratio"] = _harm_future.result(timeout=60)
-                except Exception as e:
-                    logger.warning(
-                        f"harm_ratio future failed for {stem_name}: {e}; "
-                        f"falling back to inline HPSS"
-                    )
             try:
                 midi_result = extract_midi_hybrid(
                     str(stem_path), stem_type=stem_type, preset_name=stem_name,

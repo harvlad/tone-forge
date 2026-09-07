@@ -22,6 +22,7 @@ Run:  python -m local_engine.remote_worker --backend https://jamn.app \
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import logging
 import multiprocessing
@@ -278,6 +279,38 @@ class RemoteWorker:
             self._upload_stem_with_retry(
                 job_id, role, self._compress_lossless(local))
 
+    def start_early_stem_upload(
+        self, job_id: str, stems_paths: dict
+    ) -> dict:
+        """Kick compress+upload of the base stems on background threads.
+
+        Stems are final the moment Demucs writes them; waiting for the
+        full analysis before uploading serialized minutes of FLAC+POST
+        behind the MIDI wall. Three workers: enough to hide the tail
+        entirely, few enough not to starve the analysis subprocess of
+        CPU during compression. Returns {role: Future[bool]}.
+        """
+        ex = concurrent.futures.ThreadPoolExecutor(
+            max_workers=3, thread_name_prefix="early-stem")
+        futures = {
+            role: ex.submit(self._upload_one_stem_own_session,
+                            job_id, role, raw)
+            for role, raw in stems_paths.items()
+        }
+        ex.shutdown(wait=False)
+        return futures
+
+    def _upload_one_stem_own_session(
+        self, job_id: str, role: str, raw_path
+    ) -> bool:
+        local = _local_stem_path(raw_path)
+        if local is None or not local.is_file():
+            return False
+        with requests.Session() as sess:
+            self._upload_stem_with_retry(
+                job_id, role, self._compress_lossless(local), session=sess)
+        return True
+
     @staticmethod
     def _compress_lossless(local: Path) -> Path:
         """LOSSLESS-compress a WAV stem to FLAC before upload — ~55% of
@@ -307,7 +340,12 @@ class RemoteWorker:
                            local.name, e)
         return local
 
-    def _upload_stem_with_retry(self, job_id: str, role: str, local: Path) -> None:
+    def _upload_stem_with_retry(self, job_id: str, role: str, local: Path,
+                                session: Optional[requests.Session] = None) -> None:
+        # ``session``: the early-upload threads pass their own Session —
+        # requests.Session is not thread-safe, and these run concurrently
+        # with the main loop's progress posts.
+        sess = session or self.session
         last_exc: Optional[Exception] = None
         for attempt in range(1, _UPLOAD_ATTEMPTS + 1):
             try:
@@ -316,7 +354,7 @@ class RemoteWorker:
                     ".m4a": "audio/mp4",
                 }.get(local.suffix.lower(), "audio/wav")
                 with local.open("rb") as f:
-                    resp = self.session.post(
+                    resp = sess.post(
                         self._url(f"/api/engine/job/{job_id}/stem"),
                         data={"role": role},
                         files={"file": (local.name, f, mime)},
@@ -401,6 +439,7 @@ class RemoteWorker:
             # posted for this job. See _flush_progress.
             pending: Optional[tuple] = None
             high_water = 2.0  # the claim already posted 2%
+            early_uploads: Optional[dict] = None
             started = time.time()
             last_event = started
 
@@ -475,6 +514,16 @@ class RemoteWorker:
                     high_water = pct
                     pending = (pct, event.get("message") or "Processing…")
                     _flush_progress()
+                elif etype == "stems_partial":
+                    # Base stems exist on disk — upload them NOW in the
+                    # background so the post-analysis "Saving stems" tail
+                    # is already done when the result lands.
+                    paths = event.get("stems_paths") or {}
+                    if paths and early_uploads is None:
+                        early_uploads = self.start_early_stem_upload(
+                            job_id, paths)
+                        logger.info("job %s: early upload of %d stems started",
+                                    job_id, len(paths))
                 elif etype == "result":
                     result_data = event.get("data") or {}
                 elif etype == "error":
@@ -487,7 +536,23 @@ class RemoteWorker:
                 raise RuntimeError("engine subprocess exited without a result")
 
             stems_paths = result_data.get("stems_paths") or {}
-            self.upload_stems(job_id, stems_paths)
+            # Skip roles the early background uploads already delivered;
+            # only the residue (pan-split children like guitar_left that
+            # didn't exist at separation time, or early failures) pays the
+            # serial tail now.
+            done_roles = set()
+            if early_uploads:
+                for role, fut in early_uploads.items():
+                    try:
+                        if fut.result(timeout=900):
+                            done_roles.add(role)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "early upload of %s failed (%s) — retrying in tail",
+                            role, e)
+            residue = {k: v for k, v in stems_paths.items()
+                       if k not in done_roles}
+            self.upload_stems(job_id, residue)
 
             # Localhost serve-file URLs are meaningless on the backend —
             # it rebuilds stems_paths from the uploads above.

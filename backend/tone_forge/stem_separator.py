@@ -144,7 +144,7 @@ def separate_guitar(
             # 20 of 22 guidance-mode classifications on Sex On Fire.
             # The quality cost of shifts=0 is imperceptible for
             # downstream analysis (we don't ship stems as final mix).
-            sources = apply_model(model, wav, device=device, shifts=0)
+            sources = apply_model(model, wav, device=device, shifts=0, overlap=0.1)
 
         # sources shape: (batch, num_sources, channels, samples)
         # Get source names from model
@@ -243,7 +243,7 @@ def separate_all_stems(
     with torch.no_grad():
         # shifts=0: see comment at separate_guitar's apply_model call
         # for full rationale. Bit-exact stems across runs.
-        sources = apply_model(model, wav, device=device, shifts=0)
+        sources = apply_model(model, wav, device=device, shifts=0, overlap=0.1)
 
     # Save each stem using soundfile
     stem_paths = {}
@@ -332,7 +332,7 @@ def separate_bass(
             # 20 of 22 guidance-mode classifications on Sex On Fire.
             # The quality cost of shifts=0 is imperceptible for
             # downstream analysis (we don't ship stems as final mix).
-            sources = apply_model(model, wav, device=device, shifts=0)
+            sources = apply_model(model, wav, device=device, shifts=0, overlap=0.1)
 
         source_names = model.sources
         if "bass" not in source_names:
@@ -426,7 +426,7 @@ def separate_drums(
             # 20 of 22 guidance-mode classifications on Sex On Fire.
             # The quality cost of shifts=0 is imperceptible for
             # downstream analysis (we don't ship stems as final mix).
-            sources = apply_model(model, wav, device=device, shifts=0)
+            sources = apply_model(model, wav, device=device, shifts=0, overlap=0.1)
 
         source_names = model.sources
         if "drums" not in source_names:
