@@ -314,8 +314,20 @@ class NoteClassifier:
                 flux = np.mean(np.diff(spec, axis=1) ** 2)
                 context.spectral_flux = min(flux, 1.0)
 
-            # Onset strength at this point
-            onset_env = librosa.onset.onset_strength(y=audio, sr=sr)
+            # Onset strength at this point. The envelope is a FULL-FILE
+            # mel spectrogram — computing it per note made ghost
+            # filtering O(notes x file): 2,496 notes cost 250 s of the
+            # 277 s PSB "other" extraction (profiled 2026-09-07). One
+            # envelope serves every note, so cache it keyed on a cheap
+            # buffer fingerprint (length + sr + head checksum — id()
+            # alone could collide via buffer reuse).
+            cache_key = (len(audio), sr, float(audio[:256].sum()))
+            cached = getattr(self, "_onset_env_cache", None)
+            if cached is not None and cached[0] == cache_key:
+                onset_env = cached[1]
+            else:
+                onset_env = librosa.onset.onset_strength(y=audio, sr=sr)
+                self._onset_env_cache = (cache_key, onset_env)
             onset_frame = librosa.time_to_frames(onset_time, sr=sr)
             if 0 <= onset_frame < len(onset_env):
                 max_onset = onset_env.max() if onset_env.max() > 0 else 1.0
