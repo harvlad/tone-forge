@@ -57,6 +57,12 @@ def test_places_kit_samples_at_hit_times(env):
     assert path is not None
     y, sr = sf.read(str(path))
     assert sr == SR
+    # Stereo: this file replaces a stereo demucs stem in the clients' stem
+    # players, and a channel-count change on a live mixer bus is a graph
+    # reconfiguration iOS restarts the whole engine on (v1 wrote mono).
+    assert y.ndim == 2 and y.shape[1] == 2
+    assert np.array_equal(y[:, 0], y[:, 1])  # duplicated, not a fake image
+    y = y[:, 0]
 
     def _at(t):
         return float(np.abs(y[int(t * sr) + 10]))
@@ -77,6 +83,7 @@ def test_class_fallback_when_kit_lacks_class(env):
     }
     path = redrum.render_redrum("src2", result, "kitsong")
     y, sr = sf.read(str(path))
+    y = y[:, 0]
     # Hat fell through the fallback chain to SOME sample — no dropped hit.
     assert float(np.abs(y[int(1.0 * sr) + 10])) > 0.1
 
@@ -89,6 +96,7 @@ def test_round_robin_variants(env):
     }
     path = redrum.render_redrum("src3", result, "kitsong")
     y, sr = sf.read(str(path))
+    y = y[:, 0]
     a = float(np.abs(y[int(1.0 * sr) + 10]))
     b = float(np.abs(y[int(2.0 * sr) + 10]))
     # Two consecutive kicks use the two variants → different levels.

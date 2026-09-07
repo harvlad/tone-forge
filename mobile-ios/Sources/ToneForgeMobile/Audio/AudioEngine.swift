@@ -492,6 +492,17 @@ public final class AudioEngine: ObservableObject {
         }
     }
 
+    /// Fired after the engine restarts out from under the app — a
+    /// configuration change, a media-services reset, or a revive from
+    /// `ensureEngineRunning`. A restart rebuilds the AUs and keeps the
+    /// node graph, but every AVAudioPlayerNode's SCHEDULED CONTENT is
+    /// discarded, so whoever scheduled audio has to schedule it again.
+    /// Per-trigger sources (pads, metronome) heal on their own next
+    /// trigger; StemPlayer schedules one multi-minute segment per stem
+    /// at play time and cannot. The desktop does this in
+    /// `EngineController.handleGraphRebuilt`; this is the mobile half.
+    public var onEngineRestarted: (() -> Void)?
+
     /// Revive a stopped engine before audible work. AVAudioEngine
     /// stops itself on configuration changes (song switch to a
     /// different sample rate, route swap) and after media-services
@@ -499,8 +510,13 @@ public final class AudioEngine: ObservableObject {
     /// playback silently — the desktop had this exact bug
     /// (`ensureEngineStarted`, b459b853). Returns true when the
     /// engine is running on exit.
+    ///
+    /// `notifyRestart: false` is for a caller that IS the recovery —
+    /// StemPlayer.play revives the engine and immediately reschedules
+    /// itself, so firing the hook there would only make it reschedule
+    /// twice, with an audible seam between.
     @discardableResult
-    public func ensureEngineRunning() -> Bool {
+    public func ensureEngineRunning(notifyRestart: Bool = true) -> Bool {
         #if canImport(AVFoundation)
         if engine.isRunning { return true }
         session.activate()
@@ -508,6 +524,7 @@ public final class AudioEngine: ObservableObject {
         do {
             try engine.start()
             isRunning = true
+            if notifyRestart { onEngineRestarted?() }
             return true
         } catch {
             print("[AudioEngine] ensureEngineRunning failed: \(error)")
@@ -886,6 +903,11 @@ public final class AudioEngine: ObservableObject {
                     guard let self, self.isRunning, !self.engine.isRunning else { return }
                     do {
                         try self.engine.start()
+                        // Restarting the engine is only half of it: the
+                        // stems' scheduled segments died with the old
+                        // AUs, so the transport would run on over
+                        // silence until the user happened to seek.
+                        self.onEngineRestarted?()
                     } catch {
                         print("[AudioEngine] config-change restart failed: \(error)")
                         self.isRunning = false
@@ -934,6 +956,9 @@ public final class AudioEngine: ObservableObject {
             try engine.start()
             isRunning = true
             if wasPlaying { clock.play() }
+            // Re-instantiated AUs come back empty — anything holding a
+            // long scheduled segment has to put it back.
+            onEngineRestarted?()
         } catch {
             print("[AudioEngine] media-reset recovery failed: \(error)")
             isRunning = false

@@ -244,7 +244,7 @@ public final class StemPlayer: ObservableObject {
         // sample-rate boundary); without a revive here the per-channel
         // isRunning gate below skips play() silently — "switched song,
         // lost sound".
-        engine.ensureEngineRunning()
+        engine.ensureEngineRunning(notifyRestart: false)
         for ch in channels {
             let sampleRate = ch.fileSampleRate
             let startFrame = AVAudioFramePosition(max(0, seconds) * sampleRate)

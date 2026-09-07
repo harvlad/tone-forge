@@ -28,7 +28,12 @@ from .drum_kit_render import RENDER_VERSION, load_manifest, sample_path
 
 logger = logging.getLogger(__name__)
 
-REDRUM_VERSION = 1
+# v2: render stereo. v1 wrote a mono file that REPLACED a stereo demucs
+# stem in the clients' stem players — a channel-count change on a live
+# mixer bus, which iOS treats as a graph reconfiguration (AVAudioEngine
+# stops itself and drops every scheduled segment). Bumping the version
+# re-renders the mono files already sitting in the server cache.
+REDRUM_VERSION = 2
 
 # When the target kit lacks a class the groove uses, fall through this map
 # rather than dropping the hit — a groove with holes reads as a glitch, a
@@ -177,8 +182,14 @@ def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Pa
     # Suffix keeps ".wav" LAST — soundfile infers the container from the
     # extension and refuses a bare ".part".
     tmp = dest.with_name(dest.name + ".part.wav")
+    # Stereo, because this file replaces a stereo stem and the clients wire
+    # each channel with its own file format — a mono replacement changes the
+    # format on a bus that was carrying stereo. The composites are mono by
+    # construction (drum_kit_render mixes down before stacking), so this
+    # duplicates rather than inventing a stereo image it doesn't have.
+    stereo = np.repeat(out.astype(np.float32)[:, None], 2, axis=1)
     try:
-        sf.write(str(tmp), out.astype(np.float32), sr, subtype="PCM_16")
+        sf.write(str(tmp), stereo, sr, subtype="PCM_16")
         tmp.rename(dest)
     except Exception:
         tmp.unlink(missing_ok=True)
