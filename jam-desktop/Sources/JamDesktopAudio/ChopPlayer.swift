@@ -343,13 +343,22 @@ public final class ChopPlayer {
         voice.mixer.outputVolume = min(max(velocity, 0), 1)
         voice.mixer.pan = min(max(pan, -1), 1)
 
-        if loop, let buffer = loopBuffer(file: file, startFrame: startFrame,
-                                         frameCount: AVAudioFrameCount(frameCount),
-                                         crossfadeMs: crossfadeMs) {
+        var effectiveDelay = delaySeconds
+        if loop, let baked = loopBuffer(file: file, startFrame: startFrame,
+                                        frameCount: AVAudioFrameCount(frameCount),
+                                        crossfadeMs: crossfadeMs) {
             // Seamless looping: the [start,end] region is read into a buffer,
             // crossfaded (SeamlessLoop) and hard-looped so a held pad never clicks.
-            voice.node.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
-            voice.loopFrames = buffer.frameLength
+            voice.node.scheduleBuffer(baked.buffer, at: nil, options: [.loops], completionHandler: nil)
+            voice.loopFrames = baked.buffer.frameLength
+            // Launch compensation for the onset-phase snap: the region was
+            // shifted so its cut sits just before the attack, which moves
+            // the content's downbeat off the region start by `shiftSec`.
+            // Delay the launch by the same amount so the downbeat still
+            // lands ON the quantize grid — without this, pads with
+            // different shifts (drums +9 ms, bass +47 ms measured) armed
+            // to the same boundary but sounded at different times.
+            effectiveDelay = max(0, delaySeconds + baked.shiftSec)
         } else if let buffer = regionBuffer(file: file, startFrame: startFrame,
                                             frameCount: AVAudioFrameCount(frameCount)) {
             // One-shot: read the region into a buffer and micro-fade its
@@ -368,7 +377,7 @@ public final class ChopPlayer {
             voices[index] = voice
             return
         }
-        voice.node.play(at: playTime(afterSeconds: delaySeconds))
+        voice.node.play(at: playTime(afterSeconds: effectiveDelay))
         voice.key = key
         voices[index] = voice
         // Begin the new takeover AFTER the struct write-back (which would
@@ -495,7 +504,7 @@ public final class ChopPlayer {
     private func loopBuffer(
         file: AVAudioFile, startFrame: AVAudioFramePosition,
         frameCount: AVAudioFrameCount, crossfadeMs: Double
-    ) -> AVAudioPCMBuffer? {
+    ) -> (buffer: AVAudioPCMBuffer, shiftSec: Double)? {
         let xfadeMs = crossfadeMs > 0 ? crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
         let srcRate = file.processingFormat.sampleRate
         // Onset-phase snap: the grid's downbeat timestamps land tens of ms
@@ -541,7 +550,9 @@ public final class ChopPlayer {
         let ratio = srcRate > 0 ? Self.canonicalFormat.sampleRate / srcRate : 1
         let body = min(Int(buf.frameLength),
                        Int((Double(frameCount) * ratio).rounded()))
-        return SeamlessLoop.exactCrossfaded(buf, loopFrames: body, crossfadeMs: xfadeMs)
+        let shiftSec = srcRate > 0 ? Double(start - startFrame) / srcRate : 0
+        return (SeamlessLoop.exactCrossfaded(buf, loopFrames: body, crossfadeMs: xfadeMs),
+                shiftSec)
     }
 
     private func cachedFile(for url: URL) -> AVAudioFile? {

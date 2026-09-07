@@ -97,6 +97,12 @@ public final class SampleScheduler: ObservableObject {
         /// whole buffer is the loop. Threaded into SampleTrigger so the
         /// voice pool can bake the seam at exact bar-snapped length.
         var loopBodyFrames: [Int: Int] = [:]
+        /// padIdx → seconds the loop region was moved by the onset-phase
+        /// snap at decode. The launch is delayed by the same amount so the
+        /// content's downbeat still lands ON the quantize grid — without
+        /// this, pads with different snaps armed to the same boundary but
+        /// sounded at different times.
+        var loopShiftSec: [Int: Double] = [:]
         #endif
     }
 
@@ -235,10 +241,24 @@ public final class SampleScheduler: ObservableObject {
         return (60.0 / bpm) * 4.0
     }
 
-    /// Sample-loop length (s): the 8 s kit window snapped to whole bars at
-    /// the song tempo, so loops stay musical. The shared lock cycle uses
-    /// this. Falls back to 8 s without tempo.
+    /// Shared lock-cycle length (s). Cycle = the longest analyzer loop
+    /// region in the ACTIVE pack: kit windows are whole REAL bars now
+    /// (e.g. 2 bars = 5.04 s), and the old bars-fitting-8s constant-tempo
+    /// formula queued presses to a cycle no pad plays — armed pads fired
+    /// mid-cycle of the held loops. Falls back to the constant-tempo
+    /// formula for packs without analyzer regions, 8 s without tempo.
     public var loopLengthSeconds: Double {
+        if let pid = activePackId, let entry = loadedPacks[pid] {
+            let cycle = entry.pack.pack.pads
+                .filter { ($0.loopable ?? false) || $0.loopStartSec != nil }
+                .compactMap { p -> Double? in
+                    guard let ls = p.loopStartSec, let le = p.loopEndSec,
+                          le > ls else { return nil }
+                    return le - ls
+                }
+                .max()
+            if let cycle, cycle > 0.5 { return cycle }
+        }
         guard let bpm = tempoBpm, bpm > 0 else { return 8.0 }
         let barSec = (60.0 / bpm) * 4.0
         let bars = max(1.0, (8.0 / barSec).rounded())
@@ -296,7 +316,8 @@ public final class SampleScheduler: ObservableObject {
         )
         loadedPacks[packId] = LoadedPack(
             pack: pack, buffers: loaded.buffers,
-            loopBodyFrames: loaded.loopBodyFrames)
+            loopBodyFrames: loaded.loopBodyFrames,
+            loopShiftSec: loaded.loopShiftSec)
         #else
         loadedPacks[packId] = LoadedPack(pack: pack)
         #endif
@@ -336,7 +357,8 @@ public final class SampleScheduler: ObservableObject {
         guard loadedPacks[packId] == nil else { return }
         loadedPacks[packId] = LoadedPack(
             pack: pack, buffers: loaded.buffers,
-            loopBodyFrames: loaded.loopBodyFrames)
+            loopBodyFrames: loaded.loopBodyFrames,
+            loopShiftSec: loaded.loopShiftSec)
         #else
         loadedPacks[packId] = LoadedPack(pack: pack)
         #endif
@@ -363,9 +385,11 @@ public final class SampleScheduler: ObservableObject {
         stemFiles: [String: URL],
         target: AVAudioFormat?,
         barSeconds: Double? = nil
-    ) -> (buffers: [Int: AVAudioPCMBuffer], loopBodyFrames: [Int: Int]) {
+    ) -> (buffers: [Int: AVAudioPCMBuffer], loopBodyFrames: [Int: Int],
+          loopShiftSec: [Int: Double]) {
         var loaded: [Int: AVAudioPCMBuffer] = [:]
         var bodies: [Int: Int] = [:]
+        var shifts: [Int: Double] = [:]
         for pad in pack.pack.pads {
             if let url = pack.padFileURLs[pad.padIdx] {
                 if let buf = loadBuffer(from: url, slice: nil, target: target) {
@@ -391,10 +415,11 @@ public final class SampleScheduler: ObservableObject {
                         bodies[pad.padIdx] =
                             Int(r.buffer.frameLength) - r.continuationFrames
                     }
+                    if r.shiftSec != 0 { shifts[pad.padIdx] = r.shiftSec }
                 }
             }
         }
-        return (loaded, bodies)
+        return (loaded, bodies, shifts)
     }
 
     /// Continuation audio read past a loop-capable region's end for the
@@ -868,7 +893,15 @@ public final class SampleScheduler: ObservableObject {
             crossfadeMs: crossfadeMs,
             loopBodyFrames: loopBodyFrames
         )
-        let audioTime = audioTime(forSongSeconds: targetSong, nowSong: nowSong)
+        // Launch compensation for the onset-phase snap: the decode moved
+        // the region so its cut sits just before the attack — delay the
+        // launch by the same amount so the content's downbeat still lands
+        // ON the quantize grid (pads snap by different amounts; without
+        // this they armed to the same boundary but sounded offset).
+        let launchShift = (willLoop && buffer === baseBuffer)
+            ? (entry.loopShiftSec[padIdx] ?? 0) : 0
+        let audioTime = audioTime(forSongSeconds: targetSong + max(0, launchShift),
+                                  nowSong: nowSong)
         pool.trigger(req, buffer: buffer, at: audioTime)
         #endif
 
@@ -1316,7 +1349,7 @@ public final class SampleScheduler: ObservableObject {
         slice: StemSlice?,
         target: AVAudioFormat?,
         continuationSec: Double
-    ) -> (buffer: AVAudioPCMBuffer, continuationFrames: Int)? {
+    ) -> (buffer: AVAudioPCMBuffer, continuationFrames: Int, shiftSec: Double)? {
         do {
             let file = try AVAudioFile(forReading: url)
             let format = file.processingFormat
@@ -1325,6 +1358,7 @@ public final class SampleScheduler: ObservableObject {
             var startFrame: AVAudioFramePosition
             let bodyCount: AVAudioFrameCount
             var extraCount: AVAudioFrameCount = 0
+            var shiftSec: Double = 0
             if let slice = slice {
                 startFrame = AVAudioFramePosition(max(0, slice.startSec) * sampleRate)
                 let endFrame = AVAudioFramePosition(max(slice.startSec, slice.endSec) * sampleRate)
@@ -1356,6 +1390,7 @@ public final class SampleScheduler: ObservableObject {
                         if s2 >= 0,
                            s2 + AVAudioFramePosition(bodyCount) <= file.length {
                             startFrame = s2
+                            shiftSec = Double(shift) / sampleRate
                         }
                     }
                     let want = AVAudioFramePosition(continuationSec * sampleRate)
@@ -1381,7 +1416,8 @@ public final class SampleScheduler: ObservableObject {
             guard let target = target, !format.isEqual(target) else {
                 normalizePeak(srcBuf)
                 SeamlessLoop.applyEdgeFades(srcBuf)
-                return (srcBuf, max(0, Int(srcBuf.frameLength) - Int(bodyCount)))
+                return (srcBuf, max(0, Int(srcBuf.frameLength) - Int(bodyCount)),
+                        shiftSec)
             }
             guard let dstBuf = convert(srcBuf, to: target) else { return nil }
             normalizePeak(dstBuf)
@@ -1398,7 +1434,7 @@ public final class SampleScheduler: ObservableObject {
             let ratio = target.sampleRate / sampleRate
             let bodyOut = min(Int(dstBuf.frameLength),
                               Int((Double(bodyCount) * ratio).rounded()))
-            return (dstBuf, Int(dstBuf.frameLength) - bodyOut)
+            return (dstBuf, Int(dstBuf.frameLength) - bodyOut, shiftSec)
         } catch {
             return nil
         }

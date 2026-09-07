@@ -233,6 +233,15 @@ public final class LaunchpadController {
     /// whole number of bars at the song tempo (so loops stay musical). The
     /// shared lock cycle uses this period. Falls back to 8 s with no tempo.
     public var loopLengthSeconds: Double {
+        // Cycle = the longest analyzer loop actually on the grid: kit
+        // windows are whole REAL bars now (e.g. 2 bars = 5.04 s), and the
+        // old bars-fitting-8s formula queued presses to a 3-bar cycle no
+        // pad plays — armed pads fired mid-cycle of the held loops.
+        let fromChops = assignments.values
+            .filter { $0.chop.loopScore != nil }
+            .map { $0.chop.endSec - $0.chop.startSec }
+            .max()
+        if let cycle = fromChops, cycle > 0.5 { return cycle }
         guard let bpm = tempoBpm, bpm > 0 else { return 8.0 }
         let barSec = (60.0 / bpm) * 4.0
         let bars = max(1.0, (8.0 / barSec).rounded())
