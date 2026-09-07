@@ -35,6 +35,7 @@ struct JamView: View {
     /// one sheet. Picking a sound enters place mode (`pendingChop`) —
     /// the next pad tap assigns it to that pad.
     @State private var showSoundsBrowser = false
+    @State private var showRemixSheet = false
     @State private var pendingChop: ChopReference?
     /// Progressive disclosure L3: long-pressing a Samples pad opens the
     /// deeper instrument-construction workspace (the ex-Contribute
@@ -110,6 +111,16 @@ struct JamView: View {
             Color.clear
                 .sheet(isPresented: $showSoundsBrowser) {
                     soundsBrowserSheet
+                }
+        }
+        // Remix slide-up: its own background node (same one-sheet-per-node
+        // workaround as above).
+        .background {
+            Color.clear
+                .sheet(isPresented: $showRemixSheet) {
+                    RemixSheet()
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
                 }
         }
     }
@@ -423,6 +434,7 @@ struct JamView: View {
                     // performance controls; gating them on an Auto Kit hid
                     // them from anyone who hadn't visited Library first.
                     if jamSettings.padMode == .samples {
+                        remixChip
                         instantGrooveChip
                         styleBeatChip
                         soundsChip
@@ -447,6 +459,24 @@ struct JamView: View {
             .accessibilityLabel("Jam settings")
         }
         .padding(.horizontal, TFTheme.Spacing.md)
+    }
+
+    /// The Remix sheet: one slide-up home for every one-click transform
+    /// (kits, Flip, Humanize, Re-Drum, Instrument Pack) — one chip instead
+    /// of a button per feature on an already-dense row.
+    private var remixChip: some View {
+        Button {
+            Haptics.padTrigger()
+            showRemixSheet = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles").font(.caption)
+                Text("Remix").font(TFTheme.chipFont)
+            }
+            .tfChip(active: showRemixSheet)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Remix — one-tap transforms")
     }
 
     /// One-tap groove: fire the best loop of each core category. Loops

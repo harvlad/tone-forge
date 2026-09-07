@@ -21,6 +21,7 @@ struct RootView: View {
     @State private var showJamPads = false
     @State private var showPacks = false
     @State private var showBeatCapture = false
+    @State private var showRemix = false
     @State private var showVocoder = false
     @State private var contributeMode: ContributeMode = .beat
 
@@ -192,6 +193,16 @@ struct RootView: View {
                     Label("Beat", systemImage: "figure.dance")
                 }
                 .help("Beat Capture — tap a rhythm into a drum pattern")
+                // Remix: the one entry point for one-click transforms
+                // (kits / Flip / Humanize / Re-Drum / Instrument Pack) —
+                // lives in this group because the toolbar builder is at
+                // its 10-element cap.
+                Button {
+                    showRemix.toggle()
+                } label: {
+                    Label("Remix", systemImage: "sparkles")
+                }
+                .help("Remix — one-tap transforms of this song and its samples")
             }
             ToolbarItem(placement: .automatic) {
                 Button {
@@ -257,6 +268,10 @@ struct RootView: View {
         .sheet(isPresented: $showPacks) {
             PacksBrowserView()
                 .environmentObject(model)
+                .environmentObject(session)
+        }
+        .sheet(isPresented: $showRemix) {
+            RemixSheetView()
                 .environmentObject(session)
         }
         .sheet(isPresented: $showBeatCapture) {

@@ -26,6 +26,16 @@ public final class SequencePadManager {
     /// Running players keyed by pad index.
     private var active: [Int: SequencerPlayer] = [:]
 
+    /// Groove humanize template (Remix): per-slot delays in step fractions,
+    /// applied to every running and future player. nil = straight grid.
+    public var grooveOffsets: [Double]? {
+        didSet {
+            for player in active.values {
+                player.grooveOffsets = grooveOffsets
+            }
+        }
+    }
+
     /// Step subscriptions for pulse updates.
     private var stepSubs: [Int: AnyCancellable] = [:]
 
@@ -61,6 +71,7 @@ public final class SequencePadManager {
         let player = SequencerPlayer(pattern: pattern, eventBus: eventBus)
         player.songBPM = songBPM
         player.delegate = delegate
+        player.grooveOffsets = grooveOffsets
         active[padIdx] = player
 
         // Subscribe to step updates for pulse animation

@@ -70,6 +70,22 @@ public final class SequencerClock: @unchecked Sendable {
         }
     }
 
+    /// Groove template: per-slot delays in STEP FRACTIONS (0…0.45),
+    /// indexed step % count — the song's micro-timing fingerprint from
+    /// /api/song/{id}/groove. Composes WITH swing (both are hold-based
+    /// delays). nil / empty = straight grid.
+    public var grooveOffsets: [Double]? {
+        get { lock.lock(); defer { lock.unlock() }; return _grooveOffsets }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            if let v = newValue, !v.isEmpty {
+                _grooveOffsets = v.map { min(max($0, 0), 0.45) }
+            } else {
+                _grooveOffsets = nil
+            }
+        }
+    }
+
     /// Swing amount (0 = straight, 0.5 = max swing).
     /// Delays odd-numbered steps (off-beat 16ths) by swing × stepDuration.
     public var swing: Float {
@@ -96,6 +112,18 @@ public final class SequencerClock: @unchecked Sendable {
     private var _stepCount: Int
     private var _bpm: Double
     private var _swing: Float = 0
+    private var _grooveOffsets: [Double]?
+
+    /// Total hold delay for a step, in step fractions: swing (odd steps)
+    /// plus the groove template's slot delay. Callers hold the lock.
+    private func _delaySteps(forRawStep step: Int) -> Double {
+        var d = 0.0
+        if step % 2 == 1 { d += Double(_swing) }
+        if let g = _grooveOffsets, !g.isEmpty {
+            d += g[((step % g.count) + g.count) % g.count]
+        }
+        return d
+    }
     private var _isLooping: Bool = true
     private var _isRunning: Bool = false
     private var _currentStep: Int = 0
@@ -181,15 +209,16 @@ public final class SequencerClock: @unchecked Sendable {
         // Calculate raw step position
         var rawStep = Int(elapsed / _stepDuration)
 
-        // Swing: odd steps (off-beat 16ths) fire late by
-        // swing × stepDuration. Hold the previous even step until the
-        // swung boundary passes so the delegate callback for the odd
-        // step lands at the delayed time. Step counts are even
-        // (8/16/32), so raw-step parity matches wrapped-step parity
-        // across loops.
-        if rawStep % 2 == 1, _swing > 0 {
-            let swungStart = (Double(rawStep) + Double(_swing)) * _stepDuration
-            if elapsed < swungStart { rawStep -= 1 }
+        // Swing + groove: a delayed step fires late by
+        // delay × stepDuration. Hold the previous step until the delayed
+        // boundary passes so the delegate callback lands at the delayed
+        // time. Step counts are even (8/16/32), so raw-step parity matches
+        // wrapped-step parity across loops; groove offsets index step %
+        // template length, which likewise survives wrapping.
+        let delay = _delaySteps(forRawStep: rawStep)
+        if delay > 0 {
+            let delayedStart = (Double(rawStep) + delay) * _stepDuration
+            if elapsed < delayedStart { rawStep -= 1 }
         }
 
         // Handle looping
@@ -232,20 +261,12 @@ public final class SequencerClock: @unchecked Sendable {
     }
 
     /// Calculate the song-time when a given step should trigger.
-    /// Applies swing to odd-numbered steps (off-beat 16ths).
+    /// Applies swing (odd steps) and the groove template's per-slot delay.
     public func triggerTime(forStep step: Int, from startTime: Double) -> Double {
         lock.lock(); defer { lock.unlock() }
 
         let baseTime = startTime + Double(step) * _stepDuration
-
-        // Apply swing to odd-numbered steps (1, 3, 5...): the
-        // off-beat 16ths land late, on-beats (0, 2, 4...) stay put.
-        if step % 2 == 1 {
-            let swingDelay = Double(_swing) * _stepDuration
-            return baseTime + swingDelay
-        }
-
-        return baseTime
+        return baseTime + _delaySteps(forRawStep: step) * _stepDuration
     }
 
     /// Calculate which step corresponds to a given song time.

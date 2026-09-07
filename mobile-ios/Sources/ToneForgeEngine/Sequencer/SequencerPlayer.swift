@@ -93,6 +93,14 @@ public final class SequencerPlayer: ObservableObject {
         }
     }
 
+    /// Groove humanize: per-slot delays (step fractions) from
+    /// /api/song/{id}/groove — the loaded song's micro-timing applied to
+    /// whatever pattern is playing. nil = straight grid. Published so the
+    /// Remix sheet's Humanize toggle can bind to it.
+    @Published public var grooveOffsets: [Double]? {
+        didSet { clock.grooveOffsets = grooveOffsets }
+    }
+
     /// Current step for UI highlighting.
     @Published public private(set) var currentStep: Int = 0
 

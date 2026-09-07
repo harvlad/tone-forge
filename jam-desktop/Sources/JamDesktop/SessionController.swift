@@ -18,6 +18,7 @@
 // the only place that knows all sides.
 
 import Foundation
+import AppKit
 import Combine
 import ToneForgeEngine
 import JamDesktopCore
@@ -679,6 +680,9 @@ final class SessionController: ObservableObject {
         linkSync.seedTempoIfAlone(session.bundle.meta.tempoBpm ?? 120)
         attachedBundle = session.bundle
         attachedStemURLs = session.stemURLs
+        // Remix state is per-song: a Re-Drum swap or groove template from
+        // the previous song must never leak into this one.
+        resetRemixState()
         // Melody follow-along: rebuild the player for the new song.
         // gainScale trims the synth under the stems — full-scale hits
         // would swamp the mix.
@@ -896,6 +900,113 @@ final class SessionController: ObservableObject {
             }
         }
         throw lastError
+    }
+
+    // MARK: - Remix (one-click transforms)
+
+    /// Humanize: the song's groove template on the sequencer + pad
+    /// sequences. Re-Drum: drums stem swapped for a server-rendered
+    /// replacement (this groove on another kit). Same per-song semantics
+    /// as mobile; reset on attach.
+    @Published private(set) var remixHumanizeOn = false
+    private var grooveTemplate: [Double]?
+    @Published private(set) var redrumActiveKit: String?
+    private var originalDrumsURL: URL?
+    @Published var remixBusy: String?
+    @Published var remixError: String?
+
+    @MainActor
+    func toggleHumanize() async {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL
+        else { return }
+        if remixHumanizeOn {
+            remixHumanizeOn = false
+            sequencer.grooveOffsets = nil
+            sequencePadManager.grooveOffsets = nil
+            return
+        }
+        if grooveTemplate == nil {
+            remixBusy = "humanize"
+            remixError = nil
+            defer { remixBusy = nil }
+            do {
+                grooveTemplate = try await RemixClient().fetchGroove(
+                    baseURL: base, analysisId: analysisId)
+            } catch {
+                remixError = error.localizedDescription
+                return
+            }
+        }
+        remixHumanizeOn = true
+        sequencer.grooveOffsets = grooveTemplate
+        sequencePadManager.grooveOffsets = grooveTemplate
+    }
+
+    func redrumCandidates() async -> [RedrumCandidate] {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL
+        else { return [] }
+        return (try? await RemixClient().fetchRedrumCandidates(
+            baseURL: base, analysisId: analysisId)) ?? []
+    }
+
+    @MainActor
+    func applyRedrum(kit: String) async {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL,
+              let bundle = attachedBundle else { return }
+        remixBusy = "redrum"
+        remixError = nil
+        defer { remixBusy = nil }
+        do {
+            let wav = try await RemixClient().fetchRedrumStem(
+                baseURL: base, analysisId: analysisId, kit: kit)
+            guard attachedAnalysisId == analysisId else { return }
+            if originalDrumsURL == nil {
+                originalDrumsURL = attachedStemURLs["drums"]
+            }
+            var urls = attachedStemURLs
+            urls["drums"] = wav
+            await engine.stemPlayer.load(bundle: bundle, localURLs: urls)
+            guard attachedAnalysisId == analysisId else { return }
+            attachedStemURLs = urls
+            redrumActiveKit = kit
+        } catch {
+            remixError = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    func clearRedrum() async {
+        guard let bundle = attachedBundle, let original = originalDrumsURL,
+              redrumActiveKit != nil else { return }
+        remixBusy = "redrum"
+        defer { remixBusy = nil }
+        var urls = attachedStemURLs
+        urls["drums"] = original
+        await engine.stemPlayer.load(bundle: bundle, localURLs: urls)
+        attachedStemURLs = urls
+        redrumActiveKit = nil
+    }
+
+    /// Instrument Pack downloads through the browser — the zip lands in
+    /// ~/Downloads with zero in-app plumbing.
+    func openInstrumentPack() {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL
+        else { return }
+        let url = base.appendingPathComponent("api/song")
+            .appendingPathComponent(analysisId)
+            .appendingPathComponent("instrument-pack")
+        NSWorkspace.shared.open(url)
+    }
+
+    private func resetRemixState() {
+        remixHumanizeOn = false
+        grooveTemplate = nil
+        sequencer.grooveOffsets = nil
+        sequencePadManager.grooveOffsets = nil
+        redrumActiveKit = nil
+        originalDrumsURL = nil
+        remixBusy = nil
+        remixError = nil
     }
 
     // MARK: - Layer recording (P4)

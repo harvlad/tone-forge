@@ -5796,13 +5796,15 @@ async def get_song_kit(
     entry_id: str,
     skill: str = Query("intermediate", description="beginner|intermediate|advanced"),
     pads: int = Query(8, ge=1, le=16),
-    kind: str = Query("auto", description="auto (mixed performance kit) | drums (one-shot drum kit)"),
+    kind: str = Query("auto", description="auto (mixed performance kit) | drums (one-shot drum kit) | flip (generated beat from the song's DNA)"),
 ) -> JSONResponse:
     """Auto-built Launchpad kit for a song — a SamplePack manifest the existing
     Launchpad UI consumes directly. ``kind=auto`` is the mixed performance kit
     sourced from the graph's ranked loopable assets; ``kind=drums`` slices the
     drum stem into classified one-shot hits (kick/snare/hats/…) plus groove
-    loops — the song's whole drum kit on the pads."""
+    loops — the song's whole drum kit on the pads; ``kind=flip`` builds a NEW
+    beat from the song's own material (drum one-shots + bass/stab chops) with
+    a ready-to-play defaultSequence derived from the song's own step pattern."""
     from tone_forge.performance import serve as _perf
 
     entry = _get_history_item(entry_id)
@@ -5813,7 +5815,7 @@ async def get_song_kit(
         raise HTTPException(status_code=422, detail="Song has no analysis result")
     _refresh_r2_stem_urls(result)
 
-    if kind == "drums":
+    if kind in ("drums", "flip"):
         from tone_forge.performance.drum_kit import DRUM_HITS_RESULT_KEY
         from tone_forge.performance.drum_kit_render import (
             ensure_kit_job, load_manifest)
@@ -5831,6 +5833,12 @@ async def get_song_kit(
                     _persist_backfilled_result_key,
                     entry_id, result, DRUM_HITS_RESULT_KEY)
         try:
+            if kind == "flip":
+                from tone_forge.performance.flip import build_flip
+                kit = build_flip(entry_id, result,
+                                 drum_sample_files=sample_files)
+                kit["analysisId"] = entry_id
+                return JSONResponse(kit)
             return JSONResponse(_perf.drum_kit_payload(
                 entry_id, result, sample_files=sample_files))
         except ValueError as exc:
@@ -5915,6 +5923,141 @@ async def get_drum_sample(entry_id: str, fname: str) -> FileResponse:
     if path is None:
         raise HTTPException(status_code=404, detail="No such sample")
     return FileResponse(str(path), media_type="audio/wav")
+
+
+@app.get("/api/song/{entry_id}/instrument-pack")
+async def get_song_instrument_pack(entry_id: str):
+    from fastapi import Response
+    """Song → playable sampler patch: an .sfz + samples zip with the song's
+    cleaned drums on keys, its best bass note and chord stab playable
+    chromatically (single root sample + pitch_keycenter — the sampler
+    transposes). Rendered in the worker pool, cached by content identity."""
+    from tone_forge.instrument_pack import instrument_pack_job
+
+    entry = _get_history_item(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail="Song has no analysis result")
+    _refresh_r2_stem_urls(result)
+    song_name = str(entry.get("name") or entry_id)
+    try:
+        data, filename = await asyncio.get_running_loop().run_in_executor(
+            _render_pool(), instrument_pack_job, entry_id, result, song_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return Response(
+        content=data, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/song/{entry_id}/groove")
+async def get_song_groove(entry_id: str) -> JSONResponse:
+    """The song's micro-timing fingerprint (16 per-slot delays in step
+    fractions) for the sequencer's Humanize toggle — derived from the hits
+    table vs the beat grid. Backfills hits like kind=drums when absent."""
+    from tone_forge.performance.drum_kit import (
+        DRUM_HITS_RESULT_KEY, ensure_hits_job)
+    from tone_forge.performance.groove import build_groove
+
+    entry = _get_history_item(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail="Song has no analysis result")
+    if DRUM_HITS_RESULT_KEY not in result:
+        _refresh_r2_stem_urls(result)
+        table = await asyncio.get_running_loop().run_in_executor(
+            _render_pool(), ensure_hits_job, entry_id, result)
+        if isinstance(table, dict):
+            result[DRUM_HITS_RESULT_KEY] = table
+            await asyncio.to_thread(
+                _persist_backfilled_result_key, entry_id, result,
+                DRUM_HITS_RESULT_KEY)
+    template = build_groove(result)
+    if template is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No groove available (missing drum hits or beat grid)")
+    return JSONResponse({"analysisId": entry_id, "groove": template})
+
+
+@app.get("/api/song/{entry_id}/redrum-candidates")
+async def get_redrum_candidates(entry_id: str) -> JSONResponse:
+    """Ranked kit-donor suggestions for Re-Drum: analyzed songs whose
+    persisted hits tables show a viable kit (core class coverage, enough
+    material, clean exemplars). The Remix sheet lists these instead of
+    making the user guess which songs make good donors."""
+    from tone_forge.performance.redrum import kit_candidates
+
+    history = await asyncio.to_thread(_load_history)
+    return JSONResponse({
+        "analysisId": entry_id,
+        "candidates": kit_candidates(history, exclude_id=entry_id)[:12],
+    })
+
+
+@app.get("/api/song/{entry_id}/redrum")
+async def get_song_redrum(
+    entry_id: str,
+    kit: str = Query("self", description="Kit source: self | song:<entry_id>"),
+) -> FileResponse:
+    """Re-Drum: the song's drum PERFORMANCE (hits table) re-played on another
+    kit's cleaned composites, rendered as a replacement drums stem. ``kit=self``
+    re-triggers the song's own composites (cleanup); ``kit=song:<id>`` plays
+    this song's groove on that song's drums. Cached per (song, kit) pair."""
+    from tone_forge.performance.drum_kit import DRUM_HITS_RESULT_KEY
+    from tone_forge.performance.redrum import redrum_job, rendered_path
+
+    entry = _get_history_item(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail="Song has no analysis result")
+
+    if kit == "self":
+        kit_id = entry_id
+    elif kit.startswith("song:"):
+        kit_id = kit[5:]
+    else:
+        raise HTTPException(status_code=422, detail="kit must be self or song:<id>")
+
+    cached = rendered_path(entry_id, kit_id)
+    if cached is None:
+        if kit_id == entry_id:
+            kit_entry, kit_result = entry, result
+        else:
+            kit_entry = _get_history_item(kit_id)
+            if kit_entry is None:
+                raise HTTPException(status_code=404, detail="Kit song not found")
+            kit_result = kit_entry.get("result")
+            if not isinstance(kit_result, dict):
+                raise HTTPException(status_code=422, detail="Kit song has no analysis result")
+        _refresh_r2_stem_urls(result)
+        if kit_result is not result:
+            _refresh_r2_stem_urls(kit_result)
+        src_table, kit_table, path = await asyncio.get_running_loop().run_in_executor(
+            _render_pool(), redrum_job, entry_id, result, kit_id, kit_result)
+        if isinstance(src_table, dict):
+            result[DRUM_HITS_RESULT_KEY] = src_table
+            await asyncio.to_thread(
+                _persist_backfilled_result_key, entry_id, result,
+                DRUM_HITS_RESULT_KEY)
+        if isinstance(kit_table, dict) and kit_id != entry_id:
+            kit_result[DRUM_HITS_RESULT_KEY] = kit_table
+            await asyncio.to_thread(
+                _persist_backfilled_result_key, kit_id, kit_result,
+                DRUM_HITS_RESULT_KEY)
+        if not path:
+            raise HTTPException(
+                status_code=422,
+                detail="Re-Drum unavailable (missing drum hits or kit samples)")
+        cached = Path(path)
+    return FileResponse(str(cached), media_type="audio/wav",
+                        filename=f"redrum_{entry_id[:8]}_{kit_id[:8]}.wav")
 
 
 @app.post("/api/song/{entry_id}/pad-feedback")

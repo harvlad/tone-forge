@@ -72,3 +72,24 @@ def test_kind_drums_unknown_song_is_404(monkeypatch):
         tone_forge_api, "_get_history_item", lambda eid: None)
     r = client.get("/api/song/missing/kit", params={"kind": "drums"})
     assert r.status_code == 404
+
+
+def test_kind_flip_serves_pack_with_sequence(monkeypatch):
+    result = {
+        DRUM_HITS_RESULT_KEY: _HITS,
+        "downbeats_s": [0.5 + i * 2.0 for i in range(9)],
+        "duration_sec": 20.0,
+    }
+    monkeypatch.setattr(
+        tone_forge_api, "_get_history_item",
+        lambda eid: _entry(result) if eid == "e1" else None)
+
+    r = client.get("/api/song/e1/kit", params={"kind": "flip"})
+    assert r.status_code == 200
+    kit = r.json()
+    assert kit["packId"] == "flip-e1"
+    seq = kit["defaultSequence"]
+    assert seq["stepCount"] == 16
+    assert seq["tracks"], "flip must ship a playable pattern"
+    for t in seq["tracks"]:
+        assert t["chopRef"]["packPad"]["packId"] == "flip-e1"

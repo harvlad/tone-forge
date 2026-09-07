@@ -1858,6 +1858,9 @@ public final class AppState: ObservableObject {
         unloadSongDnaPacks()
         songDnaPacks = []
         currentStemLocalURLs = [:]
+        // Remix state is per-song: a Re-Drum swap or groove template from
+        // the previous song must never leak into this one.
+        resetRemixState()
 
         // Feed quantize + section-gate context into the scheduler so
         // pads snap to this song's beats/downbeats/sections, and
@@ -2074,6 +2077,17 @@ public final class AppState: ObservableObject {
                         resolved, stemFiles: stems)
                     guard self.currentBundle?.analysisId == analysisId else { return }
                     self.activateSamplePack(resolved, stemFiles: stems)
+                    // Flip's whole point is instant: activation saved its
+                    // defaultSequence to the store (idempotent by id) —
+                    // start it on the style-beat pad so the flip PLAYS the
+                    // moment it loads, not after a picker safari.
+                    if kitKind == "flip",
+                       let pattern = pack.defaultSequence {
+                        self.modeCoordinator.sequencePadManager.start(
+                            patternId: pattern.id,
+                            padIdx: Self.styleBeatPadIdx,
+                            songBPM: self.currentBundle?.meta.tempoBpm ?? 120)
+                    }
                     return
                 } catch {
                     lastError = error
@@ -2124,6 +2138,119 @@ public final class AppState: ObservableObject {
             } catch { continue }
         }
         return out
+    }
+
+    // MARK: - Remix sheet (one-click transforms)
+
+    /// Humanize: the loaded song's groove template applied to every
+    /// running/future pad sequence. nil template = not fetched yet.
+    @Published public private(set) var remixHumanizeOn = false
+    private var grooveTemplate: [Double]?
+    /// Active Re-Drum kit ("self" | "song:<id>") — nil = original drums.
+    @Published public private(set) var redrumActiveKit: String?
+    private var originalDrumsURL: URL?
+    /// Remix row currently working (row id) + last error, for the sheet.
+    @Published public var remixBusy: String?
+    @Published public var remixError: String?
+
+    /// Toggle groove humanize; fetches the template on first use.
+    public func toggleHumanize() {
+        guard let analysisId = currentBundle?.analysisId else { return }
+        if remixHumanizeOn {
+            remixHumanizeOn = false
+            modeCoordinator.sequencePadManager.grooveOffsets = nil
+            return
+        }
+        if let template = grooveTemplate {
+            remixHumanizeOn = true
+            modeCoordinator.sequencePadManager.grooveOffsets = template
+            return
+        }
+        remixBusy = "humanize"
+        remixError = nil
+        let base = backendBaseURL
+        Task { @MainActor in
+            defer { self.remixBusy = nil }
+            do {
+                let offsets = try await RemixClient().fetchGroove(
+                    baseURL: base, analysisId: analysisId)
+                guard self.currentBundle?.analysisId == analysisId else { return }
+                self.grooveTemplate = offsets
+                self.remixHumanizeOn = true
+                self.modeCoordinator.sequencePadManager.grooveOffsets = offsets
+            } catch {
+                self.remixError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Server-ranked Re-Drum kit donors for the sheet's picker.
+    public func fetchRedrumCandidates() async -> [RedrumCandidate] {
+        guard let analysisId = currentBundle?.analysisId else { return [] }
+        return (try? await RemixClient().fetchRedrumCandidates(
+            baseURL: backendBaseURL, analysisId: analysisId)) ?? []
+    }
+
+    /// Apply Re-Drum: swap the drums stem for the rendered replacement
+    /// (this song's groove on `kit`'s drums). Reloads the stem player —
+    /// the only supported swap path (AVAudioFile can't rebind buffers).
+    public func applyRedrum(kit: String) {
+        guard let bundle = currentBundle else { return }
+        let analysisId = bundle.analysisId
+        remixBusy = "redrum"
+        remixError = nil
+        let base = backendBaseURL
+        Task { @MainActor in
+            defer { self.remixBusy = nil }
+            do {
+                let wav = try await RemixClient().fetchRedrumStem(
+                    baseURL: base, analysisId: analysisId, kit: kit)
+                guard self.currentBundle?.analysisId == analysisId else { return }
+                if self.originalDrumsURL == nil {
+                    self.originalDrumsURL = self.currentStemLocalURLs["drums"]
+                }
+                var urls = self.currentStemLocalURLs
+                urls["drums"] = wav
+                try await self.stemPlayer.load(bundle: bundle, localURLs: urls)
+                guard self.currentBundle?.analysisId == analysisId else { return }
+                self.currentStemLocalURLs = urls
+                self.redrumActiveKit = kit
+            } catch {
+                self.remixError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Back to the song's real drums (A/B).
+    public func clearRedrum() {
+        guard let bundle = currentBundle, let original = originalDrumsURL,
+              redrumActiveKit != nil else { return }
+        let analysisId = bundle.analysisId
+        remixBusy = "redrum"
+        Task { @MainActor in
+            defer { self.remixBusy = nil }
+            do {
+                var urls = self.currentStemLocalURLs
+                urls["drums"] = original
+                try await self.stemPlayer.load(bundle: bundle, localURLs: urls)
+                guard self.currentBundle?.analysisId == analysisId else { return }
+                self.currentStemLocalURLs = urls
+                self.redrumActiveKit = nil
+            } catch {
+                self.remixError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Song-switch hygiene for remix state (called from the load path).
+    private func resetRemixState() {
+        remixHumanizeOn = false
+        grooveTemplate = nil
+        modeCoordinator.sequencePadManager.grooveOffsets = nil
+        redrumActiveKit = nil
+        originalDrumsURL = nil
+        remixBusy = nil
+        remixError = nil
     }
 
     /// Instant Groove: fire the single best-scoring loop in each core category
@@ -2284,6 +2411,7 @@ public final class AppState: ObservableObject {
         songSeconds = 0
         loopRegion = nil
         currentStemLocalURLs = [:]
+        resetRemixState()
         waveformPeaks = nil
         unloadSongDnaPacks()
         songDnaPacks = []
