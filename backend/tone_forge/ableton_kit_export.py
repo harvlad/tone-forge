@@ -90,10 +90,84 @@ def _materialize_stems(
     return materialize_stems(result, scratch, roles=roles)
 
 
+# Loop-seam crossfade length. The .adg hard-loops every pad (SustainLoop
+# with Crossfade 0) and slice boundaries are bar-snapped, not
+# zero-crossing aligned — any non-zero sample at the seam is an audible
+# click on every wrap. ~15ms matches the clients' baked seam
+# (SeamlessLoop.exactCrossfaded in ToneForgeEngine, 223920dd).
+_SEAM_CROSSFADE_S = 0.015
+
+# One-shot declick ramp: just enough to kill a non-zero first/last
+# sample; long enough to matter musically would soften transients.
+_DECLICK_S = 0.003
+
+
+def _bake_loop_seam(data, continuation, sr: int):
+    """Exact-length seamless-loop bake (port of the clients'
+    SeamlessLoop.exactCrossfaded). Never trims: bar-length must stay
+    exact or Live's grid and the plugin's rate-match drift.
+
+    With continuation audio (frames that genuinely follow the slice end
+    in the stem), the seam is baked into the HEAD: continuation fades
+    out (cos) while the head fades in (sin) — every wrap then flows
+    into audio that actually followed it. Without continuation (slice
+    ends at stem end) fall back to equal-power edge ramps: a brief
+    level dip at the seam instead of a click.
+    """
+    import numpy as np
+
+    n = len(data)
+    if n <= 8:
+        return data
+    x = int(_SEAM_CROSSFADE_S * sr)
+    x = max(1, min(x, n // 2 - 1))
+    xe = min(x, len(continuation))
+
+    def _gains(count: int):
+        t = np.arange(count, dtype=np.float64) / count
+        g_in = np.sin(0.5 * np.pi * t)
+        g_out = np.cos(0.5 * np.pi * t)
+        if data.ndim > 1:  # broadcast over channels
+            g_in = g_in[:, None]
+            g_out = g_out[:, None]
+        return g_in, g_out
+
+    out = np.array(data, dtype=np.float64, copy=True)
+    if xe > 0:
+        g_in, g_out = _gains(xe)
+        out[:xe] = out[:xe] * g_in + continuation[:xe] * g_out
+    else:
+        g_in, g_out = _gains(x)
+        out[:x] *= g_in
+        out[n - x:] *= g_out
+    return out
+
+
+def _declick_edges(data, sr: int):
+    """Tiny linear in/out ramps for one-shot pads — they don't wrap, so
+    only the raw cut edges themselves can click."""
+    import numpy as np
+
+    n = len(data)
+    x = min(int(_DECLICK_S * sr), n // 2)
+    if x < 1:
+        return data
+    ramp = np.arange(x, dtype=np.float64) / x
+    if data.ndim > 1:
+        ramp = ramp[:, None]
+    out = np.array(data, dtype=np.float64, copy=True)
+    out[:x] *= ramp
+    out[n - x:] *= ramp[::-1]
+    return out
+
+
 def _render_slice(
-    stem_path: Path, start_sec: float, end_sec: float, dest: Path
+    stem_path: Path, start_sec: float, end_sec: float, dest: Path,
+    loop: bool = False,
 ) -> Optional[Tuple[int, int]]:
     """Cut [start_sec, end_sec] from the stem into a PCM_16 WAV.
+    For loop pads the seam is baked in (see _bake_loop_seam) — the full
+    stem is open here, the only place continuation audio is available.
     Returns (frames, sample_rate) or None on failure."""
     try:
         import soundfile as sf
@@ -107,10 +181,19 @@ def _render_slice(
             stop = min(len(f), int(end_sec * sr))
             if stop <= start:
                 return None
+            n = stop - start
             f.seek(start)
-            data = f.read(stop - start)
+            if loop:
+                # Over-read past the slice end: the extra frames are the
+                # continuation blended into the head, never appended —
+                # output length stays exactly n.
+                seam = int(_SEAM_CROSSFADE_S * sr)
+                raw = f.read(min(len(f) - start, n + seam))
+                data = _bake_loop_seam(raw[:n], raw[n:], sr)
+            else:
+                data = _declick_edges(f.read(n), sr)
         sf.write(str(dest), data, sr, subtype=_WAV_SUBTYPE)
-        return (stop - start, sr)
+        return (n, sr)
     except Exception as exc:
         logger.warning("[ableton-kit] slice failed (%s): %s", stem_path.name, exc)
         return None
@@ -407,7 +490,9 @@ def build_ableton_kit_zip(
                 end = float(start) + bars * bar_sec
             fname = _sample_filename(len(rendered), pad)
             dest = scratch / fname
-            meta = _render_slice(stem, float(start), float(end), dest)
+            meta = _render_slice(
+                stem, float(start), float(end), dest,
+                loop=bool(pad.get("loopable", True)))
             if meta is None:
                 continue
             frames, sr = meta

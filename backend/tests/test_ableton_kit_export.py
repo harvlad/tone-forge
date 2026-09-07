@@ -51,6 +51,65 @@ def test_render_slice_rejects_empty_window(tmp_path):
     assert ake._render_slice(stem, 0.9, 0.9, tmp_path / "out.wav") is None
 
 
+def test_render_loop_slice_length_unchanged(tmp_path):
+    # The seam bake over-reads continuation audio past the slice end;
+    # it must be blended into the head, never appended — Live and the
+    # plugin both rely on the bar length staying exact.
+    stem = tmp_path / "stem.wav"
+    _write_tone(stem, seconds=2.0)
+    dest = tmp_path / "out.wav"
+
+    meta = ake._render_slice(stem, 0.5, 1.5, dest, loop=True)
+
+    assert meta is not None
+    frames, sr = meta
+    assert frames == 44100
+    data, _ = sf.read(str(dest))
+    assert len(data) == 44100
+
+
+def test_render_loop_slice_seam_is_continuous(tmp_path):
+    # Sine cut deliberately mid-cycle: the raw wrap jumps by a large
+    # step, the baked wrap by roughly one sample of the sine.
+    sr = 44100
+    stem = tmp_path / "stem.wav"
+    _write_tone(stem, seconds=2.0, sr=sr)
+    dest = tmp_path / "out.wav"
+    end_sec = 1.003  # 220.66 cycles of 220 Hz — nowhere near a period
+
+    meta = ake._render_slice(stem, 0.0, end_sec, dest, loop=True)
+
+    assert meta is not None
+    n = int(end_sec * sr)
+    t = np.arange(n) / sr
+    sig = 0.5 * np.sin(2 * np.pi * 220 * t)
+    raw_gap = abs(sig[n - 1] - sig[0])
+    assert raw_gap > 0.3  # sanity: the raw cut really would click
+
+    data, _ = sf.read(str(dest))
+    baked_gap = abs(data[-1] - data[0])
+    assert baked_gap < raw_gap / 10
+    assert baked_gap < 0.03  # ~one sample step of a 220 Hz sine
+
+
+def test_render_loop_slice_falls_back_at_stem_end(tmp_path):
+    # No continuation exists past the stem end: equal-power edge fades
+    # instead, still at exact length — both wrap edges land near zero.
+    sr = 44100
+    stem = tmp_path / "stem.wav"
+    _write_tone(stem, seconds=1.0, sr=sr)
+    dest = tmp_path / "out.wav"
+
+    meta = ake._render_slice(stem, 0.5, 1.0, dest, loop=True)
+
+    assert meta is not None
+    frames, _ = meta
+    assert frames == sr // 2
+    data, _ = sf.read(str(dest))
+    assert len(data) == sr // 2
+    assert abs(data[0]) < 1e-3 and abs(data[-1]) < 1e-3
+
+
 # ---------------------------------------------------------------------------
 # Drum Rack XML
 # ---------------------------------------------------------------------------
