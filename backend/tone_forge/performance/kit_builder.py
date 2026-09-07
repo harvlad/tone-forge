@@ -230,18 +230,27 @@ class AutoKitBuilder:
             if pick:
                 chosen.append(pick)
                 self._mark(pick, used_ids, used_patterns, stem_counts)
-        # top up remaining slots with the next best unused (still diverse) assets
-        for a in pool:
-            if len(chosen) >= pads:
+        # Top up remaining slots, re-ranking every pick with the same
+        # stem-diversity penalty _best_for uses. The old plain rank scan let
+        # one loud stem sweep the kit (a 16-pad rap kit came back 10/16
+        # vocals); the growing per-stem penalty hands later slots to the
+        # next-best other stems instead.
+        while len(chosen) < pads:
+            best, best_key = None, float("-inf")
+            for a in pool:
+                if a.id in used_ids or (a.pattern_id and a.pattern_id in used_patterns):
+                    continue
+                # `pool` may be the relaxed starvation pool (raw ranked
+                # assets), so the top-up must re-check audibility or it
+                # re-seats exactly the near-silent slices the gate excluded.
+                if not _audible(a):
+                    continue
+                key = self._score(a) - 0.15 * stem_counts.get(a.stem, 0)
+                if key > best_key:
+                    best, best_key = a, key
+            if best is None:
                 break
-            if a.id in used_ids or (a.pattern_id and a.pattern_id in used_patterns):
-                continue
-            # `pool` may be the relaxed starvation pool (raw ranked assets),
-            # so the top-up must re-check audibility or it re-seats exactly
-            # the near-silent slices the usable gate excluded.
-            if not _audible(a):
-                continue
-            chosen.append(a); self._mark(a, used_ids, used_patterns, stem_counts)
+            chosen.append(best); self._mark(best, used_ids, used_patterns, stem_counts)
         if not chosen:
             # Total starvation (every asset under the energy floor): a quiet
             # kit beats an empty one — relax the floor, keep the ranking.
