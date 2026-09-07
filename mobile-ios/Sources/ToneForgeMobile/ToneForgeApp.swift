@@ -826,6 +826,10 @@ public final class AppState: ObservableObject {
         // shared reverb, no layer fader — D-013 rationale in Metronome).
         metronome.attach()
 
+        // Before start(), so a restart during boot is covered too.
+        audioEngine.onEngineRestarted = { [weak self] in
+            self?.rescheduleStemsAfterEngineRestart()
+        }
         audioEngine.start()
 
         wireSampleSettings()
@@ -2682,6 +2686,21 @@ public final class AppState: ObservableObject {
     }
 
     // MARK: - Transport
+
+    /// An AVAudioEngine restart (configuration change on a sample-rate or
+    /// channel-count boundary, route swap, media-services reset) keeps the
+    /// node graph but throws away every scheduled segment. Pads and the
+    /// metronome schedule per trigger so they heal themselves; StemPlayer
+    /// schedules ONE multi-minute segment per stem at play time, so it
+    /// alone is stranded — the clock keeps running, the UI keeps saying
+    /// "playing", and nothing comes out until the user happens to seek.
+    /// That is the "Remix killed the sound" report: swapping the drums
+    /// stem re-attaches the whole stem subgraph on a live engine, which
+    /// is exactly the reconfiguration iOS restarts on.
+    private func rescheduleStemsAfterEngineRestart() {
+        guard isPlaying, stemPlayer.isLoaded else { return }
+        stemPlayer.play(atSongSeconds: audioEngine.clock.nowSongSeconds)
+    }
 
     public func play() {
         audioEngine.play()

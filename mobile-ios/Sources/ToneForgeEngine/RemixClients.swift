@@ -87,6 +87,10 @@ public struct RemixClient: Sendable {
     /// pair runs server-side on this request (~10-60 s) and the payload is
     /// a full-length stem (tens of MB) — URLSession's 60 s default request
     /// timeout killed it on slower links and the row read as "did nothing".
+    /// Mirrors REDRUM_VERSION in the backend's redrum.py — see the cache
+    /// filename below.
+    private static let redrumRenderVersion = 2
+
     private static let longHaul: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 300
@@ -108,7 +112,13 @@ public struct RemixClient: Sendable {
         let dir = caches.appendingPathComponent("toneforge/redrum", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let safeKit = kit.replacingOccurrences(of: ":", with: "_")
-        let dest = dir.appendingPathComponent("\(analysisId)_\(safeKit).wav")
+        // Version in the FILENAME, same reason the kit samples carry one:
+        // this cache is consulted before the request, so a render-format
+        // change (v1's mono stem) would otherwise be served from disk
+        // forever. Keep in step with REDRUM_VERSION in
+        // backend/tone_forge/performance/redrum.py.
+        let dest = dir.appendingPathComponent(
+            "\(analysisId)_\(safeKit)_v\(Self.redrumRenderVersion).wav")
         if fm.fileExists(atPath: dest.path) { return dest }
 
         let url = try songURL(baseURL, analysisId, "redrum",
