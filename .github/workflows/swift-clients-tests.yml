@@ -1,0 +1,77 @@
+# mobile-ios + jam-desktop — build and unit-test gate.
+#
+# The gap this closes: `connect-tests` covers connect/ only, so until now
+# NOTHING in CI compiled ToneForgeEngine, ToneForgeMobile or JamDesktop. A
+# Re-Drum fix touching StemPlayer, AudioEngine, SessionController and
+# SequencerClock reached main having never been built — CodeQL's
+# Analyze (swift) job was still running when the PR merged, and it is a
+# security analysis, not a gate anyone waits on.
+#
+# Scoped to the two Swift client packages and paths-filtered like
+# connect-tests: the macos-14 pool is expensive, and a backend-only change
+# has no reason to spin up macOS. jam-desktop depends on connect
+# (ConnectCore) and mobile-ios (ToneForgeEngine) by path, so a change to
+# either of those can break it — connect/** is in its filter for that
+# reason.
+#
+# Build and test are separate steps on purpose. A compile break and a
+# failing assertion are different problems, and reading which step went red
+# tells you which one you have without opening the log.
+
+name: swift-clients-tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile-ios/**"
+      - "jam-desktop/**"
+      - "connect/**"
+      - ".github/workflows/swift-clients-tests.yml"
+  pull_request:
+    paths:
+      - "mobile-ios/**"
+      - "jam-desktop/**"
+      - "connect/**"
+      - ".github/workflows/swift-clients-tests.yml"
+
+jobs:
+  swift-clients:
+    runs-on: macos-14
+    timeout-minutes: 40
+    strategy:
+      # Report both packages every run. Without this a mobile break masks a
+      # desktop break and you fix them one CI cycle at a time.
+      fail-fast: false
+      matrix:
+        include:
+          - name: mobile-ios
+            package: mobile-ios
+          - name: jam-desktop
+            package: jam-desktop
+    name: ${{ matrix.name }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # XCTest ships only with full Xcode — the Command Line Tools have no
+      # XCTest, and mixing toolchains produces incompatible .swiftmodule
+      # errors (mobile-ios/CLAUDE.md notes this). Pin one toolchain.
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Print toolchain versions
+        run: |
+          xcode-select -p
+          swift --version
+
+      - name: Resolve SwiftPM dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build
+
+      - name: Run tests
+        run: swift test
