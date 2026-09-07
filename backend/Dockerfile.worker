@@ -17,11 +17,13 @@
 # on a fresh host (job stranded at "waiting for the analysis engine"). This
 # cuda12.4-cudnn9-runtime base is ~3 GB. CUDA 12.4 runtime runs on any host
 # driver >= 12.4 (the 12.8.1 image lost the GPU on 12.8.0-driver hosts).
-FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:2.8.0-cuda12.6-cudnn9-runtime
 
 # HARD pin of the torch stack for every pip step in this build AND at
 # runtime (ENV persists into the pod, so the bootstrap inherits it).
-# Without this, requirements resolution upgraded torch to a CUDA-13
+# Root cause found 2026-09-07: natten-mps (all-in-one-mps dep) floors
+# torch>=2.8, so any unconstrained resolve jumped to the newest torch —
+# a CUDA-13
 # build inside the image (observed 2026-09-07: torch 2.14+cu130 baked
 # into the "cuda12.4" image) — cu13 wheels need newer host drivers
 # than many RunPod hosts run (the intermittent torch.cuda-unavailable
