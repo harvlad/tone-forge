@@ -315,8 +315,15 @@ public final class LaunchpadController {
     /// applies only then; stopped = pads fire immediately.
     @ObservationIgnored public var isTransportPlaying: (() -> Bool)?
     /// Wall-clock anchor for the stopped-transport loop grid (host
-    /// ticks of the first loop's launch; 0 = no grid yet).
-    @ObservationIgnored private var freerunAnchorHost: UInt64 = 0
+    /// seconds of the first loop's launch; nil = no grid yet).
+    @ObservationIgnored private var freerunAnchorHostSeconds: Double?
+    /// Host wall clock in seconds — mach_absolute_time in production.
+    /// Injectable (internal, `@testable`) so the free-run grid is
+    /// deterministic under test; `nowProvider` can't stand in for it
+    /// because it's SONG time, frozen while the transport is stopped.
+    @ObservationIgnored var hostNowSeconds: () -> Double = {
+        Double(mach_absolute_time()) * LaunchpadController.hostTickSeconds
+    }
     /// mach_absolute_time ticks -> seconds.
     private static let hostTickSeconds: Double = {
         var info = mach_timebase_info_data_t()
@@ -559,14 +566,17 @@ public final class LaunchpadController {
             // without auto-starting the transport. Tap mode and
             // lock-off stay instant.
             if playbackMode == .loop && loopLockEnabled {
-                let hostNow = mach_absolute_time()
-                if activePads.isEmpty || freerunAnchorHost == 0 {
-                    freerunAnchorHost = hostNow
+                let hostNow = hostNowSeconds()
+                // Re-anchor whenever nothing is sounding: releasing ALL
+                // pads abandons the free-run grid, and the next press
+                // fires immediately on a fresh cycle — BY DESIGN (a new
+                // jam shouldn't wait on a grid nobody can hear).
+                if activePads.isEmpty || freerunAnchorHostSeconds == nil {
+                    freerunAnchorHostSeconds = hostNow
                     fireAt = now
                 } else {
                     let L = loopLengthSeconds
-                    let elapsed =
-                        Double(hostNow - freerunAnchorHost) * Self.hostTickSeconds
+                    let elapsed = hostNow - (freerunAnchorHostSeconds ?? hostNow)
                     let intoCycle = elapsed.truncatingRemainder(dividingBy: L)
                     // Small grace: a tap RIGHT on the boundary fires now.
                     let delay = intoCycle < 0.08 ? 0 : (L - intoCycle)

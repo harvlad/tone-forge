@@ -139,6 +139,10 @@ final class LaunchpadControllerTests: XCTestCase {
                 stem: "other", sliceMode: "chord", chops: [chop(0)])]
         ))
         controller.quantize = .quarter
+        // Quantize only applies while the transport rolls — a stopped
+        // transport fires immediately (mobile parity). This test predates
+        // that change and was failing for the wrong reason without it.
+        controller.isTransportPlaying = { true }
 
         var fired: [(PadAssignment, Double)] = []
         controller.onTrigger = { fired.append(($1, $2)) }
@@ -203,6 +207,183 @@ final class LaunchpadControllerTests: XCTestCase {
         XCTAssertEqual(released.count, 1)
         XCTAssertEqual(released[0].chop.idx, 0)
         XCTAssertFalse(controller.activePads.contains(pad))
+    }
+
+    // MARK: - Loop arming / quantize regression net
+    //
+    // These pin the padDown arming matrix that keeps regressing during
+    // audio work: tap = instant, loop+lock+rolling = shared loop-cycle
+    // grid, loop+lock+stopped = wall-clock free-run grid, lock-off =
+    // bar quantize. Song time comes from nowProvider; the free-run grid
+    // runs on the injectable hostNowSeconds host clock.
+
+    /// Loop-ready controller: tempo-carrying bundle with three chops on
+    /// the top row, transport state + host clock injectable per test.
+    private func loopController(
+        tempoBpm: Double?, now: @escaping () -> Double
+    ) -> LaunchpadController {
+        let controller = LaunchpadController(
+            nowProvider: now, fetcher: FakeFetcher())
+        controller.configure(bundle: bundle(
+            downbeats: [0, 2, 4],
+            tempoBpm: tempoBpm,
+            presets: ["harmonic": BundlePreset(
+                stem: "other", sliceMode: "chord",
+                chops: [chop(0), chop(1), chop(2)])]
+        ))
+        return controller
+    }
+
+    func testDefaultPlaybackModeIsTapAndFiresImmediately() {
+        var now = 1.23
+        let controller = loopController(tempoBpm: 120, now: { now })
+        XCTAssertEqual(controller.playbackMode, .tap)
+
+        var fireAt: Double?
+        controller.onTrigger = { fireAt = $2 }
+
+        // Stopped transport: tap is instant.
+        controller.padDown(LaunchpadPad(row: 0, col: 0))
+        XCTAssertEqual(fireAt, 1.23)
+        // Rolling transport, quantize off: still instant.
+        controller.isTransportPlaying = { true }
+        now = 4.56
+        controller.padDown(LaunchpadPad(row: 0, col: 1))
+        XCTAssertEqual(fireAt, 4.56)
+    }
+
+    func testLoopLockRollingQuantizesToLoopCycleBoundary() {
+        // 100 BPM → bar 2.4 s → 3 bars fit 8 s → L = 7.2 s. Using a
+        // non-8 L proves the grid is multiples of loopLengthSeconds,
+        // not a hardcoded 8 s.
+        var now = 3.0
+        let controller = loopController(tempoBpm: 100, now: { now })
+        controller.playbackMode = .loop
+        XCTAssertTrue(controller.loopLockEnabled)  // lock is the default
+        controller.isTransportPlaying = { true }
+
+        var fireAt: Double?
+        controller.onTrigger = { fireAt = $2 }
+
+        controller.padDown(LaunchpadPad(row: 0, col: 0))
+        XCTAssertEqual(fireAt ?? -1, 7.2, accuracy: 1e-9)
+
+        // 50 ms past the 7.2 boundary — inside the 0.12 s grace, fires
+        // NOW instead of waiting a whole cycle.
+        now = 7.25
+        controller.padDown(LaunchpadPad(row: 0, col: 1))
+        XCTAssertEqual(fireAt ?? -1, 7.25, accuracy: 1e-9)
+    }
+
+    func testLoopLockStoppedTransportFreeRunsOnAnchoredCycle() {
+        // Transport STOPPED (song clock frozen): loops must not quantize
+        // against the dead song grid. First press fires immediately and
+        // anchors a wall-clock cycle; later presses queue to that anchor.
+        var now = 5.0
+        var hostNow = 1000.0
+        let controller = loopController(tempoBpm: 120, now: { now })  // L = 8 s
+        controller.playbackMode = .loop
+        controller.isTransportPlaying = { false }
+        controller.hostNowSeconds = { hostNow }
+
+        var fireAt: Double?
+        controller.onTrigger = { fireAt = $2 }
+        let padA = LaunchpadPad(row: 0, col: 0)
+        let padB = LaunchpadPad(row: 0, col: 1)
+        let padC = LaunchpadPad(row: 0, col: 2)
+
+        // First loop: instant, anchors the cycle at hostNow = 1000.
+        controller.padDown(padA)
+        XCTAssertEqual(fireAt ?? -1, 5.0, accuracy: 1e-9)
+
+        // 3 s into the 8 s cycle: queues to the anchor cycle,
+        // delay = L - intoCycle = 5 s.
+        hostNow = 1003.0
+        now = 5.5
+        controller.padDown(padB)
+        XCTAssertEqual(fireAt ?? -1, 5.5 + 5.0, accuracy: 1e-9)
+
+        // 50 ms after the cycle wraps — inside the 0.08 s grace: NOW.
+        hostNow = 1008.05
+        now = 6.0
+        controller.padDown(padC)
+        XCTAssertEqual(fireAt ?? -1, 6.0, accuracy: 1e-9)
+    }
+
+    func testFreeRunReanchorsAfterAllPadsReleased() {
+        // Releasing ALL pads abandons the free-run grid; the next loop
+        // press fires immediately on a FRESH cycle — BY DESIGN (a new
+        // jam shouldn't wait on a grid nobody can hear).
+        var now = 5.0
+        var hostNow = 1000.0
+        let controller = loopController(tempoBpm: 120, now: { now })  // L = 8 s
+        controller.playbackMode = .loop
+        controller.isTransportPlaying = { false }
+        controller.hostNowSeconds = { hostNow }
+
+        var fireAt: Double?
+        controller.onTrigger = { fireAt = $2 }
+        let padA = LaunchpadPad(row: 0, col: 0)
+        let padB = LaunchpadPad(row: 0, col: 1)
+
+        controller.padDown(padA)               // anchor at 1000
+        controller.padDown(padA)               // loop re-tap toggles it OFF
+        XCTAssertTrue(controller.activePads.isEmpty)
+
+        // Mid-old-cycle press: would owe a 4.3 s wait on the stale grid;
+        // instead it re-anchors and fires immediately.
+        hostNow = 1003.7
+        now = 6.0
+        fireAt = nil
+        controller.padDown(padA)
+        XCTAssertEqual(fireAt ?? -1, 6.0, accuracy: 1e-9)
+
+        // And the NEW anchor governs: 2 s into the fresh cycle → 6 s wait
+        // (the stale 1000-anchor would have owed 8 - 5.7 = 2.3 s).
+        hostNow = 1005.7
+        now = 6.3
+        controller.padDown(padB)
+        XCTAssertEqual(fireAt ?? -1, 6.3 + 6.0, accuracy: 1e-9)
+    }
+
+    func testLoopLockOffFallsBackToBarQuantize() {
+        // Lock off + quantize .off in loop mode = the bar-quantize
+        // fallback (single hits still land on a downbeat).
+        var now = 0.7
+        let controller = loopController(tempoBpm: 100, now: { now })
+        controller.playbackMode = .loop
+        controller.loopLockEnabled = false
+        controller.isTransportPlaying = { true }
+        controller.quantize = .off
+
+        var fireAt: Double?
+        controller.onTrigger = { fireAt = $2 }
+
+        // Downbeats [0, 2, 4]: 0.7 (past the 0.08 s grace of 0) → 2.0,
+        // NOT the 7.2 s loop-cycle boundary.
+        controller.padDown(LaunchpadPad(row: 0, col: 0))
+        XCTAssertEqual(fireAt ?? -1, 2.0, accuracy: 1e-9)
+
+        // An explicit Quantize control wins over the bar fallback.
+        now = 2.7
+        controller.quantize = .phrase
+        controller.padDown(LaunchpadPad(row: 0, col: 1))
+        XCTAssertEqual(fireAt ?? -1, 2.7, accuracy: 1e-9)  // no sections → t
+    }
+
+    func testLoopLengthSecondsSnapsKitWindowToWholeBars() {
+        // 100 BPM: bar = 2.4 s, round(8 / 2.4) = 3 bars → 7.2 s.
+        XCTAssertEqual(
+            loopController(tempoBpm: 100, now: { 0 }).loopLengthSeconds,
+            7.2, accuracy: 1e-9)
+        // 120 BPM: bar = 2 s, 4 bars → exactly 8 s.
+        XCTAssertEqual(
+            loopController(tempoBpm: 120, now: { 0 }).loopLengthSeconds,
+            8.0, accuracy: 1e-9)
+        // No tempo: the raw 8 s kit window.
+        XCTAssertEqual(
+            loopController(tempoBpm: nil, now: { 0 }).loopLengthSeconds,
+            8.0, accuracy: 1e-9)
     }
 
     // MARK: - Slice-mode switch

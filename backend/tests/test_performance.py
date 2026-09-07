@@ -11,6 +11,7 @@ import pytest
 from tone_forge.performance.grid import MusicalGrid
 from tone_forge.performance.graph import (
     ContentType,
+    GridPos,
     Loop,
     LoopQuality,
     MusicalGraph,
@@ -155,10 +156,10 @@ def _asset(stem, ctype, *, start, loop_conf, score, pattern=None, difficulty=0.3
     ).with_id()
 
 
-def _synth_graph(assets, phrases=(), loops=()):
+def _synth_graph(assets, phrases=(), loops=(), tempo=BPM):
     return MusicalGraph(
         song_id="s", content_hash="h", module_version="test",
-        config_hash="cfg", grid_tempo_bpm=BPM, time_signature=(4, 4),
+        config_hash="cfg", grid_tempo_bpm=tempo, time_signature=(4, 4),
         phrases=tuple(phrases), loops=tuple(loops), assets=tuple(assets),
     )
 
@@ -303,8 +304,8 @@ def test_pad_window_is_whole_bars_at_song_tempo():
     The old fixed `start + 8.0 s` window ignored the phrase's musical
     boundaries, so the exported loop region was one the loop metrics were
     never measured on. A 2-bar phrase must export exactly its 2 bars; an
-    8-bar phrase must truncate to the largest whole bar count under the 8 s
-    cap (4 bars here), never a fractional cut.
+    8-bar phrase must truncate to the largest bar count that DIVIDES it and
+    fits the 8 s cap (4 bars here), never a fractional cut.
     """
     short = _asset("other", ContentType.CHORD_LOOP, start=0.0, loop_conf=0.8,
                    score=0.9, bars=2)
@@ -379,6 +380,227 @@ def test_truncated_window_lands_on_the_loudest_bars():
     pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
     assert pad["loopStartSec"] == pytest.approx(8.0)   # bars 5-8
     assert pad["loopEndSec"] == pytest.approx(16.0)
+
+
+# --- Pad WINDOW invariants on a REAL (drifting) grid ---------------------
+# The grid's real downbeats drift against any constant BPM, so these tests
+# build GridPos directly with an explicit LOCAL bar length instead of
+# snapping to the 120 BPM `_grid()`. The kit builder must derive every
+# window from the phrase's own span (pos + length_beats), never from
+# graph.grid_tempo_bpm.
+
+
+def _pos(start, bars, bar_s, beats_per_bar=4):
+    """A bar-aligned GridPos whose LOCAL bar length is explicit — and free to
+    disagree with the graph's constant tempo, like real snapped phrases do."""
+    return GridPos(
+        start_s=start, end_s=start + bars * bar_s,
+        start_beat=0, length_beats=float(bars * beats_per_bar),
+        start_bar=0, length_bars=float(bars), is_bar_aligned=True,
+    )
+
+
+def _asset_at(stem, ctype, pos, *, loop_conf=0.8, score=0.9, source=None):
+    """A PerformanceAsset on an explicit GridPos (see `_pos`)."""
+    return PerformanceAsset(
+        stem=stem, source_id=source or f"{stem}-{pos.start_s}", pos=pos,
+        content_type=ctype, performance_score=score, difficulty=0.3,
+        loopable=loop_conf >= 0.55, loop_confidence=loop_conf,
+    ).with_id()
+
+
+def test_truncation_picks_a_bar_count_that_divides_the_phrase():
+    """A 4-bar groove over the cap truncates to 2 bars — the largest count
+    that DIVIDES 4 — never the 3 that merely fits.
+
+    At ~95 BPM a bar is ~2.52 s, so 4 bars (~10.1 s) exceed the 8 s cap and
+    3 bars fit. But a 3-bar cut of a 4-bar pattern wraps bar 3 → bar 1,
+    skipping the fill bar that leads back into the "1" — an audible dead
+    spot at every wrap ("in time but not seamless": a 110 ms energy hole vs
+    60 ms at ordinary bar boundaries on the real song). The 2-bar cut is
+    pattern-coherent. A phrase that fits entirely is untouched.
+    """
+    bar = 2.523
+    four = _asset_at("drums", ContentType.RHYTHM_LOOP, _pos(0.0, 4, bar))
+    fits = _asset_at("other", ContentType.CHORD_LOOP, _pos(15.138, 3, bar),
+                     score=0.85)  # 3 bars = 7.57 s < cap → untouched
+    kit = AutoKitBuilder().build(_synth_graph([four, fits]), pads=4)
+    by_id = {p["assetId"]: p for p in kit["pads"]}
+
+    span4 = by_id[four.id]["loopEndSec"] - by_id[four.id]["loopStartSec"]
+    assert span4 == pytest.approx(2 * bar, abs=1e-3), \
+        f"expected the 2-bar divisor cut, got {span4 / bar:.3f} bars"
+    span3 = by_id[fits.id]["loopEndSec"] - by_id[fits.id]["loopStartSec"]
+    assert span3 == pytest.approx(3 * bar, abs=1e-3)
+    assert by_id[fits.id]["loopStartSec"] == pytest.approx(15.138, abs=1e-3)
+
+
+def test_truncation_prime_bar_count_falls_back_to_largest_fit():
+    """When no divisor > 1 fits the cap (5 bars, cap 3) the cut is the
+    largest that fits — 3 bars. A 1-bar loop of a 5-bar phrase is no more
+    pattern-coherent than 3 bars and loses content."""
+    bar = 2.523  # cap_bars = 3; divisors of 5 under it: only 1
+    a = _asset_at("other", ContentType.CHORD_LOOP, _pos(0.0, 5, bar))
+    kit = AutoKitBuilder().build(_synth_graph([a]), pads=2)
+    pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
+    span = pad["loopEndSec"] - pad["loopStartSec"]
+    assert span == pytest.approx(3 * bar, abs=1e-3)
+
+
+def test_window_length_derives_from_local_bars_not_graph_tempo():
+    """Window lengths come from the phrase's OWN span, not the constant
+    graph tempo.
+
+    Local bar 2.03 s vs the graph's constant 2.0 s at 120 BPM (~1.5% drift —
+    Doomsday-sized). A constant-tempo window cuts short of the real downbeat
+    so the wrap lands in the pre-beat gap and audibly pauses. The exported
+    window must be an exact multiple of the LOCAL bar and NOT of the
+    constant one.
+    """
+    local_bar = 2.03
+    a = _asset_at("other", ContentType.CHORD_LOOP, _pos(0.0, 8, local_bar))
+    kit = AutoKitBuilder().build(_synth_graph([a]), pads=2)
+    pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
+    span = pad["loopEndSec"] - pad["loopStartSec"]
+    assert span == pytest.approx(2 * local_bar, abs=1e-3)  # divisor cut, 4.06 s
+    assert span / local_bar == pytest.approx(round(span / local_bar), abs=1e-3)
+    # NOT a whole number of constant-tempo bars (4.06 / 2.0 = 2.03).
+    assert abs(span / 2.0 - round(span / 2.0)) > 0.01
+
+
+def test_loop_region_is_always_the_full_exported_slice():
+    """loopStartSec/EndSec == stemSlice start/end on EVERY pad, whichever
+    window path produced it (fits-entirely, bar-truncated, optimized seam).
+
+    The app loops the whole exported slice; a loop sub-region diverging from
+    the slice re-introduces the original defect — loop metrics describing a
+    region the exported audio doesn't contain.
+    """
+    fits = _asset("other", ContentType.CHORD_LOOP, start=0.0, loop_conf=0.8,
+                  score=0.9, bars=2)
+    truncated = _asset_at("drums", ContentType.RHYTHM_LOOP, _pos(8.0, 4, 2.523))
+    opt = _asset("bass", ContentType.BASS_GROOVE, start=24.0, loop_conf=0.85,
+                 score=0.8, bars=2)
+    lp = Loop(
+        phrase_id="ph", stem="bass", pos=opt.pos, id=opt.source_id,
+        quality=LoopQuality(confidence=0.85, crossfade_ms=12.0,
+                            optimized_start_s=24.05, optimized_end_s=28.05),
+    )
+    kit = AutoKitBuilder().build(
+        _synth_graph([fits, truncated, opt], loops=[lp]), pads=4)
+    assert len(kit["pads"]) == 3
+    for p in kit["pads"]:
+        assert p["loopStartSec"] == p["stemSlice"]["startSec"]
+        assert p["loopEndSec"] == p["stemSlice"]["endSec"]
+
+
+def test_optimized_window_over_cap_falls_back_to_phrase_span():
+    """An optimized seam window that is whole bars but EXCEEDS the cap is
+    rejected — the guard requires both — and the pad exports the phrase's
+    own bar-aligned span."""
+    a = _asset("other", ContentType.CHORD_LOOP, start=4.0, loop_conf=0.85,
+               score=0.9, bars=2)
+    lp = Loop(
+        phrase_id="ph", stem="other", pos=a.pos, id=a.source_id,
+        # 10 s = exactly 5 bars at 120 BPM — whole bars, but over the 8 s cap.
+        quality=LoopQuality(confidence=0.85, crossfade_ms=12.0,
+                            optimized_start_s=4.0, optimized_end_s=14.0),
+    )
+    kit = AutoKitBuilder().build(_synth_graph([a], loops=[lp]), pads=2)
+    pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
+    assert pad["loopStartSec"] == pytest.approx(4.0)
+    assert pad["loopEndSec"] == pytest.approx(8.0)
+
+
+def test_optimized_window_is_judged_in_local_bars():
+    """The whole-bars gate on the optimized window measures LOCAL bars.
+
+    2 local bars of 2.03 s = 4.06 s: exact whole local bars (honored), yet
+    60 ms off whole constant-tempo bars — a constant-bar gate would wrongly
+    reject exactly the drifting-grid songs the optimized seam matters for.
+    """
+    local_bar = 2.03
+    pos = _pos(10.0, 2, local_bar)
+    a = _asset_at("other", ContentType.CHORD_LOOP, pos, loop_conf=0.9,
+                  source="src-opt")
+    lp = Loop(
+        phrase_id="ph", stem="other", pos=pos, id="src-opt",
+        quality=LoopQuality(confidence=0.9, crossfade_ms=9.0,
+                            optimized_start_s=10.04, optimized_end_s=14.10),
+    )
+    kit = AutoKitBuilder().build(_synth_graph([a], loops=[lp]), pads=2)
+    pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
+    assert pad["loopStartSec"] == pytest.approx(10.04)
+    assert pad["loopEndSec"] == pytest.approx(14.10)
+    assert pad["crossfadeMs"] == pytest.approx(9.0)
+
+
+def test_truncated_window_steps_in_whole_local_bars_to_the_loudest_run():
+    """Loudest-run placement stays bar-aligned relative to the phrase start.
+
+    With a per-bar energy profile the k-bar window slides in whole LOCAL-bar
+    steps and lands on the loudest contiguous k-bar run — here bars 3-4 of a
+    4-bar phrase whose head is near-silent. A non-bar offset would break the
+    shared phase-lock cycle even when the length is right.
+    """
+    bar = 2.523
+    pos = _pos(20.184, 4, bar)
+    a = _asset_at("drums", ContentType.RHYTHM_LOOP, pos, source="ph-loud")
+    ph = Phrase(stem="drums", pos=pos, energy=0.15,
+                bar_energies=(0.01, 0.01, 0.2, 0.22), id="ph-loud")
+    kit = AutoKitBuilder().build(_synth_graph([a], phrases=[ph]), pads=2)
+    pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
+    off_bars = (pad["loopStartSec"] - pos.start_s) / bar
+    assert off_bars == pytest.approx(round(off_bars), abs=1e-3), \
+        "window offset is not a whole number of local bars"
+    assert off_bars == pytest.approx(2.0, abs=1e-3)  # bars 3-4, loudest 2-run
+    span = pad["loopEndSec"] - pad["loopStartSec"]
+    assert span == pytest.approx(2 * bar, abs=1e-3)
+
+
+def test_kit_from_real_world_drum_graph_exports_two_local_bars():
+    """Today's production failure, reconstructed end-to-end.
+
+    4-bar drum phrases whose real (local) bar is 2.523 s on a graph whose
+    constant tempo is 95.43 BPM (const bar ~2.515 s), per-bar energy profile
+    present, loops carrying measured crossfades. The shipped kit cut 3
+    constant-tempo bars — in time, never seamless. The pad must export
+    exactly 2 LOCAL bars starting on a phrase-bar boundary, stay loopable,
+    and keep the analyzer's crossfade.
+    """
+    bar = 2.523
+    ph_start = 20.184
+    pos = _pos(ph_start, 4, bar)
+    ph = Phrase(stem="drums", pos=pos, energy=0.18,
+                bar_energies=(0.12, 0.14, 0.2, 0.22), id="ph-drums")
+    lp = Loop(phrase_id="ph-drums", stem="drums", pos=pos, id="lp-drums",
+              quality=LoopQuality(confidence=0.72, crossfade_ms=15.0))
+    a = _asset_at("drums", ContentType.RHYTHM_LOOP, pos, loop_conf=0.72,
+                  score=0.7, source="lp-drums")
+    pos2 = _pos(2 * ph_start, 4, bar)
+    ph2 = Phrase(stem="drums", pos=pos2, energy=0.16,
+                 bar_energies=(0.15, 0.15, 0.14, 0.16), id="ph-drums-2")
+    lp2 = Loop(phrase_id="ph-drums-2", stem="drums", pos=pos2, id="lp-drums-2",
+               quality=LoopQuality(confidence=0.6, crossfade_ms=11.0))
+    a2 = _asset_at("drums", ContentType.RHYTHM_LOOP, pos2, loop_conf=0.6,
+                   score=0.6, source="lp-drums-2")
+    kit = AutoKitBuilder().build(
+        _synth_graph([a, a2], phrases=[ph, ph2], loops=[lp, lp2],
+                     tempo=95.43),
+        pads=4)
+    pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
+
+    span = pad["loopEndSec"] - pad["loopStartSec"]
+    assert span == pytest.approx(2 * bar, abs=1e-3), \
+        f"expected 2 local bars, got {span:.3f} s"
+    assert span < 3 * (240.0 / 95.43) - 0.5  # nowhere near the old 3-bar cut
+    off_bars = (pad["loopStartSec"] - ph_start) / bar
+    assert off_bars == pytest.approx(round(off_bars), abs=1e-3), \
+        "window does not start on a phrase-bar boundary"
+    assert pad["loopable"] is True
+    assert pad["crossfadeMs"] == pytest.approx(15.0)
+    assert pad["loopStartSec"] == pad["stemSlice"]["startSec"]
+    assert pad["loopEndSec"] == pad["stemSlice"]["endSec"]
 
 
 def test_near_silent_asset_excluded_when_alternatives_exist():

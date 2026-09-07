@@ -239,22 +239,8 @@ public final class ChopPlayer {
     ) {
         guard let file = files[assignment.stem] else { return }
         let chop = assignment.chop
-        // Phase-lock: snap the loop length to a whole number of bars so it stays
-        // aligned to the downbeat grid forever (a slightly-off length drifts).
-        //
-        // EXCEPT analyzer-provided regions (loopScore present): the kit
-        // builder exports those on the song's REAL local downbeats, which
-        // drift a few dozen ms per bar against the constant tempo — the
-        // constant re-snap cut the region short of the real downbeat, so
-        // the wrap landed in the pre-beat gap and the loop audibly paused
-        // (Doomsday drums: real 3 bars 7.570 s vs 7.545 s at constant BPM).
-        // Those regions are whole bars by construction — play them verbatim.
-        var endSec = chop.endSec
-        if loop, loopBarSeconds > 0, chop.loopScore == nil {
-            let loopSec = chop.endSec - chop.startSec
-            let bars = max(1, (loopSec / loopBarSeconds).rounded())
-            endSec = chop.startSec + bars * loopBarSeconds
-        }
+        let endSec = Self.loopRegionEndSec(
+            chop: chop, loop: loop, loopBarSeconds: loopBarSeconds)
         schedule(
             file: file,
             startSec: chop.startSec,
@@ -267,6 +253,30 @@ public final class ChopPlayer {
             loop: loop,
             crossfadeMs: crossfadeMs
         )
+    }
+
+    /// The loop region's end after the phase-lock snap decision — pure
+    /// (nonisolated, no engine) so tests can pin the verbatim rule.
+    ///
+    /// Looping constant-tempo regions snap to a whole number of bars so
+    /// they stay aligned to the downbeat grid forever (a slightly-off
+    /// length drifts). EXCEPT analyzer-provided regions (loopScore
+    /// present): the kit builder exports those on the song's REAL local
+    /// downbeats, which drift a few dozen ms per bar against the constant
+    /// tempo — the constant re-snap cut the region short of the real
+    /// downbeat, so the wrap landed in the pre-beat gap and the loop
+    /// audibly paused (Doomsday drums: real 3 bars 7.570 s vs 7.545 s at
+    /// constant BPM). Those regions are whole bars by construction — play
+    /// them verbatim.
+    nonisolated static func loopRegionEndSec(
+        chop: Chop, loop: Bool, loopBarSeconds: Double
+    ) -> Double {
+        guard loop, loopBarSeconds > 0, chop.loopScore == nil else {
+            return chop.endSec
+        }
+        let loopSec = chop.endSec - chop.startSec
+        let bars = max(1, (loopSec / loopBarSeconds).rounded())
+        return chop.startSec + bars * loopBarSeconds
     }
 
     /// Play a [startSec, endSec] segment of an arbitrary local file
