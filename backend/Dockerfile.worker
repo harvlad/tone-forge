@@ -19,6 +19,18 @@
 # driver >= 12.4 (the 12.8.1 image lost the GPU on 12.8.0-driver hosts).
 FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
 
+# HARD pin of the torch stack for every pip step in this build AND at
+# runtime (ENV persists into the pod, so the bootstrap inherits it).
+# Without this, requirements resolution upgraded torch to a CUDA-13
+# build inside the image (observed 2026-09-07: torch 2.14+cu130 baked
+# into the "cuda12.4" image) — cu13 wheels need newer host drivers
+# than many RunPod hosts run (the intermittent torch.cuda-unavailable
+# lottery) and mismatch the CUDA-12 onnxruntime-gpu, whose CUDA
+# provider then silently falls back to CPU. If a dep genuinely needs a
+# newer torch, this build FAILS loudly instead of shipping a mismatch.
+RUN printf 'torch==2.4.1\ntorchaudio==2.4.1\n' > /opt/jamn-pip-constraints.txt
+ENV PIP_CONSTRAINT=/opt/jamn-pip-constraints.txt
+
 # System codecs the analysis stack needs but the base image lacks: ffmpeg
 # decodes m4a/mp3 (_ensure_decodable); libsndfile backs soundfile.
 RUN apt-get update \
