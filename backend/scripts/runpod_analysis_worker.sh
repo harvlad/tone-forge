@@ -77,6 +77,22 @@ mkdir -p "$XDG_CACHE_HOME" "$PIP_CACHE_DIR"
 #    base; only install if missing. pip reuses the volume wheel cache, so on a
 #    seeded volume this is unpack-only (no downloads).
 python -m pip install --upgrade pip
+# HARD version lock on the torch stack for every pip step below. Without
+# it, dependency resolution (hf_midi_transcription's chain, observed
+# 2026-09-07) UPGRADED torch to a CUDA-13 build mid-bootstrap: cu13
+# wheels need newer host drivers than many RunPod hosts run (-> the
+# intermittent "GPU pod, torch.cuda unavailable" lottery) and mismatch
+# the CUDA-12 onnxruntime-gpu build, whose CUDA provider then silently
+# falls back to CPU. The baked image's torch/cu124 is the known-good
+# pairing — nothing may move it.
+python - <<'PYCON'
+import torch, torchaudio, pathlib
+pathlib.Path("/tmp/jamn-pip-constraints.txt").write_text(
+    f"torch=={torch.__version__.split('+')[0]}\n"
+    f"torchaudio=={torchaudio.__version__.split('+')[0]}\n")
+print("pip constraint:", open("/tmp/jamn-pip-constraints.txt").read().strip())
+PYCON
+export PIP_CONSTRAINT=/tmp/jamn-pip-constraints.txt
 python - <<'PY' || python -m pip install "torch>=2.1" "torchaudio>=2.1"
 import importlib.util, sys
 sys.exit(0 if importlib.util.find_spec("torch") else 1)
@@ -133,6 +149,11 @@ python - <<'PY' || { [ "${TONEFORGE_EXPECT_GPU:-0}" = "1" ] && { echo "FATAL: GP
 import torch
 print("== GPU SELF-TEST ==")
 print("torch:", torch.__version__, "| cuda build:", torch.version.cuda)
+try:
+    import onnxruntime as _ort
+    print("onnxruntime providers:", _ort.get_available_providers())
+except Exception as _e:
+    print("onnxruntime probe failed:", _e)
 print("cuda.is_available:", torch.cuda.is_available())
 if torch.cuda.is_available():
     try:
