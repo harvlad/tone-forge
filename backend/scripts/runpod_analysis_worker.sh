@@ -95,7 +95,19 @@ python -m pip install -r "$REQ"
 # to monophonic pYIN). Best-effort: if it fails to install, the worker keeps
 # working exactly as today (pYIN fallback), so it never breaks the boot. The
 # next run's receipt shows whether it helped + the boot cost.
-python -m pip install "basic-pitch[onnx]" onnxruntime 2>&1 | tail -3 \
+#
+# On CUDA hosts install onnxruntime-GPU, not the CPU build: basic_pitch's
+# polyphonic pass is the single heaviest MIDI stage (~10 min/song measured on
+# guitar+other with the CPU build) and ORT-GPU picks the CUDA execution
+# provider automatically. Plain `onnxruntime` here was why "GPU" pods spent
+# the MIDI wall on CPU. basic-pitch is installed WITHOUT the [onnx] extra so
+# it can't drag the CPU build back in as a pinned dep.
+ORT_PKG=onnxruntime
+if command -v nvidia-smi >/dev/null 2>&1; then
+  ORT_PKG=onnxruntime-gpu
+  python -m pip uninstall -y onnxruntime >/dev/null 2>&1 || true
+fi
+python -m pip install "basic-pitch" "$ORT_PKG" 2>&1 | tail -3 \
   || echo "basic_pitch optional install skipped (pYIN fallback stays in effect)"
 
 # 3. Models — Demucs htdemucs_6s + Beat-This + All-In-One (+ Riley HF when
@@ -105,7 +117,12 @@ python -m local_engine.download_models || echo "WARN: model prefetch failed; wor
 
 # 3b. GPU self-test — prove whether CUDA actually COMPUTES (is_available can be
 #     true while kernels fail on a driver/arch mismatch, silently forcing CPU).
-python - <<'PY' || true
+#     When the autoscaler rented a GPU pod (TONEFORGE_EXPECT_GPU=1), a failed
+#     self-test EXITS the pod instead of grinding every job 3-10x slower on
+#     CPU at GPU prices — the autoscaler reaps the dead pod and the next
+#     create usually lands on a healthy host. Measured: separation 18 s on a
+#     working A40 vs 168-187 s on the silent-CPU pods this used to allow.
+python - <<'PY' || { [ "${TONEFORGE_EXPECT_GPU:-0}" = "1" ] && { echo "FATAL: GPU pod without working CUDA — exiting for replacement"; exit 3; } || true; }
 import torch
 print("== GPU SELF-TEST ==")
 print("torch:", torch.__version__, "| cuda build:", torch.version.cuda)
@@ -120,8 +137,12 @@ if torch.cuda.is_available():
         print("GPU MATMUL OK, checksum:", b)
     except Exception as e:
         print("GPU COMPUTE FAILED (falls back to CPU):", repr(e))
+        print("== END SELF-TEST ==")
+        raise SystemExit(1)
 else:
     print("CUDA NOT AVAILABLE -> everything runs on CPU")
+    print("== END SELF-TEST ==")
+    raise SystemExit(1)
 print("== END SELF-TEST ==")
 PY
 

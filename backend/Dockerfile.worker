@@ -36,6 +36,15 @@ RUN --mount=type=bind,target=/src \
     && python -m pip install --no-cache-dir -r requirements.txt \
     && PYTHONPATH=. python -m local_engine.download_models || echo "WARN: model prefetch partial"
 
+# basic-pitch + onnxruntime-GPU baked in: the polyphonic basic_pitch pass is
+# the heaviest MIDI stage (~10 min/song on guitar+other with the CPU ORT
+# build), and this is a CUDA image — ORT-GPU selects the CUDA execution
+# provider automatically. basic-pitch deliberately WITHOUT the [onnx] extra
+# so it can't pin the CPU onnxruntime back in. The bootstrap script repeats
+# this conditionally for unbaked-image pods.
+RUN python -m pip uninstall -y onnxruntime 2>/dev/null; \
+    python -m pip install --no-cache-dir basic-pitch onnxruntime-gpu
+
 # Runtime: pull the latest code, then run the claim-loop bootstrap. On this
 # image its apt/pip/download steps are already satisfied, so it's git-pull-fast.
 ENV JAMN_REPO_DIR=/workspace/tone-forge

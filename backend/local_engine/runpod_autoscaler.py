@@ -178,11 +178,23 @@ def _max_live_pods() -> int:
         return 2
 
 
-_CREATE_COOLDOWN_SEC = 300     # >= 5 min between ANY two create attempts
-_MAX_CREATES_PER_PROCESS = 12  # absolute backstop; a runaway trips this, then
-                               # STOPS until the backend is restarted
+_CREATE_COOLDOWN_SEC = 300     # >= 5 min between create attempts after a FAILURE
+# After a SUCCESSFUL create, a much shorter guard: the full 5 min cooldown was
+# punishing exactly the wrong case — a healthy pre-warm pod that scale-down
+# reclaimed, or a second concurrent song, stalled behind it for minutes while
+# a user watched "waiting for the analysis engine". Failure loops still get
+# the full cooldown (and the rolling backstop below).
+_CREATE_COOLDOWN_OK_SEC = 60
+# Rolling backstop: max creates per window. The old per-process counter
+# (12, reset only by restarting the backend) turned one bad evening into a
+# dead autoscaler — "create backstop hit" spam until a manual restart
+# (observed 2026-09-06). A runaway bootstrap is still capped to the same
+# 12 creates per 6 h of spend, but the scaler self-heals when it passes.
+_CREATE_BACKSTOP_WINDOW_SEC = 6 * 3600
+_CREATE_BACKSTOP_MAX = 12
 _last_create_ts = 0.0
-_creates_this_process = 0
+_last_create_ok = False
+_create_history: list = []  # timestamps of create attempts in the window
 
 
 def _reap_exited_pods() -> None:
@@ -207,7 +219,7 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
     fleet. `queue_depth` scales concurrency: with 2 queued jobs and the
     default RUNPOD_MAX_WORKERS=2 a second pod spins up. Returns the pod
     id, "existing", or None."""
-    global _last_create_ts, _creates_this_process
+    global _last_create_ts, _last_create_ok
     if not enabled() or requests is None:
         return None
     # Reap dead pods first — otherwise a crash-looping worker leaves EXITED
@@ -223,17 +235,25 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
     if want <= 0 or len(live) >= want:
         return "existing"
     now = time.time()
-    if now - _last_create_ts < _CREATE_COOLDOWN_SEC:
+    cooldown = _CREATE_COOLDOWN_OK_SEC if _last_create_ok else _CREATE_COOLDOWN_SEC
+    if now - _last_create_ts < cooldown:
         logger.info("autoscale: create suppressed by cooldown (%ds left)",
-                    int(_CREATE_COOLDOWN_SEC - (now - _last_create_ts)))
+                    int(cooldown - (now - _last_create_ts)))
         return None  # cooldown — a fast-exiting pod cannot be respawned rapidly
-    if _creates_this_process >= _MAX_CREATES_PER_PROCESS:
-        logger.error("autoscale: create backstop hit — refusing; restart to reset")
+    _create_history[:] = [t for t in _create_history
+                          if now - t < _CREATE_BACKSTOP_WINDOW_SEC]
+    if len(_create_history) >= _CREATE_BACKSTOP_MAX:
+        logger.error(
+            "autoscale: create backstop — %d creates in %dh window; retry after %d min",
+            len(_create_history), _CREATE_BACKSTOP_WINDOW_SEC // 3600,
+            int((_create_history[0] + _CREATE_BACKSTOP_WINDOW_SEC - now) / 60),
+        )
         return None
     # Record the attempt BEFORE the POST so a create that succeeds-but-then-
     # exits still counts against the cooldown/backstop.
     _last_create_ts = now
-    _creates_this_process += 1
+    _last_create_ok = False
+    _create_history.append(now)
     body = {
         "name": _POD_NAME,
         "imageName": os.environ.get("RUNPOD_IMAGE", _DEFAULT_IMAGE),
@@ -273,6 +293,10 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
     else:
         body["gpuTypeIds"] = _gpu_ids()
         body["gpuCount"] = 1
+        # The worker's boot self-test exits the pod when a rented GPU has no
+        # working CUDA (driver/arch lottery) instead of silently computing on
+        # CPU at GPU prices — this flag is what arms that behavior.
+        body["env"]["TONEFORGE_EXPECT_GPU"] = "1"
     # Persistent network volume: holds the venv + models so a pod boots in
     # seconds instead of re-installing/re-downloading. Region-locked, so pin the
     # pod to the volume's datacenter. Set RUNPOD_NETWORK_VOLUME_ID (+ _DATACENTER).
@@ -296,6 +320,7 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
             pod_id = (r.json() or {}).get("id")
             logger.warning("autoscale: created worker pod %s (live=%d queued~%d)",
                            pod_id, len(live), queue_depth)
+            _last_create_ok = True
             return pod_id
         # THE overnight-strand failure mode: a create that fails here
         # used to vanish without a trace. Log status + body, always.
@@ -364,11 +389,14 @@ def diagnostics() -> dict:
         "enabled": enabled(),
         "min_warm": _min_warm(),
         "max_live_pods": _max_live_pods(),
-        "creates_this_process": _creates_this_process,
+        "creates_in_window": len(_create_history),
+        "last_create_ok": _last_create_ok,
         "create_cooldown_remaining_s": max(
-            0.0, _CREATE_COOLDOWN_SEC - (time.time() - _last_create_ts)
+            0.0,
+            (_CREATE_COOLDOWN_OK_SEC if _last_create_ok else _CREATE_COOLDOWN_SEC)
+            - (time.time() - _last_create_ts),
         ) if _last_create_ts else 0.0,
-        "create_backstop": _MAX_CREATES_PER_PROCESS,
+        "create_backstop": _CREATE_BACKSTOP_MAX,
         "compute": os.environ.get("RUNPOD_COMPUTE", "GPU").upper(),
         "pods": [],
     }
@@ -402,6 +430,27 @@ def terminate_worker() -> None:
 # starts once every app has gone quiet.
 _last_prewarm_ts = 0.0
 _PREWARM_DEBOUNCE_SEC = 120.0
+
+
+def spinup_for_job(queue_depth: int = 1) -> None:
+    """Undebounced spin-up for the moment a job is actually queued.
+
+    ``prewarm_async`` is presence-triggered and debounced to one attempt
+    per 2 min — right for status polls, wrong for an upload: a user who
+    opened the app, idled past the debounce window, then uploaded, waited
+    up to a full autoscale tick (60 s) before a create was even attempted.
+    The upload endpoint calls this instead; ``ensure_worker`` still owns
+    every guard (live cap, cooldown, backstop), so the worst this can do
+    is be told "existing".
+    """
+    if not enabled():
+        return
+    note_activity()
+    import threading
+
+    threading.Thread(
+        target=lambda: ensure_worker(max(1, queue_depth)), daemon=True
+    ).start()
 
 
 def prewarm_async() -> None:

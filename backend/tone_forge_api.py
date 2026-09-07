@@ -799,6 +799,20 @@ async def _autoscale_loop() -> None:
                 logger.warning(
                     "autoscale: spawned worker %s (queued=%d)",
                     spawned, queued)
+            # Loud stuck-queue alert. Every historical multi-hour strand
+            # (13 h on 09-03, 11 h pair on 09-04) sat silent in the logs
+            # until a human went looking. One ERROR line per tick while a
+            # job waits >5 min with a silent engine makes the condition
+            # greppable/alertable ("queue STUCK").
+            if (queued > 0
+                    and _oldest_queued_engine_age() >= 300
+                    and _engine_silent_sec() >= 300):
+                logger.error(
+                    "autoscale: queue STUCK — %d job(s) waiting %.0f min, "
+                    "no engine contact for %.0f min",
+                    queued, _oldest_queued_engine_age() / 60,
+                    _engine_silent_sec() / 60,
+                )
             await asyncio.to_thread(_autoscale.scale_down_if_idle, pending)
         except Exception:  # noqa: BLE001
             logger.exception("autoscale tick failed")
@@ -2496,6 +2510,15 @@ async def analyze_upload_endpoint(
             **({"target_family": target_family} if target_family else {}),
         },
     )
+    # Spin the worker up NOW — the job is real. The presence pre-warm is
+    # debounced (2 min) and the autoscale tick is 60 s; without this an
+    # uploader who idled past the debounce window ate up to a minute of
+    # pure dead time before a pod create was even attempted.
+    try:
+        from local_engine import runpod_autoscaler as _autoscale
+        _autoscale.spinup_for_job(1)
+    except Exception:
+        pass
     upload_path = _UPLOADS_DIR / f"{job.id}{suffix}"
     with upload_path.open("wb") as out:
         shutil.copyfileobj(file.file, out)
@@ -2571,6 +2594,12 @@ async def _create_job_from_local_path(
             "attestation_source": attestation_source,
         },
     )
+    # Same job-is-real spin-up as /api/analyze-upload above.
+    try:
+        from local_engine import runpod_autoscaler as _autoscale
+        _autoscale.spinup_for_job(1)
+    except Exception:
+        pass
     upload_path = _UPLOADS_DIR / f"{job.id}{src.suffix.lower()}"
     shutil.copyfile(src, upload_path)
     await _JOBS.update(

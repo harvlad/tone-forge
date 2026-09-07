@@ -939,15 +939,21 @@ def estimate_polyphony(audio_path: str, threshold: float = 0.3) -> Tuple[bool, f
         return False, 0.0
 
 
-# Check MPS availability
+# Device preference: CUDA > MPS > CPU. CUDA was missing here for the
+# pipeline's whole life — on a RunPod CUDA host every torchcrepe pass ran
+# on CPU while the GPU sat idle (the autoscaler's RUNPOD_COMPUTE comment
+# documents the gap and asks for exactly this wiring). Measured effect of
+# the same asymmetry on separation: 18 s on an A40 vs 168-187 s on CPU.
 MPS_AVAILABLE = torch.backends.mps.is_available()
-if MPS_AVAILABLE:
-    logger.info("MPS GPU available for pitch detection")
+CUDA_AVAILABLE = torch.cuda.is_available()
+BEST_DEVICE = "cuda" if CUDA_AVAILABLE else ("mps" if MPS_AVAILABLE else "cpu")
+if BEST_DEVICE == "cpu":
+    logger.warning("No GPU (CUDA/MPS) available, pitch detection on CPU")
 else:
-    logger.warning("MPS not available, will use CPU")
+    logger.info(f"{BEST_DEVICE} available for pitch detection")
 
 
-def _estimate_tempo_gpu(waveform: torch.Tensor, sr: int, device: str = "mps") -> float:
+def _estimate_tempo_gpu(waveform: torch.Tensor, sr: int, device: str = BEST_DEVICE) -> float:
     """
     Estimate tempo using GPU-accelerated onset detection and autocorrelation.
 
@@ -1029,7 +1035,7 @@ def hz_to_midi(hz: float) -> int:
 def extract_midi_torchcrepe(
     audio_path: str,
     stem_type: str = "lead",
-    device: str = "mps" if MPS_AVAILABLE else "cpu",
+    device: str = BEST_DEVICE,
     model_size: str = "tiny",  # tiny or full (small/medium/large not available)
 ) -> Tuple[List[MIDINote], float, float]:
     """

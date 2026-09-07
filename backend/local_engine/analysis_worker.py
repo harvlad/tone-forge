@@ -660,7 +660,9 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                     # fall through to the current path below
             stem_type = stem_types.get(stem_name, "other")
             if stem_type in ("bass", "lead", "vocals"):
-                method_hint = "GPU" if torch.backends.mps.is_available() else "CPU"
+                method_hint = "GPU" if (
+                    torch.backends.mps.is_available() or torch.cuda.is_available()
+                ) else "CPU"
             else:
                 method_hint = "polyphonic"
             # Floor, not a per-stem band: these all fire at once, so the
