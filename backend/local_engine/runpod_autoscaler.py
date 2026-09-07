@@ -101,6 +101,89 @@ def _worker_env() -> dict:
 # reaped, which is the exact hole a zombie hides in).
 _pod_first_seen: dict = {}
 
+# --- parked (stopped) pod tracking -------------------------------------
+# Idle scale-down STOPS a healthy pod instead of terminating it: RunPod
+# keeps the container disk on the host (storage pennies, no compute
+# billing) and a later resume skips the image pull AND the whole
+# bootstrap — worker claiming in ~30-60 s vs ~5 min cold. RunPod reports
+# a stopped pod as desiredStatus EXITED, which is exactly what
+# _reap_exited_pods hunts, so parked ids are persisted to a file (it
+# must survive backend restarts) and every reaper skips them. At most
+# ONE pod is parked; extras still terminate. A resume can fail when the
+# host's GPUs are busy — the caller then terminates the parked pod and
+# falls through to a normal create, so parking can never strand a job.
+_PARKED_FILE = os.environ.get(
+    "TONEFORGE_PARKED_PODS_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "data", "runpod_parked.json"))
+
+
+def _load_parked() -> List[str]:
+    try:
+        import json
+        with open(_PARKED_FILE) as fh:
+            ids = json.load(fh)
+        return [i for i in ids if isinstance(i, str)]
+    except Exception:
+        return []
+
+
+def _save_parked(ids: List[str]) -> None:
+    try:
+        import json
+        os.makedirs(os.path.dirname(_PARKED_FILE), exist_ok=True)
+        with open(_PARKED_FILE, "w") as fh:
+            json.dump(sorted(set(ids)), fh)
+    except Exception:
+        logger.exception("autoscale: failed to persist parked pods")
+
+
+def _unpark(pod_id: str) -> None:
+    _save_parked([i for i in _load_parked() if i != pod_id])
+
+
+def _park_pod(pod_id: str) -> bool:
+    """Stop a pod in place. True on success (id recorded as parked)."""
+    try:
+        r = requests.post(f"{_REST}/pods/{pod_id}/stop",
+                          headers=_headers(), timeout=30)
+        if r.status_code in (200, 201, 204):
+            _save_parked(_load_parked() + [pod_id])
+            logger.warning("autoscale: parked pod %s (stopped, resumable)", pod_id)
+            return True
+        logger.error("autoscale: park of %s failed HTTP %s: %s",
+                     pod_id, r.status_code, r.text[:200])
+    except Exception:
+        logger.exception("autoscale: park of %s raised", pod_id)
+    return False
+
+
+def _resume_parked() -> Optional[str]:
+    """Try to resume a parked pod. Returns the pod id on success; on any
+    failure the parked pod is terminated + forgotten so the caller can
+    fall through to a clean create."""
+    for pod_id in _load_parked():
+        try:
+            r = requests.post(f"{_REST}/pods/{pod_id}/start",
+                              headers=_headers(), timeout=40)
+            if r.status_code in (200, 201, 204):
+                _unpark(pod_id)
+                logger.warning("autoscale: resumed parked pod %s "
+                               "(no image pull, no bootstrap)", pod_id)
+                return pod_id
+            logger.error("autoscale: resume of %s failed HTTP %s: %s — "
+                         "terminating it and falling back to create",
+                         pod_id, r.status_code, r.text[:200])
+        except Exception:
+            logger.exception("autoscale: resume of %s raised", pod_id)
+        try:
+            requests.delete(f"{_REST}/pods/{pod_id}",
+                            headers=_headers(), timeout=20)
+        except Exception:
+            pass
+        _unpark(pod_id)
+    return None
+
 
 def list_worker_pods() -> List[dict]:
     if not enabled() or requests is None:
@@ -202,14 +285,24 @@ def _reap_exited_pods() -> None:
     accumulate (or keep billing) allocated-but-dead pods."""
     if requests is None:
         return
+    parked = set(_load_parked())
+    seen = set()
     for p in list_worker_pods():
+        pid = p.get("id")
+        if pid:
+            seen.add(pid)
+        if pid in parked:
+            continue  # deliberately stopped (parked) — resumable, not dead
         if str(p.get("desiredStatus", "")).upper() in ("EXITED", "TERMINATED", "DEAD"):
-            pid = p.get("id")
             if pid:
                 try:
                     requests.delete(f"{_REST}/pods/{pid}", headers=_headers(), timeout=20)
                 except Exception:
                     pass
+    # Forget parked ids whose pods no longer exist (terminated externally).
+    gone = parked - seen
+    if gone:
+        _save_parked([i for i in parked - gone])
 
 
 def ensure_worker(queue_depth: int = 1) -> Optional[str]:
@@ -234,6 +327,12 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
     want = min(_max_live_pods(), max(queue_depth, _min_warm()))
     if want <= 0 or len(live) >= want:
         return "existing"
+    # A parked (stopped) pod resumes in ~30-60 s with no image pull and no
+    # bootstrap — always preferable to a cold create. Failure terminates
+    # the parked pod and falls through to the normal create path.
+    resumed = _resume_parked()
+    if resumed:
+        return resumed
     now = time.time()
     cooldown = _CREATE_COOLDOWN_OK_SEC if _last_create_ok else _CREATE_COOLDOWN_SEC
     if now - _last_create_ts < cooldown:
@@ -390,6 +489,7 @@ def diagnostics() -> dict:
         "min_warm": _min_warm(),
         "max_live_pods": _max_live_pods(),
         "creates_in_window": len(_create_history),
+        "parked_pods": _load_parked(),
         "last_create_ok": _last_create_ok,
         "create_cooldown_remaining_s": max(
             0.0,
@@ -419,6 +519,7 @@ def terminate_worker() -> None:
                 requests.delete(f"{_REST}/pods/{pid}", headers=_headers(), timeout=20)
             except Exception:
                 pass
+    _save_parked([])  # a full teardown forgets any parked pod too
 
 
 # --- presence-based pre-warm -------------------------------------------
@@ -491,7 +592,27 @@ def scale_down_if_idle(has_pending_or_running: bool) -> None:
     if (time.time() - _last_active_ts) >= idle_min * 60:
         keep = _min_warm()
         if keep <= 0:
-            terminate_worker()
+            # Scale-to-zero, but PARK one healthy pod instead of
+            # terminating everything: the next session resumes it in
+            # ~30-60 s instead of a ~5 min cold boot. Storage-only cost.
+            live = [
+                p for p in list_worker_pods()
+                if str(p.get("desiredStatus", "")).upper()
+                in ("RUNNING", "PENDING", "CREATED")
+            ]
+            already_parked = bool(_load_parked())
+            for i, p in enumerate(live):
+                pid = p.get("id")
+                if not pid:
+                    continue
+                if i == 0 and not already_parked and _park_pod(pid):
+                    continue
+                try:
+                    requests.delete(f"{_REST}/pods/{pid}",
+                                    headers=_headers(), timeout=20)
+                    logger.info("autoscale: idle scale-down terminated %s", pid)
+                except Exception:
+                    pass
         else:
             live = [
                 p for p in list_worker_pods()

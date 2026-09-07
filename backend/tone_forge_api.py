@@ -804,14 +804,18 @@ async def _autoscale_loop() -> None:
             # until a human went looking. One ERROR line per tick while a
             # job waits >5 min with a silent engine makes the condition
             # greppable/alertable ("queue STUCK").
+            # _engine_silent_sec is epoch-huge when no worker has EVER
+            # contacted a fresh process — cap the display so the alert
+            # doesn't print "no engine contact for 29813047 min".
             if (queued > 0
                     and _oldest_queued_engine_age() >= 300
                     and _engine_silent_sec() >= 300):
                 logger.error(
                     "autoscale: queue STUCK — %d job(s) waiting %.0f min, "
-                    "no engine contact for %.0f min",
+                    "no engine contact for %s",
                     queued, _oldest_queued_engine_age() / 60,
-                    _engine_silent_sec() / 60,
+                    ("%.0f min" % (_engine_silent_sec() / 60))
+                    if _engine_silent_sec() < 86_400 else "ever (fresh process)",
                 )
             await asyncio.to_thread(_autoscale.scale_down_if_idle, pending)
         except Exception:  # noqa: BLE001
