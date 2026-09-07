@@ -121,7 +121,11 @@ def test_next_queued_engine_job_leaves_live_running_alone(tmp_path):
     assert job.status == "running"
 
 
-def test_recover_requeues_engine_jobs_but_errors_server_jobs(tmp_path):
+def test_recover_keeps_running_engine_jobs_but_errors_server_jobs(tmp_path):
+    """Server jobs die with the process → error on recover. Engine jobs
+    are worked by a remote worker that SURVIVES a backend restart, so a
+    RUNNING one stays running (50f2e6fc — requeueing mid-flight jobs
+    double-ran them); the stall reaper owns the truly-dead case."""
     reg = JobRegistry(tmp_path / "jobs")
     server_job = reg.create()
     engine_job = reg.create_engine_job(filename="s.wav")
@@ -131,7 +135,7 @@ def test_recover_requeues_engine_jobs_but_errors_server_jobs(tmp_path):
     fresh = JobRegistry(tmp_path / "jobs")
     fresh.recover()
     assert fresh.get(server_job.id).status == "error"
-    assert fresh.get(engine_job.id).status == "queued"
+    assert fresh.get(engine_job.id).status == "running"
 
 
 # ---------------------------------------------------------------------------
