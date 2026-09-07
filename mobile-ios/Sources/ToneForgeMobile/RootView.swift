@@ -383,6 +383,8 @@ struct LibraryView: View {
             Image(systemName: "plus")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(TFTheme.textPrimary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
         .accessibilityIdentifier("import-menu")
     }
@@ -400,7 +402,10 @@ struct LibraryView: View {
                     .font(.largeTitle.bold())
                     .foregroundStyle(TFTheme.textPrimary)
                 Spacer()
-                HStack(spacing: 18) {
+                // 28 pt gap + 44 pt tap frames: at spacing 18 with
+                // bare glyphs the gear and + sat ~30 pt apart and thumbs
+                // regularly opened Settings when aiming for Add.
+                HStack(spacing: 28) {
                     settingsButton
                     addSongButton
                 }
@@ -448,6 +453,8 @@ struct LibraryView: View {
             Image(systemName: "gearshape")
                 .font(.body)
                 .foregroundStyle(TFTheme.textPrimary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
         .accessibilityLabel("Settings")
         .accessibilityIdentifier("library-settings-button")

@@ -210,6 +210,9 @@ class JobRegistry:
             if job.status == "running" and now - job.updated_at > stale_after_sec:
                 job.status = "queued"
                 job.message = "Requeued after worker went silent"
+                # Honest progress: the old percent (often mid-MIDI, 60%+)
+                # kept rendering while the job sat queued again.
+                job.percent = 2.0
                 job.version += 1
                 job.updated_at = now
                 self._persist(job)
@@ -283,6 +286,7 @@ class JobRegistry:
                     # job can simply be (re)claimed by a worker.
                     job.status = "queued"
                     job.message = "Requeued after server restart"
+                    job.percent = 2.0
                 else:
                     job.status = "error"
                     job.error = "interrupted by server restart"

@@ -799,6 +799,19 @@ async def _autoscale_loop() -> None:
                 logger.warning(
                     "autoscale: spawned worker %s (queued=%d)",
                     spawned, queued)
+            # Honest queue messaging: while a pod is booting (engine
+            # silent but work queued) the client showed a generic
+            # "Queued for analysis…" for the full ~5 min boot. Say what
+            # is actually happening; cheap idempotent update (version
+            # only bumps when the text changes).
+            if queued > 0 and _engine_silent_sec() > 60:
+                boot_msg = (
+                    "Starting a GPU worker — first start takes a few minutes…"
+                )
+                for j in _JOBS.all():
+                    if (j.kind == "engine" and j.status == "queued"
+                            and j.message != boot_msg):
+                        await _JOBS.update(j.id, message=boot_msg)
             # Loud stuck-queue alert. Every historical multi-hour strand
             # (13 h on 09-03, 11 h pair on 09-04) sat silent in the logs
             # until a human went looking. One ERROR line per tick while a

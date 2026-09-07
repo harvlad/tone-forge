@@ -189,6 +189,14 @@ public final class JamSettingsStore: ObservableObject {
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        // One-time flag-day migration: sampleLatch shipped defaulting to
+        // Latch, so devices from that era carry a persisted true the
+        // user never chose — first taps machine-gun a one-shot. Reset
+        // once; anyone who re-enables Latch after this keeps it.
+        if !defaults.bool(forKey: "jam.sampleLatch.tapDefaultMigrated") {
+            defaults.set(false, forKey: "jam.sampleLatch")
+            defaults.set(true, forKey: "jam.sampleLatch.tapDefaultMigrated")
+        }
         let loaded = Self.load(from: defaults) ?? Persisted.defaults
         self.scaleVariant = loaded.scaleVariant
         self.highlightCurrentChord = loaded.highlightCurrentChord
