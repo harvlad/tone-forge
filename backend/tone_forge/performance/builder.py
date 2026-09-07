@@ -264,7 +264,8 @@ def _graph_from_dict(d: Dict) -> MusicalGraph:
 
     phrases = tuple(
         Phrase(stem=p["stem"], pos=gp(p["pos"]), onset_density=p["onset_density"],
-               pitched=p["pitched"], energy=p["energy"], id=p["id"])
+               pitched=p["pitched"], energy=p["energy"],
+               bar_energies=tuple(p.get("bar_energies") or ()), id=p["id"])
         for p in d.get("phrases", [])
     )
     loops = tuple(

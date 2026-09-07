@@ -155,7 +155,10 @@ class AutoKitBuilder:
         # Audibility: assets carry no energy, so look it up on the source
         # phrase (asset.source_id is a loop id or a phrase id). Unknown energy
         # passes — legacy/synthetic graphs without phrases must not be muted.
-        phrase_energy = {p.id: p.energy
+        # Audibility per phrase = its loudest BAR, not the whole-phrase mean:
+        # a 4-bar phrase whose content lives in bar 4 must count as audible
+        # (the window picker in _to_sample_pack lands the pad on that bar).
+        phrase_energy = {p.id: (max(p.bar_energies) if getattr(p, "bar_energies", ()) else p.energy)
                          for p in (getattr(graph, "phrases", ()) or ())}
         loop_phrase = {lp.id: lp.phrase_id
                        for lp in (getattr(graph, "loops", ()) or ())}
@@ -309,6 +312,7 @@ class AutoKitBuilder:
         for lp in (getattr(graph, "loops", ()) or ()):
             if getattr(lp, "id", None):
                 loops_by_id[lp.id] = lp
+        phrases_by_id = {p.id: p for p in (getattr(graph, "phrases", ()) or ())}
 
         # Bar length at song tempo, so the cap truncates in whole bars. The
         # phrases were cut bar-aligned upstream (PhraseAnalyzer) — the pad
@@ -328,18 +332,53 @@ class AutoKitBuilder:
             # user can still shorten/extend the window in the chop editor.
             opt_s = getattr(qual, "optimized_start_s", None) if qual else None
             opt_e = getattr(qual, "optimized_end_s", None) if qual else None
+            # The analyzer's zero-crossing nudges make optimized windows a few
+            # dozen ms off whole bars — the clients bar-snap loop length, so a
+            # non-integer-bar window would fight that snap and shift the seam
+            # off the region the metrics were measured on. Only take it when
+            # it IS whole bars (±10 ms) and fits the cap.
+            use_opt = False
             if opt_s is not None and opt_e is not None and float(opt_e) > float(opt_s):
+                opt_len = float(opt_e) - float(opt_s)
+                if opt_len <= _SAMPLE_LEN_SEC + 1e-6:
+                    if bar_s > 0:
+                        n = round(opt_len / bar_s)
+                        use_opt = n >= 1 and abs(opt_len - n * bar_s) <= 0.010
+                    else:
+                        use_opt = True
+            if use_opt:
                 q_start, q_end = float(opt_s), float(opt_e)
             else:
                 q_start, q_end = a.pos.start_s, a.pos.end_s
             # Keep the 8 s memory cap, but truncate in whole bars — never
             # below one bar (a very slow song's single bar may exceed the cap,
             # and a fractional-bar cut breaks the shared phase-lock cycle).
+            # When the phrase carries a per-bar energy profile, place the
+            # truncated window on the loudest contiguous bar run — a blind
+            # head-keep exported near-silence when a phrase's content sat in
+            # its tail (silent-head phrases read as audible on phrase RMS).
             if q_end - q_start > _SAMPLE_LEN_SEC + 1e-6:
                 if bar_s > 0:
-                    q_end = q_start + max(1, int(_SAMPLE_LEN_SEC / bar_s)) * bar_s
+                    k = max(1, int(_SAMPLE_LEN_SEC / bar_s))
+                    ph = phrases_by_id.get(getattr(lp, "phrase_id", None) or a.source_id)
+                    be = tuple(getattr(ph, "bar_energies", ()) or ()) if ph else ()
+                    n_bars = int(round((q_end - q_start) / bar_s))
+                    j = 0
+                    if n_bars > k and len(be) >= n_bars:
+                        power = [e * e for e in be[:n_bars]]
+                        sums = [sum(power[i:i + k]) for i in range(n_bars - k + 1)]
+                        j = max(range(len(sums)), key=sums.__getitem__)
+                    q_start = q_start + j * bar_s
+                    q_end = q_start + k * bar_s
                 else:  # no tempo → the fixed cap is the only bound available
                     q_end = q_start + _SAMPLE_LEN_SEC
+            # Final whole-bar snap at the CONSTANT song tempo. The grid's
+            # real downbeats drift a few dozen ms per bar against it, and
+            # trailing-partial phrases end mid-bar — but every client snaps
+            # loop length to constant bar seconds, so exporting anything else
+            # means the client's snap moves the seam off the exported region.
+            if bar_s > 0:
+                q_end = q_start + max(1, round((q_end - q_start) / bar_s)) * bar_s
             # Loop the whole exported window (full-slice loop).
             loop_start, loop_end = q_start, q_end
             # Carry the analyzer's per-seam crossfade measurement when present

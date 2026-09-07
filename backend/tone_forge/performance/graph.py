@@ -114,6 +114,12 @@ class Phrase:
     onset_density: float = 0.0    # onsets per beat (energy/activity)
     pitched: bool = False
     energy: float = 0.0
+    # Per-bar RMS across the phrase. Whole-phrase energy hides a silent head
+    # with a loud tail (a 4-bar phrase whose content lives in bar 4 reads as
+    # "audible"), which let bar-truncated kit windows export near-silence —
+    # the profile lets the kit builder pick the loudest whole-bar subwindow.
+    # Empty on graphs derived before the field existed.
+    bar_energies: Tuple[float, ...] = ()
     id: str = ""             # content hash, filled by __post_init__ via with_id
 
     def with_id(self) -> "Phrase":

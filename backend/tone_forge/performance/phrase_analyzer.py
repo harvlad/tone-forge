@@ -97,13 +97,13 @@ class PhraseAnalyzer:
             t = grid.snap_to_bar(s0) if grid.downbeats else s0
             while t + step <= s1 + 1e-3:
                 pos = grid.make_pos(t, t + step, snap="bar")
-                phrases.append(self._phrase(y, sr, pos, stem, pitched, onsets, bp))
+                phrases.append(self._phrase(y, sr, pos, stem, pitched, onsets, bp, bpb * bp))
                 t += step
             # trailing partial region → one shorter phrase if >= 1 bar
             rem = s1 - t
             if rem >= bpb * bp - 1e-3:
                 pos = grid.make_pos(t, s1, snap="bar")
-                phrases.append(self._phrase(y, sr, pos, stem, pitched, onsets, bp))
+                phrases.append(self._phrase(y, sr, pos, stem, pitched, onsets, bp, bpb * bp))
         # Drop degenerate phrases: a phrase must be at least one beat long. These
         # arise when a section/track boundary snaps end==start (e.g. past the last
         # downbeat) and would otherwise become 0-length one-shots.
@@ -119,15 +119,27 @@ class PhraseAnalyzer:
 
     def _phrase(
         self, y: np.ndarray, sr: int, pos: GridPos, stem: str, pitched: bool,
-        onsets: np.ndarray, bp: float,
+        onsets: np.ndarray, bp: float, bar_s: float = 0.0,
     ) -> Phrase:
         a, b = int(pos.start_s * sr), int(pos.end_s * sr)
         seg = y[max(0, a):max(a + 1, b)]
         energy = float(np.sqrt(np.mean(seg**2) + 1e-9)) if len(seg) else 0.0
+        # Per-bar RMS profile: whole-phrase energy hides a silent head with a
+        # loud tail, so the kit builder needs bar granularity to place its
+        # truncated window on the content instead of the silence.
+        bar_energies: Tuple[float, ...] = ()
+        if bar_s > 1e-3 and len(seg):
+            n_bars = max(1, int(round(pos.duration_s / bar_s)))
+            hop = int(bar_s * sr)
+            bar_energies = tuple(
+                float(np.sqrt(np.mean(seg[i * hop:(i + 1) * hop] ** 2) + 1e-9))
+                if len(seg[i * hop:(i + 1) * hop]) else 0.0
+                for i in range(n_bars)
+            )
         n_on = int(np.sum((onsets >= pos.start_s) & (onsets < pos.end_s))) if onsets.size else 0
         beats = max(1.0, pos.length_beats)
         onset_density = n_on / beats
         return Phrase(
             stem=stem, pos=pos, onset_density=onset_density,
-            pitched=pitched, energy=energy,
+            pitched=pitched, energy=energy, bar_energies=bar_energies,
         ).with_id()

@@ -324,12 +324,35 @@ def test_pad_window_is_whole_bars_at_song_tempo():
 
 
 def test_pad_window_prefers_the_optimized_loop_seam():
-    """When the analyzer measured an optimized seam window, the pad plays it.
+    """When the analyzer measured an optimized seam window, the pad plays it —
+    but only when that window is whole bars.
 
-    That window is the region loop_confidence/crossfade_ms were computed on —
-    exporting the raw phrase bounds instead made loopScore describe audio the
-    client never plays.
+    The optimized window is the region loop_confidence/crossfade_ms were
+    computed on. The clients bar-snap loop length at the constant song tempo,
+    so a zero-crossing-nudged window that isn't integer bars would have its
+    seam moved by the client's snap anyway — those fall back to the phrase's
+    bar-aligned span.
     """
+    # 4.05..8.05 = exactly 2 bars at 120 BPM → the optimized seam is honored.
+    a = _asset("other", ContentType.CHORD_LOOP, start=4.0, loop_conf=0.85,
+               score=0.9, bars=2)
+    lp = Loop(
+        phrase_id="ph", stem="other", pos=a.pos, id=a.source_id,
+        quality=LoopQuality(confidence=0.85, crossfade_ms=12.0,
+                            optimized_start_s=4.05, optimized_end_s=8.05),
+    )
+    kit = AutoKitBuilder().build(_synth_graph([a], loops=[lp]), pads=2)
+    pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
+    assert pad["loopStartSec"] == pytest.approx(4.05)
+    assert pad["loopEndSec"] == pytest.approx(8.05)
+    assert pad["crossfadeMs"] == pytest.approx(12.0)
+    assert pad["loopScore"] == pytest.approx(0.85)
+
+
+def test_non_bar_optimized_window_falls_back_to_phrase_span():
+    """An optimized window 30 ms off whole bars is rejected: the client's
+    bar-snap would shift its seam off the measured region, so the pad exports
+    the phrase's bar-aligned span instead."""
     a = _asset("other", ContentType.CHORD_LOOP, start=4.0, loop_conf=0.85,
                score=0.9, bars=2)
     lp = Loop(
@@ -339,10 +362,23 @@ def test_pad_window_prefers_the_optimized_loop_seam():
     )
     kit = AutoKitBuilder().build(_synth_graph([a], loops=[lp]), pads=2)
     pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
-    assert pad["loopStartSec"] == pytest.approx(4.05)
-    assert pad["loopEndSec"] == pytest.approx(8.02)
-    assert pad["crossfadeMs"] == pytest.approx(12.0)
-    assert pad["loopScore"] == pytest.approx(0.85)
+    assert pad["loopStartSec"] == pytest.approx(4.0)
+    assert pad["loopEndSec"] == pytest.approx(8.0)
+
+
+def test_truncated_window_lands_on_the_loudest_bars():
+    """A silent-head phrase must not export its silence: with a per-bar energy
+    profile the truncated window moves onto the loudest contiguous bar run."""
+    # 8 bars at 120 BPM (16 s) truncates to 4 bars; content lives in bars 5-8.
+    a = _asset("other", ContentType.CHORD_LOOP, start=0.0, loop_conf=0.8,
+               score=0.9, bars=8)
+    ph = Phrase(stem="other", pos=a.pos, energy=0.05,
+                bar_energies=(1e-4, 1e-4, 1e-4, 1e-4, 0.1, 0.1, 0.1, 0.1),
+                id=a.source_id)
+    kit = AutoKitBuilder().build(_synth_graph([a], phrases=[ph]), pads=2)
+    pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
+    assert pad["loopStartSec"] == pytest.approx(8.0)   # bars 5-8
+    assert pad["loopEndSec"] == pytest.approx(16.0)
 
 
 def test_near_silent_asset_excluded_when_alternatives_exist():
