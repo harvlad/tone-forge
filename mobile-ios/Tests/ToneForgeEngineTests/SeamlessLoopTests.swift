@@ -164,6 +164,39 @@ final class SeamlessLoopTests: XCTestCase {
         XCTAssertLessThan(errNew, errOld)
     }
 
+    func testOnsetAlignedShiftFindsAttackBeforeCenter() {
+        // Silence with a sharp attack 30 ms BEFORE the nominal cut point —
+        // the grid-late-downbeat case. The shift must move the cut to just
+        // ahead of the attack (5 ms preroll), keeping it inside the loop.
+        let sr = 48_000.0
+        let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1)!
+        let n = 9600  // 200 ms scan region
+        let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(n))!
+        buf.frameLength = AVAudioFrameCount(n)
+        let d = buf.floatChannelData![0]
+        let center = 4800                       // nominal cut at 100 ms
+        let attack = center - Int(0.030 * sr)   // real kick at 70 ms
+        for i in 0..<n { d[i] = 0 }
+        for i in attack..<min(n, attack + 2000) {
+            d[i] = 0.8 * Float(exp(-Double(i - attack) / 400.0))
+        }
+        let shift = SeamlessLoop.onsetAlignedShift(
+            buf, centerFrame: center,
+            searchFrames: Int(0.060 * sr), prerollFrames: Int(0.005 * sr))
+        let newCut = center + shift
+        XCTAssertLessThan(newCut, attack + 100, "cut must land before the attack")
+        XCTAssertGreaterThan(newCut, attack - Int(0.015 * sr),
+                             "cut must stay near the attack, not run away")
+    }
+
+    func testOnsetAlignedShiftIsZeroForSustainedMaterial() {
+        // A steady sine has no clear transient — the cut must not move.
+        let buf = sineBuffer(frames: 9600, period: 128)
+        let shift = SeamlessLoop.onsetAlignedShift(
+            buf, centerFrame: 4800, searchFrames: 2880, prerollFrames: 240)
+        XCTAssertEqual(shift, 0)
+    }
+
     func testExactCrossfadedFallbackWithoutContinuation() {
         // Region ends at the source's end — no continuation frames. The
         // length must still be exact; the seam falls back to equal-power

@@ -129,6 +129,51 @@ public enum SeamlessLoop {
     ///     loop body and to the available continuation.
     /// - Returns: a new buffer of exactly `loopFrames` frames, or `src`
     ///   unchanged when the input is degenerate (too short / no data).
+    /// Frame shift (within ±searchFrames) that puts `centerFrame` a small
+    /// preroll BEFORE the strongest energy rise near it. 0 when no clear
+    /// transient exists (sustained material must not be nudged).
+    ///
+    /// Why: the beat grid's downbeat timestamps land a few tens of ms
+    /// AFTER the audible drum attack (tracker phase vs perceptual onset),
+    /// so a grid-cut loop region starts just past its own kick — the wrap
+    /// plays tail → kickless head and the loop audibly pauses even when
+    /// the period is exact. Snapping the cut just ahead of the attack
+    /// keeps the hit inside the loop; both region edges shift together so
+    /// the period is untouched.
+    public static func onsetAlignedShift(
+        _ scan: AVAudioPCMBuffer, centerFrame: Int,
+        searchFrames: Int, prerollFrames: Int
+    ) -> Int {
+        let n = Int(scan.frameLength)
+        let sr = scan.format.sampleRate
+        guard n > 0, sr > 0, searchFrames > 0,
+              let ch0 = scan.floatChannelData?.pointee else { return 0 }
+        let lo = max(0, centerFrame - searchFrames)
+        let hi = min(n, centerFrame + searchFrames)
+        let hop = max(32, Int(0.002 * sr))
+        guard hi - lo > hop * 4 else { return 0 }
+        var env: [Float] = []
+        var i = lo
+        while i + hop <= hi {
+            var e: Float = 0
+            for j in i..<(i + hop) { e += ch0[j] * ch0[j] }
+            env.append((e / Float(hop)).squareRoot())
+            i += hop
+        }
+        guard env.count > 2 else { return 0 }
+        var rises: [Float] = []
+        for k in 1..<env.count { rises.append(max(0, env[k] - env[k - 1])) }
+        guard let maxRise = rises.max(), maxRise > 1e-4 else { return 0 }
+        let sorted = rises.sorted()
+        let median = sorted[sorted.count / 2]
+        guard maxRise > 2 * median else { return 0 }
+        let best = rises.firstIndex(of: maxRise) ?? 0
+        // rises[k] describes the step INTO env window k+1.
+        let onsetFrame = lo + (best + 1) * hop
+        let shift = (onsetFrame - prerollFrames) - centerFrame
+        return max(-searchFrames, min(searchFrames, shift))
+    }
+
     public static func exactCrossfaded(
         _ src: AVAudioPCMBuffer, loopFrames: Int, crossfadeMs: Double
     ) -> AVAudioPCMBuffer {

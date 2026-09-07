@@ -498,13 +498,42 @@ public final class ChopPlayer {
     ) -> AVAudioPCMBuffer? {
         let xfadeMs = crossfadeMs > 0 ? crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
         let srcRate = file.processingFormat.sampleRate
+        // Onset-phase snap: the grid's downbeat timestamps land tens of ms
+        // AFTER the audible attack, so a grid-cut region starts just past
+        // its own kick and the wrap plays tail → kickless head — an audible
+        // pause even with an exact period. Shift BOTH edges (period kept)
+        // so the cut sits ~5 ms before the strongest nearby onset; sustained
+        // heads see no clear transient and shift 0.
+        var start = startFrame
+        if srcRate > 0 {
+            let search = AVAudioFramePosition((0.060 * srcRate).rounded())
+            let lo = max(0, startFrame - search)
+            let scanLen = AVAudioFrameCount(
+                max(0, min(file.length - lo, (startFrame - lo) + search)))
+            if scanLen > 0,
+               let scan = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                           frameCapacity: scanLen) {
+                do {
+                    file.framePosition = lo
+                    try file.read(into: scan, frameCount: scanLen)
+                    let shift = SeamlessLoop.onsetAlignedShift(
+                        scan, centerFrame: Int(startFrame - lo),
+                        searchFrames: Int(search),
+                        prerollFrames: Int(0.005 * srcRate))
+                    let s2 = startFrame + AVAudioFramePosition(shift)
+                    if s2 >= 0, s2 + AVAudioFramePosition(frameCount) <= file.length {
+                        start = s2
+                    }
+                } catch {}
+            }
+        }
         var extra: AVAudioFrameCount = 0
         if srcRate > 0 {
             let want = AVAudioFramePosition((xfadeMs / 1000.0 * srcRate).rounded(.up))
-            let avail = max(0, file.length - startFrame - AVAudioFramePosition(frameCount))
+            let avail = max(0, file.length - start - AVAudioFramePosition(frameCount))
             extra = AVAudioFrameCount(min(want, avail))
         }
-        guard let buf = regionBuffer(file: file, startFrame: startFrame,
+        guard let buf = regionBuffer(file: file, startFrame: start,
                                      frameCount: frameCount + extra) else { return nil }
         // Loop body length in the canonical domain: regionBuffer converts to
         // 48 kHz, so rescale the file-domain frame count; converter jitter

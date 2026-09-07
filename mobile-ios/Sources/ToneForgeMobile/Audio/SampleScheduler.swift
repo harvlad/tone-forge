@@ -1322,7 +1322,7 @@ public final class SampleScheduler: ObservableObject {
             let format = file.processingFormat
             let sampleRate = format.sampleRate
 
-            let startFrame: AVAudioFramePosition
+            var startFrame: AVAudioFramePosition
             let bodyCount: AVAudioFrameCount
             var extraCount: AVAudioFrameCount = 0
             if let slice = slice {
@@ -1331,9 +1331,36 @@ public final class SampleScheduler: ObservableObject {
                 let requested = max(0, endFrame - startFrame)
                 let clipped = min(requested, max(0, file.length - startFrame))
                 bodyCount = AVAudioFrameCount(clipped)
-                if continuationSec > 0 {
+                if continuationSec > 0, sampleRate > 0 {
+                    // Onset-phase snap (loop regions only): the grid's
+                    // downbeat timestamps land tens of ms AFTER the audible
+                    // attack, so a grid-cut region starts just past its own
+                    // kick — the wrap plays tail → kickless head, an audible
+                    // pause even with an exact period. Shift BOTH edges
+                    // (period kept) so the cut sits ~5 ms before the
+                    // strongest nearby onset; sustained heads shift 0.
+                    let search = AVAudioFramePosition((0.060 * sampleRate).rounded())
+                    let lo = max(0, startFrame - search)
+                    let scanLen = AVAudioFrameCount(
+                        max(0, min(file.length - lo, (startFrame - lo) + search)))
+                    if scanLen > 0,
+                       let scan = AVAudioPCMBuffer(pcmFormat: format,
+                                                   frameCapacity: scanLen) {
+                        file.framePosition = lo
+                        try file.read(into: scan, frameCount: scanLen)
+                        let shift = SeamlessLoop.onsetAlignedShift(
+                            scan, centerFrame: Int(startFrame - lo),
+                            searchFrames: Int(search),
+                            prerollFrames: Int(0.005 * sampleRate))
+                        let s2 = startFrame + AVAudioFramePosition(shift)
+                        if s2 >= 0,
+                           s2 + AVAudioFramePosition(bodyCount) <= file.length {
+                            startFrame = s2
+                        }
+                    }
                     let want = AVAudioFramePosition(continuationSec * sampleRate)
-                    let avail = max(0, file.length - startFrame - clipped)
+                    let avail = max(0, file.length - startFrame
+                                       - AVAudioFramePosition(bodyCount))
                     extraCount = AVAudioFrameCount(min(want, avail))
                 }
             } else {
