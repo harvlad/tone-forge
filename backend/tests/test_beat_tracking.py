@@ -86,3 +86,26 @@ def test_tempo_from_beats_sanity_window():
     assert beat_tracking._tempo_from_beats(slow) == 0.0
     # fewer than 2 beats -> 0.0
     assert beat_tracking._tempo_from_beats(np.array([1.0])) == 0.0
+
+
+def test_tempo_from_beats_unbiased_under_frame_quantization():
+    """beat_this emits frame-quantized times: a true 0.629s beat arrives as
+    a bimodal mix of 0.62s and 0.64s intervals. The median snapped to the
+    majority mode (96.8 BPM instead of ~95.4) — a 1.6% bias that cut bar
+    windows ~120ms short of the real downbeat and made kit-pad loops
+    stutter at the wrap. The trimmed mean must recover the true tempo."""
+    true = 0.629
+    # quantize each cumulative beat time to a 20ms frame grid, majority
+    # of intervals land on 0.62 with the remainder on 0.64
+    times = np.round(np.cumsum(np.full(400, true)) / 0.02) * 0.02
+    bpm = beat_tracking._tempo_from_beats(times)
+    assert bpm == pytest.approx(60.0 / true, rel=0.005)
+    # median on the same input demonstrates the failure this guards against
+    assert abs(60.0 / float(np.median(np.diff(times))) - 60.0 / true) > 0.8
+
+
+def test_tempo_from_downbeats_period():
+    # downbeats every 2.5157s in 4/4 -> 95.4 BPM
+    db = np.arange(0, 120, 2.5157)
+    bpm = beat_tracking._tempo_from_beats(db, period_beats=4.0)
+    assert bpm == pytest.approx(240.0 / 2.5157, rel=1e-3)

@@ -71,14 +71,32 @@ def _get_beat_this() -> Optional[Any]:
     return _BEAT_THIS_MODEL
 
 
-def _tempo_from_beats(beats: np.ndarray) -> float:
-    """Median inter-beat interval -> BPM, 0.0 if outside sanity window."""
+def _tempo_from_beats(beats: np.ndarray, period_beats: float = 1.0) -> float:
+    """Trimmed-mean inter-beat interval -> BPM, 0.0 if outside sanity window.
+
+    NOT the median: beat_this emits frame-quantized times, so the interval
+    distribution is bimodal around the true value (e.g. 257x0.62s + 213x0.64s
+    for a real 0.629s beat) and the median snaps to the majority mode — a
+    1.6% tempo bias that cut every constant-tempo bar window ~120 ms short
+    of the real downbeat (audible stutter at kit-pad loop wraps). The 10%
+    trimmed mean keeps the median's outlier robustness while averaging the
+    quantization away.
+
+    ``period_beats``: how many beats one interval spans (4.0 when the input
+    is downbeats in 4/4).
+    """
     if len(beats) < 2:
         return 0.0
-    median_interval = float(np.median(np.diff(beats)))
-    if median_interval <= 0:
+    iv = np.diff(np.asarray(beats, dtype=float))
+    iv = iv[iv > 0]
+    if len(iv) == 0:
         return 0.0
-    bpm = 60.0 / median_interval
+    lo, hi = np.percentile(iv, [10, 90])
+    core = iv[(iv >= lo) & (iv <= hi)]
+    interval = float(core.mean()) if len(core) else float(np.median(iv))
+    if interval <= 0:
+        return 0.0
+    bpm = 60.0 * period_beats / interval
     return bpm if _MIN_BPM <= bpm <= _MAX_BPM else 0.0
 
 
@@ -100,7 +118,17 @@ def track_beats(y: np.ndarray, sr: int) -> Dict[str, Any]:
             beats, downbeats = model(y, sr)
             beats = np.asarray(beats, dtype=float)
             downbeats = np.asarray(downbeats, dtype=float)
-            tempo = _tempo_from_beats(beats)
+            # Prefer the downbeat-derived tempo when there are enough
+            # downbeats: downbeat spacing is far steadier than per-beat
+            # spacing under beat_this's frame quantization (measured std
+            # 0.4% vs 1.6% modal split), and the constant-tempo bar grid
+            # that kit windows and client loop snapping derive from tempo
+            # must match the DOWNBEATS, not the beat subdivisions.
+            tempo = 0.0
+            if len(downbeats) >= 8:
+                tempo = _tempo_from_beats(downbeats, period_beats=4.0)
+            if tempo <= 0.0:
+                tempo = _tempo_from_beats(beats)
             if tempo > 0.0:
                 return {
                     "tempo_bpm": tempo,
