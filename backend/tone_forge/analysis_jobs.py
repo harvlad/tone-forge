@@ -280,19 +280,33 @@ class JobRegistry:
                 continue
             job = JobState(**{k: v for k, v in data.items() if k in _FIELDS})
             if job.status in ("running", "queued"):
-                if job.kind == "engine":
-                    # Engine jobs aren't driven by an in-process task —
-                    # the uploaded source file persists on disk, so the
-                    # job can simply be (re)claimed by a worker.
-                    job.status = "queued"
+                if job.kind == "engine" and job.status == "running":
+                    # LEAVE running engine jobs alone: the worker dials
+                    # OUT and survives a backend restart — blind requeue
+                    # here threw away a job at 90% during the 2026-09-07
+                    # deploy and re-ran it from scratch (user watched the
+                    # bar fall 90 -> 60). If the worker really died, the
+                    # stale-worker path in next_queued_engine_job()
+                    # requeues after its silence window; if it is alive,
+                    # its next progress POST lands within seconds.
+                    # Refresh updated_at so the staleness clock starts at
+                    # the restart, not at the last pre-restart post.
+                    job.updated_at = now
+                    self._persist(job)
+                elif job.kind == "engine":
+                    # Queued engine jobs: the uploaded source persists on
+                    # disk, so the job is simply claimable again.
                     job.message = "Requeued after server restart"
                     job.percent = 2.0
+                    job.version += 1
+                    job.updated_at = now
+                    self._persist(job)
                 else:
                     job.status = "error"
                     job.error = "interrupted by server restart"
-                job.version += 1
-                job.updated_at = now
-                self._persist(job)
+                    job.version += 1
+                    job.updated_at = now
+                    self._persist(job)
             self._jobs[job.id] = job
 
     def sweep(self) -> int:
