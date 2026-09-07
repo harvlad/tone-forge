@@ -520,7 +520,12 @@ def correct_timing(
             if orig[1] != fixed[1] or orig[2] != fixed[2]:  # Timing changed
                 time_delta = fixed[1] - orig[1]
                 record = provenance_chain.create_record(
-                    action=DecisionAction.MODIFIED,
+                    # ADJUSTED, not MODIFIED: MODIFIED never existed on
+                    # DecisionAction — the AttributeError aborted EVERY
+                    # provenance-tracked refinement ("ML refinement
+                    # failed: MODIFIED"), silently downgrading all
+                    # polyphonic MIDI to the heuristic path.
+                    action=DecisionAction.ADJUSTED,
                     stage="timing_corrector",
                     entity_type="note",
                     entity_id=f"n{i}",

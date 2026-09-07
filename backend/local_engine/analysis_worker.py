@@ -513,6 +513,22 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         except Exception as e:
             logger.warning(f"stems_partial emit failed: {e}")
 
+        # Overlap: the allin1 structure inference (sections backbone,
+        # ~20-30 s) needs only the mix path + separated stems — both
+        # final right here — yet it used to run AFTER the multi-minute
+        # MIDI stage. One background thread hides it entirely under
+        # MIDI (torch releases the GIL); the sections stage below just
+        # joins the future. Failure degrades exactly like the old
+        # inline path: structure=None -> RMS-novelty fallback.
+        import concurrent.futures as _cf
+        def _structure_early():
+            from tone_forge.analysis.structure import analyze_structure
+            return analyze_structure(audio_path, stems=stems)
+        _structure_pool = _cf.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="structure")
+        _structure_future = _structure_pool.submit(_structure_early)
+        _structure_pool.shutdown(wait=False)
+
         # Step 2: MIDI extraction
         midi_stems = {}
         midi_extraction_time = 0.0
@@ -999,7 +1015,6 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
         _st = time.perf_counter()
         try:
             from tone_forge.analysis.sections import SectionDetector
-            from tone_forge.analysis.structure import analyze_structure
             # Segmenter parity with unified_pipeline._detect_sections
             # (unified_pipeline.py:2063). Both paths now share the
             # SectionDetector defaults (min_section_duration=8.0s,
@@ -1021,7 +1036,9 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
             # allin1 is unavailable or fails.
             structure = None
             try:
-                structure = analyze_structure(audio_path, stems=stems)
+                # Started right after separation (see the overlap note
+                # above Step 2) — by now this is usually already done.
+                structure = _structure_future.result(timeout=600)
             except Exception as e:
                 logger.warning(f"Structure backend failed: {e}")
 
