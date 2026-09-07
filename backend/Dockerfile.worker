@@ -28,8 +28,19 @@ FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
 # lottery) and mismatch the CUDA-12 onnxruntime-gpu, whose CUDA
 # provider then silently falls back to CPU. If a dep genuinely needs a
 # newer torch, this build FAILS loudly instead of shipping a mismatch.
-RUN printf 'torch==2.4.1\ntorchaudio==2.4.1\n' > /opt/jamn-pip-constraints.txt
+#
+# Pinned at 2.8.0+cu126, NOT the base image's 2.4.1: all-in-one-mps
+# (sections/structure) requires torch>=2.8, so a 2.4.1 constraint makes
+# requirements.txt unresolvable — the 2026-09-07 12:42 image shipped
+# with NO analysis stack at all because that failure was swallowed (see
+# the parenthesized model-prefetch fallback below). cu126 wheels bundle
+# their own CUDA runtime and run on any 12.x host driver via minor
+# version compatibility — it's cu13x that starts the driver lottery.
+RUN printf 'torch==2.8.0\ntorchaudio==2.8.0\n' > /opt/jamn-pip-constraints.txt
 ENV PIP_CONSTRAINT=/opt/jamn-pip-constraints.txt
+RUN python -m pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cu126 \
+    torch==2.8.0 torchaudio==2.8.0
 
 # System codecs the analysis stack needs but the base image lacks: ffmpeg
 # decodes m4a/mp3 (_ensure_decodable); libsndfile backs soundfile.
@@ -42,11 +53,17 @@ RUN apt-get update \
 # layer), so no source lands in the published image. torch/torchaudio already
 # ship in the base; requirements.txt fills the rest. download_models warms the
 # Demucs + Beat-This + All-In-One caches under /root/.cache, which persist.
+# The parentheses matter: `a && b || c` swallows a FAILURE OF a — the
+# 2026-09-07 12:42 image published successfully with requirements.txt
+# entirely uninstalled (ResolutionImpossible under the old 2.4.1 pin)
+# because `|| echo` caught the pip error, and every pod then died with
+# "No module named 'librosa'" after claiming a job. Only the model
+# prefetch is allowed to degrade; a deps failure must fail the build.
 RUN --mount=type=bind,target=/src \
     cd /src/backend \
     && python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir -r requirements.txt \
-    && PYTHONPATH=. python -m local_engine.download_models || echo "WARN: model prefetch partial"
+    && (PYTHONPATH=. python -m local_engine.download_models || echo "WARN: model prefetch partial")
 
 # basic-pitch + onnxruntime-GPU baked in: the polyphonic basic_pitch pass is
 # the heaviest MIDI stage (~10 min/song on guitar+other with the CPU ORT

@@ -83,8 +83,25 @@ python -m pip install --upgrade pip
 # wheels need newer host drivers than many RunPod hosts run (-> the
 # intermittent "GPU pod, torch.cuda unavailable" lottery) and mismatch
 # the CUDA-12 onnxruntime-gpu build, whose CUDA provider then silently
-# falls back to CPU. The baked image's torch/cu124 is the known-good
-# pairing — nothing may move it.
+# falls back to CPU.
+#
+# But the lock must be >= 2.8: all-in-one-mps (sections) requires
+# torch>=2.8, so locking whatever the base image ships (2.4.1 on the
+# baked image) makes requirements resolution IMPOSSIBLE — the exact
+# failure that shipped a librosa-less image on 2026-09-07. Bring the
+# stack to 2.8.0+cu126 first (cu126 wheels bundle their own CUDA
+# runtime and run on any 12.x host driver; it's cu13x that starts the
+# driver lottery), THEN freeze it for everything below.
+python - <<'PY' || python -m pip install --index-url https://download.pytorch.org/whl/cu126 \
+    "torch==2.8.0" "torchaudio==2.8.0"
+import sys
+try:
+    import torch
+except Exception:
+    sys.exit(1)
+v = tuple(int(x) for x in torch.__version__.split("+")[0].split(".")[:2])
+sys.exit(0 if v >= (2, 8) else 1)
+PY
 python - <<'PYCON'
 import torch, torchaudio, pathlib
 pathlib.Path("/tmp/jamn-pip-constraints.txt").write_text(
