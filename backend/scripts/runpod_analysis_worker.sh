@@ -102,12 +102,19 @@ python -m pip install -r "$REQ"
 # provider automatically. Plain `onnxruntime` here was why "GPU" pods spent
 # the MIDI wall on CPU. basic-pitch is installed WITHOUT the [onnx] extra so
 # it can't drag the CPU build back in as a pinned dep.
+# --no-deps: basic-pitch's base install_requires pulls FULL TensorFlow on
+# Linux, and basic_pitch prefers the TF backend whenever it imports — which
+# ran the polyphonic pass on TF-CPU even with onnxruntime-gpu present
+# (observed on the 2026-09-07 Doomsday verification run: guitar 253 s +
+# other 336 s). With TF absent the backend resolver falls through to ONNX.
+# mir_eval + resampy are the only runtime deps not already installed.
 ORT_PKG=onnxruntime
 if command -v nvidia-smi >/dev/null 2>&1; then
   ORT_PKG=onnxruntime-gpu
-  python -m pip uninstall -y onnxruntime >/dev/null 2>&1 || true
+  python -m pip uninstall -y onnxruntime tensorflow >/dev/null 2>&1 || true
 fi
-python -m pip install "basic-pitch" "$ORT_PKG" 2>&1 | tail -3 \
+{ python -m pip install --no-deps basic-pitch \
+    && python -m pip install mir_eval resampy "$ORT_PKG"; } 2>&1 | tail -3 \
   || echo "basic_pitch optional install skipped (pYIN fallback stays in effect)"
 
 # 3. Models — Demucs htdemucs_6s + Beat-This + All-In-One (+ Riley HF when

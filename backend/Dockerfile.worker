@@ -42,8 +42,9 @@ RUN --mount=type=bind,target=/src \
 # provider automatically. basic-pitch deliberately WITHOUT the [onnx] extra
 # so it can't pin the CPU onnxruntime back in. The bootstrap script repeats
 # this conditionally for unbaked-image pods.
-RUN python -m pip uninstall -y onnxruntime 2>/dev/null; \
-    python -m pip install --no-cache-dir basic-pitch onnxruntime-gpu
+RUN python -m pip uninstall -y onnxruntime tensorflow 2>/dev/null; \
+    python -m pip install --no-cache-dir --no-deps basic-pitch \
+    && python -m pip install --no-cache-dir mir_eval resampy onnxruntime-gpu
 
 # Runtime: pull the latest code, then run the claim-loop bootstrap. On this
 # image its apt/pip/download steps are already satisfied, so it's git-pull-fast.
