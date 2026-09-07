@@ -31,7 +31,7 @@ struct RemixSheet: View {
                 feelSection
                 redrumSection
                 exportSection
-                if let err = appState.remixError {
+                if let err = appState.remixError ?? appState.autoKitError {
                     Section {
                         Text(err).font(.footnote).foregroundStyle(.red)
                     }
@@ -62,7 +62,9 @@ struct RemixSheet: View {
             HStack {
                 Label(title, systemImage: icon)
                 Spacer()
-                if appState.autoKitLoading {
+                // Spinner ONLY on the row that's loading — a shared flag
+                // painted every row busy (field-reported confusion).
+                if appState.autoKitLoading && appState.lastKitKind == kind {
                     ProgressView().controlSize(.small)
                 } else if activePackId.hasPrefix(prefix) {
                     Image(systemName: "checkmark")
@@ -122,9 +124,16 @@ struct RemixSheet: View {
                 Button {
                     appState.clearRedrum()
                 } label: {
-                    Label("Original drums", systemImage: "arrow.uturn.backward")
+                    HStack {
+                        Label("Original drums",
+                              systemImage: "arrow.uturn.backward")
+                        Spacer()
+                        if appState.redrumBusyKit == "original" {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
                 }
-                .disabled(appState.remixBusy == "redrum")
+                .disabled(appState.redrumBusyKit != nil)
             }
             redrumRow(title: "Tightened (own kit)", kit: "self")
             if !candidatesLoaded {
@@ -157,19 +166,27 @@ struct RemixSheet: View {
                 Label(title, systemImage: "arrow.triangle.2.circlepath")
                     .lineLimit(1)
                 Spacer()
-                if let detail {
+                if appState.redrumBusyKit == kit {
+                    // First use per kit renders server-side (~10-60 s) and
+                    // downloads a full stem — say so instead of a bare
+                    // spinner the user can misread as a hang.
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Rendering…")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                } else if let detail, appState.redrumBusyKit == nil {
                     Text(detail).font(.caption2).foregroundStyle(.secondary)
                 }
-                if appState.remixBusy == "redrum" {
-                    ProgressView().controlSize(.small)
-                } else if appState.redrumActiveKit == kit {
+                if appState.redrumBusyKit != kit,
+                   appState.redrumActiveKit == kit {
                     Image(systemName: "checkmark")
                         .foregroundStyle(TFTheme.accent)
                 }
             }
         }
         .disabled(appState.currentBundle == nil
-                  || appState.remixBusy == "redrum")
+                  || appState.redrumBusyKit != nil)
     }
 
     // MARK: - Export

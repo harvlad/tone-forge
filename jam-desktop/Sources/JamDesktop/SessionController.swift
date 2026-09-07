@@ -913,6 +913,9 @@ final class SessionController: ObservableObject {
     @Published private(set) var redrumActiveKit: String?
     private var originalDrumsURL: URL?
     @Published var remixBusy: String?
+    /// WHICH Re-Drum kit is in flight — per-row spinners (a global flag
+    /// painted every donor row busy at once).
+    @Published private(set) var redrumBusyKit: String?
     @Published var remixError: String?
 
     @MainActor
@@ -952,10 +955,11 @@ final class SessionController: ObservableObject {
     @MainActor
     func applyRedrum(kit: String) async {
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL,
-              let bundle = attachedBundle else { return }
+              let bundle = attachedBundle, redrumBusyKit == nil else { return }
         remixBusy = "redrum"
+        redrumBusyKit = kit
         remixError = nil
-        defer { remixBusy = nil }
+        defer { remixBusy = nil; redrumBusyKit = nil }
         do {
             let wav = try await RemixClient().fetchRedrumStem(
                 baseURL: base, analysisId: analysisId, kit: kit)
@@ -977,9 +981,10 @@ final class SessionController: ObservableObject {
     @MainActor
     func clearRedrum() async {
         guard let bundle = attachedBundle, let original = originalDrumsURL,
-              redrumActiveKit != nil else { return }
+              redrumActiveKit != nil, redrumBusyKit == nil else { return }
         remixBusy = "redrum"
-        defer { remixBusy = nil }
+        redrumBusyKit = "original"
+        defer { remixBusy = nil; redrumBusyKit = nil }
         var urls = attachedStemURLs
         urls["drums"] = original
         await engine.stemPlayer.load(bundle: bundle, localURLs: urls)

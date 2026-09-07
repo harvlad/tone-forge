@@ -2151,6 +2151,9 @@ public final class AppState: ObservableObject {
     private var originalDrumsURL: URL?
     /// Remix row currently working (row id) + last error, for the sheet.
     @Published public var remixBusy: String?
+    /// WHICH Re-Drum kit is in flight — per-row spinners; a single global
+    /// flag painted every donor row busy at once (field-reported).
+    @Published public private(set) var redrumBusyKit: String?
     @Published public var remixError: String?
 
     /// Toggle groove humanize; fetches the template on first use.
@@ -2196,12 +2199,14 @@ public final class AppState: ObservableObject {
     /// the only supported swap path (AVAudioFile can't rebind buffers).
     public func applyRedrum(kit: String) {
         guard let bundle = currentBundle else { return }
+        guard redrumBusyKit == nil else { return }
         let analysisId = bundle.analysisId
         remixBusy = "redrum"
+        redrumBusyKit = kit
         remixError = nil
         let base = backendBaseURL
         Task { @MainActor in
-            defer { self.remixBusy = nil }
+            defer { self.remixBusy = nil; self.redrumBusyKit = nil }
             do {
                 let wav = try await RemixClient().fetchRedrumStem(
                     baseURL: base, analysisId: analysisId, kit: kit)
@@ -2211,10 +2216,12 @@ public final class AppState: ObservableObject {
                 }
                 var urls = self.currentStemLocalURLs
                 urls["drums"] = wav
-                try await self.stemPlayer.load(bundle: bundle, localURLs: urls)
+                try await self.swapStemsPreservingPlayback(
+                    bundle: bundle, urls: urls)
                 guard self.currentBundle?.analysisId == analysisId else { return }
                 self.currentStemLocalURLs = urls
                 self.redrumActiveKit = kit
+                Haptics.padTrigger()
             } catch {
                 self.remixError = error.localizedDescription
             }
@@ -2224,21 +2231,39 @@ public final class AppState: ObservableObject {
     /// Back to the song's real drums (A/B).
     public func clearRedrum() {
         guard let bundle = currentBundle, let original = originalDrumsURL,
-              redrumActiveKit != nil else { return }
+              redrumActiveKit != nil, redrumBusyKit == nil else { return }
         let analysisId = bundle.analysisId
         remixBusy = "redrum"
+        redrumBusyKit = "original"
         Task { @MainActor in
-            defer { self.remixBusy = nil }
+            defer { self.remixBusy = nil; self.redrumBusyKit = nil }
             do {
                 var urls = self.currentStemLocalURLs
                 urls["drums"] = original
-                try await self.stemPlayer.load(bundle: bundle, localURLs: urls)
+                try await self.swapStemsPreservingPlayback(
+                    bundle: bundle, urls: urls)
                 guard self.currentBundle?.analysisId == analysisId else { return }
                 self.currentStemLocalURLs = urls
                 self.redrumActiveKit = nil
             } catch {
                 self.remixError = error.localizedDescription
             }
+        }
+    }
+
+    /// Stem reload with playback continuity: `stemPlayer.load` tears the
+    /// channels down, which silently STOPPED the song — a Re-Drum swap
+    /// then read as "nothing happened". Capture position + play state,
+    /// reload, seek back, resume. The audible drum change is the product.
+    private func swapStemsPreservingPlayback(
+        bundle: SongBundle, urls: [String: URL]
+    ) async throws {
+        let wasPlaying = isPlaying
+        let position = audioEngine.clock.nowSongSeconds
+        try await stemPlayer.load(bundle: bundle, localURLs: urls)
+        stemPlayer.seek(to: position)
+        if wasPlaying {
+            stemPlayer.play(atSongSeconds: position)
         }
     }
 

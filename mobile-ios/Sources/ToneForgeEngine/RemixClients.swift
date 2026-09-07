@@ -83,6 +83,17 @@ public struct RemixClient: Sendable {
         return try JSONDecoder().decode(Wire.self, from: data).candidates
     }
 
+    /// Long-haul session for the redrum WAV: first render per (song, kit)
+    /// pair runs server-side on this request (~10-60 s) and the payload is
+    /// a full-length stem (tens of MB) — URLSession's 60 s default request
+    /// timeout killed it on slower links and the row read as "did nothing".
+    private static let longHaul: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 300
+        config.timeoutIntervalForResource = 600
+        return URLSession(configuration: config)
+    }()
+
     /// Download the Re-Drum replacement drums stem into Caches and return
     /// its local URL. `kit` is "self" or "song:<entryId>". First render per
     /// (song, kit) pair happens server-side on this request — allow seconds.
@@ -102,7 +113,7 @@ public struct RemixClient: Sendable {
 
         let url = try songURL(baseURL, analysisId, "redrum",
                               query: [URLQueryItem(name: "kit", value: kit)])
-        let (data, response) = try await session.data(for: request(url))
+        let (data, response) = try await Self.longHaul.data(for: request(url))
         try Self.check(response)
         guard !data.isEmpty else { throw RemixClientError.httpStatus(204) }
         try data.write(to: dest, options: .atomic)

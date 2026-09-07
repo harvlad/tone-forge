@@ -58,11 +58,17 @@ struct RemixSheetView: View {
                         Button {
                             Task { await session.clearRedrum() }
                         } label: {
-                            Label("Original drums",
-                                  systemImage: "arrow.uturn.backward")
+                            HStack {
+                                Label("Original drums",
+                                      systemImage: "arrow.uturn.backward")
+                                Spacer()
+                                if session.redrumBusyKit == "original" {
+                                    ProgressView().controlSize(.small)
+                                }
+                            }
                         }
                         .buttonStyle(.plain)
-                        .disabled(session.remixBusy == "redrum")
+                        .disabled(session.redrumBusyKit != nil)
                     }
                     redrumRow("Tightened (own kit)", kit: "self")
                     if !candidatesLoaded {
@@ -150,10 +156,12 @@ struct RemixSheetView: View {
                 subtitle: kit == "self"
                     ? "Re-trigger this song's own cleaned kit"
                     : "This song's groove on that song's drums",
-                busy: session.remixBusy == "redrum",
-                checked: session.redrumActiveKit == kit)
+                // Per-kit busy: only the tapped row spins.
+                busy: session.redrumBusyKit == kit,
+                checked: session.redrumActiveKit == kit
+                    && session.redrumBusyKit != kit)
         }
         .buttonStyle(.plain)
-        .disabled(session.remixBusy == "redrum")
+        .disabled(session.redrumBusyKit != nil)
     }
 }
