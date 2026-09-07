@@ -275,6 +275,7 @@ struct RootView: View {
             // Recover this device's server-side jobs after a relaunch
             // without requiring a visit to the Band Room.
             await queue.refreshFromServer(baseURL: model.backendBaseURL)
+            await autoOpenFeaturedSong()
         }
     }
 
@@ -299,6 +300,32 @@ struct RootView: View {
     private func loadSong(_ entry: HistoryEntry) {
         Task {
             await model.loadSession(analysisId: entry.id)
+        }
+    }
+
+    /// Curated launch default: when the backend has
+    /// TONEFORGE_FEATURED_QUERY set it pins a `featured: true` row to
+    /// the front of /api/history — open it so a dev/TestFlight launch
+    /// lands on a known-good song. Server-gated (public launch unsets
+    /// the env and this path goes inert). Strictly best-effort: guards
+    /// re-check after every await — skipped once the user has loaded
+    /// (or started loading) anything, or has left the intake view —
+    /// and a failed load is swallowed so launch looks exactly like
+    /// today when nothing opens.
+    private func autoOpenFeaturedSong() async {
+        guard model.session == nil, !model.isLoadingSession,
+              model.lastAttemptedAnalysisId == nil else { return }
+        if history.entries.isEmpty {
+            await history.refresh(baseURL: model.backendBaseURL)
+        }
+        guard let featured = history.entries.first(where: { $0.featured == true }),
+              model.session == nil, !model.isLoadingSession,
+              model.lastAttemptedAnalysisId == nil,
+              model.view == .intake
+        else { return }
+        await model.loadSession(analysisId: featured.id)
+        if model.session?.bundle.analysisId != featured.id {
+            model.sessionError = nil
         }
     }
 

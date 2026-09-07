@@ -26,6 +26,11 @@ public struct HistoryEntry: Sendable, Codable, Identifiable, Equatable {
     // responses still decode.
     public let artist: String?
     public let license: String?
+    // Featured pin (TONEFORGE_FEATURED_QUERY, dev/TestFlight only):
+    // the backend moves one curated row to the front and stamps this
+    // flag. Optional so responses without it (env unset — the public
+    // launch state) decode exactly as before.
+    public let featured: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -37,6 +42,7 @@ public struct HistoryEntry: Sendable, Codable, Identifiable, Equatable {
         case ampFamily = "amp_family"
         case artist
         case license
+        case featured
     }
 
     public init(
@@ -48,7 +54,8 @@ public struct HistoryEntry: Sendable, Codable, Identifiable, Equatable {
         duration: Double? = nil,
         ampFamily: String? = nil,
         artist: String? = nil,
-        license: String? = nil
+        license: String? = nil,
+        featured: Bool? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -59,6 +66,7 @@ public struct HistoryEntry: Sendable, Codable, Identifiable, Equatable {
         self.ampFamily = ampFamily
         self.artist = artist
         self.license = license
+        self.featured = featured
     }
 }
 

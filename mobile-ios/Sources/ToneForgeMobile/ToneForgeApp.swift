@@ -883,10 +883,12 @@ public final class AppState: ObservableObject {
         // now and let the demo's stems fill in.
         let firstRunKey = "toneforge.hasOpenedBefore"
         let firstRun = !UserDefaults.standard.bool(forKey: firstRunKey)
+        var autoOpenedDemo = false
         if firstRun, let demo = (try? bundleStore.listLocalBundles())?.first {
             UserDefaults.standard.set(true, forKey: firstRunKey)
             Task { @MainActor in await loadCachedBundle(demo) }
             selectedTab = .jam
+            autoOpenedDemo = true
         } else {
             if firstRun { UserDefaults.standard.set(true, forKey: firstRunKey) }
             let restoredTab = AppTab(rawValue: sampleSettings.appTabRaw) ?? .perform
@@ -906,6 +908,11 @@ public final class AppState: ObservableObject {
         // routing, resumes any jobs orphaned by a kill/relaunch, and
         // flushes a finished song waiting to open.
         JobCompletionCenter.shared.boot(appState: self)
+
+        // Curated launch default (TONEFORGE_FEATURED_QUERY, dev/
+        // TestFlight only). Skipped when the first-run demo just
+        // auto-opened — that flow already owns the first surface.
+        if !autoOpenedDemo { autoOpenFeaturedSong() }
     }
 
     /// P2: Launchpad Pro MK3 over CoreMIDI. Pad events publish on the
@@ -1741,6 +1748,39 @@ public final class AppState: ObservableObject {
         Task { @MainActor in
             await loadBundle(analysisId: historyId) { [weak self] in
                 self?.openSong()
+            }
+        }
+    }
+
+    /// Curated launch default: when the backend has
+    /// TONEFORGE_FEATURED_QUERY set it pins a `featured: true` row to
+    /// the front of /api/history (default scope) — open it so a
+    /// dev/TestFlight install lands on a known-good song instead of an
+    /// empty surface. Called once from `bootAudio`. Server-gated, so
+    /// public launch just unsets the env — this path becomes inert.
+    ///
+    /// Strictly best-effort: every guard re-checks AFTER the network
+    /// hop (the user may have tapped a song, or a background job may be
+    /// waiting to open, while the fetch was in flight), and any
+    /// failure — fetch error, no featured row, bundle load error — is
+    /// a silent no-op so launch looks exactly like today.
+    private func autoOpenFeaturedSong() {
+        guard currentBundle == nil, loadingBundleId == nil else { return }
+        Task { @MainActor in
+            let entries = try? await HistoryClient(
+                timeout: AppConfig.historyTimeout
+            ).fetch(baseURL: backendBaseURL)
+            guard let featured = entries?.first(where: { $0.featured == true }),
+                  currentBundle == nil, loadingBundleId == nil,
+                  JobCompletionCenter.shared.pendingOpenHistoryIds.isEmpty
+            else { return }
+            await loadBundle(analysisId: featured.id) { [weak self] in
+                self?.openSong()
+            }
+            // Auto-open must not surface errors a user action didn't
+            // cause — swallow a failed load instead of banner-ing it.
+            if currentBundle?.analysisId != featured.id {
+                loadingError = nil
             }
         }
     }

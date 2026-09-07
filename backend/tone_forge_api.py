@@ -4455,6 +4455,9 @@ _HISTORY_LIST_FIELDS = (
     # old entries project the same rows as before.
     "artist",
     "license",
+    # Featured pin (TONEFORGE_FEATURED_QUERY): stamped per-request, never
+    # persisted — absent unless the env gate is set.
+    "featured",
 )
 
 
@@ -4516,6 +4519,25 @@ async def get_history(
             or q_lower in entry.get("summary", "").lower()
             or q_lower in (entry.get("amp_family") or "").lower()
         ]
+
+    # Curated default for dev/TestFlight: pin the newest entry whose name
+    # matches TONEFORGE_FEATURED_QUERY to the front so a fresh install
+    # lands on a known-good song. Env-gated and read per request so it is
+    # trivially removable for public launch (copyright) and testable
+    # without a restart. Default scope only — "mine" stays the user's own
+    # list, untouched. The flag is stamped on a copy: history entries are
+    # shared/cached and must never be mutated here.
+    featured_query = os.environ.get("TONEFORGE_FEATURED_QUERY", "").strip()
+    if featured_query and scope != "mine":
+        needle = featured_query.lower()
+        for i, entry in enumerate(history):
+            if needle in (entry.get("name") or "").lower():
+                history = (
+                    [{**entry, "featured": True}]
+                    + history[:i]
+                    + history[i + 1:]
+                )
+                break
 
     history = history[:limit]
     if not full:
