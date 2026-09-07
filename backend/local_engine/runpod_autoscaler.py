@@ -59,7 +59,14 @@ def _key() -> str:
 
 
 def _headers() -> dict:
-    return {"Authorization": f"Bearer {_key()}", "Content-Type": "application/json"}
+    return {
+        "Authorization": f"Bearer {_key()}",
+        "Content-Type": "application/json",
+        # RunPod's Cloudflare WAF started rejecting python-requests'
+        # default UA (error 1010, 2026-09-07) — every API call 403'd
+        # and worker spawning silently died. Any custom UA passes.
+        "User-Agent": "jamn-autoscaler/1.0 (+https://jamn.app)",
+    }
 
 
 def _gpu_ids() -> List[str]:
