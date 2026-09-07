@@ -323,18 +323,26 @@ class AutoKitBuilder:
                 loops_by_id[lp.id] = lp
         phrases_by_id = {p.id: p for p in (getattr(graph, "phrases", ()) or ())}
 
-        # Bar length at song tempo, so the cap truncates in whole bars. The
-        # phrases were cut bar-aligned upstream (PhraseAnalyzer) — the pad
-        # window must respect those boundaries or loopStartSec/EndSec describe
-        # a region the loop metrics were never measured on.
+        # LOCAL bar length per asset, derived from the phrase's own real-grid
+        # span — NOT the constant song tempo. The grid's real downbeats drift
+        # a few dozen ms per bar against any constant BPM (Doomsday: 7.570 s
+        # of real 3-bar drums vs 7.545 s at the constant tempo), and a
+        # constant-tempo window cuts short of the real downbeat: the wrap
+        # lands in the pre-beat gap and the loop audibly pauses. The phrase
+        # bounds ARE real downbeats (PhraseAnalyzer snaps to the grid), so
+        # whole-local-bar windows wrap exactly on the beat.
         beats_per_bar = int((getattr(graph, "time_signature", None) or (4, 4))[0] or 4)
         tempo = float(getattr(graph, "grid_tempo_bpm", 0.0) or 0.0)
-        bar_s = beats_per_bar * 60.0 / tempo if tempo > 0 else 0.0
+        const_bar_s = beats_per_bar * 60.0 / tempo if tempo > 0 else 0.0
 
         pads = []
         for idx, a in enumerate(assets):
             lp = loops_by_id.get(getattr(a, "source_id", None))
             qual = getattr(lp, "quality", None) if lp else None
+            span = a.pos.end_s - a.pos.start_s
+            n_bars_total = max(1, round((getattr(a.pos, "length_beats", 0.0) or 0.0)
+                                        / beats_per_bar)) if span > 0 else 1
+            local_bar_s = span / n_bars_total if span > 0 else const_bar_s
             # Pad window = the asset's actual bar-aligned span, preferring the
             # analyzer's optimized seam window when it measured one — that is
             # the region loop_confidence/crossfade_ms were computed on. The
@@ -342,52 +350,41 @@ class AutoKitBuilder:
             opt_s = getattr(qual, "optimized_start_s", None) if qual else None
             opt_e = getattr(qual, "optimized_end_s", None) if qual else None
             # The analyzer's zero-crossing nudges make optimized windows a few
-            # dozen ms off whole bars — the clients bar-snap loop length, so a
-            # non-integer-bar window would fight that snap and shift the seam
-            # off the region the metrics were measured on. Only take it when
-            # it IS whole bars (±10 ms) and fits the cap.
+            # dozen ms off whole bars; a non-integer-bar window breaks the
+            # shared phase-lock cycle. Only take it when it IS whole local
+            # bars (±10 ms) and fits the cap.
             use_opt = False
             if opt_s is not None and opt_e is not None and float(opt_e) > float(opt_s):
                 opt_len = float(opt_e) - float(opt_s)
-                if opt_len <= _SAMPLE_LEN_SEC + 1e-6:
-                    if bar_s > 0:
-                        n = round(opt_len / bar_s)
-                        use_opt = n >= 1 and abs(opt_len - n * bar_s) <= 0.010
-                    else:
-                        use_opt = True
+                if opt_len <= _SAMPLE_LEN_SEC + 1e-6 and local_bar_s > 0:
+                    n = round(opt_len / local_bar_s)
+                    use_opt = n >= 1 and abs(opt_len - n * local_bar_s) <= 0.010
             if use_opt:
                 q_start, q_end = float(opt_s), float(opt_e)
             else:
                 q_start, q_end = a.pos.start_s, a.pos.end_s
-            # Keep the 8 s memory cap, but truncate in whole bars — never
-            # below one bar (a very slow song's single bar may exceed the cap,
-            # and a fractional-bar cut breaks the shared phase-lock cycle).
+            # Keep the 8 s memory cap, but truncate in whole LOCAL bars —
+            # never below one bar (a very slow song's single bar may exceed
+            # the cap, and a fractional-bar cut breaks the phase-lock cycle).
             # When the phrase carries a per-bar energy profile, place the
             # truncated window on the loudest contiguous bar run — a blind
             # head-keep exported near-silence when a phrase's content sat in
             # its tail (silent-head phrases read as audible on phrase RMS).
             if q_end - q_start > _SAMPLE_LEN_SEC + 1e-6:
-                if bar_s > 0:
-                    k = max(1, int(_SAMPLE_LEN_SEC / bar_s))
+                if local_bar_s > 0:
+                    k = max(1, int(_SAMPLE_LEN_SEC / local_bar_s))
                     ph = phrases_by_id.get(getattr(lp, "phrase_id", None) or a.source_id)
                     be = tuple(getattr(ph, "bar_energies", ()) or ()) if ph else ()
-                    n_bars = int(round((q_end - q_start) / bar_s))
+                    n_bars = int(round((q_end - q_start) / local_bar_s))
                     j = 0
                     if n_bars > k and len(be) >= n_bars:
                         power = [e * e for e in be[:n_bars]]
                         sums = [sum(power[i:i + k]) for i in range(n_bars - k + 1)]
                         j = max(range(len(sums)), key=sums.__getitem__)
-                    q_start = q_start + j * bar_s
-                    q_end = q_start + k * bar_s
+                    q_start = q_start + j * local_bar_s
+                    q_end = q_start + k * local_bar_s
                 else:  # no tempo → the fixed cap is the only bound available
                     q_end = q_start + _SAMPLE_LEN_SEC
-            # Final whole-bar snap at the CONSTANT song tempo. The grid's
-            # real downbeats drift a few dozen ms per bar against it, and
-            # trailing-partial phrases end mid-bar — but every client snaps
-            # loop length to constant bar seconds, so exporting anything else
-            # means the client's snap moves the seam off the exported region.
-            if bar_s > 0:
-                q_end = q_start + max(1, round((q_end - q_start) / bar_s)) * bar_s
             # Loop the whole exported window (full-slice loop).
             loop_start, loop_end = q_start, q_end
             # Carry the analyzer's per-seam crossfade measurement when present

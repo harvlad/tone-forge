@@ -146,6 +146,25 @@ public enum SeamlessLoop {
         x = max(1, min(x, n / 2 - 1))
         let continuation = total - n
         let channels = Int(src.format.channelCount)
+        // Transient-aware fade: when the loop head IS an attack (kick/snare
+        // on the downbeat — energy front-loaded in the first 10 ms), a long
+        // equal-power blend plays that attack at reduced gain every pass:
+        // an audible energy dip at the wrap ("in time but not seamless").
+        // Percussive heads get a ~3 ms declick instead; sustained heads
+        // keep the full requested fade.
+        if let ch0 = src.floatChannelData?.pointee {
+            let a = Int(0.010 * sr), b = Int(0.060 * sr)
+            if b <= n {
+                var e0: Float = 0, e1: Float = 0
+                for i in 0..<a { e0 += ch0[i] * ch0[i] }
+                for i in a..<b { e1 += ch0[i] * ch0[i] }
+                let rms0 = (e0 / Float(a)).squareRoot()
+                let rms1 = (e1 / Float(b - a)).squareRoot()
+                if rms0 > 2 * rms1, rms0 > 1e-4 {
+                    x = max(1, min(x, Int(0.003 * sr)))
+                }
+            }
+        }
         for c in 0..<channels {
             let s = srcData[c]
             let d = dst[c]

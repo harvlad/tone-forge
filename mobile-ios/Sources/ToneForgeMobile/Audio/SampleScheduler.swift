@@ -412,22 +412,29 @@ public final class SampleScheduler: ObservableObject {
     /// raw 8.00 s while the loop-lock grid ran at the bar-snapped cycle
     /// (e.g. 8.39 s at 143 BPM) — locked loops drifted visibly apart every
     /// pass (the "timing misalignment on the samples").
+    ///
+    /// EXCEPT when the pad carries an explicit [loopStartSec, loopEndSec]:
+    /// the kit builder exports those on the song's REAL local downbeats,
+    /// which drift a few dozen ms per bar against the constant tempo — a
+    /// constant-tempo re-snap here cut the region short of the real
+    /// downbeat, so the wrap landed in the pre-beat gap and the loop
+    /// audibly paused (Doomsday drums: real 3 bars 7.570 s vs 7.545 s at
+    /// constant BPM). Explicit regions are whole bars by construction —
+    /// play them verbatim.
     private nonisolated static func _loopRegion(
         for pad: SamplePad, slice: StemSlice, barSeconds: Double? = nil
     ) -> StemSlice {
-        func snapped(_ start: Double, _ end: Double) -> StemSlice {
-            guard pad.loopable ?? false, let bar = barSeconds, bar > 0 else {
-                return StemSlice(stemRole: slice.stemRole, startSec: start, endSec: end)
-            }
-            let len = end - start
-            let bars = max(1.0, (len / bar).rounded())
-            return StemSlice(stemRole: slice.stemRole,
-                             startSec: start, endSec: start + bars * bar)
-        }
         if let ls = pad.loopStartSec, let le = pad.loopEndSec, le > ls {
-            return snapped(ls, le)
+            return StemSlice(stemRole: slice.stemRole, startSec: ls, endSec: le)
         }
-        return snapped(slice.startSec, slice.endSec)
+        guard pad.loopable ?? false, let bar = barSeconds, bar > 0 else {
+            return slice
+        }
+        let len = slice.endSec - slice.startSec
+        let bars = max(1.0, (len / bar).rounded())
+        return StemSlice(stemRole: slice.stemRole,
+                         startSec: slice.startSec,
+                         endSec: slice.startSec + bars * bar)
     }
     #endif
 
