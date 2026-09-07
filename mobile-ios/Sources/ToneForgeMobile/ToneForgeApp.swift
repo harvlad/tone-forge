@@ -2251,17 +2251,23 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// Stem reload with playback continuity: `stemPlayer.load` tears the
-    /// channels down, which silently STOPPED the song — a Re-Drum swap
-    /// then read as "nothing happened". Capture position + play state,
-    /// reload, seek back, resume. The audible drum change is the product.
+    /// Stem reload with playback AND mix continuity: `stemPlayer.load`
+    /// tears the channels down, which silently STOPPED the song — a
+    /// Re-Drum swap then read as "nothing happened" — and rebuilds every
+    /// gain node at unity, which un-muted whatever the user had muted.
+    /// Capture play state + mix, reload, restore both, resume. The
+    /// audible drum change is the product; nothing else may move.
     private func swapStemsPreservingPlayback(
         bundle: SongBundle, urls: [String: URL]
     ) async throws {
         let wasPlaying = isPlaying
-        let position = audioEngine.clock.nowSongSeconds
+        let mixSnapshot = stemPlayer.stems
         try await stemPlayer.load(bundle: bundle, localURLs: urls)
-        stemPlayer.seek(to: position)
+        stemPlayer.restoreStemStates(mixSnapshot)
+        // Read the clock AFTER the load: it free-runs through the file
+        // opens, so a position captured before would restart every stem
+        // permanently behind the transport.
+        let position = audioEngine.clock.nowSongSeconds
         if wasPlaying {
             stemPlayer.play(atSongSeconds: position)
         }

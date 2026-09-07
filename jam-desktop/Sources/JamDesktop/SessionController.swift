@@ -969,7 +969,7 @@ final class SessionController: ObservableObject {
             }
             var urls = attachedStemURLs
             urls["drums"] = wav
-            await engine.stemPlayer.load(bundle: bundle, localURLs: urls)
+            await swapStemsPreservingPlayback(bundle: bundle, urls: urls)
             guard attachedAnalysisId == analysisId else { return }
             attachedStemURLs = urls
             redrumActiveKit = kit
@@ -987,9 +987,43 @@ final class SessionController: ObservableObject {
         defer { remixBusy = nil; redrumBusyKit = nil }
         var urls = attachedStemURLs
         urls["drums"] = original
-        await engine.stemPlayer.load(bundle: bundle, localURLs: urls)
+        await swapStemsPreservingPlayback(bundle: bundle, urls: urls)
         attachedStemURLs = urls
         redrumActiveKit = nil
+    }
+
+    /// Stem reload with playback AND mix continuity — the only supported
+    /// mid-song swap path (AVAudioFile can't rebind buffers).
+    ///
+    /// `DesktopStemPlayer.load` detaches every channel and rebuilds the
+    /// submix, which leaves all players stopped and every fresh gain node
+    /// at unity. A bare `load` therefore killed the sound on a Re-Drum
+    /// apply (mobile got this fix; desktop was left on the bare call) and
+    /// silently undid mute/solo/volume. Worse, the teardown can drop the
+    /// engine on a device reconfig, and `play` gates on
+    /// `avEngine.isRunning` — so a dead engine swallows the restart
+    /// without a word. Revive, re-push the mix, resume.
+    @MainActor
+    private func swapStemsPreservingPlayback(
+        bundle: SongBundle, urls: [String: URL]
+    ) async {
+        let wasPlaying = transport.isPlaying
+        // Settle the music bus BEFORE the load: `load` connects the stem
+        // submix into `stemPlayer.outputNode`, which `engine.start()`
+        // rebinds.
+        ensureEngineStarted()
+        await engine.stemPlayer.load(bundle: bundle, localURLs: urls)
+        if !engine.engine.isRunning {
+            ensureEngineStarted()
+            engine.stemPlayer.reattach()
+        }
+        applyMix()
+        // Read the clock AFTER the load: it free-runs through the file
+        // opens, so a position captured before would restart every stem
+        // permanently behind the transport.
+        if wasPlaying {
+            engine.stemPlayer.play(atSongSeconds: engine.clock.nowSongSeconds)
+        }
     }
 
     /// Instrument Pack downloads through the browser — the zip lands in
