@@ -78,6 +78,61 @@ final class SequencerClockTests: XCTestCase {
         XCTAssertEqual(clock.swing, 0)
     }
 
+    // MARK: - Groove (Remix Humanize)
+
+    func testGrooveOffsetsClampAndNormalize() {
+        let clock = makeClock()
+        clock.grooveOffsets = [0.9, -0.2, 0.1, 0]
+        XCTAssertEqual(clock.grooveOffsets ?? [], [0.45, 0, 0.1, 0])
+        clock.grooveOffsets = []
+        XCTAssertNil(clock.grooveOffsets)
+    }
+
+    // A groove delay on slot 0 used to decrement raw step 0 to -1, which
+    // survives Swift's truncating `%` as -1 and gets dropped by
+    // triggersAt's range guard — the pattern's first downbeat went
+    // missing. The first step of a run now fires on the grid.
+    func testGrooveOnSlotZeroStillFiresFirstStep() {
+        let clock = makeClock()
+        clock.grooveOffsets = [0.25, 0, 0, 0]
+        clock.start(at: 0)
+        XCTAssertEqual(clock.tick(songSeconds: 0.0), 0)
+        XCTAssertEqual(clock.currentStep, 0)
+    }
+
+    // …but every LATER occurrence of slot 0 is delayed: raw step 4 (a
+    // fresh bar on a 4-step template) has a predecessor to hold.
+    func testGrooveDelaysSlotZeroOnLaterBars() {
+        // 4-step pattern, 0.125 s steps; slot 0 delayed by 0.25 steps →
+        // raw step 4's boundary moves from 0.5 s to 0.53125 s.
+        let clock = makeClock(stepCount: 4)
+        clock.grooveOffsets = [0.25, 0, 0, 0]
+        clock.start(at: 0)
+        clock.tick(songSeconds: 0.376)                    // step 3
+        XCTAssertEqual(clock.tick(songSeconds: 0.505), 3) // grid boundary: held
+        XCTAssertEqual(clock.tick(songSeconds: 0.532), 0) // delayed boundary
+    }
+
+    func testGrooveComposesWithSwing() {
+        let clock = makeClock()
+        clock.swing = 0.25
+        clock.grooveOffsets = [0, 0.1, 0, 0]
+        // Step 1 is odd (swing 0.25) AND slot 1 (groove 0.1) → 0.35 steps.
+        XCTAssertEqual(clock.triggerTime(forStep: 1, from: 0),
+                       0.125 + 0.35 * 0.125, accuracy: 1e-9)
+        // Step 2 is even and slot 2 is straight → untouched.
+        XCTAssertEqual(clock.triggerTime(forStep: 2, from: 0), 0.25, accuracy: 1e-9)
+    }
+
+    func testNilGrooveLeavesSwingBehaviourUnchanged() {
+        let clock = makeClock()
+        clock.swing = 0.5
+        clock.grooveOffsets = nil
+        XCTAssertEqual(clock.triggerTime(forStep: 0, from: 0), 0, accuracy: 1e-9)
+        XCTAssertEqual(clock.triggerTime(forStep: 1, from: 0),
+                       0.125 + 0.0625, accuracy: 1e-9)
+    }
+
     func testTickHoldsOddStepUntilSwungBoundary() {
         // swing 0.5 at 120 BPM: step 1's boundary moves from 0.125
         // to (1 + 0.5) × 0.125 = 0.1875.

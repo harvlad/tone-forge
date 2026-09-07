@@ -126,6 +126,11 @@ public final class StemPlayer: ObservableObject {
         engine.engine.connect(pitch, to: engine.engine.mainMixerNode, format: nil)
         pitch.rate = playbackRate
         pitch.bypass = playbackRate == 1.0
+        // songGain survives load/unload as a property (same contract as
+        // playbackRate), so the fresh submix has to be told about it —
+        // otherwise a mid-song reload silently snaps the song back to
+        // unity while the slider still reads the user's value.
+        mixer.outputVolume = songGain
         self.stemMixer = mixer
         self.timePitch = pitch
 
@@ -318,6 +323,20 @@ public final class StemPlayer: ObservableObject {
     public func toggleSolo(role: String) {
         if let idx = stems.firstIndex(where: { $0.role == role }) {
             stems[idx].isSoloed.toggle()
+        }
+        applyGains()
+    }
+
+    /// Re-apply a mixer snapshot taken before a reload that kept the same
+    /// roles (the Re-Drum stem swap). `load` rebuilds every channel from
+    /// scratch at unity, so without this a swap mid-song un-mutes what the
+    /// user muted and drops any solo — the mix jumps under their hands.
+    /// Roles absent from the reloaded set are ignored.
+    public func restoreStemStates(_ snapshot: [StemState]) {
+        for state in snapshot {
+            guard let idx = stems.firstIndex(where: { $0.role == state.role })
+            else { continue }
+            stems[idx] = state
         }
         applyGains()
     }

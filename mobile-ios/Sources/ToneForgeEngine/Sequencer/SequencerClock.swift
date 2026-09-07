@@ -215,8 +215,17 @@ public final class SequencerClock: @unchecked Sendable {
         // time. Step counts are even (8/16/32), so raw-step parity matches
         // wrapped-step parity across loops; groove offsets index step %
         // template length, which likewise survives wrapping.
+        //
+        // `rawStep > 0` because there is no previous step to hold at the
+        // very start of a run. Swing never hit this (it only delays odd
+        // steps, so the earliest hold was raw step 1), but a groove
+        // template with a delay on slot 0 decremented to -1, which
+        // Swift's truncating `%` leaves at -1 — an out-of-range step
+        // that `triggersAt` drops on the floor, swallowing the pattern's
+        // first downbeat. Slot 0 is still delayed on every later bar,
+        // where raw step 16/32/… has a real predecessor to hold.
         let delay = _delaySteps(forRawStep: rawStep)
-        if delay > 0 {
+        if delay > 0, rawStep > 0 {
             let delayedStart = (Double(rawStep) + delay) * _stepDuration
             if elapsed < delayedStart { rawStep -= 1 }
         }
