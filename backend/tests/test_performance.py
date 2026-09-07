@@ -9,7 +9,14 @@ import numpy as np
 import pytest
 
 from tone_forge.performance.grid import MusicalGrid
-from tone_forge.performance.graph import ContentType, MusicalGraph, PerformanceAsset, Phrase
+from tone_forge.performance.graph import (
+    ContentType,
+    Loop,
+    LoopQuality,
+    MusicalGraph,
+    PerformanceAsset,
+    Phrase,
+)
 from tone_forge.performance.loop_analyzer import LoopAnalyzer
 from tone_forge.performance.phrase_analyzer import PhraseAnalyzer
 from tone_forge.performance.pattern_discovery import PatternDiscovery
@@ -132,12 +139,13 @@ def test_auto_kit_builder_emits_sample_pack(tmp_path):
     assert "performance_intelligence" in kit["provenance"]
 
 
-def _asset(stem, ctype, *, start, loop_conf, score, pattern=None, difficulty=0.3):
+def _asset(stem, ctype, *, start, loop_conf, score, pattern=None, difficulty=0.3,
+           bars=2):
     """A PerformanceAsset positioned on the bar grid, with scores pinned."""
     return PerformanceAsset(
         stem=stem,
         source_id=f"{stem}-{start}",
-        pos=_grid().make_pos(start, start + 8 * BP, snap="bar"),
+        pos=_grid().make_pos(start, start + bars * 4 * BP, snap="bar"),
         content_type=ctype,
         performance_score=score,
         difficulty=difficulty,
@@ -145,6 +153,14 @@ def _asset(stem, ctype, *, start, loop_conf, score, pattern=None, difficulty=0.3
         loop_confidence=loop_conf,
         pattern_id=pattern,
     ).with_id()
+
+
+def _synth_graph(assets, phrases=(), loops=()):
+    return MusicalGraph(
+        song_id="s", content_hash="h", module_version="test",
+        config_hash="cfg", grid_tempo_bpm=BPM, time_signature=(4, 4),
+        phrases=tuple(phrases), loops=tuple(loops), assets=tuple(assets),
+    )
 
 
 def test_drum_anchor_survives_the_usable_gate():
@@ -217,7 +233,7 @@ def test_kit_pads_are_grouped_by_category():
     assert bass_ids == [bass_a.id, bass_b.id]
     # padIdx matches the grouped order and the layout bump busts kit caches.
     assert [p["padIdx"] for p in pads] == list(range(len(pads)))
-    assert "kit=5" in kit["provenance"]
+    assert "kit=6" in kit["provenance"]
 
 
 def test_percussion_loop_confidence_ignores_harmonic_carryover():
@@ -276,3 +292,117 @@ def test_clarity_does_not_punish_a_loud_stem_like_silence():
     assert loud == pytest.approx(healthy), "0.32 RMS is a good level, not a defect"
     # genuinely hot material is nudged, never zeroed
     assert silent < performance_score(_phrase_at(0.9), *args) < loud
+
+
+BAR_S = 4 * BP  # 2.0 s at 120 BPM 4/4
+
+
+def test_pad_window_is_whole_bars_at_song_tempo():
+    """loopStartSec/EndSec are the asset's bar-aligned span, capped in bars.
+
+    The old fixed `start + 8.0 s` window ignored the phrase's musical
+    boundaries, so the exported loop region was one the loop metrics were
+    never measured on. A 2-bar phrase must export exactly its 2 bars; an
+    8-bar phrase must truncate to the largest whole bar count under the 8 s
+    cap (4 bars here), never a fractional cut.
+    """
+    short = _asset("other", ContentType.CHORD_LOOP, start=0.0, loop_conf=0.8,
+                   score=0.9, bars=2)
+    long = _asset("other", ContentType.LEAD_LOOP, start=8.0, loop_conf=0.7,
+                  score=0.8, bars=8)  # 16 s span > 8 s cap
+    kit = AutoKitBuilder().build(_synth_graph([short, long]), pads=4)
+    by_id = {p["assetId"]: p for p in kit["pads"]}
+
+    ps, pl = by_id[short.id], by_id[long.id]
+    assert ps["loopEndSec"] - ps["loopStartSec"] == pytest.approx(2 * BAR_S)
+    assert pl["loopEndSec"] - pl["loopStartSec"] == pytest.approx(4 * BAR_S)
+    for p in (ps, pl):  # window is whole bars, and stemSlice matches it
+        span = p["loopEndSec"] - p["loopStartSec"]
+        assert span / BAR_S == pytest.approx(round(span / BAR_S))
+        assert p["stemSlice"]["startSec"] == p["loopStartSec"]
+        assert p["stemSlice"]["endSec"] == p["loopEndSec"]
+
+
+def test_pad_window_prefers_the_optimized_loop_seam():
+    """When the analyzer measured an optimized seam window, the pad plays it.
+
+    That window is the region loop_confidence/crossfade_ms were computed on —
+    exporting the raw phrase bounds instead made loopScore describe audio the
+    client never plays.
+    """
+    a = _asset("other", ContentType.CHORD_LOOP, start=4.0, loop_conf=0.85,
+               score=0.9, bars=2)
+    lp = Loop(
+        phrase_id="ph", stem="other", pos=a.pos, id=a.source_id,
+        quality=LoopQuality(confidence=0.85, crossfade_ms=12.0,
+                            optimized_start_s=4.05, optimized_end_s=8.02),
+    )
+    kit = AutoKitBuilder().build(_synth_graph([a], loops=[lp]), pads=2)
+    pad = next(p for p in kit["pads"] if p["assetId"] == a.id)
+    assert pad["loopStartSec"] == pytest.approx(4.05)
+    assert pad["loopEndSec"] == pytest.approx(8.02)
+    assert pad["crossfadeMs"] == pytest.approx(12.0)
+    assert pad["loopScore"] == pytest.approx(0.85)
+
+
+def test_near_silent_asset_excluded_when_alternatives_exist():
+    """A whisper-quiet sustain must not earn a pad on loop steadiness alone.
+
+    A steady near-silent tail aces loop_confidence (head==tail by
+    construction) and cleared the old usable gate; the energy floor vetoes it
+    on level. Energy lives on the Phrase, resolved via source_id.
+    """
+    quiet = _asset("other", ContentType.CHORD_LOOP, start=0.0, loop_conf=0.95,
+                   score=0.9)
+    quiet_ph = Phrase(stem="other", pos=quiet.pos, energy=0.001,
+                      id=quiet.source_id)
+    loud = [
+        _asset("other", ContentType.CHORD_LOOP, start=4.0, loop_conf=0.8, score=0.85),
+        _asset("bass", ContentType.BASS_GROOVE, start=8.0, loop_conf=0.7, score=0.8),
+        _asset("other", ContentType.LEAD_LOOP, start=12.0, loop_conf=0.75, score=0.75),
+    ]
+    loud_phs = [Phrase(stem=a.stem, pos=a.pos, energy=0.2, id=a.source_id)
+                for a in loud]
+    kit = AutoKitBuilder().build(
+        _synth_graph([quiet] + loud, phrases=[quiet_ph] + loud_phs), pads=4)
+    ids = {p["assetId"] for p in kit["pads"]}
+    assert quiet.id not in ids, "near-silent asset seated despite alternatives"
+    assert ids == {a.id for a in loud}
+
+
+def test_loopable_reflects_loop_confidence():
+    """Seam-hostile material one-shots instead of force-looping.
+
+    loopable was hardcoded True, so a pad with loop_confidence 0.1 stuttered
+    at every seam. The flip threshold is the usable gate's own 0.2, NOT the
+    classifier's 0.55 — that would flip far too many pads out of layering.
+    """
+    hostile = _asset("other", ContentType.ONE_SHOT, start=0.0, loop_conf=0.1,
+                     score=0.9)
+    seamy = _asset("other", ContentType.CHORD_LOOP, start=4.0, loop_conf=0.25,
+                   score=0.8)
+    clean = _asset("bass", ContentType.BASS_GROOVE, start=8.0, loop_conf=0.8,
+                   score=0.7)
+    kit = AutoKitBuilder().build(_synth_graph([hostile, seamy, clean]), pads=4)
+    loopable = {p["assetId"]: p["loopable"] for p in kit["pads"]}
+    assert loopable[hostile.id] is False
+    assert loopable[seamy.id] is True
+    assert loopable[clean.id] is True
+
+
+def test_starvation_fallback_still_fills_a_quiet_kit():
+    """If EVERY asset is under the energy floor, the kit still fills.
+
+    The floor must not be able to return an empty kit — a quiet kit beats an
+    empty one, so total starvation relaxes the floor and keeps the ranking.
+    """
+    assets = [
+        _asset("other", ContentType.CHORD_LOOP, start=4.0 * i, loop_conf=0.8,
+               score=0.9 - 0.1 * i)
+        for i in range(3)
+    ]
+    phrases = [Phrase(stem=a.stem, pos=a.pos, energy=0.001, id=a.source_id)
+               for a in assets]
+    kit = AutoKitBuilder().build(_synth_graph(assets, phrases=phrases), pads=4)
+    assert kit["pads"], "energy floor starved the kit to empty"
+    assert len(kit["pads"]) == len(assets)

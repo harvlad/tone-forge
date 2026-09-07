@@ -14,10 +14,18 @@ from typing import Dict, List, Optional
 from .graph import ContentType, MusicalGraph, PerformanceAsset
 
 # Ideal 8-pad role layout (content types preferred per slot, best-first).
-# Fixed kit-pad sample window (seconds). Every auto-kit pad is an 8 s loop
-# from the asset's start; the client bar-snaps + phase-locks them so they
-# layer musically. Matches StemSlice.maxChopDurationSec on the clients.
+# Kit-pad sample window CAP (seconds) — memory bound per slice, matching
+# StemSlice.maxChopDurationSec on the clients. The actual window is the
+# asset's bar-aligned span, truncated to whole bars under this cap: a fixed
+# 8 s cut ignored the phrase's musical boundaries, so loopStartSec/EndSec
+# described a region the loop metrics were never measured on.
 _SAMPLE_LEN_SEC = 8.0
+
+# Absolute audibility floor (plain RMS ≈ −40 dBFS). loop_confidence rewards a
+# steady head==tail seam, which a near-silent sustain aces — so quiet residue
+# sailed through the usable gate and onto pads. Energy lives on the Phrase,
+# not the asset, so the builder resolves it via source_id (loop → phrase).
+_ENERGY_FLOOR = 0.01
 
 _KIT_SLOTS = [
     ("Main riff", [ContentType.RHYTHM_LOOP, ContentType.LEAD_LOOP, ContentType.CHORD_LOOP]),
@@ -143,8 +151,28 @@ class AutoKitBuilder:
                 s -= 0.20 * math.tanh(float(u.get("skip", 0)) / 3.0)
             return s
         self._score = _score
-        # A pad must be actually usable: loopable OR a decent-scoring one-shot.
-        usable = [a for a in graph.ranked_assets() if a.loop_confidence > 0.2 or a.performance_score > 0.4]
+
+        # Audibility: assets carry no energy, so look it up on the source
+        # phrase (asset.source_id is a loop id or a phrase id). Unknown energy
+        # passes — legacy/synthetic graphs without phrases must not be muted.
+        phrase_energy = {p.id: p.energy
+                         for p in (getattr(graph, "phrases", ()) or ())}
+        loop_phrase = {lp.id: lp.phrase_id
+                       for lp in (getattr(graph, "loops", ()) or ())}
+
+        def _audible(a) -> bool:
+            e = phrase_energy.get(loop_phrase.get(a.source_id, a.source_id))
+            return e is None or e >= _ENERGY_FLOOR
+        self._audible = _audible
+
+        # A pad must be actually usable: loopable OR a decent-scoring one-shot
+        # — AND audible. loop_confidence/performance_score both reward steady
+        # material, so a whisper-quiet sustain cleared them; the energy floor
+        # is the only term that can veto on level alone.
+        usable = [
+            a for a in graph.ranked_assets()
+            if _audible(a) and (a.loop_confidence > 0.2 or a.performance_score > 0.4)
+        ]
         pool = [
             a for a in usable
             if a.difficulty <= rule["max_difficulty"] and (a.loopable or not rule["require_loop"])
@@ -175,8 +203,11 @@ class AutoKitBuilder:
         # gone by the time the anchor looked for them and the kit came back
         # with no drum pad at all. A song that HAS drums gets a drums pad; the
         # gate still governs the seven generic slots below.
+        # The anchor bypasses the score gates by design, but not the energy
+        # floor — a near-silent drums stem anchoring pad 0 is the exact defect
+        # the floor exists for.
         drum_pool = self._one_per_pattern(
-            [a for a in graph.ranked_assets() if a.stem == "drums"]
+            [a for a in graph.ranked_assets() if a.stem == "drums" and _audible(a)]
         )
         if drum_pool:
             def _groove_key(a) -> float:
@@ -202,7 +233,17 @@ class AutoKitBuilder:
                 break
             if a.id in used_ids or (a.pattern_id and a.pattern_id in used_patterns):
                 continue
+            # `pool` may be the relaxed starvation pool (raw ranked assets),
+            # so the top-up must re-check audibility or it re-seats exactly
+            # the near-silent slices the usable gate excluded.
+            if not _audible(a):
+                continue
             chosen.append(a); self._mark(a, used_ids, used_patterns, stem_counts)
+        if not chosen:
+            # Total starvation (every asset under the energy floor): a quiet
+            # kit beats an empty one — relax the floor, keep the ranking.
+            for a in pool[:pads]:
+                chosen.append(a); self._mark(a, used_ids, used_patterns, stem_counts)
 
         # Layout pass, AFTER selection: group pads by category in a stable,
         # musical row order (drums → bass → chords → riffs → lead/vocal →
@@ -241,6 +282,8 @@ class AutoKitBuilder:
                     continue
                 if a.content_type != ct:
                     continue
+                if not self._audible(a):  # relaxed pool can hold silent slices
+                    continue
                 key = self._score(a) - 0.15 * stem_counts.get(a.stem, 0)
                 if key > best_key:
                     best, best_key = a, key
@@ -267,21 +310,42 @@ class AutoKitBuilder:
             if getattr(lp, "id", None):
                 loops_by_id[lp.id] = lp
 
+        # Bar length at song tempo, so the cap truncates in whole bars. The
+        # phrases were cut bar-aligned upstream (PhraseAnalyzer) — the pad
+        # window must respect those boundaries or loopStartSec/EndSec describe
+        # a region the loop metrics were never measured on.
+        beats_per_bar = int((getattr(graph, "time_signature", None) or (4, 4))[0] or 4)
+        tempo = float(getattr(graph, "grid_tempo_bpm", 0.0) or 0.0)
+        bar_s = beats_per_bar * 60.0 / tempo if tempo > 0 else 0.0
+
         pads = []
         for idx, a in enumerate(assets):
-            # Every kit pad is a fixed 8-second loop window from the asset's
-            # start. The client snaps the loop length to whole bars and
-            # phase-locks all pads to one shared cycle, so pressing several
-            # pads layers them coherently (and drums give a continuous beat).
-            # The user can still shorten/extend this window in the chop editor.
-            q_start = a.pos.start_s
-            q_end = q_start + _SAMPLE_LEN_SEC
-            # Loop the whole 8-second window (full-slice loop).
-            loop_start, loop_end = q_start, q_end
-            # Carry the analyzer's per-seam crossfade measurement when present
-            # (the app prefers it over its coarse loopScore→ms fallback).
             lp = loops_by_id.get(getattr(a, "source_id", None))
             qual = getattr(lp, "quality", None) if lp else None
+            # Pad window = the asset's actual bar-aligned span, preferring the
+            # analyzer's optimized seam window when it measured one — that is
+            # the region loop_confidence/crossfade_ms were computed on. The
+            # user can still shorten/extend the window in the chop editor.
+            opt_s = getattr(qual, "optimized_start_s", None) if qual else None
+            opt_e = getattr(qual, "optimized_end_s", None) if qual else None
+            if opt_s is not None and opt_e is not None and float(opt_e) > float(opt_s):
+                q_start, q_end = float(opt_s), float(opt_e)
+            else:
+                q_start, q_end = a.pos.start_s, a.pos.end_s
+            # Keep the 8 s memory cap, but truncate in whole bars — never
+            # below one bar (a very slow song's single bar may exceed the cap,
+            # and a fractional-bar cut breaks the shared phase-lock cycle).
+            if q_end - q_start > _SAMPLE_LEN_SEC + 1e-6:
+                if bar_s > 0:
+                    q_end = q_start + max(1, int(_SAMPLE_LEN_SEC / bar_s)) * bar_s
+                else:  # no tempo → the fixed cap is the only bound available
+                    q_end = q_start + _SAMPLE_LEN_SEC
+            # Loop the whole exported window (full-slice loop).
+            loop_start, loop_end = q_start, q_end
+            # Carry the analyzer's per-seam crossfade measurement when present
+            # (the app prefers it over its coarse loopScore→ms fallback). When
+            # the window was bar-truncated away from the measured loop this is
+            # approximate — clients clamp it to 8–30 ms, which is acceptable.
             xfade_ms = getattr(qual, "crossfade_ms", None) if qual else None
             pads.append(
                 {
@@ -304,9 +368,12 @@ class AutoKitBuilder:
                     "loopScore": round(a.loop_confidence, 3),
                     **({"crossfadeMs": round(float(xfade_ms), 2)}
                        if isinstance(xfade_ms, (int, float)) and xfade_ms > 0 else {}),
-                    # Every pad loops the 8 s window so all samples can layer
-                    # continuously — drums keep a beat, and held loops stack.
-                    "loopable": True,
+                    # Loop only what can survive a seam: force-looping
+                    # genuinely seam-hostile material audibly stuttered, so
+                    # below the usable gate's own loop threshold a pad plays
+                    # as a one-shot. Deliberately NOT the classifier's 0.55 —
+                    # that flips far too many pads out of layering.
+                    "loopable": a.loop_confidence >= 0.2,
                     "contentType": a.content_type.value,
                     "performanceScore": round(a.performance_score, 3),
                     "difficulty": round(a.difficulty, 3),
@@ -328,9 +395,10 @@ class AutoKitBuilder:
             # separately from the graph — it feeds the export zip-cache
             # key, so bumping it invalidates stale cached kits.
             # kit=5: category-grouped pad layout (padIdx rows by category).
+            # kit=6: bar-aligned pad windows, energy floor, honest loopable.
             "provenance": (
                 f"performance_intelligence graph={graph.graph_hash} "
-                f"module={graph.module_version} kit=5 use={use_digest} "
+                f"module={graph.module_version} kit=6 use={use_digest} "
                 f"skill={skill}"
             ),
         }
