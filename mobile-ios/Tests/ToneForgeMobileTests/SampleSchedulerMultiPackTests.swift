@@ -123,6 +123,61 @@ final class SampleSchedulerMultiPackTests: XCTestCase {
         SamplePadKey(packId: packId, padIdx: padIdx)
     }
 
+    // MARK: - Decode: exact-length loop continuation
+
+    /// Loopable stem-slice pads decode WITH continuation audio past the
+    /// region end (so the loop seam can be baked at exact bar-snapped
+    /// length), and the decode reports the loop-body split. One-shot pads
+    /// and slices ending at the stem's end stay plain region reads.
+    func testDecodeRecordsLoopBodyFramesForLoopableSlicePads() throws {
+        let sr = 44_100.0
+        let stemURL = tmpDir.appendingPathComponent("stem.caf")
+        try writeTone(to: stemURL, durationSec: 1.0)
+
+        let loopable = SamplePad(
+            padIdx: 0, name: "loop", family: .pads,
+            stemSlice: StemSlice(stemRole: "other", startSec: 0.25, endSec: 0.5),
+            loopable: true
+        )
+        let oneShot = SamplePad(
+            padIdx: 1, name: "hit", family: .pads,
+            stemSlice: StemSlice(stemRole: "other", startSec: 0.25, endSec: 0.5)
+        )
+        // Loopable but flush with the stem's end: no continuation exists.
+        let atEnd = SamplePad(
+            padIdx: 2, name: "tail", family: .pads,
+            stemSlice: StemSlice(stemRole: "other", startSec: 0.75, endSec: 1.0),
+            loopable: true
+        )
+        let pack = SamplePack(
+            packId: "kit", name: "kit", family: .pads,
+            pads: [loopable, oneShot, atEnd]
+        )
+        let resolved = ResolvedSamplePack(pack: pack, padFileURLs: [:])
+
+        let decoded = SampleScheduler.decodePackBuffers(
+            resolved, stemFiles: ["other": stemURL], target: nil
+        )
+        let bodyFrames = Int(0.25 * sr)
+        let contFrames = Int(SampleScheduler.loopContinuationSec * sr)
+
+        // Loopable pad: buffer = body + continuation, split recorded.
+        let loopBuf = try XCTUnwrap(decoded.buffers[0])
+        XCTAssertEqual(decoded.loopBodyFrames[0], bodyFrames)
+        XCTAssertEqual(Int(loopBuf.frameLength), bodyFrames + contFrames)
+
+        // One-shot pad: byte-count-identical to the plain region read.
+        let hitBuf = try XCTUnwrap(decoded.buffers[1])
+        XCTAssertNil(decoded.loopBodyFrames[1])
+        XCTAssertEqual(Int(hitBuf.frameLength), bodyFrames)
+
+        // Loopable-at-end pad: nothing to read past the end — no split,
+        // the seam bake falls back to exact-length edge ramps.
+        let tailBuf = try XCTUnwrap(decoded.buffers[2])
+        XCTAssertNil(decoded.loopBodyFrames[2])
+        XCTAssertEqual(Int(tailBuf.frameLength), bodyFrames)
+    }
+
     // MARK: - Registry
 
     func testSequentialActivationKeepsBothPacksLoaded() throws {

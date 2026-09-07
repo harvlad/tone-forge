@@ -91,6 +91,12 @@ public final class SampleScheduler: ObservableObject {
         let pack: ResolvedSamplePack
         #if canImport(AVFoundation)
         var buffers: [Int: AVAudioPCMBuffer] = [:]
+        /// For loop-capable pads whose buffer was decoded WITH continuation
+        /// audio past the region end: padIdx → loop body frame count (the
+        /// buffer's remaining frames are the continuation). Absent = the
+        /// whole buffer is the loop. Threaded into SampleTrigger so the
+        /// voice pool can bake the seam at exact bar-snapped length.
+        var loopBodyFrames: [Int: Int] = [:]
         #endif
     }
 
@@ -288,7 +294,9 @@ public final class SampleScheduler: ObservableObject {
             pack, stemFiles: stemFiles, target: engine?.canonicalFormat,
             barSeconds: currentBarSeconds
         )
-        loadedPacks[packId] = LoadedPack(pack: pack, buffers: loaded)
+        loadedPacks[packId] = LoadedPack(
+            pack: pack, buffers: loaded.buffers,
+            loopBodyFrames: loaded.loopBodyFrames)
         #else
         loadedPacks[packId] = LoadedPack(pack: pack)
         #endif
@@ -326,7 +334,9 @@ public final class SampleScheduler: ObservableObject {
                                    barSeconds: bar)
         }.value
         guard loadedPacks[packId] == nil else { return }
-        loadedPacks[packId] = LoadedPack(pack: pack, buffers: loaded)
+        loadedPacks[packId] = LoadedPack(
+            pack: pack, buffers: loaded.buffers,
+            loopBodyFrames: loaded.loopBodyFrames)
         #else
         loadedPacks[packId] = LoadedPack(pack: pack)
         #endif
@@ -353,8 +363,9 @@ public final class SampleScheduler: ObservableObject {
         stemFiles: [String: URL],
         target: AVAudioFormat?,
         barSeconds: Double? = nil
-    ) -> [Int: AVAudioPCMBuffer] {
+    ) -> (buffers: [Int: AVAudioPCMBuffer], loopBodyFrames: [Int: Int]) {
         var loaded: [Int: AVAudioPCMBuffer] = [:]
+        var bodies: [Int: Int] = [:]
         for pad in pack.pack.pads {
             if let url = pack.padFileURLs[pad.padIdx] {
                 if let buf = loadBuffer(from: url, slice: nil, target: target) {
@@ -364,13 +375,32 @@ public final class SampleScheduler: ObservableObject {
                       let stemURL = stemFiles[slice.stemRole] {
                 let region = _loopRegion(for: pad, slice: slice,
                                          barSeconds: barSeconds)
-                if let buf = loadBuffer(from: stemURL, slice: region, target: target) {
-                    loaded[pad.padIdx] = buf
+                // Loop-capable pads read a little continuation audio PAST
+                // the region end so the seam can be baked without changing
+                // the loop period (SeamlessLoop.exactCrossfaded). One-shot
+                // pads stay byte-identical to before.
+                let mayLoop = (pad.loopable ?? false)
+                    || pad.loopPointSec != nil || pad.loopStartSec != nil
+                let contSec = mayLoop ? Self.loopContinuationSec : 0
+                if let r = loadBufferWithContinuation(
+                    from: stemURL, slice: region, target: target,
+                    continuationSec: contSec
+                ) {
+                    loaded[pad.padIdx] = r.buffer
+                    if r.continuationFrames > 0 {
+                        bodies[pad.padIdx] =
+                            Int(r.buffer.frameLength) - r.continuationFrames
+                    }
                 }
             }
         }
-        return loaded
+        return (loaded, bodies)
     }
+
+    /// Continuation audio read past a loop-capable region's end for the
+    /// exact-length seam bake — covers the 8–30 ms crossfade clamp with
+    /// margin for SRC rounding.
+    nonisolated static let loopContinuationSec: Double = 0.035
 
     /// The stem region to preload for a pad: the analyzer's optimized loop seam
     /// [loopStartSec, loopEndSec] when the pad carries one (so a looping pad
@@ -813,6 +843,12 @@ public final class SampleScheduler: ObservableObject {
         let crossfadeMs: Double = pad.crossfadeMs.map { max(8.0, min(30.0, $0)) }
             ?? pad.loopScore.map { max(8.0, min(30.0, (1.0 - $0) * 45.0)) }
             ?? 0
+        // Continuation audio for the exact-length seam bake is only valid on
+        // the UNTRANSFORMED, UNTRIMMED base buffer — a transform/trim output
+        // no longer lines up with the decode-time loop-body split, so those
+        // fall back to the edge-ramp seam (still exact length).
+        let loopBodyFrames = (buffer === baseBuffer)
+            ? (entry.loopBodyFrames[padIdx] ?? 0) : 0
         let req = SampleTrigger(
             padKey: padKey,
             // A Riley auto-kit pad is "seamlessly loopable" via loopable+loopScore
@@ -822,7 +858,8 @@ public final class SampleScheduler: ObservableObject {
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,
             effects: effects,
-            crossfadeMs: crossfadeMs
+            crossfadeMs: crossfadeMs,
+            loopBodyFrames: loopBodyFrames
         )
         let audioTime = audioTime(forSongSeconds: targetSong, nowSong: nowSong)
         pool.trigger(req, buffer: buffer, at: audioTime)
@@ -952,6 +989,10 @@ public final class SampleScheduler: ObservableObject {
         let effects = effectsResolver?(pid, padIdx, pad.effects)
             ?? pad.effects
             ?? .neutral
+        // Same exact-length seam threading as the live trigger path: the
+        // continuation split only holds for the untransformed base buffer.
+        let loopBodyFrames = (buffer === baseBuffer)
+            ? (entry.loopBodyFrames[padIdx] ?? 0) : 0
         let req = SampleTrigger(
             padKey: padKey,
             loop: loopOverride || pad.loopPointSec != nil
@@ -959,7 +1000,8 @@ public final class SampleScheduler: ObservableObject {
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,
             pan: pan,
-            effects: effects
+            effects: effects,
+            loopBodyFrames: loopBodyFrames
         )
         pool.trigger(req, buffer: buffer, at: nil)
         #endif
@@ -1250,23 +1292,48 @@ public final class SampleScheduler: ObservableObject {
         slice: StemSlice?,
         target: AVAudioFormat?
     ) -> AVAudioPCMBuffer? {
+        loadBufferWithContinuation(
+            from: url, slice: slice, target: target, continuationSec: 0
+        )?.buffer
+    }
+
+    /// `loadBuffer` core, extended for the exact-length loop seam: when
+    /// `continuationSec > 0` and the source has audio past the slice's end,
+    /// up to that much extra is read onto the buffer's tail. The returned
+    /// `continuationFrames` is that extra length in OUTPUT (post-convert)
+    /// frames — the loop body is `frameLength - continuationFrames`, and
+    /// SeamlessLoop.exactCrossfaded bakes the seam from it without ever
+    /// shortening the loop period. 0 continuation = plain region load.
+    private nonisolated static func loadBufferWithContinuation(
+        from url: URL,
+        slice: StemSlice?,
+        target: AVAudioFormat?,
+        continuationSec: Double
+    ) -> (buffer: AVAudioPCMBuffer, continuationFrames: Int)? {
         do {
             let file = try AVAudioFile(forReading: url)
             let format = file.processingFormat
             let sampleRate = format.sampleRate
 
             let startFrame: AVAudioFramePosition
-            let frameCount: AVAudioFrameCount
+            let bodyCount: AVAudioFrameCount
+            var extraCount: AVAudioFrameCount = 0
             if let slice = slice {
                 startFrame = AVAudioFramePosition(max(0, slice.startSec) * sampleRate)
                 let endFrame = AVAudioFramePosition(max(slice.startSec, slice.endSec) * sampleRate)
                 let requested = max(0, endFrame - startFrame)
                 let clipped = min(requested, max(0, file.length - startFrame))
-                frameCount = AVAudioFrameCount(clipped)
+                bodyCount = AVAudioFrameCount(clipped)
+                if continuationSec > 0 {
+                    let want = AVAudioFramePosition(continuationSec * sampleRate)
+                    let avail = max(0, file.length - startFrame - clipped)
+                    extraCount = AVAudioFrameCount(min(want, avail))
+                }
             } else {
                 startFrame = 0
-                frameCount = AVAudioFrameCount(file.length)
+                bodyCount = AVAudioFrameCount(file.length)
             }
+            let frameCount = bodyCount + extraCount
             guard frameCount > 0,
                   let srcBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)
             else { return nil }
@@ -1280,15 +1347,24 @@ public final class SampleScheduler: ObservableObject {
             guard let target = target, !format.isEqual(target) else {
                 normalizePeak(srcBuf)
                 SeamlessLoop.applyEdgeFades(srcBuf)
-                return srcBuf
+                return (srcBuf, max(0, Int(srcBuf.frameLength) - Int(bodyCount)))
             }
             guard let dstBuf = convert(srcBuf, to: target) else { return nil }
             normalizePeak(dstBuf)
             // Micro-fade the slice edges so one-shots/stabs don't click on
             // attack or tail (grid-boundary slices aren't zero-crossings);
             // shorter than any loop crossfade, so seam quality is unaffected.
+            // (With continuation the release fade lands on the continuation
+            // tail, which the seam bake only uses at near-zero gain.)
             SeamlessLoop.applyEdgeFades(dstBuf)
-            return dstBuf
+            // Loop body length in the CONVERTED domain: SRC scales frame
+            // counts, so recompute from the ratio rather than trusting the
+            // converter's exact output length (±a frame of jitter lands in
+            // the continuation, never in the body).
+            let ratio = target.sampleRate / sampleRate
+            let bodyOut = min(Int(dstBuf.frameLength),
+                              Int((Double(bodyCount) * ratio).rounded()))
+            return (dstBuf, Int(dstBuf.frameLength) - bodyOut)
         } catch {
             return nil
         }

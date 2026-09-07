@@ -475,14 +475,36 @@ public final class ChopPlayer {
     /// for gapless looping. EVERY looping voice gets a seam — a measured
     /// length when supplied, else the default floor — so an unscored loop
     /// never hard-loops with a click. Returns nil on read failure.
+    ///
+    /// EXACT LENGTH: the seam is baked with SeamlessLoop.exactCrossfaded so
+    /// the loop period stays exactly the bar-snapped region. The old
+    /// `crossfaded()` trimmed the crossfade off the buffer, so every held
+    /// loop ran 8–30 ms short of the grid and drifted (the bug the jamn Kit
+    /// plugin fixed with its runtime dual-read). We read up to one crossfade
+    /// of CONTINUATION audio past the region end and blend it into the head;
+    /// when the region ends at the file's end the bake falls back to
+    /// exact-length edge ramps instead of trimming.
     private func loopBuffer(
         file: AVAudioFile, startFrame: AVAudioFramePosition,
         frameCount: AVAudioFrameCount, crossfadeMs: Double
     ) -> AVAudioPCMBuffer? {
-        guard let buf = regionBuffer(file: file, startFrame: startFrame,
-                                     frameCount: frameCount) else { return nil }
         let xfadeMs = crossfadeMs > 0 ? crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
-        return SeamlessLoop.crossfaded(buf, crossfadeMs: xfadeMs)
+        let srcRate = file.processingFormat.sampleRate
+        var extra: AVAudioFrameCount = 0
+        if srcRate > 0 {
+            let want = AVAudioFramePosition((xfadeMs / 1000.0 * srcRate).rounded(.up))
+            let avail = max(0, file.length - startFrame - AVAudioFramePosition(frameCount))
+            extra = AVAudioFrameCount(min(want, avail))
+        }
+        guard let buf = regionBuffer(file: file, startFrame: startFrame,
+                                     frameCount: frameCount + extra) else { return nil }
+        // Loop body length in the canonical domain: regionBuffer converts to
+        // 48 kHz, so rescale the file-domain frame count; converter jitter
+        // (±a frame) lands in the continuation, never in the body.
+        let ratio = srcRate > 0 ? Self.canonicalFormat.sampleRate / srcRate : 1
+        let body = min(Int(buf.frameLength),
+                       Int((Double(frameCount) * ratio).rounded()))
+        return SeamlessLoop.exactCrossfaded(buf, loopFrames: body, crossfadeMs: xfadeMs)
     }
 
     private func cachedFile(for url: URL) -> AVAudioFile? {

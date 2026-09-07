@@ -71,6 +71,12 @@ public struct SampleTrigger: Sendable {
     /// 0 = hard loop (legacy behavior). When > 0 and looping, the loop
     /// buffer is overlap-add crossfaded so the seam is inaudible.
     public let crossfadeMs: Double
+    /// Frames of `buffer` that form the LOOP BODY when the decoded buffer
+    /// carries continuation audio past the loop's end (read from the source
+    /// stem so the seam can be baked at EXACT bar-snapped length — see
+    /// SeamlessLoop.exactCrossfaded). 0 = the whole buffer is the loop
+    /// (no continuation available; seam falls back to edge ramps).
+    public let loopBodyFrames: Int
 
     public init(
         padKey: SamplePadKey,
@@ -79,7 +85,8 @@ public struct SampleTrigger: Sendable {
         gainDb: Double,
         pan: Float = 0,
         effects: SamplePadEffects = .neutral,
-        crossfadeMs: Double = 0
+        crossfadeMs: Double = 0,
+        loopBodyFrames: Int = 0
     ) {
         self.padKey = padKey
         self.loop = loop
@@ -88,6 +95,7 @@ public struct SampleTrigger: Sendable {
         self.pan = pan
         self.effects = effects
         self.crossfadeMs = crossfadeMs
+        self.loopBodyFrames = loopBodyFrames
     }
 }
 
@@ -325,11 +333,26 @@ public final class SampleVoicePool: ObservableObject {
         // Groove via triggerRaw) falls back to the default floor instead of
         // hard-looping. Non-loop one-shots play the raw (already edge-faded)
         // buffer.
+        //
+        // EXACT LENGTH: the seam bake must never change the loop period.
+        // The old `crossfaded()` returned n − x frames, so every held loop
+        // ran 8–30 ms short of the bar-snapped grid and drifted (each pad
+        // by a different x). `exactCrossfaded` keeps the period at the
+        // loop body length, using the buffer's continuation frames
+        // (loopBodyFrames split) when the decoder supplied them.
         let xfadeMs = req.crossfadeMs > 0 ? req.crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
-        let playBuffer: AVAudioPCMBuffer = req.loop
-            ? SeamlessLoop.crossfaded(buffer, crossfadeMs: xfadeMs)
-            : buffer
-        // One pass length reflects the (possibly shortened) crossfaded buffer.
+        let playBuffer: AVAudioPCMBuffer
+        if req.loop {
+            let body = req.loopBodyFrames > 0
+                ? min(req.loopBodyFrames, Int(buffer.frameLength))
+                : Int(buffer.frameLength)
+            playBuffer = SeamlessLoop.exactCrossfaded(
+                buffer, loopFrames: body, crossfadeMs: xfadeMs)
+        } else {
+            playBuffer = buffer
+        }
+        // One pass length reflects the exact-length loop body (loop) or the
+        // raw buffer (one-shot) — releaseAtLoopEnd/loopProgress key off it.
         slot.bufferDurationSec = playBuffer.format.sampleRate > 0
             ? Double(playBuffer.frameLength) / playBuffer.format.sampleRate
             : slot.bufferDurationSec

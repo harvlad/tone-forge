@@ -98,5 +98,80 @@ public enum SeamlessLoop {
         }
         return out
     }
+
+    /// EXACT-LENGTH seamless-loop bake. `crossfaded(_:crossfadeMs:)` above
+    /// returns `n - x` frames, so a hard-looped result plays a period 8–30 ms
+    /// SHORT of the bar-snapped region — held loops drift against the
+    /// loop-lock grid and against each other (each pad trims a different x).
+    /// The jamn Kit plugin fixed the same bug with a runtime dual-read ("the
+    /// old baked seam trimmed the buffer and made every wrap skip"); this is
+    /// the baked-buffer equivalent for AVAudioPlayerNode `.loops`.
+    ///
+    /// `src` holds the loop region plus optional CONTINUATION audio: extra
+    /// frames read past the region's end from the same source (`loopFrames`
+    /// marks the split; `src.frameLength - loopFrames` are continuation).
+    /// The seam is baked into the head at full length: out[0..<x) is an
+    /// equal-power blend of the continuation (fading out) into the head
+    /// (fading in). Every wrap is then continuous — the tail flows into
+    /// audio that genuinely followed it in the source — and the loop period
+    /// stays EXACTLY `loopFrames`.
+    ///
+    /// Without continuation frames (region ends at the source's end, or the
+    /// caller couldn't supply them) it falls back to equal-power edge ramps
+    /// at exact length: a brief level dip at the seam instead of a click,
+    /// but never a shortened period.
+    ///
+    /// - Parameters:
+    ///   - src: loop region + continuation frames (if any) in one buffer.
+    ///   - loopFrames: the loop body length; the returned buffer is exactly
+    ///     this long (clamped to `src.frameLength`).
+    ///   - crossfadeMs: seam crossfade length; clamped to at most half the
+    ///     loop body and to the available continuation.
+    /// - Returns: a new buffer of exactly `loopFrames` frames, or `src`
+    ///   unchanged when the input is degenerate (too short / no data).
+    public static func exactCrossfaded(
+        _ src: AVAudioPCMBuffer, loopFrames: Int, crossfadeMs: Double
+    ) -> AVAudioPCMBuffer {
+        let total = Int(src.frameLength)
+        let n = min(loopFrames, total)
+        let sr = src.format.sampleRate
+        guard n > 8, sr > 0, let srcData = src.floatChannelData,
+              let out = AVAudioPCMBuffer(
+                  pcmFormat: src.format, frameCapacity: AVAudioFrameCount(n)),
+              let dst = out.floatChannelData
+        else { return src }
+        out.frameLength = AVAudioFrameCount(n)
+
+        var x = Int((max(0, crossfadeMs) / 1000.0) * sr)
+        x = max(1, min(x, n / 2 - 1))
+        let continuation = total - n
+        let channels = Int(src.format.channelCount)
+        for c in 0..<channels {
+            let s = srcData[c]
+            let d = dst[c]
+            // Exact-length body first; the seam only rewrites the head.
+            d.update(from: s, count: n)
+            if continuation > 0 {
+                // Baked seam: continuation (what really follows the loop's
+                // end) fades out while the head fades back in.
+                let xe = min(x, continuation)
+                for i in 0..<xe {
+                    let t = Float(i) / Float(xe)
+                    let gIn = sinf(0.5 * .pi * t)
+                    let gOut = cosf(0.5 * .pi * t)
+                    d[i] = s[i] * gIn + s[n + i] * gOut
+                }
+            } else {
+                // No continuation available: equal-power edge ramps. The
+                // wrap meets at ~zero on both sides — dip, not click.
+                for i in 0..<x {
+                    let t = Float(i) / Float(x)
+                    d[i] *= sinf(0.5 * .pi * t)          // head fade-in
+                    d[n - x + i] *= cosf(0.5 * .pi * t)  // tail fade-out
+                }
+            }
+        }
+        return out
+    }
 }
 #endif
