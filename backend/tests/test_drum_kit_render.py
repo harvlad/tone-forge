@@ -92,8 +92,11 @@ def test_render_produces_cleaner_kick_than_raw_slice(noisy_song):
     pad_idx = kick_pads[0]
     assert pad_idx in files
 
-    comp, sr = sf.read(str(dkr.sample_path("song1", files[pad_idx])))
+    comp, sr = sf.read(str(dkr.sample_path("song1", files[pad_idx])),
+                       always_2d=True)
     assert sr == SR
+    assert comp.shape[1] == 2  # render v2: composites are stereo
+    comp = comp.mean(axis=1)   # mono fixture → fold for template correlation
 
     template = _kick_template()
     template /= np.abs(template).max()
@@ -143,3 +146,34 @@ def test_load_manifest_rejects_half_written_cache(noisy_song, tmp_path):
     victim = dkr.sample_path("song3", next(iter(files.values())))
     victim.unlink()
     assert dkr.load_manifest("song3") is None
+
+
+def test_composite_preserves_stereo_image(tmp_path, monkeypatch):
+    """A hard-panned synthetic kick must come back panned, not centered —
+    the dual-mono collapse was an audible field regression."""
+    import soundfile as sf
+    from tone_forge.performance import drum_kit as dk
+
+    monkeypatch.setenv("TONEFORGE_DRUMKIT_CACHE", str(tmp_path / "cache"))
+    sr = 44100
+    n = int(0.3 * sr)
+    t = np.arange(n) / sr
+    kick = np.sin(2 * np.pi * 55.0 * t) * np.exp(-t / 0.08)
+    y = np.zeros((int(10 * sr), 2), dtype=np.float32)
+    for i in range(8):
+        i0 = int((0.5 + i) * sr)
+        y[i0:i0 + n, 0] += kick        # left only
+        y[i0:i0 + n, 1] += kick * 0.2  # faint right
+    wav = tmp_path / "drums.wav"
+    sf.write(str(wav), y, sr)
+
+    table = dk.detect_drum_hits(wav)
+    result = {dk.DRUM_HITS_RESULT_KEY: table,
+              "stems_local": {"drums": str(wav)}}
+    files = dkr.render_drum_samples("panned", result)
+    assert files
+    comp, _ = sf.read(str(dkr.sample_path("panned", next(iter(files.values())))),
+                      always_2d=True)
+    left = float(np.abs(comp[:, 0]).max())
+    right = float(np.abs(comp[:, 1]).max())
+    assert left > right * 2.5, (left, right)  # pan survived the stack

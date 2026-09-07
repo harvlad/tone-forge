@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 # mixer bus, which iOS treats as a graph reconfiguration (AVAudioEngine
 # stops itself and drops every scheduled segment). Bumping the version
 # re-renders the mono files already sitting in the server cache.
-REDRUM_VERSION = 2
+# v3: true stereo passthrough of render-v2 stereo composites (v2 was
+# dual-mono — crash-safe but the collapsed image was plainly audible).
+REDRUM_VERSION = 3
 
 # When the target kit lacks a class the groove uses, fall through this map
 # rather than dropping the hit — a groove with holes reads as a glitch, a
@@ -119,21 +121,26 @@ def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Pa
     if not class_files:
         return None
 
-    # Load every composite once. All were written by drum_kit_render at the
-    # kit song's native rate — one rate per kit, so no per-hit resampling.
+    # Load every composite once, normalized to (n, 2). All were written by
+    # drum_kit_render at the kit song's native rate — one rate per kit, so
+    # no per-hit resampling. Render-v1 caches were mono; duplicate those so
+    # a mid-migration cache still renders instead of erroring.
     samples: Dict[str, List] = {}
     sr = None
     for cls, paths in class_files.items():
         for p in paths:
             try:
-                data, file_sr = sf.read(str(p), dtype="float32")
+                data, file_sr = sf.read(str(p), dtype="float32",
+                                        always_2d=True)
             except Exception:
                 continue
             if sr is None:
                 sr = file_sr
             if file_sr != sr:
                 continue  # mixed-rate cache (mid-version) — skip odd one out
-            samples.setdefault(cls, []).append(np.asarray(data))
+            if data.shape[1] == 1:
+                data = np.repeat(data, 2, axis=1)
+            samples.setdefault(cls, []).append(np.asarray(data[:, :2]))
     if sr is None or not samples:
         return None
 
@@ -153,7 +160,7 @@ def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Pa
     last_end = max(float(h["end"]) for h in hits)
     total_s = max(float(dur) if isinstance(dur, (int, float)) and dur > 0
                   else 0.0, last_end + 3.0)
-    out = np.zeros(int(total_s * sr) + sr, dtype=np.float64)
+    out = np.zeros((int(total_s * sr) + sr, 2), dtype=np.float64)
 
     used_count: Dict[str, int] = {}
     for h in hits:
@@ -167,10 +174,10 @@ def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Pa
         # already-normalized level.
         gain = 0.4 + 0.6 * float(h.get("strength", 1.0))
         i0 = int(float(h["t"]) * sr)
-        seg = smp[: out.size - i0]
-        if seg.size <= 0:
+        seg = smp[: out.shape[0] - i0]
+        if seg.shape[0] <= 0:
             continue
-        out[i0: i0 + seg.size] += seg * gain
+        out[i0: i0 + seg.shape[0]] += seg * gain
 
     peak = float(np.max(np.abs(out)))
     if peak <= 0:
@@ -182,14 +189,12 @@ def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Pa
     # Suffix keeps ".wav" LAST — soundfile infers the container from the
     # extension and refuses a bare ".part".
     tmp = dest.with_name(dest.name + ".part.wav")
-    # Stereo, because this file replaces a stereo stem and the clients wire
-    # each channel with its own file format — a mono replacement changes the
-    # format on a bus that was carrying stereo. The composites are mono by
-    # construction (drum_kit_render mixes down before stacking), so this
-    # duplicates rather than inventing a stereo image it doesn't have.
-    stereo = np.repeat(out.astype(np.float32)[:, None], 2, axis=1)
+    # Stereo end-to-end now: render-v2 composites carry the record's real
+    # image (per-channel median), and this buffer accumulated it directly —
+    # both the format-change crash AND the collapsed-image quality loss stay
+    # fixed.
     try:
-        sf.write(str(tmp), stereo, sr, subtype="PCM_16")
+        sf.write(str(tmp), out.astype(np.float32), sr, subtype="PCM_16")
         tmp.rename(dest)
     except Exception:
         tmp.unlink(missing_ok=True)

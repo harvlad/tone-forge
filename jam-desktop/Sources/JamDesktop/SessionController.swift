@@ -973,9 +973,53 @@ final class SessionController: ObservableObject {
             guard attachedAnalysisId == analysisId else { return }
             attachedStemURLs = urls
             redrumActiveKit = kit
+            // The kit lands on the PADS too — a stem-only swap left users
+            // hunting for where the new drums lived.
+            if kit.hasPrefix("song:") {
+                await loadDonorKitPads(donorId: String(kit.dropFirst(5)))
+            } else {
+                await loadAutoKit(kind: "drums")
+            }
         } catch {
             remixError = error.localizedDescription
         }
+    }
+
+    /// Put a Re-Drum DONOR's cleaned one-shots on the Launchpad grid. Only
+    /// pads whose composite file downloaded are adopted (the donor's stems
+    /// aren't local, so a chop-window fallback would play the WRONG song's
+    /// drums); groove pads are dropped for the same reason. Trigger routes
+    /// through the drumfile: sentinel → ChopPlayer.trigger(file:).
+    @MainActor
+    private func loadDonorKitPads(donorId: String) async {
+        guard let base = backendBaseURL else { return }
+        guard let donorPack = try? await KitClient().fetchKit(
+            baseURL: base, analysisId: donorId, kind: "drums") else { return }
+        let files = await Self.downloadKitSamples(pack: donorPack, base: base)
+        guard !files.isEmpty else { return }
+        drumKitSampleFiles = files
+        let pairs: [(chop: Chop, stem: String)] = donorPack.pads.compactMap { pad in
+            guard files[pad.padIdx] != nil, pad.loopable != true else { return nil }
+            let chop = Chop(
+                idx: pad.padIdx,
+                startSec: 0,
+                endSec: 0.5,   // dummy window — the file path plays, not this
+                durationSec: 0.5,
+                kind: "chord",
+                sectionLabel: pad.name,
+                colorHint: pad.colorHint,
+                contentType: nil,
+                performanceScore: pad.performanceScore,
+                difficulty: nil,
+                loopable: false,
+                loopScore: nil,
+                crossfadeMs: nil,
+                assetId: "drumfile:\(pad.padIdx)"
+            )
+            return (chop, "drums")
+        }
+        guard !pairs.isEmpty else { return }
+        launchpad.adoptAssignments(pairs)
     }
 
     @MainActor

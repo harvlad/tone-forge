@@ -2226,6 +2226,14 @@ public final class AppState: ObservableObject {
                 self.currentStemLocalURLs = urls
                 self.redrumActiveKit = kit
                 Haptics.padTrigger()
+                // The kit lands on the PADS too — field feedback: a stem-only
+                // swap left users hunting for where the new drums lived.
+                if kit.hasPrefix("song:") {
+                    await self.loadDonorKitPads(
+                        donorId: String(kit.dropFirst(5)))
+                } else {
+                    self.loadAutoKit(kind: "drums")
+                }
             } catch {
                 self.remixError = error.localizedDescription
             }
@@ -2275,6 +2283,45 @@ public final class AppState: ObservableObject {
         if wasPlaying {
             stemPlayer.play(atSongSeconds: position)
         }
+    }
+
+    /// Put a Re-Drum DONOR's cleaned one-shots on the pads. The donor's
+    /// stems aren't on this device, so only pads whose composite FILE
+    /// downloaded make the grid — the stemSlice fallback would slice the
+    /// CURRENT song's drums stem at the donor's timestamps, i.e. garbage.
+    /// Groove pads (stem-window loops) are dropped for the same reason.
+    private func loadDonorKitPads(donorId: String) async {
+        let base = backendBaseURL
+        guard let donorPack = try? await KitClient().fetchKit(
+            baseURL: base, analysisId: donorId, kind: "drums") else { return }
+        let files = await Self.downloadKitSamples(pack: donorPack, base: base)
+        let pads: [SamplePad] = donorPack.pads.compactMap { pad in
+            guard files[pad.padIdx] != nil,
+                  pad.loopable != true else { return nil }
+            return SamplePad(
+                padIdx: pad.padIdx,
+                name: pad.name,
+                family: pad.family,
+                colorHint: pad.colorHint,
+                chokeGroup: pad.chokeGroup,
+                defaultQuantize: pad.defaultQuantize,
+                loopable: false,
+                category: pad.category
+            )
+        }
+        guard !pads.isEmpty else { return }
+        let pack = SamplePack(
+            manifestVersion: donorPack.manifestVersion,
+            packId: donorPack.packId,
+            name: donorPack.name,
+            family: donorPack.family,
+            paletteHint: donorPack.paletteHint,
+            pads: pads
+        )
+        let resolved = SampleBank.autoKit(pack, padFileURLs: files)
+        await sampleScheduler.preloadPackAsync(
+            resolved, stemFiles: currentStemLocalURLs)
+        activateSamplePack(resolved, stemFiles: currentStemLocalURLs)
     }
 
     /// Song-switch hygiene for remix state (called from the load path).

@@ -47,7 +47,10 @@ logger = logging.getLogger(__name__)
 
 # Bump to invalidate rendered composites after algorithm changes (cache dirs
 # are versioned by BOTH: new hits tables also re-render).
-RENDER_VERSION = 1
+# v2: composites are true STEREO (per-channel median, mono alignment) —
+# v1's mono renders collapsed the record's drum image and the loss was
+# plainly audible next to the real stem.
+RENDER_VERSION = 2
 
 # Stacking knobs. 32 instances is plenty for median convergence; the 0.80
 # attack-spectrum similarity gate keeps "the other kick" out of the stack.
@@ -161,7 +164,13 @@ def render_drum_samples(entry_id: str, result: Dict) -> Optional[Dict[int, str]]
             y, sr = sf.read(str(wav), dtype="float32", always_2d=True)
         except Exception:
             return None
-        y = y.mean(axis=1)  # mono mix at NATIVE rate — hats need the top octave
+        # Keep the STEREO source for extraction — the composites replace or
+        # sit next to the real stem, and dual-mono one-shots are the "big
+        # quality loss" testers heard (a record's drums live in a stereo
+        # image: overheads panned, room wide). Mono mix only feeds the
+        # decision DSP (alignment, similarity, envelopes).
+        y_st = y
+        y = y.mean(axis=1)  # mono decision signal at NATIVE rate
         if y.size == 0:
             return None
 
@@ -190,7 +199,7 @@ def render_drum_samples(entry_id: str, result: Dict) -> Optional[Dict[int, str]]
         out_dir.mkdir(parents=True, exist_ok=True)
         files: Dict[int, str] = {}
         for pad_idx, (cls, _label, exemplar) in enumerate(select_one_shots(hits)):
-            comp = _stack_composite(np, y, _aligned(cls), sr, exemplar,
+            comp = _stack_composite(np, y, y_st, _aligned(cls), sr, exemplar,
                                     by_cls.get(cls, []), cls)
             if comp is None:
                 continue
@@ -212,12 +221,15 @@ def render_drum_samples(entry_id: str, result: Dict) -> Optional[Dict[int, str]]
         return files
 
 
-def _stack_composite(np, y, y_align, sr: int, exemplar: Dict,
+def _stack_composite(np, y, y_st, y_align, sr: int, exemplar: Dict,
                      instances: List[Dict], cls: str):
     """One cleaned composite: gather → gate on attack similarity → align
     (on the class-band signal) → normalize → nanmedian → fades. ``y`` is the
-    full-band render source, ``y_align`` the band-filtered alignment signal.
-    Returns float32 array or None."""
+    mono decision signal, ``y_st`` the (N, 2) stereo render source, and
+    ``y_align`` the band-filtered alignment signal. Alignment and gating run
+    mono (one lag per hit — per-channel lags would smear the image); the
+    median stacks per channel, so the composite keeps the record's real
+    stereo placement. Returns (n, 2) float32 or None."""
     L = int(_TAIL_SEC[cls] * sr)
     pre = int(_PRE_ROLL_S * sr)
     attack_n = int(_ATTACK_S * sr)
@@ -269,30 +281,33 @@ def _stack_composite(np, y, y_align, sr: int, exemplar: Dict,
         start = i0 - pre
         if start < 0:
             continue
-        seg = y[start: start + pre + L].astype(np.float64)
+        seg = y_st[start: start + pre + L].astype(np.float64)
+        # One normalization factor for BOTH channels (the joint peak):
+        # per-channel scaling would recenter every hit and erase the pan.
         peak = float(np.max(np.abs(seg))) if seg.size else 0.0
         if peak <= 0:
             continue
         seg = seg / peak
-        row = np.full(pre + L, np.nan)
+        row = np.full((pre + L, 2), np.nan)
         # Only this instance's CLEAN window contributes; past its own next
         # onset the row is NaN so the median never averages in a neighbor.
-        valid = min(seg.size, pre + int(max(0.0, inst["end"] - inst["t"]) * sr))
+        valid = min(seg.shape[0], pre + int(max(0.0, inst["end"] - inst["t"]) * sr))
         row[:valid] = seg[:valid]
         rows.append(row)
 
     if not rows:
         return None
-    stack = np.vstack(rows)
-    counts = np.sum(~np.isnan(stack), axis=0)
-    comp = np.zeros(pre + L)
+    stack = np.stack(rows)                       # (n_inst, pre+L, 2)
+    counts = np.sum(~np.isnan(stack[:, :, 0]), axis=0)
+    comp = np.zeros((pre + L, 2))
     have = counts > 0
     if not have.any():
         return None
     # nanmedian warns on all-NaN columns; mask them out instead.
-    comp[have] = np.nanmedian(stack[:, have], axis=0)
+    comp[have] = np.nanmedian(stack[:, have, :], axis=0)
 
-    env = np.abs(comp)
+    # Envelope decisions on the mono fold so both channels trim/fade as one.
+    env = np.abs(comp).max(axis=1)
     peak = float(env.max())
     if peak <= 0:
         return None
@@ -313,11 +328,13 @@ def _stack_composite(np, y, y_align, sr: int, exemplar: Dict,
     comp = comp[: min(end + int(0.01 * sr), comp.size)]
 
     # Baked tier-1 cleanup: short fade-in up to the attack, exponential
-    # fade-out so a truncated slice never ends on a cliff.
-    fi = min(int(_FADE_IN_S * sr), comp.size)
-    comp[:fi] *= np.linspace(0.0, 1.0, fi) ** 2
-    fo = min(max(int(0.010 * sr), int(comp.size * 0.15)), comp.size)
-    comp[-fo:] *= np.exp(np.linspace(0.0, -6.0, fo))
+    # fade-out so a truncated slice never ends on a cliff. Broadcast the
+    # same ramp over both channels.
+    n = comp.shape[0]
+    fi = min(int(_FADE_IN_S * sr), n)
+    comp[:fi] *= (np.linspace(0.0, 1.0, fi) ** 2)[:, None]
+    fo = min(max(int(0.010 * sr), int(n * 0.15)), n)
+    comp[-fo:] *= np.exp(np.linspace(0.0, -6.0, fo))[:, None]
 
     comp = comp / (float(np.max(np.abs(comp))) + 1e-12) * 0.89  # ≈ −1 dBFS
     return comp.astype(np.float32)

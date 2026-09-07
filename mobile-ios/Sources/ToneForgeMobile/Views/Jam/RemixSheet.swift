@@ -153,7 +153,7 @@ struct RemixSheet: View {
         } header: {
             Text("Re-Drum")
         } footer: {
-            Text("Keep this song's groove, play it on another song's drums. First use per kit renders on the server — give it a few seconds.")
+            Text("Keep this song's groove, play it on another song's drums — in the mix AND on your pads. First use per kit renders on the server; give it a few seconds.")
         }
     }
 
