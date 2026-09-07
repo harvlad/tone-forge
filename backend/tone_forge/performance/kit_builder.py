@@ -372,10 +372,25 @@ class AutoKitBuilder:
             # its tail (silent-head phrases read as audible on phrase RMS).
             if q_end - q_start > _SAMPLE_LEN_SEC + 1e-6:
                 if local_bar_s > 0:
-                    k = max(1, int(_SAMPLE_LEN_SEC / local_bar_s))
+                    cap_bars = max(1, int(_SAMPLE_LEN_SEC / local_bar_s))
+                    n_bars = max(1, int(round((q_end - q_start) / local_bar_s)))
+                    # Truncate to a bar count that DIVIDES the phrase, not
+                    # the largest that fits: a 4-bar groove capped at 3 bars
+                    # wraps bar 3 → bar 1, skipping the fill bar that leads
+                    # back into the "1" — an audible dead spot at every wrap
+                    # ("in time but not seamless", measured as a 110 ms
+                    # energy hole vs 60 ms at ordinary bar boundaries). A
+                    # 2-bar cut of the same groove is pattern-coherent.
+                    # Phrases whose only fitting divisor is 1 bar (prime
+                    # counts > cap) keep the largest-fit cut — a 1-bar loop
+                    # of a 5-bar phrase is no more coherent than 3 bars and
+                    # loses content.
+                    k = max((d for d in range(1, cap_bars + 1)
+                             if n_bars % d == 0), default=1)
+                    if k == 1 and cap_bars > 1 and n_bars > 1:
+                        k = min(cap_bars, n_bars)
                     ph = phrases_by_id.get(getattr(lp, "phrase_id", None) or a.source_id)
                     be = tuple(getattr(ph, "bar_energies", ()) or ()) if ph else ()
-                    n_bars = int(round((q_end - q_start) / local_bar_s))
                     j = 0
                     if n_bars > k and len(be) >= n_bars:
                         power = [e * e for e in be[:n_bars]]
