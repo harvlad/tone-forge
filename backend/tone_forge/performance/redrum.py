@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -187,8 +188,13 @@ def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Pa
 
     dest = out_dir / cache_key(entry_id, kit_entry_id)
     # Suffix keeps ".wav" LAST — soundfile infers the container from the
-    # extension and refuses a bare ".part".
-    tmp = dest.with_name(dest.name + ".part.wav")
+    # extension and refuses a bare ".part". The uuid makes the scratch name
+    # unique per render: the pool used to be single-worker, so a fixed
+    # ".part.wav" could never collide, but two workers rendering the same
+    # (song, kit) pair would interleave writes into one file and rename the
+    # wreckage into place. Rename stays atomic, so a reader sees either the
+    # old complete file or the new one.
+    tmp = dest.with_name(f"{dest.name}.{uuid.uuid4().hex[:8]}.part.wav")
     # Stereo end-to-end now: render-v2 composites carry the record's real
     # image (per-channel median), and this buffer accumulated it directly —
     # both the format-change crash AND the collapsed-image quality loss stay

@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -208,14 +209,20 @@ def render_drum_samples(entry_id: str, result: Dict) -> Optional[Dict[int, str]]
             # they'd keep serving stale composites forever.
             fname = f"pad{pad_idx:02d}_{cls}_v{HITS_VERSION}-{RENDER_VERSION}.wav"
             try:
-                sf.write(str(out_dir / fname), comp, sr, subtype="PCM_16")
+                # Write-then-rename, unique scratch name: with more than one
+                # render worker two jobs can render the same donor at once,
+                # and a bare sf.write to the shared path hands a reader a
+                # torn WAV. Rename is atomic within the cache dir.
+                scratch = out_dir / f"{fname}.{uuid.uuid4().hex[:8]}.part.wav"
+                sf.write(str(scratch), comp, sr, subtype="PCM_16")
+                scratch.rename(out_dir / fname)
                 files[pad_idx] = fname
             except Exception:
                 logger.warning("drum sample write failed: %s", fname, exc_info=True)
 
         if not files:
             return None
-        tmp = out_dir / "files.json.part"
+        tmp = out_dir / f"files.json.{uuid.uuid4().hex[:8]}.part"
         tmp.write_text(json.dumps({str(k): v for k, v in files.items()}))
         tmp.rename(out_dir / "files.json")
         return files

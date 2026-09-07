@@ -117,6 +117,48 @@ def test_cache_hit_and_missing_prereqs(env):
     assert redrum.render_redrum("src4", result, "nokit") is None
 
 
+def test_concurrent_renders_of_same_pair_dont_corrupt(env):
+    """The render pool is no longer single-worker, so two jobs can render the
+    same (song, kit) pair at once. Every cache write goes to a unique scratch
+    name and is renamed into place, so each racer sees a complete file —
+    before that, both streamed into one fixed ".part.wav" and the winner
+    renamed the interleaved wreckage into the cache."""
+    import threading
+
+    _make_kit(env, "kitsong", [("kick", 0.5), ("snare", 0.25)])
+    result = {
+        DRUM_HITS_RESULT_KEY: _hits((1.0, "kick", 1.0), (2.0, "snare", 1.0)),
+        "duration_sec": 5.0,
+    }
+    results, errors = [], []
+    start = threading.Barrier(4)
+
+    def _race():
+        try:
+            start.wait()
+            results.append(redrum.render_redrum("racer", result, "kitsong"))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_race) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors
+    assert results and all(p is not None for p in results)
+    # Every racer names the same cache entry, and it must be a readable,
+    # correctly shaped stereo WAV — not a torn one.
+    assert len({str(p) for p in results}) == 1
+    y, sr = sf.read(str(results[0]))
+    assert sr == SR
+    assert y.ndim == 2 and y.shape[1] == 2
+    assert float(np.abs(y[int(1.0 * sr) + 10, 0])) > 0.1
+    # No scratch files left behind.
+    assert not list(results[0].parent.glob("*.part.wav"))
+
+
 def test_kit_candidates_ranking():
     def entry(eid, classes, n, iso=1.0):
         hits = [{"t": i * 0.5, "end": i * 0.5 + 0.2, "cls": classes[i % len(classes)],

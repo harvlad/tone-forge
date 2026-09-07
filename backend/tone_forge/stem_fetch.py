@@ -13,6 +13,7 @@ import hashlib
 import logging
 import os
 import re
+import uuid
 import urllib.request
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -79,7 +80,12 @@ def materialize_stems(
                 continue
 
         dest = cached if cached is not None else scratch / f"stem_{_safe(role)}"
-        tmp = dest.with_suffix(dest.suffix + ".part")
+        # Unique scratch name: `cached` is a SHARED path keyed by the R2
+        # object, so two render workers fetching the same stem at once used
+        # to stream into one ".part" file and rename the interleaved bytes
+        # into the cache — poisoning it for every later request. Rename is
+        # atomic, so the loser simply overwrites with identical content.
+        tmp = dest.with_suffix(dest.suffix + f".{uuid.uuid4().hex[:8]}.part")
         try:
             with urllib.request.urlopen(url, timeout=120) as resp, open(tmp, "wb") as f:
                 while True:

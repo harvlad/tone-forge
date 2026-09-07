@@ -5863,16 +5863,44 @@ async def get_song_kit(
 _kit_render_pool = None
 
 
+def _render_workers() -> int:
+    """How many render workers to run. One worker already keeps the DSP off
+    uvicorn's event loop, but it also serialized EVERY job type through a
+    single queue — a Re-Drum tap waited behind an unrelated instrument-pack
+    or graph backfill, which is most of the "first use takes 10-60 s" the
+    Remix sheet warns about.
+
+    Default stays deliberately small: each worker is a whole interpreter
+    with librosa/numpy/scipy resident plus a decoded stem in memory (a
+    4-minute stereo 44.1k float32 stem is ~85 MB before the mono fold), and
+    the prod box is a modest VPS. Leave a core for uvicorn, cap at 2, and
+    let TONEFORGE_RENDER_WORKERS raise it once a box is known to have the
+    headroom. A 1-2 core box lands on 1 — exactly today's behavior.
+    """
+    raw = os.environ.get("TONEFORGE_RENDER_WORKERS")
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            logger.warning("bad TONEFORGE_RENDER_WORKERS=%r; using default", raw)
+    return max(1, min(2, (os.cpu_count() or 2) - 1))
+
+
 def _render_pool():
-    """Single-worker process pool for kit renders + graph backfills.
-    Process (not thread): the DSP holds the GIL in long stretches and
-    starves uvicorn's event loop — /api/history hung for entire renders
-    ('backend unreachable' in the plugin). Spawned lazily; the worker
-    stays warm between jobs."""
+    """Process pool for kit renders + graph backfills. Process (not thread):
+    the DSP holds the GIL in long stretches and starves uvicorn's event loop
+    — /api/history hung for entire renders ('backend unreachable' in the
+    plugin). Spawned lazily; workers stay warm between jobs.
+
+    Concurrency is safe only because every cache write is now
+    write-to-unique-scratch-then-rename (redrum, drum_kit_render,
+    stem_fetch). Those paths were shared and fixed-named, harmless under a
+    single worker and corrupting under two."""
     global _kit_render_pool
     if _kit_render_pool is None:
         import concurrent.futures
-        _kit_render_pool = concurrent.futures.ProcessPoolExecutor(max_workers=1)
+        _kit_render_pool = concurrent.futures.ProcessPoolExecutor(
+            max_workers=_render_workers())
     return _kit_render_pool
 
 
