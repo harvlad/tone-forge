@@ -1,21 +1,35 @@
 /* remix.js — one-tap Remix transforms for the web Jam Pads surface.
  *
- * Web parity for the native Remix sheets:
+ * Web parity for the native Remix sheets, now as a MODAL SHEET matching
+ * the desktop instead of the old inline bar:
  *   mobile-ios  Sources/ToneForgeMobile/Views/Jam/RemixSheet.swift
  *   jam-desktop Sources/JamDesktop/RemixSheetView.swift
  * over the same backend endpoints RemixClients.swift wraps:
  *
- *   Flip       GET /api/song/{id}/kit?kind=flip        SamplePack + defaultSequence
+ *   Kit        GET /api/song/{id}/kit?kind=auto|drums|flip  SamplePack (+seq)
  *   Humanize   GET /api/song/{id}/groove               16 per-slot delays (step fractions)
  *   Re-Drum    GET /api/song/{id}/redrum-candidates    ranked kit donors
  *              GET /api/song/{id}/redrum?kit=…         replacement drums stem WAV
  *   Pack       GET /api/song/{id}/instrument-pack      .sfz zip download
  *
- * This module owns the fetches + row UI; everything that touches audio
- * goes through the host ctx (jam.js) so there is exactly one playback
- * layer, mirroring how RemixSheet drives AppState/SessionController:
+ * Presentation: a centered modal titled "✦ Remix" with a Done button,
+ * opened from a small "✦ Remix" trigger rendered where the host mounts
+ * #remix-root. Sections mirror the desktop sheet exactly:
+ *   Pads    : Auto Kit / Drum Kit / Flip   (checkmark on the active kit)
+ *   Feel    : Humanize                      (checkmark when on)
+ *   Re-Drum : Original drums / Tightened / donor songs (spinner while applying)
+ *   Export  : Instrument Pack (.sfz zip)
+ * Dismiss: Done button, Escape, or backdrop click.
  *
- *   window.JamnRemix.mount(container, ctx)
+ * This module owns the fetches + UI; everything that touches audio goes
+ * through the host ctx (jam.js) so there is exactly one playback layer,
+ * mirroring how the native sheets drive AppState/SessionController:
+ *
+ *   window.JamnRemix.mount(container, ctx)   renders the trigger, owns modal
+ *   window.JamnRemix.open(ctx)               opens the modal (ctx optional)
+ *   window.JamnRemix.close()                 dismisses the modal
+ *   window.JamnRemix.unmount()
+ *
  *     ctx.entry              full /api/history/{id} entry (needs .id)
  *     ctx.loadKit(kind)      mount the song's kit on the pads (auto|drums|flip)
  *     ctx.loadDonorDrumKit(donorId)  donor song's drum kit on the pads
@@ -26,7 +40,6 @@
  *     ctx.isSongPlaying() → bool  OPTIONAL: song transport state, for the
  *                            playing-aware "Applied:" line (falls back to
  *                            window.JamnKitHost.isPlaying, then false)
- *   window.JamnRemix.unmount()
  *
  * Per-row busy flags (never one global spinner painted on every row —
  * the same field-reported confusion the native sheets fixed) and a
@@ -48,10 +61,21 @@
     return '/api/song/' + encodeURIComponent(entryId) + '/' + leaf + (query || '');
   }
 
+  /* remix.css is not linked from jam.html (host files are off-limits to
+   * this module), so inject it once. Idempotent across mounts/pages. */
+  function ensureStylesheet() {
+    if (document.getElementById('remix-css')) return;
+    var link = document.createElement('link');
+    link.id = 'remix-css';
+    link.rel = 'stylesheet';
+    link.href = '/static/remix.css?v=1';
+    (document.head || document.documentElement).appendChild(link);
+  }
+
   function setError(msg) {
-    if (!state || !state.errEl) return;
-    state.errEl.textContent = msg || '';
-    state.errEl.hidden = !msg;
+    if (!state) return;
+    state.errorMsg = msg || '';
+    render();
   }
 
   /** Visible "Applied: …" line + row highlight. Every transform here
@@ -87,6 +111,17 @@
     return songPlaying() ? '' : ' Press Play on the song to hear it.';
   }
 
+  /** Which kit kind is currently loaded on the pads (auto|drums|flip|…),
+   * so the matching Pads row shows a checkmark — the web analogue of the
+   * native lastKitKind. */
+  function activeKitKind() {
+    try {
+      var JK = window.JamnKit;
+      if (JK && typeof JK.kind === 'function') return JK.kind();
+    } catch (_) {}
+    return null;
+  }
+
   function setBusy(key, on) {
     if (!state) return;
     state.busy = on ? key : null;
@@ -99,30 +134,41 @@
   // ------------------------------------------------------------------
   // Transforms (same semantics as AppState/SessionController)
 
-  /** Flip: a new beat from the song's own DNA. The kit mount stages the
-   * manifest's defaultSequence into the sequencer store (kit.js hook),
-   * so the beat is armed in the Sequencer pane after the pads land. */
-  function doFlip() {
+  /** Load a kit onto the pads (Pads section: auto|drums|flip). Kit mounts
+   * are synchronous fire-and-forget through the host hook (window.JamnKit
+   * .mount), so there is no async busy state — the checkmark comes from
+   * activeKitKind() on the next render, mirroring the native sheets. */
+  function doLoadKit(kind, msg) {
     if (!state || state.busy) return;
     setError(null);
     try {
-      state.ctx.loadKit('flip');
-      // The flip is SILENT until the user plays it: the song mix is
-      // untouched, and the web sequencer never auto-starts (unlike iOS).
-      // Say so, or the transform reads as a no-op.
-      setApplied('flip',
-        'Applied: Flip — new kit loading onto the pads; the beat is armed '
-        + 'in the Sequencer. Open Sequencer and press play to hear it.');
+      state.ctx.loadKit(kind);
+      setApplied(kind, msg);
     } catch (e) {
       setApplied(null, '');
-      setError('Flip failed: ' + e);
+      setError('Kit load failed: ' + ((e && e.message) || e));
     }
   }
+
+  var KIT_MSG = {
+    auto:
+      'Applied: Auto Kit — the song’s best loops are on the pads, '
+      + 'color-coded. Tap the pads to play them.',
+    drums:
+      'Applied: Drum Kit — the song’s kick, snare and hats are on the pads '
+      + 'as clean one-shots. Tap the pads to play them.',
+    // The flip is SILENT until the user plays it: the song mix is
+    // untouched, and the web sequencer never auto-starts (unlike iOS).
+    // Say so, or the transform reads as a no-op.
+    flip:
+      'Applied: Flip — new kit loading onto the pads; the beat is armed '
+      + 'in the Sequencer. Open Sequencer and press play to hear it.',
+  };
 
   /** Humanize toggle; fetches the groove template on first use and
    * caches it for the song (RemixClient.fetchGroove + toggleHumanize). */
   // Humanize only bends SEQUENCER step timing (a few ms per step) — it
-  // never touches the song mix. Both messages below spell that out; the
+  // never touches the song mix. The message below spells that out; the
   // silent-failure path (sequencer module absent → jam.js optional-
   // chains the hook into a no-op while the toggle lights up) becomes a
   // real error instead.
@@ -175,20 +221,13 @@
       });
   }
 
-  /** Expand/collapse the Re-Drum donor row; candidates load once per
-   * song (RemixSheet loads them in .task on open). */
-  function toggleRedrumRow() {
-    if (!state) return;
-    state.redrumOpen = !state.redrumOpen;
-    render();
-    if (state.redrumOpen && !state.candidatesLoaded && !state.candidatesLoading) {
-      loadCandidates();
-    }
-  }
-
+  /** Re-Drum candidates load once per song (the native sheet loads them
+   * in .task when the sheet opens — mirrored in openModal()). */
   function loadCandidates() {
+    if (!state || state.candidatesLoading || state.candidatesLoaded) return;
     var entryId = state.entryId;
     state.candidatesLoading = true;
+    render();
     fetch(api(entryId, 'redrum-candidates'))
       .then(function (r) { return r.ok ? r.json() : { candidates: [] }; })
       .catch(function () { return { candidates: [] }; })
@@ -343,161 +382,321 @@
   }
 
   // ------------------------------------------------------------------
-  // DOM
+  // DOM — trigger button + modal
 
-  function mainButton(label, title, key, onClick) {
-    var b = el('button', 'tab-control-btn remix-btn', label);
+  /** A single section row: icon, name + subtitle, and an aside that shows
+   * a spinner while busy, else a checkmark when active. Matches the
+   * native row() helper (RemixSheetView.row / RemixSheet's HStack). */
+  function row(opts) {
+    var b = el('button', 'remix-row');
     b.type = 'button';
-    b.title = title;
-    b.dataset.remix = key;
-    b.addEventListener('click', onClick);
+    if (opts.title) b.title = opts.title;
+    b.disabled = !!opts.disabled;
+
+    b.appendChild(el('span', 'remix-row-icon', opts.icon || ''));
+
+    var body = el('div', 'remix-row-body');
+    body.appendChild(el('div', 'remix-row-name', opts.name));
+    if (opts.subtitle) body.appendChild(el('div', 'remix-row-sub', opts.subtitle));
+    b.appendChild(body);
+
+    var aside = el('div', 'remix-row-aside');
+    if (opts.busy) {
+      if (opts.busyLabel) aside.appendChild(el('span', null, opts.busyLabel));
+      aside.appendChild(el('span', 'remix-spinner'));
+    } else if (opts.checked) {
+      aside.appendChild(el('span', 'remix-check', '✓'));
+    }
+    b.appendChild(aside);
+
+    if (opts.onClick && !opts.disabled) b.addEventListener('click', opts.onClick);
     return b;
   }
 
-  function donorButton(label, kit, title) {
-    var b = el('button', 'tab-control-btn remix-btn', label);
-    b.type = 'button';
-    b.title = title;
-    b.dataset.redrumKit = kit;
-    b.addEventListener('click', function () { applyRedrum(kit); });
-    return b;
+  function section(title) {
+    var s = el('div', 'remix-section');
+    if (title) s.appendChild(el('div', 'remix-section-header', title));
+    return s;
   }
 
-  function build() {
-    var root = state.container;
-    root.innerHTML = '';
-    var bar = el('div', 'remix-bar');
-    bar.appendChild(el('span', 'remix-title', 'Remix'));
+  /** Build (or rebuild) the modal body from current state. Cheap enough
+   * to redraw whole on each render — the row list is short, and the
+   * Escape/backdrop dismiss listeners live on the backdrop, not the
+   * rebuilt rows, so nothing here breaks dismissal. */
+  function renderModal() {
+    if (!state || !state.modalOpen || !state.els) return;
+    var body = state.els.body;
+    body.innerHTML = '';
 
-    var group = el('div', 'tab-control-group remix-group');
-    group.setAttribute('role', 'group');
-    group.setAttribute('aria-label', 'Remix transforms');
-    group.appendChild(mainButton('Flip', 'A new beat built from the song’s own DNA — pads load here, the pattern lands in the Sequencer', 'flip', doFlip));
-    group.appendChild(mainButton('Humanize', 'Sequences swing with this song’s own timing', 'humanize', doHumanize));
-    group.appendChild(mainButton('Re-Drum', 'Keep this song’s groove, play it on another song’s drums — in the mix and on the pads', 'redrum', toggleRedrumRow));
-    group.appendChild(mainButton('Instrument Pack', 'The song as a playable sampler patch (.sfz zip)', 'pack', doInstrumentPack));
-    bar.appendChild(group);
+    var busy = state.busy; // a blocking fetch: humanize | redrum | pack
+    var activeKit = activeKitKind();
 
-    var err = el('span', 'remix-error');
-    err.hidden = true;
-    bar.appendChild(err);
-    state.errEl = err;
+    // ---- Pads
+    var pads = section('Pads');
+    pads.appendChild(row({
+      name: 'Auto Kit', icon: '🪄',
+      subtitle: 'The song’s best loops, color-coded',
+      title: 'The song’s best loops on the pads, color-coded',
+      checked: activeKit === 'auto',
+      disabled: !!busy,
+      onClick: function () { doLoadKit('auto', KIT_MSG.auto); },
+    }));
+    pads.appendChild(row({
+      name: 'Drum Kit', icon: '🥁',
+      subtitle: 'Its kick, snare and hats as clean one-shots',
+      title: 'The song’s kick, snare and hats as clean one-shots',
+      checked: activeKit === 'drums',
+      disabled: !!busy,
+      onClick: function () { doLoadKit('drums', KIT_MSG.drums); },
+    }));
+    pads.appendChild(row({
+      name: 'Flip', icon: '🔀',
+      subtitle: 'A new beat built from the song’s own DNA',
+      title: 'A new beat built from the song’s own DNA — pads load here, the pattern lands in the Sequencer',
+      checked: activeKit === 'flip',
+      disabled: !!busy,
+      onClick: function () { doLoadKit('flip', KIT_MSG.flip); },
+    }));
+    body.appendChild(pads);
 
-    // "Applied: …" line — the transforms land on surfaces that may be
-    // silent right now (paused mix, idle sequencer), so success must be
-    // stated, not inferred from the audio.
-    var status = el('span', 'remix-note remix-status');
-    status.hidden = true;
-    status.setAttribute('role', 'status'); // screen readers announce it
-    bar.appendChild(status);
-    state.statusEl = status;
+    // ---- Feel
+    var feel = section('Feel');
+    feel.appendChild(row({
+      name: 'Humanize', icon: '〰️',
+      subtitle: 'Sequences swing with this song’s own timing',
+      title: 'Sequences swing with this song’s own timing',
+      busy: busy === 'humanize',
+      checked: state.humanizeOn,
+      disabled: !!busy && busy !== 'humanize',
+      onClick: doHumanize,
+    }));
+    body.appendChild(feel);
 
-    var donors = el('div', 'remix-donors');
-    donors.hidden = true;
-    bar.appendChild(donors);
-    state.donorsEl = donors;
+    // ---- Re-Drum
+    var redrum = section('Re-Drum — keep the groove, swap the kit');
+    var redrumLocked = !!state.redrumBusyKit; // any donor rendering
 
-    root.appendChild(bar);
-    render();
+    if (state.redrumActiveKit) {
+      redrum.appendChild(row({
+        name: 'Original drums', icon: '↩︎',
+        subtitle: 'Back to the song’s real drums',
+        busy: state.redrumBusyKit === 'original',
+        busyLabel: state.redrumBusyKit === 'original' ? 'Restoring…' : null,
+        disabled: redrumLocked && state.redrumBusyKit !== 'original',
+        onClick: clearRedrum,
+      }));
+    }
+
+    redrum.appendChild(row({
+      name: 'Tightened (own kit)', icon: '🔁',
+      subtitle: 'Re-trigger this song’s own cleaned kit',
+      busy: state.redrumBusyKit === 'self',
+      busyLabel: state.redrumBusyKit === 'self' ? 'Rendering…' : null,
+      checked: state.redrumActiveKit === 'self' && state.redrumBusyKit !== 'self',
+      disabled: redrumLocked && state.redrumBusyKit !== 'self',
+      onClick: function () { applyRedrum('self'); },
+    }));
+
+    if (state.candidatesLoading || (!state.candidatesLoaded && !state.candidates.length)) {
+      var loading = el('div', 'remix-note');
+      loading.appendChild(el('span', 'remix-spinner'));
+      loading.appendChild(el('span', null, 'Finding kit donors…'));
+      redrum.appendChild(loading);
+    } else if (state.candidatesLoaded && !state.candidates.length) {
+      redrum.appendChild(el('div', 'remix-note',
+        'Analyze more songs to unlock cross-song kits.'));
+    }
+
+    state.candidates.forEach(function (c) {
+      var kit = 'song:' + c.entryId;
+      redrum.appendChild(row({
+        name: c.name || c.entryId, icon: '🔁',
+        subtitle: 'This song’s groove on that song’s drums',
+        title: 'This song’s groove on that song’s drums — first use renders on the server, give it a few seconds',
+        busy: state.redrumBusyKit === kit,
+        busyLabel: state.redrumBusyKit === kit ? 'Rendering…' : null,
+        checked: state.redrumActiveKit === kit && state.redrumBusyKit !== kit,
+        disabled: redrumLocked && state.redrumBusyKit !== kit,
+        onClick: function () { applyRedrum(kit); },
+      }));
+    });
+    body.appendChild(redrum);
+
+    // ---- Export
+    var exp = section('Export');
+    exp.appendChild(row({
+      name: 'Instrument Pack (.sfz)', icon: '🎹',
+      subtitle: 'Drums on keys, bass + stab chromatic — downloads via browser',
+      title: 'The song as a playable sampler patch (.sfz zip)',
+      busy: busy === 'pack',
+      busyLabel: busy === 'pack' ? 'Rendering…' : null,
+      disabled: !!busy && busy !== 'pack',
+      onClick: doInstrumentPack,
+    }));
+    body.appendChild(exp);
+
+    // ---- Pinned "Applied: …" + error, below the scroll region.
+    state.els.applied.textContent = state.appliedMsg || '';
+    state.els.applied.hidden = !state.appliedMsg;
+    state.els.error.textContent = state.errorMsg || '';
+    state.els.error.hidden = !state.errorMsg;
   }
 
   function render() {
-    if (!state || !state.container) return;
-    var btns = state.container.querySelectorAll('.remix-btn[data-remix]');
-    for (var i = 0; i < btns.length; i++) {
-      var b = btns[i];
-      var key = b.dataset.remix;
-      var busy = state.busy === key
-        || (key === 'redrum' && state.busy === 'redrum');
-      b.classList.toggle('is-busy', busy);
-      b.disabled = !!state.busy && !busy;
-      if (key === 'humanize') b.classList.toggle('is-active', state.humanizeOn);
-      if (key === 'redrum') {
-        b.classList.toggle('is-active',
-          state.redrumOpen || !!state.redrumActiveKit);
-      }
-      if (key === 'flip' || key === 'pack') {
-        b.classList.toggle('is-active', state.appliedKey === key);
-      }
+    if (!state) return;
+    if (state.els && state.els.trigger) {
+      state.els.trigger.classList.toggle('is-open', !!state.modalOpen);
     }
-    if (state.statusEl) {
-      state.statusEl.textContent = state.appliedMsg || '';
-      state.statusEl.hidden = !state.appliedMsg;
-    }
-    renderDonors();
+    renderModal();
   }
 
-  function renderDonors() {
-    var wrap = state.donorsEl;
-    if (!wrap) return;
-    wrap.hidden = !state.redrumOpen;
-    if (!state.redrumOpen) return;
-    wrap.innerHTML = '';
-    if (state.redrumActiveKit) {
-      var orig = el('button', 'tab-control-btn remix-btn', 'Original drums');
-      orig.type = 'button';
-      orig.title = 'Back to the song’s real drums';
-      orig.dataset.redrumKit = '__original__';
-      orig.addEventListener('click', clearRedrum);
-      wrap.appendChild(orig);
-    }
-    wrap.appendChild(donorButton('Tightened (own kit)', 'self',
-      'Re-trigger this song’s own cleaned kit'));
-    if (state.candidatesLoading || (!state.candidatesLoaded && !state.candidates.length)) {
-      wrap.appendChild(el('span', 'remix-note', 'Finding kit donors…'));
-    } else if (state.candidatesLoaded && !state.candidates.length) {
-      wrap.appendChild(el('span', 'remix-note',
-        'Analyze more songs to unlock cross-song kits.'));
-    }
-    state.candidates.forEach(function (c) {
-      wrap.appendChild(donorButton(c.name || c.entryId, 'song:' + c.entryId,
-        'This song’s groove on that song’s drums — first use renders on the server, give it a few seconds'));
+  function buildTrigger() {
+    var root = state.container;
+    root.innerHTML = '';
+    var b = el('button', 'remix-trigger');
+    b.type = 'button';
+    b.title = 'Remix — one-tap transforms for this song';
+    b.setAttribute('aria-haspopup', 'dialog');
+    b.appendChild(el('span', 'remix-trigger-mark', '✦'));
+    b.appendChild(el('span', null, 'Remix'));
+    b.addEventListener('click', openModal);
+    root.appendChild(b);
+    state.els.trigger = b;
+  }
+
+  function openModal() {
+    if (!state || state.modalOpen) return;
+    state.modalOpen = true;
+
+    var backdrop = el('div', 'remix-backdrop');
+    var modal = el('div', 'remix-modal');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Remix');
+    modal.tabIndex = -1;
+
+    var header = el('div', 'remix-header');
+    var title = el('div', 'remix-modal-title');
+    title.appendChild(el('span', 'remix-mark', '✦'));
+    title.appendChild(el('span', null, 'Remix'));
+    header.appendChild(title);
+    var done = el('button', 'remix-done', 'Done');
+    done.type = 'button';
+    done.addEventListener('click', closeModal);
+    header.appendChild(done);
+    modal.appendChild(header);
+
+    var body = el('div', 'remix-body');
+    modal.appendChild(body);
+
+    // "Applied: …" line — the transforms land on surfaces that may be
+    // silent right now (paused mix, idle sequencer), so success must be
+    // stated, not inferred from the audio. role=status → screen readers.
+    var applied = el('div', 'remix-applied');
+    applied.setAttribute('role', 'status');
+    applied.hidden = true;
+    modal.appendChild(applied);
+
+    var error = el('div', 'remix-modal-error');
+    error.hidden = true;
+    modal.appendChild(error);
+
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+
+    state.els.backdrop = backdrop;
+    state.els.modal = modal;
+    state.els.body = body;
+    state.els.applied = applied;
+    state.els.error = error;
+
+    // Backdrop click (outside the card) dismisses, like the native sheet.
+    backdrop.addEventListener('click', function (ev) {
+      if (ev.target === backdrop) closeModal();
     });
-    // Busy/active decoration on donor rows.
-    var rows = wrap.querySelectorAll('.remix-btn');
-    for (var i = 0; i < rows.length; i++) {
-      var r = rows[i];
-      var kit = r.dataset.redrumKit;
-      var busyKit = state.redrumBusyKit === kit
-        || (kit === '__original__' && state.redrumBusyKit === 'original');
-      r.classList.toggle('is-busy', busyKit);
-      r.disabled = !!state.redrumBusyKit && !busyKit;
-      r.classList.toggle('is-active',
-        kit === state.redrumActiveKit && !busyKit);
-      if (busyKit) r.textContent = r.textContent + ' — rendering…';
+    // Escape dismisses; capture so it wins over page-level handlers.
+    state.onKeyDown = function (ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); closeModal(); }
+    };
+    document.addEventListener('keydown', state.onKeyDown, true);
+
+    // Candidates load when the sheet opens (native .task parity).
+    loadCandidates();
+
+    render();
+    try { modal.focus(); } catch (_) {}
+  }
+
+  function closeModal() {
+    if (!state || !state.modalOpen) return;
+    state.modalOpen = false;
+    if (state.onKeyDown) {
+      document.removeEventListener('keydown', state.onKeyDown, true);
+      state.onKeyDown = null;
     }
+    if (state.els.backdrop && state.els.backdrop.parentNode) {
+      state.els.backdrop.parentNode.removeChild(state.els.backdrop);
+    }
+    state.els.backdrop = null;
+    state.els.modal = null;
+    state.els.body = null;
+    state.els.applied = null;
+    state.els.error = null;
+    render(); // clears trigger .is-open
   }
 
   // ------------------------------------------------------------------
   // Public surface
 
+  function initState(container, ctx) {
+    return {
+      container: container,
+      ctx: ctx,
+      entryId: ctx.entry.id,
+      busy: null,
+      humanizeOn: false,
+      grooveTemplate: null,
+      redrumActiveKit: null,
+      redrumBusyKit: null,
+      candidates: [],
+      candidatesLoaded: false,
+      candidatesLoading: false,
+      appliedKey: null,
+      appliedMsg: '',
+      errorMsg: '',
+      modalOpen: false,
+      onKeyDown: null,
+      els: {},
+    };
+  }
+
   window.JamnRemix = {
+    // Renders the "✦ Remix" trigger into the host container and owns the
+    // modal — the host mount site (#remix-root) needs no change.
     mount: function (container, ctx) {
       if (!container || !ctx || !ctx.entry || !ctx.entry.id) return;
       window.JamnRemix.unmount();
-      state = {
-        container: container,
-        ctx: ctx,
-        entryId: ctx.entry.id,
-        busy: null,
-        humanizeOn: false,
-        grooveTemplate: null,
-        redrumOpen: false,
-        redrumActiveKit: null,
-        redrumBusyKit: null,
-        candidates: [],
-        candidatesLoaded: false,
-        candidatesLoading: false,
-        appliedKey: null,
-        appliedMsg: '',
-        errEl: null,
-        statusEl: null,
-        donorsEl: null,
-      };
-      build();
+      ensureStylesheet();
+      state = initState(container, ctx);
+      buildTrigger();
+      render();
     },
+    // Open the modal. Optional ctx lets a host open with a fresh context
+    // (e.g. a newly loaded song) without a full remount.
+    open: function (ctx) {
+      if (ctx && ctx.entry && ctx.entry.id && state && ctx.entry.id !== state.entryId) {
+        var container = state.container;
+        closeModal();
+        state = initState(container, ctx);
+        buildTrigger();
+      }
+      if (!state) return;
+      openModal();
+    },
+    close: function () { closeModal(); },
     unmount: function () {
       if (!state) return;
+      closeModal();
       try { state.container.innerHTML = ''; } catch (_) {}
       state = null;
     },
