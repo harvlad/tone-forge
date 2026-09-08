@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Persisted-result key, analog of serve.GRAPH_RESULT_KEY. Version gates the
 # table: bump HITS_VERSION to invalidate stale tables after algorithm changes.
 DRUM_HITS_RESULT_KEY = "drum_hits"
-HITS_VERSION = 2
+HITS_VERSION = 3
 
 _SR = 22050
 
@@ -243,6 +243,25 @@ def detect_drum_hits(wav_path: Path) -> Dict:
             flat = 0.3
 
         if dominant == "low":
+            # Transient gate — the low band fires on every BASS NOTE, not
+            # just kicks, so a bass-heavy stem returns 2-3x too many "kicks"
+            # and Re-Drum turns them into a wash. A kick (acoustic OR 808)
+            # DECAYS; a held / legato bass note SUSTAINS. Measure the low
+            # band's energy ~150-250 ms after the attack vs its own peak:
+            # still loud = sustained bass, drop it. 808-safe — 808s decay
+            # below this inside ~300 ms; only genuinely held notes stay up.
+            # Skipped when the next onset is <250 ms away (a fast pattern is
+            # drummy by nature and there's no room to measure sustain).
+            low = filtered.get("low")
+            if low is not None and gap >= 0.25:
+                p0 = int(t_peak * sr)
+                pk = float(np.max(np.abs(low[p0: p0 + int(0.03 * sr)])) + 1e-9)
+                s0 = p0 + int(0.15 * sr)
+                s1 = p0 + int(0.25 * sr)
+                sustain = float(np.sqrt(np.mean(low[s0:s1] ** 2))) \
+                    if s1 <= low.shape[0] else 0.0
+                if sustain / pk > 0.5:
+                    continue  # sustained bass note, not a kick — drop
             cls = "kick"
         elif dominant == "high":
             cls = "hat_closed" if decay < 0.25 else (
