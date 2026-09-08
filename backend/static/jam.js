@@ -1447,12 +1447,15 @@
   // renders, and the pre-Phase-6 behaviour (no install affordance,
   // status pill only) prevails.
   //
-  // Install link for the desktop helper. Points at the backend's
-  // presigned-R2 redirect for the ToneForge Studio DMG (the tray app
-  // that supervises the Connect helper) — relative so it works on
-  // jamn.app and local dev alike. Previously pointed at GitHub
-  // Releases, which 404s for the public.
-  const CONNECT_INSTALL_URL = '/api/downloads/studio-app';
+  // Install link for the low-latency monitor. Points at the signed,
+  // notarized Connect release DMG on GitHub (via the backend's
+  // version-free /api/downloads/connect redirect) — this is the build
+  // carrying the local-bridge monitoring feature. The older
+  // /api/downloads/studio-app R2 redirect serves a different app (the
+  // Studio analysis accelerator) and did not track Connect releases.
+  // Relative so it works on jamn.app and local dev alike. The repo is
+  // public now, so GitHub Releases no longer 404s for anonymous users.
+  const CONNECT_INSTALL_URL = '/api/downloads/connect';
 
   async function probeConnectInstalled() {
     const cb = state.connectBridge;

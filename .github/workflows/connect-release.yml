@@ -176,6 +176,18 @@ jobs:
           # and the release manager re-runs the workflow.
           git push origin HEAD:main
 
+      - name: Stable-named copy for the web download endpoint
+        run: |
+          set -euo pipefail
+          cd connect
+          # The appcast references the versioned DMG (per-version URLs are
+          # what Sparkle needs). The website instead links a stable name so
+          # /api/downloads/connect can stay version-free — same trick as
+          # jamnKit-macOS.pkg. Byte-identical copy, so its notarization
+          # ticket is stapled and its bytes are already validated.
+          SRC="$(ls dist/Connect-*.dmg | head -1)"
+          cp "$SRC" dist/Connect-macOS.dmg
+
       - name: Upload DMG to GitHub Release
         uses: softprops/action-gh-release@v2
         with:

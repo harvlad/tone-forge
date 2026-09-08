@@ -3524,6 +3524,73 @@ async def download_studio_app():
     return RedirectResponse(url, status_code=307)
 
 
+# The repo ships two independently-tagged product lines (connect-v*,
+# jamnkit-v*), so GitHub's single global `releases/latest` pointer can't
+# be used for downloads — whichever line released most recently would
+# hijack the other's link (and did: a Connect release once 404'd every
+# jamn-kit download). Resolve the newest release *matching a tag prefix*
+# via the API instead. Cached briefly because the prod box shares one IP
+# against the unauthenticated 60/hr limit.
+_release_asset_cache: dict[tuple[str, str], tuple[float, str]] = {}
+_RELEASE_CACHE_TTL_S = 300.0
+
+
+async def _latest_release_asset_url(tag_prefix: str, asset_name: str) -> str:
+    """browser_download_url for `asset_name` on the newest release whose
+    tag starts with `tag_prefix`. On any API failure, falls back to the
+    tag-agnostic latest/download path — correct whenever that product
+    line happens to be the global latest, best-effort otherwise."""
+    import time as _time
+
+    key = (tag_prefix, asset_name)
+    now = _time.monotonic()
+    cached = _release_asset_cache.get(key)
+    if cached and now - cached[0] < _RELEASE_CACHE_TTL_S:
+        return cached[1]
+
+    import httpx
+
+    url = ("https://github.com/harvlad/tone-forge/releases/latest/download/"
+           + asset_name)
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(
+                "https://api.github.com/repos/harvlad/tone-forge/releases",
+                params={"per_page": 30},
+                headers={"Accept": "application/vnd.github+json"},
+            )
+            resp.raise_for_status()
+            for rel in resp.json():  # API returns newest-first
+                if not str(rel.get("tag_name", "")).startswith(tag_prefix):
+                    continue
+                for asset in rel.get("assets", []):
+                    if asset.get("name") == asset_name:
+                        url = asset["browser_download_url"]
+                        break
+                break  # only the newest matching release is "latest"
+    except Exception:  # noqa: BLE001
+        logger.exception("release asset resolution failed for %s", asset_name)
+
+    _release_asset_cache[key] = (now, url)
+    return url
+
+
+@app.get("/api/downloads/connect")
+async def download_connect():
+    """Redirect to the latest Connect release DMG on GitHub.
+
+    The release publishes a stable-named `Connect-macOS.dmg` alongside the
+    versioned asset. This is the signed + notarized, Sparkle-auto-updating
+    build — distinct from the Studio local-engine DMG in R2
+    (`/api/downloads/studio-app`), which is the analysis accelerator, not
+    the low-latency monitor.
+    """
+    from fastapi.responses import RedirectResponse
+
+    url = await _latest_release_asset_url("connect-v", "Connect-macOS.dmg")
+    return RedirectResponse(url, status_code=307)
+
+
 @app.get("/api/downloads/jamn-kit")
 async def download_jamn_kit(
     os: str = Query("mac", description="mac | win"),
@@ -3536,10 +3603,8 @@ async def download_jamn_kit(
     asset = {"mac": "jamnKit-macOS.pkg", "win": "jamnKit-windows.zip"}.get(os)
     if asset is None:
         raise HTTPException(status_code=422, detail="os must be mac or win")
-    return RedirectResponse(
-        "https://github.com/harvlad/tone-forge/releases/latest/download/"
-        + asset,
-        status_code=307)
+    url = await _latest_release_asset_url("jamnkit-v", asset)
+    return RedirectResponse(url, status_code=307)
 
 
 @app.get("/api/admin/serve-file")
@@ -5022,6 +5087,94 @@ async def get_history_entry(entry_id: str) -> JSONResponse:
     _refresh_r2_stem_urls(entry.get("result"))
     # Convert numpy types and handle inf/nan values
     return JSONResponse(_convert_numpy_types(entry))
+
+
+# Designated DMCA/takedown agent contact — the ONE source of truth,
+# mirrored by mobile AppConfig.takedownEmail (copyright@jamn.app). The
+# domain forwards via ImprovMX. Register this address with the US
+# Copyright Office DMCA agent directory before public launch
+# (OUTSTANDING.md §2) so it is a *designated* agent, not just a mailbox.
+TAKEDOWN_EMAIL = os.environ.get("TONEFORGE_TAKEDOWN_EMAIL", "copyright@jamn.app")
+
+# Provisional legal copy — the App Store submission needs a hosted
+# Privacy Policy URL, and the mobile app links its in-app sheets here.
+# The BODY text below is provisional and MUST be replaced with
+# counsel-reviewed wording before public release; the structure
+# (personal-practice scope, 7-day retention, designated-agent DMCA
+# contact) is deliberate and mirrors LegalSheets.swift 1:1.
+_LEGAL_SECTIONS = [
+    ("Terms of Service", [
+        ("Personal practice only",
+         "Jamn analyses audio you own or are licensed to use, for your own "
+         "practice and tone exploration. You may not upload audio you do not "
+         "have rights to."),
+        ("Your attestation",
+         "Before importing, you confirm that you own each file or hold rights "
+         "to use it for personal practice. You are responsible for the content "
+         "you upload."),
+        ("Server retention",
+         "Uploaded audio and analysis artifacts are retained on our servers "
+         "for at most 7 days, after which they are deleted automatically. You "
+         "can delete them at any time from Settings."),
+        ("Copyright complaints",
+         "We respond to copyright takedown notices sent to our designated "
+         f"agent at {TAKEDOWN_EMAIL}. Include the work, the material "
+         "complained of, and your contact details."),
+    ]),
+    ("Privacy Policy", [
+        ("What we process",
+         "Audio you upload, the analysis artifacts derived from it, and your "
+         "account email if you sign in. Processing happens to produce your "
+         "stems, chords, and kits — nothing more."),
+        ("Retention & deletion",
+         "Uploaded audio and artifacts are deleted automatically within 7 "
+         "days; you can delete them sooner from Settings. Account records "
+         "persist until you delete your account."),
+        ("Questions & requests",
+         f"Questions and requests: {TAKEDOWN_EMAIL}."),
+    ]),
+]
+
+
+@app.get("/legal", response_class=HTMLResponse)
+@app.get("/legal/", response_class=HTMLResponse)
+async def legal_page() -> HTMLResponse:
+    """Hosted Terms of Service + Privacy Policy (App Store privacy URL;
+    the mobile/desktop in-app sheets deep-link here). Provisional copy —
+    see _LEGAL_SECTIONS. Self-contained HTML, near-black JamN palette."""
+    import html as _html
+
+    blocks = []
+    for doc_title, sections in _LEGAL_SECTIONS:
+        blocks.append(f"<h2>{_html.escape(doc_title)}</h2>")
+        for heading, body in sections:
+            blocks.append(
+                f"<h3>{_html.escape(heading)}</h3>"
+                f"<p>{_html.escape(body)}</p>"
+            )
+    body_html = "\n".join(blocks)
+    page = (
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>Jamn — Legal</title><style>"
+        ":root{color-scheme:dark}"
+        "body{margin:0;background:#0B0B0F;color:#fff;"
+        "font:16px/1.6 -apple-system,ui-sans-serif,\"SF Pro Text\",system-ui,sans-serif;}"
+        "main{max-width:720px;margin:0 auto;padding:48px 20px 80px;}"
+        "h1{font-size:28px;margin:0 0 4px;}"
+        ".sub{color:#A1A1AA;margin:0 0 32px;font-size:14px;}"
+        "h2{font-size:20px;margin:40px 0 8px;color:#8B5CF6;}"
+        "h3{font-size:15px;margin:20px 0 4px;}"
+        "p{margin:0 0 12px;color:#D4D4D8;}"
+        "a{color:#8B5CF6;}"
+        "</style></head><body><main>"
+        "<h1>Jamn — Legal</h1>"
+        "<p class=\"sub\">Terms of Service &amp; Privacy Policy · "
+        f"Takedown / privacy contact: <a href=\"mailto:{TAKEDOWN_EMAIL}\">{TAKEDOWN_EMAIL}</a></p>"
+        f"{body_html}"
+        "</main></body></html>"
+    )
+    return HTMLResponse(page)
 
 
 @app.get("/api/history/{entry_id}/stem-audio/{role}")
