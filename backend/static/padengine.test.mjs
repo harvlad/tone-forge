@@ -779,6 +779,87 @@ test("gateRegionInPlace: ramps shrink to fit tiny gates; edges clamp", () => {
   gateRegionInPlace([new Float32Array(4).fill(1)], 0, 0, 2);
 });
 
+// --- setPadSource / restorePadSource (radial "Add sound") ------------------
+//
+// The web SoundPickerSheet twin: swap one pad's baked source for an external
+// decoded buffer, snapshot the original once, restore it on radial Reset.
+
+/** External source buffer: `frames` of flat `value`, distinct length from
+ * makeEngine's 2 s body so a swap is observable by buffer length. */
+function extBuffer(ctx, frames, value = 0.5) {
+  const buf = ctx.createBuffer(1, frames, FAKE_SR);
+  buf.getChannelData(0).fill(value);
+  return buf;
+}
+
+test("setPadSource swaps the baked source and marks the pad restorable", () => {
+  const { engine, ctx } = makeEngine();
+  const origLen = engine.sourceBuffer(0).length; // 2 s body + continuation
+  assert.equal(engine.hasSwappedSource(0), false);
+
+  const ext = extBuffer(ctx, 4000);
+  assert.equal(engine.setPadSource(0, ext, { name: "Clap", colorHint: "#FF0000" }), true);
+  assert.equal(engine.hasSwappedSource(0), true);
+  // Whole-buffer bake: the one-shot buffer is the source length verbatim
+  // (no analyzer continuation tail), so it's clearly the new source.
+  assert.equal(engine.sourceBuffer(0).length, 4000);
+  assert.notEqual(engine.sourceBuffer(0).length, origLen);
+  // peaks() now reads the swapped bake (non-null, normalized).
+  const pk = engine.peaks(0, 8);
+  assert.ok(pk && pk.length === 8);
+});
+
+test("restorePadSource returns the pad to its pre-swap source (idempotent)", () => {
+  const { engine, ctx } = makeEngine();
+  const origLen = engine.sourceBuffer(0).length;
+  engine.setPadSource(0, extBuffer(ctx, 4000));
+  assert.equal(engine.sourceBuffer(0).length, 4000);
+
+  assert.equal(engine.restorePadSource(0), true);
+  assert.equal(engine.hasSwappedSource(0), false);
+  assert.equal(engine.sourceBuffer(0).length, origLen);
+  // Second restore is a no-op — nothing left to undo.
+  assert.equal(engine.restorePadSource(0), false);
+});
+
+test("source snapshot is taken ONCE — restore skips intermediate swaps", () => {
+  const { engine, ctx } = makeEngine();
+  const origLen = engine.sourceBuffer(0).length;
+  engine.setPadSource(0, extBuffer(ctx, 4000)); // first swap → snapshot original
+  engine.setPadSource(0, extBuffer(ctx, 2000)); // second swap → snapshot untouched
+  assert.equal(engine.sourceBuffer(0).length, 2000);
+  assert.equal(engine.restorePadSource(0), true);
+  assert.equal(engine.sourceBuffer(0).length, origLen); // original, not 4000/2000
+});
+
+test("swapping onto an EMPTY pad, then restoring, leaves it empty again", () => {
+  const { engine, ctx } = makeEngine();
+  assert.equal(engine.sourceBuffer(5), null); // unbaked slot
+  assert.equal(engine.setPadSource(5, extBuffer(ctx, 3000)), true);
+  assert.equal(engine.sourceBuffer(5).length, 3000);
+  assert.equal(engine.restorePadSource(5), true);
+  assert.equal(engine.sourceBuffer(5), null); // baked entry dropped → empty
+  assert.equal(engine.hasSwappedSource(5), false);
+});
+
+test("setKit / setStems void every source snapshot", () => {
+  const { engine, ctx } = makeEngine();
+  engine.setPadSource(0, extBuffer(ctx, 4000));
+  assert.equal(engine.hasSwappedSource(0), true);
+  engine.setKit(
+    { pads: [{ padIdx: 0, loopable: true, stemSlice: { stemRole: "drums", startSec: 0, endSec: 2 } }] },
+    { tempoBpm: 120 }
+  );
+  assert.equal(engine.hasSwappedSource(0), false); // new kit = stale snapshot dropped
+});
+
+test("setPadSource rejects an invalid buffer without snapshotting", () => {
+  const { engine } = makeEngine();
+  assert.equal(engine.setPadSource(0, null), false);
+  assert.equal(engine.setPadSource(0, { length: 0, numberOfChannels: 1, sampleRate: FAKE_SR }), false);
+  assert.equal(engine.hasSwappedSource(0), false);
+});
+
 // --- runner ----------------------------------------------------------------
 
 let failed = 0;

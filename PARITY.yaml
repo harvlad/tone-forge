@@ -267,6 +267,28 @@ features:
         status: na
         note: "Tone chains are its domain, not per-pad FX."
 
+  - id: pad-add-sound
+    name: Per-pad Add sound / sound picker (swap a pad's sample)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#openSoundPicker"
+        note: "Radial Add sound opens an inline picker — curated packs (their pads) or this song's other kit pads — previews on hover, commits on click, engine.setPadSource swaps the baked buffer; Reset restores the original."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/SamplePadGrid4x4.swift#SamplePadGrid4x4"
+        note: "ChopPickerSheet (bundle chops / sample packs / sequences)."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Launchpad/LaunchpadPanelView.swift#handleRadialAction"
+        note: "SoundPickerSheet (onAssign packId,sourcePadIdx)."
+      plugin:
+        status: na
+        note: "Sampler loads its own packs."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: web-tool-surfaces
     name: Web Jam tool surfaces (Stage / Sequencer / Recordings / Packs / Contribute)
     platforms:
