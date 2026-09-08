@@ -533,10 +533,15 @@ void JamnKitEditor::browseBackend()
         juce::MemoryBlock raw;
         for (int attempt = 0; attempt < 3; ++attempt)
         {
-            raw = fetchHttp(base + "/api/history?limit=25", statusCode,
-                            15000, {}, auth);
+            // scope=mine: only the signed-in account's (or this device's)
+            // analyses. Without it the server's default returns EVERYONE's
+            // history — a fresh install browsing strangers' songs.
+            raw = fetchHttp(base + "/api/history?limit=25&scope=mine",
+                            statusCode, 15000, {}, auth);
             if (statusCode == 200 && raw.getSize() > 0)
                 break;
+            if (statusCode == 401)
+                break;  // not signed in — retrying won't change that
             juce::Thread::sleep(1500);
         }
         const juce::String body = raw.toString();
@@ -555,11 +560,15 @@ void JamnKitEditor::browseBackend()
                 if (statusCode == 0)
                     self->statusLine = "backend unreachable: " + base
                         + " (is it running?)";
+                else if (statusCode == 401)
+                    self->statusLine =
+                        "sign in below to browse your songs";
                 else if (statusCode != 200)
                     self->statusLine = "backend error http "
                         + juce::String(statusCode);
                 else
-                    self->statusLine = "backend has no analyzed songs yet";
+                    self->statusLine =
+                        "no songs yet - analyze one at jamn.app";
                 self->repaint();
                 return;
             }
