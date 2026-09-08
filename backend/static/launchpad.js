@@ -2003,6 +2003,14 @@
       _sendLedSpecs([_offSpec(idx)]);
     },
 
+    /// Force a full repaint of the current mode's grid. For callers that
+    /// painted over the driver's LEDs out-of-band (the kit-hw 4×4 mirror)
+    /// and need the mode's own colors restored — setMode() early-returns
+    /// on the same mode, so it can't be used to nudge a repaint.
+    repaint() {
+      if (_output) _repaintForMode();
+    },
+
     setMode(mode) {
       const allowed = [
         'off',

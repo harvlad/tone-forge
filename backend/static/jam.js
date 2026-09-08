@@ -15528,7 +15528,22 @@
         // feedback loop with the listener below.
         try { window.history.replaceState(null, '', '#' + surface); } catch (_) {}
       }
-      if (name === 'kit') { _mountKitIfReady(); _mountRemix(); }
+      if (name === 'kit') {
+        _mountKitIfReady();
+        _mountRemix();
+        // Returning to Jam Pads with the same song mounted skips the
+        // mount branch (and its attach), so re-arm the LED mirror here.
+        try { window.JamnKitHW?.attach?.().catch(() => {}); } catch (_) {}
+      } else {
+        // Leaving Jam Pads: stop the kit's hardware LED mirror. Its
+        // ledTick kept repainting the bottom-left 4×4 over whatever the
+        // chord/launchpad modes painted — field report: "two rows never
+        // change, UI tells a different story on pads". detach() blanks
+        // its block, so hand the driver a full repaint to restore the
+        // mode's own colors on those pads.
+        try { window.JamnKitHW?.detach?.(); } catch (_) {}
+        try { window.Launchpad?.repaint?.(); } catch (_) {}
+      }
       if (name === 'library') _renderLibrary();
       if (name === 'stage') _mountStage();
       if (name === 'sequencer') _mountSequencer();
