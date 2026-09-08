@@ -806,12 +806,14 @@
     };
     ws.onclose = () => {
       clearTimeout(fuse);
+      // Only the current socket may mutate shared state — a
+      // superseded socket closing late must not clobber its
+      // replacement.
+      if (cb.localWs !== ws) return;
       const wasOpen = cb.localStatus === 'open';
-      if (cb.localWs === ws) {
-        cb.localWs = null;
-        cb.localStatus = 'closed';
-        cb.transport = 'relay';
-      }
+      cb.localWs = null;
+      cb.localStatus = 'closed';
+      cb.transport = 'relay';
       // Auto-fallback: interactive frames route back through the relay
       // the moment localStatus leaves 'open' (sendOrQueueBridgeMessage
       // checks it per-send), so there's nothing to tear down — just
@@ -1156,8 +1158,13 @@
     const launching = !!cb.launching
       && performance.now() < cb.launchingUntilMs;
     const errored = cb.status === 'closed' && cb.reconnectMs >= 30000;
+    // Transport qualifier: "direct" = loopback WS straight into
+    // Connect.app (Chrome-only fast path), "via cloud" = the backend
+    // relay. Shown only when actually paired — the distinction is
+    // meaningless otherwise.
+    const via = cb.transport === 'local' ? 'direct' : 'via cloud';
     if (paired) {
-      label = `Connect Connected (${cb.peers})`;
+      label = `Connect Connected (${via})`;
       btn.classList.add('connected');
     } else if (launching) {
       label = 'Connect Starting…';
@@ -1242,7 +1249,31 @@
       } else if (cb.status === 'closed') {
         text = 'Connect Offline. Restart it from the tray menu.';
       }
+      // Transport line for the paired states: make "which wire am I
+      // on" visible without the user opening devtools.
+      if (paired) {
+        text += cb.transport === 'local'
+          ? ' Link: direct (local WebSocket).'
+          : ' Link: via cloud relay.';
+      }
       statusEl.textContent = text;
+      // Reconnect affordance. Shown when we're disconnected, or when
+      // we're paired via the relay even though the local fast path
+      // should have worked (Chrome + Connect installed) — i.e. every
+      // state where re-running the local-first attempt can improve
+      // things. Follows the "Try restarting Connect" button idiom.
+      const showReconnect = errored
+        || cb.status === 'closed'
+        || (paired && cb.transport === 'relay' && localBridgeEligible());
+      if (showReconnect) {
+        const reBtn = document.createElement('button');
+        reBtn.type = 'button';
+        reBtn.textContent = 'Reconnect';
+        reBtn.className = 'connect-restart-btn';
+        reBtn.addEventListener('click', reconnectConnectBridge);
+        statusEl.appendChild(document.createElement('br'));
+        statusEl.appendChild(reBtn);
+      }
       // Phase 6: install/launch CTA. Lives ABOVE the existing
       // deep-link / restart affordances so it's the user's primary
       // action when not paired. Renders one of three states:
@@ -1264,14 +1295,28 @@
           statusEl.appendChild(ver);
         }
       } else if (!paired && cb.installed === false) {
-        const installLink = document.createElement('a');
-        installLink.href = CONNECT_INSTALL_URL;
-        installLink.target = '_blank';
-        installLink.rel = 'noopener';
-        installLink.textContent = 'Install Connect for low-latency monitoring';
-        installLink.className = 'connect-install-link';
+        // The installer is a macOS .dmg and no other build exists yet —
+        // offering the link to a Windows/Linux user hands them a file
+        // they can't run, so non-Mac platforms get an honest note
+        // instead of a dead-end download.
+        const isMac = (navigator.userAgentData?.platform === 'macOS')
+          || /Mac/.test(navigator.platform || '');
         statusEl.appendChild(document.createElement('br'));
-        statusEl.appendChild(installLink);
+        if (isMac) {
+          const installLink = document.createElement('a');
+          installLink.href = CONNECT_INSTALL_URL;
+          installLink.target = '_blank';
+          installLink.rel = 'noopener';
+          installLink.textContent = 'Install Connect for low-latency monitoring';
+          installLink.className = 'connect-install-link';
+          statusEl.appendChild(installLink);
+        } else {
+          const note = document.createElement('span');
+          note.className = 'connect-install-link';
+          note.textContent =
+            'Low-latency monitoring needs the Connect app (macOS only for now).';
+          statusEl.appendChild(note);
+        }
       }
       if (showLauncherLink) {
         const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1413,6 +1458,9 @@
       cb.installed = !!data.installed;
       cb.installedPath = data.path || null;
       cb.installedVersion = data.version || null;
+      // installed=true is one of the two gates on the local fast
+      // path (the other is Chrome) — attempt it as soon as we know.
+      if (cb.installed) ensureLocalBridge();
       renderConnectStatus();
     } catch (err) {
       // No-op: stays at installed=null, no CTA rendered. This is the
@@ -2815,7 +2863,8 @@
         // Update metadata in case the final result refined the role /
         // display name; keep audio state untouched.
         existing.role = rec.role;
-        existing.displayName = rec.display_name || rec.displayName || existing.displayName;
+        existing.displayName = _prettyStemName(
+          rec.display_name || rec.displayName || existing.displayName);
         existing.url = rec.audio_url || rec.audioUrl || existing.url;
         existing.parentId = rec.parent_id || rec.parentId || existing.parentId;
         existing.provider = rec.provider || existing.provider;
@@ -2824,7 +2873,7 @@
         state.stems.set(id, {
           id,
           role: rec.role,
-          displayName: rec.display_name || rec.displayName || id,
+          displayName: _prettyStemName(rec.display_name || rec.displayName || id),
           url: rec.audio_url || rec.audioUrl,
           parentId: rec.parent_id || rec.parentId || null,
           provider: rec.provider || 'unknown',
@@ -5106,6 +5155,22 @@
   // Legacy adapter: convert the old name-keyed ``stems_paths`` dict
   // into Stem records. Older servers only ship the dict; this lets us
   // keep one code path on the client.
+  // Raw stem keys leak from the analyzer (guitar_center, guitar_sides…)
+  // — humanize for every surface that shows a stem name.
+  function _prettyStemName(name) {
+    if (!name || typeof name !== 'string') return name;
+    const MAP = {
+      guitar_center: 'Guitar (center)', guitar_sides: 'Guitar (sides)',
+      guitar_left: 'Guitar (left)', guitar_right: 'Guitar (right)',
+    };
+    if (MAP[name]) return MAP[name];
+    if (/^[a-z_]+$/.test(name)) {
+      return name.split('_')
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
+    return name;
+  }
+
   function legacyStemsToRecords(stemsDict) {
     const records = [];
     for (const [name, url] of Object.entries(stemsDict)) {
@@ -6021,7 +6086,10 @@
           : entry;
         state.sourceUrl = result.source_url || null;
         state.userInstrument = result.detected_type || 'guitar';
-        showView('bandroom');
+        // Already-analyzed song: land straight on the Jam surface like
+        // the native apps — stems stream in underneath. The Band Room
+        // staging ceremony is for FRESH analyses only (upload flow).
+        showView('kit');
         return Promise.resolve(onAnalysisComplete(result)).then(() => true);
       })
       .catch(() => false); // caller decides; deep link stays on intake
@@ -10149,7 +10217,9 @@
     const errored = cb.status === 'closed' && cb.reconnectMs >= 30000;
     if (paired) {
       pill.classList.add('connected');
-      pill.textContent = `Connect Connected (${cb.peers})`;
+      // Mirror the inline status button's transport qualifier —
+      // "direct" = loopback WS into Connect.app, "via cloud" = relay.
+      pill.textContent = `Connect Connected (${cb.transport === 'local' ? 'direct' : 'via cloud'})`;
     } else if (launching) {
       pill.classList.add('connecting');
       pill.textContent = 'Connect Starting…';

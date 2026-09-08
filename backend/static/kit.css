@@ -20,7 +20,7 @@
   gap: 12px;
   flex-wrap: wrap;
   width: 100%;
-  max-width: 1080px; /* stay aligned with .kit-grid */
+  max-width: 720px; /* stay aligned with .kit-grid */
   margin-inline: auto;
   box-sizing: border-box;
 }
@@ -106,7 +106,9 @@
   /* Never wider than the visible content area — a fixed 4-up grid was
    * clipping its right column off-screen next to the 260px sidebar. */
   width: 100%;
-  max-width: 1080px;
+  /* Launchpad scale: compact square pads like the native grid, not
+   * full-width hero tiles (~170px pads at 4-up). */
+  max-width: 720px;
   margin-inline: auto;
   box-sizing: border-box;
 }
