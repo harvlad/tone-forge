@@ -3524,6 +3524,81 @@ async def download_studio_app():
     return RedirectResponse(url, status_code=307)
 
 
+# Album art for the web Library / stage header. The client CANNOT reliably
+# reach the iTunes Search API + mzstatic image host directly: privacy/content
+# blockers (uBlock-style lists) routinely block apple.com/mzstatic, so
+# artwork.js's direct fetch silently returned null for every song even though
+# the API works from the server. Proxying through our own origin bypasses the
+# blocker AND any CORS edge, mirroring the stem-audio proxy. Returns the image
+# bytes so a blocked mzstatic host never matters.
+_artwork_cache: dict[str, tuple[float, bytes | None, str]] = {}
+_ARTWORK_CACHE_TTL_S = 7 * 24 * 60 * 60.0  # hits are stable; cache a week
+_ARTWORK_MISS_TTL_S = 6 * 60 * 60.0        # re-probe misses after 6h
+
+
+@app.get("/api/artwork")
+async def get_artwork(title: str = "", artist: str = ""):
+    """Best-effort album cover for a song title, proxied through our origin.
+
+    Queries iTunes server-side, upsizes the thumbnail, fetches the JPEG, and
+    streams the bytes back (image/jpeg). 404 when nothing matches. Cached in
+    memory so repeat renders and multiple clients don't hammer iTunes.
+    """
+    import time as _time
+
+    from fastapi.responses import Response
+
+    term = (title or "").strip()
+    if artist:
+        term = (artist.strip() + " " + term).strip()
+    if not term:
+        raise HTTPException(status_code=404, detail="no title")
+
+    key = term.lower()
+    now = _time.monotonic()
+    cached = _artwork_cache.get(key)
+    if cached:
+        ts, data, ctype = cached
+        ttl = _ARTWORK_CACHE_TTL_S if data else _ARTWORK_MISS_TTL_S
+        if now - ts < ttl:
+            if data is None:
+                raise HTTPException(status_code=404, detail="no art")
+            return Response(content=data, media_type=ctype,
+                            headers={"Cache-Control": "public, max-age=86400"})
+
+    import httpx
+
+    data: bytes | None = None
+    ctype = "image/jpeg"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.get(
+                "https://itunes.apple.com/search",
+                params={"term": term, "entity": "song", "limit": 1},
+            )
+            art_url = None
+            if r.status_code == 200:
+                results = (r.json() or {}).get("results") or []
+                if results:
+                    art100 = results[0].get("artworkUrl100")
+                    if isinstance(art100, str) and art100:
+                        # 100x100bb.jpg -> 600x600bb.jpg (parity with client upsize)
+                        art_url = art100.replace("100x100bb", "600x600bb")
+            if art_url:
+                img = await client.get(art_url)
+                if img.status_code == 200 and img.content:
+                    data = img.content
+                    ctype = img.headers.get("content-type", "image/jpeg")
+    except Exception:  # noqa: BLE001 — best-effort; a miss is fine
+        data = None
+
+    _artwork_cache[key] = (now, data, ctype)
+    if data is None:
+        raise HTTPException(status_code=404, detail="no art")
+    return Response(content=data, media_type=ctype,
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 # The repo ships two independently-tagged product lines (connect-v*,
 # jamnkit-v*), so GitHub's single global `releases/latest` pointer can't
 # be used for downloads — whichever line released most recently would

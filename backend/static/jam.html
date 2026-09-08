@@ -400,7 +400,9 @@
                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .account-btn { background: rgba(255,255,255,0.06); color: #e4e4e7;
                  border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
-                 padding: 6px 12px; font-size: 13px; cursor: pointer; }
+                 padding: 6px 12px; font-size: 13px; cursor: pointer;
+                 white-space: nowrap; flex: 0 0 auto; line-height: 1; }
+  #account-chip { flex: 0 0 auto; }
   .account-btn:hover { background: rgba(255,255,255,0.12); }
   .account-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
                    z-index: 1000; display: flex; align-items: center;
@@ -1673,7 +1675,7 @@
 
 <script src="/static/account.js?v=1"></script>
 <script src="/static/launchpad.js?v=26"></script>
-<script src="/static/artwork.js?v=2"></script>
+<script src="/static/artwork.js?v=3"></script>
 <script src="/static/kit.js?v=12"></script>
 <script src="/static/stage.js?v=2"></script>
 <script src="/static/sequencer.js?v=3"></script>

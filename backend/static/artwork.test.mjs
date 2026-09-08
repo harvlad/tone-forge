@@ -108,80 +108,35 @@ assert.equal(readCache(c, "bad"), undefined, "corrupt entry is unknown");
 assert.equal(readCache(null, "x"), undefined);
 writeCache(null, "x", "y"); // must not throw
 
-// ------------------------------------------------- get(): fetch + cache
+// ------------------------------------------------- get(): backend proxy URL
+// get() now returns a same-origin /api/artwork proxy URL (no direct client
+// fetch — blockers were killing the iTunes/mzstatic path). The <img> load /
+// error path is the fallback; the backend does the iTunes lookup + caching.
 await (async () => {
-  const s2 = makeStore();
-  const art100 = "https://is1-ssl.mzstatic.com/image/thumb/z/100x100bb.jpg";
-  const fetch = makeFetch((url) => {
-    if (url.includes("itunes.apple.com")) {
-      return { results: [{ artworkUrl100: art100, trackName: "Oblivion" }] };
-    }
-    return null;
-  });
-  window.localStorage = s2;
-  window.fetch = fetch;
-
   const entry = { id: "song-1", name: "M83 - Oblivion (Official Music Video)" };
   const url = await A.get(entry);
-  assert.equal(url, "https://is1-ssl.mzstatic.com/image/thumb/z/300x300bb.jpg",
-    "get() returns the upsized art URL");
-  assert.equal(fetch.calls.length, 1, "one network call");
-  // The cleaned query rode into the request.
-  assert.ok(decodeURIComponent(fetch.calls[0]).includes("M83 Oblivion"),
-    "request carries the cleaned term");
-  assert.ok(fetch.calls[0].includes("entity=song"), "entity=song param present");
-  assert.ok(fetch.calls[0].includes("limit=1"), "limit=1 param present");
-
-  // Second call for the same id is served from cache — no new fetch.
-  const url2 = await A.get(entry);
-  assert.equal(url2, url, "cached hit matches");
-  assert.equal(fetch.calls.length, 1, "no refetch on cache hit");
+  assert.ok(url && url.startsWith("/api/artwork?title="),
+    "get() returns the same-origin proxy URL");
+  // The cleaned query (noise stripped) rides in the title param.
+  assert.ok(decodeURIComponent(url).includes("M83 Oblivion"),
+    "proxy URL carries the cleaned term");
+  assert.ok(!decodeURIComponent(url).toLowerCase().includes("official"),
+    "noise phrases stripped from the term");
 })();
 
-// ------------------------------------------------- get(): miss is cached
+// ------------------------------------------------- get(): name fallbacks
 await (async () => {
-  const s3 = makeStore();
-  const fetch = makeFetch((url) =>
-    url.includes("itunes.apple.com") ? { results: [] } : null);
-  window.localStorage = s3;
-  window.fetch = fetch;
-
-  const entry = { id: "song-2", name: "Totally Unknown Bedroom Demo 7" };
-  const r = await A.get(entry);
-  assert.equal(r, null, "no results → null");
-  assert.equal(fetch.calls.length, 1);
-  const r2 = await A.get(entry);
-  assert.equal(r2, null, "cached miss → null");
-  assert.equal(fetch.calls.length, 1, "miss is cached, no refetch");
+  const byFilename = await A.get({ id: "s", filename: "Doomsday.mp3" });
+  assert.ok(decodeURIComponent(byFilename).includes("Doomsday"),
+    "filename used when name absent (extension stripped)");
+  const byTitle = await A.get({ title: "ONUKA ZENIT" });
+  assert.ok(byTitle.startsWith("/api/artwork?title="), "title used as last resort");
 })();
 
-// ------------------------------------------------- get(): absent artworkUrl100
+// ------------------------------------------------- get(): no name → null
 await (async () => {
-  const s4 = makeStore();
-  const fetch = makeFetch((url) =>
-    url.includes("itunes.apple.com") ? { results: [{ trackName: "X" }] } : null);
-  window.localStorage = s4;
-  window.fetch = fetch;
-  const r = await A.get({ id: "song-3", name: "Song With No Art" });
-  assert.equal(r, null, "missing artworkUrl100 field → null (no crash)");
-})();
-
-// ------------------------------------------------- get(): no name → null, no fetch
-await (async () => {
-  const fetch = makeFetch(() => ({ results: [{ artworkUrl100: "x/100x100bb.jpg" }] }));
-  window.localStorage = makeStore();
-  window.fetch = fetch;
   const r = await A.get({ id: "song-4" }); // no name/filename/title
   assert.equal(r, null, "no usable name → null");
-  assert.equal(fetch.calls.length, 0, "no fetch when there's nothing to search");
-})();
-
-// ------------------------------------------------- get(): network error → null
-await (async () => {
-  window.localStorage = makeStore();
-  window.fetch = () => Promise.reject(new Error("offline"));
-  const r = await A.get({ id: "song-5", name: "Doomsday" });
-  assert.equal(r, null, "network failure → null (caller shows fallback)");
 })();
 
 console.log("artwork.test.mjs: all assertions passed");

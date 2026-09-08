@@ -139,42 +139,23 @@
       .catch(function () { return null; });
   }
 
-  // In-flight dedupe: two rows (or a row + the header) asking for the
-  // same song at once share one network request. Keyed by id when
-  // present, else by cleaned name so anonymous entries still coalesce.
-  var _inflight = {};
-
+  // Same-origin backend proxy (tone_forge_api /api/artwork). We used to
+  // fetch iTunes + mzstatic directly from the browser, but privacy/content
+  // blockers routinely block apple.com/mzstatic, so every lookup silently
+  // returned null. The proxy fetches server-side and streams the JPEG bytes
+  // back from our own origin, so no blocker/CORS is in the path. It also
+  // caches, so the client no longer needs its own network cache — get()
+  // just hands back the proxy URL and the <img>/error path is the fallback.
   function get(entry) {
-    var id = entry && entry.id;
     // Mirror the on-screen label: name, then filename, then title.
     var label = entry && (entry.name || entry.filename || entry.title);
-    var store = (typeof window !== 'undefined') ? _safeStore() : null;
-
-    if (id) {
-      var cached = readCache(store, id);
-      if (cached !== undefined) return Promise.resolve(cached);
-    }
-
     var query = cleanQuery(label);
-    if (!query) {
-      // No usable name — cache the miss (if we can key it) and bail.
-      if (id) writeCache(store, id, null);
-      return Promise.resolve(null);
-    }
+    if (!query) return Promise.resolve(null);
+    return Promise.resolve(artworkProxyUrl(query));
+  }
 
-    var key = id || ('q:' + query);
-    if (_inflight[key]) return _inflight[key];
-
-    var p = fetchArtwork(query).then(function (url) {
-      if (id) writeCache(store, id, url);
-      return url || null;
-    });
-    // Release the slot whether it resolves or rejects. `p` already
-    // swallows errors (fetchArtwork catches), so this only cleans up.
-    _inflight[key] = p;
-    var clear = function () { delete _inflight[key]; };
-    p.then(clear, clear);
-    return p;
+  function artworkProxyUrl(query) {
+    return '/api/artwork?title=' + encodeURIComponent(query);
   }
 
   function _safeStore() {
