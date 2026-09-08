@@ -66,11 +66,19 @@
         ctx: null,
         engine: null,
         pads: [], // server pad dicts, index = padIdx
-        padEls: [], // { el, ring, sweep, canvas, tint, ui:'idle'|'armed'|'playing', loop:bool }
+        padEls: [], // { el, ring, sweep, canvas, badge, tint, ui, loop, loopOverride, lp, lpX, lpY }
         mode: "tap", // DEFAULT Tap
+        // Quantize grid for triggers. Default "bar" — the engine's lock
+        // cycle is bar-ish, and loops always quantized before this control
+        // existed; "off" would silently change how existing kits feel.
+        quantize: "bar",
         latch: false,
         raf: 0,
         onResize: null,
+        stems: null, // role → decoded AudioBuffer (kept for applyPadRegion rebakes)
+        dsp: null, // padengine module (pure DSP exports) once imported
+        radial: null, // open radial-menu state, or null
+        transportTimer: 0,
         kitKind: (opts && opts.kind && opts.kind !== "auto") ? opts.kind : null,
       };
       if (!entry || !entry.id || !entry.result) {
@@ -97,6 +105,11 @@
     if (!s) return;
     s.alive = false;
     if (s.raf) cancelAnimationFrame(s.raf);
+    if (s.transportTimer) clearInterval(s.transportTimer);
+    closeRadial(s);
+    for (var i = 0; i < s.padEls.length; i++) {
+      if (s.padEls[i] && s.padEls[i].lp) clearTimeout(s.padEls[i].lp);
+    }
     if (s.onResize) window.removeEventListener("resize", s.onResize);
     try {
       if (can(s.engine, "stopAll")) s.engine.stopAll();
@@ -206,6 +219,8 @@
           if (!s.alive) return;
           var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
           if (typeof PadEngine !== "function") throw new Error("PadEngine missing");
+          s.dsp = mod; // pure DSP exports feed applyPadRegion rebakes
+          s.stems = stems;
           s.engine = new PadEngine(s.ctx, s.ctx.destination);
           if (can(s.engine, "setStems")) s.engine.setStems(stems);
           if (can(s.engine, "setKit"))
@@ -289,23 +304,58 @@
     var controls = document.createElement("div");
     controls.className = "kit-controls";
 
-    // Tap / Loop segmented toggle (DEFAULT Tap).
+    // Tap / Loop segmented toggle (DEFAULT Tap). Buttons kept on state so
+    // Instant Groove can flip the mode programmatically (setMode).
     var seg = document.createElement("div");
     seg.className = "kit-seg";
     seg.setAttribute("role", "group");
+    s.modeBtns = {};
     ["tap", "loop"].forEach(function (mode) {
       var b = document.createElement("button");
       b.type = "button";
       b.className = "kit-seg-btn" + (mode === s.mode ? " is-on" : "");
       b.textContent = mode === "tap" ? "Tap" : "Loop";
       b.addEventListener("click", function () {
-        s.mode = mode;
-        var btns = seg.querySelectorAll(".kit-seg-btn");
-        for (var i = 0; i < btns.length; i++) btns[i].classList.remove("is-on");
-        b.classList.add("is-on");
-        s.latchEl.classList.toggle("is-disabled", mode !== "loop");
+        setMode(s, mode);
       });
+      s.modeBtns[mode] = b;
       seg.appendChild(b);
+    });
+
+    // Quantize selector — Off | Beat | Bar (native QuantizeMode subset the
+    // web engine can honor: its lock cycle is bar-ish, Beat==Bar until the
+    // engine learns to split; the grid option is plumbed regardless).
+    var quant = document.createElement("div");
+    quant.className = "kit-seg kit-quant";
+    quant.setAttribute("role", "group");
+    quant.title = "Quantize — when triggered pads start";
+    s.quantBtns = {};
+    [["off", "Off"], ["beat", "Beat"], ["bar", "Bar"]].forEach(function (pair) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "kit-seg-btn" + (pair[0] === s.quantize ? " is-on" : "");
+      b.textContent = pair[1];
+      b.addEventListener("click", function () {
+        s.quantize = pair[0];
+        for (var k in s.quantBtns) s.quantBtns[k].classList.remove("is-on");
+        b.classList.add("is-on");
+      });
+      s.quantBtns[pair[0]] = b;
+      quant.appendChild(b);
+    });
+
+    // Instant Groove — one tap starts the single best loop per category,
+    // all quantized to the shared cycle (desktop's "Groove" button).
+    var groove = document.createElement("button");
+    groove.type = "button";
+    groove.className = "kit-groove";
+    groove.textContent = "⚡ Groove";
+    groove.title = "Instant Groove — start the best loop of each category, locked to the grid";
+    groove.addEventListener("click", function () {
+      try {
+        if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+        instantGroove(s);
+      } catch (_) {}
     });
 
     // Latch toggle (default OFF; only meaningful in Loop mode).
@@ -332,12 +382,58 @@
       for (var i = 0; i < s.padEls.length; i++) if (s.padEls[i]) setUi(s, i, "idle");
     });
 
+    controls.appendChild(quant);
     controls.appendChild(seg);
     controls.appendChild(latch);
+    controls.appendChild(groove);
     controls.appendChild(stop);
     head.appendChild(title);
     head.appendChild(status);
     head.appendChild(controls);
+
+    // Transport strip: song Play/Pause + time readout (host-provided via
+    // window.JamnKitHost, feature-checked — no host hides them) and Kill
+    // All, which always works on engine voices even hostless.
+    var transport = document.createElement("div");
+    transport.className = "kit-transport";
+
+    var play = document.createElement("button");
+    play.type = "button";
+    play.className = "kit-play";
+    play.textContent = "▶ Play";
+    play.addEventListener("click", function () {
+      var host = getHost();
+      try {
+        var playing = can(host, "isPlaying") ? !!host.isPlaying() : false;
+        if (playing && can(host, "pauseSong")) host.pauseSong();
+        else if (!playing && can(host, "playSong")) host.playSong();
+      } catch (_) {}
+      updateTransport(s);
+    });
+    s.playEl = play;
+
+    var time = document.createElement("div");
+    time.className = "kit-time";
+    time.textContent = "0:00 / 0:00";
+    s.timeEl = time;
+
+    var tSpacer = document.createElement("div");
+    tSpacer.className = "kit-transport-spacer";
+
+    var kill = document.createElement("button");
+    kill.type = "button";
+    kill.className = "kit-kill";
+    kill.textContent = "Kill All";
+    kill.title = "Stop every pad voice and the song";
+    kill.addEventListener("click", function () {
+      killAll(s);
+    });
+
+    transport.appendChild(play);
+    transport.appendChild(time);
+    transport.appendChild(tSpacer);
+    transport.appendChild(kill);
+    s.transportEl = transport;
 
     var grid = document.createElement("div");
     grid.className = "kit-grid";
@@ -351,7 +447,123 @@
     }
 
     s.root.appendChild(head);
+    s.root.appendChild(transport);
     s.root.appendChild(grid);
+
+    // Transport polls on its own slow clock (not the pad rAF, which only
+    // runs once pads exist) so time/play state stay live from mount.
+    updateTransport(s);
+    s.transportTimer = setInterval(function () {
+      if (s.alive) updateTransport(s);
+    }, 250);
+  }
+
+  // ---------- transport (host bridge) ----------
+
+  /** Host callbacks, if the embedding page provides them. Every method is
+   * feature-checked at call time — a partial host degrades per-control. */
+  function getHost() {
+    var h = window.JamnKitHost;
+    return h && typeof h === "object" ? h : null;
+  }
+
+  function fmtTime(t) {
+    if (typeof t !== "number" || !isFinite(t) || t < 0) t = 0;
+    var m = Math.floor(t / 60);
+    var sec = Math.floor(t % 60);
+    return m + ":" + (sec < 10 ? "0" : "") + sec;
+  }
+
+  function updateTransport(s) {
+    if (!s.transportEl) return;
+    var host = getHost();
+    var hasPlay = can(host, "isPlaying") && (can(host, "playSong") || can(host, "pauseSong"));
+    var hasTime = can(host, "getTime") && can(host, "getDuration");
+    s.playEl.style.display = hasPlay ? "" : "none";
+    s.timeEl.style.display = hasTime ? "" : "none";
+    if (hasPlay) {
+      var playing = false;
+      try {
+        playing = !!host.isPlaying();
+      } catch (_) {}
+      var label = playing ? "❚❚ Pause" : "▶ Play";
+      if (s.playEl.textContent !== label) s.playEl.textContent = label;
+      s.playEl.classList.toggle("is-playing", playing);
+    }
+    if (hasTime) {
+      var text = "0:00 / 0:00";
+      try {
+        text = fmtTime(host.getTime()) + " / " + fmtTime(host.getDuration());
+      } catch (_) {}
+      if (s.timeEl.textContent !== text) s.timeEl.textContent = text;
+    }
+  }
+
+  /** Kill All: silence every engine voice, reset pad UI, and ask the host
+   * to stop song playback too (host absent → engine-only, still useful). */
+  function killAll(s) {
+    try {
+      if (can(s.engine, "stopAll")) s.engine.stopAll();
+    } catch (_) {}
+    for (var i = 0; i < s.padEls.length; i++) if (s.padEls[i]) setUi(s, i, "idle");
+    var host = getHost();
+    try {
+      if (can(host, "killAll")) host.killAll();
+      else if (can(host, "pauseSong")) host.pauseSong();
+    } catch (_) {}
+    updateTransport(s);
+  }
+
+  // ---------- mode / quantize / instant groove ----------
+
+  function setMode(s, mode) {
+    s.mode = mode;
+    if (s.modeBtns) {
+      for (var k in s.modeBtns) s.modeBtns[k].classList.toggle("is-on", k === mode);
+    }
+    if (s.latchEl) s.latchEl.classList.toggle("is-disabled", mode !== "loop");
+  }
+
+  /** Effective loop behavior for a pad press: the per-pad radial override
+   * wins; otherwise the surface mode decides. */
+  function effectiveLoop(s, p) {
+    return p.loopOverride != null ? p.loopOverride : s.mode === "loop";
+  }
+
+  /** Instant Groove picker (pure — mirrors LaunchpadController.instantGroove):
+   * the single best pad per core category by performanceScore || loopScore.
+   * Returns padIdx values in the fixed category order. */
+  function pickInstantGroove(pads) {
+    var targets = ["DRUMS", "BASS", "CHORDS", "LEAD", "RHYTHM", "TEXTURE"];
+    var best = {};
+    (pads || []).forEach(function (p) {
+      if (!p || typeof p.padIdx !== "number") return;
+      var cat = String(p.category || "").toUpperCase();
+      if (targets.indexOf(cat) === -1) return;
+      var score =
+        p.performanceScore != null ? p.performanceScore : p.loopScore != null ? p.loopScore : 0;
+      if (!(cat in best) || score > best[cat].score) best[cat] = { padIdx: p.padIdx, score: score };
+    });
+    var out = [];
+    targets.forEach(function (cat) {
+      if (cat in best) out.push(best[cat].padIdx);
+    });
+    return out;
+  }
+
+  function instantGroove(s) {
+    if (!can(s.engine, "trigger")) return;
+    setMode(s, "loop");
+    var grid = s.quantize === "off" ? "bar" : s.quantize;
+    pickInstantGroove(s.pads).forEach(function (idx) {
+      var p = s.padEls[idx];
+      if (!p || p.ui !== "idle") return; // native: skip already-active pads
+      p.loop = true;
+      try {
+        s.engine.trigger(idx, { loop: true, quantized: true, grid: grid });
+        setUi(s, idx, "armed");
+      } catch (_) {}
+    });
   }
 
   function renderPads(s) {
@@ -395,13 +607,23 @@
       var ring = document.createElement("span");
       ring.className = "kit-pad-ring";
 
+      // Corner badge showing a radial per-pad loop/one-shot override.
+      var badge = document.createElement("span");
+      badge.className = "kit-pad-badge";
+
       el.appendChild(name);
       el.appendChild(canvas);
       el.appendChild(sweep);
       el.appendChild(ring);
+      el.appendChild(badge);
       s.gridEl.appendChild(el);
 
-      s.padEls[i] = { el: el, ring: ring, sweep: sweep, canvas: canvas, tint: tint, ui: "idle", loop: false };
+      s.padEls[i] = {
+        el: el, ring: ring, sweep: sweep, canvas: canvas, badge: badge, tint: tint,
+        ui: "idle", loop: false,
+        loopOverride: null, // radial per-pad override: true=loop, false=one-shot, null=follow mode
+        lp: null, lpX: 0, lpY: 0, // long-press (radial) timer state
+      };
       wirePad(s, i, el);
     }
 
@@ -416,8 +638,18 @@
   }
 
   function wirePad(s, padIdx, el) {
+    var clearLp = function () {
+      var p = s.padEls[padIdx];
+      if (p && p.lp) {
+        clearTimeout(p.lp);
+        p.lp = null;
+      }
+    };
     el.addEventListener("pointerdown", function (ev) {
       try {
+        // Secondary buttons never sound the pad — the right-click pointerdown
+        // precedes contextmenu, and firing audio under the radial felt broken.
+        if (typeof ev.button === "number" && ev.button !== 0) return;
         ev.preventDefault();
         if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
         if (ev.pointerId !== undefined && el.setPointerCapture) {
@@ -426,17 +658,51 @@
           } catch (_) {}
         }
         padDown(s, padIdx);
+        // Long-press ≥450 ms = the radial gesture (mobile hold-radial
+        // parity; also the only path on touch, where contextmenu may
+        // never fire). Movement past ~8 px cancels — that's a scrub.
+        var p = s.padEls[padIdx];
+        if (p) {
+          clearLp();
+          p.lpX = ev.clientX;
+          p.lpY = ev.clientY;
+          p.lp = setTimeout(function () {
+            p.lp = null;
+            try {
+              padUp(s, padIdx); // release the held voice before the menu takes over
+              el.classList.remove("is-pressed");
+              openRadial(s, padIdx, p.lpX, p.lpY);
+            } catch (_) {}
+          }, 450);
+        }
       } catch (_) {}
     });
+    el.addEventListener("pointermove", function (ev) {
+      var p = s.padEls[padIdx];
+      if (!p || p.lp == null) return;
+      var dx = ev.clientX - p.lpX;
+      var dy = ev.clientY - p.lpY;
+      if (dx * dx + dy * dy > 64) clearLp();
+    });
     var up = function () {
+      clearLp();
       try {
         padUp(s, padIdx);
       } catch (_) {}
     };
     el.addEventListener("pointerup", up);
     el.addEventListener("pointercancel", up);
-    // Flash pressed feedback regardless of mode.
-    el.addEventListener("pointerdown", function () {
+    // Right-click = the same radial menu, never the browser menu.
+    el.addEventListener("contextmenu", function (ev) {
+      ev.preventDefault();
+      clearLp();
+      try {
+        openRadial(s, padIdx, ev.clientX, ev.clientY);
+      } catch (_) {}
+    });
+    // Flash pressed feedback regardless of mode (primary button only).
+    el.addEventListener("pointerdown", function (ev) {
+      if (typeof ev.button === "number" && ev.button !== 0) return;
       el.classList.add("is-pressed");
     });
     el.addEventListener("pointerup", function () {
@@ -450,31 +716,42 @@
   function padDown(s, padIdx) {
     var p = s.padEls[padIdx];
     if (!p || !can(s.engine, "trigger")) return;
-    if (s.mode === "tap") {
+    var wantLoop = effectiveLoop(s, p);
+    var q = s.quantize !== "off";
+    // grid is plumbed even though today's engine quantizes everything to
+    // its lock cycle (bar-ish; Beat==Bar until it can split) — a future
+    // engine reads it, current one ignores unknown opts.
+    var opts = { loop: wantLoop, quantized: q };
+    if (q) opts.grid = s.quantize;
+    if (!wantLoop) {
       // One-shot fire-and-forget; release is ignored (padUp checks .loop).
       p.loop = false;
-      s.engine.trigger(padIdx, { loop: false, quantized: false });
+      s.engine.trigger(padIdx, opts);
       setUi(s, padIdx, "playing"); // immediate start; rAF ends it via padProgress
       return;
     }
-    // Loop mode.
-    if (s.latch && (p.ui === "armed" || p.ui === "playing")) {
-      // Latch ON: second tap toggles off.
+    // Loop path (Loop mode, or a radial loop-override in Tap mode).
+    if ((s.latch || p.loopOverride === true) && (p.ui === "armed" || p.ui === "playing")) {
+      // Latch ON (and override-loops, which behave latched): second tap
+      // toggles off.
       if (can(s.engine, "release")) s.engine.release(padIdx);
       setUi(s, padIdx, "idle");
       return;
     }
     p.loop = true;
-    s.engine.trigger(padIdx, { loop: true, quantized: true });
+    s.engine.trigger(padIdx, opts);
     // Armed until padProgress (or onstate) reports actual start — the
-    // pulsing border says "waiting for the beat", not silence.
-    setUi(s, padIdx, "armed");
+    // pulsing border says "waiting for the beat", not silence. Unquantized
+    // loops start now, so they're playing already.
+    setUi(s, padIdx, q ? "armed" : "playing");
   }
 
   function padUp(s, padIdx) {
     var p = s.padEls[padIdx];
     if (!p) return;
-    if (s.mode !== "loop" || s.latch || !p.loop) return; // tap = fire-and-forget; latch holds
+    if (s.latch || !p.loop) return; // tap/one-shot = fire-and-forget; latch holds
+    if (p.loopOverride === true) return; // override-loops latch (radial Stop / re-tap ends them)
+    if (s.mode !== "loop") return;
     if (can(s.engine, "release")) s.engine.release(padIdx);
     setUi(s, padIdx, "idle");
   }
@@ -572,6 +849,288 @@
     }
   }
 
+  // ---------- radial pad menu (right-click / long-press) ----------
+
+  function padByIdx(s, padIdx) {
+    for (var i = 0; i < s.pads.length; i++) {
+      var p = s.pads[i];
+      if (p && p.padIdx === padIdx) return p;
+    }
+    return null;
+  }
+
+  function closeRadial(s) {
+    var r = s && s.radial;
+    if (!r) return;
+    s.radial = null;
+    try {
+      document.removeEventListener("keydown", r.onKey, true);
+    } catch (_) {}
+    try {
+      if (r.el && r.el.parentNode) r.el.parentNode.removeChild(r.el);
+    } catch (_) {}
+  }
+
+  function updateOverrideBadge(s, padIdx) {
+    var p = s.padEls[padIdx];
+    if (!p || !p.badge) return;
+    // ∞ = forced loop, 1 = forced one-shot, hidden = follow the mode.
+    p.badge.textContent = p.loopOverride === true ? "∞" : p.loopOverride === false ? "1" : "";
+    p.badge.classList.toggle("is-on", p.loopOverride != null);
+  }
+
+  /** Circular action menu around (x, y) — the mobile hold-radial / desktop
+   * right-click wheel, in DOM. Dark ring of tinted round buttons; labels on
+   * hover; click-away or Escape dismisses. */
+  function openRadial(s, padIdx, x, y) {
+    closeRadial(s);
+    var p = s.padEls[padIdx];
+    if (!p) return;
+    var pad = padByIdx(s, padIdx);
+    var effLoop = effectiveLoop(s, p);
+    var sounding = p.ui === "armed" || p.ui === "playing";
+
+    var actions = [
+      {
+        icon: "∞",
+        label: effLoop ? "One-shot" : "Loop",
+        active: effLoop,
+        run: function () {
+          p.loopOverride = !effLoop;
+          updateOverrideBadge(s, padIdx);
+        },
+      },
+      {
+        icon: "✎",
+        label: "Edit chop",
+        run: function () {
+          var CE = window.JamnChopEdit;
+          if (CE && typeof CE.open === "function") {
+            CE.open({
+              pad: pad,
+              entry: s.entry,
+              onSave: function (region) {
+                applyPadRegion(padIdx, region);
+              },
+            });
+          } else {
+            toast(s, "Chop editor coming soon");
+          }
+        },
+      },
+      {
+        icon: "■",
+        label: "Stop pad",
+        danger: true,
+        disabled: !sounding,
+        run: function () {
+          try {
+            if (can(s.engine, "release")) s.engine.release(padIdx);
+          } catch (_) {}
+          setUi(s, padIdx, "idle");
+        },
+      },
+      {
+        icon: "◎",
+        label: "Solo",
+        run: function () {
+          for (var i = 0; i < s.padEls.length; i++) {
+            var other = s.padEls[i];
+            if (i === padIdx || !other || other.ui === "idle") continue;
+            try {
+              if (can(s.engine, "release")) s.engine.release(i);
+            } catch (_) {}
+            setUi(s, i, "idle");
+          }
+        },
+      },
+    ];
+
+    var R = 92; // wheel radius (button centers)
+    var vw = window.innerWidth || 0;
+    var vh = window.innerHeight || 0;
+    var cx = Math.max(R + 36, Math.min(vw - R - 36, x));
+    var cy = Math.max(R + 36, Math.min(vh - R - 36, y));
+
+    var backdrop = document.createElement("div");
+    backdrop.className = "kit-radial-backdrop";
+    backdrop.addEventListener("pointerdown", function (ev) {
+      if (ev.target === backdrop) closeRadial(s);
+    });
+    backdrop.addEventListener("contextmenu", function (ev) {
+      ev.preventDefault(); // a second right-click anywhere just re-aims/dismisses
+      closeRadial(s);
+    });
+
+    var menu = document.createElement("div");
+    menu.className = "kit-radial";
+    menu.style.left = cx + "px";
+    menu.style.top = cy + "px";
+    if (p.tint) menu.style.setProperty("--pad-tint", p.tint.r + "," + p.tint.g + "," + p.tint.b);
+
+    var hub = document.createElement("button");
+    hub.type = "button";
+    hub.className = "kit-radial-hub";
+    hub.textContent = (pad && pad.name) || "Pad " + (padIdx + 1);
+    hub.title = "Close";
+    hub.addEventListener("click", function () {
+      closeRadial(s);
+    });
+    menu.appendChild(hub);
+
+    actions.forEach(function (a, i) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className =
+        "kit-radial-btn" +
+        (a.active ? " is-active" : "") +
+        (a.danger ? " is-danger" : "") +
+        (a.disabled ? " is-disabled" : "");
+      var angle = (-90 + (360 / actions.length) * i) * (Math.PI / 180); // start at top
+      b.style.left = Math.round(Math.cos(angle) * R) + "px";
+      b.style.top = Math.round(Math.sin(angle) * R) + "px";
+      var icon = document.createElement("span");
+      icon.className = "kit-radial-icon";
+      icon.textContent = a.icon;
+      var label = document.createElement("span");
+      label.className = "kit-radial-label";
+      label.textContent = a.label;
+      b.appendChild(icon);
+      b.appendChild(label);
+      b.addEventListener("click", function () {
+        closeRadial(s);
+        if (a.disabled) return;
+        try {
+          a.run();
+        } catch (_) {}
+      });
+      menu.appendChild(b);
+    });
+
+    backdrop.appendChild(menu);
+    document.body.appendChild(backdrop);
+
+    var onKey = function (ev) {
+      if (ev.key === "Escape") {
+        ev.stopPropagation();
+        closeRadial(s);
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    s.radial = { el: backdrop, onKey: onKey };
+  }
+
+  // ---------- toast ----------
+
+  function toast(s, msg) {
+    try {
+      if (s.toastEl && s.toastEl.parentNode) s.toastEl.parentNode.removeChild(s.toastEl);
+      var t = document.createElement("div");
+      t.className = "kit-toast";
+      t.textContent = msg;
+      s.root.appendChild(t);
+      s.toastEl = t;
+      setTimeout(function () {
+        if (t.parentNode) t.parentNode.removeChild(t);
+        if (s.toastEl === t) s.toastEl = null;
+      }, 2000);
+    } catch (_) {}
+  }
+
+  // ---------- chop-editor integration ----------
+
+  /**
+   * Re-slice a pad from its stem buffer with a user-set region — the same
+   * bake path as PadEngine.prepare (normalize → edge fades → exact-length
+   * seam bake) EXCEPT the onset-phase snap, which is skipped: the user put
+   * the cut exactly where they want it. Swaps the engine's baked entry and
+   * redraws the pad waveform in place.
+   * @param {number} padIdx
+   * @param {{startSec: number, endSec: number}} region seconds into the stem
+   * @returns {boolean} true when the pad was re-sliced
+   */
+  function applyPadRegion(padIdx, region) {
+    var s = current;
+    if (!s || !s.alive || !s.engine || !s.ctx || !s.dsp) return false;
+    if (!region || typeof region.startSec !== "number" || typeof region.endSec !== "number")
+      return false;
+    var startSec = Math.max(0, region.startSec);
+    var endSec = region.endSec;
+    if (!isFinite(startSec) || !isFinite(endSec) || !(endSec > startSec + 0.02)) return false;
+    var pad = padByIdx(s, padIdx);
+    if (!pad || !pad.stemSlice) return false;
+    var stem = s.stems && s.stems[pad.stemSlice.stemRole];
+    if (!stem) return false;
+    // The rebaked entry is swapped straight into the engine's bake map —
+    // deep coupling, but kit.js and padengine.js ship as a pair, and the
+    // guard keeps a differently-built engine from throwing.
+    if (!(s.engine._baked instanceof Map)) return false;
+
+    var sr = stem.sampleRate;
+    var stemLen = stem.length;
+    var startFrame = Math.trunc(startSec * sr);
+    var endFrame = Math.min(Math.trunc(endSec * sr), stemLen);
+    var bodyCount = endFrame - startFrame;
+    if (!(bodyCount > 8) || startFrame >= stemLen) return false;
+
+    var mayLoop = !!pad.loopable || pad.loopPointSec != null || pad.loopStartSec != null;
+    var contSec = mayLoop
+      ? (typeof s.dsp.LOOP_CONTINUATION_SEC === "number" ? s.dsp.LOOP_CONTINUATION_SEC : 0.035)
+      : 0;
+    var extra = Math.min(Math.trunc(contSec * sr), Math.max(0, stemLen - startFrame - bodyCount));
+
+    var channels = [];
+    for (var c = 0; c < stem.numberOfChannels; c++) {
+      channels.push(
+        new Float32Array(stem.getChannelData(c).subarray(startFrame, startFrame + bodyCount + extra))
+      );
+    }
+    s.dsp.normalizePeak(channels);
+    s.dsp.applyEdgeFades(channels, sr);
+
+    var toBuf = function (chs) {
+      var buf = s.ctx.createBuffer(chs.length, chs[0].length, sr);
+      for (var i = 0; i < chs.length; i++) buf.copyToChannel(chs[i], i);
+      return buf;
+    };
+    var oneShotBuffer = toBuf(channels);
+    var loopChannels = null;
+    var loopBuffer = null;
+    if (mayLoop) {
+      loopChannels = s.dsp.exactCrossfaded(channels, sr, bodyCount, s.dsp.chooseCrossfadeMs(pad));
+      loopBuffer = toBuf(loopChannels);
+    }
+
+    // Stop the old voice — it plays the stale buffer at the stale length.
+    try {
+      if (can(s.engine, "release")) s.engine.release(padIdx);
+    } catch (_) {}
+    var pEl = s.padEls[padIdx];
+    if (pEl) setUi(s, padIdx, "idle");
+
+    s.engine._baked.set(padIdx, {
+      pad: pad,
+      sampleRate: sr,
+      bodySec: bodyCount / sr,
+      shiftSec: 0, // onset snap deliberately skipped for user-set regions
+      oneShotBuffer: oneShotBuffer,
+      oneShotChannels: channels,
+      loopBuffer: loopBuffer,
+      loopChannels: loopChannels,
+    });
+
+    // Keep the pad dict honest so any later full re-bake agrees.
+    pad.stemSlice.startSec = startSec;
+    pad.stemSlice.endSec = endSec;
+    if (pad.loopStartSec != null) {
+      pad.loopStartSec = startSec;
+      pad.loopEndSec = endSec;
+    }
+
+    if (pEl) drawWave(s, padIdx, pEl); // peaks() now reads the new bake
+    return true;
+  }
+
   // ---------- errors ----------
 
   function showError(s, msg) {
@@ -594,7 +1153,9 @@
     if (current) unmount();
     current = {
       root: root, entry: null, alive: true, ctx: null, engine: null,
-      pads: [], padEls: [], mode: "tap", latch: false, raf: 0, onResize: null,
+      pads: [], padEls: [], mode: "tap", quantize: "bar", latch: false,
+      raf: 0, onResize: null, stems: null, dsp: null, radial: null,
+      transportTimer: 0,
     };
     renderShell(current);
     var s = current;
@@ -645,6 +1206,8 @@
           return import("./padengine.js").then(function (mod) {
             if (!s.alive) return;
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
+            s.dsp = mod;
+            s.stems = stems;
             s.engine = new PadEngine(s.ctx, s.ctx.destination);
             s.engine.setStems(stems);
             s.engine.setKit(s.kit, { tempoBpm: manifest.tempoBpm || 0 });
@@ -670,7 +1233,15 @@
     engine: function () { return current && current.engine; },
     pads: function () { return (current && current.pads) || []; },
     audioContext: function () { return current && current.ctx; },
+    // Chop-editor integration: re-slice a pad from its stem with a
+    // user-set region (onset snap skipped) and swap buffers in place.
+    applyPadRegion: applyPadRegion,
     // Pure helpers exposed for the DOM-free smoke test only.
-    _internals: { resolveStemUrl: resolveStemUrl, parseColor: parseColor },
+    _internals: {
+      resolveStemUrl: resolveStemUrl,
+      parseColor: parseColor,
+      pickInstantGroove: pickInstantGroove,
+      fmtTime: fmtTime,
+    },
   };
 })();

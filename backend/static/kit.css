@@ -97,6 +97,91 @@
   color: var(--jamn-text, #fff);
 }
 
+/* Instant Groove: the one prominent header action (desktop's accent
+ * "Groove" button) — filled accent, not another quiet outline chip. */
+.kit-groove {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--jamn-accent, #8B5CF6);
+  background: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+  cursor: pointer;
+}
+
+.kit-groove:hover {
+  filter: brightness(1.12);
+}
+
+/* ---------- transport strip ---------- */
+
+.kit-transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 720px; /* stay aligned with .kit-grid */
+  margin-inline: auto;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-md, 12px);
+  background: var(--jamn-surface1, #14141A);
+}
+
+.kit-play {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kit-play.is-playing {
+  border-color: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-accent, #8B5CF6);
+}
+
+.kit-time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--jamn-text2, #A1A1AA);
+  white-space: nowrap;
+}
+
+.kit-transport-spacer {
+  flex: 1 1 auto;
+}
+
+/* Kill All: the panic button — danger-tinted and unmissable. */
+.kit-kill {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--jamn-danger, #EF4444);
+  background: rgba(239, 68, 68, 0.14);
+  color: var(--jamn-danger, #EF4444);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kit-kill:hover {
+  background: var(--jamn-danger, #EF4444);
+  color: var(--jamn-text, #fff);
+}
+
 /* ---------- grid ---------- */
 
 .kit-grid {
@@ -256,6 +341,157 @@
 @keyframes kit-skeleton {
   0%, 100% { opacity: 0.45; }
   50%      { opacity: 0.85; }
+}
+
+/* ---------- per-pad override badge ---------- */
+
+/* Radial loop/one-shot override marker: ∞ (forced loop) or 1 (forced
+ * one-shot) in the pad's top-right corner; hidden when following mode. */
+.kit-pad-badge {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--jamn-text, #fff);
+  display: none;
+  pointer-events: none;
+}
+
+.kit-pad-badge.is-on {
+  display: block;
+}
+
+/* ---------- radial pad menu ---------- */
+
+.kit-radial-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.4); /* native dims the panel behind the wheel */
+}
+
+.kit-radial {
+  position: absolute; /* left/top set by kit.js at the (clamped) cursor */
+  --pad-tint: 139, 92, 246;
+  width: 0;
+  height: 0;
+}
+
+/* Center hub: pad name, doubles as the cancel zone (native inner circle). */
+.kit-radial-hub {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  appearance: none;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.55);
+}
+
+.kit-radial-btn {
+  position: absolute; /* left/top = wheel offset set by kit.js */
+  transform: translate(-50%, -50%);
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  appearance: none;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+}
+
+.kit-radial-icon {
+  font-size: 17px;
+  line-height: 1;
+  color: rgba(var(--pad-tint), 0.95); /* tinted icons over the dark ring */
+  pointer-events: none;
+}
+
+/* Labels on hover (native shows them enlarged on the highlighted slice). */
+.kit-radial-label {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--jamn-text2, #A1A1AA);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.kit-radial-btn:hover {
+  border-color: rgba(var(--pad-tint), 0.9);
+  background: var(--jamn-surface1, #14141A);
+}
+
+.kit-radial-btn:hover .kit-radial-label {
+  opacity: 1;
+}
+
+.kit-radial-btn.is-active {
+  border-color: rgba(var(--pad-tint), 0.9);
+  box-shadow: 0 0 0 2px rgba(var(--pad-tint), 0.35), 0 4px 18px rgba(0, 0, 0, 0.5);
+}
+
+.kit-radial-btn.is-danger .kit-radial-icon {
+  color: var(--jamn-danger, #EF4444);
+}
+
+.kit-radial-btn.is-danger:hover {
+  border-color: var(--jamn-danger, #EF4444);
+}
+
+.kit-radial-btn.is-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---------- toast ---------- */
+
+.kit-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 1001;
+  padding: 8px 16px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-md, 12px);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text, #fff);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  animation: kit-toast-in 0.18s ease-out;
+}
+
+@keyframes kit-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 /* ---------- error ---------- */

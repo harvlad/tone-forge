@@ -15,6 +15,7 @@ import {
   onsetAlignedShift,
   exactCrossfaded,
   chooseCrossfadeMs,
+  PadEngine,
 } from "./padengine.js";
 
 const SR = 48000;
@@ -219,6 +220,221 @@ test("constants match native", () => {
   assert.equal(DEFAULT_LOOP_CROSSFADE_MS, 12.0);
   assert.equal(NORMALIZE_TARGET_PEAK, 0.63);
   assert.equal(LOOP_CONTINUATION_SEC, 0.035);
+});
+
+// --- PadEngine scheduling (fake WebAudio) ----------------------------------
+//
+// The engine's scheduling/takeover logic is pure arithmetic over
+// ctx.currentTime + node bookkeeping, so a minimal fake AudioContext is
+// enough to test it in node — no real audio graph.
+
+const FAKE_SR = 8000; // small so the bake stays fast
+
+class FakeParam {
+  constructor() {
+    this.value = 1;
+  }
+  setValueAtTime() {}
+  linearRampToValueAtTime() {}
+}
+
+class FakeAudioContext {
+  constructor() {
+    this.currentTime = 0;
+    this.destination = { name: "ctx-destination" };
+  }
+  createBuffer(numCh, length, sampleRate) {
+    const data = Array.from({ length: numCh }, () => new Float32Array(length));
+    return {
+      numberOfChannels: numCh,
+      length,
+      sampleRate,
+      duration: length / sampleRate,
+      getChannelData: (c) => data[c],
+      copyToChannel(src, c) {
+        data[c].set(src);
+      },
+    };
+  }
+  createBufferSource() {
+    return {
+      buffer: null,
+      loop: false,
+      loopStart: 0,
+      loopEnd: 0,
+      onended: null,
+      connect() {},
+      start(t) {
+        this.startedAt = t;
+      },
+      stop() {},
+    };
+  }
+  createGain() {
+    return { gain: new FakeParam(), connect() {} };
+  }
+}
+
+/** Engine with two loopable pads on `roles` over 3 s flat stems. */
+function makeEngine(roles = ["drums", "drums"], tempoBpm = 120) {
+  const ctx = new FakeAudioContext();
+  const engine = new PadEngine(ctx, { name: "host-bus" });
+  const stems = {};
+  for (const role of roles) {
+    if (!stems[role]) {
+      const buf = ctx.createBuffer(1, 3 * FAKE_SR, FAKE_SR);
+      buf.getChannelData(0).fill(0.5); // sustained → no onset shift
+      stems[role] = buf;
+    }
+  }
+  engine.setStems(stems);
+  engine.setKit(
+    {
+      pads: roles.map((role, i) => ({
+        padIdx: i,
+        loopable: true,
+        stemSlice: { stemRole: role, startSec: 0, endSec: 2 },
+      })),
+    },
+    { tempoBpm }
+  );
+  engine.prepare();
+  return { engine, ctx };
+}
+
+test("transport-aligned launch lands on the next song bar", () => {
+  const { engine, ctx } = makeEngine();
+  // 120 bpm → 2 s bars anchored at song time 0.
+  let songNow = 3.25;
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => songNow,
+    tempoBpm: 120,
+    barAnchorSongTime: 0,
+  });
+  ctx.currentTime = 10;
+  // Next bar at song 4.0 → 0.75 s away → ctx time 10.75 (rate 1: the
+  // launchTime = now + (nextBarSongTime - songTimeNow) identity).
+  const r = engine.trigger(0, { loop: true, quantized: true });
+  assert.ok(Math.abs(r.startTime - 10.75) < 1e-9, `startTime ${r.startTime}`);
+
+  // Boundary grace: a press just past a bar line fires immediately.
+  songNow = 4.05;
+  ctx.currentTime = 20;
+  const r2 = engine.trigger(1, { loop: true, quantized: true });
+  assert.equal(r2.startTime, 20);
+
+  // Non-zero bar anchor shifts the grid.
+  songNow = 3.25;
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => songNow,
+    tempoBpm: 120,
+    barAnchorSongTime: 0.5, // bars at 0.5, 2.5, 4.5, ...
+  });
+  ctx.currentTime = 30;
+  const r3 = engine.trigger(0, { loop: true, quantized: true });
+  assert.ok(Math.abs(r3.startTime - 31.25) < 1e-9, `startTime ${r3.startTime}`);
+});
+
+test("stopped transport falls back to the free-run lock grid", () => {
+  const { engine, ctx } = makeEngine();
+  engine.setTransport({
+    isPlaying: () => false,
+    getSongTime: () => 3.25,
+    tempoBpm: 120,
+  });
+  // First loop launch anchors the free-run grid at NOW, ignoring the song
+  // grid (song 3.25 would have queued 0.75 s out were the transport rolling).
+  ctx.currentTime = 5;
+  const r = engine.trigger(0, { loop: true, quantized: true });
+  assert.equal(r.startTime, 5);
+  assert.equal(engine.lockInfo().anchor, 5);
+  // Second pad queues to the free-run cycle (bar 2 s → 4 bars fit 8 s).
+  assert.equal(engine.lockInfo().cycle, 8);
+  ctx.currentTime = 6;
+  const r2 = engine.trigger(1, { loop: true, quantized: true });
+  assert.equal(r2.startTime, 13); // anchor 5 + one 8 s cycle
+});
+
+test("takeover: two loops one role = one activation, both released = one deactivation", () => {
+  const { engine, ctx } = makeEngine(["drums", "drums", "bass"]);
+  const events = [];
+  engine.ontakeover = (role, active) => events.push([role, active]);
+
+  engine.trigger(0, { loop: true });
+  engine.trigger(1, { loop: true });
+  assert.deepEqual(events, [["drums", true]]); // second voice: count 1→2, silent
+
+  engine.release(0);
+  assert.deepEqual(events, [["drums", true]]); // count 2→1, silent
+  engine.release(1);
+  assert.deepEqual(events, [["drums", true], ["drums", false]]);
+
+  // Independent roles duck independently; stopAll restores everything.
+  events.length = 0;
+  engine.trigger(0, { loop: true });
+  engine.trigger(2, { loop: true });
+  assert.deepEqual(events, [["drums", true], ["bass", true]]);
+  engine.stopAll();
+  assert.deepEqual(events, [
+    ["drums", true],
+    ["bass", true],
+    ["drums", false],
+    ["bass", false],
+  ]);
+
+  // Same-stem retrigger keeps the duck: no deactivate/activate blip
+  // (ChopPlayer's takeoverStem transfer).
+  events.length = 0;
+  engine.trigger(0, { loop: true });
+  engine.trigger(0, { loop: true });
+  assert.deepEqual(events, [["drums", true]]);
+  engine.release(0);
+  assert.deepEqual(events, [["drums", true], ["drums", false]]);
+
+  // One-shots duck too (ChopPlayer takes over on ANY chop voice) and
+  // restore on their NATURAL end.
+  events.length = 0;
+  engine.trigger(0, {});
+  assert.deepEqual(events, [["drums", true]]);
+  engine._voices.get(0).source.onended(); // buffer played through
+  assert.deepEqual(events, [["drums", true], ["drums", false]]);
+  // Late onended after an explicit stop must not double-decrement.
+  events.length = 0;
+  engine.trigger(0, {});
+  const src = engine._voices.get(0).source;
+  engine.release(0);
+  src.onended();
+  assert.deepEqual(events, [["drums", true], ["drums", false]]);
+  void ctx;
+});
+
+test("setRate scales the free-run lock cycle spacing", () => {
+  const { engine, ctx } = makeEngine();
+  engine.setRate(2.0); // double-speed practice → cycles half as long
+  assert.equal(engine.lockInfo().cycle, 4); // 8 s grid / 2
+  ctx.currentTime = 0;
+  const r = engine.trigger(0, { loop: true, quantized: true });
+  assert.equal(r.startTime, 0); // first launch anchors
+  ctx.currentTime = 1;
+  const r2 = engine.trigger(1, { loop: true, quantized: true });
+  assert.equal(r2.startTime, 4); // next rate-scaled boundary, not 8
+
+  // Transport path: song-time delta converts at the practice rate too
+  // (desktop divides launch delays by tempoPct).
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => 3.0, // next bar at 4.0 → 1 s of song → 0.5 s real
+    tempoBpm: 120,
+  });
+  ctx.currentTime = 10;
+  const r3 = engine.trigger(0, { loop: true, quantized: true });
+  assert.ok(Math.abs(r3.startTime - 10.5) < 1e-9, `startTime ${r3.startTime}`);
+
+  // Invalid rates reset to 1.
+  engine.setRate(0);
+  assert.equal(engine.lockInfo().cycle, 8);
 });
 
 // --- runner ----------------------------------------------------------------

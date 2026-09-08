@@ -14659,6 +14659,23 @@
         .catch(() => {});
     }
 
+    // ------------------------------------------ kit host transport
+    // The kit surface's transport strip + Kill All read this contract
+    // (all feature-checked kit-side). Backed by the page's real song
+    // player so pads and song share one clock and one panic button.
+    window.JamnKitHost = {
+      playSong: () => { try { playAll(); } catch (_) {} },
+      pauseSong: () => { try { pauseAll(); } catch (_) {} },
+      isPlaying: () => !!state.isPlaying,
+      getTime: () => { try { return currentPlayTime(); } catch (_) { return 0; } },
+      getDuration: () =>
+        (_currentEntry?.result?.duration_sec || _currentEntry?.duration || 0),
+      killAll: () => {
+        try { pauseAll(); } catch (_) {}
+        try { window.JamnKit?.engine?.()?.stopAll?.(); } catch (_) {}
+      },
+    };
+
     // ------------------------------------------ tool-surface mounts
     // Each tool pane hosts a self-contained module (stage/sequencer/
     // recordings/packs/contribute). Mount lazily on first visit; every

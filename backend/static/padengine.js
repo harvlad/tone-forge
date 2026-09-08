@@ -8,6 +8,12 @@
 //   * -4 dBFS peak normalize with +12 dB boost cap (normalizePeak)
 //   * crossfadeMs choice: measured pad.crossfadeMs > loopScore map > 12 ms floor
 //   * shared loop-lock grid + per-pad launch-shift compensation
+//   * song-transport bar-grid quantize while the song plays (setTransport),
+//     free-run lock grid as the stopped-transport fallback
+//   * ref-counted stem takeover reporting (ontakeover — ChopPlayer twin;
+//     the HOST ducks/restores the song stem, the engine only counts)
+//   * practice-rate follow (setRate): launch-grid spacing only, buffers are
+//     never resampled — pitch-true rate change is plugin-only
 //
 // The DSP is pure (Float32Array + sampleRate) so node can test it without
 // WebAudio; the PadEngine class wraps it. ES module, no bundler, no deps.
@@ -237,6 +243,10 @@ export class PadEngine {
    * @param {AudioNode} [destinationNode] defaults to audioContext.destination
    */
   constructor(audioContext, destinationNode) {
+    // The context is BORROWED — usually the page's shared AudioContext. The
+    // engine never suspends/resumes/closes it and never touches
+    // ctx.destination when a destination node is provided, so a host can
+    // route the pads through its own mixer/master chain.
     this.ctx = audioContext;
     this.destination = destinationNode || audioContext.destination;
     /** @type {Object<string, AudioBuffer>} stem role → decoded buffer */
@@ -249,8 +259,64 @@ export class PadEngine {
     this._voices = new Map();
     /** Lock-grid anchor: audioContext time of the first loop launch. */
     this._lockAnchor = null;
+    /** Host song transport (setTransport), null = free-run only. */
+    this._transport = null;
+    /** Practice-rate follow (setRate): scales launch-grid spacing only. */
+    this._rate = 1.0;
+    /** stem role → sounding-voice count (ChopPlayer.takeoverCounts twin). */
+    this._takeoverCounts = new Map();
     /** @type {?function(number, {playing: boolean, armedUntil: ?number}): void} */
     this.onstate = null;
+    /**
+     * Stem takeover (song augmentation): fired when the number of sounding
+     * voices for a stem role crosses 0↔active, so the HOST can duck
+     * (active=true) / restore (active=false) the song's own stem. The engine
+     * only reports; it never touches the song audio. Mirrors
+     * ChopPlayer.onStemTakeoverChange: ANY voice with a stem role counts —
+     * one-shots included, restored on their natural end — not just loops.
+     * @type {?function(string, boolean): void}
+     */
+    this.ontakeover = null;
+  }
+
+  /**
+   * Wire the page's song transport so quantized loop launches align to the
+   * SONG's bar grid while it plays. Pass null to detach (free-run only).
+   * When the transport is stopped — or reports no usable grid — quantized
+   * launches fall back to the shared free-run lock grid, exactly as before.
+   * (Desktop twin: LaunchpadController.isTransportPlaying + the
+   * transport-rolling branch of its fireAt computation.)
+   * @param {?{isPlaying: function(): boolean,
+   *           getSongTime: function(): number,
+   *           tempoBpm: number,
+   *           barAnchorSongTime?: number}} transport
+   *   getSongTime returns the song position in seconds (song domain);
+   *   barAnchorSongTime is the song time of a known bar line (default 0).
+   */
+  setTransport(transport) {
+    this._transport = transport || null;
+  }
+
+  /**
+   * Practice-rate follow: `rate` scales launch-grid spacing (free-run lock
+   * cycles shrink/grow by 1/rate; transport song-time deltas convert to real
+   * seconds via /rate, matching the desktop's delay/tempoPct). Loop buffers
+   * are NOT resampled — only launch scheduling shifts. Pitch-true playback
+   * at a practice rate is plugin-only (the JUCE sampler owns resampling).
+   * @param {number} rate > 0; invalid values reset to 1.
+   */
+  setRate(rate) {
+    this._rate = rate > 0 && Number.isFinite(rate) ? rate : 1.0;
+  }
+
+  /**
+   * Free-run lock-grid state for sibling tools (they should read this, not
+   * `_lockAnchor`, which remains as a legacy field). `cycle` is the
+   * EFFECTIVE spacing — loopLengthSeconds scaled by the practice rate.
+   * @returns {{anchor: ?number, cycle: number}}
+   */
+  lockInfo() {
+    return { anchor: this._lockAnchor, cycle: this.loopLengthSeconds / this._rate };
   }
 
   /** @param {Object<string, AudioBuffer>} buffersByRole */
@@ -424,12 +490,34 @@ export class PadEngine {
    */
   _lockLaunchTime(now) {
     if (this._lockAnchor == null) return now;
-    const L = this.loopLengthSeconds;
+    // Practice-rate follow: grid spacing scales with rate (a 2x rate halves
+    // the wait), same as the desktop dividing launch delays by tempoPct.
+    const L = this.loopLengthSeconds / this._rate;
     if (!(L > 0)) return now;
     const elapsed = now - this._lockAnchor;
     const phase = elapsed % L;
     if (phase <= LOOP_LOCK_GRACE_SEC) return now;
     return this._lockAnchor + (Math.floor(elapsed / L) + 1) * L;
+  }
+
+  /**
+   * Transport-aligned launch time: the next SONG bar line, converted to
+   * audioContext time by sampling getSongTime() at call time —
+   * launchTime = now + (nextBarSongTime - songTimeNow) / rate. Null when the
+   * transport carries no usable grid (caller falls back to the free-run
+   * lock grid). A press within the boundary grace fires immediately.
+   */
+  _transportLaunchTime(now) {
+    const t = this._transport;
+    if (!t || typeof t.getSongTime !== "function" || !(t.tempoBpm > 0)) return null;
+    const bar = (60.0 / t.tempoBpm) * 4.0;
+    const songNow = t.getSongTime();
+    if (!Number.isFinite(songNow)) return null;
+    const anchor = Number.isFinite(t.barAnchorSongTime) ? t.barAnchorSongTime : 0;
+    const phase = (((songNow - anchor) % bar) + bar) % bar;
+    if (phase <= LOOP_LOCK_GRACE_SEC) return now;
+    // Song-domain delta → real seconds at the practice rate.
+    return now + (bar - phase) / this._rate;
   }
 
   /**
@@ -448,13 +536,33 @@ export class PadEngine {
     const quantized = !!opts.quantized;
     const willLoop = wantLoop && entry.loopBuffer != null;
 
+    // Stem this trigger takes over. Same-stem retrigger keeps the duck (no
+    // deactivate/activate blip): the count transfers from the old voice to
+    // the new one instead of end+begin — ChopPlayer's
+    // `voices[index].takeoverStem != takeoverStem` guard.
+    const stemRole = (entry.pad.stemSlice && entry.pad.stemSlice.stemRole) || null;
+    const prevVoice = this._voices.get(padIdx);
+    const transferTakeover =
+      stemRole != null && !!prevVoice && !prevVoice.released && prevVoice.takeoverRole === stemRole;
+    if (transferTakeover) prevVoice.takeoverRole = null;
+
     // Self-choke: retrigger stops the pad's previous voice first.
     this._stopVoice(padIdx, /* notify */ false);
 
     const now = this.ctx.currentTime;
     let startTime = now;
     if (willLoop) {
-      const target = quantized ? this._lockLaunchTime(now) : now;
+      let target = now;
+      if (quantized) {
+        // Transport rolling → quantize against the SONG's bar grid;
+        // stopped/absent transport → shared free-run lock grid (unchanged
+        // legacy behavior). Desktop twin: LaunchpadController's
+        // transportRolling branch.
+        const t = this._transport;
+        const rolling = !!(t && typeof t.isPlaying === "function" && t.isPlaying());
+        const aligned = rolling ? this._transportLaunchTime(now) : null;
+        target = aligned != null ? aligned : this._lockLaunchTime(now);
+      }
       // Launch compensation for the onset-phase snap: delay the launch by
       // the amount the region was shifted so the content's downbeat still
       // lands ON the grid; never negative.
@@ -477,11 +585,25 @@ export class PadEngine {
       source.buffer = entry.oneShotBuffer;
     }
 
-    const voice = { source, gain, startTime, loop: willLoop, bodySec: entry.bodySec, released: false };
+    const voice = {
+      source,
+      gain,
+      startTime,
+      loop: willLoop,
+      bodySec: entry.bodySec,
+      released: false,
+      takeoverRole: stemRole,
+    };
     this._voices.set(padIdx, voice);
+    if (stemRole != null && !transferTakeover) this._beginTakeover(stemRole);
     source.onended = () => {
+      // Natural end (one-shot played through): restore the taken-over stem.
+      // A voice killed via _stopVoice was already removed from the map (and
+      // its takeover ended), so this guard makes the late callback a no-op —
+      // the web analogue of ChopPlayer's gen match.
       if (this._voices.get(padIdx) === voice) {
         this._voices.delete(padIdx);
+        this._endVoiceTakeover(voice);
         this._emitState(padIdx, { playing: false, armedUntil: null });
       }
     };
@@ -517,7 +639,36 @@ export class PadEngine {
       /* already stopped */
     }
     this._voices.delete(padIdx);
+    this._endVoiceTakeover(voice);
     if (notify) this._emitState(padIdx, { playing: false, armedUntil: null });
+  }
+
+  /**
+   * Ref-counted stem takeover (ChopPlayer.beginTakeover): the host is
+   * notified only when a role goes 0 → active.
+   */
+  _beginTakeover(role) {
+    const c = this._takeoverCounts.get(role) || 0;
+    this._takeoverCounts.set(role, c + 1);
+    if (c === 0 && this.ontakeover) this.ontakeover(role, true);
+  }
+
+  /**
+   * End a voice's takeover, if any (ChopPlayer.endTakeover): idempotent —
+   * the role is cleared first — and the host is notified only when the
+   * role's count returns to 0.
+   */
+  _endVoiceTakeover(voice) {
+    const role = voice.takeoverRole;
+    if (role == null) return;
+    voice.takeoverRole = null;
+    const c = this._takeoverCounts.get(role) || 0;
+    if (c <= 1) {
+      this._takeoverCounts.delete(role);
+      if (this.ontakeover) this.ontakeover(role, false);
+    } else {
+      this._takeoverCounts.set(role, c - 1);
+    }
   }
 
   /**
