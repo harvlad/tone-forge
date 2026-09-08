@@ -70,6 +70,10 @@ public final class TransportController {
     /// ticks are throttled separately by the caller.
     public var onDiscreteChange: (() -> Void)?
 
+    /// Fired when playback starts (user play, peer play, hardware
+    /// button). MIDI clock out sends Start/Continue from here.
+    public var onPlay: (() -> Void)?
+
     /// Fired when playback pauses (user pause, peer pause, or end of
     /// song). The session recorder inserts a gap marker (P4).
     public var onPause: (() -> Void)?
@@ -90,6 +94,7 @@ public final class TransportController {
         guard !isPlaying else { return }
         isPlaying = true
         audio?.play(atSongSeconds: positionSeconds)
+        onPlay?()
         onDiscreteChange?()
     }
 

@@ -51,6 +51,9 @@ final class SessionController: ObservableObject {
     @Published private(set) var usbLaunchpad: USBLaunchpadTransport?
     /// Generic MIDI keyboard/pad controller — note route to synth or pads.
     @Published private(set) var midiKeyboard: MIDIKeyboardTransport?
+    /// Persisted MIDI-Learn note→pad map (Settings "Map controller
+    /// pads"); a saved map routes the controller to the sample grid.
+    let midiPadMap = MIDIPadMapStore()
 
     /// Contribution-event funnel (recording taps into it in P4; the
     /// sequencer requires it at init).
@@ -192,6 +195,17 @@ final class SessionController: ObservableObject {
             if !stemTakeoverEnabled { mix.clearTakeover() }
         }
     }
+
+    // MARK: - MIDI clock out (iOS/web parity, PARITY.yaml midi-clock-out)
+
+    /// The "Tone Forge Jam" virtual source, created lazily only while
+    /// clock-out is enabled (headless sessions never open CoreMIDI).
+    private var midiOut: MIDIOutTransport?
+    private var midiClockDriver: Timer?
+    /// Pulse-span origin: song-time of the last emitted pulse batch.
+    private var midiClockLastSongSec: Double = 0
+    /// Beat grid of the attached song (empty = no tempo → no pulses).
+    private var midiClockBeatClock = BeatClock()
 
     private var engineStarted = false
     /// Suppresses outbound echoes while applying a peer's transport
@@ -483,6 +497,13 @@ final class SessionController: ObservableObject {
             nowProvider: { (song: clock.nowSongSeconds, host: mach_absolute_time()) }
         )
         midiKeyboard = keyboard
+        // MIDI Learn (iOS parity): a saved note→pad map routes the
+        // controller onto the sample grid and DROPS unmapped notes; no
+        // map keeps the plain synth route.
+        keyboard.noteRouting = MIDIPadMapStore.noteRouting(map: midiPadMap.map)
+        midiPadMap.onMapChanged = { [weak keyboard] map in
+            keyboard?.noteRouting = MIDIPadMapStore.noteRouting(map: map)
+        }
         keyboard.onContribution = { [weak self] event in
             guard let self else { return }
             self.ensureEngineStarted()
@@ -528,9 +549,26 @@ final class SessionController: ObservableObject {
         // (recorder ignores them unless actively recording).
         transport.onPause = { [weak self] in
             self?.recording.recorder.noteTransportPause()
+            // MIDI clock out: external gear stops with the transport.
+            self?.midiOut?.sendStop()
         }
         transport.onSeek = { [weak self] from, to in
             self?.recording.recorder.noteTransportSeek(from: from, to: to)
+            // Re-anchor the clock-out span so the jump doesn't emit a
+            // burst (forward) or stall (backward) of catch-up pulses.
+            // Deliberately NO Start/Stop here (web/mobile semantics):
+            // re-Start on a scrub snaps external sequencers back to
+            // pattern zero — a seek only retunes the pulse grid.
+            self?.midiClockLastSongSec = to
+        }
+        transport.onPlay = { [weak self] in
+            guard let self, let out = self.midiOut else { return }
+            // Resume from the current position (Continue), or Start when
+            // at the top. Resync the pulse span origin so we don't dump
+            // a backlog of pulses for the paused interval.
+            self.midiClockLastSongSec = self.engine.clock.nowSongSeconds
+            self.transport.positionSeconds < 0.01 ? out.sendStart()
+                                                  : out.sendContinue()
         }
 
         transport.onDiscreteChange = { [weak self] in
@@ -542,6 +580,67 @@ final class SessionController: ObservableObject {
         bridge.onPeerConnectState = { [weak self] _ in
             self?.foreignAudioOwnerSeen = true
         }
+
+        // MIDI clock out re-arms from the persisted toggle on launch
+        // (Settings owns the write; mirrors mobile's bootAudio).
+        if UserDefaults.standard.bool(forKey: "midiClockOut") {
+            setMIDIClockOutEnabled(true)
+        }
+    }
+
+    // MARK: - MIDI clock output (PERFORM_PARITY spec 2B, desktop)
+
+    /// True while the "Tone Forge Jam" virtual source is publishing.
+    var isMIDIClockOutEnabled: Bool { midiOut?.isAvailable ?? false }
+
+    /// Turn the virtual MIDI source on/off. When on, external gear that
+    /// subscribes to "Tone Forge Jam" follows the Jam transport: 24 PPQN
+    /// clock plus Start/Stop. Idempotent. Same semantics as mobile's
+    /// AudioEngine.setMIDIClockOutEnabled; tempo follows the song's beat
+    /// grid in SONG-seconds, so the practice-rate slowdown (tempoPct)
+    /// stretches pulse spacing automatically — external gear slows with
+    /// the song.
+    func setMIDIClockOutEnabled(_ on: Bool) {
+        if on {
+            guard midiOut == nil else { return }
+            let out = MIDIOutTransport()
+            midiOut = out
+            midiClockLastSongSec = engine.clock.nowSongSeconds
+            if transport.isPlaying { out.sendStart() }
+            startMIDIClockDriver()
+        } else {
+            stopMIDIClockDriver()
+            midiOut?.sendStop()
+            midiOut = nil
+        }
+    }
+
+    private func startMIDIClockDriver() {
+        guard midiClockDriver == nil else { return }
+        // Higher rate than the 30 Hz display pump: 24 PPQN at fast tempi
+        // needs sub-10 ms granularity to keep pulse spacing sane. ~1 ms.
+        let timer = Timer(timeInterval: 0.001, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let out = self.midiOut,
+                      self.transport.isPlaying else { return }
+                let now = self.engine.clock.nowSongSeconds
+                let gen = MIDIClockGenerator(beatClock: self.midiClockBeatClock)
+                let pulses = gen.pulsesToEmit(
+                    fromSongSec: self.midiClockLastSongSec, toSongSec: now
+                )
+                if pulses > 0 {
+                    out.sendClockPulses(pulses)
+                    self.midiClockLastSongSec = now
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        midiClockDriver = timer
+    }
+
+    private func stopMIDIClockDriver() {
+        midiClockDriver?.invalidate()
+        midiClockDriver = nil
     }
 
     // MARK: - Bridge lifecycle
@@ -680,6 +779,12 @@ final class SessionController: ObservableObject {
         linkSync.seedTempoIfAlone(session.bundle.meta.tempoBpm ?? 120)
         attachedBundle = session.bundle
         attachedStemURLs = session.stemURLs
+        // MIDI clock out follows this song's beat grid (analysis beats
+        // absorb tempo drift; meta tempo is the fixed-grid fallback).
+        midiClockBeatClock = BeatClock(
+            timeline: session.bundle.timeline,
+            tempoBpm: session.bundle.meta.tempoBpm
+        )
         // Remix state is per-song: a Re-Drum swap or groove template from
         // the previous song must never leak into this one.
         resetRemixState()

@@ -42,6 +42,14 @@ public final class MIDIKeyboardTransport: ObservableObject {
     public enum NoteRouting: Sendable, Equatable {
         case synth
         case samplePads(baseNote: Int)
+        /// Learned map: MIDI note number -> sample-pad index (0..<16).
+        /// Covers controllers whose pads are NOT a contiguous note run —
+        /// the Pioneer DJM-S7's two 8-pad decks, TE boxes, LPD8 custom
+        /// programs. Built by the Settings "map controller pads" flow;
+        /// unmapped notes are ignored (they don't fall through to the
+        /// synth — half-mapped hardware spraying synth notes mid-jam
+        /// would read as a haunted instrument).
+        case mappedPads(map: [Int: Int])
     }
 
     /// General MIDI: pad boxes (LPD8/MPD) default their bottom-left pad to
@@ -64,6 +72,11 @@ public final class MIDIKeyboardTransport: ObservableObject {
     /// Raw Control Change (channel, controller, value). Unrouted to
     /// audio today — a hook for future knob/fader mapping.
     public var onControlChange: ((UInt8, UInt8, UInt8) -> Void)?
+    /// Raw note tap for the MIDI-Learn flow: fires for EVERY incoming
+    /// note-on before routing, regardless of the routing mode, so the
+    /// learn sheet can capture a controller's actual note numbers.
+    /// nil (the default) costs nothing.
+    public var onLearnNote: ((Int) -> Void)?
 
     // MARK: - Private
 
@@ -147,6 +160,9 @@ public final class MIDIKeyboardTransport: ObservableObject {
         note: UInt8, on: Bool, velocity: UInt8,
         songSeconds: Double, hostTime: UInt64
     ) {
+        if on, let learn = onLearnNote {
+            learn(Int(note))
+        }
         let kind: ContributionEvent.Kind
         switch noteRouting {
         case .synth:
@@ -156,6 +172,11 @@ public final class MIDIKeyboardTransport: ObservableObject {
             guard (0..<16).contains(idx) else { return }
             // Pack quadrant mapping (ModeCoordinator.sampleQuadrantContent):
             // pad idx N → grid row 8 - N/4, col N%4 + 1.
+            let row = 8 - idx / 4
+            let col = idx % 4 + 1
+            kind = on ? .padDown(row: row, col: col) : .padUp(row: row, col: col)
+        case .mappedPads(let map):
+            guard let idx = map[Int(note)], (0..<16).contains(idx) else { return }
             let row = 8 - idx / 4
             let col = idx % 4 + 1
             kind = on ? .padDown(row: row, col: col) : .padUp(row: row, col: col)
