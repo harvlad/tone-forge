@@ -4550,6 +4550,8 @@ _HISTORY_LIST_FIELDS = (
     "id",
     "timestamp",
     "name",
+    # scope=mine demo fallback marks its row so clients can label it.
+    "demo",
     "filename",
     "detected_type",
     "summary",
@@ -4606,15 +4608,41 @@ async def get_history(
     if scope == "mine":
         from tone_forge.auth.deps import current_user
 
+        def _demo_entry():
+            """The provided demo song (TONEFORGE_DEMO_ENTRY_ID) — what a
+            user who has never analyzed anything gets to play with. Marked
+            so clients can label it. None when unconfigured/missing."""
+            demo_id = (os.environ.get("TONEFORGE_DEMO_ENTRY_ID") or "").strip()
+            if not demo_id:
+                return None
+            for entry in history:
+                if entry.get("id") == demo_id:
+                    demo = dict(entry)
+                    demo["demo"] = True
+                    return demo
+            return None
+
         user = await current_user(request)
         if user is None:
-            raise HTTPException(status_code=401, detail="Sign in required")
-        device_id = (request.headers.get("x-device-id") or "").strip()
-        history = [
-            entry for entry in history
-            if entry.get("owner_id") == user.id
-            or (device_id and entry.get("device_id") == device_id)
-        ]
+            # Signed out: the demo is still browsable (fresh plugin install
+            # should have something to play before the email-code dance);
+            # 401 only when no demo is configured so the client can prompt.
+            demo = _demo_entry()
+            if demo is None:
+                raise HTTPException(status_code=401, detail="Sign in required")
+            history = [demo]
+        else:
+            device_id = (request.headers.get("x-device-id") or "").strip()
+            mine = [
+                entry for entry in history
+                if entry.get("owner_id") == user.id
+                or (device_id and entry.get("device_id") == device_id)
+            ]
+            if not mine:
+                demo = _demo_entry()
+                if demo is not None:
+                    mine = [demo]
+            history = mine
 
     if q:
         q_lower = q.lower()

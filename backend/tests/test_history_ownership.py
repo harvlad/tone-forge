@@ -141,6 +141,38 @@ class TestScopeMine:
         assert len(rows) == 2
 
 
+class TestDemoFallback:
+    def test_anonymous_gets_demo_when_configured(self, client, monkeypatch):
+        e = api._add_to_history({"name": "Doomsday"})
+        monkeypatch.setenv("TONEFORGE_DEMO_ENTRY_ID", e["id"])
+        rows = client.get("/api/history?scope=mine").json()["history"]
+        assert [r["name"] for r in rows] == ["Doomsday"]
+        assert rows[0]["demo"] is True
+
+    def test_fresh_account_gets_demo_only(self, client, monkeypatch):
+        e = api._add_to_history({"name": "Doomsday"})
+        api._add_to_history({"name": "someone-elses"}, owner_id="other")
+        monkeypatch.setenv("TONEFORGE_DEMO_ENTRY_ID", e["id"])
+        token, _user = _sign_in()
+        client.cookies.set(SESSION_COOKIE, token)
+        rows = client.get("/api/history?scope=mine").json()["history"]
+        assert [r["name"] for r in rows] == ["Doomsday"]
+        assert rows[0]["demo"] is True
+
+    def test_own_songs_replace_demo(self, client, monkeypatch):
+        e = api._add_to_history({"name": "Doomsday"})
+        monkeypatch.setenv("TONEFORGE_DEMO_ENTRY_ID", e["id"])
+        token, user = _sign_in()
+        api._add_to_history({"name": "my-song"}, owner_id=user.id)
+        client.cookies.set(SESSION_COOKIE, token)
+        rows = client.get("/api/history?scope=mine").json()["history"]
+        assert [r["name"] for r in rows] == ["my-song"]
+
+    def test_unconfigured_keeps_401(self, client, monkeypatch):
+        monkeypatch.delenv("TONEFORGE_DEMO_ENTRY_ID", raising=False)
+        assert client.get("/api/history?scope=mine").status_code == 401
+
+
 class TestClaim:
     def test_claim_requires_sign_in(self, client):
         resp = client.post("/api/auth/claim", json={"device_id": "d"})
