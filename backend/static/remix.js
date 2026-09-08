@@ -23,6 +23,9 @@
  *                            in the song mix, preserving position + mix
  *     ctx.restoreDrums() → Promise   back to the song's real drums (A/B)
  *     ctx.setGrooveOffsets(offsets|null)   sequencer humanize template
+ *     ctx.isSongPlaying() → bool  OPTIONAL: song transport state, for the
+ *                            playing-aware "Applied:" line (falls back to
+ *                            window.JamnKitHost.isPlaying, then false)
  *   window.JamnRemix.unmount()
  *
  * Per-row busy flags (never one global spinner painted on every row —
@@ -51,9 +54,45 @@
     state.errEl.hidden = !msg;
   }
 
+  /** Visible "Applied: …" line + row highlight. Every transform here
+   * lands on a surface that may not be SOUNDING right now (paused song
+   * mix, idle sequencer), which field reports read as "remix did
+   * nothing" — so each success says exactly what changed and where to
+   * hear it, instead of relying on the audio to announce itself. */
+  function setApplied(key, msg) {
+    if (!state) return;
+    state.appliedKey = key || null;
+    state.appliedMsg = msg || '';
+    render();
+  }
+
+  /** Is the song transport actually playing? ctx hook when the host
+   * provides one; otherwise the kit-host transport contract that jam.js
+   * already publishes for kit.js. Unknown → false (safe: worst case we
+   * tell an already-listening user to press Play). */
+  function songPlaying() {
+    try {
+      if (state && state.ctx && typeof state.ctx.isSongPlaying === 'function') {
+        return !!state.ctx.isSongPlaying();
+      }
+      if (window.JamnKitHost && typeof window.JamnKitHost.isPlaying === 'function') {
+        return !!window.JamnKitHost.isPlaying();
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /** Suffix steering the user to where the change becomes audible. */
+  function hearItNote() {
+    return songPlaying() ? '' : ' Press Play on the song to hear it.';
+  }
+
   function setBusy(key, on) {
     if (!state) return;
     state.busy = on ? key : null;
+    // A new in-flight transform obsoletes the previous applied line —
+    // stale "Applied: …" next to a spinner reads as a finished action.
+    if (on) { state.appliedKey = null; state.appliedMsg = ''; }
     render();
   }
 
@@ -66,24 +105,48 @@
   function doFlip() {
     if (!state || state.busy) return;
     setError(null);
-    try { state.ctx.loadKit('flip'); } catch (e) { setError('Flip failed: ' + e); }
+    try {
+      state.ctx.loadKit('flip');
+      // The flip is SILENT until the user plays it: the song mix is
+      // untouched, and the web sequencer never auto-starts (unlike iOS).
+      // Say so, or the transform reads as a no-op.
+      setApplied('flip',
+        'Applied: Flip — new kit loading onto the pads; the beat is armed '
+        + 'in the Sequencer. Open Sequencer and press play to hear it.');
+    } catch (e) {
+      setApplied(null, '');
+      setError('Flip failed: ' + e);
+    }
   }
 
   /** Humanize toggle; fetches the groove template on first use and
    * caches it for the song (RemixClient.fetchGroove + toggleHumanize). */
+  // Humanize only bends SEQUENCER step timing (a few ms per step) — it
+  // never touches the song mix. Both messages below spell that out; the
+  // silent-failure path (sequencer module absent → jam.js optional-
+  // chains the hook into a no-op while the toggle lights up) becomes a
+  // real error instead.
+  var HUMANIZE_ON_MSG =
+    'Applied: Humanize on — sequencer steps now swing with this song’s '
+    + 'own micro-timing. Subtle by design; audible while a sequence plays.';
+
   function doHumanize() {
     if (!state || state.busy) return;
     setError(null);
     if (state.humanizeOn) {
       state.humanizeOn = false;
       try { state.ctx.setGrooveOffsets(null); } catch (_) {}
-      render();
+      setApplied(null, 'Humanize off — sequencer timing back to the grid.');
+      return;
+    }
+    if (!window.JamnSequencer) {
+      setError('Humanize needs the Sequencer (module missing on this page).');
       return;
     }
     if (state.grooveTemplate) {
       state.humanizeOn = true;
       try { state.ctx.setGrooveOffsets(state.grooveTemplate); } catch (_) {}
-      render();
+      setApplied('humanize', HUMANIZE_ON_MSG);
       return;
     }
     var entryId = state.entryId;
@@ -102,6 +165,7 @@
         state.grooveTemplate = offsets;
         state.humanizeOn = true;
         try { state.ctx.setGrooveOffsets(offsets); } catch (_) {}
+        setApplied('humanize', HUMANIZE_ON_MSG);
       })
       .catch(function (e) {
         setError('Humanize unavailable: ' + ((e && e.message) || e));
@@ -137,6 +201,17 @@
       });
   }
 
+  /** Donor display name for the applied line ("song:<id>" → its title). */
+  function donorLabel(kit) {
+    if (kit === 'self') return 'Tightened (own kit)';
+    var id = kit.indexOf('song:') === 0 ? kit.slice(5) : kit;
+    for (var i = 0; i < state.candidates.length; i++) {
+      var c = state.candidates[i];
+      if (c && c.entryId === id) return c.name || id.slice(0, 8);
+    }
+    return id.slice(0, 8);
+  }
+
   /** Apply Re-Drum: swap the song-mix drums stem for the rendered
    * replacement, then land the kit on the PADS too (a stem-only swap
    * left native users hunting for where the new drums lived).
@@ -160,14 +235,27 @@
       .then(function () {
         if (!state || state.entryId !== entryId) return;
         state.redrumActiveKit = kit;
-        // Pads follow the mix (applyRedrum on iOS/desktop).
+        // Pads follow the mix (applyRedrum on iOS/desktop). A failure
+        // here is non-fatal (the mix swap already landed) but must not
+        // vanish — the pads staying stale is exactly the confusion the
+        // pads-follow exists to prevent.
         try {
           if (kit.indexOf('song:') === 0) {
             state.ctx.loadDonorDrumKit(kit.slice(5));
           } else {
             state.ctx.loadKit('drums');
           }
-        } catch (_) {}
+        } catch (e) {
+          try { console.warn('[remix] pads follow-up failed:', e); } catch (_) {}
+        }
+        // The swap restarts audio only when the song is PLAYING;
+        // paused, it's inaudible until the next Play — say which.
+        var what = kit === 'self'
+          ? 'drums re-triggered from this song’s own tightened kit'
+          : 'drums swapped to “' + donorLabel(kit) + '”';
+        setApplied('redrum',
+          'Applied: Re-Drum — ' + what
+          + ', in the song mix and on the pads.' + hearItNote());
       })
       .catch(function (e) {
         setError('Re-Drum failed: ' + ((e && e.message) || e));
@@ -192,6 +280,8 @@
       .then(function () {
         if (!state || state.entryId !== entryId) return;
         state.redrumActiveKit = null;
+        setApplied(null,
+          'Original drums restored in the song mix.' + hearItNote());
       })
       .catch(function (e) {
         setError('Restore failed: ' + ((e && e.message) || e));
@@ -230,6 +320,8 @@
         // Revoke on a delay — Safari cancels the download if the URL
         // disappears before the save sheet commits.
         setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+        setApplied('pack',
+          'Applied: Instrument Pack — .sfz zip saved to your downloads.');
       })
       .catch(function (e) {
         setError('Instrument Pack unavailable: ' + ((e && e.message) || e));
@@ -280,6 +372,15 @@
     bar.appendChild(err);
     state.errEl = err;
 
+    // "Applied: …" line — the transforms land on surfaces that may be
+    // silent right now (paused mix, idle sequencer), so success must be
+    // stated, not inferred from the audio.
+    var status = el('span', 'remix-note remix-status');
+    status.hidden = true;
+    status.setAttribute('role', 'status'); // screen readers announce it
+    bar.appendChild(status);
+    state.statusEl = status;
+
     var donors = el('div', 'remix-donors');
     donors.hidden = true;
     bar.appendChild(donors);
@@ -304,6 +405,13 @@
         b.classList.toggle('is-active',
           state.redrumOpen || !!state.redrumActiveKit);
       }
+      if (key === 'flip' || key === 'pack') {
+        b.classList.toggle('is-active', state.appliedKey === key);
+      }
+    }
+    if (state.statusEl) {
+      state.statusEl.textContent = state.appliedMsg || '';
+      state.statusEl.hidden = !state.appliedMsg;
     }
     renderDonors();
   }
@@ -369,7 +477,10 @@
         candidates: [],
         candidatesLoaded: false,
         candidatesLoading: false,
+        appliedKey: null,
+        appliedMsg: '',
         errEl: null,
+        statusEl: null,
         donorsEl: null,
       };
       build();

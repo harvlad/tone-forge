@@ -15248,6 +15248,13 @@
       if (wasPlaying) pauseAll();
       if (_remixOriginalDrums == null) _remixOriginalDrums = stem.buffer;
       stem.buffer = buf;
+      // Duration = max over decoded stems (prepareStemAudio invariant);
+      // the swapped WAV can be longer/shorter than what it replaced.
+      let maxDur = 0;
+      for (const s of state.stems.values()) {
+        if (s.buffer && s.buffer.duration > maxDur) maxDur = s.buffer.duration;
+      }
+      if (maxDur > 0) state.duration = maxDur;
       if (wasPlaying) await playAll();
     }
 
@@ -15296,6 +15303,10 @@
           setGrooveOffsets: offsets => {
             window.JamnSequencer?.setGrooveOffsets?.(offsets);
           },
+          // Playing-aware "Applied:" feedback (remix.js): a paused-mix
+          // drum swap is inaudible until the next Play — remix.js adds
+          // a "press Play" note only when this reports false.
+          isSongPlaying: () => !!state.isPlaying,
         });
         _remixMountedId = id;
       } catch (e) { console.warn('[jamn-router] remix mount failed:', e); }
