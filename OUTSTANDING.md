@@ -36,6 +36,26 @@ to the domain may still be cached by some resolvers until TTL expiry.
   UserDefaults, file timestamps, system boot time, user-uploaded audio
   ("other user content"); no tracking.
 
+## 2b. Ableton Link — commercial license (blocks public jam-desktop release)
+
+**Status:** not needed yet — GPLv2's obligation triggers only on distribution
+to third parties, so dev / internal / private-beta builds are fully clear.
+Resolve before any PUBLIC jam-desktop release.
+
+- Vendored `ableton::Link` (`jam-desktop/third_party/link/`) is **GPLv2**.
+  Shipping jam-desktop closed-source links it → must obtain Ableton's
+  proprietary Link license first (LICENSE file's own escape hatch:
+  `link-devs@ableton.com`). Free but requires a signed agreement + Link
+  branding compliance (`third_party/link/Ableton Link Guidelines.pdf`).
+- Linked by `jam-desktop` only (`LinkSync.swift` via `AbletonLinkShim`),
+  follow-only V1. Also `tools/jamn-link-helper` via `aalink` — internal
+  testing tool, same question if ever distributed.
+- **NOT** the plugin: jamn Kit syncs via the JUCE host playhead, no Link.
+- Separate agreement from the JUCE license (JUCE Personal tier, plugin only).
+- Draft request email parked at `jam-desktop/LINK_LICENSE_REQUEST.md`.
+- Interim option if a public desktop release is wanted pre-license: compile
+  jam-desktop with Link disabled (already behind an enable toggle).
+
 ## 3. YouTube URL analysis (kept for dev, must stay off in production)
 
 **Status:** intentionally kept for development song ingestion. ToS/DMCA risk
