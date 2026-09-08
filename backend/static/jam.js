@@ -14642,6 +14642,9 @@
         try {
           window.JamnKit?.mount(_currentEntry);
           _mountedEntryId = id;
+          // Hardware Launchpad LED mirror + Link sync for the kit —
+          // inert without WebMIDI/device (resolves 'unavailable').
+          window.JamnKitHW?.attach?.().catch(() => {});
         } catch (e) {
           console.warn('[jamn-router] kit mount failed:', e);
         }
