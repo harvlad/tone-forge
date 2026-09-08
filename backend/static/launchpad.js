@@ -421,6 +421,20 @@
   let _input = null;
   let _output = null;
   let _deviceName = null;
+  // --- Generic MIDI pad controllers (MIDI Learn) -------------------
+  // Any non-Launchpad input (DJ mixers like the DJM-S7, Akai LPD8, TE
+  // boxes) can drive the Contribute sample pads through a learned
+  // note -> chop-index map. Parity with mobile's MIDIKeyboardTransport
+  // .mappedPads: unmapped notes are DROPPED (a half-mapped controller
+  // must not fire random pads), and the map persists in localStorage.
+  let _genericInputs = [];
+  let _genericPadMap = {};   // midi note (int) -> chop idx 0..15
+  let _learnCb = null;       // set while the learn flow captures notes
+  const GENERIC_MAP_KEY = 'jamn.midiPadMap';
+  try {
+    const raw = localStorage.getItem(GENERIC_MAP_KEY);
+    if (raw) _genericPadMap = JSON.parse(raw) || {};
+  } catch (_) { _genericPadMap = {}; }
   // Expanded mode taxonomy. See jam.js state.settings.launchpadMode for
   // the full list + semantics; here we only need to know which grid
   // painter to invoke.
@@ -1660,6 +1674,7 @@
   }
 
   function _onStateChange(_evt) {
+    _bindGenericInputs();
     // Re-scan on any port change. If we lose our bound ports mid-session,
     // null them out and emit disconnected status.
     const bound = _output && _input;
@@ -1676,6 +1691,69 @@
     }
   }
 
+  function _isLaunchpadPort(port) {
+    const n = (port && (port.name || '')) + '';
+    return n.includes('Launchpad');
+  }
+
+  function _onGenericMidi(evt) {
+    const data = evt.data;
+    if (!data || data.length < 2) return;
+    const status = data[0] & 0xf0;
+    const note = data[1];
+    const velocity = data[2] || 0;
+    const isOn = status === 0x90 && velocity > 0;
+    const isOff = status === 0x80 || (status === 0x90 && velocity === 0);
+    if (!isOn && !isOff) return;
+    if (isOn && typeof _learnCb === 'function') {
+      try { _learnCb(note); } catch (_) {}
+      return; // learn mode captures; no playback side effects
+    }
+    const chopIdx = _genericPadMap[note];
+    if (chopIdx === undefined) return; // unmapped: dropped by design
+    _fireGenericPad(chopIdx, isOn, velocity);
+  }
+
+  // Trigger the Contribute chop at `idx` exactly as if its grid pad
+  // was pressed: same meaning lookup, same jam.js callbacks, so
+  // quantize/hold/haptics behave identically. Only meaningful in
+  // contribute-sample mode — other modes have no chop meanings.
+  function _fireGenericPad(idx, on, velocity) {
+    if (_mode !== 'contribute-sample') return;
+    if (idx < 0 || idx >= CONTRIBUTE_PAD_COUNT) return;
+    // Inverse of _chopIdxForPad: chop 0 = padIdx 71 (second row from
+    // top, left), rows of 8 reading downward.
+    const padIdx = (7 - Math.floor(idx / 8)) * 10 + (idx % 8) + 1;
+    const meaning = _meaningForPad(padIdx);
+    if (!meaning || meaning.kind !== 'chop') return;
+    try {
+      if (on && typeof _padPressCb === 'function') {
+        _padPressCb({ padIdx, note: padIdx, velocity, meaning });
+      } else if (!on && typeof _padReleaseCb === 'function') {
+        _padReleaseCb({ padIdx, note: padIdx, meaning });
+      }
+    } catch (e) {
+      console.warn('[launchpad] generic pad callback threw:', e);
+    }
+  }
+
+  function _bindGenericInputs() {
+    if (!_access) return;
+    for (const inp of _genericInputs) {
+      try { inp.onmidimessage = null; } catch (_) {}
+    }
+    _genericInputs = [];
+    try {
+      for (const inp of _access.inputs.values()) {
+        if (_isLaunchpadPort(inp)) continue; // MK3 grid owned above
+        try {
+          inp.onmidimessage = _onGenericMidi;
+          _genericInputs.push(inp);
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
   async function _requestAccess() {
     if (!navigator || !navigator.requestMIDIAccess) {
       _emitStatus({ supported: false });
@@ -1690,6 +1768,7 @@
       return false;
     }
     try { _access.onstatechange = _onStateChange; } catch (_) {}
+    _bindGenericInputs();
     return true;
   }
 
@@ -1898,6 +1977,31 @@
       if (_mode.startsWith('instrument-') && _mode !== 'instrument-drum') {
         _paintInstrumentFull();
       }
+    },
+
+    // ---- Generic MIDI pad controllers (MIDI Learn) ----
+    // The learned map routes any non-Launchpad controller's pads onto
+    // the Contribute chop grid. jam.js drives the learn flow.
+    getGenericPadMap() { return { ..._genericPadMap }; },
+    setGenericPadMap(map) {
+      _genericPadMap = {};
+      if (map && typeof map === 'object') {
+        for (const [note, idx] of Object.entries(map)) {
+          const n = Number(note), i = Number(idx);
+          if (Number.isInteger(n) && Number.isInteger(i)
+              && i >= 0 && i < CONTRIBUTE_PAD_COUNT) {
+            _genericPadMap[n] = i;
+          }
+        }
+      }
+      try {
+        localStorage.setItem(GENERIC_MAP_KEY, JSON.stringify(_genericPadMap));
+      } catch (_) {}
+    },
+    startPadLearn(onNote) { _learnCb = onNote; },
+    stopPadLearn() { _learnCb = null; },
+    genericInputNames() {
+      return _genericInputs.map((i) => i.name || 'MIDI input');
     },
 
     // ---- Song melody follow-along ----
