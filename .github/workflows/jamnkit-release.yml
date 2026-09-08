@@ -31,12 +31,76 @@ on:
   push:
     tags:
       - 'jamnkit-v*'
+  # Manual runs build WITHOUT releasing — used to validate the Windows
+  # job (and the mac build) before cutting a tag.
+  workflow_dispatch:
 
 permissions:
   contents: write  # Release upload
 
 jobs:
+  # Windows: VST3 + Standalone for Ableton/any DAW on Windows. The
+  # plugin source is JUCE-portable (juce::File everywhere, no Apple
+  # APIs); AU in FORMATS is skipped automatically off-macOS. Unsigned
+  # zip — SmartScreen will warn on first run, acceptable for testers;
+  # Authenticode signing is a later, separate secret.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90  # first run compiles JUCE from scratch
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache JUCE + build tree
+        uses: actions/cache@v4
+        with:
+          path: plugin/build
+          key: jamnkit-build-${{ runner.os }}-${{ hashFiles('plugin/CMakeLists.txt') }}
+
+      - name: Configure + build (VST3 + Standalone)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build plugin/build --config Release --target JamnKit_All -j 4
+
+      - name: Package zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          ART="plugin/build/JamnKit_artefacts/Release"
+          mkdir -p plugin/dist/jamnKit-windows
+          cp -R "$ART/VST3/jamn Kit.vst3" plugin/dist/jamnKit-windows/
+          cp -R "$ART/Standalone/jamn Kit.exe" plugin/dist/jamnKit-windows/ || true
+          cat > plugin/dist/jamnKit-windows/README.txt <<'TXT'
+          jamn Kit for Windows (VST3 + Standalone)
+
+          Install: copy "jamn Kit.vst3" to C:\Program Files\Common Files\VST3\
+          then rescan plugins in your DAW (Ableton: Options > Preferences >
+          Plug-Ins > Rescan).
+
+          Unsigned build: Windows SmartScreen may warn on first launch of the
+          Standalone — "More info" > "Run anyway".
+          TXT
+          cd plugin/dist && 7z a "jamnKit-windows.zip" jamnKit-windows
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jamnKit-windows
+          path: plugin/dist/jamnKit-windows.zip
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/jamnkit-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: plugin/dist/jamnKit-windows.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release:
+    if: startsWith(github.ref, 'refs/tags/jamnkit-v')
     runs-on: macos-14
     timeout-minutes: 90  # first run compiles JUCE from scratch
     steps:
