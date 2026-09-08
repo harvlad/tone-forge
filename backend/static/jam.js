@@ -14173,19 +14173,30 @@
       if (view) { showView(view); return; }
       if (side === 'launchpad') {
         // Launchpad lives as a center tab inside the perform surface.
-        // Activate perform, then delegate to the existing tab button so
-        // _initLaunchpadPanel's own wiring does the switching.
+        // Activate perform, then delegate to the existing tab button —
+        // on the NEXT frame, because the tab bar may not be laid out
+        // until the perform view is visible (clicking it while hidden
+        // silently did nothing: "launchpad doesn't work on web").
         showView('perform');
-        const lpTab = document.querySelector(
-          '#center-tabs .center-tab[data-tab="launchpad"]');
-        if (lpTab) { try { lpTab.click(); } catch (_) {} }
+        requestAnimationFrame(() => {
+          const lpTab = document.querySelector(
+            '#center-tabs .center-tab[data-tab="launchpad"]');
+          if (lpTab) { try { lpTab.click(); } catch (_) {} }
+          else if (sideNote) {
+            it.insertAdjacentElement('afterend', sideNote);
+            sideNote.textContent = 'Load a song first — the Launchpad view opens inside Perform.';
+            sideNote.hidden = false;
+          }
+        });
         return;
       }
-      // Placeholder: select the item and say so. Highlight clears on
-      // the next surface change (showView wrapper).
+      // Placeholder: select the item and say so — the note moves right
+      // under the clicked item (at the bottom of the sidebar it was off
+      // screen, so placeholder clicks read as dead buttons).
       sideItems.forEach(o => o.classList.remove('jamn-side-item--active'));
       it.classList.add('jamn-side-item--active');
       if (sideNote) {
+        it.insertAdjacentElement('afterend', sideNote);
         sideNote.textContent =
           `${SIDE_LABELS[side] || side} is coming to the web app — ` +
           'it lives in the desktop app today.';
