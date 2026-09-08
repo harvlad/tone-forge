@@ -187,8 +187,9 @@ features:
     name: One-tap remix transforms (Re-Drum / Flip / Humanize / Instrument Pack)
     platforms:
       web:
-        status: missing
-        note: "Remix sheet shipped iOS/desktop only; web has no transform UI (matrix audit 2026-09-08 caught this — memory claimed all surfaces)."
+        status: partial
+        evidence: "backend/static/remix.js#JamnRemix"
+        note: "Remix bar on Jam Pads: Humanize (identical SequencerClock groove math in sequencer.js), Re-Drum (mix stem swap preserving position+mix, pads follow, donor picker, original restore), Instrument Pack (.sfz download). Flip loads the kit and stages defaultSequence into the sequencer store (JamnSequencer.stageDefaultSequence) but does NOT auto-start (no headless sequencer clock on web) and drops per-step probability (web steps are velocity-only)."
       ios:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeEngine/RemixClients.swift#RemixClient"

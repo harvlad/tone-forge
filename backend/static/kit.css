@@ -504,3 +504,83 @@
   color: var(--jamn-text2, #A1A1AA);
   font-size: 13px;
 }
+
+/* ---------- Remix bar (remix.js, mounted above the kit) ----------
+ * Web home of the native Remix sheets. Buttons ride the shared
+ * .tab-control-btn look (jam.css) inside a .tab-control-group; the
+ * extra classes below only add layout + the busy/active affordances
+ * the sheets show per row. */
+
+.remix-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 720px; /* align with .kit-head / .kit-grid */
+  margin: 0 auto 10px;
+  box-sizing: border-box;
+}
+
+.remix-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--jamn-text2, #A1A1AA);
+}
+
+.remix-group {
+  display: inline-flex;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+  background: var(--jamn-surface1, #14141A);
+  overflow: hidden;
+}
+
+.remix-btn {
+  white-space: nowrap;
+  padding: 5px 10px;
+}
+
+.remix-btn.is-active {
+  color: var(--jamn-bg, #0B0B0F);
+  background: var(--jamn-accent, #8B5CF6);
+}
+
+/* Busy = quiet pulse, not a spinner — matches the pad "armed" idiom. */
+.remix-btn.is-busy {
+  color: var(--jamn-text, #fff);
+  animation: kit-skeleton 1.2s ease-in-out infinite;
+  cursor: progress;
+}
+
+.remix-btn:disabled:not(.is-busy) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.remix-error {
+  font-size: 12px;
+  color: var(--jamn-danger, #EF4444);
+}
+
+/* Re-Drum donor rows expand under the bar on their own line. */
+.remix-donors {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.remix-donors .remix-btn {
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+  background: var(--jamn-surface1, #14141A);
+}
+
+.remix-note {
+  font-size: 12px;
+  color: var(--jamn-text2, #A1A1AA);
+}

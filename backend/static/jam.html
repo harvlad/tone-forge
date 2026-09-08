@@ -1450,7 +1450,14 @@
   <!-- Sample-kit surface (sidebar TOOLS → Jam Pads). kit.js owns
        everything inside #kit-root via window.JamnKit.mount(entry); the
        router calls it whenever this pane activates with a loaded song. -->
-  <section class="view" id="view-kit"><div id="kit-root"></div></section>
+  <section class="view" id="view-kit">
+    <!-- Remix bar: the web home of the native Remix sheets (one-tap
+         Flip / Humanize / Re-Drum / Instrument Pack). remix.js owns
+         everything inside #remix-root; the router mounts it alongside
+         the kit whenever this pane activates with a loaded song. -->
+    <div id="remix-root"></div>
+    <div id="kit-root"></div>
+  </section>
 
   <!-- Full-parity tool surfaces: each pane hosts a self-contained module
        (stage/sequencer/recordings/packs/contribute .js) mounted by the
@@ -1571,12 +1578,13 @@
 <script src="/static/launchpad.js?v=23"></script>
 <script src="/static/kit.js?v=4"></script>
 <script src="/static/stage.js?v=1"></script>
-<script src="/static/sequencer.js?v=1"></script>
+<script src="/static/sequencer.js?v=2"></script>
+<script src="/static/remix.js?v=1"></script>
 <script src="/static/recordings.js?v=1"></script>
 <script src="/static/packs.js?v=1"></script>
 <script src="/static/contribute.js?v=1"></script>
 <script src="/static/chopedit.js?v=1"></script>
 <script src="/static/kit-hw.js?v=1"></script>
-<script src="/static/jam.js?v=130"></script>
+<script src="/static/jam.js?v=131"></script>
 </body>
 </html>

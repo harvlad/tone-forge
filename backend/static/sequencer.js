@@ -67,11 +67,17 @@
   /**
    * Absolute time of a raw (unwrapped) step. Swing delays odd steps by
    * swing × stepDur; step counts are even so raw parity == wrapped parity
-   * across loops (same argument as SequencerClock.tick).
+   * across loops (same argument as SequencerClock.tick). `groove` is the
+   * optional Humanize template — per-slot delays in step fractions,
+   * indexed raw % length, composing WITH swing exactly like
+   * SequencerClock._delaySteps (both are hold-based delays).
    */
-  function stepTimeSec(startSec, rawStep, stepDur, swing) {
+  function stepTimeSec(startSec, rawStep, stepDur, swing, groove) {
     var t = startSec + rawStep * stepDur;
     if (rawStep % 2 === 1 && swing > 0) t += Math.min(swing, 0.5) * stepDur;
+    if (groove && groove.length) {
+      t += groove[((rawStep % groove.length) + groove.length) % groove.length] * stepDur;
+    }
     return t;
   }
 
@@ -102,7 +108,7 @@
     var raw = state.nextRaw;
     var guard = 0;
     for (;;) {
-      var t = stepTimeSec(state.startSec, raw, state.stepDur, state.swing);
+      var t = stepTimeSec(state.startSec, raw, state.stepDur, state.swing, state.groove);
       if (t >= horizonSec) break;
       events.push({ raw: raw, step: raw % state.stepCount, timeSec: t });
       raw += 1;
@@ -223,6 +229,92 @@
   // ---------- mount state (one surface at a time, like kit.js) ----------
 
   var current = null;
+
+  // ---------- Remix integration (Humanize + Flip) ----------
+
+  /** Humanize template: per-slot delays in STEP FRACTIONS (0…0.45),
+   * from /api/song/{id}/groove. Module-level (not per-mount) so the
+   * Remix toggle survives pane switches, exactly like the native
+   * SequencePadManager holding the template across sheet opens. The
+   * host clears it on song change (resetRemixState parity). */
+  var grooveOffsets = null;
+
+  function setGrooveOffsets(offsets) {
+    if (Array.isArray(offsets) && offsets.length) {
+      var out = [];
+      for (var i = 0; i < offsets.length; i++) {
+        var v = Number(offsets[i]);
+        // Same clamp as SequencerClock.grooveOffsets (0…0.45): a groove
+        // delay must never push a step past its successor.
+        out.push(isFinite(v) ? Math.max(0, Math.min(0.45, v)) : 0);
+      }
+      grooveOffsets = out;
+    } else {
+      grooveOffsets = null;
+    }
+  }
+
+  /**
+   * Stage a native-wire SequencerPattern (a Flip kit's defaultSequence:
+   * tracks[].chopRef.packPad.padIdx + steps[].velocity) into the web
+   * pattern store for `analysisId`, so the beat is armed the moment the
+   * Sequencer pane opens — the web analogue of iOS saving the pattern
+   * into SequencerPatternStore on pack activation. Targets the first
+   * EMPTY slot (never silently stomping a user's pattern), or "D" when
+   * all four hold something; the staged slot becomes active. Per-step
+   * probability has no web equivalent and is dropped. Returns the slot
+   * id, or null when the wire shape is unusable.
+   */
+  function stageDefaultSequence(analysisId, seq) {
+    if (!seq || !Array.isArray(seq.tracks) || !seq.tracks.length) return null;
+    var p = emptyPattern();
+    if (STEP_COUNTS.indexOf(seq.stepCount) !== -1) p.stepCount = seq.stepCount;
+    var sw = Number(seq.swing);
+    if (isFinite(sw)) p.swing = Math.max(0, Math.min(0.5, sw));
+    var any = false;
+    for (var i = 0; i < seq.tracks.length; i++) {
+      var t = seq.tracks[i];
+      var padIdx = t && t.chopRef && t.chopRef.packPad
+        ? t.chopRef.packPad.padIdx : null;
+      if (typeof padIdx !== "number" || !isFinite(padIdx) || padIdx < 0
+          || !Array.isArray(t.steps)) continue;
+      var steps = [];
+      var rowAny = false;
+      for (var j = 0; j < p.stepCount; j++) {
+        var v = t.steps[j] ? Number(t.steps[j].velocity) : 0;
+        v = isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+        steps.push(v);
+        if (v > 0) rowAny = true;
+      }
+      if (rowAny) { p.rows[String(padIdx)] = steps; any = true; }
+    }
+    if (!any) return null;
+
+    var json = null;
+    try { json = localStorage.getItem(storageKey(analysisId)); } catch (_) {}
+    var store = normalizeStore(json);
+    var target = null;
+    for (var k = 0; k < SLOT_IDS.length; k++) {
+      var slot = store.slots[SLOT_IDS[k]];
+      var empty = true;
+      for (var key in slot.rows) {
+        if (Object.prototype.hasOwnProperty.call(slot.rows, key)) { empty = false; break; }
+      }
+      if (empty) { target = SLOT_IDS[k]; break; }
+    }
+    if (!target) target = SLOT_IDS[SLOT_IDS.length - 1];
+    store.slots[target] = p;
+    store.activeSlot = target;
+    try {
+      localStorage.setItem(storageKey(analysisId), serializeStore(store));
+    } catch (_) {}
+    // Live surface for the same song picks the staged beat up now.
+    if (current && current.ctx && current.ctx.analysisId === analysisId) {
+      loadStore(current);
+      render(current);
+    }
+    return target;
+  }
 
   function mount(container, ctx) {
     try {
@@ -386,6 +478,7 @@
         startSec: s.startSec,
         stepDur: stepDurationSec(s.tempoBpm),
         swing: s.pattern.swing,
+        groove: grooveOffsets,
         stepCount: s.pattern.stepCount,
       },
       now + LOOKAHEAD_SEC
@@ -639,6 +732,9 @@
   window.JamnSequencer = {
     mount: mount,
     unmount: unmount,
+    // Remix hooks (remix.js Humanize toggle; kit.js Flip activation).
+    setGrooveOffsets: setGrooveOffsets,
+    stageDefaultSequence: stageDefaultSequence,
     _internals: {
       stepDurationSec: stepDurationSec,
       stepTimeSec: stepTimeSec,
