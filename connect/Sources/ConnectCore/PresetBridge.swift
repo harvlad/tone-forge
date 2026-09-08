@@ -106,6 +106,17 @@ public final class PresetBridge {
     private var task: URLSessionWebSocketTask?
     private var reconnectDelay: TimeInterval = 1.0
     private let reconnectMax: TimeInterval = 30.0
+    /// All task/session teardown and re-open is serialized here, and
+    /// every socket carries a generation. Hello-send failure and
+    /// receive failure fire on different URLSession callback threads
+    /// for the SAME dead socket; unserialized they both ran the
+    /// cancel/invalidate teardown, which double-releases inside
+    /// CFNetwork (observed SIGSEGV on com.apple.network.connections)
+    /// and leaves two reconnect loops alive, doubling every cycle.
+    /// The generation check also stops a stale callback from a
+    /// previous socket tearing down a healthy successor.
+    private let socketQueue = DispatchQueue(label: "com.toneforge.connect.socket")
+    private var socketGeneration = 0
     private var shouldReconnect = true
 
     // ----- v2 connect_state coalescing (Audio-Ownership Pivot) -----
@@ -143,10 +154,17 @@ public final class PresetBridge {
     public func stop() {
         shouldReconnect = false
         isRunning = false
-        task?.cancel(with: .goingAway, reason: nil)
-        task = nil
-        session?.invalidateAndCancel()
-        session = nil
+        socketQueue.async { [weak self] in
+            guard let self = self else { return }
+            // Bump generation so any in-flight failure callback for the
+            // socket we're killing becomes a no-op instead of a second
+            // teardown.
+            self.socketGeneration += 1
+            self.task?.cancel(with: .goingAway, reason: nil)
+            self.task = nil
+            self.session?.invalidateAndCancel()
+            self.session = nil
+        }
         localBridge?.stop()
         localBridge = nil
     }
@@ -169,6 +187,13 @@ public final class PresetBridge {
     }
 
     private func openSocket() {
+        socketQueue.async { self.openSocketOnQueue() }
+    }
+
+    private func openSocketOnQueue() {
+        dispatchPrecondition(condition: .onQueue(socketQueue))
+        socketGeneration += 1
+        let generation = socketGeneration
         let config = URLSessionConfiguration.default
         let session = URLSession(configuration: config)
         self.session = session
@@ -177,11 +202,11 @@ public final class PresetBridge {
 
         onStatus?("connecting to \(serverURL.absoluteString) (session=\(sessionId))")
         task.resume()
-        sendHello()
-        pumpReceive()
+        sendHello(generation: generation)
+        pumpReceive(generation: generation)
     }
 
-    private func sendHello() {
+    private func sendHello(generation: Int) {
         let hello: [String: Any] = [
             "type": ConnectProtocol.MessageType.hello,
             "role": "connect",
@@ -194,7 +219,7 @@ public final class PresetBridge {
         sendJSON(hello) { [weak self] err in
             if let err = err {
                 self?.onStatus?("hello send failed: \(err.localizedDescription)")
-                self?.scheduleReconnect()
+                self?.scheduleReconnect(from: generation)
             }
         }
     }
@@ -430,17 +455,17 @@ public final class PresetBridge {
 
     /// URLSessionWebSocketTask.receive is one-shot. We chain it so the
     /// task drains frames as they arrive without spawning a thread.
-    private func pumpReceive() {
+    private func pumpReceive(generation: Int) {
         guard let task = task else { return }
         task.receive { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .failure(let err):
                 self.onStatus?("receive failed: \(err.localizedDescription)")
-                self.scheduleReconnect()
+                self.scheduleReconnect(from: generation)
             case .success(let message):
                 self.handleMessage(message)
-                self.pumpReceive()
+                self.pumpReceive(generation: generation)
             }
         }
     }
@@ -607,19 +632,29 @@ public final class PresetBridge {
         }
     }
 
-    private func scheduleReconnect() {
-        // Tear down the current task before backing off.
-        task?.cancel(with: .goingAway, reason: nil)
-        task = nil
-        session?.invalidateAndCancel()
-        session = nil
+    private func scheduleReconnect(from generation: Int) {
+        socketQueue.async { [weak self] in
+            guard let self = self else { return }
+            // Both failure paths of one socket land here, and callbacks
+            // from an already-replaced socket can arrive late. Only the
+            // first report for the CURRENT generation runs teardown;
+            // bumping the generation makes every other pending report a
+            // no-op.
+            guard generation == self.socketGeneration else { return }
+            self.socketGeneration += 1
 
-        guard shouldReconnect else { return }
-        let delay = min(reconnectDelay, reconnectMax)
-        reconnectDelay = min(reconnectDelay * 2, reconnectMax)
-        onStatus?("reconnecting in \(Int(delay))s")
-        DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.openSocket()
+            self.task?.cancel(with: .goingAway, reason: nil)
+            self.task = nil
+            self.session?.invalidateAndCancel()
+            self.session = nil
+
+            guard self.shouldReconnect else { return }
+            let delay = min(self.reconnectDelay, self.reconnectMax)
+            self.reconnectDelay = min(self.reconnectDelay * 2, self.reconnectMax)
+            self.onStatus?("reconnecting in \(Int(delay))s")
+            self.socketQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.openSocketOnQueue()
+            }
         }
     }
 }
