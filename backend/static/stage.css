@@ -1,0 +1,438 @@
+/* stage.css — web Perform stage (window.JamnStage), styled to match the
+ * native desktop PerformView. Built on the shared --jamn-* tokens from
+ * jam.css with local fallbacks so the stage also renders standalone. */
+
+.jstage {
+  --js-bg: var(--jamn-bg, #0B0B0F);
+  --js-surface1: var(--jamn-surface1, #14141A);
+  --js-surface2: var(--jamn-surface2, #1C1C24);
+  --js-border: var(--jamn-border, #2A2A36);
+  --js-accent: var(--jamn-accent, #8B5CF6);
+  --js-success: var(--jamn-success, #22C55E);
+  --js-danger: var(--jamn-danger, #EF4444);
+  --js-text: var(--jamn-text, #FFFFFF);
+  --js-text2: var(--jamn-text2, #A1A1AA);
+  --js-radius-sm: var(--jamn-radius-sm, 8px);
+  --js-radius-md: var(--jamn-radius-md, 12px);
+  --js-radius-lg: var(--jamn-radius-lg, 16px);
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+  color: var(--js-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+@media (max-width: 900px) {
+  .jstage { grid-template-columns: minmax(0, 1fr); }
+}
+
+.jstage-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* ---- song header ---- */
+.jstage-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--js-surface1);
+  border: 1px solid var(--js-border);
+  border-radius: var(--js-radius-lg);
+}
+.jstage-art {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--js-radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.55);
+  flex: none;
+}
+.jstage-header-text { min-width: 0; }
+.jstage-title {
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jstage-meta {
+  font-size: 12px;
+  color: var(--js-text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- tone match banner ---- */
+.jstage-tone {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--js-accent) 16%, var(--js-surface1)),
+    var(--js-surface1));
+  border: 1px solid var(--js-border);
+  border-radius: var(--js-radius-lg);
+}
+.jstage-tone-text { flex: 1; min-width: 0; }
+.jstage-tone-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.jstage-tone-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--js-accent);
+}
+.jstage-tone-name { font-size: 14px; font-weight: 600; }
+.jstage-tone-tier {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--js-border);
+  color: var(--js-text2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.jstage-tone-tier--high { color: var(--js-success); border-color: var(--js-success); }
+.jstage-tone-why {
+  font-size: 12px;
+  color: var(--js-text2);
+  margin-top: 2px;
+}
+.jstage-tone-actions { display: flex; gap: 6px; flex: none; }
+
+/* ---- display layers row ---- */
+.jstage-layers {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: var(--js-surface1);
+  border: 1px solid var(--js-border);
+  border-radius: var(--js-radius-md);
+}
+.jstage-layers-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--js-text2);
+  margin-right: 2px;
+}
+.jstage-layers-spacer { flex: 1; }
+.jstage-chip {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--js-text) 12%, transparent);
+  color: var(--js-text2);
+  transition: background 0.15s, color 0.15s;
+}
+.jstage-chip--on { background: var(--js-accent); color: #fff; }
+.jstage-chip--ghost { background: transparent; }
+.jstage-chip--disabled { opacity: 0.4; cursor: not-allowed; }
+.jstage-chip:not(.jstage-chip--disabled):hover {
+  filter: brightness(1.15);
+}
+
+/* ---- fretboard stage ---- */
+.jstage-board-wrap {
+  position: relative;
+  background: #131017;
+  border: 1px solid var(--js-border);
+  border-radius: var(--js-radius-lg);
+  overflow: hidden;
+  min-height: 260px;
+  flex: 1;
+}
+.jstage-board {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+}
+.jstage-chord-overlay {
+  position: absolute;
+  top: 10px;
+  left: 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  pointer-events: none;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+.jstage-chord-now {
+  font-size: 52px;
+  font-weight: 800;
+  line-height: 1;
+}
+.jstage-chord-next {
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--js-text2);
+}
+
+/* ---- TAB reference card ---- */
+.jstage-tabcard {
+  background: var(--js-surface1);
+  border: 1px solid var(--js-border);
+  border-radius: var(--js-radius-md);
+  padding: 10px 12px;
+}
+.jstage-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.jstage-card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--js-accent);
+}
+.jstage-tab {
+  display: block;
+  width: 100%;
+  height: 130px;
+}
+
+/* ---- chord timeline chips ---- */
+.jstage-chips {
+  display: flex;
+  gap: 6px;
+  overflow: hidden;
+  min-height: 40px;
+  align-items: center;
+}
+.jstage-chordchip {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: var(--js-radius-sm);
+  border: none;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--js-text) 9%, transparent);
+  color: var(--js-text);
+  flex: none;
+}
+.jstage-chordchip--now {
+  background: var(--js-accent);
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--js-accent) 55%, transparent);
+}
+
+/* ---- section strip ---- */
+.jstage-sections {
+  position: relative;
+  height: 40px;
+  background: var(--js-surface1);
+  border: 1px solid var(--js-border);
+  border-radius: var(--js-radius-sm);
+  overflow: hidden;
+}
+.jstage-section {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--js-text) 10%, transparent);
+  color: var(--js-text2);
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+.jstage-section--now {
+  background: color-mix(in srgb, var(--js-accent) 50%, transparent);
+  color: #fff;
+  font-weight: 700;
+}
+.jstage-section-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(239, 68, 68, 0.85);
+  pointer-events: none;
+}
+
+/* ---- transport ---- */
+.jstage-transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--js-surface1);
+  border: 1px solid var(--js-border);
+  border-radius: var(--js-radius-lg);
+}
+.jstage-play {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  background: var(--js-accent);
+  color: #fff;
+  font-size: 15px;
+  flex: none;
+}
+.jstage-time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--js-text2);
+  min-width: 34px;
+  text-align: center;
+}
+.jstage-pos { flex: 1; min-width: 120px; }
+.jstage-tdiv {
+  width: 1px;
+  height: 20px;
+  background: var(--js-border);
+  flex: none;
+}
+.jstage-tgroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.jstage-ticon { font-size: 12px; }
+.jstage-rate { width: 90px; }
+.jstage-vol { width: 90px; }
+.jstage-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: var(--js-radius-sm);
+  border: 1px solid var(--js-border);
+  background: var(--js-surface2);
+  color: var(--js-text);
+  cursor: pointer;
+}
+.jstage-btn--accent { background: var(--js-accent); border-color: var(--js-accent); color: #fff; }
+.jstage-btn--ghost { background: transparent; border-color: transparent; color: var(--js-text2); }
+.jstage-loop-chip {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--js-accent) 22%, transparent);
+}
+.jstage-rec {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--js-border);
+  background: var(--js-surface2);
+  color: var(--js-danger);
+  font-size: 13px;
+  cursor: pointer;
+  flex: none;
+}
+.jstage-rec:disabled { opacity: 0.35; cursor: not-allowed; }
+.jstage-rec--on {
+  background: var(--js-danger);
+  color: #fff;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--js-danger) 60%, transparent);
+}
+
+/* ---- range inputs, tinted to the accent ---- */
+.jstage input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--js-text) 18%, transparent);
+  outline: none;
+}
+.jstage input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--js-accent);
+  border: 2px solid #fff;
+  cursor: pointer;
+}
+.jstage input[type="range"]::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--js-accent);
+  border: 2px solid #fff;
+  cursor: pointer;
+}
+
+/* ---- right mixer panel ---- */
+.jstage-mixer {
+  background: var(--js-surface1);
+  border: 1px solid var(--js-border);
+  border-radius: var(--js-radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-self: start;
+  position: sticky;
+  top: 12px;
+}
+.jstage-mixer-title { font-size: 15px; font-weight: 700; }
+.jstage-mixer-div { height: 1px; background: var(--js-border); }
+.jstage-mixer-empty { font-size: 12px; color: var(--js-text2); }
+.jstage-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: opacity 0.15s;
+}
+.jstage-strip--dim { opacity: 0.4; }
+.jstage-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.jstage-strip-name {
+  font-size: 13px;
+  text-transform: capitalize;
+}
+.jstage-strip-name--song { font-weight: 700; }
+.jstage-strip-btns { display: flex; gap: 4px; }
+.jstage-ms {
+  width: 24px;
+  height: 22px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 5px;
+  border: 1px solid var(--js-border);
+  background: var(--js-surface2);
+  color: var(--js-text2);
+  cursor: pointer;
+}
+.jstage-ms--muted { background: var(--js-danger); border-color: var(--js-danger); color: #fff; }
+.jstage-ms--soloed { background: #EAB308; border-color: #EAB308; color: #1a1a1a; }
+.jstage-fader { width: 100%; }

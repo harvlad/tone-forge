@@ -210,13 +210,20 @@ html, body {
   transition: width 0.4s ease;
 }
 
+/* The stage must hold ANY number of slots: songs with extra stems
+   (guitar_center / guitar_sides / piano / pan-split sub-roles) inject
+   tiles beyond the classic 5+You, creating implicit grid rows. The old
+   fixed `aspect-ratio: 16/10` box couldn't grow with them — the extra
+   rows spilled out of the box (over the CTA), and WebKit transferred
+   the content-forced height back through the ratio into a too-wide box
+   that escaped the viewport. Rows are auto-sized with a min height
+   that reproduces the classic 3-row look instead. */
 .bandroom-stage {
   position: relative;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(3, 1fr);
+  grid-auto-rows: minmax(170px, auto);
   gap: 18px;
-  aspect-ratio: 16 / 10;
   max-width: 900px;
   margin: 0 auto;
 }
@@ -2746,7 +2753,8 @@ main.lp-tab-active .perform-grid {
   flex-shrink: 0;
 }
 .rehearsal-section-item.is-complete .rehearsal-check {
-  border-color: var(--good);
+  /* green lives in the ✓ glyph + tint; border stays quiet */
+  border-color: var(--border);
   background: rgba(34, 197, 94, 0.16);
 }
 .rehearsal-section-item .rehearsal-item-label {
@@ -2917,14 +2925,19 @@ main.lp-tab-active .perform-grid {
   background: rgba(139, 92, 246, 0.10);
   transform: translateY(-1px);
 }
+/* Native parity (same treatment as the band-room green fix): result
+   state is signalled by the tinted fill + semantic TEXT colour; the
+   card border stays quiet --border instead of glowing green/red. */
 .rehearsal-tile.is-pass {
-  border-color: var(--good);
+  border-color: var(--border);
   background: rgba(34, 197, 94, 0.12);
 }
+.rehearsal-tile.is-pass .rehearsal-tile-label { color: var(--good); }
 .rehearsal-tile.is-fail {
-  border-color: var(--bad);
+  border-color: var(--border);
   background: rgba(239, 68, 68, 0.10);
 }
+.rehearsal-tile.is-fail .rehearsal-tile-label { color: var(--bad); }
 .rehearsal-empty {
   color: var(--text-dim);
   font-style: italic;
@@ -3172,7 +3185,8 @@ main.lp-tab-active .perform-grid {
   flex-shrink: 0;
 }
 .rehearsal-section-row.is-complete .rehearsal-check {
-  border-color: var(--good);
+  /* green lives in the ✓ glyph + tint; border stays quiet */
+  border-color: var(--border);
   background: rgba(34, 197, 94, 0.16);
 }
 
@@ -3638,7 +3652,8 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   background: rgba(139, 92, 246, 0.08);
 }
 .warmup-tile.is-passed {
-  border-color: var(--good, #22C55E);
+  /* band-room parity: green text + tint, border stays quiet */
+  border-color: var(--border);
   background: rgba(34, 197, 94, 0.12);
   color: var(--good, #22C55E);
 }
@@ -3838,7 +3853,8 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 }
 .mastery-chip.is-mastered {
   color: #ffffff;
-  border-color: var(--good);
+  /* translucent like the sibling states — no full-strength green ring */
+  border-color: rgba(34, 197, 94, 0.45);
   background: rgba(34, 197, 94, 0.35);
 }
 /* Fading: previously locked-in, but stale. Muted amber signals
@@ -3900,16 +3916,18 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 /* Tile fine-grained failure states. is-fail keeps the existing red
    treatment (defined elsewhere); is-close/early/late nudge the
    colour warmer so a musician sees "almost there" vs "wrong". */
+/* Borders stay quiet --border (band-room parity); the tint + the
+   coloured why-hint text below carry the close/early/late semantics. */
 .rehearsal-tile.is-close {
-  border-color: #86efac;
+  border-color: var(--border);
   background: rgba(134, 239, 172, 0.10);
 }
 .rehearsal-tile.is-early {
-  border-color: #93c5fd;
+  border-color: var(--border);
   background: rgba(147, 197, 253, 0.10);
 }
 .rehearsal-tile.is-late {
-  border-color: #f4c063;
+  border-color: var(--border);
   background: rgba(244, 192, 99, 0.10);
 }
 
@@ -4606,8 +4624,16 @@ body:has(#view-intake.active) #jam-app {
   max-width: 900px;
   padding: clamp(6px, 1.5vh, 20px) 24px;
   display: flex;
+  /* Column, not row: #jam-app also holds the .plugin-download footer
+     line — in a row flexbox it rendered BESIDE the upload card,
+     vertically centered off to the right. Column keeps it under the
+     landing stack where it reads as a footer. */
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+}
+body:has(#view-intake.active) #jam-app .plugin-download {
+  flex: 0 0 auto;
 }
 body:has(#view-intake.active) #view-intake.active { width: 100%; }
 

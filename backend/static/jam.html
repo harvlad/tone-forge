@@ -4,8 +4,13 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>JamN — What are we playing?</title>
-<link rel="stylesheet" href="/static/jam.css?v=70" />
+<link rel="stylesheet" href="/static/jam.css?v=71" />
 <link rel="stylesheet" href="/static/kit.css?v=3">
+<link rel="stylesheet" href="/static/stage.css?v=1">
+<link rel="stylesheet" href="/static/sequencer.css?v=1">
+<link rel="stylesheet" href="/static/recordings.css?v=1">
+<link rel="stylesheet" href="/static/packs.css?v=1">
+<link rel="stylesheet" href="/static/contribute.css?v=1">
 <style>
   /* Jamn desktop-chrome shell: left sidebar + centered pill nav.
      Deliberately small and local — jam.css is owned by the theming
@@ -1432,6 +1437,15 @@
        router calls it whenever this pane activates with a loaded song. -->
   <section class="view" id="view-kit"><div id="kit-root"></div></section>
 
+  <!-- Full-parity tool surfaces: each pane hosts a self-contained module
+       (stage/sequencer/recordings/packs/contribute .js) mounted by the
+       router — mirrors the native desktop TOOLS sidebar 1:1. -->
+  <section class="view" id="view-stage"><div id="stage-root"></div></section>
+  <section class="view" id="view-sequencer"><div id="sequencer-root"></div></section>
+  <section class="view" id="view-recordings"><div id="recordings-root"></div></section>
+  <section class="view" id="view-packs"><div id="packs-root"></div></section>
+  <section class="view" id="view-contribute"><div id="contribute-root"></div></section>
+
   <!-- ============================== MIXER =============================== -->
   <!-- Stems mixer, promoted from the perform center column to its own
        surface (native 5-surface IA). Every id preserved verbatim —
@@ -1540,7 +1554,12 @@
 
 <script src="/static/account.js?v=1"></script>
 <script src="/static/launchpad.js?v=23"></script>
-<script src="/static/kit.js?v=2"></script>
+<script src="/static/kit.js?v=3"></script>
+<script src="/static/stage.js?v=1"></script>
+<script src="/static/sequencer.js?v=1"></script>
+<script src="/static/recordings.js?v=1"></script>
+<script src="/static/packs.js?v=1"></script>
+<script src="/static/contribute.js?v=1"></script>
 <script src="/static/jam.js?v=127"></script>
 </body>
 </html>

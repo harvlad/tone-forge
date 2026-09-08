@@ -1,0 +1,253 @@
+/* contribute.css — styles for the Contribute surface (contribute.js).
+ * All colors ride the shared --jamn-* custom properties with hard
+ * fallbacks, same discipline as kit.css, so the module renders sanely
+ * even if jam.css hasn't loaded yet. */
+
+.jc-root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  color: var(--jamn-text, #fff);
+  max-width: 720px;
+}
+
+/* ---- tab strip ---- */
+
+.jc-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.jc-tab {
+  padding: 8px 18px;
+  border-radius: var(--jamn-radius-md, 12px);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  cursor: pointer;
+}
+
+.jc-tab--active {
+  background: var(--jamn-accent, #8B5CF6);
+  border-color: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+}
+
+.jc-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.jc-title { margin: 4px 0 0; font-size: 18px; }
+
+.jc-sub {
+  margin: 0;
+  color: var(--jamn-text2, #A1A1AA);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* ---- status / banners / notes ---- */
+
+.jc-status {
+  color: var(--jamn-text2, #A1A1AA);
+  font-size: 13px;
+}
+
+.jc-banner {
+  padding: 10px 12px;
+  border-radius: var(--jamn-radius-sm, 8px);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.jc-banner--error {
+  border-color: var(--jamn-danger, #EF4444);
+  color: var(--jamn-danger, #EF4444);
+}
+
+.jc-note {
+  color: var(--jamn-text2, #A1A1AA);
+  font-size: 12px;
+}
+
+/* ---- buttons ---- */
+
+.jc-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.jc-btn {
+  padding: 8px 16px;
+  border-radius: var(--jamn-radius-sm, 8px);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text, #fff);
+  font: inherit;
+  cursor: pointer;
+}
+
+.jc-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.jc-btn--primary {
+  background: var(--jamn-accent, #8B5CF6);
+  border-color: var(--jamn-accent, #8B5CF6);
+}
+
+.jc-btn--danger {
+  border-color: var(--jamn-danger, #EF4444);
+  color: var(--jamn-danger, #EF4444);
+}
+
+.jc-btn--ghost { color: var(--jamn-text2, #A1A1AA); }
+.jc-btn--ghost:hover:not(:disabled) { color: var(--jamn-text, #fff); }
+
+/* ---- meter + clock (recording state) ---- */
+
+.jc-meter-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.jc-meter {
+  flex: 1;
+  height: 64px;
+  border-radius: var(--jamn-radius-sm, 8px);
+  background: var(--jamn-surface2, #1C1C24);
+}
+
+.jc-clock {
+  font-variant-numeric: tabular-nums;
+  color: var(--jamn-text2, #A1A1AA);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* ---- waveform review ---- */
+
+.jc-review {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-lg, 16px);
+  background: var(--jamn-surface1, #14141A);
+}
+
+.jc-wave {
+  width: 100%;
+  height: 96px;
+  border-radius: var(--jamn-radius-sm, 8px);
+  background: var(--jamn-surface2, #1C1C24);
+}
+
+.jc-wave--trim {
+  cursor: ew-resize;
+  touch-action: none; /* pointer-drag trim handles on touch screens */
+}
+
+/* ---- inputs ---- */
+
+.jc-name-row { display: flex; gap: 8px; }
+
+.jc-input {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: var(--jamn-radius-sm, 8px);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+  font: inherit;
+}
+
+.jc-input--bpm { flex: 0 0 72px; text-align: center; }
+
+/* ---- beat tempo row ---- */
+
+.jc-tempo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.jc-label {
+  color: var(--jamn-text2, #A1A1AA);
+  font-size: 13px;
+}
+
+.jc-beat-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--jamn-border, #2A2A36);
+  margin-left: 4px;
+}
+
+.jc-beat-dot--on { animation: jc-pulse 0.18s ease-out; }
+.jc-beat-dot--accent { background: var(--jamn-accent, #8B5CF6); }
+
+@keyframes jc-pulse {
+  0% { background: var(--jamn-success, #22C55E); transform: scale(1.5); }
+  100% { transform: scale(1); }
+}
+
+/* ---- take list ---- */
+
+.jc-takes-heading {
+  margin-top: 8px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--jamn-text2, #A1A1AA);
+}
+
+.jc-takes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.jc-empty {
+  color: var(--jamn-text2, #A1A1AA);
+  font-size: 13px;
+}
+
+.jc-take {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-md, 12px);
+  background: var(--jamn-surface1, #14141A);
+}
+
+.jc-take-main { flex: 1; min-width: 0; }
+
+.jc-take-name {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jc-take-meta {
+  font-size: 12px;
+  color: var(--jamn-text2, #A1A1AA);
+}

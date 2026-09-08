@@ -1,0 +1,188 @@
+/* packs.css — Packs browser surface (packs.js).
+ *
+ * Card look mirrors the native pack browsers (rounded tiles with a
+ * tinted cover, name + family/pad-count meta). Everything rides the
+ * shared --jamn-* tokens from jam.css; fallbacks keep the surface
+ * legible if mounted standalone. Scoped under .jamn-packs — no
+ * selectors leak into the host page. */
+
+.jamn-packs {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px;
+  color: var(--jamn-text, #fff);
+}
+
+.jamn-packs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.jamn-packs-heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--jamn-text, #fff);
+}
+
+.jamn-packs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 12px;
+}
+
+/* ---------------------------------------------------------------- card */
+
+.jamn-pack-card {
+  /* <button> reset */
+  appearance: none;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--jamn-radius-md, 12px);
+  overflow: hidden;
+  transition: transform 120ms ease, border-color 120ms ease,
+              box-shadow 120ms ease;
+}
+
+.jamn-pack-card:hover,
+.jamn-pack-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--pack-tint, var(--jamn-accent, #8B5CF6)) 60%,
+                          var(--jamn-border, #2A2A36));
+  outline: none;
+}
+
+.jamn-pack-card--selected {
+  border-color: var(--pack-tint, var(--jamn-accent, #8B5CF6));
+  box-shadow: 0 0 0 1px var(--pack-tint, var(--jamn-accent, #8B5CF6)),
+              0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------------------------------------------------------- cover tile */
+
+.jamn-pack-cover {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* tinted gradient set inline by packs.js; this is the no-JS floor */
+  background: var(--jamn-surface2, #1C1C24);
+}
+
+.jamn-pack-cover-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.jamn-pack-glyph {
+  font-size: 26px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+  user-select: none;
+}
+
+.jamn-pack-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+/* ---------------------------------------------------------------- body */
+
+.jamn-pack-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px 12px;
+}
+
+.jamn-pack-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--jamn-text, #fff);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jamn-pack-meta {
+  font-size: 11px;
+  color: var(--jamn-text2, #A1A1AA);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Secondary action on song cards: load the drum kit instead of the
+   performance kit. Rendered inside the <button> card, so it's a
+   role=button span, not a nested button (invalid HTML). */
+.jamn-pack-chip {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface2, #1C1C24);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--jamn-text2, #A1A1AA);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.jamn-pack-chip:hover,
+.jamn-pack-chip:focus-visible {
+  color: var(--jamn-text, #fff);
+  border-color: var(--jamn-cat-drums, #F97316);
+  outline: none;
+}
+
+/* --------------------------------------------------------------- notes */
+
+.jamn-packs-note {
+  grid-column: 1 / -1;
+  padding: 18px 12px;
+  border: 1px dashed var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-md, 12px);
+  font-size: 12px;
+  color: var(--jamn-text2, #A1A1AA);
+  text-align: center;
+}
+
+.jamn-packs-note--error {
+  color: var(--jamn-danger, #EF4444);
+  border-color: color-mix(in srgb, var(--jamn-danger, #EF4444) 40%,
+                          var(--jamn-border, #2A2A36));
+}
+
+@media (max-width: 480px) {
+  .jamn-packs { padding: 12px; }
+  .jamn-packs-grid {
+    grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+    gap: 10px;
+  }
+}

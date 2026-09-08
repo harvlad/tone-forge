@@ -1,0 +1,212 @@
+/* recordings.css — session Recordings surface (recordings.js).
+ * All colors ride the shared --jamn-* custom properties with the same
+ * hard fallbacks as kit.css so the surface matches the Auto Kit look
+ * even on a page that hasn't defined the tokens. */
+
+.rec-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 1080px; /* stay aligned with .kit-grid */
+  margin-inline: auto;
+  box-sizing: border-box;
+  color: var(--jamn-text, #fff);
+}
+
+/* ---------- header ---------- */
+
+.rec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rec-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--jamn-text, #fff);
+}
+
+.rec-record {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text2, #A1A1AA);
+  cursor: pointer;
+}
+
+.rec-record:hover:not(:disabled) {
+  color: var(--jamn-text, #fff);
+}
+
+.rec-record:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Armed look: red dot + pulse so a live take is impossible to miss. */
+.rec-record.is-recording {
+  border-color: #EF4444;
+  color: #EF4444;
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+
+.rec-record.is-recording::before {
+  content: '●';
+  margin-right: 6px;
+}
+
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.rec-status {
+  font-size: 0.85rem;
+  color: var(--jamn-text2, #A1A1AA);
+  min-height: 1em;
+}
+
+.rec-status:empty {
+  display: none;
+}
+
+/* ---------- takes list ---------- */
+
+.rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rec-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-lg, 16px);
+  background: var(--jamn-surface1, #14141A);
+}
+
+.rec-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* The name is an input styled as plain text — editable in place with
+ * no separate rename affordance, like a Finder-style click-to-edit. */
+.rec-name {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--jamn-text, #fff);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 4px;
+  margin-left: -4px; /* keep text flush with the sub-line */
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.rec-name:hover {
+  border-color: var(--jamn-border, #2A2A36);
+}
+
+.rec-name:focus {
+  outline: none;
+  border-color: var(--jamn-accent, #8B5CF6);
+  background: var(--jamn-surface2, #1C1C24);
+}
+
+.rec-sub {
+  font-size: 12px;
+  color: var(--jamn-text2, #A1A1AA);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rec-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.rec-btn {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text2, #A1A1AA);
+  cursor: pointer;
+}
+
+.rec-btn:hover {
+  color: var(--jamn-text, #fff);
+}
+
+.rec-play.is-on {
+  border-color: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-accent, #8B5CF6);
+}
+
+.rec-delete:hover {
+  border-color: #EF4444;
+  color: #EF4444;
+}
+
+/* ---------- empty state ---------- */
+
+.rec-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 16px;
+  border: 1px dashed var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-lg, 16px);
+  text-align: center;
+}
+
+.rec-empty-icon {
+  font-size: 24px;
+  color: var(--jamn-text2, #A1A1AA);
+}
+
+.rec-empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--jamn-text2, #A1A1AA);
+}
+
+.rec-empty-hint {
+  font-size: 12px;
+  color: var(--jamn-text2, #A1A1AA);
+  opacity: 0.7;
+  max-width: 320px;
+}

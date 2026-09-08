@@ -14271,7 +14271,10 @@
       intake: 'intake',
       bandroom: 'bandroom',
       rehearsal: 'rehearsal',
-      perform: 'perform',
+      // Native parity: the Perform pill opens the fretboard STAGE
+      // (stage.js) like the desktop app; the legacy chord-card perform
+      // view stays reachable via the Launchpad sidebar item.
+      perform: 'stage',
       jampads: 'kit',
       mixer: 'mixer',
       library: 'library', // fallback pane; primary access is the sidebar
@@ -14281,19 +14284,29 @@
       bandroom: 'bandroom',
       rehearsal: 'rehearsal',
       perform: 'perform',
+      stage: 'perform',
       kit: 'jampads',
       mixer: 'mixer',
       library: 'library',
     };
-    // Sidebar items that select a real pane; everything else in the
-    // sidebar is a "coming to web" placeholder.
-    const SIDE_TO_VIEW = { jampads: 'kit', mixer: 'mixer' };
+    // Every sidebar item routes to a REAL pane (full-parity build) —
+    // voice/beat/sample share the contribute pane, tab-selected below.
+    const SIDE_TO_VIEW = {
+      jampads: 'kit', mixer: 'mixer',
+      sequencer: 'sequencer', recordings: 'recordings', packs: 'packs',
+      voice: 'contribute', beat: 'contribute', sample: 'contribute',
+    };
 
     // Register the new panes in the shared registry so the existing
     // showView() owns their visibility exactly like the legacy four.
     views.kit = $('view-kit');
     views.mixer = $('view-mixer');
     views.library = $('view-library');
+    views.stage = $('view-stage');
+    views.sequencer = $('view-sequencer');
+    views.recordings = $('view-recordings');
+    views.packs = $('view-packs');
+    views.contribute = $('view-contribute');
 
     const pillnav = $('jamn-pillnav');
     const pills = pillnav
@@ -14365,6 +14378,174 @@
         .catch(() => {});
     }
 
+    // ------------------------------------------ tool-surface mounts
+    // Each tool pane hosts a self-contained module (stage/sequencer/
+    // recordings/packs/contribute). Mount lazily on first visit; every
+    // mount is feature-checked so a missing module degrades to a note.
+    let _stageMounted = null;   // entry id the stage was mounted for
+    let _contribTab = null;     // pending tab from a sidebar click
+
+    function _paneNote(rootId, msg) {
+      const el = $(rootId);
+      if (el && !el.firstChild) {
+        const d = document.createElement('div');
+        d.className = 'kit-error';
+        d.textContent = msg;
+        el.appendChild(d);
+      }
+    }
+
+    function _mountStage() {
+      const id = state.analysisId;
+      if (!id) { _paneNote('stage-root', 'Load a song to open the stage.'); return; }
+      if (_stageMounted === id) return;
+      if (!window.JamnStage) { _paneNote('stage-root', 'Stage module missing.'); return; }
+      const root = $('stage-root');
+      const mountIt = (entry, bundle) => {
+        try {
+          window.JamnStage.mount(root, {
+            entry, bundle,
+            getTime: () => { try { return currentPlayTime(); } catch (_) { return 0; } },
+            onSongGain: g => { try { if (state.masterGain) state.masterGain.gain.value = g; } catch (_) {} },
+            onStemGain: (role, g) => _stageStem(role, s => { s.lastGain = g; if (s.gainNode && !s._muted) s.gainNode.gain.value = g; }),
+            onStemMute: (role, m) => _stageStem(role, s => { s._muted = m; if (s.gainNode) s.gainNode.gain.value = m ? 0 : (s.lastGain ?? 1); }),
+            onSolo: (role, on) => {
+              // Solo semantics: any solo silences the rest (mute wins).
+              const solos = (_stageSolos ||= new Set());
+              on ? solos.add(role) : solos.delete(role);
+              for (const [name, s] of state.stems.entries()) {
+                const r = s.role || String(name).split('.').pop();
+                const audible = !solos.size || solos.has(r);
+                if (s.gainNode) s.gainNode.gain.value = (!audible || s._muted) ? 0 : (s.lastGain ?? 1);
+              }
+            },
+          });
+          window.JamnStage.setTransport?.({
+            play: () => { try { playAll(); } catch (_) {} },
+            pause: () => { try { pauseAll(); } catch (_) {} },
+            isPlaying: () => !!state.isPlaying,
+            getTime: () => { try { return currentPlayTime(); } catch (_) { return 0; } },
+            getDuration: () => (entry?.result?.duration_sec || bundle?.audio?.duration_s || 0),
+            seek: t => { try { seekAll(t); } catch (_) {} },
+          });
+          _stageMounted = id;
+        } catch (e) { console.warn('[jamn-router] stage mount failed:', e); }
+      };
+      const entryP = (_currentEntry && _currentEntry.id === id)
+        ? Promise.resolve(_currentEntry)
+        : fetch(`/api/history/${id}`).then(r => (r.ok ? r.json() : null));
+      const bundleP = fetch(`/api/session/${id}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+      Promise.all([entryP, bundleP]).then(([entry, bundle]) => {
+        if (!entry || state.analysisId !== id) return;
+        _currentEntry = entry;
+        mountIt(entry, bundle);
+      });
+    }
+    let _stageSolos = null;
+    function _stageStem(role, fn) {
+      for (const [name, s] of state.stems.entries()) {
+        const r = s.role || String(name).split('.').pop();
+        if (r === role) { try { fn(s); } catch (_) {} }
+      }
+    }
+
+    function _mountSequencer() {
+      const root = $('sequencer-root');
+      if (!root) return;
+      const engine = window.JamnKit?.engine?.();
+      const pads = window.JamnKit?.pads?.() || [];
+      if (!engine || !pads.length) {
+        root.innerHTML = '';
+        _paneNote('sequencer-root',
+          'Open Jam Pads first — the sequencer drives the loaded kit’s pads.');
+        return;
+      }
+      try {
+        root.innerHTML = '';
+        window.JamnSequencer?.mount(root, {
+          engine, pads,
+          audioContext: window.JamnKit.audioContext?.(),
+          tempoBpm: _currentEntry?.result?.tempo_bpm || 0,
+          analysisId: state.analysisId || 'default',
+        });
+      } catch (e) { console.warn('[jamn-router] sequencer mount failed:', e); }
+    }
+
+    let _recMounted = false;
+    function _mountRecordings() {
+      if (_recMounted) return;
+      const root = $('recordings-root');
+      if (!root || !window.JamnRecordings) return;
+      try {
+        const ctx = state.ctx || window.JamnKit?.audioContext?.();
+        window.JamnRecordings.mount(root, { audioContext: ctx });
+        // Tap whatever master buses exist so the take hears the jam.
+        if (ctx && state.masterGain) {
+          try { state.masterGain.connect(window.JamnRecordings.createTap(ctx)); } catch (_) {}
+        }
+        const kctx = window.JamnKit?.audioContext?.();
+        if (kctx && kctx !== ctx) {
+          try { window.JamnRecordings.attachSource(kctx.destination); } catch (_) {}
+        }
+        _recMounted = true;
+      } catch (e) { console.warn('[jamn-router] recordings mount failed:', e); }
+    }
+
+    let _packsMounted = false;
+    function _mountPacks() {
+      if (_packsMounted) return;
+      const root = $('packs-root');
+      if (!root || !window.JamnPacks) return;
+      try {
+        window.JamnPacks.mount(root, {
+          entry: _currentEntry,
+          onMountKit: desc => {
+            if (desc.kind === 'sample-pack') {
+              window.JamnKit?.mountPack?.(desc);
+              showView('kit');
+              return;
+            }
+            fetch(`/api/history/${desc.entryId}`)
+              .then(r => (r.ok ? r.json() : null))
+              .then(entry => {
+                if (!entry) return;
+                _currentEntry = entry;
+                window.JamnKit?.mount(entry, { kind: desc.kind });
+                _mountedEntryId = entry.id;
+                showView('kit');
+              });
+          },
+        });
+        _packsMounted = true;
+      } catch (e) { console.warn('[jamn-router] packs mount failed:', e); }
+    }
+
+    let _contribMounted = false;
+    function _mountContribute() {
+      const root = $('contribute-root');
+      if (!root || !window.JamnContribute) return;
+      if (!_contribMounted) {
+        try {
+          window.JamnContribute.mount(root, {
+            audioContext: state.ctx || undefined,
+            entry: _currentEntry,
+          });
+          _contribMounted = true;
+        } catch (e) { console.warn('[jamn-router] contribute mount failed:', e); }
+      }
+      if (_contribTab) {
+        // Best-effort tab select: modules render tabs as buttons with
+        // text Voice/Beat/Sample.
+        const want = _contribTab; _contribTab = null;
+        try {
+          const btns = root.querySelectorAll('button');
+          for (const b of btns) {
+            if (b.textContent.trim().toLowerCase() === want) { b.click(); break; }
+          }
+        } catch (_) {}
+      }
+    }
+
     // ---------------------------------------------- showView wrapper
     // Function declarations are mutable bindings, so every existing
     // call site (bandroom CTAs, deep link, cancel, …) picks up the
@@ -14388,7 +14569,8 @@
       if (sidebar) sidebar.classList.remove('jamn-side--open');
       // Native parity: the desktop app hides its sidebar on Perform
       // (stage needs the width). CSS keys off this body class.
-      document.body.classList.toggle('jamn-no-side', name === 'perform');
+      document.body.classList.toggle('jamn-no-side',
+        name === 'perform' || name === 'stage');
       if (surface && window.location.hash !== '#' + surface) {
         // replaceState (not location.hash=) so surface hops don't pile
         // up history entries; it also never fires hashchange, so no
@@ -14397,6 +14579,11 @@
       }
       if (name === 'kit') _mountKitIfReady();
       if (name === 'library') _renderLibrary();
+      if (name === 'stage') _mountStage();
+      if (name === 'sequencer') _mountSequencer();
+      if (name === 'recordings') _mountRecordings();
+      if (name === 'packs') _mountPacks();
+      if (name === 'contribute') _mountContribute();
     };
 
     // ---------------------------------------------- pill nav + hash
@@ -14426,6 +14613,7 @@
       _userActed = true;
       const side = it.dataset.side;
       const view = SIDE_TO_VIEW[side];
+      if (view === 'contribute') _contribTab = side; // preselect Voice/Beat/Sample tab
       if (view) { showView(view); return; }
       if (side === 'launchpad') {
         // Launchpad lives as a center tab inside the perform surface.

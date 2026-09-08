@@ -54,7 +54,7 @@
 
   var current = null;
 
-  function mount(entry) {
+  function mount(entry, opts) {
     try {
       var root = document.getElementById("kit-root");
       if (!root) return;
@@ -71,6 +71,7 @@
         latch: false,
         raf: 0,
         onResize: null,
+        kitKind: (opts && opts.kind && opts.kind !== "auto") ? opts.kind : null,
       };
       if (!entry || !entry.id || !entry.result) {
         showError(current, "No analysis loaded.");
@@ -116,7 +117,8 @@
     if (!AC) return Promise.reject(new Error("Web Audio unsupported"));
     s.ctx = new AC();
 
-    var kitP = fetch("/api/song/" + encodeURIComponent(entry.id) + "/kit?pads=16").then(
+    var kindQ = s.kitKind ? "&kind=" + encodeURIComponent(s.kitKind) : "";
+    var kitP = fetch("/api/song/" + encodeURIComponent(entry.id) + "/kit?pads=16" + kindQ).then(
       function (r) {
         if (!r.ok) throw new Error("kit HTTP " + r.status);
         return r.json();
@@ -582,9 +584,92 @@
     } catch (_) {}
   }
 
+  /** Mount a curated sample pack (/api/sample-packs/{packId}) onto the pad
+   * surface: each pad's audio file becomes its own single-pad "stem" with a
+   * whole-buffer slice, so PadEngine plays them as one-shots with the same
+   * normalize/edge-fade path the song kits get. */
+  function mountPack(desc) {
+    var root = document.getElementById("kit-root");
+    if (!root || !desc || !desc.packId) return;
+    if (current) unmount();
+    current = {
+      root: root, entry: null, alive: true, ctx: null, engine: null,
+      pads: [], padEls: [], mode: "tap", latch: false, raf: 0, onResize: null,
+    };
+    renderShell(current);
+    var s = current;
+    if (s.titleEl) s.titleEl.textContent = desc.name || "Pack";
+    var AC = window.AudioContext || window.webkitAudioContext;
+    s.ctx = new AC();
+    fetch("/api/sample-packs/" + encodeURIComponent(desc.packId))
+      .then(function (r) {
+        if (!r.ok) throw new Error("pack HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (manifest) {
+        if (!s.alive) return;
+        var pads = (manifest && manifest.pads) || [];
+        if (!pads.length) throw new Error("pack has no pads");
+        var stems = {};
+        var kitPads = [];
+        var loads = pads.map(function (p, i) {
+          var idx = typeof p.padIdx === "number" ? p.padIdx : i;
+          var fname = p.sampleFile || p.file || p.sampleUrl || p.filename;
+          if (!fname) return null;
+          var url = /^https?:|^\//.test(fname)
+            ? fname
+            : "/api/sample-packs/" + encodeURIComponent(desc.packId) +
+              "/pads/" + encodeURIComponent(fname);
+          return fetch(url)
+            .then(function (r) { return r.ok ? r.arrayBuffer() : Promise.reject(new Error("pad HTTP " + r.status)); })
+            .then(function (b) { return s.ctx.decodeAudioData(b); })
+            .then(function (buf) {
+              var role = "pad" + idx;
+              stems[role] = buf;
+              kitPads.push({
+                padIdx: idx,
+                name: p.name || ("Pad " + (idx + 1)),
+                colorHint: p.colorHint || desc.paletteHint || null,
+                stemSlice: { stemRole: role, startSec: 0, endSec: buf.duration },
+                loopable: !!p.loopable,
+              });
+            })
+            .catch(function () { return null; });
+        });
+        return Promise.all(loads).then(function () {
+          if (!s.alive) return;
+          if (!kitPads.length) throw new Error("no pack pads decoded");
+          kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
+          s.kit = { name: desc.name || manifest.name || "Pack", pads: kitPads };
+          s.pads = kitPads;
+          return import("./padengine.js").then(function (mod) {
+            if (!s.alive) return;
+            var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
+            s.engine = new PadEngine(s.ctx, s.ctx.destination);
+            s.engine.setStems(stems);
+            s.engine.setKit(s.kit, { tempoBpm: manifest.tempoBpm || 0 });
+            return Promise.resolve(s.engine.prepare()).then(function () {
+              if (!s.alive) return;
+              attachEngineState(s);
+              renderPads(s);
+              startRaf(s);
+            });
+          });
+        });
+      })
+      .catch(function (err) {
+        if (s.alive) showError(s, "Pack failed to load: " + ((err && err.message) || err));
+      });
+  }
+
   window.JamnKit = {
     mount: mount,
     unmount: unmount,
+    mountPack: mountPack,
+    // Live handles for sibling tools (sequencer drives the same engine).
+    engine: function () { return current && current.engine; },
+    pads: function () { return (current && current.pads) || []; },
+    audioContext: function () { return current && current.ctx; },
     // Pure helpers exposed for the DOM-free smoke test only.
     _internals: { resolveStemUrl: resolveStemUrl, parseColor: parseColor },
   };

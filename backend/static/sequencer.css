@@ -1,0 +1,224 @@
+/* sequencer.css — step-sequencer surface (web mirror of the native
+ * PatternEditorView / SequencerPanelView). Rides the shared --jamn-*
+ * tokens with hard fallbacks, matching the kit.css look: 16px panel
+ * radii, surface2 cells, per-row tint via an "r,g,b" --pad-tint triple
+ * (set from the pad's colorHint by sequencer.js) so rgba(var(--pad-tint), a)
+ * composes the tint-on fills without per-category CSS. */
+
+.seq-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--jamn-text, #fff);
+  width: 100%;
+  max-width: 1080px; /* stay aligned with .kit-grid */
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+/* ---------- transport row ---------- */
+
+.seq-transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.seq-play {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  min-width: 72px;
+  padding: 7px 14px;
+  border-radius: var(--jamn-radius-sm, 8px);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-success, #22C55E);
+  cursor: pointer;
+}
+
+.seq-play.is-playing {
+  color: var(--jamn-danger, #EF4444);
+  border-color: var(--jamn-danger, #EF4444);
+}
+
+/* Armed: start queued on the lock-grid boundary — pulse like the kit's
+ * armed pads so the wait reads "waiting for the beat", not broken. */
+.seq-play.is-armed {
+  color: var(--jamn-accent, #8B5CF6);
+  border-color: var(--jamn-accent, #8B5CF6);
+  animation: seq-armed-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes seq-armed-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+  50%      { box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.45); }
+}
+
+/* Segmented controls (slot picker A–D, 16/32) — same as .kit-seg. */
+.seq-seg {
+  display: inline-flex;
+  background: var(--jamn-surface1, #14141A);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-sm, 8px);
+  padding: 2px;
+}
+
+.seq-seg-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.seq-seg-btn.is-on {
+  background: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+}
+
+.seq-swing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--jamn-text2, #A1A1AA);
+}
+
+.seq-swing input[type="range"] {
+  width: 90px;
+  accent-color: var(--jamn-accent, #8B5CF6);
+}
+
+.seq-swing-val {
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+
+.seq-tempo {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--jamn-text2, #A1A1AA);
+  padding: 5px 10px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-sm, 8px);
+  background: var(--jamn-surface1, #14141A);
+}
+
+.seq-toggle {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--jamn-radius-sm, 8px);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text2, #A1A1AA);
+  cursor: pointer;
+  margin-left: auto; /* park the row-collapse on the right edge */
+}
+
+.seq-toggle.is-on {
+  border-color: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-accent, #8B5CF6);
+}
+
+/* ---------- grid ---------- */
+
+.seq-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-lg, 16px);
+  background: var(--jamn-surface1, #14141A);
+  overflow-x: auto; /* 32 steps on a narrow screen scroll, never wrap */
+}
+
+.seq-row {
+  --pad-tint: 139, 92, 246; /* accent fallback until colorHint lands */
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: max-content;
+}
+
+.seq-row-label {
+  appearance: none;
+  border: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--jamn-text, #fff);
+  width: 96px;
+  flex: 0 0 96px;
+  padding: 0 8px;
+  border-radius: 6px;
+  /* Tinted chip like an idle kit pad: tint at low opacity over surface2. */
+  background:
+    linear-gradient(rgba(var(--pad-tint), 0.28), rgba(var(--pad-tint), 0.28)),
+    var(--jamn-surface2, #1C1C24);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seq-row-cells {
+  display: grid;
+  grid-template-columns: repeat(var(--seq-steps, 16), minmax(22px, 1fr));
+  gap: 3px;
+  flex: 1 1 auto;
+}
+
+.seq-cell {
+  appearance: none;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 6px;
+  background: var(--jamn-surface2, #1C1C24);
+  height: 30px;
+  min-width: 22px;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Beat columns (steps 1, 5, 9, ...) read slightly brighter so the bar
+ * structure is visible on an empty grid (native isBeat cells). */
+.seq-cell.is-beat {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)),
+    var(--jamn-surface2, #1C1C24);
+}
+
+/* Active step: the row's tint, solid enough to read at cell size. */
+.seq-cell.is-on {
+  background:
+    linear-gradient(rgba(var(--pad-tint), 0.85), rgba(var(--pad-tint), 0.85)),
+    var(--jamn-surface2, #1C1C24);
+  border-color: rgba(var(--pad-tint), 0.9);
+}
+
+/* Playhead column sweeps in time (native playhead stroke on the cell). */
+.seq-cell.is-playhead {
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+
+.seq-cell.is-on.is-playhead {
+  background:
+    linear-gradient(rgba(var(--pad-tint), 1), rgba(var(--pad-tint), 1)),
+    var(--jamn-surface2, #1C1C24);
+}
