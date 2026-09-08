@@ -51,6 +51,9 @@ final class SessionController: ObservableObject {
     @Published private(set) var usbLaunchpad: USBLaunchpadTransport?
     /// Generic MIDI keyboard/pad controller — note route to synth or pads.
     @Published private(set) var midiKeyboard: MIDIKeyboardTransport?
+    /// Persisted MIDI-Learn note→pad map (Settings "Map controller
+    /// pads"); a saved map routes the controller to the sample grid.
+    let midiPadMap = MIDIPadMapStore()
 
     /// Contribution-event funnel (recording taps into it in P4; the
     /// sequencer requires it at init).
@@ -483,6 +486,13 @@ final class SessionController: ObservableObject {
             nowProvider: { (song: clock.nowSongSeconds, host: mach_absolute_time()) }
         )
         midiKeyboard = keyboard
+        // MIDI Learn (iOS parity): a saved note→pad map routes the
+        // controller onto the sample grid and DROPS unmapped notes; no
+        // map keeps the plain synth route.
+        keyboard.noteRouting = MIDIPadMapStore.noteRouting(map: midiPadMap.map)
+        midiPadMap.onMapChanged = { [weak keyboard] map in
+            keyboard?.noteRouting = MIDIPadMapStore.noteRouting(map: map)
+        }
         keyboard.onContribution = { [weak self] event in
             guard let self else { return }
             self.ensureEngineStarted()

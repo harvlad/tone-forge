@@ -123,6 +123,13 @@ struct SettingsView: View {
                         : session.monitor.engineStateName)
             }
 
+            Section("MIDI controllers") {
+                MIDIControllersSection(
+                    store: session.midiPadMap,
+                    transport: session.midiKeyboard
+                )
+            }
+
             Section("Studio (admin)") {
                 SecureField("Admin token", text: $adminTokenText)
                     .onSubmit(commitAdminToken)
@@ -203,5 +210,56 @@ struct SettingsView: View {
             sessionId: model.bridgeSessionId,
             backendBaseURL: model.backendBaseURL
         )
+    }
+}
+
+// MARK: - MIDI controllers
+
+/// Generic MIDI note-controller settings (iOS parity): the MIDI-Learn
+/// pad-mapping flow plus a live list of connected inputs. Split out so
+/// the nested store is `@ObservedObject`-observed.
+private struct MIDIControllersSection: View {
+    @ObservedObject var store: MIDIPadMapStore
+    /// nil until SessionController wires the CoreMIDI transport.
+    let transport: MIDIKeyboardTransport?
+
+    @State private var showPadLearn = false
+
+    var body: some View {
+        Button("Map controller pads…") { showPadLearn = true }
+            .sheet(isPresented: $showPadLearn) {
+                MIDIPadLearnSheet(store: store, transport: transport)
+            }
+        Text(store.map.isEmpty
+             ? "For pad controllers (DJ mixers, TE boxes, LPD8): tap the "
+               + "pads once in order and they drive the sample grid. "
+               + "Without a map, notes play the synth."
+             : "Custom pad map active (\(store.map.count) pads) — "
+               + "unmapped notes are ignored.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+        if let transport {
+            MIDIInputsList(transport: transport)
+        }
+    }
+}
+
+/// Live list of connected MIDI inputs. Own view so the transport is
+/// `@ObservedObject`-observed (updates on hot-plug).
+private struct MIDIInputsList: View {
+    @ObservedObject var transport: MIDIKeyboardTransport
+
+    var body: some View {
+        if transport.connectedInputs.isEmpty {
+            Text("No MIDI inputs connected")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(transport.connectedInputs, id: \.self) { name in
+                Label(name, systemImage: "pianokeys")
+                    .font(.caption)
+            }
+        }
     }
 }

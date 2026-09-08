@@ -75,8 +75,8 @@ features:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeMobile/Launchpad/MIDIKeyboardTransport.swift#mappedPads"
       desktop:
-        status: missing
-        note: "USB Launchpad + MIDI keyboard transports exist; no learn-mode mapping yet."
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/MIDIKeyboardTransport.swift#mappedPads"
       plugin:
         status: missing
         note: "Fixed note-36 layout; in-DAW remapping covers hosted use, standalone needs learn."

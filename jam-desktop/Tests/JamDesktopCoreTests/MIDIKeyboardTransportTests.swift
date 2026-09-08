@@ -189,6 +189,90 @@ final class MIDIKeyboardTransportTests: XCTestCase {
         XCTAssertTrue(events.isEmpty)
     }
 
+    // MARK: - mappedPads routing (MIDI Learn)
+
+    func testMappedPadsRoutesLearnedNote() {
+        let t = makeTransport()
+        plugInKeyboard()
+        // A split-layout controller: note 70 learned onto pad idx 5.
+        t.noteRouting = .mappedPads(map: [70: 5, 40: 0])
+        midi.receive([.noteOn(channel: 0, note: 70, velocity: 100)],
+                     from: Self.keyboard)
+        drainMainQueue()
+
+        // idx 5 → row 8 - 5/4 = 7, col 5%4 + 1 = 2.
+        XCTAssertEqual(events.map(\.kind), [.padDown(row: 7, col: 2)])
+    }
+
+    func testMappedPadsNoteOffEmitsPadUp() {
+        let t = makeTransport()
+        plugInKeyboard()
+        t.noteRouting = .mappedPads(map: [40: 0])
+        midi.receive([.noteOff(channel: 0, note: 40, velocity: 0)],
+                     from: Self.keyboard)
+        drainMainQueue()
+
+        XCTAssertEqual(events.map(\.kind), [.padUp(row: 8, col: 1)])
+    }
+
+    func testMappedPadsDropsUnmappedNotes() {
+        let t = makeTransport()
+        plugInKeyboard()
+        t.noteRouting = .mappedPads(map: [40: 0])
+        // Unmapped notes must be DROPPED, not fall through to the synth
+        // (mandatory cross-platform semantic — half-mapped hardware must
+        // not spray synth notes mid-jam).
+        midi.receive([.noteOn(channel: 0, note: 41, velocity: 100),
+                      .noteOff(channel: 0, note: 41, velocity: 0)],
+                     from: Self.keyboard)
+        drainMainQueue()
+
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testMappedPadsIgnoresOutOfRangePadIndex() {
+        let t = makeTransport()
+        plugInKeyboard()
+        t.noteRouting = .mappedPads(map: [40: 16])   // corrupt persisted map
+        midi.receive([.noteOn(channel: 0, note: 40, velocity: 100)],
+                     from: Self.keyboard)
+        drainMainQueue()
+
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    // MARK: - Learn tap
+
+    func testLearnTapFiresForEveryNoteOnBeforeRouting() {
+        let t = makeTransport()
+        plugInKeyboard()
+        var learned: [Int] = []
+        t.onLearnNote = { learned.append($0) }
+        // Unmapped-note drop must NOT starve the learn tap — capture
+        // happens before routing, in every routing mode.
+        t.noteRouting = .mappedPads(map: [:])
+        midi.receive([.noteOn(channel: 0, note: 60, velocity: 100),
+                      .noteOn(channel: 3, note: 61, velocity: 1)],
+                     from: Self.keyboard)
+        drainMainQueue()
+
+        XCTAssertEqual(learned, [60, 61])
+        XCTAssertTrue(events.isEmpty)   // still dropped by routing
+    }
+
+    func testLearnTapIgnoresReleases() {
+        let t = makeTransport()
+        plugInKeyboard()
+        var learned: [Int] = []
+        t.onLearnNote = { learned.append($0) }
+        midi.receive([.noteOff(channel: 0, note: 60, velocity: 0),
+                      .noteOn(channel: 0, note: 61, velocity: 0)],  // vel-0 = release
+                     from: Self.keyboard)
+        drainMainQueue()
+
+        XCTAssertTrue(learned.isEmpty)
+    }
+
     // MARK: - Control Change
 
     func testControlChangeSurfacedNotRoutedToAudio() {
