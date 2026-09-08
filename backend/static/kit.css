@@ -39,6 +39,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Wrap so no segmented group is clipped off the right edge on narrow
+     viewports (mobile web) — every control stays reachable. */
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 
 .kit-seg {

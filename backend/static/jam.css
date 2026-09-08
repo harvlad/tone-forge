@@ -2582,7 +2582,9 @@ main.lp-tab-active .perform-grid {
    sections. Slider rows mirror the native layout: fixed-width label,
    flexible slider, fixed-width monospace value. */
 .mixer-fx-pane {
-  max-width: 560px;
+  /* Full-bleed to match the Levels stem rack (user: "fx not full width").
+     No max cap — spans the mixer surface on desktop and mobile alike. */
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 14px;

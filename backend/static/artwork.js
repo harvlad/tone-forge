@@ -27,7 +27,14 @@
   'use strict';
 
   var ITUNES = 'https://itunes.apple.com/search';
-  var CACHE_PREFIX = 'jamn:art:';
+  // v2 namespace: the v1 cache permanently stored `null` misses, so any
+  // song whose art was probed before the fetch reliably worked (or during
+  // a transient failure) stayed blank forever. Bumping the prefix orphans
+  // those entries and forces a clean re-probe.
+  var CACHE_PREFIX = 'jamn:art:v2:';
+  // Hits are cached forever (art URLs are stable); misses only for a day,
+  // so a transient network/API hiccup never blanks a song permanently.
+  var MISS_TTL_MS = 24 * 60 * 60 * 1000;
 
   // --------------------------------------------------------------- query
   // Strip the noise a human wouldn't type into a music search: YouTube
@@ -95,14 +102,23 @@
     if (raw == null) return undefined;
     try {
       var obj = JSON.parse(raw);
-      if (obj && typeof obj === 'object' && 'u' in obj) return obj.u;
+      if (obj && typeof obj === 'object' && 'u' in obj) {
+        // Hit (string) is permanent. Miss (null) expires after MISS_TTL_MS
+        // so a transient failure self-heals on the next render past the TTL.
+        if (typeof obj.u === 'string') return obj.u;
+        var t = typeof obj.t === 'number' ? obj.t : 0;
+        var now = (typeof Date !== 'undefined' && Date.now) ? Date.now() : 0;
+        if (now && t && (now - t) < MISS_TTL_MS) return null; // honour fresh miss
+        return undefined; // stale/legacy miss — refetch
+      }
     } catch (_) { /* corrupt entry — treat as unknown */ }
     return undefined;
   }
 
   function writeCache(store, id, url) {
     if (!store || !id) return;
-    try { store.setItem(cacheKey(id), JSON.stringify({ u: url == null ? null : url })); }
+    var now = (typeof Date !== 'undefined' && Date.now) ? Date.now() : 0;
+    try { store.setItem(cacheKey(id), JSON.stringify({ u: url == null ? null : url, t: now })); }
     catch (_) { /* quota / disabled storage — degrade to no cache */ }
   }
 

@@ -95,14 +95,14 @@ assert.equal(upsizeUrl("https://x/art.jpg"), "https://x/art.jpg");
 
 // ------------------------------------------------- cache round-trip
 const c = makeStore();
-assert.equal(cacheKey("abc"), "jamn:art:abc");
+assert.equal(cacheKey("abc"), "jamn:art:v2:abc");
 assert.equal(readCache(c, "abc"), undefined, "unknown before write");
 writeCache(c, "abc", "https://x/300x300bb.jpg");
 assert.equal(readCache(c, "abc"), "https://x/300x300bb.jpg", "hit round-trips");
 writeCache(c, "def", null);
 assert.equal(readCache(c, "def"), null, "miss round-trips as null (not undefined)");
 // Corrupt payload → treated as unknown, not a throw.
-c.setItem("jamn:art:bad", "{not json");
+c.setItem("jamn:art:v2:bad", "{not json");
 assert.equal(readCache(c, "bad"), undefined, "corrupt entry is unknown");
 // No store / no id → safe no-ops.
 assert.equal(readCache(null, "x"), undefined);

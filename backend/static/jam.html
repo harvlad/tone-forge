@@ -4,8 +4,8 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>JamN — What are we playing?</title>
-<link rel="stylesheet" href="/static/jam.css?v=76" />
-<link rel="stylesheet" href="/static/kit.css?v=9">
+<link rel="stylesheet" href="/static/jam.css?v=77" />
+<link rel="stylesheet" href="/static/kit.css?v=10">
 <link rel="stylesheet" href="/static/stage.css?v=2">
 <link rel="stylesheet" href="/static/sequencer.css?v=1">
 <link rel="stylesheet" href="/static/recordings.css?v=1">
@@ -171,7 +171,12 @@
     box-shadow: 0 8px 28px rgba(0,0,0,.45);
     color: var(--jamn-text, #f4f4f8); font-size:.88rem; }
   .jamn-loading-pill[hidden] { display:none; }
-  body.jamn-no-side .jamn-loading-pill { left:50%; }
+  /* Desktop only: shift into the content column past the 260px sidebar.
+     Perform hides the sidebar, so keep it dead-center there. */
+  @media (min-width: 900px) {
+    .jamn-loading-pill { left: calc(50% + 130px); }
+    body.jamn-no-side .jamn-loading-pill { left: 50%; }
+  }
   .jamn-loading-pill-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .jamn-loading-spinner { flex:0 0 auto; width:14px; height:14px; border-radius:50%;
     border: 2px solid var(--jamn-accent-dim, rgba(168,85,247,.35));
@@ -1668,7 +1673,7 @@
 
 <script src="/static/account.js?v=1"></script>
 <script src="/static/launchpad.js?v=26"></script>
-<script src="/static/artwork.js?v=1"></script>
+<script src="/static/artwork.js?v=2"></script>
 <script src="/static/kit.js?v=12"></script>
 <script src="/static/stage.js?v=2"></script>
 <script src="/static/sequencer.js?v=3"></script>
