@@ -3524,23 +3524,71 @@ async def download_studio_app():
     return RedirectResponse(url, status_code=307)
 
 
+# The repo ships two independently-tagged product lines (connect-v*,
+# jamnkit-v*), so GitHub's single global `releases/latest` pointer can't
+# be used for downloads — whichever line released most recently would
+# hijack the other's link (and did: a Connect release once 404'd every
+# jamn-kit download). Resolve the newest release *matching a tag prefix*
+# via the API instead. Cached briefly because the prod box shares one IP
+# against the unauthenticated 60/hr limit.
+_release_asset_cache: dict[tuple[str, str], tuple[float, str]] = {}
+_RELEASE_CACHE_TTL_S = 300.0
+
+
+async def _latest_release_asset_url(tag_prefix: str, asset_name: str) -> str:
+    """browser_download_url for `asset_name` on the newest release whose
+    tag starts with `tag_prefix`. On any API failure, falls back to the
+    tag-agnostic latest/download path — correct whenever that product
+    line happens to be the global latest, best-effort otherwise."""
+    import time as _time
+
+    key = (tag_prefix, asset_name)
+    now = _time.monotonic()
+    cached = _release_asset_cache.get(key)
+    if cached and now - cached[0] < _RELEASE_CACHE_TTL_S:
+        return cached[1]
+
+    import httpx
+
+    url = ("https://github.com/harvlad/tone-forge/releases/latest/download/"
+           + asset_name)
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(
+                "https://api.github.com/repos/harvlad/tone-forge/releases",
+                params={"per_page": 30},
+                headers={"Accept": "application/vnd.github+json"},
+            )
+            resp.raise_for_status()
+            for rel in resp.json():  # API returns newest-first
+                if not str(rel.get("tag_name", "")).startswith(tag_prefix):
+                    continue
+                for asset in rel.get("assets", []):
+                    if asset.get("name") == asset_name:
+                        url = asset["browser_download_url"]
+                        break
+                break  # only the newest matching release is "latest"
+    except Exception:  # noqa: BLE001
+        logger.exception("release asset resolution failed for %s", asset_name)
+
+    _release_asset_cache[key] = (now, url)
+    return url
+
+
 @app.get("/api/downloads/connect")
 async def download_connect():
     """Redirect to the latest Connect release DMG on GitHub.
 
     The release publishes a stable-named `Connect-macOS.dmg` alongside the
-    versioned asset, so `latest/download/...` stays version-free the same
-    way the jamn-kit endpoint does. This is the signed + notarized,
-    Sparkle-auto-updating build — distinct from the Studio local-engine
-    DMG in R2 (`/api/downloads/studio-app`), which is the analysis
-    accelerator, not the low-latency monitor.
+    versioned asset. This is the signed + notarized, Sparkle-auto-updating
+    build — distinct from the Studio local-engine DMG in R2
+    (`/api/downloads/studio-app`), which is the analysis accelerator, not
+    the low-latency monitor.
     """
     from fastapi.responses import RedirectResponse
 
-    return RedirectResponse(
-        "https://github.com/harvlad/tone-forge/releases/latest/download/"
-        "Connect-macOS.dmg",
-        status_code=307)
+    url = await _latest_release_asset_url("connect-v", "Connect-macOS.dmg")
+    return RedirectResponse(url, status_code=307)
 
 
 @app.get("/api/downloads/jamn-kit")
@@ -3555,10 +3603,8 @@ async def download_jamn_kit(
     asset = {"mac": "jamnKit-macOS.pkg", "win": "jamnKit-windows.zip"}.get(os)
     if asset is None:
         raise HTTPException(status_code=422, detail="os must be mac or win")
-    return RedirectResponse(
-        "https://github.com/harvlad/tone-forge/releases/latest/download/"
-        + asset,
-        status_code=307)
+    url = await _latest_release_asset_url("jamnkit-v", asset)
+    return RedirectResponse(url, status_code=307)
 
 
 @app.get("/api/admin/serve-file")
