@@ -158,9 +158,9 @@ features:
         evidence: "jam-desktop/Sources/JamDesktopCore/Intake/AnalysisQueueModel.swift#onJobCompleted"
         note: "In-flight analyses live via followJob SSE (progress + completion, reattach-on-drop); job completion + scene-active now refresh the Recent-songs history list (RootView onJobCompleted / scenePhase). Verified 2026-09-08: swift build clean."
       plugin:
-        status: partial
-        evidence: "plugin/Source/PluginProcessor.cpp#JamnKitProcessor"
-        note: "Library browser exists (sign-in feature); live-update behavior unverified."
+        status: done
+        evidence: "plugin/Source/PluginEditor.cpp#browseBackend"
+        note: "Browse re-fetches /api/history?scope=mine live on every open (no caching) — a song analyzed on any other surface appears on the next Browse click. Verified 2026-09-08. The list is a transient PopupMenu, so it can't self-update while open; the plugin is a kit CONSUMER with no analysis queue of its own, so there are no in-flight jobs to track. A persistent auto-polling panel is possible but low-value in a plugin editor."
       connect:
         status: na
         note: "No library UI."
