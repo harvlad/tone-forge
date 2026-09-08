@@ -59,6 +59,77 @@
     return v === 64 ? 64 : 16;
   }
 
+  /** Normalize the /api/sample-packs catalog into sound-picker rows.
+   * Accepts the raw `{packs:[...]}` response or a bare array; drops
+   * entries without a packId. Pure — the picker sheet renders the result.
+   * (Mirror of the desktop SoundPickerSheet packList over PacksModel.) */
+  function pickerPackList(catalog) {
+    var arr = catalog && catalog.packs ? catalog.packs : catalog;
+    if (!Array.isArray(arr)) return [];
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var e = arr[i];
+      if (!e || !e.packId) continue;
+      out.push({
+        packId: e.packId,
+        name: e.name || e.packId,
+        padCount: typeof e.padCount === "number" ? e.padCount : null,
+        family: e.family || null,
+        paletteHint: e.paletteHint || null,
+      });
+    }
+    return out;
+  }
+
+  /** The song's OTHER kit pads, as picker rows (the "This song" tab —
+   * swap another slot's sound onto this pad). Excludes the target pad and
+   * any pad dict without a numeric padIdx; sorted by padIdx. Pure. */
+  function pickerSongPads(pads, excludeIdx) {
+    if (!Array.isArray(pads)) return [];
+    var out = [];
+    for (var i = 0; i < pads.length; i++) {
+      var p = pads[i];
+      if (!p || typeof p.padIdx !== "number" || p.padIdx === excludeIdx) continue;
+      out.push({
+        padIdx: p.padIdx,
+        name: p.name || "Pad " + (p.padIdx + 1),
+        colorHint: p.colorHint || null,
+      });
+    }
+    out.sort(function (a, b) { return a.padIdx - b.padIdx; });
+    return out;
+  }
+
+  /** A curated pack manifest's pads as picker rows with resolved audio
+   * URLs — the same sampleFile/file/sampleUrl/filename → URL resolution
+   * mountPack uses. Rows without a usable filename are dropped; sorted by
+   * padIdx. Pure (given packId). */
+  function packPadRows(manifest, packId) {
+    var pads = (manifest && manifest.pads) || [];
+    if (!Array.isArray(pads)) return [];
+    var out = [];
+    for (var i = 0; i < pads.length; i++) {
+      var p = pads[i];
+      if (!p) continue;
+      var idx = typeof p.padIdx === "number" ? p.padIdx : i;
+      var fname = p.sampleFile || p.file || p.sampleUrl || p.filename;
+      if (!fname) continue;
+      var url = /^https?:|^\//.test(fname)
+        ? fname
+        : "/api/sample-packs/" + encodeURIComponent(packId) +
+          "/pads/" + encodeURIComponent(fname);
+      out.push({
+        padIdx: idx,
+        name: p.name || "Pad " + (idx + 1),
+        colorHint: p.colorHint || null,
+        loopable: !!p.loopable,
+        url: url,
+      });
+    }
+    out.sort(function (a, b) { return a.padIdx - b.padIdx; });
+    return out;
+  }
+
   /** Score used everywhere ranking pads (native `??` chain:
    * performanceScore ?? loopScore ?? 0). */
   function padScore(p) {
@@ -255,6 +326,12 @@
         fxKey: entry && entry.id ? entry.id : null, // localStorage jamn.padfx.<id>
         fxPop: null, // open FX-editor popover state, or null
         deleted: {}, // padIdx → {pad, token, timer} undo window after Delete
+        // Source-swap display snapshot (radial "Add sound"): padIdx →
+        // {name, colorHint} of the pad BEFORE its first swap, so Reset can
+        // repaint the tile. The engine holds the matching buffer snapshot.
+        origSource: {},
+        pickerPop: null, // open sound-picker popover state, or null
+        pickerPreview: null, // { source, gain, timer } for the hovered preview
       };
       if (!entry || !entry.id || !entry.result) {
         showError(current, "No analysis loaded.");
@@ -298,6 +375,7 @@
     flushPadFeedback(s, true); // last batch rides sendBeacon past teardown
     closeRadial(s);
     closeFxEditor(s);
+    closeSoundPicker(s);
     for (var k in s.deleted) {
       if (s.deleted[k] && s.deleted[k].timer) clearTimeout(s.deleted[k].timer);
     }
@@ -1928,6 +2006,419 @@
     s.fxPop = { el: pop, onKey: onKey, onDown: onDown, padIdx: padIdx };
   }
 
+  // ---------- sound picker (radial "Add sound") ----------
+
+  function stopPickerPreview(s) {
+    var pv = s && s.pickerPreview;
+    if (!pv) return;
+    s.pickerPreview = null;
+    try { if (pv.timer) clearTimeout(pv.timer); } catch (_) {}
+    try {
+      // 40 ms fade so a cut-off preview doesn't click.
+      if (s.ctx && pv.gain && pv.gain.gain) {
+        var t = s.ctx.currentTime;
+        pv.gain.gain.setValueAtTime(pv.gain.gain.value, t);
+        pv.gain.gain.linearRampToValueAtTime(0, t + 0.04);
+      }
+    } catch (_) {}
+    try { if (pv.source && s.ctx) pv.source.stop(s.ctx.currentTime + 0.05); } catch (_) {}
+  }
+
+  /** Short one-shot preview of a decoded AudioBuffer straight through the
+   * page context — NOT the pad voice pool (a hovered pack pad isn't baked
+   * onto any pad yet). Capped at 1.5 s so a long loop sample can't run
+   * away, with tiny edge ramps so it never clicks. */
+  function previewBuffer(s, buffer) {
+    if (!s || !s.ctx || !buffer) return;
+    stopPickerPreview(s);
+    try {
+      if (s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+      var src = s.ctx.createBufferSource();
+      src.buffer = buffer;
+      var g = s.ctx.createGain();
+      src.connect(g);
+      g.connect(s.ctx.destination);
+      var now = s.ctx.currentTime;
+      var cap = Math.min(buffer.duration || 1.5, 1.5);
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(1, now + 0.008);
+      g.gain.setValueAtTime(1, now + Math.max(0.02, cap - 0.05));
+      g.gain.linearRampToValueAtTime(0, now + cap);
+      src.start(now);
+      src.stop(now + cap + 0.02);
+      var timer = setTimeout(function () {
+        if (s.pickerPreview && s.pickerPreview.source === src) s.pickerPreview = null;
+      }, (cap + 0.05) * 1000);
+      s.pickerPreview = { source: src, gain: g, timer: timer };
+    } catch (_) {}
+  }
+
+  /** Repaint a tile after its source changed: name, tint, title, wave.
+   * (The slot keeps its position; only the assigned sample's identity
+   * follows — native SoundPickerSheet assign semantics.) */
+  function repaintPadSource(s, padIdx) {
+    var pad = padByIdx(s, padIdx);
+    var p = s.padEls[padIdx];
+    if (!p || !pad) return;
+    var tint = parseColor(pad.colorHint);
+    p.tint = tint;
+    try {
+      p.el.style.setProperty("--pad-tint", tint.r + "," + tint.g + "," + tint.b);
+      p.el.title = (pad.category ? pad.category + " — " : "") + (pad.name || "Pad " + (padIdx + 1));
+      var nm = p.el.querySelector(".kit-pad-name");
+      if (nm) nm.textContent = pad.name || "Pad " + (padIdx + 1);
+    } catch (_) {}
+    drawWave(s, padIdx, p);
+  }
+
+  /** Swap `buffer` onto the pad through the engine and reflect it in the
+   * UI. Snapshots the pad's display identity ONCE (first swap) so the
+   * radial Reset can repaint back; the engine snapshots the buffer. */
+  function commitPadSource(s, padIdx, buffer, meta) {
+    if (!buffer || !can(s.engine, "setPadSource")) {
+      toast(s, "Add sound needs the current pad engine");
+      return false;
+    }
+    var pad = padByIdx(s, padIdx);
+    // Take the display snapshot only when this is the FIRST swap, so a
+    // later failure that leaves an already-swapped pad untouched can't
+    // clobber the true original.
+    var firstSwap = !(can(s.engine, "hasSwappedSource") && s.engine.hasSwappedSource(padIdx));
+    var ok = false;
+    try {
+      ok = s.engine.setPadSource(padIdx, buffer, {
+        name: meta && meta.name,
+        colorHint: meta && meta.colorHint,
+      });
+    } catch (_) { ok = false; }
+    if (!ok) {
+      toast(s, "Could not add that sound");
+      return false;
+    }
+    if (pad && firstSwap && s.origSource && s.origSource[padIdx] == null) {
+      s.origSource[padIdx] = { name: pad.name, colorHint: pad.colorHint };
+    }
+    if (pad) {
+      if (meta && meta.name) pad.name = meta.name;
+      if (meta && meta.colorHint) pad.colorHint = meta.colorHint;
+    }
+    repaintPadSource(s, padIdx);
+    setUi(s, padIdx, "idle");
+    return true;
+  }
+
+  function closeSoundPicker(s) {
+    var f = s && s.pickerPop;
+    if (!f) return;
+    s.pickerPop = null;
+    stopPickerPreview(s);
+    try {
+      document.removeEventListener("keydown", f.onKey, true);
+      document.removeEventListener("pointerdown", f.onDown, true);
+    } catch (_) {}
+    try { if (f.el && f.el.parentNode) f.el.parentNode.removeChild(f.el); } catch (_) {}
+  }
+
+  /** Per-pad sound picker popover (NOT a page nav — the FX-popover idiom):
+   * two sections, "Curated packs" (fetch /api/sample-packs → drill into a
+   * pack's pads) and "This song" (the other kit pads). Rows preview on
+   * hover/tap and commit on click via commitPadSource. A "Browse all
+   * packs →" link keeps the old full-page Packs route as a secondary exit.
+   * Click-away or Escape dismisses. Web twin of the native
+   * SoundPickerSheet. */
+  function openSoundPicker(s, padIdx) {
+    closeSoundPicker(s);
+    closeFxEditor(s); // never stack popovers
+    var p = s.padEls[padIdx];
+    if (!p) return;
+    if (!can(s.engine, "setPadSource")) {
+      toast(s, "Add sound needs the current pad engine");
+      return;
+    }
+    var pad = padByIdx(s, padIdx);
+
+    var state = { tab: "packs", openPack: null };
+
+    var pop = document.createElement("div");
+    pop.className = "kit-pick-pop";
+    if (p.tint) pop.style.setProperty("--pad-tint", p.tint.r + "," + p.tint.g + "," + p.tint.b);
+
+    var head = document.createElement("div");
+    head.className = "kit-pick-head";
+    var back = document.createElement("button");
+    back.type = "button";
+    back.className = "kit-pick-back";
+    back.textContent = "‹";
+    back.title = "Back";
+    back.addEventListener("click", function () {
+      state.openPack = null;
+      stopPickerPreview(s);
+      render();
+    });
+    var title = document.createElement("span");
+    title.className = "kit-pick-title";
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "kit-pick-close";
+    close.textContent = "✕";
+    close.title = "Close";
+    close.addEventListener("click", function () { closeSoundPicker(s); });
+    head.appendChild(back);
+    head.appendChild(title);
+    head.appendChild(close);
+    pop.appendChild(head);
+
+    var tabs = document.createElement("div");
+    tabs.className = "kit-pick-tabs";
+    var tabPacks = document.createElement("button");
+    tabPacks.type = "button";
+    tabPacks.className = "kit-pick-tab";
+    tabPacks.textContent = "Curated packs";
+    tabPacks.addEventListener("click", function () {
+      state.tab = "packs";
+      stopPickerPreview(s);
+      render();
+    });
+    var tabSong = document.createElement("button");
+    tabSong.type = "button";
+    tabSong.className = "kit-pick-tab";
+    tabSong.textContent = "This song";
+    tabSong.addEventListener("click", function () {
+      state.tab = "song";
+      state.openPack = null;
+      stopPickerPreview(s);
+      render();
+    });
+    tabs.appendChild(tabPacks);
+    tabs.appendChild(tabSong);
+    pop.appendChild(tabs);
+
+    var body = document.createElement("div");
+    body.className = "kit-pick-body";
+    pop.appendChild(body);
+
+    var foot = document.createElement("div");
+    foot.className = "kit-pick-foot";
+    var browse = document.createElement("button");
+    browse.type = "button";
+    browse.className = "kit-pick-browse";
+    browse.textContent = "Browse all packs →";
+    browse.title = "Open the full Packs view";
+    browse.addEventListener("click", function () {
+      closeSoundPicker(s);
+      var hooks = window.JamnKitHooks;
+      if (hooks && typeof hooks.openPacks === "function") {
+        try { hooks.openPacks(); return; } catch (_) {}
+      }
+      try { window.location.hash = "#packs"; } catch (_) {}
+    });
+    foot.appendChild(browse);
+    pop.appendChild(foot);
+
+    function msg(text) {
+      var d = document.createElement("div");
+      d.className = "kit-pick-msg";
+      d.textContent = text;
+      body.appendChild(d);
+    }
+
+    /** One clickable row: swatch + name + optional sub. `buffer()` returns
+     * (sync or via Promise) the AudioBuffer to preview/commit; commit uses
+     * `meta` for the pad's new name/color. */
+    function row(opts) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "kit-pick-row";
+      var sw = document.createElement("span");
+      sw.className = "kit-pick-swatch";
+      var c = parseColor(opts.colorHint);
+      sw.style.background = rgba(c, 0.9);
+      var text = document.createElement("span");
+      text.className = "kit-pick-rowtext";
+      var nm = document.createElement("span");
+      nm.className = "kit-pick-rowname";
+      nm.textContent = opts.name;
+      text.appendChild(nm);
+      if (opts.sub) {
+        var sub = document.createElement("span");
+        sub.className = "kit-pick-rowsub";
+        sub.textContent = opts.sub;
+        text.appendChild(sub);
+      }
+      b.appendChild(sw);
+      b.appendChild(text);
+      if (opts.chevron) {
+        var ch = document.createElement("span");
+        ch.className = "kit-pick-chev";
+        ch.textContent = "›";
+        b.appendChild(ch);
+      }
+      var doPreview = function () {
+        if (typeof opts.preview !== "function") return;
+        try {
+          var r = opts.preview();
+          if (r && typeof r.then === "function") r.then(function (buf) { if (buf) previewBuffer(s, buf); });
+          else if (r) previewBuffer(s, r);
+        } catch (_) {}
+      };
+      b.addEventListener("pointerenter", function () {
+        if (opts.preview) doPreview();
+      });
+      b.addEventListener("pointerdown", function (ev) {
+        // Touch has no hover — preview on the press instead.
+        if (ev && ev.pointerType && ev.pointerType !== "mouse" && opts.preview) doPreview();
+      });
+      b.addEventListener("click", function () {
+        if (typeof opts.activate === "function") { opts.activate(); return; }
+      });
+      body.appendChild(b);
+      return b;
+    }
+
+    function renderPackList() {
+      var render2 = function (catalog) {
+        if (s.pickerPop !== ref) return;
+        body.innerHTML = "";
+        var packs = pickerPackList(catalog);
+        if (!packs.length) { msg("No curated packs on this backend."); return; }
+        packs.forEach(function (pk) {
+          row({
+            name: pk.name,
+            sub: pk.padCount != null ? pk.padCount + " pads" : null,
+            colorHint: pk.paletteHint,
+            chevron: true,
+            activate: function () {
+              state.openPack = { packId: pk.packId, name: pk.name };
+              stopPickerPreview(s);
+              render();
+            },
+          });
+        });
+      };
+      if (s._pickerCatalog) { render2(s._pickerCatalog); return; }
+      body.innerHTML = "";
+      msg("Loading packs…");
+      fetch("/api/sample-packs")
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)); })
+        .then(function (data) { s._pickerCatalog = data; render2(data); })
+        .catch(function () { if (s.pickerPop === ref) { body.innerHTML = ""; msg("Could not load packs."); } });
+    }
+
+    function renderPackPads(packId, packName) {
+      var render2 = function (manifest) {
+        if (s.pickerPop !== ref) return;
+        body.innerHTML = "";
+        var rows = packPadRows(manifest, packId);
+        if (!rows.length) { msg("This pack has no pads."); return; }
+        rows.forEach(function (pr) {
+          row({
+            name: pr.name,
+            colorHint: pr.colorHint,
+            preview: function () { return fetchPadBuffer(s, pr.url); },
+            activate: function () {
+              fetchPadBuffer(s, pr.url).then(function (buf) {
+                if (!buf) { toast(s, "That sound wouldn't load"); return; }
+                if (commitPadSource(s, padIdx, buf, { name: pr.name, colorHint: pr.colorHint })) {
+                  closeSoundPicker(s);
+                  toast(s, "Sound added");
+                }
+              });
+            },
+          });
+        });
+      };
+      s._pickerManifests = s._pickerManifests || {};
+      if (s._pickerManifests[packId]) { render2(s._pickerManifests[packId]); return; }
+      body.innerHTML = "";
+      msg("Loading " + (packName || "pack") + "…");
+      fetch("/api/sample-packs/" + encodeURIComponent(packId))
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)); })
+        .then(function (m) { s._pickerManifests[packId] = m; render2(m); })
+        .catch(function () { if (s.pickerPop === ref) { body.innerHTML = ""; msg("Could not load this pack."); } });
+    }
+
+    function renderSongPads() {
+      body.innerHTML = "";
+      var rows = pickerSongPads(s.pads, padIdx);
+      if (!rows.length) { msg("No other pads in this song."); return; }
+      rows.forEach(function (sp) {
+        row({
+          name: sp.name,
+          sub: "Pad " + (sp.padIdx + 1),
+          colorHint: sp.colorHint,
+          preview: function () {
+            return can(s.engine, "sourceBuffer") ? s.engine.sourceBuffer(sp.padIdx) : null;
+          },
+          activate: function () {
+            var buf = can(s.engine, "sourceBuffer") ? s.engine.sourceBuffer(sp.padIdx) : null;
+            if (!buf) { toast(s, "That pad has no sound to copy"); return; }
+            if (commitPadSource(s, padIdx, buf, { name: sp.name, colorHint: sp.colorHint })) {
+              closeSoundPicker(s);
+              toast(s, "Sound added");
+            }
+          },
+        });
+      });
+    }
+
+    function render() {
+      var drilled = state.tab === "packs" && state.openPack;
+      back.style.display = drilled ? "" : "none";
+      title.textContent = drilled
+        ? state.openPack.name
+        : ((pad && pad.name) || "Pad " + (padIdx + 1)) + " — Add sound";
+      tabPacks.classList.toggle("is-active", state.tab === "packs");
+      tabSong.classList.toggle("is-active", state.tab === "song");
+      if (state.tab === "song") renderSongPads();
+      else if (drilled) renderPackPads(state.openPack.packId, state.openPack.name);
+      else renderPackList();
+    }
+
+    document.body.appendChild(pop);
+    // Anchor beside the pad, clamped on-viewport (position: fixed).
+    try {
+      var rect = p.el.getBoundingClientRect();
+      var vw = window.innerWidth || 0;
+      var vh = window.innerHeight || 0;
+      var w = pop.offsetWidth || 300;
+      var h = pop.offsetHeight || 360;
+      var left = Math.max(8, Math.min(vw - w - 8, rect.right + 10));
+      var top = Math.max(8, Math.min(vh - h - 8, rect.top));
+      pop.style.left = left + "px";
+      pop.style.top = top + "px";
+    } catch (_) {}
+
+    var onKey = function (ev) {
+      if (ev.key === "Escape") {
+        ev.stopPropagation();
+        closeSoundPicker(s);
+      }
+    };
+    var onDown = function (ev) {
+      if (pop.contains(ev.target)) return;
+      closeSoundPicker(s);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onDown, true);
+    var ref = { el: pop, onKey: onKey, onDown: onDown, padIdx: padIdx };
+    s.pickerPop = ref;
+    render();
+  }
+
+  /** Fetch + decode one pad audio file into an AudioBuffer, cached on the
+   * session so re-hovering a row doesn't re-download. Resolves null on any
+   * failure (the caller toasts). */
+  function fetchPadBuffer(s, url) {
+    if (!s || !s.ctx || !url) return Promise.resolve(null);
+    s._padBufCache = s._padBufCache || {};
+    if (s._padBufCache[url]) return Promise.resolve(s._padBufCache[url]);
+    return fetch(url)
+      .then(function (r) { return r.ok ? r.arrayBuffer() : Promise.reject(new Error("HTTP " + r.status)); })
+      .then(function (b) { return s.ctx.decodeAudioData(b); })
+      .then(function (buf) { s._padBufCache[url] = buf; return buf; })
+      .catch(function () { return null; });
+  }
+
   // ---------- radial pad menu (right-click / long-press) ----------
 
   function padByIdx(s, padIdx) {
@@ -1964,6 +2455,7 @@
   function openRadial(s, padIdx, x, y) {
     closeRadial(s);
     closeFxEditor(s); // never stack the FX popover under the wheel
+    closeSoundPicker(s);
     var p = s.padEls[padIdx];
     if (!p) return;
     var pad = padByIdx(s, padIdx);
@@ -1979,6 +2471,9 @@
     }
     var overrides = padOverrides(
       s.origRegions[padIdx], s.gated[padIdx], p.loopOverride, s.padFx[padIdx]);
+    // A swapped source (radial "Add sound") also makes the pad resettable,
+    // even when no region/gate/loop/fx override is present.
+    var swapped = can(s.engine, "hasSwappedSource") && s.engine.hasSwappedSource(padIdx);
 
     // Full native assigned ring (delete/chop/addSound/loop/reset/effects/
     // sequence — PadRadialMenu.assigned) plus the two web-only transport
@@ -2043,12 +2538,10 @@
         icon: "＋",
         label: "Add sound",
         run: function () {
-          // Honest navigation: web has no per-pad sound picker yet, so
-          // this walks to Packs instead of stubbing a picker.
-          try {
-            window.location.hash = "#packs";
-          } catch (_) {}
-          toast(s, "Pick a pack to mount");
+          // Per-pad sound picker (native SoundPickerSheet twin): swap this
+          // pad's sample from a curated pack or another kit pad, in place.
+          // The "Browse all packs →" footer keeps the old full-page route.
+          openSoundPicker(s, padIdx);
         },
       },
       {
@@ -2090,7 +2583,7 @@
       {
         icon: "↺",
         label: "Reset",
-        disabled: !overrides.any,
+        disabled: !(overrides.any || swapped),
         run: function () {
           // Undo the radial-era overrides: FX → neutral, loop override →
           // follow mode, chop/gate → rebake from the server pad dict.
@@ -2121,6 +2614,20 @@
             } catch (_) {}
             setUi(s, padIdx, "idle");
             drawWave(s, padIdx, p);
+          }
+          // Undo an "Add sound" source swap LAST so the restored original
+          // buffer wins over any rebake above. The engine snapshotted the
+          // buffer; s.origSource holds the tile's pre-swap name/color.
+          if (swapped && can(s.engine, "restorePadSource")) {
+            try { s.engine.restorePadSource(padIdx); } catch (_) {}
+            var snap = s.origSource && s.origSource[padIdx];
+            if (snap && pad) {
+              pad.name = snap.name;
+              pad.colorHint = snap.colorHint;
+            }
+            if (s.origSource) delete s.origSource[padIdx];
+            repaintPadSource(s, padIdx);
+            setUi(s, padIdx, "idle");
           }
           toast(s, "Pad reset");
         },
@@ -2439,6 +2946,7 @@
       origRegions: {}, gated: {}, padFx: {},
       fxKey: "pack:" + desc.packId, // pack FX persist per pack, not per song
       fxPop: null, deleted: {},
+      origSource: {}, pickerPop: null, pickerPreview: null,
     };
     renderShell(current);
     var s = current;
@@ -2546,6 +3054,9 @@
       padOverrides: padOverrides,
       cutoffFromSlider: cutoffFromSlider,
       sliderFromCutoff: sliderFromCutoff,
+      pickerPackList: pickerPackList,
+      pickerSongPads: pickerSongPads,
+      packPadRows: packPadRows,
     },
   };
 })();
