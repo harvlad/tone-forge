@@ -61,6 +61,10 @@ JamnKitProcessor::JamnKitProcessor()
         n.store(false);
     for (auto& p : padPhases)
         p.store(-1.0f);
+    for (auto& s : midiNoteSlots)
+        s.store(-1);
+    for (auto& n : learnNotes)
+        n.store(-1);
     pFilter = apvts.getRawParameterValue("filter");
     pSpace = apvts.getRawParameterValue("space");
     pDrive = apvts.getRawParameterValue("drive");
@@ -327,6 +331,74 @@ void JamnKitProcessor::pushFeedback(const juce::String& assetId,
     pendingFeedback.emplace_back(assetId, kind);
 }
 
+// MARK: - MIDI Learn (see PluginProcessor.h)
+
+void JamnKitProcessor::startMidiLearn()
+{
+    for (auto& n : learnNotes)
+        n.store(-1);
+    learnSlot.store(0);
+}
+
+void JamnKitProcessor::cancelMidiLearn()
+{
+    learnSlot.store(-1);
+}
+
+void JamnKitProcessor::finishMidiLearn()
+{
+    // Zero captures = cancel: committing an empty map here would
+    // silently wipe an existing one on an accidental double-click.
+    bool any = false;
+    for (auto& n : learnNotes)
+        any = any || n.load() >= 0;
+    if (!any)
+    {
+        learnSlot.store(-1);
+        return;
+    }
+    for (auto& s : midiNoteSlots)
+        s.store(-1);
+    for (int slot = 0; slot < kVoices; ++slot)
+    {
+        const int note = learnNotes[(size_t) slot].load();
+        // Same physical pad pressed for two slots: the later slot wins
+        // (a note keys exactly one slot — same rule as launchpad.js's
+        // note-keyed map object).
+        if (note >= 0 && note < 128)
+            midiNoteSlots[(size_t) note].store(slot);
+    }
+    learnSlot.store(-1);
+}
+
+void JamnKitProcessor::clearMidiMap()
+{
+    for (auto& s : midiNoteSlots)
+        s.store(-1);
+}
+
+bool JamnKitProcessor::hasMidiMap() const
+{
+    for (const auto& s : midiNoteSlots)
+        if (s.load() >= 0)
+            return true;
+    return false;
+}
+
+int JamnKitProcessor::slotForNote(int note) const
+{
+    if (note < 0 || note >= 128)
+        return -1;
+    const int mapped =
+        midiNoteSlots[(size_t) note].load(std::memory_order_relaxed);
+    if (mapped >= 0 && mapped < kVoices)
+        return mapped;
+    // Unmapped notes keep the fixed C1 layout (the plugin's documented
+    // default — deviation from ios/web's drop rule, see header).
+    const int slot = note - kFirstNote;
+    return slot >= 0 && slot < kVoices ? slot : -1;
+}
+
 // MARK: - Stretch cache (pool thread builds; audio thread plays)
 
 /// Pitch-preserved render of one loopable pad: output length is EXACT
@@ -459,11 +531,17 @@ double JamnKitProcessor::sharedCyclePpq(double barPpq) const
 
 void JamnKitProcessor::handleNoteOn(int note, float velocity,
                                     double eventPpq, double samplesPerPpq,
-                                    double barPpq)
+                                    double barPpq, bool applyLearnedMap)
 {
-    const int slot = note - kFirstNote;
+    const int slot =
+        applyLearnedMap ? slotForNote(note) : note - kFirstNote;
     if (slot < 0 || slot >= kVoices)
         return;
+    // Canonical pad note from here on: the state arrays and the pack's
+    // C1 layout are keyed by kFirstNote + slot regardless of which
+    // physical note the controller sent, so the editor's fixed-note
+    // queries light the right pad.
+    note = kFirstNote + slot;
     auto& v = voices[(size_t) slot];
 
     const KitPadSample* pad =
@@ -565,9 +643,10 @@ void JamnKitProcessor::handleNoteOn(int note, float velocity,
     activeNotes[(size_t) note].store(true);
 }
 
-void JamnKitProcessor::handleNoteOff(int note)
+void JamnKitProcessor::handleNoteOff(int note, bool applyLearnedMap)
 {
-    const int slot = note - kFirstNote;
+    const int slot =
+        applyLearnedMap ? slotForNote(note) : note - kFirstNote;
     if (slot < 0 || slot >= kVoices)
         return;
     auto& v = voices[(size_t) slot];
@@ -837,13 +916,18 @@ void JamnKitProcessor::processBlock(
     }
     wasPlaying = hostPlaying;
 
-    uiMidi.removeNextBlockOfMessages(midi, buffer.getNumSamples());
+    // UI pad events stay in their OWN buffer (not merged into `midi`):
+    // they are slot-addressed already, so the learned map must neither
+    // reroute them nor capture them during a learn pass.
+    juce::MidiBuffer uiEvents;
+    uiMidi.removeNextBlockOfMessages(uiEvents, buffer.getNumSamples());
 
     const juce::SpinLock::ScopedTryLockType lock(packLock);
     if (!lock.isLocked())
         return;
 
-    for (const auto metadata : midi)
+    auto dispatch = [&](const juce::MidiMessageMetadata& metadata,
+                        bool applyLearnedMap)
     {
         const auto msg = metadata.getMessage();
         if (msg.isNoteOn())
@@ -852,11 +936,33 @@ void JamnKitProcessor::processBlock(
                 ? blockPpq + metadata.samplePosition / samplesPerPpq
                 : -1.0;
             handleNoteOn(msg.getNoteNumber(), msg.getFloatVelocity(),
-                         eventPpq, samplesPerPpq, barPpq);
+                         eventPpq, samplesPerPpq, barPpq, applyLearnedMap);
         }
         else if (msg.isNoteOff())
-            handleNoteOff(msg.getNoteNumber());
+            handleNoteOff(msg.getNoteNumber(), applyLearnedMap);
+    };
+
+    for (const auto metadata : midi)
+    {
+        // MIDI Learn capture: while active, hardware note events are
+        // CONSUMED — each note-on stages the next slot's note; nothing
+        // sounds until the learn is saved or cancelled.
+        const int capture = learnSlot.load(std::memory_order_relaxed);
+        if (capture >= 0)
+        {
+            const auto msg = metadata.getMessage();
+            if (msg.isNoteOn() && capture < kVoices)
+            {
+                learnNotes[(size_t) capture].store(msg.getNoteNumber());
+                learnSlot.store(capture + 1);
+            }
+            if (msg.isNoteOn() || msg.isNoteOff())
+                continue;
+        }
+        dispatch(metadata, true);
     }
+    for (const auto metadata : uiEvents)
+        dispatch(metadata, false);
 
     const int numSamples = buffer.getNumSamples();
     auto* left = buffer.getWritePointer(0);
@@ -891,6 +997,18 @@ void JamnKitProcessor::getStateInformation(juce::MemoryBlock& dest)
                                             : juce::String(),
                       nullptr);
     state.setProperty("backendUrl", backendUrlValue, nullptr);
+    // MIDI Learn map: "note:slot,note:slot" — survives host project
+    // reloads AND standalone restarts (the standalone wrapper persists
+    // plugin state the same way).
+    juce::StringArray pairs;
+    for (int note = 0; note < 128; ++note)
+    {
+        const int slot = midiNoteSlots[(size_t) note].load();
+        if (slot >= 0)
+            pairs.add(juce::String(note) + ":" + juce::String(slot));
+    }
+    if (!pairs.isEmpty())
+        state.setProperty("midiPadMap", pairs.joinIntoString(","), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, dest);
 }
@@ -910,6 +1028,23 @@ void JamnKitProcessor::setStateInformation(const void* data, int size)
     // really wants the dev URL re-types it once.
     if (url.isNotEmpty() && url != "http://127.0.0.1:8300")
         backendUrlValue = url;
+    // MIDI Learn map (see getStateInformation). Absent property =
+    // fixed layout; per-entry atomic stores keep the audio thread safe
+    // if a host restores state while processing.
+    for (auto& s : midiNoteSlots)
+        s.store(-1);
+    const juce::String mapText =
+        state.getProperty("midiPadMap", juce::String());
+    for (const auto& pair : juce::StringArray::fromTokens(mapText, ",", ""))
+    {
+        const int note = pair.upToFirstOccurrenceOf(":", false, false)
+                             .getIntValue();
+        const int slot = pair.fromFirstOccurrenceOf(":", false, false)
+                             .getIntValue();
+        if (note >= 0 && note < 128 && slot >= 0 && slot < kVoices
+            && pair.contains(":"))
+            midiNoteSlots[(size_t) note].store(slot);
+    }
     const juce::String path = state.getProperty("packPath", juce::String());
     if (path.isNotEmpty())
     {

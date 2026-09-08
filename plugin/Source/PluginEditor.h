@@ -30,6 +30,7 @@ public:
 private:
     void timerCallback() override
     {
+        updateMidiLearnUi();
         repaint();
         // Feedback loop: flush queued pad play/skip events ~every 15 s.
         if (++feedbackTick >= 450)
@@ -40,6 +41,9 @@ private:
     }
     void flushFeedback();
     int feedbackTick = 0;
+    /// MIDI Learn flow: button text + footer progress line, and the
+    /// auto-save once all 16 pads are captured.
+    void updateMidiLearnUi();
     void openPackChooser();
     void browseBackend();
     void downloadKit(const juce::String& entryId, const juce::String& name);
@@ -53,6 +57,9 @@ private:
     juce::TextButton refreshButton { "Re-rank" };
     juce::TextButton armButton { "ARM" };
     juce::TextButton learnButton { "LEARN" };
+    // MIDI Learn (external pad controllers) — distinct from LEARN,
+    // which is the usage-reporting toggle.
+    juce::TextButton mapButton { "MAP" };
     juce::TextEditor urlEditor;
     // Account row (footer): email → code → signed in. Machine-level
     // session lives on the processor; this is just the flow UI.
