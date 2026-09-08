@@ -280,3 +280,43 @@ test("fret geometry is monotonic with the nut at 0", () => {
   assert.ok(Math.abs(I.wirePos(12) - 0.5) < 1e-9); // octave = half the scale
   assert.ok(I.fingerPos(1) > 0 && I.fingerPos(1) < I.wirePos(1));
 });
+
+// ---------------------------------------------------------------------
+// Board aspect / layout (skewed-neck fix): one px/unit for both axes.
+// ---------------------------------------------------------------------
+test("stringGapUnits tapers nut→saddle and clamps", () => {
+  assert.ok(Math.abs(I.stringGapUnits(0) - (35 / 648) / 5) < 1e-12); // nut span / 5 gaps
+  assert.ok(Math.abs(I.stringGapUnits(1) - (52 / 648) / 5) < 1e-12); // saddle span / 5 gaps
+  assert.ok(I.stringGapUnits(0.5) > I.stringGapUnits(0));            // widens toward the body
+  assert.equal(I.stringGapUnits(2), I.stringGapUnits(1));            // clamped at the saddle
+  assert.equal(I.stringGapUnits(-1), I.stringGapUnits(0));           // clamped at the nut
+});
+
+test("boardAspect is the physical neck ratio — wide, not stretched", () => {
+  const a9 = I.boardAspect(9);
+  const a15 = I.boardAspect(15);
+  assert.ok(Math.abs(a9 - 5.694) < 0.01, `9-fret aspect ${a9}`);
+  assert.ok(Math.abs(a15 - 7.838) < 0.01, `15-fret aspect ${a15}`);
+  assert.ok(a15 > a9); // more frets visible → wider board
+});
+
+test("computeBoardLayout uses ONE px/unit for both axes (aspect preserved)", () => {
+  const lay = I.computeBoardLayout(1000, 320, 9);
+  const boardW = lay.span * lay.pxPerUnit;
+  // The whole point of the fix: rendered board ratio == the pure physical ratio.
+  assert.ok(Math.abs(boardW / lay.boardH - I.boardAspect(9)) < 1e-9);
+  // gap (vertical) and the horizontal scale share the single pxPerUnit.
+  assert.ok(Math.abs(lay.gap - lay.gapU * lay.pxPerUnit) < 1e-12);
+  // Wide container: the width fit binds, so the board fills to padL (=14).
+  assert.ok(Math.abs(lay.left - 14) < 1e-6);
+  assert.ok(Math.abs(boardW - 946.0) < 1.0, `boardW ${boardW}`);
+});
+
+test("computeBoardLayout keeps the aspect when the height fit binds", () => {
+  // Wide but short: the vertical budget binds, board is right-aligned.
+  const lay = I.computeBoardLayout(2000, 150, 9);
+  const boardW = lay.span * lay.pxPerUnit;
+  assert.ok(lay.left > 14, `left ${lay.left}`);               // narrower than full width
+  assert.ok(Math.abs(lay.right - (2000 - 40)) < 1e-9);        // nut still pinned right (padR)
+  assert.ok(Math.abs(boardW / lay.boardH - I.boardAspect(9)) < 1e-9); // still undistorted
+});

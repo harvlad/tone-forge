@@ -348,6 +348,58 @@
     return (wirePos(n - 1) + wirePos(n)) / 2;
   }
 
+  // String-to-string gap in scale-length units (same units as wirePos),
+  // a linear nut→saddle taper. Port of GuitarPhysical.stringGapMM /
+  // scaleLength (mobile ToneForgeEngine/NeckPlay/HandPoseKit.swift) so the
+  // web board shares the desktop's physical proportions: nut span E→e =
+  // 35mm, saddle = 52mm, scale = 648mm, over 5 gaps.
+  var STRING_SPAN_NUT_U = 35 / 648;
+  var STRING_SPAN_SADDLE_U = 52 / 648;
+  function stringGapUnits(xU) {
+    var c = Math.max(0, Math.min(1, xU));
+    return (STRING_SPAN_NUT_U + (STRING_SPAN_SADDLE_U - STRING_SPAN_NUT_U) * c) / 5;
+  }
+
+  // Board width:height ratio for a window of `maxFret` frets across 6
+  // strings — pure physical proportion, independent of pixels. ~5.7:1 at
+  // 9 frets, ~7.8:1 at 15. A real neck segment IS wide, but this is the
+  // true shape, not the full-width-stretched one the old independent-axis
+  // sizing produced.
+  function boardAspect(maxFret) {
+    var loU = wirePos(0), hiU = wirePos(maxFret);
+    return (hiU - loU) / (6 * stringGapUnits((loU + hiU) / 2));
+  }
+
+  // Fretboard layout for a `W`×`H` (CSS px) canvas. The fix for the skewed
+  // neck: ONE px-per-unit factor drives BOTH axes (min of the width fit and
+  // the height fit), exactly like the desktop HandNeckView's single
+  // pxPerMM — so fret spacing and string spacing stay in true proportion,
+  // finger dots read as circles, and the board can't skew. Nut on the
+  // RIGHT; when the width fit binds `left` lands at padL, otherwise the
+  // board is narrower and right-aligned (height-limited), never distorted.
+  function computeBoardLayout(W, H, maxFret, opts) {
+    opts = opts || {};
+    var top = opts.top != null ? opts.top : 28;
+    var padR = opts.padR != null ? opts.padR : 40;
+    var padL = opts.padL != null ? opts.padL : 14;
+    var bottom = opts.bottom != null ? opts.bottom : 44; // fret-number labels + knuckle row
+    var loU = wirePos(0), hiU = wirePos(maxFret), span = hiU - loU;
+    var gapU = stringGapUnits((loU + hiU) / 2);
+    var availW = Math.max(1, W - padR - padL);
+    var vBudget = Math.max(1, H - top - bottom);
+    var pxPerUnit = Math.max(0.3, Math.min(availW / span, vBudget / (6 * gapU)));
+    var gap = gapU * pxPerUnit;
+    var boardH = 6 * gap;
+    var right = W - padR;
+    var left = right - span * pxPerUnit;
+    return {
+      top: top, padR: padR, padL: padL, bottom: bottom,
+      loU: loU, hiU: hiU, span: span, gapU: gapU,
+      pxPerUnit: pxPerUnit, gap: gap, boardH: boardH,
+      bot: top + boardH, right: right, left: left,
+    };
+  }
+
   // smootherstep: zero 1st AND 2nd derivative at the ends — no jerk.
   function easeIO(x) { var c = Math.min(1, Math.max(0, x)); return c * c * c * (c * (c * 6 - 15) + 10); }
 
@@ -563,8 +615,17 @@
     main.appendChild(buildTransport());
 
     root.appendChild(main);
-    root.appendChild(buildMixer());
+    root.appendChild(buildMixerOverlay());
     container.appendChild(root);
+
+    // Escape closes the mixer popover (only while it's open).
+    on(document, "keydown", function (e) {
+      if (e.key === "Escape" && S && S.dom.mixerOverlay &&
+          !S.dom.mixerOverlay.hasAttribute("hidden")) {
+        e.stopPropagation();
+        closeMixer();
+      }
+    });
 
     // dpr-aware canvas sizing
     S.resizeObs = new ResizeObserver(function () { sizeCanvases(); });
@@ -597,6 +658,31 @@
     art.style.background = "linear-gradient(135deg, hsl(" + hue + ",55%,45%), hsl(" + hue + ",65%,20%))";
     art.textContent = "♪";
     head.appendChild(art);
+
+    // Real cover art via the shared artwork resolver, falling back to the
+    // seeded gradient tile above when there's no match. Feature-checked so
+    // the stage still renders if artwork.js isn't loaded. Swap only on a
+    // successful image decode, so a 404/broken URL keeps the ♪ tile.
+    if (window.JamnArtwork && typeof window.JamnArtwork.get === "function") {
+      // Key the cache on the entry id but search on the on-screen title.
+      var artEntry = { id: entry.id, name: title };
+      window.JamnArtwork.get(artEntry).then(function (url) {
+        if (!url || !S || S.dead) return;
+        var img = document.createElement("img");
+        img.className = "jstage-art-img";
+        img.alt = "";
+        img.decoding = "async";
+        img.loading = "lazy";
+        img.addEventListener("load", function () {
+          art.textContent = "";
+          art.style.background = "";
+          art.classList.add("jstage-art--img");
+          art.appendChild(img);
+        });
+        img.addEventListener("error", function () { /* keep the gradient tile */ });
+        img.src = url;
+      }).catch(function () { /* keep the gradient tile */ });
+    }
     var col = el("div", "jstage-header-text");
     col.appendChild(el("div", "jstage-title", title));
     var parts = [];
@@ -668,6 +754,15 @@
       applyLayerVisibility();
     });
     row.appendChild(reset);
+
+    // Mixer opens as a popover so the fretboard keeps the full width; the
+    // controls themselves live in buildMixer() unchanged.
+    var mixerBtn = el("button", "jstage-chip jstage-chip--ghost", "🎚 Mixer");
+    mixerBtn.setAttribute("aria-haspopup", "dialog");
+    mixerBtn.setAttribute("aria-expanded", "false");
+    on(mixerBtn, "click", toggleMixer);
+    S.dom.mixerBtn = mixerBtn;
+    row.appendChild(mixerBtn);
     return row;
   }
 
@@ -830,9 +925,54 @@
     return bar;
   }
 
+  // The mixer popover: a backdrop + a modal shell wrapping the unchanged
+  // mixer panel. Dismiss on the toolbar toggle, Escape, or a backdrop
+  // click. Moving it out of the layout lets the fretboard span full width.
+  function buildMixerOverlay() {
+    var overlay = el("div", "jstage-mixer-overlay");
+    overlay.setAttribute("hidden", "");
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Mixer");
+    var modal = el("div", "jstage-mixer-modal");
+    var head = el("div", "jstage-mixer-modalhead");
+    head.appendChild(el("div", "jstage-mixer-title", "Mixer"));
+    var close = el("button", "jstage-btn jstage-btn--ghost jstage-mixer-close", "×");
+    close.title = "Close mixer";
+    on(close, "click", function () { closeMixer(); });
+    head.appendChild(close);
+    modal.appendChild(head);
+    modal.appendChild(buildMixer());
+    overlay.appendChild(modal);
+    // Backdrop click (outside the modal) dismisses.
+    on(overlay, "click", function (e) { if (e.target === overlay) closeMixer(); });
+    S.dom.mixerOverlay = overlay;
+    return overlay;
+  }
+
+  function openMixer() {
+    if (!S || !S.dom.mixerOverlay) return;
+    S.dom.mixerOverlay.removeAttribute("hidden");
+    if (S.dom.mixerBtn) {
+      S.dom.mixerBtn.classList.add("jstage-chip--on");
+      S.dom.mixerBtn.setAttribute("aria-expanded", "true");
+    }
+  }
+  function closeMixer() {
+    if (!S || !S.dom.mixerOverlay) return;
+    S.dom.mixerOverlay.setAttribute("hidden", "");
+    if (S.dom.mixerBtn) {
+      S.dom.mixerBtn.classList.remove("jstage-chip--on");
+      S.dom.mixerBtn.setAttribute("aria-expanded", "false");
+    }
+  }
+  function toggleMixer() {
+    if (!S || !S.dom.mixerOverlay) return;
+    if (S.dom.mixerOverlay.hasAttribute("hidden")) openMixer(); else closeMixer();
+  }
+
   function buildMixer() {
     var panel = el("div", "jstage-mixer");
-    panel.appendChild(el("div", "jstage-mixer-title", "Mixer"));
 
     // Song master
     var song = el("div", "jstage-strip");
@@ -1036,15 +1176,11 @@
     g.clearRect(0, 0, W, H);
 
     var maxFret = S.maxFret;
-    var top = 28, padR = 40, padL = 14;
-    var loMM = wirePos(0), hiMM = wirePos(maxFret), span = hiMM - loMM;
-    var vBudget = Math.max(1, H - top - 44);
-    var gap = Math.min(vBudget / 6, 46);
-    var boardH = 6 * gap;
-    var bot = top + boardH;
-    var right = W - padR;
-    var left = padL;
-    var pxPerUnit = (right - left) / span;
+    // Single px/unit for BOTH axes → aspect preserved (see computeBoardLayout).
+    var lay = computeBoardLayout(W, H, maxFret);
+    var top = lay.top, gap = lay.gap, boardH = lay.boardH, bot = lay.bot;
+    var right = lay.right, left = lay.left, pxPerUnit = lay.pxPerUnit;
+    var loMM = lay.loU;
 
     function wireX(n) { return right - (wirePos(n) - loMM) * pxPerUnit; }
     function cx(fret) {
@@ -1285,6 +1421,9 @@
       easeIO: easeIO,
       wirePos: wirePos,
       fingerPos: fingerPos,
+      stringGapUnits: stringGapUnits,
+      boardAspect: boardAspect,
+      computeBoardLayout: computeBoardLayout,
     },
   };
 })();
