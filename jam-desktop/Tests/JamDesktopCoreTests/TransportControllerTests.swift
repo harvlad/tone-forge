@@ -182,6 +182,19 @@ final class TransportControllerTests: XCTestCase {
         XCTAssertEqual(seeks[1].1, 100)
     }
 
+    func testOnPlayFiresOncePerStart() {
+        // MIDI clock out sends Start/Continue from this hook — a
+        // redundant play() must not double-Start external sequencers.
+        var plays = 0
+        transport.onPlay = { plays += 1 }
+        transport.play()
+        transport.play()           // idempotent: already playing
+        XCTAssertEqual(plays, 1)
+        transport.pause()
+        transport.play()
+        XCTAssertEqual(plays, 2)
+    }
+
     func testOnSeekFiresOnLoopWrap() {
         var seeks: [(Double, Double)] = []
         transport.setLoop(LoopRegion(inSeconds: 10, outSeconds: 20))

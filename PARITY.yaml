@@ -113,8 +113,8 @@ features:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeMobile/SettingsView.swift#midiClockOut"
       desktop:
-        status: missing
-        note: "Desktop has Link instead; clock out not wired."
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/SessionController.swift#setMIDIClockOutEnabled"
       plugin:
         status: na
         note: "The DAW host owns clock; plugin follows host transport."

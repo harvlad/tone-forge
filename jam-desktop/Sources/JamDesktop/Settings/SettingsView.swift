@@ -126,7 +126,8 @@ struct SettingsView: View {
             Section("MIDI controllers") {
                 MIDIControllersSection(
                     store: session.midiPadMap,
-                    transport: session.midiKeyboard
+                    transport: session.midiKeyboard,
+                    onSetClockOut: { session.setMIDIClockOutEnabled($0) }
                 )
             }
 
@@ -222,7 +223,12 @@ private struct MIDIControllersSection: View {
     @ObservedObject var store: MIDIPadMapStore
     /// nil until SessionController wires the CoreMIDI transport.
     let transport: MIDIKeyboardTransport?
+    /// Enable/disable the "Tone Forge Jam" virtual MIDI source.
+    var onSetClockOut: (Bool) -> Void
 
+    /// Persisted so the virtual source re-arms on next launch (applied
+    /// in SessionController.init). Same key as mobile.
+    @AppStorage("midiClockOut") private var clockOut = false
     @State private var showPadLearn = false
 
     var body: some View {
@@ -236,6 +242,14 @@ private struct MIDIControllersSection: View {
                + "Without a map, notes play the synth."
              : "Custom pad map active (\(store.map.count) pads) — "
                + "unmapped notes are ignored.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+        Toggle("MIDI clock output", isOn: $clockOut)
+            .onChange(of: clockOut) { _, on in onSetClockOut(on) }
+        Text("Publishes a \"Tone Forge Jam\" MIDI source: external "
+             + "synths, drum machines and DAWs follow the transport "
+             + "(24 PPQN clock + start/stop).")
             .font(.caption)
             .foregroundStyle(.secondary)
 
