@@ -83,6 +83,7 @@ jobs:
       - name: Build, sign, notarize, DMG
         env:
           DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
           NOTARY_KEY_P8_B64: ${{ secrets.APPLE_NOTARY_API_KEY_P8 }}
