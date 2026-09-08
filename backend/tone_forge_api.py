@@ -3436,6 +3436,24 @@ async def download_studio_app():
     return RedirectResponse(url, status_code=307)
 
 
+@app.get("/api/downloads/jamn-kit")
+async def download_jamn_kit(
+    os: str = Query("mac", description="mac | win"),
+):
+    """Redirect to the latest jamn Kit plugin release asset on GitHub.
+    Stable asset names (jamnKit-macOS.pkg / jamnKit-windows.zip) let this
+    endpoint stay version-free; the repo is public so no token needed."""
+    from fastapi.responses import RedirectResponse
+
+    asset = {"mac": "jamnKit-macOS.pkg", "win": "jamnKit-windows.zip"}.get(os)
+    if asset is None:
+        raise HTTPException(status_code=422, detail="os must be mac or win")
+    return RedirectResponse(
+        "https://github.com/harvlad/tone-forge/releases/latest/download/"
+        + asset,
+        status_code=307)
+
+
 @app.get("/api/admin/serve-file")
 async def admin_serve_file(
     path: str = Query(..., description="Path to the file to serve"),
@@ -4891,7 +4909,8 @@ async def get_history_entry(entry_id: str) -> JSONResponse:
 
 
 @app.get("/api/history/{entry_id}/stem-audio/{role}")
-async def get_history_stem_audio(entry_id: str, role: str):
+async def get_history_stem_audio(entry_id: str, role: str,
+                                 format: Optional[str] = Query(None)):
     """Same-origin stem audio for the WEB app.
 
     Native clients fetch the presigned R2 stem URLs directly, but a
@@ -4900,6 +4919,12 @@ async def get_history_stem_audio(entry_id: str, role: str):
     a bare TypeError. A redirect wouldn't help — CORS applies to the
     final response — so this streams the object through the backend.
     Local stem files (dev) are served directly.
+
+    ``?format=wav`` transcodes on the fly via ffmpeg: Safari's WebAudio
+    decodeAudioData can't decode FLAC (Chrome can), so its pads sat on
+    the loading skeleton forever. Clients retry with format=wav when the
+    native-container decode fails, keeping the cheap FLAC path for
+    browsers that handle it.
     """
     entry = _get_history_item(entry_id)
     if not entry:
@@ -4907,22 +4932,54 @@ async def get_history_stem_audio(entry_id: str, role: str):
     result = entry.get("result") or {}
     local = _resolve_local_stem_paths(result)
     lp = local.get(role)
+    src: str | None = None
     if lp and Path(lp).exists():
-        return FileResponse(lp)
-    _refresh_r2_stem_urls(result)
-    url = (result.get("stems_paths") or {}).get(role)
-    if not isinstance(url, str) or not url.startswith("http"):
+        src = str(lp)
+    else:
+        _refresh_r2_stem_urls(result)
+        url = (result.get("stems_paths") or {}).get(role)
+        if isinstance(url, str) and url.startswith("http"):
+            src = url
+    if not src:
         raise HTTPException(status_code=404, detail=f"No stem audio for role {role!r}")
+
+    from fastapi.responses import StreamingResponse
+
+    if format == "wav" and not src.split("?", 1)[0].endswith(".wav"):
+        import subprocess
+
+        # ffmpeg reads local paths and https URLs alike; -f wav on stdout
+        # streams as it transcodes, so first audio reaches the browser
+        # before the object finishes downloading.
+        proc = subprocess.Popen(
+            ["ffmpeg", "-v", "error", "-i", src, "-f", "wav", "pipe:1"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+
+        def _iter_wav():
+            try:
+                while True:
+                    chunk = proc.stdout.read(1 << 16)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                proc.stdout.close()
+                proc.terminate()
+
+        return StreamingResponse(_iter_wav(), media_type="audio/wav")
+
+    if not src.startswith("http"):
+        return FileResponse(src)
     import requests as _requests
 
     def _iter():
-        with _requests.get(url, stream=True, timeout=120) as r:
+        with _requests.get(src, stream=True, timeout=120) as r:
             r.raise_for_status()
             for chunk in r.iter_content(chunk_size=1 << 16):
                 yield chunk
 
-    media = "audio/flac" if ".flac" in url.split("?", 1)[0] else "audio/wav"
-    from fastapi.responses import StreamingResponse
+    media = "audio/flac" if ".flac" in src.split("?", 1)[0] else "audio/wav"
     return StreamingResponse(_iter(), media_type=media)
 
 
