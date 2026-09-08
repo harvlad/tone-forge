@@ -71,8 +71,11 @@ struct JamView: View {
                 DegreePadRow(controller: controller)
             }
 
-            // Chord follow countdown strip (shown when follow mode is on)
-            if jamSettings.followEnabled {
+            // Chord follow countdown strip — only for chord/pad play, never
+            // Samples (drum loops have no chord to follow). It also
+            // appears/disappears per chord, which reflowed the grid and made
+            // the pads jump — so it lives OUTSIDE the Samples surface.
+            if jamSettings.followEnabled, jamSettings.padMode != .samples {
                 ChordFollowStrip()
             }
 

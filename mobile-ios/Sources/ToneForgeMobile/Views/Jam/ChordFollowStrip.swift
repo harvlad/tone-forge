@@ -15,7 +15,21 @@ struct ChordFollowStrip: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        if let info = countdownInfo {
+        // Reserve the strip's height at all times so it fades in/out per
+        // chord WITHOUT reflowing the pad grid (the "pads jump" report).
+        ZStack {
+            if let info = countdownInfo {
+                stripCard(info)
+                    .transition(.opacity)
+            }
+        }
+        .frame(height: 52)
+        .animation(.easeInOut(duration: 0.15), value: countdownInfo?.symbol)
+    }
+
+    @ViewBuilder
+    private func stripCard(_ info: CountdownInfo) -> some View {
+        Group {
             VStack(spacing: 4) {
                 // Progress bar
                 GeometryReader { geo in

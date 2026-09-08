@@ -1,6 +1,8 @@
 Jamn — TestFlight build notes
 
 WHAT'S NEW THIS BUILD
+• Fixed: the "Next: <chord>" countdown strip no longer shows in Samples
+  mode and no longer makes the pads jump as chords change.
 • Borrow (new): in the Remix sheet, borrow real drum/bass/chord loops from
   your other analyzed songs. They're time-stretched to the current song's
   tempo (and key-matched for bass/chords) and land on the pads as loops.
