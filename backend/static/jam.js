@@ -7506,6 +7506,33 @@
       refreshIdle();
     })();
 
+    // "MIDI keyboard plays synth": route unmapped generic-MIDI notes to
+    // the pad synth. Opt-in (default OFF) because the same handler
+    // serves pad controllers, where firing unmapped notes is exactly
+    // the failure the drop-by-design rule exists to prevent.
+    (function wireMidiKeyboardSynth() {
+      const kbCb = document.getElementById('lp-midi-keyboard-synth');
+      if (!kbCb || typeof window.Launchpad.onGenericNote !== 'function') return;
+      const KEY = 'jamn.midiKeyboardSynth';
+      let enabled = false;
+      try { enabled = localStorage.getItem(KEY) === '1'; } catch (_) {}
+      const apply = () => {
+        window.Launchpad.onGenericNote(enabled ? _midiKbNote : null);
+        // Toggling off mid-hold must not strand a droning voice.
+        if (!enabled) _midiKbReleaseAll();
+      };
+      kbCb.checked = enabled;
+      apply();
+      kbCb.addEventListener('change', () => {
+        enabled = kbCb.checked;
+        try { localStorage.setItem(KEY, enabled ? '1' : '0'); } catch (_) {}
+        // The click is a user gesture — bootstrap the synth context now
+        // so MIDI-delivered notes (not gestures) aren't autoplay-muted.
+        if (enabled) { try { _ensureLaunchpadSynth(); } catch (_) {} }
+        apply();
+      });
+    })();
+
     window.Launchpad.init({
       onStatusChange: _renderLaunchpadStatus,
       onPadPress: _launchpadPushPress,
@@ -9450,7 +9477,13 @@
   // triangle) fed through a lowpass filter whose cutoff sweeps from
   // bright → warm to imitate the initial pick attack decaying into a
   // rounder body. Optional `pan` in [-1, 1] spreads chord voices.
-  function _launchpadPlayVoice(ctx, out, midi, velocity, releaseSec, pan) {
+  //
+  // Pad presses are one-shot: the whole envelope (including release) is
+  // scheduled up front and the return value is ignored. A MIDI keyboard
+  // needs real note-offs, so `hold` keeps the voice sustaining at the
+  // post-pluck body level and returns { release() } — same graph, same
+  // sliders, so the keyboard sounds identical to the on-screen pads.
+  function _launchpadPlayVoice(ctx, out, midi, velocity, releaseSec, pan, hold) {
     const t = ctx.currentTime;
     // Live octave transpose from the hardware Up/Down arrows. Clamp
     // to legal MIDI so a stacked chord voicing near the edges of the
@@ -9501,7 +9534,7 @@
     env.gain.exponentialRampToValueAtTime(peak, t + attack);
     // Two-stage decay: quick drop from the pluck, then long tail.
     env.gain.exponentialRampToValueAtTime(peak * 0.45, t + Math.max(attack + 0.05, 0.25));
-    env.gain.exponentialRampToValueAtTime(0.0001, t + rel);
+    if (!hold) env.gain.exponentialRampToValueAtTime(0.0001, t + rel);
 
     oscA.connect(mix);
     oscB.connect(mix);
@@ -9517,8 +9550,34 @@
     tail.connect(out);
 
     oscA.start(t); oscB.start(t);
-    oscA.stop(t + rel + 0.08);
-    oscB.stop(t + rel + 0.08);
+    if (!hold) {
+      oscA.stop(t + rel + 0.08);
+      oscB.stop(t + rel + 0.08);
+      return null;
+    }
+    // Held voice: no scheduled ending, so a lost note-off would drone
+    // forever. Failsafe-stop at 30 s (longer than any deliberate hold);
+    // release() re-schedules stop earlier, which the Web Audio spec
+    // allows — the last stop() call wins.
+    oscA.stop(t + 30);
+    oscB.stop(t + 30);
+    let released = false;
+    return {
+      release() {
+        if (released) return;
+        released = true;
+        const now = ctx.currentTime;
+        // Anchor at the current gain before ramping so a release during
+        // the attack doesn't snap or click.
+        env.gain.cancelScheduledValues(now);
+        env.gain.setValueAtTime(Math.max(env.gain.value, 0.0001), now);
+        env.gain.exponentialRampToValueAtTime(0.0001, now + rel);
+        try {
+          oscA.stop(now + rel + 0.08);
+          oscB.stop(now + rel + 0.08);
+        } catch (_) {}
+      },
+    };
   }
 
   // Map a chord symbol → array of MIDI note numbers for a voicing that
@@ -9590,6 +9649,47 @@
         _launchpadPlayVoice(ctx, delayGate, midi, perVoiceVel, null, pan);
       });
     }
+  }
+
+  // ---- MIDI keyboard → pad synth (opt-in) -----------------------------
+  // Sink for Launchpad.onGenericNote: notes a generic controller sends
+  // that the pad map does NOT claim. Registered only while the
+  // "MIDI keyboard plays synth" toggle is on, so pad boxes keep their
+  // drop-unmapped safety by default. Voices are held (see the `hold`
+  // arg on _launchpadPlayVoice) and keyed by MIDI note so note-off
+  // releases exactly the voice its note-on started.
+  const _midiKbVoices = new Map();
+
+  function _midiKbReleaseAll() {
+    for (const v of _midiKbVoices.values()) {
+      try { v.release(); } catch (_) {}
+    }
+    _midiKbVoices.clear();
+  }
+
+  function _midiKbNote(note, on, velocity01) {
+    const held = _midiKbVoices.get(note);
+    if (held) {
+      // Note-off, or a retrigger before the off arrived (some keyboards
+      // send on/on under fast repeats) — either way the old voice must
+      // release first or it drones under the new one.
+      _midiKbVoices.delete(note);
+      try { held.release(); } catch (_) {}
+    }
+    if (!on) return;
+    _ensureLaunchpadSynth();
+    // Same bus fallback chain as _launchpadPlayPress so the live-play
+    // fader governs keyboard notes too.
+    const out = state.launchpad.voiceBus
+      || state.launchpad.synthBus
+      || state.launchpad.synthGain;
+    const ctx = state.launchpad.synthCtx || state.ctx;
+    if (!out || !ctx) return;
+    // Callback velocity is [0, 1]; the voice expects MIDI 0..127. Floor
+    // at 1 so a soft-but-real press never rounds to silence.
+    const vel = Math.max(1, Math.round(Math.max(0, Math.min(1, velocity01)) * 127));
+    const voice = _launchpadPlayVoice(ctx, out, note, vel, null, 0, true);
+    if (voice) _midiKbVoices.set(note, voice);
   }
 
   // =====================================================================

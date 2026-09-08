@@ -1265,6 +1265,15 @@
                   </div>
 
                   <div class="lp-mode-row">
+                    <span class="lp-section-label">MIDI keyboard</span>
+                    <label>
+                      <input type="checkbox" id="lp-midi-keyboard-synth" />
+                      MIDI keyboard plays synth
+                    </label>
+                    <span class="lp-hint">Unmapped notes play the pad synth (pads mapped above still fire samples)</span>
+                  </div>
+
+                  <div class="lp-mode-row">
                     <span class="lp-section-label">Anticipation</span>
                     <label>
                       <input type="range" id="lp-panel-anticipation" min="0" max="8" step="1" style="width:120px;vertical-align:middle" />
@@ -1515,8 +1524,8 @@
 </main>
 
 <script src="/static/account.js?v=1"></script>
-<script src="/static/launchpad.js?v=21"></script>
+<script src="/static/launchpad.js?v=22"></script>
 <script src="/static/kit.js?v=2"></script>
-<script src="/static/jam.js?v=125"></script>
+<script src="/static/jam.js?v=126"></script>
 </body>
 </html>
