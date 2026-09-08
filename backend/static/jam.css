@@ -9,18 +9,50 @@
  * out of the way.
  */
 
+/* JamN native design tokens — source of truth:
+   mobile-ios/Sources/ToneForgeMobile/Views/Theme.swift. Web chrome must
+   read as the same product as mobile/desktop, so every surface/border/
+   accent below derives from these. */
 :root {
-  --bg: #0b0d10;
-  --panel: #14181d;
-  --panel-2: #1c2128;
-  --text: #f3f4f6;
-  --text-dim: #8b95a5;
-  --accent: #f97316;       /* warm orange */
-  --accent-2: #fdba74;
-  --good: #4ade80;
+  --jamn-bg: #0B0B0F;
+  --jamn-surface1: #14141A;
+  --jamn-surface2: #1C1C24;
+  --jamn-border: #2A2A36;
+  --jamn-accent: #8B5CF6;
+  --jamn-success: #22C55E;
+  --jamn-danger: #EF4444;
+  --jamn-text: #FFFFFF;
+  --jamn-text2: #A1A1AA;
+  --jamn-brand-a: #8C59F2;
+  --jamn-brand-b: #4073F2;
+  --jamn-radius-sm: 8px;
+  --jamn-radius-md: 12px;
+  --jamn-radius-lg: 16px;
+  /* Category colors — fallbacks only; pads normally use the backend
+     colorHint (see Auto Kit / launchpad category colorHint contract). */
+  --jamn-cat-drums: #F97316;
+  --jamn-cat-bass: #3B82F6;
+  --jamn-cat-chords: #EC4899;
+  --jamn-cat-texture: #14B8A6;
+  --jamn-cat-pads: #6E5AF7;
+  --jamn-cat-fx: #EAB308;
+  --jamn-cat-vocals: #22C55E;
+  --jamn-cat-mixed: #9CA3AF;
+
+  /* Legacy semantic aliases — the rest of the file reads these; they
+     now resolve to the JamN tokens above. --warn has no JamN
+     equivalent and keeps its amber. */
+  --bg: var(--jamn-bg);
+  --panel: var(--jamn-surface1);
+  --panel-2: var(--jamn-surface2);
+  --text: var(--jamn-text);
+  --text-dim: var(--jamn-text2);
+  --accent: var(--jamn-accent);
+  --accent-2: #A78BFA;
+  --good: var(--jamn-success);
   --warn: #fbbf24;
-  --bad: #f87171;
-  --border: #232a33;
+  --bad: var(--jamn-danger);
+  --border: var(--jamn-border);
 }
 
 * { box-sizing: border-box; }
@@ -29,8 +61,8 @@ html, body {
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue",
-               Arial, sans-serif;
+  font-family: ui-sans-serif, -apple-system, "SF Pro Text", system-ui,
+               sans-serif;
   font-size: 16px;
   height: 100%;
 }
@@ -110,7 +142,7 @@ html, body {
   background: var(--warn);
   animation: pulse 1.2s ease-in-out infinite;
 }
-.engine-banner--on { border-color: rgba(74, 222, 128, 0.35); }
+.engine-banner--on { border-color: rgba(34, 197, 94, 0.35); }
 .engine-banner--on .engine-banner-dot { background: var(--good); }
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -139,7 +171,7 @@ html, body {
 }
 .intake button {
   background: var(--accent);
-  color: #1a0f06;
+  color: #fff;
   border: none;
   border-radius: 10px;
   padding: 0 22px;
@@ -248,7 +280,7 @@ a.np-source:hover,
 a.np-source:focus-visible {
   border-color: var(--accent);
   color: var(--text);
-  background: rgba(249, 115, 22, 0.06);
+  background: rgba(139, 92, 246, 0.06);
 }
 /* Attribution credit line (D-024) — shown only for licensed sessions. */
 a.np-credit {
@@ -290,9 +322,9 @@ a.np-credit[href]:focus-visible {
 .user-card-meta { color: var(--text-dim); font-size: 13px; margin-bottom: 16px; }
 .user-card-controls { display: flex; flex-direction: column; gap: 8px; }
 #connect-btn.connected {
-  background: var(--accent, #4ade80);
-  color: #0a0a0a;
-  border-color: var(--accent, #4ade80);
+  background: var(--accent, #8B5CF6);
+  color: #fff;
+  border-color: var(--accent, #8B5CF6);
 }
 /* Brief visual pulse so a click on the Connect button always has an
    on-element response, even when the resulting state change is purely
@@ -303,9 +335,9 @@ a.np-credit[href]:focus-visible {
   animation: connect-btn-pulse 480ms ease-out;
 }
 @keyframes connect-btn-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(255, 122, 0, 0.55); }
-  60%  { box-shadow: 0 0 0 10px rgba(255, 122, 0, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(255, 122, 0, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.55); }
+  60%  { box-shadow: 0 0 0 10px rgba(139, 92, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
 }
 .connect-status {
   font-size: 12px;
@@ -313,11 +345,11 @@ a.np-credit[href]:focus-visible {
   line-height: 1.4;
   padding: 2px 2px;
 }
-.connect-status.ok { color: var(--accent, #4ade80); }
+.connect-status.ok { color: var(--accent, #8B5CF6); }
 .connect-launcher-link {
   display: inline-block;
   margin-top: 4px;
-  color: var(--accent, #ff7a00);
+  color: var(--accent, #8B5CF6);
   text-decoration: underline;
   font-weight: 500;
 }
@@ -328,16 +360,16 @@ a.np-credit[href]:focus-visible {
   padding: 4px 10px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--text-dim, #aaa);
+  color: var(--text-dim, #A1A1AA);
   background: transparent;
-  border: 1px solid var(--text-dim, #aaa);
+  border: 1px solid var(--text-dim, #A1A1AA);
   border-radius: 4px;
   cursor: pointer;
   font-family: inherit;
 }
 .connect-restart-btn:hover {
-  color: var(--accent, #ff7a00);
-  border-color: var(--accent, #ff7a00);
+  color: var(--accent, #8B5CF6);
+  border-color: var(--accent, #8B5CF6);
 }
 .connect-restart-btn:disabled {
   opacity: 0.5;
@@ -356,8 +388,8 @@ a.np-credit[href]:focus-visible {
   font-size: 13px;
   font-weight: 600;
   color: #fff;
-  background: var(--accent, #ff7a00);
-  border: 1px solid var(--accent, #ff7a00);
+  background: var(--accent, #8B5CF6);
+  border: 1px solid var(--accent, #8B5CF6);
   border-radius: 4px;
   cursor: pointer;
   font-family: inherit;
@@ -373,13 +405,13 @@ a.np-credit[href]:focus-visible {
   display: inline-block;
   margin-left: 6px;
   font-size: 11px;
-  color: var(--text-dim, #aaa);
+  color: var(--text-dim, #A1A1AA);
   letter-spacing: 0.3px;
 }
 .connect-install-link {
   display: inline-block;
   margin-top: 4px;
-  color: var(--accent, #ff7a00);
+  color: var(--accent, #8B5CF6);
   text-decoration: underline;
   font-weight: 500;
 }
@@ -507,7 +539,7 @@ a.np-credit[href]:focus-visible {
   transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
 .section-pill:hover { border-color: var(--accent); }
-.section-pill.active { background: var(--accent); color: #1a0f06; border-color: var(--accent); }
+.section-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* Phase-5 structural-role badge on section pills.
  *
@@ -540,7 +572,7 @@ a.np-credit[href]:focus-visible {
 }
 .section-role-badge.role-anchor {
   background: var(--accent);
-  color: #1a0f06;
+  color: #fff;
   border-color: var(--accent);
 }
 .section-role-badge.role-development {
@@ -554,16 +586,16 @@ a.np-credit[href]:focus-visible {
   border-color: var(--border);
 }
 /* When the pill itself is the active loop region, keep the badge
- * legible against the orange background by inverting only the
+ * legible against the accent background by inverting only the
  * anchor variant (which would otherwise blend in). */
 .section-pill.active .section-role-badge.role-anchor {
-  background: #1a0f06;
+  background: var(--jamn-bg);
   color: var(--accent);
-  border-color: #1a0f06;
+  border-color: var(--jamn-bg);
 }
 .section-pill.active .section-role-badge.role-development,
 .section-pill.active .section-role-badge.role-unique {
-  border-color: #1a0f06;
+  border-color: var(--jamn-bg);
 }
 
 /* Fix B: suspicious-section indicator.
@@ -578,7 +610,7 @@ a.np-credit[href]:focus-visible {
  * not a re-classification.
  *
  * Amber (not red) so it doesn't compete visually with the active
- * loop pill (which uses --accent = orange). Dashed border makes
+ * loop pill (which uses --accent). Dashed border makes
  * "something's provisional here" legible at a glance.
  */
 .section-pill-suspicious {
@@ -602,7 +634,7 @@ a.np-credit[href]:focus-visible {
   vertical-align: middle;
   cursor: help;
 }
-.section-pill.active .section-duration-warn { color: #1a0f06; }
+.section-pill.active .section-duration-warn { color: #fff; }
 
 .loop-status { color: var(--text-dim); font-size: 13px; margin-top: 10px; }
 
@@ -666,7 +698,7 @@ a.np-credit[href]:focus-visible {
 }
 .chord-pill.active {
   background: var(--accent);
-  color: #1a0f06;
+  color: #fff;
   border-color: var(--accent);
   font-weight: 700;
 }
@@ -703,7 +735,7 @@ button {
 }
 button.primary {
   background: var(--accent);
-  color: #1a0f06;
+  color: #fff;
   border: none;
   border-radius: 10px;
   padding: 10px 18px;
@@ -729,10 +761,10 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
 .intake-error {
   margin-top: 14px;
   padding: 10px 14px;
-  background: rgba(211, 106, 69, 0.12);
-  border: 1px solid #d36a45;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid var(--jamn-danger);
   border-radius: 10px;
-  color: #f0a585;
+  color: var(--jamn-danger);
   font-size: 14px;
 }
 
@@ -813,9 +845,9 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: rgba(80, 200, 120, 0.15);
-  color: var(--good, #5c8);
-  border: 1px solid rgba(80, 200, 120, 0.4);
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--good, #22C55E);
+  border: 1px solid rgba(34, 197, 94, 0.4);
 }
 .onboarding-error {
   color: var(--bad);
@@ -829,7 +861,7 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--text-dim, #aaa);
+  color: var(--text-dim, #A1A1AA);
   margin-top: 4px;
 }
 .onboarding-input-name { color: var(--text); font-weight: 600; }
@@ -848,12 +880,12 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
   gap: 4px;
   margin-top: 4px;
 }
-.onboarding-input-picker-label { font-size: 13px; color: var(--text-dim, #aaa); }
+.onboarding-input-picker-label { font-size: 13px; color: var(--text-dim, #A1A1AA); }
 .onboarding-input-picker select {
   padding: 8px;
-  background: var(--panel, #1a1a1a);
+  background: var(--panel, #14141A);
   color: var(--text);
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border, #2A2A36);
   border-radius: 4px;
 }
 #onboarding-submit { margin-top: 8px; align-self: flex-end; }
@@ -878,8 +910,8 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
 .settings-hint--inline { padding-left: 0; margin: 0 0 6px; }
 #setting-device-reset { font-size: 12px; padding: 4px 10px; }
 .launchpad-status--idle { color: var(--text-dim); }
-.launchpad-status--ok { color: #6ce07a; }
-.launchpad-status--error { color: #e07a6c; }
+.launchpad-status--ok { color: var(--jamn-success); }
+.launchpad-status--error { color: var(--jamn-danger); }
 .launchpad-openjam { margin-top: 6px; padding-left: 22px; }
 .launchpad-openjam label { display: block; font-size: 12px; padding: 3px 0; }
 .launchpad-openjam select { font-size: 12px; margin-left: 4px; }
@@ -934,9 +966,9 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
   transform: translateX(-50%);
   transition: left 80ms ease-out, background 200ms;
 }
-.intonation-meter-needle.flat { background: #d36a45; }
-.intonation-meter-needle.sharp { background: #d36a45; }
-.intonation-meter-needle.in-tune { background: #58c47a; }
+.intonation-meter-needle.flat { background: var(--jamn-danger); }
+.intonation-meter-needle.sharp { background: var(--jamn-danger); }
+.intonation-meter-needle.in-tune { background: var(--jamn-success); }
 .intonation-status { font-size: 11px; color: var(--text-dim); grid-column: 1 / -1; margin-top: 4px; }
 .intonation-rolling { text-align: center; padding-left: 14px; border-left: 1px solid var(--border); }
 .intonation-rolling-label { font-size: 11px; color: var(--text-dim); }
@@ -960,7 +992,7 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
   padding: 12px 14px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border, #2a2a2a);
+  border: 1px solid var(--border, #2A2A36);
 }
 .tone-card-header {
   display: flex;
@@ -976,19 +1008,19 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
   padding: 2px 8px;
   border-radius: 999px;
   font-weight: 700;
-  background: #2a2a2a;
-  color: var(--text, #eee);
+  background: var(--jamn-surface2);
+  color: var(--text, #FFFFFF);
 }
 .tone-tier-badge--high    { background: #14532d; color: #bbf7d0; }
 .tone-tier-badge--medium  { background: #78350f; color: #fde68a; }
-.tone-tier-badge--low     { background: #3a3a3a; color: #d4d4d4; }
-.tone-tier-badge--unknown { background: #2a2a2a; color: #9ca3af; }
+.tone-tier-badge--low     { background: var(--jamn-surface2); color: var(--jamn-text2); }
+.tone-tier-badge--unknown { background: var(--jamn-surface2); color: var(--jamn-text2); }
 .tone-card-title {
   font-weight: 600;
   font-size: 14px;
 }
 .tone-card-rationale {
-  color: var(--text-dim, #aaa);
+  color: var(--text-dim, #A1A1AA);
   font-size: 12px;
   line-height: 1.4;
   margin: 4px 0 10px;
@@ -1000,11 +1032,11 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
 .tone-card-alternates {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid var(--border, #2a2a2a);
+  border-top: 1px solid var(--border, #2A2A36);
 }
 .tone-card-alternates-label {
   font-size: 10px;
-  color: var(--text-dim, #aaa);
+  color: var(--text-dim, #A1A1AA);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 4px;
@@ -1015,9 +1047,9 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
   gap: 6px;
 }
 .tone-alternate-chip {
-  border: 1px solid var(--border, #2a2a2a);
+  border: 1px solid var(--border, #2A2A36);
   background: rgba(255, 255, 255, 0.02);
-  color: var(--text, #eee);
+  color: var(--text, #FFFFFF);
   font-size: 11px;
   padding: 3px 10px;
   border-radius: 999px;
@@ -1078,7 +1110,7 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 .connect-pill.connected {
   border-color: var(--accent);
   color: var(--accent);
-  background: rgba(249, 115, 22, 0.08);
+  background: rgba(139, 92, 246, 0.08);
 }
 .connect-pill.connecting {
   border-color: var(--warn);
@@ -1092,8 +1124,8 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
    to separate "auto-reconnect exhausted" from the routine
    transient-offline state above. */
 .connect-pill.errored {
-  border-color: var(--err, #ff4d4d);
-  color: var(--err, #ff4d4d);
+  border-color: var(--err, #EF4444);
+  color: var(--err, #EF4444);
 }
 
 .connect-monitor-pop {
@@ -1314,7 +1346,7 @@ main.lp-tab-active .perform-grid {
 .tone-match-card .tone-card { margin: 8px 0 0; }
 .tone-match-card #tone-send-connect {
   background: var(--accent);
-  color: #1a0f06;
+  color: #fff;
   border: none;
   border-radius: 10px;
   padding: 9px 14px;
@@ -1383,12 +1415,12 @@ main.lp-tab-active .perform-grid {
 }
 .audio-in-status-dot.audio-in-status-off { background: var(--border); }
 .audio-in-status-dot.audio-in-status-on {
-  background: #4caf50;
-  box-shadow: 0 0 6px rgba(76, 175, 80, 0.55);
+  background: var(--jamn-success);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.55);
 }
 .audio-in-status-dot.audio-in-status-err {
-  background: #e54b4b;
-  box-shadow: 0 0 6px rgba(229, 75, 75, 0.55);
+  background: var(--jamn-danger);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.55);
 }
 .audio-in-mini-meter {
   display: inline-block;
@@ -1509,32 +1541,32 @@ main.lp-tab-active .perform-grid {
   font-weight: 600;
   letter-spacing: 0.4px;
   text-transform: uppercase;
-  color: var(--text-dim, #aaa);
+  color: var(--text-dim, #A1A1AA);
 }
 .audio-input-card-badge {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid var(--border, #2a2a2a);
-  color: var(--text-dim, #aaa);
+  border: 1px solid var(--border, #2A2A36);
+  color: var(--text-dim, #A1A1AA);
   letter-spacing: 0.3px;
 }
 .audio-input-card-badge.is-paired {
-  border-color: var(--good, #4caf50);
-  color: var(--good, #4caf50);
+  border-color: var(--good, #22C55E);
+  color: var(--good, #22C55E);
 }
 .audio-input-card-badge.is-installed {
   border-color: var(--warn, #ff9800);
   color: var(--warn, #ff9800);
 }
 .audio-input-card-badge.is-fallback {
-  border-color: var(--accent, #ff7a00);
-  color: var(--accent, #ff7a00);
+  border-color: var(--accent, #8B5CF6);
+  color: var(--accent, #8B5CF6);
 }
 .audio-input-card-badge.is-missing {
-  border-color: var(--border, #2a2a2a);
-  color: var(--text-dim, #aaa);
+  border-color: var(--border, #2A2A36);
+  color: var(--text-dim, #A1A1AA);
 }
 
 /* Audio-Ownership Pivot, Phase 2 — fallback affordance.
@@ -1546,15 +1578,15 @@ main.lp-tab-active .perform-grid {
   padding: 4px 0 0 0;
 }
 .monitor-fallback-link {
-  color: var(--text-dim, #aaa);
+  color: var(--text-dim, #A1A1AA);
   font-size: 12px;
   text-decoration: underline;
-  text-decoration-color: var(--text-dim, #aaa);
+  text-decoration-color: var(--text-dim, #A1A1AA);
   cursor: pointer;
 }
 .monitor-fallback-link:hover {
-  color: var(--accent, #ff7a00);
-  text-decoration-color: var(--accent, #ff7a00);
+  color: var(--accent, #8B5CF6);
+  text-decoration-color: var(--accent, #8B5CF6);
 }
 
 /* Audio-Ownership Pivot, Phase 3 — dual-latency card.
@@ -1657,8 +1689,8 @@ main.lp-tab-active .perform-grid {
   letter-spacing: 0.3px;
 }
 .audio-latency-measured-badge.is-nosignal {
-  color: var(--err, #c0392b);
-  border-color: var(--err, #c0392b);
+  color: var(--err, #EF4444);
+  border-color: var(--err, #EF4444);
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
@@ -1712,7 +1744,7 @@ main.lp-tab-active .perform-grid {
 .monitor-row-controls #monitor-toggle.active {
   background: var(--good);
   border-color: var(--good);
-  color: #0b0d10;
+  color: var(--jamn-bg);
 }
 .monitor-row-controls #monitor-mute { font-size: 12px; padding: 6px 10px; }
 .monitor-row-controls #monitor-mute:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -1797,7 +1829,7 @@ main.lp-tab-active .perform-grid {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: #0b0d10;
+  color: var(--jamn-bg);
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
@@ -1868,16 +1900,16 @@ main.lp-tab-active .perform-grid {
   user-select: none;
 }
 .chord-lane-stem-label select {
-  background: var(--bg-elev, #1c1c1c);
-  color: var(--text, #e8e8e8);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-elev, #1C1C24);
+  color: var(--text, #FFFFFF);
+  border: 1px solid var(--border, #2A2A36);
   border-radius: 4px;
   padding: 2px 6px;
   font-size: 13px;
   cursor: pointer;
 }
 .chord-lane-stem-label select:focus {
-  outline: 1px solid var(--accent, #6aa6ff);
+  outline: 1px solid var(--accent, #8B5CF6);
   outline-offset: 1px;
 }
 
@@ -1907,7 +1939,7 @@ main.lp-tab-active .perform-grid {
   border: 2px solid var(--accent);
   border-radius: 10px;
   background: var(--panel);
-  box-shadow: 0 0 0 1px var(--accent), 0 4px 12px rgba(249, 115, 22, 0.20);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 12px rgba(139, 92, 246, 0.20);
   padding: 14px 16px 16px;
   display: flex;
   flex-direction: column;
@@ -2109,12 +2141,12 @@ main.lp-tab-active .perform-grid {
 }
 .chord-voicing-option:hover,
 .chord-voicing-option:focus-visible {
-  background: rgba(249, 115, 22, 0.08);
+  background: rgba(139, 92, 246, 0.08);
   border-color: var(--accent);
   outline: none;
 }
 .chord-voicing-option.is-selected {
-  background: rgba(249, 115, 22, 0.16);
+  background: rgba(139, 92, 246, 0.16);
   border-color: var(--accent);
   color: var(--accent);
   font-weight: 600;
@@ -2250,7 +2282,7 @@ main.lp-tab-active .perform-grid {
   font-family: inherit;
 }
 .chord-diagram-finger {
-  fill: #0b0d10;
+  fill: #fff;
   font-size: 7px;
   font-weight: 700;
   font-family: inherit;
@@ -2559,8 +2591,8 @@ main.lp-tab-active .perform-grid {
 .cv-toggle-btn,
 .cv-style-btn {
   background: transparent;
-  border: 1px solid var(--border, #2c2c2c);
-  color: var(--text-dim, #888);
+  border: 1px solid var(--border, #2A2A36);
+  color: var(--text-dim, #A1A1AA);
   padding: 3px 10px;
   border-radius: 4px;
   cursor: pointer;
@@ -2569,21 +2601,21 @@ main.lp-tab-active .perform-grid {
 }
 .cv-toggle-btn.is-active,
 .cv-style-btn.is-active {
-  background: var(--accent, #e8743b);
-  color: #0b0b0b;
-  border-color: var(--accent, #e8743b);
+  background: var(--accent, #8B5CF6);
+  color: #fff;
+  border-color: var(--accent, #8B5CF6);
 }
 .cv-toggle-btn:hover:not(.is-active),
 .cv-style-btn:hover:not(.is-active) {
-  color: var(--text, #ddd);
-  border-color: var(--text-dim, #888);
+  color: var(--text, #FFFFFF);
+  border-color: var(--text-dim, #A1A1AA);
 }
 .cv-style-group {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding-left: 8px;
-  border-left: 1px solid var(--border, #2c2c2c);
+  border-left: 1px solid var(--border, #2A2A36);
 }
 
 /* The tab lane SVG fills the same horizontal envelope as the chord
@@ -2600,24 +2632,24 @@ main.lp-tab-active .perform-grid {
   display: block;
 }
 .chord-now-tab-lane .tab-string {
-  stroke: var(--border, #2c2c2c);
+  stroke: var(--border, #2A2A36);
   stroke-width: 1;
 }
 .chord-now-tab-lane .tab-playhead {
-  stroke: var(--accent, #e8743b);
+  stroke: var(--accent, #8B5CF6);
   stroke-width: 1.5;
 }
 .chord-now-tab-lane .tab-string-label {
-  fill: var(--text-dim, #888);
+  fill: var(--text-dim, #A1A1AA);
   font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .chord-now-tab-lane .tab-note-dot {
-  fill: var(--accent, #e8743b);
+  fill: var(--accent, #8B5CF6);
 }
 .chord-now-tab-lane .tab-note-fret,
 .chord-now-tab-lane .tab-note-name {
-  fill: var(--accent, #e8743b);
+  fill: var(--accent, #8B5CF6);
   font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
@@ -2696,7 +2728,7 @@ main.lp-tab-active .perform-grid {
 }
 .rehearsal-section-item.is-active {
   border-color: var(--accent);
-  background: rgba(249, 115, 22, 0.08);
+  background: rgba(139, 92, 246, 0.08);
 }
 .rehearsal-section-item .rehearsal-check {
   width: 18px;
@@ -2713,7 +2745,7 @@ main.lp-tab-active .perform-grid {
 }
 .rehearsal-section-item.is-complete .rehearsal-check {
   border-color: var(--good);
-  background: rgba(74, 222, 128, 0.16);
+  background: rgba(34, 197, 94, 0.16);
 }
 .rehearsal-section-item .rehearsal-item-label {
   flex: 1;
@@ -2772,7 +2804,7 @@ main.lp-tab-active .perform-grid {
   font-size: 11px;
   padding: 3px 8px;
   border-radius: 10px;
-  background: rgba(249, 115, 22, 0.12);
+  background: rgba(139, 92, 246, 0.12);
   color: var(--accent-2);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -2796,7 +2828,7 @@ main.lp-tab-active .perform-grid {
 }
 .rehearsal-mic-chip.rehearsal-mic-on .rehearsal-mic-dot {
   background: var(--good);
-  box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
 }
 .rehearsal-mic-chip.rehearsal-mic-off .rehearsal-mic-label { color: var(--text-dim); }
 .rehearsal-mic-pitch {
@@ -2857,14 +2889,14 @@ main.lp-tab-active .perform-grid {
 .rehearsal-tile-tag {
   padding: 1px 6px;
   border-radius: 8px;
-  background: rgba(148, 163, 184, 0.14);
+  background: rgba(161, 161, 170, 0.14);
   color: var(--text-dim);
   font-weight: 600;
   font-size: 10px;
   letter-spacing: 0.02em;
 }
 .rehearsal-tile-tag.tag-severity-3 {
-  background: rgba(249, 115, 22, 0.16);
+  background: rgba(139, 92, 246, 0.16);
   color: var(--accent-2);
 }
 /* Next-chord preview under the meta strip. Muted colour keeps it
@@ -2873,23 +2905,23 @@ main.lp-tab-active .perform-grid {
 .rehearsal-tile-next {
   margin-top: 6px;
   padding-top: 6px;
-  border-top: 1px dashed rgba(148, 163, 184, 0.28);
+  border-top: 1px dashed rgba(161, 161, 170, 0.28);
   font-size: 11px;
   color: var(--text-dim);
   letter-spacing: 0.02em;
 }
 .rehearsal-tile.is-active {
   border-color: var(--accent);
-  background: rgba(249, 115, 22, 0.10);
+  background: rgba(139, 92, 246, 0.10);
   transform: translateY(-1px);
 }
 .rehearsal-tile.is-pass {
   border-color: var(--good);
-  background: rgba(74, 222, 128, 0.12);
+  background: rgba(34, 197, 94, 0.12);
 }
 .rehearsal-tile.is-fail {
   border-color: var(--bad);
-  background: rgba(248, 113, 113, 0.10);
+  background: rgba(239, 68, 68, 0.10);
 }
 .rehearsal-empty {
   color: var(--text-dim);
@@ -3055,7 +3087,7 @@ main.lp-tab-active .perform-grid {
 }
 .rehearsal-section-row.is-active {
   border-color: var(--accent);
-  background: rgba(249, 115, 22, 0.10);
+  background: rgba(139, 92, 246, 0.10);
 }
 .rehearsal-section-row.is-variant {
   padding-left: 28px;
@@ -3065,7 +3097,7 @@ main.lp-tab-active .perform-grid {
 }
 .rehearsal-section-row.is-variant.is-active {
   color: var(--text);
-  background: rgba(249, 115, 22, 0.08);
+  background: rgba(139, 92, 246, 0.08);
 }
 /* Cluster wraps one anchor + its variation drawer. Kept transparent
    so it's invisible when a group has no variants; the drawer
@@ -3139,7 +3171,7 @@ main.lp-tab-active .perform-grid {
 }
 .rehearsal-section-row.is-complete .rehearsal-check {
   border-color: var(--good);
-  background: rgba(74, 222, 128, 0.16);
+  background: rgba(34, 197, 94, 0.16);
 }
 
 /* Section heading — "Maybe …" italics for low-confidence labels. */
@@ -3197,7 +3229,7 @@ main.lp-tab-active .perform-grid {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 10px;
-  background: rgba(148, 163, 184, 0.12);
+  background: rgba(161, 161, 170, 0.12);
   color: var(--text-dim);
   font-size: 11px;
   font-weight: 500;
@@ -3207,7 +3239,7 @@ main.lp-tab-active .perform-grid {
    barre chords stand out in the heading strip; severity 2 keeps the
    neutral default. */
 .difficulty-hint.tag-severity-3 {
-  background: rgba(249, 115, 22, 0.14);
+  background: rgba(139, 92, 246, 0.14);
   color: var(--accent-2);
 }
 /* Hand hint: a small leading marker tells the musician at a glance
@@ -3249,12 +3281,12 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   text-transform: uppercase;
   padding: 1px 5px;
   border-radius: 3px;
-  background: rgba(148, 163, 184, 0.18);
+  background: rgba(161, 161, 170, 0.18);
   color: var(--text-dim);
   line-height: 1.4;
 }
 .rehearsal-row-debug-tag[data-tag-id="barre"] {
-  background: rgba(249, 115, 22, 0.24);
+  background: rgba(139, 92, 246, 0.24);
   color: var(--accent-2);
 }
 .rehearsal-row-debug-tag[data-tag-id="colour"] {
@@ -3282,7 +3314,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 14, 20, 0.72);
+  background: rgba(11, 11, 15, 0.72);
   z-index: 20;
   padding: 24px;
   opacity: 0;
@@ -3297,7 +3329,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   display: none;
 }
 .session-summary-card {
-  background: var(--surface, #131922);
+  background: var(--surface, #14141A);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 28px 32px;
@@ -3309,7 +3341,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   font-size: 22px;
   font-weight: 600;
   margin-bottom: 20px;
-  color: var(--text, #e9edf2);
+  color: var(--text, #FFFFFF);
 }
 /* Follow-up: today's-goal badge on the summary card. A small inline
    stripe that surfaces when the elapsed session met the 15 min soft
@@ -3321,8 +3353,8 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   padding: 4px 10px;
   margin: -12px 0 20px 0;
   border-radius: 999px;
-  background: rgba(74, 222, 128, 0.10);
-  color: var(--good, #4ade80);
+  background: rgba(34, 197, 94, 0.10);
+  color: var(--good, #22C55E);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -3353,7 +3385,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   font-weight: 500;
 }
 .session-summary-line-value {
-  color: var(--text, #e9edf2);
+  color: var(--text, #FFFFFF);
   font-weight: 600;
   text-align: right;
 }
@@ -3363,8 +3395,8 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   line-height: 1.5;
   margin-bottom: 20px;
   padding: 10px 12px;
-  border-left: 2px solid var(--accent, #6ea8ff);
-  background: rgba(110, 168, 255, 0.06);
+  border-left: 2px solid var(--accent, #8B5CF6);
+  background: rgba(139, 92, 246, 0.06);
   border-radius: 4px;
 }
 .session-summary-recommendation:empty {
@@ -3399,7 +3431,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 14, 20, 0.72);
+  background: rgba(11, 11, 15, 0.72);
   z-index: 50;
   padding: 24px;
 }
@@ -3407,7 +3439,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   display: none;
 }
 .skill-map-card {
-  background: var(--surface, #131922);
+  background: var(--surface, #14141A);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 28px 32px;
@@ -3426,7 +3458,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 .skill-map-heading {
   font-size: 22px;
   font-weight: 600;
-  color: var(--text, #e9edf2);
+  color: var(--text, #FFFFFF);
 }
 .skill-map-empty {
   color: var(--text-dim);
@@ -3459,14 +3491,14 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   padding: 6px 8px;
   border-radius: 6px;
   font-size: 13px;
-  background: rgba(148, 163, 184, 0.06);
+  background: rgba(161, 161, 170, 0.06);
 }
 .skill-map-row-label {
-  color: var(--text, #e9edf2);
+  color: var(--text, #FFFFFF);
   font-weight: 500;
 }
 .skill-map-row-dots {
-  color: var(--accent, #6ea8ff);
+  color: var(--accent, #8B5CF6);
   letter-spacing: 2px;
   font-size: 10px;
 }
@@ -3491,12 +3523,12 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   gap: 12px;
   padding: 8px 10px;
   border-radius: 6px;
-  background: rgba(148, 163, 184, 0.06);
+  background: rgba(161, 161, 170, 0.06);
   font-size: 13px;
   align-items: baseline;
 }
 .skill-map-recent-song-title {
-  color: var(--text, #e9edf2);
+  color: var(--text, #FFFFFF);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3521,7 +3553,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   padding: 8px 12px;
   border-radius: 999px;
   border: 1px dashed var(--border);
-  background: rgba(148, 163, 184, 0.05);
+  background: rgba(161, 161, 170, 0.05);
   color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
@@ -3529,7 +3561,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   transition: background 0.15s, color 0.15s;
 }
 .warmup-suggestion-chip:hover {
-  background: rgba(148, 163, 184, 0.12);
+  background: rgba(161, 161, 170, 0.12);
   color: var(--text);
 }
 
@@ -3550,7 +3582,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(10, 14, 20, 0.72);
+  background: rgba(11, 11, 15, 0.72);
 }
 .warmup-overlay[hidden] {
   display: none;
@@ -3560,7 +3592,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   max-height: 80vh;
   overflow-y: auto;
   padding: 24px;
-  background: var(--card, #1c2028);
+  background: var(--card, #1C1C24);
   border: 1px solid var(--border);
   border-radius: 12px;
   display: flex;
@@ -3591,7 +3623,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   padding: 20px 8px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(148, 163, 184, 0.05);
+  background: rgba(161, 161, 170, 0.05);
   color: var(--text);
   font-size: 20px;
   font-weight: 600;
@@ -3599,14 +3631,14 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 .warmup-tile.is-active {
-  border-color: var(--accent, #6ea8ff);
-  box-shadow: 0 0 0 2px rgba(110, 168, 255, 0.25);
-  background: rgba(110, 168, 255, 0.08);
+  border-color: var(--accent, #8B5CF6);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+  background: rgba(139, 92, 246, 0.08);
 }
 .warmup-tile.is-passed {
-  border-color: var(--good, #66c67d);
-  background: rgba(102, 198, 125, 0.12);
-  color: var(--good, #66c67d);
+  border-color: var(--good, #22C55E);
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--good, #22C55E);
 }
 .warmup-progress {
   color: var(--text-dim);
@@ -3616,8 +3648,8 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 .warmup-done-copy {
   padding: 12px;
   border-radius: 8px;
-  background: rgba(102, 198, 125, 0.10);
-  color: var(--good, #66c67d);
+  background: rgba(34, 197, 94, 0.10);
+  color: var(--good, #22C55E);
   text-align: center;
   font-weight: 500;
 }
@@ -3636,14 +3668,14 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   padding: 2px 8px;
   border: none;
   background: transparent;
-  color: var(--accent, #6ea8ff);
+  color: var(--accent, #8B5CF6);
   font-size: 11px;
   cursor: pointer;
   border-radius: 4px;
   transition: background 0.15s;
 }
 .best-rep-button:hover {
-  background: rgba(110, 168, 255, 0.10);
+  background: rgba(139, 92, 246, 0.10);
 }
 
 /* Sibling "⬇ WAV" download control. Uses the same text-link visual
@@ -3656,15 +3688,15 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   padding: 2px 8px;
   border: none;
   background: transparent;
-  color: var(--text-dim, #94a3b8);
+  color: var(--text-dim, #A1A1AA);
   font-size: 11px;
   cursor: pointer;
   border-radius: 4px;
   transition: background 0.15s;
 }
 .best-rep-download-button:hover {
-  background: rgba(148, 163, 184, 0.10);
-  color: var(--accent, #6ea8ff);
+  background: rgba(161, 161, 170, 0.10);
+  color: var(--accent, #8B5CF6);
 }
 
 /* Session-summary "Hear your best rep" link. Inline next to the
@@ -3674,7 +3706,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--accent, #6ea8ff);
+  color: var(--accent, #8B5CF6);
   font-size: 12px;
   cursor: pointer;
 }
@@ -3694,7 +3726,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   flex-direction: column;
   gap: 10px;
   padding: 14px 18px;
-  background: var(--card, #1c2028);
+  background: var(--card, #1C1C24);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
@@ -3769,7 +3801,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 .bead.is-perfect {
   background: var(--good);
   border-color: var(--good);
-  box-shadow: 0 0 4px rgba(74, 222, 128, 0.5);
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
 }
 
 /* State chip: small pill shown next to the beads. Hidden when
@@ -3799,13 +3831,13 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 }
 .mastery-chip.is-locked-in {
   color: var(--good);
-  border-color: rgba(74, 222, 128, 0.45);
-  background: rgba(74, 222, 128, 0.14);
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.14);
 }
 .mastery-chip.is-mastered {
   color: #ffffff;
   border-color: var(--good);
-  background: rgba(74, 222, 128, 0.35);
+  background: rgba(34, 197, 94, 0.35);
 }
 /* Fading: previously locked-in, but stale. Muted amber signals
    "refresher needed" without the alarm of a fail state. */
@@ -3829,7 +3861,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
   font-size: 12px;
-  color: var(--dim);
+  color: var(--text-dim);
 }
 .rehearsal-session-goal[hidden] { display: none; }
 .rehearsal-session-goal-label {
@@ -3838,7 +3870,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   letter-spacing: 0.02em;
 }
 .rehearsal-session-goal-value {
-  color: var(--dim);
+  color: var(--text-dim);
   white-space: nowrap;
 }
 .rehearsal-session-goal-bar {
@@ -3917,12 +3949,12 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   display: flex;
   gap: 6px;
   margin-bottom: 10px;
-  border-bottom: 1px solid var(--border, #2b2f38);
+  border-bottom: 1px solid var(--border, #2A2A36);
 }
 .center-tab {
   background: transparent;
   border: 0;
-  color: var(--text-dim, #8a8f99);
+  color: var(--text-dim, #A1A1AA);
   font: inherit;
   padding: 8px 14px;
   cursor: pointer;
@@ -3931,10 +3963,10 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   align-items: center;
   gap: 6px;
 }
-.center-tab:hover { color: var(--text, #e6e8ec); }
+.center-tab:hover { color: var(--text, #FFFFFF); }
 .center-tab.is-active {
-  color: var(--text, #e6e8ec);
-  border-bottom-color: var(--accent, #6ce07a);
+  color: var(--text, #FFFFFF);
+  border-bottom-color: var(--accent, #8B5CF6);
 }
 .center-tab[disabled] { opacity: 0.5; cursor: not-allowed; }
 .center-tab-warn-dot {
@@ -3942,8 +3974,8 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #e07a6c;
-  box-shadow: 0 0 4px #e07a6c;
+  background: var(--jamn-danger);
+  box-shadow: 0 0 4px var(--jamn-danger);
 }
 .chord-stack[hidden], .launchpad-panel[hidden] { display: none !important; }
 
@@ -3959,7 +3991,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-dim, #8a8f99);
+  color: var(--text-dim, #A1A1AA);
   margin-bottom: 4px;
 }
 .lp-status-row {
@@ -3974,11 +4006,11 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   gap: 6px;
   padding: 5px 12px;
   border-radius: 999px;
-  background: #1c1f26;
+  background: var(--jamn-surface2);
   font-size: 13px;
   font-weight: 500;
 }
-.lp-status-device { color: var(--text-dim, #8a8f99); font-size: 12px; }
+.lp-status-device { color: var(--text-dim, #A1A1AA); font-size: 12px; }
 .lp-status-enable { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .lp-status-enable[hidden] { display: none !important; }
 
@@ -3991,7 +4023,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   align-items: stretch;
   gap: 6px;
   padding: 10px 12px;
-  background: #16181e;
+  background: var(--jamn-surface1);
   border-radius: 8px;
 }
 /* Chunky button-style radios. The native radio is hidden and the
@@ -4002,25 +4034,25 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
    the shared button rules stay DRY. Matches the Launchpad top-row
    preset LEDs painted from jam.js. */
 .lp-preset-row label {
-  --preset-color: #8a8f99;
-  --preset-color-soft: rgba(138, 143, 153, 0.14);
+  --preset-color: #A1A1AA;
+  --preset-color-soft: rgba(161, 161, 170, 0.14);
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
   min-height: 34px;
-  background: #1c1f27;
-  border: 1px solid #2b2f38;
+  background: var(--jamn-surface2);
+  border: 1px solid var(--jamn-border);
   border-radius: 999px;
-  color: #d8dbe1;
+  color: var(--jamn-text);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, transform 60ms ease;
 }
 .lp-preset-row label:hover {
-  background: #20242d;
-  border-color: #3a3f4a;
+  background: #24242E;
+  border-color: #3A3A48;
 }
 .lp-preset-row label:active {
   transform: translateY(1px);
@@ -4078,8 +4110,8 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   margin-top: 6px;
   padding-top: 8px;
   width: 100%;
-  border-top: 1px solid #23262e;
-  color: var(--text-dim, #8a8f99);
+  border-top: 1px solid var(--jamn-border);
+  color: var(--text-dim, #A1A1AA);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -4087,9 +4119,9 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 .lp-preset-caption {
   margin: 4px 0 0;
   padding-top: 6px;
-  border-top: 1px solid #23262e;
+  border-top: 1px solid var(--jamn-border);
   width: 100%;
-  color: var(--text-dim, #8a8f99);
+  color: var(--text-dim, #A1A1AA);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -4111,14 +4143,14 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
    instrument/anticipation/openjam controls so they're hidden by default
    but still reachable for power users. */
 .lp-advanced {
-  border-top: 1px solid var(--border, #2b2f38);
+  border-top: 1px solid var(--border, #2A2A36);
   padding-top: 8px;
 }
 .lp-advanced-summary {
   cursor: pointer;
   padding: 4px 0;
   font-size: 12px;
-  color: var(--text-dim, #8a8f99);
+  color: var(--text-dim, #A1A1AA);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -4141,7 +4173,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   flex-wrap: wrap;
   gap: 12px;
   padding: 8px 12px;
-  background: #16181e;
+  background: var(--jamn-surface1);
   border-radius: 8px;
 }
 .lp-openjam-options label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
@@ -4171,7 +4203,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 .lp-settings-column .lp-mode-row,
 .lp-settings-column .lp-openjam-options {
   padding: 6px 10px;
-  background: #16181e;
+  background: var(--jamn-surface1);
   border-radius: 8px;
 }
 .lp-settings-column .lp-mode-row {
@@ -4184,7 +4216,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 }
 .lp-settings-column .lp-legend-wrap {
   padding: 6px 10px;
-  background: #16181e;
+  background: var(--jamn-surface1);
   border-radius: 8px;
 }
 
@@ -4213,14 +4245,14 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   gap: 4px;
   aspect-ratio: 1 / 1;
   padding: 6px;
-  background: #0e1015;
+  background: var(--jamn-bg);
   border-radius: 10px;
   width: 100%;
 }
 .lp-pad {
   border: 0;
   border-radius: 4px;
-  background: #1b1e25;
+  background: var(--jamn-surface2);
   cursor: pointer;
   padding: 0;
   transition: transform 60ms ease-out, box-shadow 60ms ease-out;
@@ -4228,7 +4260,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 }
 .lp-pad:hover { transform: scale(1.05); }
 .lp-pad:active { transform: scale(0.95); }
-.lp-pad:focus-visible { outline: 2px solid var(--accent, #6ce07a); outline-offset: 2px; }
+.lp-pad:focus-visible { outline: 2px solid var(--accent, #8B5CF6); outline-offset: 2px; }
 .lp-pad--pulse {
   /* Upcoming-chord pads pulse and stay dimmer than active pads so
      the currently-sounding tones remain the visual anchor. */
@@ -4267,11 +4299,11 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 .lp-legend-item { display: flex; align-items: center; gap: 8px; }
 .lp-legend-swatch {
   width: 14px; height: 14px; border-radius: 3px; flex: 0 0 14px;
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid var(--jamn-border);
 }
 .lp-legend-caption {
   margin-top: 6px;
-  color: var(--text-dim, #8a8f99);
+  color: var(--text-dim, #A1A1AA);
   font-size: 11px;
   line-height: 1.4;
 }
@@ -4280,7 +4312,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
    the pad grid; caption drops to its own line below. */
 .lp-legend-wrap--horizontal {
   padding: 6px 10px;
-  background: #16181e;
+  background: var(--jamn-surface1);
   border-radius: 8px;
 }
 .lp-legend--horizontal {
@@ -4301,14 +4333,14 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   flex-direction: column;
   gap: 4px;
   padding: 6px 10px;
-  background: #16181e;
+  background: var(--jamn-surface1);
   border-radius: 8px;
   margin-bottom: 6px;
 }
 .lp-countdown-track {
   position: relative;
   height: 8px;
-  background: #0d0f13;
+  background: var(--jamn-bg);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -4327,10 +4359,10 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   justify-content: space-between;
   align-items: baseline;
   font-size: 12px;
-  color: var(--text-dim, #8a8f99);
+  color: var(--text-dim, #A1A1AA);
 }
 .lp-countdown-next {
-  color: var(--text, #e6e8ec);
+  color: var(--text, #FFFFFF);
   font-weight: 600;
 }
 .lp-countdown-time {
@@ -4345,7 +4377,7 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
 }
 
 /* Voice tweaks (collapsible) */
-.lp-voice { border-top: 1px solid var(--border, #2b2f38); padding-top: 8px; }
+.lp-voice { border-top: 1px solid var(--border, #2A2A36); padding-top: 8px; }
 .lp-voice-summary { cursor: pointer; padding: 4px 0; font-size: 13px; }
 .lp-voice-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
 .lp-tweak-row {
@@ -4355,37 +4387,40 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   gap: 10px;
   font-size: 12px;
 }
-.lp-tweak-label { color: var(--text-dim, #8a8f99); }
-.lp-tweak-readout { text-align: right; font-variant-numeric: tabular-nums; color: var(--text, #e6e8ec); }
+.lp-tweak-label { color: var(--text-dim, #A1A1AA); }
+.lp-tweak-readout { text-align: right; font-variant-numeric: tabular-nums; color: var(--text, #FFFFFF); }
 .lp-tweak-row input[type="range"] { width: 100%; }
 .lp-voice-actions { display: flex; justify-content: flex-end; padding-top: 6px; }
 
 /* ============================================================ landing reskin
-   JamN marketing landing for #view-intake. Purple/indigo theme, scoped so the
-   band-room and perform views keep the calm orange language. Every functional
+   JamN marketing landing for #view-intake. Since the JamN-token retint the
+   whole app shares the purple accent; this block only adds the marketing
+   backdrop/hero/CTA treatments on top. Every functional
    id is preserved (#upload-form, #upload-file, #upload-submit, #engine-banner*,
    #intake-form/#intake-instrument/#intake-submit, #upload-attest,
    #intake-change-device) — this block is visual only.
    ============================================================================ */
 :root {
-  --brand-purple: #8b5cf6;
-  --brand-purple-lite: #a78bfa;
-  --brand-grad: linear-gradient(120deg, #a855f7 0%, #7c6cf5 50%, #6366f1 100%);
+  --brand-purple: var(--jamn-accent);
+  --brand-purple-lite: #A78BFA;
+  /* Brand gradient — reserved for the brand mark / hero accent / primary
+     CTA. Controls and selected states use flat --jamn-accent instead. */
+  --brand-grad: linear-gradient(120deg, var(--jamn-brand-a) 0%, var(--jamn-brand-b) 100%);
 }
 
 /* Deep purple-black backdrop (harmonises every view, fixed while scrolling). */
 body {
   background:
-    radial-gradient(1200px 620px at 50% -12%, rgba(96, 63, 176, 0.34), transparent 60%),
-    radial-gradient(900px 520px at 10% 6%, rgba(124, 58, 237, 0.12), transparent 55%),
-    radial-gradient(900px 520px at 90% 6%, rgba(99, 102, 241, 0.12), transparent 55%),
-    #07060d;
+    radial-gradient(1200px 620px at 50% -12%, rgba(140, 89, 242, 0.34), transparent 60%),
+    radial-gradient(900px 520px at 10% 6%, rgba(140, 89, 242, 0.12), transparent 55%),
+    radial-gradient(900px 520px at 90% 6%, rgba(64, 115, 242, 0.12), transparent 55%),
+    var(--jamn-bg);
   background-attachment: fixed;
 }
 
 /* header */
 .jam-header {
-  border-bottom-color: rgba(255, 255, 255, 0.06);
+  border-bottom-color: var(--jamn-border);
   padding: 20px 32px;
   justify-content: flex-start;
   gap: clamp(32px, 7vw, 120px);
@@ -4405,8 +4440,8 @@ body {
   align-items: center; justify-content: center;
   width: 40px; height: 40px; margin-left: 14px;
   border-radius: 10px; cursor: pointer;
-  color: var(--text); background: rgba(124, 58, 237, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.28);
+  color: var(--text); background: rgba(139, 92, 246, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.28);
 }
 .nav-burger svg { width: 22px; height: 22px; }
 .jam-header nav a {
@@ -4416,8 +4451,8 @@ body {
 .jam-header nav a:hover { color: var(--text); }
 .jam-header nav a.active {
   color: #fff;
-  background: rgba(124, 58, 237, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.35);
+  background: rgba(139, 92, 246, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.35);
 }
 
 /* decorative waveform wisps flanking the intake column */
@@ -4458,7 +4493,7 @@ body {
 .upload-card {
   position: relative;
   width: 100%; max-width: 600px; margin: 0 auto;
-  background: linear-gradient(180deg, rgba(32, 24, 54, 0.72), rgba(18, 14, 30, 0.72));
+  background: linear-gradient(180deg, rgba(28, 28, 36, 0.72), rgba(20, 20, 26, 0.72));
   border: 1px solid rgba(139, 92, 246, 0.22);
   border-radius: 26px;
   padding: 44px 48px 40px;
@@ -4472,7 +4507,7 @@ body {
   z-index: -1; pointer-events: none;
   background: radial-gradient(closest-side,
     rgba(139, 92, 246, 0.40),
-    rgba(124, 58, 237, 0.14) 58%,
+    rgba(139, 92, 246, 0.14) 58%,
     transparent 80%);
   filter: blur(48px);
 }
@@ -4507,7 +4542,7 @@ body {
   padding: 17px 20px; font-size: 17px; font-weight: 700;
   font-family: inherit; color: #fff;
   background: var(--brand-grad); cursor: pointer;
-  box-shadow: 0 10px 26px rgba(124, 58, 237, 0.35);
+  box-shadow: 0 10px 26px rgba(140, 89, 242, 0.35);
   transition: filter .15s, opacity .15s, transform .1s;
 }
 .analyze-btn:hover:not(:disabled) { filter: brightness(1.08); }
@@ -4519,8 +4554,8 @@ body {
   max-width: none; width: 100%; margin: 14px 0 0;
   display: flex; align-items: center; gap: 10px; text-align: left;
   padding: 11px 14px; border-radius: 12px;
-  background: rgba(16, 12, 26, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(20, 20, 26, 0.6);
+  border: 1px solid var(--jamn-border);
 }
 .landing .engine-banner-text { display: flex; flex-direction: column; gap: 1px; }
 .landing .engine-banner-text strong { font-size: 13.5px; font-weight: 600; }
@@ -4542,8 +4577,8 @@ body {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 40px 0 0;
 }
 .feature-card {
-  background: rgba(20, 16, 32, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(20, 20, 26, 0.5);
+  border: 1px solid var(--jamn-border);
   border-radius: 16px; padding: 22px 16px; text-align: center;
 }
 .feature-card__icon { display: inline-flex; color: var(--brand-purple-lite); margin-bottom: 12px; }
@@ -4555,7 +4590,7 @@ body {
 .landing-footer {
   display: flex; justify-content: center; gap: 40px; flex-wrap: wrap;
   margin: 44px 0 0; padding-top: 22px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--jamn-border);
   color: var(--text-dim); font-size: 14px;
 }
 .landing-footer__item { display: inline-flex; align-items: center; gap: 8px; }
@@ -4667,8 +4702,8 @@ body:has(#view-intake.active) #view-intake.active { width: 100%; }
     flex-direction: column; align-items: stretch; gap: 4px;
     margin-left: 0; padding: 8px;
     min-width: 168px; z-index: 60;
-    background: #150f24;
-    border: 1px solid rgba(167, 139, 250, 0.28);
+    background: var(--jamn-surface1);
+    border: 1px solid rgba(139, 92, 246, 0.28);
     border-radius: 14px;
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   }

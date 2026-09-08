@@ -1,0 +1,236 @@
+/* kit.css — 16-pad Auto Kit surface (web mirror of mobile SamplePadGrid4x4).
+ * All colors ride the shared --jamn-* custom properties with hard fallbacks;
+ * per-pad tint arrives as an "r,g,b" triple in --pad-tint (set from the
+ * server's colorHint by kit.js) so rgba(var(--pad-tint), a) composes the
+ * mobile tint-at-opacity fills without per-category CSS. */
+
+.kit-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--jamn-text, #fff);
+}
+
+/* ---------- header ---------- */
+
+.kit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.kit-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--jamn-text, #fff);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.kit-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kit-seg {
+  display: inline-flex;
+  background: var(--jamn-surface1, #14141A);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.kit-seg-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.kit-seg-btn.is-on {
+  background: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+}
+
+.kit-toggle,
+.kit-stop {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text2, #A1A1AA);
+  cursor: pointer;
+}
+
+.kit-toggle.is-on {
+  border-color: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-accent, #8B5CF6);
+}
+
+/* Latch only means something in Loop mode — fade it in Tap. */
+.kit-toggle.is-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.kit-stop:hover,
+.kit-toggle:hover {
+  color: var(--jamn-text, #fff);
+}
+
+/* ---------- grid ---------- */
+
+.kit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px; /* matches mobile tile spacing */
+}
+
+.kit-pad {
+  --pad-tint: 139, 92, 246; /* accent fallback until kit.js sets colorHint */
+  position: relative;
+  appearance: none;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-lg, 16px);
+  /* Idle filled pad: tint at low opacity over the surface — the mobile
+   * "0.30 over near-black" look ("filled must not read as dead"). */
+  background:
+    linear-gradient(rgba(var(--pad-tint), 0.28), rgba(var(--pad-tint), 0.28)),
+    var(--jamn-surface2, #1C1C24);
+  aspect-ratio: 1 / 1;
+  min-height: 64px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  touch-action: none; /* pointer events own the gesture (no scroll/zoom steal) */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.kit-pad.is-playing {
+  /* Stronger tint while ringing (mobile bumps 0.30 → 0.50). */
+  background:
+    linear-gradient(rgba(var(--pad-tint), 0.5), rgba(var(--pad-tint), 0.5)),
+    var(--jamn-surface2, #1C1C24);
+  border-color: rgba(255, 255, 255, 0.85);
+}
+
+.kit-pad.is-pressed {
+  box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0.18);
+}
+
+.kit-pad.is-empty {
+  background: var(--jamn-surface1, #14141A);
+  cursor: default;
+  opacity: 0.5;
+}
+
+.kit-pad-name {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  color: var(--jamn-text, #fff);
+  text-shadow: 0 1px 1.5px rgba(0, 0, 0, 0.45); /* scrim: readable mid-flash */
+  /* Truncate at two lines like the mobile tile label. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.kit-pad-wave {
+  width: 100%;
+  height: 30px;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+/* Elapsed sweep + playhead over the tile while playing (mobile
+ * loopPlayhead: translucent elapsed region ending in a bright line). */
+.kit-pad-sweep {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: rgba(255, 255, 255, 0.14);
+  border-right: 2px solid rgba(255, 255, 255, 0.95);
+  pointer-events: none;
+}
+
+.kit-pad:not(.is-playing) .kit-pad-sweep {
+  display: none;
+}
+
+/* Progress ring: kit.js paints a conic-gradient into this element each
+ * frame; the mask hollows it to a 2.5px edge ring hugging the tile radius. */
+.kit-pad-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2.5px;
+  background: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Armed: triggered but waiting for the quantize boundary — pulsing tinted
+ * border reads "waiting for the beat", not broken silence. */
+.kit-pad.is-armed {
+  border-color: rgba(var(--pad-tint), 0.9);
+  animation: kit-armed-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes kit-armed-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--pad-tint), 0.0); }
+  50%      { box-shadow: 0 0 0 3px rgba(var(--pad-tint), 0.45); }
+}
+
+/* ---------- loading skeleton ---------- */
+
+.kit-pad.is-skeleton {
+  border-color: var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface1, #14141A);
+  cursor: default;
+  animation: kit-skeleton 1.2s ease-in-out infinite;
+}
+
+@keyframes kit-skeleton {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 0.85; }
+}
+
+/* ---------- error ---------- */
+
+.kit-error {
+  padding: 14px 16px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-lg, 16px);
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text2, #A1A1AA);
+  font-size: 13px;
+}

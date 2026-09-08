@@ -5726,12 +5726,15 @@
   //
   // Older history rows (pre-result persistence) fall back to
   // ``/api/history/:id`` so deep-link doesn't regress for legacy data.
-  (function maybeDeepLink() {
-    const m = window.location.pathname.match(/^\/jam\/([^\/]+)$/);
-    if (!m) return;
-    const id = m[1];
-
-    fetch(`/api/session/${id}`)
+  // The fetch chain is shared with the Library / featured-auto-open
+  // paths (jamn router module at the end of this file) — they load a
+  // history entry exactly like the deep link does. ``shouldAbort`` is
+  // checked after the fetch resolves but before any state is touched,
+  // so a background auto-open can never stomp an action the user took
+  // while the request was in flight. Resolves true on success, false
+  // on failure/abort — it never rejects.
+  function loadSessionById(id, shouldAbort) {
+    return fetch(`/api/session/${id}`)
       .then(r => {
         if (r.ok) return r.json().then(bundle => ({ kind: 'bundle', bundle }));
         if (r.status === 422) {
@@ -5745,17 +5748,25 @@
         throw new Error('not found');
       })
       .then(({ kind, bundle, entry }) => {
+        if (shouldAbort && shouldAbort()) return false;
         const result = kind === 'bundle'
           ? bundleToLegacyResult(bundle)
           : entry;
         state.sourceUrl = result.source_url || null;
         state.userInstrument = result.detected_type || 'guitar';
         showView('bandroom');
-        onAnalysisComplete(result);
+        return Promise.resolve(onAnalysisComplete(result)).then(() => true);
       })
-      .catch(() => {
-        // Stay on intake on error.
-      });
+      .catch(() => false); // caller decides; deep link stays on intake
+  }
+
+  // Non-null exactly when the page was opened on /jam/:id — the jamn
+  // router awaits it to land on the Jam surface and to suppress the
+  // featured auto-open.
+  const _deepLinkPromise = (function maybeDeepLink() {
+    const m = window.location.pathname.match(/^\/jam\/([^\/]+)$/);
+    if (!m) return null;
+    return loadSessionById(m[1]);
   })();
 
   // ---------------------------------------------- SessionBundle adapter
@@ -13926,4 +13937,369 @@
       _maybeSnapshotBestRep,
     };
   } catch (_) {}
+
+  // ==================================================================
+  // Jamn desktop-chrome router — pill nav + left sidebar
+  //
+  // Additive module: the legacy intake/bandroom flow and showView()
+  // remain the engine underneath. This layer mirrors the native
+  // desktop app's chrome: a centered pill segmented nav for the four
+  // legacy surfaces (Intake | Band Room | Rehearsal | Perform, plus a
+  // plain Studio link) and a persistent left sidebar (Contribute /
+  // Tools / Recent songs). "Jam Pads" in the sidebar activates the
+  // kit pane and hands the loaded song's full history entry to
+  // window.JamnKit.mount() (kit.js); "Mixer" activates the promoted
+  // stems-mixer pane. The URL hash keeps the surface across refreshes.
+  // ==================================================================
+  (function initJamnRouter() {
+    const SURFACE_TO_VIEW = {
+      intake: 'intake',
+      bandroom: 'bandroom',
+      rehearsal: 'rehearsal',
+      perform: 'perform',
+      jampads: 'kit',
+      mixer: 'mixer',
+      library: 'library', // fallback pane; primary access is the sidebar
+    };
+    const VIEW_TO_SURFACE = {
+      intake: 'intake',
+      bandroom: 'bandroom',
+      rehearsal: 'rehearsal',
+      perform: 'perform',
+      kit: 'jampads',
+      mixer: 'mixer',
+      library: 'library',
+    };
+    // Sidebar items that select a real pane; everything else in the
+    // sidebar is a "coming to web" placeholder.
+    const SIDE_TO_VIEW = { jampads: 'kit', mixer: 'mixer' };
+
+    // Register the new panes in the shared registry so the existing
+    // showView() owns their visibility exactly like the legacy four.
+    views.kit = $('view-kit');
+    views.mixer = $('view-mixer');
+    views.library = $('view-library');
+
+    const pillnav = $('jamn-pillnav');
+    const pills = pillnav
+      ? Array.from(pillnav.querySelectorAll('.jamn-pill[data-surface]'))
+      : [];
+    const sidebar = $('jamn-sidebar');
+    const sideItems = sidebar
+      ? Array.from(sidebar.querySelectorAll('.jamn-side-item'))
+      : [];
+    const sideNote = $('jamn-side-note');
+    const sideToggle = $('jamn-side-toggle');
+
+    // ---------------------------------------------- auto-open guards
+    // Any interactive click (tab, library row, upload submit, demo
+    // track, …) means the user is driving — the background featured
+    // auto-open must never steal the surface from them. Capture phase
+    // so the flag is set even when a handler stops propagation.
+    let _userActed = false;
+    document.addEventListener('click', (e) => {
+      const t = e.target;
+      if (t && t.closest &&
+          t.closest('button, a, input, select, label, [role="tab"]')) {
+        _userActed = true;
+      }
+    }, true);
+
+    function _analysisInFlight() {
+      // pendingJobId covers the window between POST and followJob();
+      // an active bandroom pane covers the streaming phase after it.
+      return !!state.pendingJobId ||
+        !!(views.bandroom && views.bandroom.classList.contains('active'));
+    }
+
+    // ---------------------------------------------- kit hand-off
+    // kit.js owns everything inside #kit-root. We hand it the full
+    // /api/history/{id} entry once per loaded song; songs that arrived
+    // via the upload/streaming path (no cached entry) hydrate lazily.
+    let _currentEntry = null;   // full history entry for the loaded song
+    let _mountedEntryId = null; // last entry id handed to JamnKit.mount
+
+    function _setCurrentEntry(entry) {
+      _currentEntry = entry || null;
+      _mountedEntryId = null; // force a remount for the new song
+    }
+
+    function _mountKitIfReady() {
+      const id = state.analysisId;
+      if (!id) return; // no song loaded — Jam pane stays empty
+      if (!views.kit || !views.kit.classList.contains('active')) return;
+      if (_currentEntry && _currentEntry.id === id) {
+        if (_mountedEntryId === id) return;
+        try {
+          window.JamnKit?.mount(_currentEntry);
+          _mountedEntryId = id;
+        } catch (e) {
+          console.warn('[jamn-router] kit mount failed:', e);
+        }
+        return;
+      }
+      // Entry missing or stale — hydrate from the persisted row, then
+      // retry (the recursion hits the cached-entry branch above).
+      fetch(`/api/history/${id}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(entry => {
+          if (!entry || state.analysisId !== id) return;
+          _currentEntry = entry;
+          _mountKitIfReady();
+        })
+        .catch(() => {});
+    }
+
+    // ---------------------------------------------- showView wrapper
+    // Function declarations are mutable bindings, so every existing
+    // call site (bandroom CTAs, deep link, cancel, …) picks up the
+    // wrapper automatically: pill/sidebar highlight + URL hash stay in
+    // sync no matter which code path switches the pane.
+    const _legacyShowView = showView;
+    showView = function (name) {
+      _legacyShowView(name);
+      const surface = VIEW_TO_SURFACE[name] || null;
+      pills.forEach(p => p.classList.toggle(
+        'jamn-pill--active', !!surface && p.dataset.surface === surface));
+      // Sidebar: pane-backed items follow the active view; placeholder
+      // highlights and the "coming to web" note clear on any surface
+      // change. The mobile drawer also closes — a surface switch means
+      // the user is done with the menu.
+      sideItems.forEach(it => {
+        const v = SIDE_TO_VIEW[it.dataset.side];
+        it.classList.toggle('jamn-side-item--active', !!v && v === name);
+      });
+      if (sideNote) sideNote.hidden = true;
+      if (sidebar) sidebar.classList.remove('jamn-side--open');
+      if (surface && window.location.hash !== '#' + surface) {
+        // replaceState (not location.hash=) so surface hops don't pile
+        // up history entries; it also never fires hashchange, so no
+        // feedback loop with the listener below.
+        try { window.history.replaceState(null, '', '#' + surface); } catch (_) {}
+      }
+      if (name === 'kit') _mountKitIfReady();
+      if (name === 'library') _renderLibrary();
+    };
+
+    // ---------------------------------------------- pill nav + hash
+    pills.forEach(p => p.addEventListener('click', () => {
+      _userActed = true;
+      const view = SURFACE_TO_VIEW[p.dataset.surface];
+      if (view) showView(view);
+    }));
+
+    window.addEventListener('hashchange', () => {
+      const view = SURFACE_TO_VIEW[(window.location.hash || '').replace(/^#/, '')];
+      if (view) { _userActed = true; showView(view); }
+    });
+
+    // ---------------------------------------------- sidebar
+    if (sideToggle && sidebar) {
+      sideToggle.addEventListener('click', () => {
+        sidebar.classList.toggle('jamn-side--open');
+      });
+    }
+
+    const SIDE_LABELS = {
+      voice: 'Voice', beat: 'Beat', sample: 'Sample',
+      sequencer: 'Sequencer', recordings: 'Recordings', packs: 'Packs',
+    };
+    sideItems.forEach(it => it.addEventListener('click', () => {
+      _userActed = true;
+      const side = it.dataset.side;
+      const view = SIDE_TO_VIEW[side];
+      if (view) { showView(view); return; }
+      if (side === 'launchpad') {
+        // Launchpad lives as a center tab inside the perform surface.
+        // Activate perform, then delegate to the existing tab button so
+        // _initLaunchpadPanel's own wiring does the switching.
+        showView('perform');
+        const lpTab = document.querySelector(
+          '#center-tabs .center-tab[data-tab="launchpad"]');
+        if (lpTab) { try { lpTab.click(); } catch (_) {} }
+        return;
+      }
+      // Placeholder: select the item and say so. Highlight clears on
+      // the next surface change (showView wrapper).
+      sideItems.forEach(o => o.classList.remove('jamn-side-item--active'));
+      it.classList.add('jamn-side-item--active');
+      if (sideNote) {
+        sideNote.textContent =
+          `${SIDE_LABELS[side] || side} is coming to the web app — ` +
+          'it lives in the desktop app today.';
+        sideNote.hidden = false;
+      }
+    }));
+
+    // ---------------------------------------------- library
+    // Two render targets share one fetch: the sidebar RECENT SONGS
+    // list (primary, desktop chrome) and the #view-library fallback
+    // pane (reachable via #library, useful when the drawer is closed).
+    const LIB_TARGETS = [
+      { list: $('jamn-side-lib-list'), empty: $('jamn-side-lib-empty') },
+      { list: $('jamn-lib-list'), empty: $('jamn-lib-empty') },
+    ];
+    [$('jamn-lib-add'), $('jamn-side-lib-add')].forEach(btn => {
+      if (btn) btn.addEventListener('click', () => showView('intake'));
+    });
+
+    function _libDate(ts) {
+      if (ts == null) return '';
+      const d = typeof ts === 'number'
+        ? new Date(ts < 1e12 ? ts * 1000 : ts) // epoch seconds vs ms
+        : new Date(ts);
+      return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+    }
+
+    function _libMeta(row) {
+      const bits = [];
+      if (row.detected_type) bits.push(row.detected_type);
+      const dur = Number(row.duration);
+      if (isFinite(dur) && dur > 0) bits.push(formatTime(dur));
+      const when = _libDate(row.timestamp);
+      if (when) bits.push(when);
+      return bits.join(' · ');
+    }
+
+    function _buildLibRow(row) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'jamn-lib-row'
+        + (row.featured === true ? ' jamn-lib-row--featured' : '');
+      const main = document.createElement('div');
+      main.className = 'jamn-lib-row-main';
+      const nameEl = document.createElement('div');
+      nameEl.className = 'jamn-lib-row-name';
+      nameEl.textContent = row.name || row.filename || 'Untitled';
+      const metaEl = document.createElement('div');
+      metaEl.className = 'jamn-lib-row-meta';
+      metaEl.textContent = _libMeta(row);
+      main.appendChild(nameEl);
+      main.appendChild(metaEl);
+      btn.appendChild(main);
+      if (row.featured === true) {
+        const chip = document.createElement('span');
+        chip.className = 'jamn-lib-chip';
+        chip.textContent = 'Featured';
+        btn.appendChild(chip);
+      }
+      btn.addEventListener('click', () => {
+        _userActed = true;
+        loadSessionById(row.id).then(ok => {
+          if (ok) _hydrateAndLand(row.id, true);
+        });
+      });
+      return btn;
+    }
+
+    function _renderLibrary() {
+      fetch('/api/history?limit=50')
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          const rows = ((data && data.history) || []).filter(r => r && r.id);
+          LIB_TARGETS.forEach(({ list, empty }) => {
+            if (!list) return;
+            list.textContent = '';
+            if (empty) empty.hidden = rows.length > 0;
+            rows.forEach(row => list.appendChild(_buildLibRow(row)));
+          });
+        })
+        .catch(() => { /* keep whatever the lists showed */ });
+    }
+
+    // Fetch the full history entry for JamnKit, then land on the Jam
+    // surface. ``force`` distinguishes an explicit user load (library
+    // row tap — always land) from the background featured auto-open
+    // (only land if the user hasn't navigated meanwhile).
+    function _hydrateAndLand(id, force) {
+      if (!id) return Promise.resolve();
+      return fetch(`/api/history/${id}`)
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null)
+        .then(entry => {
+          if (entry) _setCurrentEntry(entry);
+          if (force || !_userActed) showView('kit');
+        });
+    }
+
+    // ---------------------------------------------- featured auto-open
+    // Fires only on a cold load: no /jam/:id deep link, no surface
+    // hash, no song, no analysis in flight, no user click yet. The
+    // pre-apply guard is re-checked by loadSessionById after its fetch
+    // resolves, so a click or upload that happens mid-flight wins and
+    // the auto-open silently stands down. A failed load degrades to
+    // the Library surface; an aborted one changes nothing.
+    function _tryFeaturedAutoOpen() {
+      const preApply = () =>
+        _userActed || _analysisInFlight() || !!state.analysisId;
+      fetch('/api/history?limit=25')
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          const rows = (data && data.history) || [];
+          if (preApply()) return;
+          const feat = rows.find(r => r && r.featured === true && r.id);
+          if (!feat) {
+            // No featured pin: surface the song list. On desktop
+            // chrome the sidebar already shows RECENT SONGS next to
+            // the intake pane; on narrow viewports (drawer closed)
+            // fall through to the Library pane instead.
+            if (rows.length && !_isDesktopShell()) showView('library');
+            return;
+          }
+          loadSessionById(feat.id, preApply).then(ok => {
+            if (!ok) {
+              // preApply() true here means abort (user won) — leave
+              // their surface alone. Otherwise the load itself failed:
+              // degrade silently to the song list (sidebar on desktop,
+              // Library pane on narrow viewports).
+              if (!preApply() && !_isDesktopShell()) showView('library');
+              return;
+            }
+            if (_userActed) return; // user navigated mid-load
+            _hydrateAndLand(feat.id, false);
+          });
+        })
+        .catch(() => { /* silent: intake stays up */ });
+    }
+
+    // ---------------------------------------------- boot
+    function _isDesktopShell() {
+      try {
+        return window.matchMedia('(min-width: 900px)').matches;
+      } catch (_) { return true; }
+    }
+
+    (function _boot() {
+      // The sidebar is persistent chrome — populate RECENT SONGS right
+      // away, independent of which surface boots.
+      _renderLibrary();
+
+      const hashView =
+        SURFACE_TO_VIEW[(window.location.hash || '').replace(/^#/, '')] || null;
+
+      if (_deepLinkPromise) {
+        // Explicit /jam/:id deep link owns the flow — featured never
+        // fires. Once loaded, default to the Jam Pads surface (or
+        // whatever surface the hash pinned) unless the user already
+        // navigated.
+        _deepLinkPromise.then(ok => {
+          if (!ok || _userActed) return; // legacy: failure stays on intake
+          if (hashView && hashView !== 'kit') { showView(hashView); return; }
+          _hydrateAndLand(state.analysisId, false);
+        });
+        return;
+      }
+
+      if (hashView && hashView !== 'intake') {
+        // Refresh with a surface hash: restore that surface. Counts as
+        // explicit intent, so featured auto-open never fires. #intake
+        // is the boot default anyway — treat it as a cold load so the
+        // featured pin still works there.
+        showView(hashView);
+        return;
+      }
+
+      _tryFeaturedAutoOpen();
+    })();
+  })();
 })();

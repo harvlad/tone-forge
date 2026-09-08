@@ -4,7 +4,99 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>JamN — What are we playing?</title>
-<link rel="stylesheet" href="/static/jam.css?v=68" />
+<link rel="stylesheet" href="/static/jam.css?v=69" />
+<link rel="stylesheet" href="/static/kit.css?v=1">
+<style>
+  /* Jamn desktop-chrome shell: left sidebar + centered pill nav.
+     Deliberately small and local — jam.css is owned by the theming
+     pass, so only jamn-* classes live here, on --jamn-* tokens with
+     fallback values matching the current near-black look. */
+
+  /* --- centered pill segmented nav ------------------------------- */
+  .jamn-pillbar { position:sticky; top:0; z-index:60; display:flex;
+    justify-content:center; align-items:center; gap:8px; padding:8px 12px;
+    background: var(--jamn-bg, rgba(7,6,13,.92));
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--jamn-border, rgba(255,255,255,.08));
+    overflow-x:auto; }
+  .jamn-pillnav { display:flex; gap:4px; padding:4px; border-radius:999px;
+    background: var(--jamn-surface2, rgba(255,255,255,.06)); flex:0 0 auto; }
+  .jamn-pill { appearance:none; border:none; background:none; cursor:pointer;
+    font:inherit; font-size:.92rem; padding:7px 16px; border-radius:999px;
+    color: var(--jamn-text2, rgba(235,235,245,.62)); text-decoration:none;
+    white-space:nowrap; display:inline-block; }
+  .jamn-pill:hover { color: var(--jamn-text, #f4f4f8); }
+  .jamn-pill--active { color:#fff;
+    background: var(--jamn-accent, #a855f7); }
+
+  /* --- left sidebar ---------------------------------------------- */
+  .jamn-side { position:fixed; top:0; bottom:0; left:0; width:260px; z-index:70;
+    display:flex; flex-direction:column;
+    background: var(--jamn-surface1, #0d0c16);
+    border-right: 1px solid var(--jamn-border, rgba(255,255,255,.08));
+    padding:16px 12px; overflow-y:auto; box-sizing:border-box; }
+  .jamn-side-brand { display:flex; align-items:center; gap:10px;
+    padding:4px 8px 12px;
+    border-bottom: 1px solid var(--jamn-border, rgba(255,255,255,.06)); }
+  .jamn-side-brand-name { font-weight:700; font-size:1.05rem;
+    color: var(--jamn-text, #f4f4f8); line-height:1.1; }
+  .jamn-side-brand-domain { font-size:.72rem;
+    color: var(--jamn-text2, rgba(235,235,245,.55)); }
+  .jamn-side-label { font-size:11px; letter-spacing:.09em; text-transform:uppercase;
+    color: var(--jamn-text2, rgba(235,235,245,.55)); margin:16px 8px 6px; }
+  .jamn-side-item { display:block; width:100%; text-align:left; appearance:none;
+    background:none; border:none; cursor:pointer; font:inherit; font-size:.95rem;
+    color: var(--jamn-text, #e8e8f0); padding:9px 12px; border-radius:12px; }
+  .jamn-side-item:hover { background: var(--jamn-surface2, rgba(255,255,255,.05)); }
+  .jamn-side-item--active { background: var(--jamn-accent-tint, rgba(168,85,247,.18));
+    color: var(--jamn-accent-bright, #c084fc); }
+  .jamn-side-note { margin:10px 8px 0; font-size:.8rem; line-height:1.4;
+    color: var(--jamn-text2, rgba(235,235,245,.55)); }
+  .jamn-side .jamn-lib-row { padding:8px 10px; }
+  .jamn-side .jamn-lib-row-name { font-size:.9rem; }
+  .jamn-side .jamn-lib-add { margin-top:10px; }
+
+  /* --- responsive shell ------------------------------------------ */
+  .jamn-side-toggle { display:none; appearance:none; background:none; cursor:pointer;
+    border:1px solid var(--jamn-border, rgba(255,255,255,.12)); border-radius:8px;
+    color: var(--jamn-text, #f4f4f8); padding:6px 10px; font:inherit;
+    flex:0 0 auto; }
+  @media (min-width: 900px) {
+    body { padding-left: 260px; }
+    /* fixed playback bar spans the viewport in jam.css — keep it clear
+       of the sidebar */
+    .playback-bar { left: 260px; }
+    /* brand lives in the sidebar on desktop; hide the header copy */
+    .jam-header .brand { visibility: hidden; }
+  }
+  @media (max-width: 899.98px) {
+    .jamn-side { transform: translateX(-100%); transition: transform .2s ease; }
+    .jamn-side.jamn-side--open { transform: none;
+      box-shadow: 0 0 40px rgba(0,0,0,.55); }
+    .jamn-side-toggle { display:inline-flex; }
+  }
+
+  /* --- library rows (sidebar RECENT SONGS + fallback pane) ------- */
+  .jamn-lib { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  .jamn-lib-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+  .jamn-lib-title { font-size:1.4rem; font-weight:700; color: var(--jamn-text, #f4f4f8); }
+  .jamn-lib-list { display:flex; flex-direction:column; gap:8px; }
+  .jamn-lib-row { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    width:100%; text-align:left; font:inherit; cursor:pointer; padding:12px 14px; border-radius:10px;
+    background: var(--jamn-card, rgba(255,255,255,.04));
+    border: 1px solid var(--jamn-border, rgba(255,255,255,.08));
+    color: var(--jamn-text, #f4f4f8); }
+  .jamn-lib-row:hover { border-color: var(--jamn-accent-dim, rgba(168,85,247,.45)); }
+  .jamn-lib-row--featured { border-color: var(--jamn-accent-dim, rgba(168,85,247,.55)); }
+  .jamn-lib-row-main { min-width:0; flex:1 1 auto; }
+  .jamn-lib-row-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .jamn-lib-row-meta { font-size:.82rem; color: var(--jamn-text-dim, rgba(235,235,245,.6)); margin-top:2px; }
+  .jamn-lib-chip { flex:0 0 auto; font-size:.72rem; font-weight:700; letter-spacing:.04em;
+    text-transform:uppercase; padding:3px 8px; border-radius:999px;
+    color: var(--jamn-accent, #a855f7);
+    border: 1px solid var(--jamn-accent-dim, rgba(168,85,247,.55)); }
+  .jamn-lib-empty { color: var(--jamn-text-dim, rgba(235,235,245,.6)); padding: 24px 0; }
+</style>
 </head>
 <body>
 <header class="jam-header">
@@ -30,7 +122,6 @@
   </a>
   <input type="checkbox" id="nav-toggle" class="nav-toggle" hidden />
   <nav id="primary-nav">
-    <a class="active" href="/jam">Jam</a>
     <a href="/studio">Studio</a>
     <a href="/debug">Community</a>
   </nav>
@@ -41,6 +132,64 @@
     </svg>
   </label>
 </header>
+
+<!-- Desktop-app chrome: centered pill segmented nav (surfaces) +
+     persistent left sidebar (Contribute / Tools / Recent songs).
+     Wired by the jamn router module at the end of jam.js; the hash
+     (#intake/#bandroom/#rehearsal/#perform/#jampads/#mixer/#library)
+     keeps the surface across refreshes. Studio stays a plain link. -->
+<nav id="jamn-pillbar" class="jamn-pillbar" aria-label="Jamn surfaces">
+  <button type="button" id="jamn-side-toggle" class="jamn-side-toggle"
+          aria-label="Menu" aria-controls="jamn-sidebar">☰</button>
+  <div id="jamn-pillnav" class="jamn-pillnav">
+    <button type="button" class="jamn-pill" data-surface="intake">Intake</button>
+    <button type="button" class="jamn-pill" data-surface="bandroom">Band Room</button>
+    <button type="button" class="jamn-pill" data-surface="rehearsal">Rehearsal</button>
+    <button type="button" class="jamn-pill" data-surface="perform">Perform</button>
+    <a class="jamn-pill" href="/studio">Studio</a>
+  </div>
+</nav>
+
+<aside id="jamn-sidebar" class="jamn-side">
+  <div class="jamn-side-brand">
+    <!-- Same waveform mark as the header; reuses the #brandGrad defs
+         declared in the header SVG (same document, header stays in the
+         DOM even when visually hidden on desktop). -->
+    <svg width="24" height="20" viewBox="0 0 24 20" fill="url(#brandGrad)" aria-hidden="true">
+      <rect x="0"  y="7"  width="3" height="6"  rx="1.5"/>
+      <rect x="5"  y="3"  width="3" height="14" rx="1.5"/>
+      <rect x="10" y="0"  width="3" height="20" rx="1.5"/>
+      <rect x="15" y="4"  width="3" height="12" rx="1.5"/>
+      <rect x="20" y="7"  width="3" height="6"  rx="1.5"/>
+    </svg>
+    <div>
+      <div class="jamn-side-brand-name">JamN</div>
+      <div class="jamn-side-brand-domain">jamn.app</div>
+    </div>
+  </div>
+
+  <div class="jamn-side-label">Contribute</div>
+  <button type="button" class="jamn-side-item" data-side="voice">Voice</button>
+  <button type="button" class="jamn-side-item" data-side="beat">Beat</button>
+  <button type="button" class="jamn-side-item" data-side="sample">Sample</button>
+
+  <div class="jamn-side-label">Tools</div>
+  <button type="button" class="jamn-side-item" data-side="launchpad">Launchpad</button>
+  <button type="button" class="jamn-side-item" data-side="sequencer">Sequencer</button>
+  <button type="button" class="jamn-side-item" data-side="recordings">Recordings</button>
+  <button type="button" class="jamn-side-item" data-side="jampads">Jam Pads</button>
+  <button type="button" class="jamn-side-item" data-side="packs">Packs</button>
+  <button type="button" class="jamn-side-item" data-side="mixer">Mixer</button>
+
+  <div class="jamn-side-label">Recent songs</div>
+  <div id="jamn-side-lib-list" class="jamn-lib-list"></div>
+  <div id="jamn-side-lib-empty" class="jamn-lib-empty" hidden>
+    No songs yet.
+  </div>
+  <button type="button" id="jamn-side-lib-add" class="ghost jamn-lib-add">+ Add song</button>
+
+  <div id="jamn-side-note" class="jamn-side-note" hidden></div>
+</aside>
 
 <!-- Sign-in modal (magic link). Optional — anonymous jamming keeps
      working; signing in keeps analyses across devices. -->
@@ -971,19 +1120,9 @@
         <div id="loop-status" class="loop-status">Loop: off</div>
         </div><!-- /#chord-stack -->
 
-        <!-- Stems mixer: sibling of #chord-stack and #launchpad-panel
-             so it stays visible regardless of which center tab is
-             active — the mix is a live-playback concern and the user
-             needs it in both the chord view and the Launchpad view.
-             Wrapped in a <details> so the whole rack collapses to a
-             single-line header when the user wants max room for the
-             pad grid. Open state persists via state.settings.stemsOpen. -->
-        <details id="slot-right" class="stage-col stage-right">
-          <summary class="stage-col-label">Stems</summary>
-          <div class="stem-rack" id="stem-rack">
-            <!-- Per-stem rows injected by JS -->
-          </div>
-        </details>
+        <!-- Stems mixer moved to its own surface: #view-mixer (native
+             5-surface IA). All ids preserved there so jam.js wiring
+             into #stem-rack is untouched. -->
 
         <!-- Dedicated Launchpad view. Wired up by _initLaunchpadPanel
              in jam.js. The mirror grid is a live DOM copy of the 8×8
@@ -1211,6 +1350,46 @@
     </div>
   </section>
 
+  <!-- ============================= JAM PADS ============================= -->
+  <!-- Sample-kit surface (sidebar TOOLS → Jam Pads). kit.js owns
+       everything inside #kit-root via window.JamnKit.mount(entry); the
+       router calls it whenever this pane activates with a loaded song. -->
+  <section class="view" id="view-kit"><div id="kit-root"></div></section>
+
+  <!-- ============================== MIXER =============================== -->
+  <!-- Stems mixer, promoted from the perform center column to its own
+       surface (native 5-surface IA). Every id preserved verbatim —
+       jam.js injects per-stem rows into #stem-rack and never cared
+       which pane the rack lived in. -->
+  <section id="view-mixer" class="view">
+    <details id="slot-right" class="stage-col stage-right" open>
+      <summary class="stage-col-label">Stems</summary>
+      <div class="stem-rack" id="stem-rack">
+        <!-- Per-stem rows injected by JS -->
+      </div>
+    </details>
+  </section>
+
+  <!-- ============================= LIBRARY ============================== -->
+  <!-- Fallback history pane (GET /api/history, server order = newest
+       first). Primary access is the sidebar RECENT SONGS list; this
+       pane stays reachable via #library for narrow viewports. Rows
+       rendered by the jamn router module in jam.js; a tap loads the
+       entry through the same path as the /jam/:id deep link and lands
+       on Jam Pads. -->
+  <section id="view-library" class="view">
+    <div class="jamn-lib">
+      <div class="jamn-lib-head">
+        <div class="jamn-lib-title">Library</div>
+        <button type="button" id="jamn-lib-add" class="primary">+ Add song</button>
+      </div>
+      <div id="jamn-lib-list" class="jamn-lib-list"></div>
+      <div id="jamn-lib-empty" class="jamn-lib-empty" hidden>
+        No songs yet. Add one to get started.
+      </div>
+    </div>
+  </section>
+
   <!-- ========================= SKILL MAP ============================= -->
   <!--
     Phase B: cross-song skill map. Modal overlay reachable from the
@@ -1275,6 +1454,7 @@
 
 <script src="/static/account.js?v=1"></script>
 <script src="/static/launchpad.js?v=21"></script>
+<script src="/static/kit.js?v=1"></script>
 <script src="/static/jam.js?v=123"></script>
 </body>
 </html>
