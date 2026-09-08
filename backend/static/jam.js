@@ -7187,7 +7187,9 @@
       ? state.tempo_bpm
       : (typeof state.tempo === 'number' && state.tempo >= 40 && state.tempo <= 240)
         ? state.tempo : null;
-    return bpm ? bpm * _rehearsalRate() : null;
+    // _playRate, not _rehearsalRate: Link follow scales playback too,
+    // and gear locked to the unscaled bpm would drift off the stems.
+    return bpm ? bpm * _playRate() : null;
   }
 
   function _midiClockOnTransport(playing) {
@@ -9261,7 +9263,7 @@
     if (!state.isPlaying) return ctxNow;
     const beats = state.beatTimes;
     const songT = currentPlayTime();
-    const rate = _rehearsalRate() || 1.0;
+    const rate = _playRate() || 1.0;  // rehearsal x Link follow — must match currentPlayTime()
     const toAudio = (songT_) => state.playClockAnchor + (songT_ - state.playOffset) / rate;
     // GRACE window: if we JUST passed a boundary (within GRACE ms),
     // play immediately — perceptually this reads as on-beat and avoids
@@ -13509,7 +13511,7 @@
 
   function _verifyChordTile(item) {
     const nowPerf = performance.now();
-    const rate = _rehearsalRate() || 1.0;
+    const rate = _playRate() || 1.0;  // rehearsal x Link follow — must match currentPlayTime()
     const windowDurSongSec = Math.max(0.001, item.endSec - item.startSec);
     const windowRealMs = (windowDurSongSec / rate) * 1000;
     const startPerf = nowPerf - windowRealMs - 200;
@@ -13600,7 +13602,7 @@
     if (!onsets.length) {
       return { pass: false, reason: 'no_onset', centsError: null, timingMs: null };
     }
-    const rate = _rehearsalRate() || 1.0;
+    const rate = _playRate() || 1.0;  // rehearsal x Link follow — must match currentPlayTime()
     const songNow = currentPlayTime();
     const perfNow = performance.now();
     const targetPerf = perfNow + ((item.startSec - songNow) / rate) * 1000;
