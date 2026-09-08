@@ -84,17 +84,32 @@ die() { printf '\033[1;31mxx \033[0m%s\n' "$*" >&2; exit 1; }
 
 # Submit $1 (zip or DMG) to Apple's notary service using whichever
 # auth path the pre-flight selected. Blocks until the service
-# returns. The caller is responsible for stapler staple afterward.
+# returns. On an Invalid verdict, fetches and prints Apple's issue log
+# before dying — an Invalid otherwise proceeds to stapling, which
+# fails with an opaque "Record not found" that hides the real reason.
+# The caller is responsible for stapler staple afterward.
 notarize_submit() {
     local target="$1"
+    local out submission_id
     case "$NOTARIZE_AUTH" in
         api)
-            xcrun notarytool submit "$target" \
+            out="$(xcrun notarytool submit "$target" \
                 --key "$NOTARY_KEY_PATH" \
                 --key-id "$NOTARY_KEY_ID" \
                 --issuer "$NOTARY_ISSUER_ID" \
                 --team-id "$APPLE_TEAM_ID" \
-                --wait
+                --wait 2>&1 | tee /dev/stderr)" || true
+            if ! grep -q "status: Accepted" <<<"$out"; then
+                submission_id="$(grep -m1 -oE 'id: [a-f0-9-]{36}' <<<"$out" | cut -d' ' -f2)"
+                if [[ -n "$submission_id" ]]; then
+                    warn "notarization not Accepted — Apple's issue log for $submission_id:"
+                    xcrun notarytool log "$submission_id" \
+                        --key "$NOTARY_KEY_PATH" \
+                        --key-id "$NOTARY_KEY_ID" \
+                        --issuer "$NOTARY_ISSUER_ID" >&2 || true
+                fi
+                die "notarization failed for $target"
+            fi
             ;;
         password)
             xcrun notarytool submit "$target" \
