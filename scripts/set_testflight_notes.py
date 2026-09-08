@@ -42,12 +42,48 @@ def _die(msg: str) -> None:
     sys.exit(1)
 
 
+def _discover_key() -> tuple[str | None, str | None]:
+    """Zero-config fallback: a single AuthKey_*.p8 in the conventional
+    private_keys dir gives the Key ID (filename), and the ASC issuer is
+    stashed in the notary keychain item's comment (set by our
+    notarytool/CI setup). Returns (key_path, issuer) or (None, None)."""
+    key_path = issuer = None
+    kdir = Path.home() / ".appstoreconnect" / "private_keys"
+    keys = sorted(kdir.glob("AuthKey_*.p8")) if kdir.exists() else []
+    if len(keys) == 1:
+        key_path = str(keys[0])
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["security", "find-generic-password", "-s", "AppleNotaryKey-jamn"],
+            capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if "issuer" in line.lower():
+                import re
+                m = re.search(r"[0-9a-f-]{36}", line)
+                if m:
+                    issuer = m.group(0)
+                    break
+    except Exception:
+        pass
+    return key_path, issuer
+
+
 def _token() -> str:
     key_id = os.environ.get("ASC_KEY_ID")
     issuer = os.environ.get("ASC_ISSUER_ID")
     key_path = os.environ.get("ASC_KEY_PATH")
+    if not key_path or not issuer:
+        dk_path, dk_issuer = _discover_key()
+        key_path = key_path or dk_path
+        issuer = issuer or dk_issuer
+    if not key_id and key_path:
+        # Key ID is the filename: AuthKey_<KEYID>.p8
+        stem = Path(key_path).stem
+        key_id = stem.split("AuthKey_", 1)[-1] if "AuthKey_" in stem else None
     if not (key_id and issuer and key_path):
-        _die("set ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH (see file header)")
+        _die("set ASC_KEY_ID/ASC_ISSUER_ID/ASC_KEY_PATH, or drop one "
+             "AuthKey_*.p8 in ~/.appstoreconnect/private_keys (see header)")
     p8 = Path(os.path.expanduser(key_path))
     if not p8.exists():
         _die(f"key file not found: {p8}")

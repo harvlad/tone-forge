@@ -181,10 +181,12 @@ three.** The single source is `mobile-ios/WhatToTest.en-US.txt`:
 2. The file's contents become the build's TestFlight **"What to Test"**
    notes. Set them with `scripts/set_testflight_notes.py` after the
    upload finishes processing — it reads the committed file and stamps
-   the latest build via the App Store Connect API. Needs an ASC API key
-   (App Manager role) exported as `ASC_KEY_ID` / `ASC_ISSUER_ID` /
-   `ASC_KEY_PATH` (the `.p8` lives OUTSIDE the repo — never commit it).
-   Until the key is set, paste the file into App Store Connect manually.
+   the latest build via the App Store Connect API. Zero-config on this
+   machine: the ASC key sits at
+   `~/.appstoreconnect/private_keys/AuthKey_*.p8` (Key ID = filename)
+   and the issuer is read from the `AppleNotaryKey-jamn` keychain item,
+   so just run it. Override via `ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_PATH`.
+   The `.p8` stays OUT of the repo (gitignored).
 3. Commit the updated file in the same commit as the build's code.
 
 Upload flow (manual, the working path): archive, then
