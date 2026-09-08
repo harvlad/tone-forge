@@ -131,7 +131,7 @@ features:
         note: "Follow-only via native helper relay (tools/jamn-link-helper); relay-grade accuracy; licensing review pending before public."
       ios:
         status: missing
-        note: "No Link; licensing review queued (OUTSTANDING.md)."
+        note: "Blocked on the Ableton LinkKit license agreement (OUTSTANDING.md); LinkKit is the iOS-specific SDK and requires signing terms before integration — deliberate hold, not forgotten."
       desktop:
         status: partial
         evidence: "jam-desktop/Sources/JamDesktop/LinkSync.swift#LinkSync"
@@ -141,7 +141,7 @@ features:
         note: "DAW host owns tempo/Link."
       connect:
         status: missing
-        note: "Would be the natural Link bridge for web; not built."
+        note: "Natural long-term Link bridge for web, but tools/jamn-link-helper covers the relay for internal testing; revisit only if the helper's Python dependency or accuracy becomes a problem. Same licensing gate as iOS."
 
   - id: live-library
     name: Library list live-updates (new songs + in-flight analyses)
