@@ -16,6 +16,9 @@ struct RemixSheetView: View {
 
     @State private var candidates: [RedrumCandidate] = []
     @State private var candidatesLoaded = false
+    @State private var borrowStem = "drums"
+    @State private var borrowCandidates: [BorrowCandidate] = []
+    @State private var borrowLoaded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -89,6 +92,58 @@ struct RemixSheetView: View {
                     Text("Re-Drum — keep the groove, swap the kit")
                 }
 
+                Section {
+                    Picker("Borrow", selection: $borrowStem) {
+                        Text("Beat").tag("drums")
+                        Text("Bass").tag("bass")
+                        Text("Chords").tag("other")
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: borrowStem) { _ in
+                        borrowLoaded = false
+                        Task { await loadBorrow() }
+                    }
+                    if !borrowLoaded {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Finding compatible loops…")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    } else if borrowCandidates.isEmpty {
+                        Text(borrowStem == "drums"
+                             ? "Analyze more songs to borrow beats."
+                             : "No key-compatible songs yet.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(borrowCandidates.prefix(6)) { c in
+                        Button {
+                            Task { await session.loadBorrowLoops(
+                                donorId: c.entryId, stem: borrowStem) }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(c.name).lineLimit(1)
+                                    Text(borrowStem == "drums"
+                                         ? "\(Int(c.tempo)) bpm"
+                                         : "\(c.key ?? "?") · \(Int(c.tempo)) bpm")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if session.borrowBusyDonor == c.entryId {
+                                    ProgressView().controlSize(.small)
+                                } else if borrowStem != "drums", c.harmonic >= 0.9 {
+                                    Text("key match").font(.caption2)
+                                        .foregroundStyle(JamTheme.accent)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(session.borrowBusyDonor != nil)
+                    }
+                } header: {
+                    Text("Borrow — real loops from your other songs")
+                }
+
                 Section("Export") {
                     Button {
                         session.openInstrumentPack()
@@ -122,11 +177,17 @@ struct RemixSheetView: View {
                     .padding(.vertical, 10)
             }
         }
-        .frame(width: 440, height: 520)
+        .frame(width: 440, height: 560)
         .task {
             candidates = await session.redrumCandidates()
             candidatesLoaded = true
         }
+        .task { await loadBorrow() }
+    }
+
+    private func loadBorrow() async {
+        borrowCandidates = await session.borrowCandidates(stem: borrowStem)
+        borrowLoaded = true
     }
 
     // MARK: - Rows

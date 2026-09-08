@@ -2410,6 +2410,52 @@ public final class AppState: ObservableObject {
         return true
     }
 
+    // MARK: - Borrow (real loops from other songs, tempo/key matched)
+
+    @Published public private(set) var borrowBusyDonor: String?
+
+    public func fetchBorrowCandidates(stem: String) async -> [BorrowCandidate] {
+        guard let analysisId = currentBundle?.analysisId else { return [] }
+        return (try? await RemixClient().fetchBorrowCandidates(
+            baseURL: backendBaseURL, analysisId: analysisId, stem: stem)) ?? []
+    }
+
+    /// Load a donor's borrowed loops onto the pads as loopable file pads
+    /// (bar-synced to this song). Real recorded loops, tempo-matched — the
+    /// coherent alternative to synthesized Re-Drum.
+    public func loadBorrowLoops(donorId: String, stem: String) {
+        guard currentBundle != nil, borrowBusyDonor == nil else { return }
+        borrowBusyDonor = donorId
+        remixError = nil
+        let base = backendBaseURL
+        let stems = currentStemLocalURLs
+        Task { @MainActor in
+            defer { self.borrowBusyDonor = nil }
+            do {
+                let analysisId = self.currentBundle?.analysisId ?? ""
+                let pack = try await RemixClient().fetchBorrowPack(
+                    baseURL: base, analysisId: analysisId,
+                    donor: donorId, stem: stem)
+                let files = await Self.downloadKitSamples(pack: pack, base: base)
+                guard !files.isEmpty else {
+                    self.remixError = "Borrowed loops didn't download."
+                    return
+                }
+                guard self.currentBundle?.analysisId == analysisId else { return }
+                let resolved = SampleBank.autoKit(pack, padFileURLs: files)
+                await self.sampleScheduler.preloadPackAsync(
+                    resolved, stemFiles: stems)
+                self.activateSamplePack(resolved, stemFiles: stems)
+                self.remixApplied =
+                    "Applied: Borrow — \(pack.name) on the pads, "
+                    + "locked to this song's tempo."
+                Haptics.padTrigger()
+            } catch {
+                self.remixError = error.localizedDescription
+            }
+        }
+    }
+
     /// Song-switch hygiene for remix state (called from the load path).
     private func resetRemixState() {
         remixHumanizeOn = false
@@ -2417,6 +2463,7 @@ public final class AppState: ObservableObject {
         modeCoordinator.sequencePadManager.grooveOffsets = nil
         redrumActiveKit = nil
         originalDrumsURL = nil
+        borrowBusyDonor = nil
         remixBusy = nil
         remixError = nil
         remixApplied = nil

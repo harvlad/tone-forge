@@ -15630,6 +15630,18 @@
           setGrooveOffsets: offsets => {
             window.JamnSequencer?.setGrooveOffsets?.(offsets);
           },
+          // Borrow: fetch a donor's loops (already a SamplePack manifest with
+          // sampleUrl loop pads) and mount them on the Jam pads.
+          loadBorrow: async (donor, stem) => {
+            const cur = state.analysisId;
+            const r = await fetch(
+              `/api/song/${cur}/borrow?donor=${encodeURIComponent(donor)}`
+              + `&stem=${encodeURIComponent(stem)}`);
+            if (!r.ok) throw new Error('borrow HTTP ' + r.status);
+            const manifest = await r.json();
+            window.JamnKit?.mountManifest?.(manifest);
+            _mountedEntryId = null; // a real kit remount replaces these
+          },
           // Playing-aware "Applied:" feedback (remix.js): a paused-mix
           // drum swap is inaudible until the next Play — remix.js adds
           // a "press Play" note only when this reports false.
@@ -15804,7 +15816,8 @@
             entry,
             onClose: () => showView('kit'),
             onOpenContribute: (tab, onSample) => {
-              _contribTab = tab; showView('contribute');
+              // Popup, not the inline pane (desktop parity).
+              _openContributeModal(tab);
             },
           });
           _lpMountedId = id;
@@ -15835,13 +15848,74 @@
         // Best-effort tab select: modules render tabs as buttons with
         // text Voice/Beat/Sample.
         const want = _contribTab; _contribTab = null;
-        try {
-          const btns = root.querySelectorAll('button');
-          for (const b of btns) {
-            if (b.textContent.trim().toLowerCase() === want) { b.click(); break; }
-          }
-        } catch (_) {}
+        _contribSelectTab(root, want);
       }
+    }
+
+    // Best-effort tab select shared by the inline pane and the modal:
+    // contribute.js renders the tab strip as buttons whose text is
+    // exactly Voice/Beat/Sample (the h3 title is not a button, so no
+    // false match).
+    function _contribSelectTab(root, want) {
+      if (!root || !want) return;
+      try {
+        const btns = root.querySelectorAll('button');
+        for (const b of btns) {
+          if (b.textContent.trim().toLowerCase() === want) { b.click(); break; }
+        }
+      } catch (_) {}
+    }
+
+    // ---------------------------------------------- contribute modal
+    // Desktop parity: Voice/Beat/Sample are separate capture surfaces,
+    // not one inline page. The sidebar CONTRIBUTE items open this
+    // centered popup on the clicked tab; the tab strip inside the popup
+    // still lets the user switch between the three. contribute.js is a
+    // singleton (its mount() unmounts any prior mount first), so the
+    // modal and the legacy #view-contribute pane never run at once.
+    const _contribModal = $('contribute-modal');
+    const _contribModalRoot = $('contribute-modal-root');
+
+    function _openContributeModal(tab) {
+      if (!_contribModal || !_contribModalRoot || !window.JamnContribute) return;
+      // Always mount fresh into the modal so the popup opens clean and
+      // the previous surface (inline pane or a prior popup) is torn
+      // down — mount() calls unmount() for us.
+      try {
+        window.JamnContribute.mount(_contribModalRoot, {
+          audioContext: state.ctx || undefined,
+          entry: _currentEntry,
+        });
+        _contribMounted = false; // the inline pane, if ever used, must remount
+      } catch (e) {
+        console.warn('[jamn-router] contribute modal mount failed:', e);
+        return;
+      }
+      _contribModal.hidden = false;
+      _contribSelectTab(_contribModalRoot, tab || null);
+    }
+
+    function _closeContributeModal() {
+      if (!_contribModal || _contribModal.hidden) return;
+      // Release the mic: unmount() runs contribute.js's teardown
+      // (recorder.cancel() → stops the MediaRecorder + getUserMedia
+      // stream tracks), so the browser mic light goes out on close.
+      try { window.JamnContribute?.unmount?.(); } catch (_) {}
+      _contribModal.hidden = true;
+    }
+
+    if (_contribModal) {
+      // Backdrop click (outside the card) dismisses — house convention
+      // shared with the skill-map / warm-up overlays.
+      _contribModal.addEventListener('click', (e) => {
+        if (e.target === _contribModal) _closeContributeModal();
+      });
+      const _contribClose = $('contribute-modal-close');
+      if (_contribClose) _contribClose.addEventListener('click', _closeContributeModal);
+      // Escape closes the popup when it's open.
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !_contribModal.hidden) _closeContributeModal();
+      });
     }
 
     // ---------------------------------------------- showView wrapper
@@ -15949,7 +16023,11 @@
       _userActed = true;
       const side = it.dataset.side;
       const view = SIDE_TO_VIEW[side];
-      if (view === 'contribute') _contribTab = side; // preselect Voice/Beat/Sample tab
+      // Contribute (voice/beat/sample) opens as a centered popup on the
+      // clicked tab instead of taking over the surface as an inline
+      // pane — desktop parity. The old #view-contribute pane stays wired
+      // to showView('contribute') as a routing fallback only.
+      if (view === 'contribute') { _openContributeModal(side); return; }
       if (view) { showView(view); return; }
       // Placeholder: select the item and say so — the note moves right
       // under the clicked item (at the bottom of the sidebar it was off

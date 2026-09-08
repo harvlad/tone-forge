@@ -390,6 +390,16 @@ final class SessionController: ObservableObject {
             // (median-stacked, faded, latency-trimmed), not the raw stem
             // window. Always a one-shot — a lone drum hit has nothing to
             // loop; the kit's groove pads stay on the chop path below.
+            // Borrow loop pad: play the whole downloaded loop FILE, looped
+            // (bar-length at the target tempo). Re-tap stops it (below).
+            if let aid = assignment.chop.assetId, aid.hasPrefix("borrowfile:"),
+               let url = self.drumKitSampleFiles[assignment.chop.idx] {
+                let looping = self.launchpad.playbackMode == .loop
+                self.chopPlayer.trigger(
+                    file: url, startSec: nil, endSec: nil,
+                    afterSeconds: delay, loop: looping)
+                return
+            }
             if let aid = assignment.chop.assetId, aid.hasPrefix("drumfile:"),
                let url = self.drumKitSampleFiles[assignment.chop.idx] {
                 self.chopPlayer.trigger(
@@ -1197,6 +1207,57 @@ final class SessionController: ObservableObject {
         guard !pairs.isEmpty else { return false }
         launchpad.adoptAssignments(pairs)
         return true
+    }
+
+    // MARK: - Borrow (real loops from other songs)
+
+    @Published private(set) var borrowBusyDonor: String?
+
+    func borrowCandidates(stem: String) async -> [BorrowCandidate] {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL
+        else { return [] }
+        return (try? await RemixClient().fetchBorrowCandidates(
+            baseURL: base, analysisId: analysisId, stem: stem)) ?? []
+    }
+
+    /// Load a donor's borrowed loops as loopable file pads on the grid.
+    @MainActor
+    func loadBorrowLoops(donorId: String, stem: String) async {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL,
+              borrowBusyDonor == nil else { return }
+        borrowBusyDonor = donorId
+        remixError = nil
+        defer { borrowBusyDonor = nil }
+        do {
+            let pack = try await RemixClient().fetchBorrowPack(
+                baseURL: base, analysisId: analysisId, donor: donorId, stem: stem)
+            let files = await Self.downloadKitSamples(pack: pack, base: base)
+            guard !files.isEmpty else {
+                remixError = "Borrowed loops didn't download."
+                return
+            }
+            guard attachedAnalysisId == analysisId else { return }
+            drumKitSampleFiles = files
+            let pairs: [(chop: Chop, stem: String)] = pack.pads.compactMap { pad in
+                guard files[pad.padIdx] != nil else { return nil }
+                let chop = Chop(
+                    idx: pad.padIdx, startSec: 0, endSec: 0.5, durationSec: 0.5,
+                    kind: "phrase", sectionLabel: pad.name,
+                    colorHint: pad.colorHint, contentType: nil,
+                    performanceScore: nil, difficulty: nil,
+                    loopable: true, loopScore: 1.0, crossfadeMs: nil,
+                    assetId: "borrowfile:\(pad.padIdx)")
+                return (chop, "drums")
+            }
+            guard !pairs.isEmpty else { return }
+            launchpad.playbackMode = .loop      // borrow pads are loops
+            launchpad.adoptAssignments(pairs)
+            remixApplied =
+                "Applied: Borrow — \(pack.name) on the pads, "
+                + "looped to this song's tempo."
+        } catch {
+            remixError = error.localizedDescription
+        }
     }
 
     @MainActor

@@ -240,6 +240,43 @@
       });
   }
 
+  function loadBorrowCandidates() {
+    if (!state) return;
+    var entryId = state.entryId;
+    var stem = state.borrowStem;
+    fetch(api(entryId, 'borrow-candidates') + '?stem=' + encodeURIComponent(stem))
+      .then(function (r) { return r.ok ? r.json() : { candidates: [] }; })
+      .catch(function () { return { candidates: [] }; })
+      .then(function (data) {
+        if (!state || state.entryId !== entryId || state.borrowStem !== stem) return;
+        state.borrowCandidates = ((data && data.candidates) || []).slice(0, 6);
+        state.borrowLoaded = true;
+        render();
+      });
+  }
+
+  function applyBorrow(donor) {
+    if (!state || state.borrowBusyDonor) return;
+    setError(null);
+    state.borrowBusyDonor = donor;
+    render();
+    var stem = state.borrowStem;
+    Promise.resolve(state.ctx.loadBorrow(donor, stem))
+      .then(function () {
+        if (!state) return;
+        state.borrowBusyDonor = null;
+        setApplied('borrow',
+          'Applied: Borrow — real ' + (stem === 'drums' ? 'beat' : stem)
+          + ' loops on the pads, locked to this song’s tempo.' + hearItNote());
+      })
+      .catch(function (e) {
+        if (!state) return;
+        state.borrowBusyDonor = null;
+        setError((e && e.message) || 'Borrow failed');
+        render();
+      });
+  }
+
   /** Donor display name for the applied line ("song:<id>" → its title). */
   function donorLabel(kit) {
     if (kit === 'self') return 'Tightened (own kit)';
@@ -522,6 +559,52 @@
     });
     body.appendChild(redrum);
 
+    // ---- Borrow (real loops from other songs)
+    var borrow = section('Borrow — real loops from your other songs');
+    var stems = [['drums', 'Beat'], ['bass', 'Bass'], ['other', 'Chords']];
+    var picker = el('div', 'remix-stem-picker');
+    stems.forEach(function (st) {
+      var b = el('button', 'remix-stem-btn'
+        + (state.borrowStem === st[0] ? ' is-on' : ''), st[1]);
+      b.type = 'button';
+      b.onclick = function () {
+        if (state.borrowStem === st[0]) return;
+        state.borrowStem = st[0];
+        state.borrowLoaded = false; state.borrowCandidates = [];
+        loadBorrowCandidates(); render();
+      };
+      picker.appendChild(b);
+    });
+    borrow.appendChild(picker);
+
+    if (!state.borrowLoaded) {
+      var bl = el('div', 'remix-note');
+      bl.appendChild(el('span', 'remix-spinner'));
+      bl.appendChild(el('span', null, 'Finding compatible loops…'));
+      borrow.appendChild(bl);
+    } else if (!state.borrowCandidates.length) {
+      borrow.appendChild(el('div', 'remix-note',
+        state.borrowStem === 'drums'
+          ? 'Analyze more songs to borrow beats.'
+          : 'No key-compatible songs yet.'));
+    }
+    state.borrowCandidates.forEach(function (c) {
+      var sub = state.borrowStem === 'drums'
+        ? Math.round(c.tempo) + ' bpm'
+        : (c.key || '?') + ' · ' + Math.round(c.tempo) + ' bpm';
+      borrow.appendChild(row({
+        name: c.name || c.entryId, icon: '🎚️',
+        subtitle: sub + (state.borrowStem !== 'drums' && c.harmonic >= 0.9
+          ? ' · key match' : ''),
+        title: 'Real loops from this song, stretched to your tempo, on the pads',
+        busy: state.borrowBusyDonor === c.entryId,
+        busyLabel: state.borrowBusyDonor === c.entryId ? 'Rendering…' : null,
+        disabled: !!state.borrowBusyDonor && state.borrowBusyDonor !== c.entryId,
+        onClick: function () { applyBorrow(c.entryId); },
+      }));
+    });
+    body.appendChild(borrow);
+
     // ---- Export
     var exp = section('Export');
     exp.appendChild(row({
@@ -622,6 +705,7 @@
 
     // Candidates load when the sheet opens (native .task parity).
     loadCandidates();
+    loadBorrowCandidates();
 
     render();
     try { modal.focus(); } catch (_) {}
@@ -661,6 +745,10 @@
       candidates: [],
       candidatesLoaded: false,
       candidatesLoading: false,
+      borrowStem: 'drums',
+      borrowCandidates: [],
+      borrowLoaded: false,
+      borrowBusyDonor: null,
       appliedKey: null,
       appliedMsg: '',
       errorMsg: '',

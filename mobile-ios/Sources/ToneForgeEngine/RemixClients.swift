@@ -33,6 +33,16 @@ public struct RedrumCandidate: Codable, Sendable, Identifiable, Equatable {
     public var id: String { entryId }
 }
 
+/// One Borrow donor (server-ranked by tempo, plus key for melodic stems).
+public struct BorrowCandidate: Codable, Sendable, Identifiable, Equatable {
+    public let entryId: String
+    public let name: String
+    public let tempo: Double
+    public let key: String?
+    public let harmonic: Double
+    public var id: String { entryId }
+}
+
 public struct RemixClient: Sendable {
     private let session: URLSession
 
@@ -70,6 +80,33 @@ public struct RemixClient: Sendable {
             for: request(try songURL(baseURL, analysisId, "groove")))
         try Self.check(response)
         return try JSONDecoder().decode(Wire.self, from: data).groove.offsetsSteps
+    }
+
+    /// Borrow donors for a stem: real loops from other songs, tempo-matched
+    /// (and key-compatible for melodic stems). `stem` = drums|bass|other.
+    public func fetchBorrowCandidates(
+        baseURL: URL, analysisId: String, stem: String
+    ) async throws -> [BorrowCandidate] {
+        struct Wire: Codable { let candidates: [BorrowCandidate] }
+        let (data, response) = try await session.data(
+            for: request(try songURL(baseURL, analysisId, "borrow-candidates",
+                                     query: [URLQueryItem(name: "stem", value: stem)])))
+        try Self.check(response)
+        return try JSONDecoder().decode(Wire.self, from: data).candidates
+    }
+
+    /// Render + fetch a donor's borrowed loops as a SamplePack (loopable
+    /// file pads). First call renders server-side — allow seconds.
+    public func fetchBorrowPack(
+        baseURL: URL, analysisId: String, donor: String, stem: String
+    ) async throws -> SamplePack {
+        let url = try songURL(
+            baseURL, analysisId, "borrow",
+            query: [URLQueryItem(name: "donor", value: donor),
+                    URLQueryItem(name: "stem", value: stem)])
+        let (data, response) = try await Self.longHaul.data(for: request(url))
+        try Self.check(response)
+        return try JSONDecoder().decode(SamplePack.self, from: data)
     }
 
     /// Ranked kit-donor suggestions for Re-Drum.

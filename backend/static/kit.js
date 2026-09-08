@@ -3117,11 +3117,17 @@
     if (s.titleEl) s.titleEl.textContent = desc.name || "Pack";
     var AC = window.AudioContext || window.webkitAudioContext;
     s.ctx = new AC();
-    fetch("/api/sample-packs/" + encodeURIComponent(desc.packId))
-      .then(function (r) {
-        if (!r.ok) throw new Error("pack HTTP " + r.status);
-        return r.json();
-      })
+    // desc.manifest = a manifest already in hand (Borrow loops); otherwise
+    // fetch the curated pack. Same pad-loading path either way — sampleUrl
+    // pads resolve as absolute URLs below.
+    var manifestP = desc.manifest
+      ? Promise.resolve(desc.manifest)
+      : fetch("/api/sample-packs/" + encodeURIComponent(desc.packId))
+          .then(function (r) {
+            if (!r.ok) throw new Error("pack HTTP " + r.status);
+            return r.json();
+          });
+    manifestP
       .then(function (manifest) {
         if (!s.alive) return;
         var pads = (manifest && manifest.pads) || [];
@@ -3181,10 +3187,23 @@
       });
   }
 
+  /** Mount a manifest already in hand (Borrow loops) — loopable file pads
+   * decoded straight from their sampleUrls. */
+  function mountManifest(manifest) {
+    if (!manifest || !manifest.packId) return;
+    mountPack({
+      packId: manifest.packId,
+      name: manifest.name,
+      paletteHint: manifest.paletteHint,
+      manifest: manifest,
+    });
+  }
+
   window.JamnKit = {
     mount: mount,
     unmount: unmount,
     mountPack: mountPack,
+    mountManifest: mountManifest,
     // Live handles for sibling tools (sequencer drives the same engine).
     engine: function () { return current && current.engine; },
     pads: function () { return (current && current.pads) || []; },

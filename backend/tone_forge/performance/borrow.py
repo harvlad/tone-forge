@@ -233,6 +233,11 @@ def render_borrow_loops(donor_id: str, donor_result: Dict, stem: str,
                 "family": "percussion" if stem == "drums" else "mixed",
                 "colorHint": "#3B82F6",
                 "loopable": True,
+                # File-backed loop: loopPointSec 0 tells the scheduler to
+                # loop the whole file (it's already exactly 2 bars at the
+                # target tempo), bar-quantized so layers phase-lock.
+                "loopPointSec": 0,
+                "loopScore": 1.0,
                 "defaultQuantize": "1 bar",
                 "sampleFile": fname,
             })

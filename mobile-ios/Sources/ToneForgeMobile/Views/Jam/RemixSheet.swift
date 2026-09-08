@@ -29,6 +29,7 @@ struct RemixSheet: View {
             List {
                 kitsSection
                 feelSection
+                borrowSection
                 redrumSection
                 exportSection
                 if let err = appState.remixError ?? appState.autoKitError {
@@ -63,6 +64,7 @@ struct RemixSheet: View {
             }
         }
         .task { await loadCandidates() }
+        .task { await loadBorrowCandidates() }
     }
 
     // MARK: - Kits
@@ -131,6 +133,75 @@ struct RemixSheet: View {
                       || appState.remixBusy == "humanize")
             .listRowSubtitle("Sequences swing with this song's own timing")
         }
+    }
+
+    // MARK: - Borrow (real loops from other songs)
+
+    @State private var borrowStem = "drums"
+    @State private var borrowCandidates: [BorrowCandidate] = []
+    @State private var borrowLoaded = false
+
+    private var borrowSection: some View {
+        Section {
+            Picker("Borrow", selection: $borrowStem) {
+                Text("Beat").tag("drums")
+                Text("Bass").tag("bass")
+                Text("Chords").tag("other")
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: borrowStem) { _ in
+                borrowLoaded = false
+                Task { await loadBorrowCandidates() }
+            }
+            if !borrowLoaded {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Finding compatible loops…")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            } else if borrowCandidates.isEmpty {
+                Text(borrowStem == "drums"
+                     ? "Analyze more songs to borrow beats."
+                     : "No key-compatible songs yet — analyze more.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            ForEach(borrowCandidates.prefix(6)) { c in
+                Button {
+                    appState.loadBorrowLoops(donorId: c.entryId, stem: borrowStem)
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(c.name).lineLimit(1)
+                            Text(borrowStem == "drums"
+                                 ? "\(Int(c.tempo)) bpm"
+                                 : "\(c.key ?? "?") · \(Int(c.tempo)) bpm")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if appState.borrowBusyDonor == c.entryId {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Rendering…").font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if borrowStem != "drums", c.harmonic >= 0.9 {
+                            Text("key match").font(.caption2)
+                                .foregroundStyle(TFTheme.accent)
+                        }
+                    }
+                }
+                .disabled(appState.borrowBusyDonor != nil)
+            }
+        } header: {
+            Text("Borrow")
+        } footer: {
+            Text("Real loops from your other songs, time-stretched to this song's tempo — and key-matched for bass/chords. Layer them on the pads.")
+        }
+    }
+
+    private func loadBorrowCandidates() async {
+        borrowCandidates = await appState.fetchBorrowCandidates(stem: borrowStem)
+        borrowLoaded = true
     }
 
     // MARK: - Re-Drum

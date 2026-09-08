@@ -6415,11 +6415,18 @@ async def get_borrow_loops(
             detail="No borrowable loops (tempo too far, or stem/grid missing)")
     for p in pads:
         p["sampleUrl"] = f"/api/song/{entry_id}/borrow-sample/{p.pop('sampleFile')}"
+    # SamplePack manifest shape (SamplePack.swift) so every client mounts it
+    # through the same path as the drum-kit composites — loopable file pads.
     return JSONResponse({
-        "analysisId": entry_id, "donor": donor, "stem": stem,
+        "manifestVersion": 2,
         "packId": f"borrow-{donor}-{stem}",
-        "name": f"{donor_entry.get('name', 'Borrowed')} {stem}",
+        "name": f"{(donor_entry.get('name') or 'Borrowed')[:24]} · {stem}",
+        "family": "percussion" if stem == "drums" else "mixed",
+        "paletteHint": "song",
         "pads": pads,
+        "analysisId": entry_id,
+        "donor": donor,
+        "stem": stem,
     })
 
 

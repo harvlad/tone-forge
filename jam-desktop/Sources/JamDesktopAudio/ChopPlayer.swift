@@ -288,10 +288,13 @@ public final class ChopPlayer {
         endSec: Double?,
         velocity: Float = 1,
         pan: Float = 0,
-        afterSeconds delaySeconds: Double = 0
+        afterSeconds delaySeconds: Double = 0,
+        loop: Bool = false
     ) {
         guard let file = cachedFile(for: url) else { return }
         let duration = Double(file.length) / file.fileFormat.sampleRate
+        // Borrow loops are exactly 2 bars at the target tempo, so looping the
+        // whole file phase-locks with no bar math needed.
         schedule(
             file: file,
             startSec: startSec ?? 0,
@@ -300,7 +303,9 @@ public final class ChopPlayer {
             effects: .neutral,
             velocity: velocity,
             pan: pan,
-            afterSeconds: delaySeconds
+            afterSeconds: delaySeconds,
+            loop: loop,
+            crossfadeMs: loop ? 12 : 0
         )
     }
 
