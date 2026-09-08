@@ -71,9 +71,10 @@ def test_places_kit_samples_at_hit_times(env):
     assert _at(1.0) > 0.4
     assert _at(2.0) > 0.2
     assert float(np.abs(y[int(0.5 * sr)])) < 1e-6
-    # strength 0.0 → velocity floor 0.15, so the 3.0 s kick is much quieter
-    # (ghost-note dynamics) but still audible.
-    assert 0.03 < _at(3.0) < _at(1.0)
+    # The strength-0.0 kick at 3.0 s is a ghost/bleed onset — the musical
+    # filter drops it (below the strength floor) so Re-Drum plays the
+    # backbone, not the wash. Silent here.
+    assert _at(3.0) < 1e-6
 
 
 def test_class_fallback_when_kit_lacks_class(env):
@@ -159,3 +160,21 @@ def test_same_class_hits_choke_no_tail_soup(env):
     # only); uncontrolled overlap of 5+ full samples would blow past 1.0.
     dense = np.abs(y[int(1.2 * sr):int(1.7 * sr)]).max()
     assert dense < 0.8, dense
+
+
+def test_musical_hits_drops_ghosts_and_flams():
+    from tone_forge.performance.redrum import _musical_hits
+    hits = (
+        # strong backbone kicks, well spaced
+        [{"t": i * 0.5, "cls": "kick", "strength": 0.8} for i in range(8)]
+        # ghosts below the strength floor — must be dropped
+        + [{"t": 0.25 + i * 0.5, "cls": "kick", "strength": 0.05} for i in range(8)]
+        # a flam 20 ms after a real kick — too close, dropped
+        + [{"t": 0.02, "cls": "kick", "strength": 0.7}]
+    )
+    kept = _musical_hits(hits)
+    assert all(h["strength"] >= 0.18 for h in kept)      # no ghosts
+    kt = sorted(h["t"] for h in kept if h["cls"] == "kick")
+    # every kept pair respects the kick min-gap
+    assert all(b - a >= 0.09 - 1e-9 for a, b in zip(kt, kt[1:]))
+    assert len(kt) == 8  # the 8 backbone kicks, flam + ghosts gone

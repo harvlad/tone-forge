@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # re-renders the mono files already sitting in the server cache.
 # v3: true stereo passthrough of render-v2 stereo composites (v2 was
 # dual-mono — crash-safe but the collapsed image was plainly audible).
-REDRUM_VERSION = 4
+REDRUM_VERSION = 5
 
 # When the target kit lacks a class the groove uses, fall through this map
 # rather than dropping the hit — a groove with holes reads as a glitch, a
@@ -96,6 +96,55 @@ def rendered_path(entry_id: str, kit_entry_id: str) -> Optional[Path]:
     return p if p.exists() and p.stat().st_size > 0 else None
 
 
+# Re-Drum plays the groove's BACKBONE, not every detected onset. The hit
+# detector over-fires badly on real stems — a 280 s song came back with 1968
+# hits (1190 of them "kicks" from sub-bass bleed, 43% below 0.2 strength, 7
+# hits/sec). Placing a kit sample at each = a crunchy wash, not a beat. So
+# for re-drumming we keep only confident, musically-spaced hits.
+_STRENGTH_FLOOR = 0.18
+# Minimum seconds between kept hits of the same class — a drummer can't
+# realistically retrigger a kick/snare faster than this; closer onsets are
+# flams, double-triggers, or bleed. Hats genuinely go fast (16th rolls), so
+# they get a shorter gate.
+_MIN_GAP = {
+    "kick": 0.09, "snare": 0.09, "tom": 0.09, "perc": 0.09,
+    "hat_closed": 0.055, "hat_open": 0.08, "cymbal": 0.15,
+}
+
+
+def _musical_hits(hits: List[Dict]) -> List[Dict]:
+    """Filter a raw hits table down to the confident, musically-spaced
+    backbone: drop ghost/bleed onsets below a strength floor, then, per
+    class in time order, drop any hit within MIN_GAP of the previous KEPT
+    hit of that class (keeping the stronger of a close pair)."""
+    strong = [h for h in hits if float(h.get("strength", 0.0)) >= _STRENGTH_FLOOR]
+    if not strong:
+        # Nothing clears the floor (a very quiet mix): fall back to the top
+        # third by strength so re-drum still produces a groove.
+        ranked = sorted(hits, key=lambda h: float(h.get("strength", 0.0)),
+                        reverse=True)
+        strong = ranked[: max(1, len(ranked) // 3)]
+
+    by_cls: Dict[str, List[Dict]] = {}
+    for h in strong:
+        by_cls.setdefault(h["cls"], []).append(h)
+
+    kept: List[Dict] = []
+    for cls, group in by_cls.items():
+        group.sort(key=lambda h: float(h["t"]))
+        gap = _MIN_GAP.get(cls, 0.09)
+        last_t = -1e9
+        for h in group:
+            t = float(h["t"])
+            if t - last_t >= gap:
+                kept.append(h)
+                last_t = t
+            # else: too close to the last kept hit of this class — drop it
+            # (a flam/double-trigger; the kept one already covers the beat).
+    kept.sort(key=lambda h: float(h["t"]))
+    return kept
+
+
 def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Path]:
     """Render the replacement drums stem: target kit composites at the source
     song's hit times. Returns the cached WAV path, or None when either side's
@@ -115,6 +164,9 @@ def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Pa
 
     table = result.get(DRUM_HITS_RESULT_KEY)
     hits = table.get("hits") if isinstance(table, dict) else None
+    if not hits:
+        return None
+    hits = _musical_hits(hits)
     if not hits:
         return None
     class_files = _kit_class_files(kit_entry_id)
