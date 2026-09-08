@@ -146,6 +146,76 @@ assert.equal(fmtTime(65.7), "1:05");
 assert.equal(fmtTime(NaN), "0:00");
 assert.equal(fmtTime(-3), "0:00");
 
+// Engine↔song transport wiring: setTransport gets a live host bridge only
+// when JamnKitHost + tempo exist; closures track the CURRENT host; losing
+// the host detaches (null) so the engine falls back to its free-run grid.
+const { syncEngineTransport } = K._internals;
+{
+  const calls = [];
+  const s = {
+    engine: { setTransport: (t) => calls.push(t) },
+    entry: { result: { tempo_bpm: 120 } },
+    engineTransport: null,
+  };
+  // No host yet → nothing wired, no call.
+  syncEngineTransport(s);
+  assert.equal(calls.length, 0);
+  assert.equal(s.engineTransport, null);
+
+  // Host appears → wired once with tempo + bar anchor 0.
+  window.JamnKitHost = { isPlaying: () => true, getTime: () => 3.25 };
+  syncEngineTransport(s);
+  assert.equal(calls.length, 1);
+  const t = calls[0];
+  assert.equal(t.tempoBpm, 120);
+  assert.equal(t.barAnchorSongTime, 0);
+  assert.equal(t.isPlaying(), true);
+  assert.equal(t.getSongTime(), 3.25);
+
+  // Idempotent while wired — no churn on the 2 s re-check.
+  syncEngineTransport(s);
+  assert.equal(calls.length, 1);
+
+  // Closures read the LIVE host: a replaced JamnKitHost tracks without
+  // re-wiring, and a throwing host degrades (stopped / NaN), never throws.
+  window.JamnKitHost = { isPlaying: () => false, getTime: () => 7 };
+  assert.equal(t.isPlaying(), false);
+  assert.equal(t.getSongTime(), 7);
+  window.JamnKitHost = {
+    isPlaying: () => { throw new Error("boom"); },
+    getTime: () => { throw new Error("boom"); },
+  };
+  assert.equal(t.isPlaying(), false);
+  assert.ok(Number.isNaN(t.getSongTime()));
+
+  // Host gone → detach: engine returns to free-run quantize.
+  delete window.JamnKitHost;
+  assert.equal(t.isPlaying(), false); // safe even while detached
+  syncEngineTransport(s);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1], null);
+  assert.equal(s.engineTransport, null);
+  syncEngineTransport(s); // detach is idempotent too
+  assert.equal(calls.length, 2);
+}
+{
+  // No usable tempo → never wires (the engine would build a garbage grid).
+  window.JamnKitHost = { isPlaying: () => true, getTime: () => 1 };
+  const s = {
+    engine: { setTransport: () => { throw new Error("must not wire without tempo"); } },
+    entry: { result: {} },
+    engineTransport: null,
+  };
+  syncEngineTransport(s);
+  s.entry.result.tempo_bpm = 0;
+  syncEngineTransport(s);
+  s.entry = null; // pack mounts have no entry at all
+  syncEngineTransport(s);
+  // Engine without setTransport (older twin) → silent no-op.
+  syncEngineTransport({ engine: {}, entry: { result: { tempo_bpm: 120 } } });
+  delete window.JamnKitHost;
+}
+
 // applyPadRegion with nothing mounted → false, never a throw.
 assert.equal(K.applyPadRegion(0, { startSec: 0, endSec: 1 }), false);
 

@@ -44,6 +44,25 @@ export const RELEASE_FADE_SEC = 0.02;
 /// boundary fires immediately instead of waiting a full cycle.
 export const LOOP_LOCK_GRACE_SEC = 0.08;
 
+/// Real-time grace past a quantized launch before the armed watchdog
+/// declares the voice stuck (context clock never reached its start time)
+/// and force-starts it. Armed-forever must be impossible.
+export const ARMED_WATCHDOG_GRACE_SEC = 1.0;
+
+/**
+ * Real milliseconds the armed watchdog waits before verifying a scheduled
+ * voice actually fired: the voice's own scheduled wait plus a grace second.
+ * The scheduled wait is at most one lock/bar cycle, so the check always
+ * lands within (cycle + grace). Pure — testable without WebAudio.
+ * @param {number} startTime scheduled launch (ctx time, seconds)
+ * @param {number} now ctx time when the launch was scheduled
+ * @param {number} [graceSec]
+ * @returns {number} milliseconds, never negative
+ */
+export function armedWatchdogDelayMs(startTime, now, graceSec = ARMED_WATCHDOG_GRACE_SEC) {
+  return Math.max(0, startTime - now + graceSec) * 1000.0;
+}
+
 // ---------------------------------------------------------------------------
 // Pure DSP (ports of SeamlessLoop / SampleScheduler statics)
 // ---------------------------------------------------------------------------
@@ -244,9 +263,11 @@ export class PadEngine {
    */
   constructor(audioContext, destinationNode) {
     // The context is BORROWED — usually the page's shared AudioContext. The
-    // engine never suspends/resumes/closes it and never touches
-    // ctx.destination when a destination node is provided, so a host can
-    // route the pads through its own mixer/master chain.
+    // engine never suspends/closes it and never touches ctx.destination when
+    // a destination node is provided, so a host can route the pads through
+    // its own mixer/master chain. The one exception: trigger() may RESUME a
+    // suspended context — a trigger is always user intent to hear audio, and
+    // launch math against a suspended context's frozen clock is garbage.
     this.ctx = audioContext;
     this.destination = destinationNode || audioContext.destination;
     /** @type {Object<string, AudioBuffer>} stem role → decoded buffer */
@@ -257,6 +278,8 @@ export class PadEngine {
     this._baked = new Map();
     /** padIdx → active voice */
     this._voices = new Map();
+    /** padIdx → token for a trigger deferred behind ctx.resume(). */
+    this._pendingTriggers = new Map();
     /** Lock-grid anchor: audioContext time of the first loop launch. */
     this._lockAnchor = null;
     /** Host song transport (setTransport), null = free-run only. */
@@ -527,11 +550,44 @@ export class PadEngine {
    *   loop+quantized → schedule at the next lock boundary (+ the pad's
    *   launch shift); otherwise immediate. Loop launches are always delayed
    *   by the pad's onset shift so content downbeats line up (never negative).
-   * @returns {?{startTime: number, loop: boolean}}
+   * @returns {?{startTime: ?number, loop: boolean, deferred?: boolean}}
+   *   `deferred: true` (startTime null) means the context was suspended:
+   *   the voice starts asynchronously once ctx.resume() lands. The caller
+   *   should show "armed"; padProgress() reports the start as usual.
    */
   trigger(padIdx, opts = {}) {
     const entry = this._baked.get(padIdx);
     if (!entry) return null;
+    const ctx = this.ctx;
+    // A suspended AudioContext has a FROZEN currentTime. Computing launch
+    // times against it schedules at a stale `now`: after resume the clock
+    // continues from that stale value, so a "next boundary" landed at an
+    // arbitrary real moment, and source.start(past) plays immediately per
+    // spec — either way the quantize grid is fiction; if the clock never
+    // advances the voice never sounds at all (armed forever). So resume
+    // FIRST and compute launch times only once the clock is live. The
+    // token guards a release/retrigger racing the resume.
+    if (ctx && ctx.state === "suspended" && typeof ctx.resume === "function") {
+      const token = {};
+      this._pendingTriggers.set(padIdx, token);
+      const fire = () => {
+        if (this._pendingTriggers.get(padIdx) !== token) return; // superseded
+        this._pendingTriggers.delete(padIdx);
+        this._startVoice(padIdx, entry, opts);
+      };
+      try {
+        // Fire even when resume rejects: starting on a still-suspended
+        // context is the pre-guard legacy behavior, never worse.
+        ctx.resume().then(fire, fire);
+      } catch (_) {
+        fire();
+      }
+      return { startTime: null, loop: !!opts.loop && entry.loopBuffer != null, deferred: true };
+    }
+    return this._startVoice(padIdx, entry, opts);
+  }
+
+  _startVoice(padIdx, entry, opts) {
     const wantLoop = !!opts.loop;
     const quantized = !!opts.quantized;
     const willLoop = wantLoop && entry.loopBuffer != null;
@@ -593,6 +649,7 @@ export class PadEngine {
       bodySec: entry.bodySec,
       released: false,
       takeoverRole: stemRole,
+      watchdog: null,
     };
     this._voices.set(padIdx, voice);
     if (stemRole != null && !transferTakeover) this._beginTakeover(stemRole);
@@ -602,12 +659,27 @@ export class PadEngine {
       // its takeover ended), so this guard makes the late callback a no-op —
       // the web analogue of ChopPlayer's gen match.
       if (this._voices.get(padIdx) === voice) {
+        if (voice.watchdog) {
+          clearTimeout(voice.watchdog);
+          voice.watchdog = null;
+        }
         this._voices.delete(padIdx);
         this._endVoiceTakeover(voice);
         this._emitState(padIdx, { playing: false, armedUntil: null });
       }
     };
     source.start(startTime);
+    // Armed watchdog: a quantized launch must be sounding by its own wait
+    // plus a grace second (≤ cycle + 1 s). If the context clock never
+    // reached startTime by then — real time passed but audio time didn't
+    // (suspended/throttled context) — the pad would pulse "armed" forever;
+    // _watchdogCheck force-starts it instead.
+    if (willLoop && startTime > now + 1e-3 && typeof setTimeout === "function") {
+      voice.watchdog = setTimeout(() => {
+        voice.watchdog = null;
+        this._watchdogCheck(padIdx, voice);
+      }, armedWatchdogDelayMs(startTime, now));
+    }
     this._emitState(padIdx, {
       playing: true,
       armedUntil: startTime > now + 1e-3 ? startTime : null,
@@ -621,15 +693,46 @@ export class PadEngine {
   }
 
   stopAll() {
+    this._pendingTriggers.clear(); // pads waiting on ctx.resume() count too
     for (const padIdx of Array.from(this._voices.keys())) {
       this._stopVoice(padIdx, /* notify */ true);
     }
   }
 
+  /**
+   * Armed-forever guard, fired armedWatchdogDelayMs after a scheduled loop
+   * launch. If the context clock reached the launch time the voice is
+   * sounding and this is a no-op. Otherwise the clock stalled (suspended /
+   * heavily throttled context) and the voice would pulse "armed" forever:
+   * warn and force an immediate unquantized retrigger — trigger() self-
+   * chokes the stuck voice, resumes a still-suspended context via the
+   * deferred path, and the same-stem takeover transfer avoids a duck blip.
+   */
+  _watchdogCheck(padIdx, voice) {
+    if (this._voices.get(padIdx) !== voice || voice.released) return;
+    const now = this.ctx.currentTime;
+    if (now >= voice.startTime - 0.05) return; // launched (or about to) on time
+    if (typeof console !== "undefined" && console.warn) {
+      console.warn(
+        "PadEngine: pad " + padIdx + " stayed armed past its launch window " +
+          "(ctx clock at " + now.toFixed(3) + " s, launch was " +
+          voice.startTime.toFixed(3) + " s) — force-starting"
+      );
+    }
+    this.trigger(padIdx, { loop: voice.loop, quantized: false });
+  }
+
   _stopVoice(padIdx, notify) {
+    // A pad released while its trigger waits on ctx.resume() must not have
+    // the pending voice start late over an idle pad.
+    this._pendingTriggers.delete(padIdx);
     const voice = this._voices.get(padIdx);
     if (!voice || voice.released) return;
     voice.released = true;
+    if (voice.watchdog) {
+      clearTimeout(voice.watchdog);
+      voice.watchdog = null;
+    }
     const now = this.ctx.currentTime;
     try {
       voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);

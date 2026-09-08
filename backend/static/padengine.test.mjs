@@ -15,6 +15,8 @@ import {
   onsetAlignedShift,
   exactCrossfaded,
   chooseCrossfadeMs,
+  armedWatchdogDelayMs,
+  ARMED_WATCHDOG_GRACE_SEC,
   PadEngine,
 } from "./padengine.js";
 
@@ -437,12 +439,126 @@ test("setRate scales the free-run lock cycle spacing", () => {
   assert.equal(engine.lockInfo().cycle, 8);
 });
 
+// --- armed watchdog + suspended-context guard --------------------------------
+
+test("armedWatchdogDelayMs: scheduled wait + grace, bounded by cycle + grace", () => {
+  // Free-run example: launch queued 7 s out → check 8 s later (7 + 1 grace).
+  assert.equal(armedWatchdogDelayMs(13, 6), 8000);
+  // Immediate launch: only the grace second.
+  assert.equal(armedWatchdogDelayMs(5, 5), ARMED_WATCHDOG_GRACE_SEC * 1000);
+  // Launch already in the past never yields a negative delay.
+  assert.equal(armedWatchdogDelayMs(3, 5), 0);
+  // The wait is at most one lock cycle, so the check always lands within
+  // cycle + grace — the "armed forever must be impossible" bound.
+  const cycle = 8;
+  for (const phase of [0, 0.1, 4, 7.99]) {
+    const delay = armedWatchdogDelayMs(10 + (cycle - phase), 10);
+    assert.ok(delay <= (cycle + ARMED_WATCHDOG_GRACE_SEC) * 1000, `phase ${phase}: ${delay}`);
+  }
+  // Custom grace plumbs through.
+  assert.equal(armedWatchdogDelayMs(12, 10, 0.5), 2500);
+});
+
+test("suspended context: trigger resumes FIRST, computes launch after", async () => {
+  const { engine, ctx } = makeEngine();
+  ctx.currentTime = 10; // frozen, stale — must NOT be used for launch math
+  ctx.state = "suspended";
+  ctx.resume = () => {
+    ctx.state = "running";
+    ctx.currentTime = 50; // the live clock the resumed context reports
+    return Promise.resolve();
+  };
+  const r = engine.trigger(0, { loop: true, quantized: true });
+  assert.equal(r.deferred, true);
+  assert.equal(r.startTime, null);
+  assert.equal(engine._voices.get(0), undefined, "no voice until resume lands");
+  await new Promise((res) => setTimeout(res, 0));
+  const v = engine._voices.get(0);
+  assert.ok(v, "voice starts once the clock is live");
+  assert.ok(v.startTime >= 50, `launch ${v.startTime} must use the post-resume clock, not 10`);
+  assert.equal(v.source.startedAt, v.startTime);
+});
+
+test("release during a deferred trigger cancels the pending voice", async () => {
+  const { engine, ctx } = makeEngine();
+  ctx.state = "suspended";
+  ctx.resume = () => {
+    ctx.state = "running";
+    return Promise.resolve();
+  };
+  const r = engine.trigger(0, { loop: true, quantized: true });
+  assert.equal(r.deferred, true);
+  engine.release(0); // user let go before the resume landed
+  await new Promise((res) => setTimeout(res, 0));
+  assert.equal(engine._voices.get(0), undefined, "released pad must not start late");
+
+  // A retrigger during the resume supersedes the first pending voice —
+  // exactly one voice, from the second trigger. Like a real context, the
+  // fake stays "suspended" until the resume promise settles.
+  ctx.state = "suspended";
+  let resumes = 0;
+  ctx.resume = () => {
+    resumes++;
+    return Promise.resolve().then(() => {
+      ctx.state = "running";
+      ctx.currentTime = 5;
+    });
+  };
+  engine.trigger(0, { loop: true, quantized: true });
+  engine.trigger(0, { loop: true, quantized: true });
+  await new Promise((res) => setTimeout(res, 0));
+  assert.ok(engine._voices.get(0), "superseding trigger still starts");
+  assert.equal(resumes, 2);
+});
+
+test("armed watchdog force-starts a voice the clock never launched", () => {
+  const { engine, ctx } = makeEngine();
+  ctx.currentTime = 0;
+  engine.trigger(0, { loop: true, quantized: true }); // anchors the lock grid at 0
+  ctx.currentTime = 1;
+  const r = engine.trigger(1, { loop: true, quantized: true });
+  assert.equal(r.startTime, 8); // queued to the next 8 s cycle boundary
+  const v = engine._voices.get(1);
+  assert.ok(v.watchdog != null, "scheduled launch must carry a watchdog");
+
+  // Healthy clock: by check time the clock passed the launch — no-op.
+  ctx.currentTime = 9.1;
+  engine._watchdogCheck(1, v);
+  assert.equal(engine._voices.get(1), v, "on-time voice left alone");
+
+  // Stalled clock: real time elapsed but ctx.currentTime never reached the
+  // launch — warn + force an immediate retrigger so armed can't be forever.
+  ctx.currentTime = 1.5;
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (m) => warnings.push(String(m));
+  let v2;
+  try {
+    engine._watchdogCheck(1, v);
+    v2 = engine._voices.get(1);
+  } finally {
+    console.warn = origWarn;
+  }
+  assert.ok(v2 && v2 !== v, "a fresh voice replaces the stuck one");
+  assert.equal(v2.startTime, 1.5); // immediate, not re-quantized
+  assert.equal(v2.loop, true);
+  assert.equal(warnings.length, 1);
+  assert.ok(/force-starting/.test(warnings[0]), warnings[0]);
+  if (v2.watchdog) clearTimeout(v2.watchdog);
+
+  // A released voice is never force-started (late timer after release).
+  engine.release(1);
+  const before = engine._voices.get(1);
+  engine._watchdogCheck(1, v2);
+  assert.equal(engine._voices.get(1), before);
+});
+
 // --- runner ----------------------------------------------------------------
 
 let failed = 0;
 for (const [name, fn] of tests) {
   try {
-    fn();
+    await fn(); // async tests (deferred-resume paths) await; sync ones no-op
     console.log(`ok   ${name}`);
   } catch (err) {
     failed++;

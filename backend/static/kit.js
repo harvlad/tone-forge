@@ -167,6 +167,8 @@
         dsp: null, // padengine module (pure DSP exports) once imported
         radial: null, // open radial-menu state, or null
         transportTimer: 0,
+        engineTransport: null, // transport object handed to engine.setTransport
+        engineTransportTimer: 0, // slow re-check: the host can appear post-mount
         kitKind: (opts && opts.kind && opts.kind !== "auto") ? opts.kind : null,
         view: "grid", // "grid" | "layers" (desktop LayerStackView port)
         padCount: 16, // 16 (4×4) or 64 (8×8 compact); resolved below
@@ -213,6 +215,7 @@
     s.alive = false;
     if (s.raf) cancelAnimationFrame(s.raf);
     if (s.transportTimer) clearInterval(s.transportTimer);
+    if (s.engineTransportTimer) clearInterval(s.engineTransportTimer);
     if (s.fb && s.fb.timer) clearInterval(s.fb.timer);
     flushPadFeedback(s, true); // last batch rides sendBeacon past teardown
     closeRadial(s);
@@ -256,11 +259,40 @@
     });
   }
 
+  /** Stream a response body, reporting cumulative bytes received, and
+   * resolve the concatenated ArrayBuffer. Falls back to arrayBuffer()
+   * where ReadableStream reads aren't available (older Safari). */
+  function readBodyWithProgress(r, onBytes) {
+    if (!r.body || typeof r.body.getReader !== "function") {
+      return r.arrayBuffer();
+    }
+    var reader = r.body.getReader();
+    var chunks = [];
+    var received = 0;
+    function pump() {
+      return reader.read().then(function (step) {
+        if (step.done) {
+          var out = new Uint8Array(received);
+          var off = 0;
+          chunks.forEach(function (c) { out.set(c, off); off += c.length; });
+          return out.buffer;
+        }
+        chunks.push(step.value);
+        received += step.value.length;
+        if (onBytes) onBytes(received);
+        return pump();
+      });
+    }
+    return pump();
+  }
+
   /** Fetch + decode one stem role (proxying cross-origin R2 URLs, and
    * retrying Safari's FLAC decode failure via the proxy's WAV transcode).
+   * onProgress(role, loadedBytes, totalBytes) fires as the body streams;
+   * totalBytes is 0 when the proxy responds chunked without a length.
    * Resolves null on any failure — a single bad stem mutes its pads, not
    * the kit. */
-  function fetchStemBuffer(s, entry, paths, role) {
+  function fetchStemBuffer(s, entry, paths, role, onProgress) {
     var url = resolveStemUrl(paths[role]);
     // Cross-origin R2 presigned URLs are unreachable from a browser
     // (bucket sends no CORS headers) — stream via the backend proxy.
@@ -274,7 +306,10 @@
     return fetch(url)
       .then(function (r) {
         if (!r.ok) throw new Error(role + " HTTP " + r.status);
-        return r.arrayBuffer();
+        var total = parseInt(r.headers.get("content-length") || "0", 10) || 0;
+        return readBodyWithProgress(r, function (loaded) {
+          if (onProgress) onProgress(role, loaded, total);
+        });
       })
       .then(function (buf) {
         return s.ctx.decodeAudioData(buf).catch(function (err) {
@@ -298,7 +333,7 @@
     s.ctx = new AC();
 
     var kitP = fetchKitJson(s, entry);
-    var engineP = import("./padengine.js");
+    var engineP = import("./padengine.js?v=2");
 
     return kitP.then(function (kit) {
       if (!s.alive) return;
@@ -334,13 +369,43 @@
       function setStatus(text) {
         if (s.alive && s.statusEl) s.statusEl.textContent = text;
       }
-      setStatus("Loading stems 0/" + roles.length + "…");
+
+      // Full-length stems through the proxy run 100MB+ on long songs, so
+      // a bare "0/4" counter sits frozen for tens of seconds and reads as
+      // a hang. Stream the bodies and show aggregate megabytes instead;
+      // renders are throttled because 64KB chunks arrive far faster than
+      // a status line is worth repainting.
+      var loadedByRole = {};
+      var totalByRole = {};
+      var lastRender = 0;
+      function mb(n) { return (n / 1048576).toFixed(1); }
+      function renderProgress(force) {
+        var now = Date.now();
+        if (!force && now - lastRender < 150) return;
+        lastRender = now;
+        var loaded = 0;
+        var total = 0;
+        var allKnown = true;
+        roles.forEach(function (r) {
+          loaded += loadedByRole[r] || 0;
+          if (totalByRole[r]) total += totalByRole[r];
+          else allKnown = false;
+        });
+        setStatus("Loading stems " + stemsDone + "/" + roles.length +
+          " — " + mb(loaded) +
+          (allKnown && total ? " / " + mb(total) : "") + " MB…");
+      }
+      renderProgress(true);
 
       return Promise.all(
         roles.map(function (role) {
-          return fetchStemBuffer(s, entry, paths, role).then(function (d) {
+          return fetchStemBuffer(s, entry, paths, role, function (r, loaded, total) {
+            loadedByRole[r] = loaded;
+            if (total) totalByRole[r] = total;
+            renderProgress();
+          }).then(function (d) {
             stemsDone++;
-            setStatus("Loading stems " + stemsDone + "/" + roles.length + "…");
+            renderProgress(true);
             return d; // null = a single bad stem mutes its pads, not the kit
           });
         })
@@ -371,6 +436,13 @@
             if (!s.alive) return;
             setStatus("");
             attachEngineState(s);
+            // Song-bar quantize while the transport rolls: wire now and
+            // re-check on a slow clock (jam.js defines JamnKitHost in its
+            // own boot path, which can land after the kit mounts).
+            syncEngineTransport(s);
+            s.engineTransportTimer = setInterval(function () {
+              if (s.alive) syncEngineTransport(s);
+            }, 2000);
             renderPads(s);
             startRaf(s);
           });
@@ -663,6 +735,61 @@
     var m = Math.floor(t / 60);
     var sec = Math.floor(t % 60);
     return m + ":" + (sec < 10 ? "0" : "") + sec;
+  }
+
+  /** Wire the engine's quantize grid to the SONG transport. Without this,
+   * quantized loop launches while the song plays snap to the engine's
+   * free-run lock grid — anchored at the first loop of the SESSION, up to
+   * a full ~8 s cycle away and unrelated to any beat the user hears — the
+   * "pads arm but don't fire / fire at wrong times" bug. With it, the
+   * engine quantizes to the song's own bars while the song rolls (desktop
+   * LaunchpadController behavior) and only free-runs when it's stopped.
+   * Everything is feature-checked; closures read the LIVE host each call so
+   * a replaced JamnKitHost keeps working without re-wiring. Re-run on a
+   * slow clock because the host can appear/disappear after mount. */
+  function syncEngineTransport(s) {
+    if (!can(s.engine, "setTransport")) return;
+    var host = getHost();
+    var tempo = s.entry && s.entry.result && s.entry.result.tempo_bpm;
+    var usable =
+      host && can(host, "isPlaying") && can(host, "getTime") &&
+      typeof tempo === "number" && isFinite(tempo) && tempo > 0;
+    if (!usable) {
+      if (s.engineTransport) {
+        s.engineTransport = null;
+        try {
+          s.engine.setTransport(null);
+        } catch (_) {}
+      }
+      return;
+    }
+    if (s.engineTransport) return; // already wired; closures track the host
+    var t = {
+      isPlaying: function () {
+        var h = getHost();
+        try {
+          return !!(h && can(h, "isPlaying") && h.isPlaying());
+        } catch (_) {
+          return false;
+        }
+      },
+      getSongTime: function () {
+        var h = getHost();
+        try {
+          return h && can(h, "getTime") ? Number(h.getTime()) : NaN;
+        } catch (_) {
+          return NaN;
+        }
+      },
+      tempoBpm: tempo,
+      // The analyzer's loop regions are cut on real downbeats measured from
+      // song time 0, so 0 is the bar anchor the pads were baked against.
+      barAnchorSongTime: 0,
+    };
+    try {
+      s.engine.setTransport(t);
+      s.engineTransport = t;
+    } catch (_) {}
   }
 
   function updateTransport(s) {
@@ -1276,12 +1403,12 @@
       return;
     }
     p.loop = true;
-    s.engine.trigger(padIdx, opts);
+    var res = s.engine.trigger(padIdx, opts);
     noteTrigger(s, padIdx);
     // Armed until padProgress (or onstate) reports actual start — the
     // pulsing border says "waiting for the beat", not silence. Unquantized
     // loops start now, so they're playing already.
-    setUi(s, padIdx, q ? "armed" : "playing");
+    setUi(s, padIdx, q || (res && res.deferred) ? "armed" : "playing");
   }
 
   function padUp(s, padIdx) {
@@ -1715,7 +1842,7 @@
       root: root, entry: null, alive: true, ctx: null, engine: null,
       pads: [], padEls: [], mode: "tap", quantize: "bar", latch: false,
       raf: 0, onResize: null, stems: null, dsp: null, radial: null,
-      transportTimer: 0,
+      transportTimer: 0, engineTransport: null, engineTransportTimer: 0,
       // Packs keep the 16 grid (their manifests are 16-pad) and have no
       // entry, so feedback stays inert (noteTrigger requires s.entry).
       view: "grid", padCount: 16, layersEl: null, layerRows: null,
@@ -1767,7 +1894,7 @@
           kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
           s.kit = { name: desc.name || manifest.name || "Pack", pads: kitPads };
           s.pads = kitPads;
-          return import("./padengine.js").then(function (mod) {
+          return import("./padengine.js?v=2").then(function (mod) {
             if (!s.alive) return;
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
             s.dsp = mod;
@@ -1811,6 +1938,7 @@
       padsInCategory: padsInCategory,
       padStepFlags: padStepFlags,
       pushPadEvent: pushPadEvent,
+      syncEngineTransport: syncEngineTransport,
     },
   };
 })();
