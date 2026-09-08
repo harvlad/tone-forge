@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>jamn MIDI probe</title>
+<style>
+  body { background:#0b0b0f; color:#eef0ff; font:14px/1.5 -apple-system, monospace; padding:24px; }
+  button { font-size:16px; padding:10px 18px; margin-right:8px; border-radius:8px;
+           border:1px solid #4a44a8; background:#262157; color:#fff; cursor:pointer; }
+  #log { margin-top:16px; white-space:pre-wrap; font-family:monospace; font-size:12px; }
+  .ok { color:#22c55e; } .err { color:#ef4444; } .info { color:#9aa0c0; }
+</style>
+</head>
+<body>
+<h2>jamn MIDI probe</h2>
+<p class="info">Diagnoses the browser→Launchpad path outside the app. Click Run, watch the device.</p>
+<button id="run">Run test</button>
+<button id="daw">Try DAW port</button>
+<div id="log"></div>
+<script>
+const logEl = document.getElementById('log');
+function log(msg, cls) {
+  const d = document.createElement('div');
+  d.textContent = msg; if (cls) d.className = cls;
+  logEl.appendChild(d);
+}
+function pattern() {
+  const spec = [];
+  for (let r = 1; r <= 8; r++)
+    for (let c = 1; c <= 8; c++)
+      spec.push(0x00, r * 10 + c, (r * 8 + c * 3) % 127);
+  return spec;
+}
+async function run(portHint) {
+  logEl.textContent = '';
+  log('UA: ' + navigator.userAgent, 'info');
+  if (!navigator.requestMIDIAccess) { log('Web MIDI NOT supported in this browser', 'err'); return; }
+  let access;
+  try {
+    access = await navigator.requestMIDIAccess({ sysex: true });
+    log('MIDIAccess granted (sysex=' + access.sysexEnabled + ')', 'ok');
+  } catch (e) { log('requestMIDIAccess FAILED: ' + e, 'err'); return; }
+
+  const outs = [...access.outputs.values()];
+  const ins = [...access.inputs.values()];
+  log('outputs (' + outs.length + '):');
+  outs.forEach(o => log('  [' + o.state + '/' + o.connection + '] ' + o.name,
+                        o.state === 'connected' ? 'ok' : 'err'));
+  log('inputs (' + ins.length + '):');
+  ins.forEach(i => log('  [' + i.state + '/' + i.connection + '] ' + i.name,
+                       i.state === 'connected' ? 'ok' : 'err'));
+
+  const out = outs.find(o => (o.name || '').toLowerCase().includes(portHint))
+    || outs.find(o => (o.name || '').toLowerCase().includes('launchpad'));
+  if (!out) { log('No Launchpad output found', 'err'); return; }
+  log('using output: ' + out.name, 'info');
+
+  try {
+    log('open() → ...', 'info');
+    await out.open();
+    log('open() resolved. state=' + out.state + ' connection=' + out.connection,
+        out.connection === 'open' ? 'ok' : 'err');
+  } catch (e) { log('open() REJECTED: ' + e, 'err'); return; }
+
+  try {
+    out.send([0xF0, 0x00, 0x20, 0x29, 0x02, 0x0E, 0x0E, 0x01, 0xF7]); // programmer mode
+    out.send([0xF0, 0x00, 0x20, 0x29, 0x02, 0x0E, 0x03, ...pattern(), 0xF7]);
+    log('SENT programmer mode + rainbow. IS THE DEVICE LIT?', 'ok');
+  } catch (e) { log('send() THREW: ' + e, 'err'); return; }
+
+  const inp = ins.find(i => (i.name || '').toLowerCase().includes('midi')
+                            && (i.name || '').toLowerCase().includes('launchpad'));
+  if (inp) {
+    inp.onmidimessage = (ev) =>
+      log('IN  [' + ev.data.length + 'b] ' +
+          [...ev.data].slice(0, 6).map(b => b.toString(16)).join(' '), 'ok');
+    log('listening for pad presses on ' + inp.name + ' — tap a pad', 'info');
+  }
+}
+document.getElementById('run').onclick = () => run('midi');
+document.getElementById('daw').onclick = () => run('daw');
+</script>
+</body>
+</html>
