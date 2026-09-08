@@ -349,23 +349,63 @@ features:
         status: na
         note: "Monitoring chains are its own feature domain (tone chains), not song-mix FX."
 
+  - id: pad-usage-feedback
+    name: Pad play/skip usage reported to the server kit re-ranking
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#pad-feedback"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/ToneForgeApp.swift#padFeedbackEvents"
+        note: "dwell timer: heard <3s = skip, else play; batched POST to /api/song/{id}/pad-feedback."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/SessionController.swift#pad-feedback"
+      plugin:
+        status: done
+        evidence: "plugin/Source/PluginEditor.cpp#pad-feedback"
+        note: "\"Learn From Playing\" toggle; posts /pad-feedback."
+      connect:
+        status: na
+        note: "No pad surface."
+
+  - id: pad-grid-8x8
+    name: 64-pad (8x8) kit grid mode
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#kit-is-64"
+      ios:
+        status: missing
+        note: "iOS pad grid is 16 (4x4 Contribute + hold-radial, kVoices-style); no 8x8/64 mode — real gap, own target."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/LaunchpadController.swift#prefix(64)"
+      plugin:
+        status: na
+        note: "jamn Kit is a fixed 16-voice sampler (kVoices=16); 8x8 is a jam-surface concept, not a sampler one."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: layers-rack
-    name: Layers rack (category layers, 8x8 mode, pad-usage feedback)
+    name: Category-layer rack on the pad surface
     platforms:
       web:
         status: done
         evidence: "backend/static/kit.js#renderLayers"
       ios:
         status: partial
-        evidence: "mobile-ios/Sources/ToneForgeMobile/Audio/LayerPlayer.swift#LayerPlayer"
-        note: "Layer recording/playback exists; the rack UI + 8x8 mode + usage feedback shipped web-only 2026-09-08 (parity backfill row — audit and close)."
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/LayerSlotToggle.swift#LayerSlotToggle"
+        note: "iOS layering is an A/B take-slot model (record into slot A or B), NOT the web/desktop per-category layer rack; different UX, own target if we want convergence."
       desktop:
         status: partial
         evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/LaunchpadController.swift#activeLayer"
-        note: "Category layers exist on the launchpad controller; 8x8 rack UI + usage feedback not audited."
+        note: "Per-category active-layer model exists on the controller; the 8x8 rack UI + row rendering (web renderLayers) not built."
       plugin:
         status: na
-        note: "Sampler scope."
+        note: "Sampler scope; no layer surface."
       connect:
         status: na
-        note: "No pad/layer surface."
+        note: "No pad surface."
