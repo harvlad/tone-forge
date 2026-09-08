@@ -637,6 +637,31 @@
       installedVersion: null,
       launching: false,
       launchingUntilMs: 0,
+
+      // ----- local fast path (Chrome + Connect.app on the same Mac) -----
+      //
+      // Connect.app runs a loopback WS listener on 127.0.0.1:17995
+      // (LocalBridgeServer.swift) speaking the same v2 frames as the
+      // relay. Design chosen here: the RELAY CONNECTION STAYS OPEN
+      // even when the local socket is up. Rationale: the relay is
+      // where server-side work lives (apply_chain chain_id→spec
+      // resolution + acks, set_gain/preset/session caching for
+      // replay-on-reconnect, peer counting for the "paired" UI), so
+      // dropping it would mean reimplementing all of that locally.
+      // The local socket carries only the latency-sensitive
+      // interactive frames (see LOCAL_FAST_TYPES) — that's the part
+      // where a cloud round-trip is actually felt by the user.
+      //
+      // localWs     : WebSocket to 127.0.0.1:17995, or null.
+      // localStatus : 'idle' | 'connecting' | 'open' | 'closed'.
+      //               'open' means hello_ack received (token accepted),
+      //               not merely socket-open.
+      // transport   : 'local' | 'relay' — which path interactive
+      //               frames currently take. Surfaced in
+      //               renderConnectStatus() as "direct"/"via cloud".
+      localWs: null,
+      localStatus: 'idle',
+      transport: 'relay',
     },
     // perform v2 waveform timeline. Peaks are computed once from the
     // decoded stem AudioBuffers after prepareStemAudio resolves.
@@ -682,8 +707,205 @@
   // app when that joins the same session channel. The push is fire-and-
   // forget from the browser's perspective.
 
+  // ---- Local fast path (Chrome-only) --------------------------------------
+  // Connect.app listens on ws://127.0.0.1:17995 (LocalBridgeServer.swift)
+  // with three gates: loopback-only bind, Origin allowlist at upgrade
+  // time, and a hello frame that must carry our session id. Chrome is
+  // the one major browser that reliably allows ws:// to loopback from
+  // an https page (Safari and Firefox block or break it), hence the
+  // browser gate below — everyone else just stays on the relay.
+
+  const LOCAL_BRIDGE_URL = 'ws://127.0.0.1:17995';
+  const LOCAL_BRIDGE_TIMEOUT_MS = 800;
+  // Frame types that ride the local socket when it's up. Only the
+  // interactive, latency-sensitive ones: everything else needs the
+  // server anyway (apply_chain resolution + acks, cache-for-replay
+  // of preset/session/stems) and gains nothing from a local hop.
+  const LOCAL_FAST_TYPES = new Set(['set_gain', 'transport_state', 'measure_latency']);
+
+  function isDesktopChrome() {
+    try {
+      const uaData = navigator.userAgentData;
+      if (uaData && Array.isArray(uaData.brands)) {
+        // Brand check excludes Edge/Opera/Brave-with-brand — plain
+        // Chrome carries the "Google Chrome" brand alongside
+        // "Chromium".
+        return !uaData.mobile
+          && uaData.brands.some((b) => b.brand === 'Google Chrome');
+      }
+      // UA-string fallback for older Chrome without userAgentData.
+      const ua = navigator.userAgent || '';
+      return /Chrome\//.test(ua) && !/Edg\/|OPR\/|Mobile/.test(ua);
+    } catch { return false; }
+  }
+
+  // The local path is worth attempting only when we're on Chrome and
+  // the install probe has actually seen Connect.app on disk — dialing
+  // 127.0.0.1 from other setups just burns a connection error in the
+  // console every time.
+  function localBridgeEligible() {
+    const cb = state.connectBridge;
+    return isDesktopChrome() && cb.installed === true;
+  }
+
+  function ensureLocalBridge() {
+    const cb = state.connectBridge;
+    if (!localBridgeEligible()) return;
+    if (cb.localWs && (cb.localStatus === 'open' || cb.localStatus === 'connecting')) return;
+    if (!cb.sessionId) cb.sessionId = newSessionId();
+    cb.localStatus = 'connecting';
+    let ws;
+    try { ws = new WebSocket(LOCAL_BRIDGE_URL); }
+    catch (e) {
+      console.warn('[connect] local WS construction failed:', e);
+      cb.localStatus = 'closed';
+      return;
+    }
+    cb.localWs = ws;
+    // Short-fuse timeout: if Connect's listener isn't there (helper
+    // not running, port squatted) we want to conclude "relay only"
+    // quickly, not hang a CONNECTING socket around.
+    const fuse = setTimeout(() => {
+      if (cb.localWs === ws && cb.localStatus !== 'open') {
+        try { ws.close(); } catch {}
+      }
+    }, LOCAL_BRIDGE_TIMEOUT_MS);
+    ws.onopen = () => {
+      // Token gate: first frame must be the hello with our session id
+      // (the same id Connect received via the toneforge://pair
+      // deeplink). `transport` is an additive v2 field.
+      try {
+        ws.send(JSON.stringify({
+          type: 'hello',
+          role: 'browser',
+          session_id: cb.sessionId,
+          protocol_version: 2,
+          transport: 'local',
+        }));
+      } catch {}
+    };
+    ws.onmessage = (ev) => {
+      let data;
+      try { data = JSON.parse(ev.data); } catch { return; }
+      if (data.type === 'hello_ack') {
+        // Token accepted — the fast path is live.
+        clearTimeout(fuse);
+        cb.localStatus = 'open';
+        cb.transport = 'local';
+        console.log('[connect] local bridge up (direct)');
+        flashConnectStatus('Connect link: direct (local)', true, 1500);
+        renderConnectStatus();
+      } else if (data.type === 'ping') {
+        try { ws.send(JSON.stringify({ type: 'pong' })); } catch {}
+      } else {
+        // Telemetry mirrored by Connect (connect_state /
+        // latency_report / input_meter / device_lost). Same handler
+        // as the relay path; duplicates are last-value-wins.
+        _handleConnectTelemetry(data);
+      }
+    };
+    ws.onclose = () => {
+      clearTimeout(fuse);
+      const wasOpen = cb.localStatus === 'open';
+      if (cb.localWs === ws) {
+        cb.localWs = null;
+        cb.localStatus = 'closed';
+        cb.transport = 'relay';
+      }
+      // Auto-fallback: interactive frames route back through the relay
+      // the moment localStatus leaves 'open' (sendOrQueueBridgeMessage
+      // checks it per-send), so there's nothing to tear down — just
+      // tell the user the path changed. Re-promotion to local is NOT
+      // on a background timer: the common cause of a local drop is
+      // Connect itself restarting, and when it comes back it rejoins
+      // the relay channel, which fires the 'joined' handler → that
+      // calls ensureLocalBridge() again. Rarer cases are covered by
+      // the manual Reconnect affordance in renderConnectStatus().
+      if (wasOpen) {
+        flashConnectStatus('Direct link lost — using cloud relay', false, 2500);
+      }
+      renderConnectStatus();
+    };
+    ws.onerror = () => { /* onclose follows; nothing to add */ };
+  }
+
+  // Shared handler for the three Connect→browser v2 telemetry frame
+  // types. Extracted from the relay ws.onmessage chain so the local
+  // socket can feed the same stores. Returns true when handled.
+  function _handleConnectTelemetry(data) {
+    const cb = state.connectBridge;
+    if (data.type === 'connect_state') {
+      // v2 (Audio-Ownership Pivot): engine snapshot from Connect.app.
+      // Stored raw so consumers read { state, device, monitor, dsp }
+      // without a second wire pass. The "Recommended" tag on the
+      // dual-latency card tracks paired-and-running → re-render.
+      cb.connectState = data;
+      renderLatencyComparison();
+      return true;
+    }
+    if (data.type === 'latency_report') {
+      // v2: measured engine latency — floor estimate plus optional
+      // LatencyProbe ground truth (measured_round_trip_ms).
+      const rt = Number(data.estimated_round_trip_ms);
+      cb.connectLatencyMs = Number.isFinite(rt) ? rt : null;
+      const measured = Number(data.measured_round_trip_ms);
+      cb.connectMeasuredLatencyMs = Number.isFinite(measured) ? measured : null;
+      cb.connectMeasuredConfidence = typeof data.measurement_confidence === 'string'
+        ? data.measurement_confidence
+        : null;
+      cb.measureInFlight = false;
+      cb.connectLatencyReport = data;
+      renderLatencyComparison();
+      return true;
+    }
+    if (data.type === 'input_meter') {
+      // v2: input level for JAM's VU meter, ~20 Hz. Last sample only.
+      const peak = Number(data.peak_dbfs);
+      const rms = Number(data.rms_dbfs);
+      cb.connectMeter = {
+        peak: Number.isFinite(peak) ? peak : -120,
+        rms: Number.isFinite(rms) ? rms : -120,
+        t: performance.now(),
+      };
+      return true;
+    }
+    return false;
+  }
+
+  // Manual "Reconnect" action (rendered by renderConnectStatus).
+  // Tears down both sockets, resets the relay backoff, and re-runs
+  // the local-first attempt. Reuses the existing machinery: the relay
+  // ws.onclose path is told (via _manualReconnect) to call
+  // ensureConnectBridge immediately instead of consulting the
+  // lastPreset-gated backoff.
+  function reconnectConnectBridge() {
+    const cb = state.connectBridge;
+    cb.reconnectMs = 1000;
+    cb.reconnectToastShown = false;
+    flashConnectStatus('Reconnecting…', false, 2000);
+    // Local socket: close and immediately retry (no relay dependency).
+    if (cb.localWs) {
+      try { cb.localWs.close(); } catch {}
+      cb.localWs = null;
+      cb.localStatus = 'closed';
+      cb.transport = 'relay';
+    }
+    if (cb.ws && cb.status === 'open') {
+      cb._manualReconnect = true;
+      try { cb.ws.close(); } catch {}
+    } else {
+      ensureConnectBridge();
+    }
+    ensureLocalBridge();
+    renderConnectStatus();
+  }
+
   function ensureConnectBridge() {
     const cb = state.connectBridge;
+    // Piggyback: any code path that wants the bridge up also wants
+    // the local fast path attempted (it self-gates on Chrome +
+    // installed, and no-ops while connecting/open).
+    ensureLocalBridge();
     if (cb.ws && (cb.status === 'open' || cb.status === 'connecting')) return;
     if (!cb.sessionId) cb.sessionId = newSessionId();
     cb.status = 'connecting';
@@ -754,6 +976,11 @@
         // to "Connect Connected" without lingering in the
         // intermediate state for the rest of the 5s.
         if (cb.peers > 0) _clearLaunchingTimer();
+        // A peer appearing usually means Connect.app just came up —
+        // which is exactly when its loopback listener becomes
+        // dialable. This is also the re-promotion path after a local
+        // drop caused by a helper restart (see local ws.onclose).
+        if (cb.peers > 0) ensureLocalBridge();
         renderConnectStatus();
         console.log(`[connect] joined session ${data.session_id} (peers=${data.peers})`);
       } else if (data.type === 'peer_left') {
@@ -875,50 +1102,12 @@
             5000,
           );
         }
-      } else if (data.type === 'connect_state') {
-        // v2 (Audio-Ownership Pivot): engine snapshot from Connect.app.
-        // Phase 4 commit A only stores it; consumers in Phases 1/2/5
-        // read state.connectBridge.connectState to drive the four-
-        // state status pill, the audio-input-card collapse, and the
-        // ownership banner. Storing the raw payload (not destructured)
-        // keeps the v2 fields { state, device, monitor, dsp }
-        // available without a second wire pass.
-        cb.connectState = data;
-        // Phase 3: the "Recommended" tag on the dual-latency card
-        // tracks paired-and-running, which depends on the connect_state
-        // we just stored. Re-render the comparison so the tag flips
-        // when Connect's engine transitions to .running.
-        renderLatencyComparison();
-      } else if (data.type === 'latency_report') {
-        // v2: measured engine latency. Stash the round-trip estimate
-        // for the dual-latency card (Phase 3) plus the full payload
-        // (input/output/buffer ms) so the row's tooltip can break
-        // the floor down for the curious user.
-        const rt = Number(data.estimated_round_trip_ms);
-        cb.connectLatencyMs = Number.isFinite(rt) ? rt : null;
-        // measured_round_trip_ms is the ground-truth from a
-        // LatencyProbe impulse-loopback run; only present after the
-        // user triggered a "Measure" via measure_latency. Stash
-        // alongside the floor estimate so the UI can show both.
-        const measured = Number(data.measured_round_trip_ms);
-        cb.connectMeasuredLatencyMs = Number.isFinite(measured) ? measured : null;
-        cb.connectMeasuredConfidence = typeof data.measurement_confidence === 'string'
-          ? data.measurement_confidence
-          : null;
-        cb.measureInFlight = false;
-        cb.connectLatencyReport = data;
-        renderLatencyComparison();
-      } else if (data.type === 'input_meter') {
-        // v2: input level for JAM's VU meter. High-rate (~20 Hz at
-        // source); smoothing happens at the render layer in a later
-        // phase. Store last sample only.
-        const peak = Number(data.peak_dbfs);
-        const rms = Number(data.rms_dbfs);
-        cb.connectMeter = {
-          peak: Number.isFinite(peak) ? peak : -120,
-          rms: Number.isFinite(rms) ? rms : -120,
-          t: performance.now(),
-        };
+      } else {
+        // v2 telemetry (connect_state / latency_report / input_meter)
+        // is shared with the local fast path — see
+        // _handleConnectTelemetry. Unknown types fall through as a
+        // silent no-op, matching pre-refactor behaviour.
+        _handleConnectTelemetry(data);
       }
     };
     ws.onclose = () => {
@@ -926,6 +1115,13 @@
       cb.status = 'closed';
       cb.peers = 0;
       renderConnectStatus();
+      // Manual Reconnect: skip the lastPreset gate and the backoff —
+      // the user explicitly asked, so dial immediately.
+      if (cb._manualReconnect) {
+        cb._manualReconnect = false;
+        setTimeout(ensureConnectBridge, 0);
+        return;
+      }
       // Exponential backoff up to 30s. Only auto-reconnect if we have a
       // preset to keep alive; idle browser doesn't need to keep hammering.
       if (cb.lastPreset) {
@@ -1580,6 +1776,21 @@
 
   function sendOrQueueBridgeMessage(msg) {
     const cb = state.connectBridge;
+    // Local fast path: latency-sensitive interactive frames go
+    // straight to Connect.app when the loopback socket is up.
+    //   - transport_state / measure_latency are NOT cached server-side,
+    //     so the local copy is the whole story — skip the relay.
+    //   - set_gain IS cached server-side and replayed to a
+    //     late-(re)joining Connect, so we ALSO send it to the relay;
+    //     Connect applies the duplicate idempotently and the server
+    //     cache never goes stale.
+    if (cb.localWs && cb.localStatus === 'open' && LOCAL_FAST_TYPES.has(msg.type)) {
+      let sentLocal = false;
+      try { cb.localWs.send(JSON.stringify(msg)); sentLocal = true; }
+      catch (e) { console.warn('[connect] local send failed:', e); }
+      if (sentLocal && msg.type !== 'set_gain') return;
+      // set_gain (or a failed local send) falls through to the relay.
+    }
     if (cb.ws && cb.status === 'open') {
       try { cb.ws.send(JSON.stringify(msg)); }
       catch (e) { console.warn('[connect] send failed:', e); cb.queue.push(msg); }
@@ -14816,7 +15027,11 @@
         return;
       }
 
-      _tryFeaturedAutoOpen();
+      // Featured songs are PINNED in the library (chip + first row) but
+      // deliberately never auto-load — landing inside someone else's
+      // song uninvited read as broken on every platform. The library is
+      // the cold-boot default so the featured row is one tap away.
+      showView('library');
     })();
   })();
 })();

@@ -290,7 +290,8 @@ struct RootView: View {
             // Recover this device's server-side jobs after a relaunch
             // without requiring a visit to the Band Room.
             await queue.refreshFromServer(baseURL: model.backendBaseURL)
-            await autoOpenFeaturedSong()
+            // Featured songs stay pinned in Recent Songs but never
+            // auto-load — opening a song uninvited read as broken.
         }
     }
 

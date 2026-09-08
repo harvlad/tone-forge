@@ -913,10 +913,9 @@ public final class AppState: ObservableObject {
         // flushes a finished song waiting to open.
         JobCompletionCenter.shared.boot(appState: self)
 
-        // Curated launch default (TONEFORGE_FEATURED_QUERY, dev/
-        // TestFlight only). Skipped when the first-run demo just
-        // auto-opened — that flow already owns the first surface.
-        if !autoOpenedDemo { autoOpenFeaturedSong() }
+        // Featured songs (TONEFORGE_FEATURED_QUERY) stay pinned first
+        // in the Library with a chip, but never auto-load — opening a
+        // song uninvited read as broken on every platform.
     }
 
     /// P2: Launchpad Pro MK3 over CoreMIDI. Pad events publish on the
