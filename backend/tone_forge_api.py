@@ -7820,20 +7820,16 @@ async def download_local_engine():
             media_type=media_type,
         )
 
-    # Fallback to info page
-    platform_name = {"Darwin": "macOS", "Windows": "Windows", "Linux": "Linux"}.get(system, "macOS")
-    if system == "Darwin":
-        # Actionable on macOS: link the real R2 artifact instead of
-        # leaving the "upgrade" CTA at an informational dead end.
-        download_block = (
-            '<a href="/api/downloads/studio-app" class="cta">Download for macOS</a>'
-            '<p class="note">Runs quietly in your menu bar.</p>'
-        )
-    else:
-        download_block = (
-            f'<p class="note">Studio is macOS-only for now — '
-            f'no {platform_name} build yet.</p>'
-        )
+    # Fallback to info page. platform.system() is the SERVER's OS, which
+    # says nothing about the visitor — on the prod Linux box it would be
+    # Linux for everyone. Studio ships for macOS only, so the page simply
+    # presents the macOS build (with the real R2 link) rather than gating
+    # on a signal that's meaningless here. A non-macOS visitor sees an
+    # honest macOS-only offer, not a phantom build for their platform.
+    download_block = (
+        '<a href="/api/downloads/studio-app" class="cta">Download for macOS</a>'
+        '<p class="note">macOS only for now — runs quietly in your menu bar.</p>'
+    )
 
     html = f"""
     <!DOCTYPE html>
