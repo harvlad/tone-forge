@@ -42,6 +42,14 @@
     // apply on the perform view. Intake / band-room / rehearsal keep
     // the legacy 1100px max-width to stay byte-identical.
     document.body.classList.toggle('perform-active', name === 'perform');
+    // Repaint the transport waveform once perform is laid out again.
+    // While the view was display:none the canvas rect was 0×0 and
+    // drawWaveform() skipped painting (see the guard there), so the
+    // bitmap can be stale; rAF waits for the new layout. Function
+    // declaration hoisting makes the reference safe during parse.
+    if (name === 'perform') {
+      requestAnimationFrame(() => { try { drawWaveform(); } catch (_) {} });
+    }
     // Rehearsal lifecycle hooks — enter/leave lets the module arm
     // its transport, mic pipeline, and playhead tracking. Hooks are
     // defined lower in the file; guarded so this callsite still works
@@ -3189,6 +3197,10 @@
   function buildStemRack() {
     const rack = $('stem-rack');
     rack.innerHTML = '';
+    // Song (re)load — pull this song's persisted master-FX settings
+    // so the FX tab and audio chain reflect the right song even if
+    // the user never opens the tab. Idempotent per storage key.
+    try { _fxSyncSong(); } catch (_) {}
 
     // Two synthetic mixer-channel rows precede the per-stem rows:
     //   * Song master  -- routes state.masterGain
@@ -3281,6 +3293,455 @@
     `;
     return row;
   }
+
+  // ─────────────────────────── Mixer FX tab (desktop D-022 parity)
+  //
+  // WebAudio mirror of jam-desktop's master FX chain (MusicBus.swift):
+  // the song bus (state.masterGain) fans out to an insert chain and a
+  // parallel send/return, exactly like the native topology:
+  //
+  //   masterGain ─→ eqLow → eqMid → eqHigh → comp → makeup → limiter ─→ dest
+  //           └──→ fxSend → convolver ─→ delay dry/wet mix → fxReturn ─→ dest
+  //
+  // Params, ranges, presets and the "knob edit clears preset" rule are
+  // 1:1 with ToneForgeEngine FXSettings / FXPresetCatalog so the same
+  // knob positions sound the same on web and native:
+  //   * reverb runs fully wet in the send chain; audibility rides the
+  //     send gain = max(reverb.mix, delay.mix)/100 (MusicBus parity),
+  //   * delay blends dry/wet WITHIN the wet chain (AVAudioUnitDelay
+  //     wetDryMix semantics: wet = mix%, dry = 100-mix%),
+  //   * fxReturn goes silent when both wet FX are neutral (doubling
+  //     guard),
+  //   * comp "amount" is the native DynamicsProcessor headroom 0..40;
+  //     WebAudio has no headroom param so it maps onto ratio 1..20
+  //     (0 → ratio 1 ≈ transparent), makeup is an explicit post-gain.
+  // The native brickwall limiter after the comp is approximated with a
+  // hard-knee 20:1 compressor at -1 dB.
+  //
+  // Settings persist per song in localStorage (native persists via
+  // FXSettingsStore); absent fields degrade to neutral like the Swift
+  // decodeIfPresent path.
+
+  const FX_STORAGE_PREFIX = 'jamnFxV1:';
+
+  function _fxNeutral() {
+    return {
+      schemaVersion: 1,
+      eq: { lowFreq: 200, lowGainDb: 0, midFreq: 1000, midGainDb: 0,
+            highFreq: 6000, highGainDb: 0 },
+      comp: { thresholdDb: -20, amountDb: 0, attackMs: 10, releaseMs: 100,
+              makeupDb: 0 },
+      reverb: { mix: 0, sizeSeconds: 2.0, dampPercent: 50 },
+      delay: { timeSec: 0.25, feedback: 30, mix: 0 },
+      fxReturnDb: 0,
+      presetId: 'clean',
+    };
+  }
+
+  // Verbatim port of FXPresetCatalog (FXSettings.swift) — same ids,
+  // names and values.
+  const FX_PRESETS = [
+    { id: 'clean', name: 'Clean', settings: _fxNeutral() },
+    { id: 'shoegaze', name: 'Shoegaze Hall', settings: {
+      eq: { lowFreq: 200, lowGainDb: 2, midFreq: 1000, midGainDb: -2, highFreq: 6000, highGainDb: 1 },
+      comp: { thresholdDb: -18, amountDb: 8, attackMs: 30, releaseMs: 200, makeupDb: 3 },
+      reverb: { mix: 45, sizeSeconds: 3.5, dampPercent: 40 },
+      delay: { timeSec: 0.3, feedback: 25, mix: 15 },
+      fxReturnDb: -3 } },
+    { id: 'slapback', name: 'Slapback', settings: {
+      delay: { timeSec: 0.12, feedback: 15, mix: 35 },
+      fxReturnDb: 0 } },
+    { id: 'tapeEcho', name: 'Tape Echo', settings: {
+      eq: { lowFreq: 200, lowGainDb: 1, midFreq: 1000, midGainDb: 0, highFreq: 6000, highGainDb: -3 },
+      reverb: { mix: 10, sizeSeconds: 1.5, dampPercent: 60 },
+      delay: { timeSec: 0.375, feedback: 45, mix: 30 },
+      fxReturnDb: -2 } },
+    { id: 'glueComp', name: 'Glue Comp', settings: {
+      comp: { thresholdDb: -16, amountDb: 12, attackMs: 20, releaseMs: 150, makeupDb: 4 },
+      fxReturnDb: 0 } },
+    { id: 'loFi', name: 'Lo-Fi', settings: {
+      eq: { lowFreq: 200, lowGainDb: 3, midFreq: 1000, midGainDb: 2, highFreq: 6000, highGainDb: -6 },
+      comp: { thresholdDb: -24, amountDb: 15, attackMs: 5, releaseMs: 80, makeupDb: 6 },
+      reverb: { mix: 20, sizeSeconds: 1.2, dampPercent: 70 },
+      fxReturnDb: -1 } },
+  ];
+
+  const _clampNum = (v, lo, hi, dflt) =>
+    (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : dflt;
+
+  // Merge a possibly-partial stored blob over neutral and clamp every
+  // field to the documented FXSettings ranges (mirror of clamped()).
+  function _fxSanitize(raw) {
+    const n = _fxNeutral();
+    const s = (raw && typeof raw === 'object') ? raw : {};
+    const eq = s.eq || {}, comp = s.comp || {}, rev = s.reverb || {}, del = s.delay || {};
+    return {
+      schemaVersion: 1,
+      eq: {
+        lowFreq: _clampNum(eq.lowFreq, 20, 2000, n.eq.lowFreq),
+        lowGainDb: _clampNum(eq.lowGainDb, -24, 24, 0),
+        midFreq: _clampNum(eq.midFreq, 200, 8000, n.eq.midFreq),
+        midGainDb: _clampNum(eq.midGainDb, -24, 24, 0),
+        highFreq: _clampNum(eq.highFreq, 1000, 20000, n.eq.highFreq),
+        highGainDb: _clampNum(eq.highGainDb, -24, 24, 0),
+      },
+      comp: {
+        thresholdDb: _clampNum(comp.thresholdDb, -60, 0, n.comp.thresholdDb),
+        amountDb: _clampNum(comp.amountDb, 0, 40, 0),
+        attackMs: _clampNum(comp.attackMs, 0.1, 200, n.comp.attackMs),
+        releaseMs: _clampNum(comp.releaseMs, 10, 3000, n.comp.releaseMs),
+        makeupDb: _clampNum(comp.makeupDb, 0, 40, 0),
+      },
+      reverb: {
+        mix: _clampNum(rev.mix, 0, 100, 0),
+        sizeSeconds: _clampNum(rev.sizeSeconds, 0.3, 6, n.reverb.sizeSeconds),
+        dampPercent: _clampNum(rev.dampPercent, 0, 100, n.reverb.dampPercent),
+      },
+      delay: {
+        timeSec: _clampNum(del.timeSec, 0, 2, n.delay.timeSec),
+        feedback: _clampNum(del.feedback, 0, 95, n.delay.feedback),
+        mix: _clampNum(del.mix, 0, 100, 0),
+      },
+      fxReturnDb: _clampNum(s.fxReturnDb, -40, 6, 0),
+      presetId: (typeof s.presetId === 'string') ? s.presetId : null,
+    };
+  }
+
+  // Neutrality predicates — same epsilons as the Swift isNeutral set.
+  const _fxEqNeutral = (e) =>
+    Math.abs(e.lowGainDb) < 0.01 && Math.abs(e.midGainDb) < 0.01 && Math.abs(e.highGainDb) < 0.01;
+  const _fxCompNeutral = (c) => c.amountDb < 0.01;
+  const _fxRevNeutral = (r) => r.mix < 0.01;
+  const _fxDelNeutral = (d) => d.mix < 0.01;
+  const _fxAllNeutral = (s) =>
+    _fxEqNeutral(s.eq) && _fxCompNeutral(s.comp) && _fxRevNeutral(s.reverb) && _fxDelNeutral(s.delay);
+
+  // Current settings live on state lazily (avoids touching the big
+  // state literal); fxLoadedKey tracks which song's blob is loaded.
+  function _fxSettings() {
+    if (!state.fxSettings) state.fxSettings = _fxNeutral();
+    return state.fxSettings;
+  }
+
+  function _fxStorageKey() {
+    return FX_STORAGE_PREFIX + (state.analysisId || 'default');
+  }
+
+  function _fxSave() {
+    try {
+      localStorage.setItem(_fxStorageKey(), JSON.stringify(_fxSettings()));
+    } catch (_) { /* private-mode Safari */ }
+  }
+
+  // (Re)load the per-song blob when the song changes. Called from
+  // buildStemRack (song load), prepareStemAudio (analysisId certain)
+  // and the FX tab click — idempotent per storage key.
+  function _fxSyncSong() {
+    const key = _fxStorageKey();
+    if (state.fxLoadedKey === key) return;
+    state.fxLoadedKey = key;
+    let raw = null;
+    try {
+      const str = localStorage.getItem(key);
+      if (str) raw = JSON.parse(str);
+    } catch (_) {}
+    state.fxSettings = _fxSanitize(raw);
+    _fxApply();
+    _fxRenderUI();
+  }
+
+  // Build (once per AudioContext) the master FX node graph. Nodes are
+  // keyed on the context so a watchdog-driven context rebuild gets a
+  // fresh chain.
+  function _ensureMasterFXChain() {
+    const ctx = state.ctx;
+    if (!ctx) return null;
+    if (state.fxNodes && state.fxNodes.ctx === ctx) return state.fxNodes;
+    const eqLow = ctx.createBiquadFilter();
+    eqLow.type = 'lowshelf';
+    const eqMid = ctx.createBiquadFilter();
+    eqMid.type = 'peaking';
+    eqMid.Q.value = 1.0; // MusicBus band bandwidth 1.0
+    const eqHigh = ctx.createBiquadFilter();
+    eqHigh.type = 'highshelf';
+    const comp = ctx.createDynamicsCompressor();
+    comp.knee.value = 6;
+    const makeup = ctx.createGain();
+    // Safety brickwall stand-in (MusicBus PeakLimiter): hard-knee 20:1
+    // just under 0 dBFS so summing overs never hard-clip destination.
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.05;
+    const fxSend = ctx.createGain();
+    const convolver = ctx.createConvolver();
+    const delayDry = ctx.createGain();
+    const delay = ctx.createDelay(2.0);
+    const delayFb = ctx.createGain();
+    const delayWet = ctx.createGain();
+    const fxReturn = ctx.createGain();
+    const input = ctx.createGain(); // single connect point for masterGain
+    input.connect(eqLow);
+    eqLow.connect(eqMid);
+    eqMid.connect(eqHigh);
+    eqHigh.connect(comp);
+    comp.connect(makeup);
+    makeup.connect(limiter);
+    limiter.connect(ctx.destination);
+    input.connect(fxSend);
+    fxSend.connect(convolver);
+    convolver.connect(delayDry);
+    delayDry.connect(fxReturn);
+    convolver.connect(delay);
+    delay.connect(delayFb);
+    delayFb.connect(delay);
+    delay.connect(delayWet);
+    delayWet.connect(fxReturn);
+    fxReturn.connect(ctx.destination);
+    state.fxNodes = {
+      ctx, input, eqLow, eqMid, eqHigh, comp, makeup, limiter,
+      fxSend, convolver, delayDry, delay, delayFb, delayWet, fxReturn,
+      _irKey: null,
+    };
+    _fxApply();
+    return state.fxNodes;
+  }
+
+  // Called at both AudioContext creation sites in place of the old
+  // masterGain → destination connection.
+  function _connectMasterThroughFX() {
+    try {
+      const n = _ensureMasterFXChain();
+      if (n) { state.masterGain.connect(n.input); return; }
+    } catch (e) {
+      console.warn('[fx] master FX chain unavailable, direct routing:', e);
+    }
+    state.masterGain.connect(state.ctx.destination);
+  }
+
+  // Generated reverb impulse: exponentially-decaying noise, one-pole
+  // lowpassed per sample so dampPercent darkens the tail (stand-in for
+  // the AVAudioUnitReverb factory presets — web has no built-in
+  // reverb node). Regenerated only when size/damp change.
+  function _fxMakeImpulse(ctx, seconds, dampPercent) {
+    const rate = ctx.sampleRate;
+    const len = Math.max(1, Math.floor(rate * seconds));
+    const buf = ctx.createBuffer(2, len, rate);
+    const a = Math.min(0.98, (dampPercent / 100) * 0.9);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      let lp = 0;
+      for (let i = 0; i < len; i++) {
+        const env = Math.pow(1 - i / len, 2.5);
+        lp = lp * a + (Math.random() * 2 - 1) * (1 - a);
+        d[i] = lp * env;
+      }
+    }
+    return buf;
+  }
+
+  // Push current settings into the node graph — the web mirror of
+  // MusicBus.apply(). Params only; never mutates topology.
+  function _fxApply() {
+    const s = _fxSettings();
+    const n = state.fxNodes;
+    if (!n) return;
+    const e = s.eq;
+    n.eqLow.frequency.value = e.lowFreq;
+    n.eqLow.gain.value = e.lowGainDb;
+    n.eqMid.frequency.value = e.midFreq;
+    n.eqMid.gain.value = e.midGainDb;
+    n.eqHigh.frequency.value = e.highFreq;
+    n.eqHigh.gain.value = e.highGainDb;
+    const c = s.comp;
+    n.comp.threshold.value = c.thresholdDb;
+    n.comp.ratio.value = 1 + (c.amountDb / 40) * 19; // 0..40 dB → 1..20:1
+    n.comp.attack.value = c.attackMs / 1000;
+    n.comp.release.value = c.releaseMs / 1000;
+    n.makeup.gain.value = Math.pow(10, c.makeupDb / 20);
+    const irKey = `${s.reverb.sizeSeconds.toFixed(2)}:${s.reverb.dampPercent.toFixed(0)}`;
+    if (n._irKey !== irKey) {
+      try {
+        n.convolver.buffer = _fxMakeImpulse(n.ctx, s.reverb.sizeSeconds, s.reverb.dampPercent);
+        n._irKey = irKey;
+      } catch (err) {
+        console.warn('[fx] impulse generation failed:', err);
+      }
+    }
+    n.delay.delayTime.value = s.delay.timeSec;
+    n.delayFb.gain.value = s.delay.feedback / 100;
+    n.delayWet.gain.value = s.delay.mix / 100;
+    n.delayDry.gain.value = 1 - s.delay.mix / 100;
+    n.fxSend.gain.value = Math.max(s.reverb.mix, s.delay.mix) / 100;
+    // Doubling guard: return silent when both wet FX are off.
+    const wetActive = !_fxRevNeutral(s.reverb) || !_fxDelNeutral(s.delay);
+    n.fxReturn.gain.value = wetActive ? Math.pow(10, s.fxReturnDb / 20) : 0;
+  }
+
+  function _fxCommit(next) {
+    state.fxSettings = _fxSanitize(next);
+    _fxApply();
+    _fxSave();
+    _fxRenderUI();
+  }
+
+  // Knob edit — clears presetId (displayed as "Custom"), FXPanelModel
+  // semantics.
+  function _fxEdit(mutate) {
+    const s = JSON.parse(JSON.stringify(_fxSettings()));
+    mutate(s);
+    s.presetId = null;
+    _fxCommit(s);
+  }
+
+  function _fxApplyPreset(id) {
+    const p = FX_PRESETS.find((x) => x.id === id) || FX_PRESETS[0];
+    const merged = _fxSanitize(p.settings);
+    merged.presetId = p.id;
+    _fxCommit(merged);
+  }
+
+  // Slider specs — labels, ranges and formats mirror the desktop
+  // FXPanelView slider list verbatim.
+  const _FX_FMT_DB = (v) => `${Math.round(v)} dB`;
+  const _FX_FMT_PCT = (v) => `${Math.round(v)}%`;
+  const FX_SLIDERS = [
+    { section: 'eq', path: ['eq', 'lowGainDb'], label: 'Low', min: -24, max: 24, step: 1, fmt: _FX_FMT_DB },
+    { section: 'eq', path: ['eq', 'midGainDb'], label: 'Mid', min: -24, max: 24, step: 1, fmt: _FX_FMT_DB },
+    { section: 'eq', path: ['eq', 'highGainDb'], label: 'High', min: -24, max: 24, step: 1, fmt: _FX_FMT_DB },
+    { section: 'comp', path: ['comp', 'thresholdDb'], label: 'Threshold', min: -60, max: 0, step: 1, fmt: _FX_FMT_DB },
+    { section: 'comp', path: ['comp', 'amountDb'], label: 'Amount', min: 0, max: 40, step: 1, fmt: _FX_FMT_DB },
+    { section: 'comp', path: ['comp', 'makeupDb'], label: 'Makeup', min: 0, max: 40, step: 1, fmt: _FX_FMT_DB },
+    { section: 'reverb', path: ['reverb', 'mix'], label: 'Mix', min: 0, max: 100, step: 1, fmt: _FX_FMT_PCT },
+    { section: 'reverb', path: ['reverb', 'sizeSeconds'], label: 'Size', min: 0.3, max: 6, step: 0.1, fmt: (v) => `${v.toFixed(1)} s` },
+    { section: 'delay', path: ['delay', 'timeSec'], label: 'Time', min: 0, max: 2, step: 0.01, fmt: (v) => `${v.toFixed(2)} s` },
+    { section: 'delay', path: ['delay', 'feedback'], label: 'Feedback', min: 0, max: 95, step: 1, fmt: _FX_FMT_PCT },
+    { section: 'delay', path: ['delay', 'mix'], label: 'Mix', min: 0, max: 100, step: 1, fmt: _FX_FMT_PCT },
+    { section: 'return', path: ['fxReturnDb'], label: 'Level', min: -40, max: 6, step: 1, fmt: _FX_FMT_DB },
+  ];
+  const FX_SECTIONS = [
+    { id: 'eq', title: 'EQ' },
+    { id: 'comp', title: 'Compressor' },
+    { id: 'reverb', title: 'Reverb' },
+    { id: 'delay', title: 'Delay' },
+    { id: 'return', title: 'FX Return' },
+  ];
+
+  function _fxGetPath(s, path) {
+    return path.length === 2 ? s[path[0]][path[1]] : s[path[0]];
+  }
+  function _fxSetPath(s, path, v) {
+    if (path.length === 2) s[path[0]][path[1]] = v;
+    else s[path[0]] = v;
+  }
+
+  // Refresh slider positions, value readouts, preset chip highlight,
+  // "Custom" tag and per-section OFF badges from current settings.
+  function _fxRenderUI() {
+    const pane = $('mixer-fx-pane');
+    if (!pane || !pane.dataset.built) return;
+    const s = _fxSettings();
+    FX_SLIDERS.forEach((spec, i) => {
+      const input = pane.querySelector(`input[data-fx-idx="${i}"]`);
+      const out = pane.querySelector(`span[data-fx-val="${i}"]`);
+      const v = _fxGetPath(s, spec.path);
+      if (input && document.activeElement !== input) input.value = String(v);
+      if (out) out.textContent = spec.fmt(v);
+    });
+    pane.querySelectorAll('.fx-preset-chip').forEach((chip) => {
+      chip.classList.toggle('active', chip.dataset.preset === s.presetId);
+    });
+    const custom = pane.querySelector('.fx-custom-tag');
+    if (custom) custom.hidden = !(s.presetId == null && !_fxAllNeutral(s));
+    const offFor = {
+      eq: _fxEqNeutral(s.eq),
+      comp: _fxCompNeutral(s.comp),
+      reverb: _fxRevNeutral(s.reverb),
+      delay: _fxDelNeutral(s.delay),
+      return: false,
+    };
+    pane.querySelectorAll('.fx-section-off').forEach((el) => {
+      el.hidden = !offFor[el.dataset.section];
+    });
+  }
+
+  // One-shot: build the FX pane DOM and wire the Levels|FX tabs.
+  (function initMixerFXPane() {
+    const tabs = $('mixer-tabs');
+    const pane = $('mixer-fx-pane');
+    const levels = $('slot-right');
+    if (!tabs || !pane || !levels) return;
+
+    const chips = FX_PRESETS.map((p) =>
+      `<button type="button" class="fx-preset-chip" data-preset="${p.id}">${p.name}</button>`
+    ).join('');
+    const sections = FX_SECTIONS.map((sec) => {
+      const rows = FX_SLIDERS.map((spec, i) => ({ spec, i }))
+        .filter(({ spec }) => spec.section === sec.id)
+        .map(({ spec, i }) => `
+          <div class="fx-slider-row">
+            <span class="fx-slider-label">${spec.label}</span>
+            <input type="range" class="fx-slider" data-fx-idx="${i}"
+                   min="${spec.min}" max="${spec.max}" step="${spec.step}"
+                   aria-label="${sec.title} ${spec.label}" />
+            <span class="fx-slider-value" data-fx-val="${i}"></span>
+          </div>`).join('');
+      return `
+        <div class="fx-section">
+          <div class="fx-section-head">
+            <span class="fx-section-title">${sec.title}</span>
+            <span class="fx-section-off" data-section="${sec.id}" hidden>OFF</span>
+          </div>
+          ${rows}
+        </div>`;
+    }).join('');
+    pane.innerHTML = `
+      <div class="fx-section">
+        <div class="fx-section-head">
+          <span class="fx-section-title">Preset</span>
+          <span class="fx-custom-tag" hidden>Custom</span>
+        </div>
+        <div class="fx-preset-row">${chips}</div>
+      </div>
+      ${sections}
+      <button type="button" class="ghost fx-reset-btn">Reset FX</button>`;
+    pane.dataset.built = '1';
+
+    pane.querySelectorAll('.fx-preset-chip').forEach((chip) =>
+      chip.addEventListener('click', () => _fxApplyPreset(chip.dataset.preset))
+    );
+    pane.querySelector('.fx-reset-btn').addEventListener('click', () => {
+      const n = _fxNeutral();
+      n.presetId = null; // native reset() commits .neutral w/o preset
+      _fxCommit(n);
+    });
+    pane.querySelectorAll('input[data-fx-idx]').forEach((input) =>
+      input.addEventListener('input', () => {
+        const spec = FX_SLIDERS[parseInt(input.dataset.fxIdx, 10)];
+        const v = parseFloat(input.value);
+        if (!spec || !isFinite(v)) return;
+        _fxEdit((s) => _fxSetPath(s, spec.path, v));
+      })
+    );
+
+    tabs.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.mixer-tab');
+      if (!btn) return;
+      const which = btn.dataset.tab;
+      tabs.querySelectorAll('.mixer-tab').forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      levels.hidden = which !== 'levels';
+      pane.hidden = which !== 'fx';
+      if (which === 'fx') { _fxSyncSong(); _fxRenderUI(); }
+    });
+
+    _fxRenderUI();
+  })();
 
   function buildSectionBar(sections) {
     const bar = $('section-bar');
@@ -5032,7 +5493,10 @@
         state.ctx = new Ctx({ latencyHint: 'interactive' });
         state.masterGain = state.ctx.createGain();
         state.masterGain.gain.value = 1.0;
-        state.masterGain.connect(state.ctx.destination);
+        // Route through the master FX chain (desktop MusicBus parity);
+        // falls back to a direct destination connection inside the
+        // helper if the chain can't build.
+        _connectMasterThroughFX();
         // Engine watchdog: without this, the playback engine has no
         // observation loop for AudioContext state transitions and
         // silently freezes when the browser/OS suspends the context
@@ -5048,6 +5512,11 @@
         return;
       }
     }
+
+    // analysisId is certain by play time — make sure the loaded FX
+    // blob belongs to this song (covers paths that skipped the rack
+    // rebuild).
+    try { _fxSyncSong(); } catch (_) {}
 
     const loaders = [];
     for (const [name, stem] of state.stems.entries()) {
@@ -6065,7 +6534,45 @@
   // so a background auto-open can never stomp an action the user took
   // while the request was in flight. Resolves true on success, false
   // on failure/abort — it never rejects.
-  function loadSessionById(id, shouldAbort) {
+  // ---------------------------------------------- global loading pill
+  //
+  // Fixed top-center feedback for song loads. loadSessionById lands on
+  // the Jam surface immediately, but the pane stays EMPTY until the
+  // session fetch + onAnalysisComplete + stem decodes finish — with no
+  // indicator the library tap reads as broken. begin/update/end drive
+  // #jamn-loading-pill (jam.html shell); a 60s watchdog force-ends so
+  // a dropped promise chain can never leave the pill stuck.
+  window.JamnLoading = (() => {
+    let songLabel = 'song';
+    let timeoutT = null;
+    const el = () => document.getElementById('jamn-loading-pill');
+    const txt = () => document.getElementById('jamn-loading-text');
+    function _show(stage) {
+      const pill = el(), t = txt();
+      if (t) t.textContent = `Loading ${songLabel} — ${stage}`;
+      if (pill) pill.hidden = false;
+    }
+    function end() {
+      if (timeoutT) { clearTimeout(timeoutT); timeoutT = null; }
+      const pill = el();
+      if (pill) pill.hidden = true;
+    }
+    function begin(label) {
+      songLabel = (label && String(label).trim()) || 'song';
+      _show('fetching analysis…');
+      if (timeoutT) clearTimeout(timeoutT);
+      timeoutT = setTimeout(end, 60000);
+    }
+    function update(stage) {
+      const pill = el();
+      if (!pill || pill.hidden) return; // never resurrect after end()
+      _show(stage);
+    }
+    return { begin, update, end };
+  })();
+
+  function loadSessionById(id, shouldAbort, songLabel) {
+    window.JamnLoading.begin(songLabel);
     return fetch(`/api/session/${id}`)
       .then(r => {
         if (r.ok) return r.json().then(bundle => ({ kind: 'bundle', bundle }));
@@ -6080,19 +6587,34 @@
         throw new Error('not found');
       })
       .then(({ kind, bundle, entry }) => {
-        if (shouldAbort && shouldAbort()) return false;
+        if (shouldAbort && shouldAbort()) {
+          window.JamnLoading.end();
+          return false;
+        }
         const result = kind === 'bundle'
           ? bundleToLegacyResult(bundle)
           : entry;
         state.sourceUrl = result.source_url || null;
         state.userInstrument = result.detected_type || 'guitar';
+        // The fetched payload may know the title when the caller
+        // didn't (deep link) — re-label before the long stem phase.
+        if (!songLabel && (result.name || result.filename)) {
+          window.JamnLoading.begin(result.name || result.filename);
+        }
+        window.JamnLoading.update('preparing stems…');
         // Already-analyzed song: land straight on the Jam surface like
         // the native apps — stems stream in underneath. The Band Room
         // staging ceremony is for FRESH analyses only (upload flow).
         showView('kit');
-        return Promise.resolve(onAnalysisComplete(result)).then(() => true);
+        return Promise.resolve(onAnalysisComplete(result)).then(() => {
+          window.JamnLoading.end();
+          return true;
+        });
       })
-      .catch(() => false); // caller decides; deep link stays on intake
+      .catch(() => {
+        window.JamnLoading.end();
+        return false; // caller decides; deep link stays on intake
+      });
   }
 
   // Non-null exactly when the page was opened on /jam/:id — the jamn
@@ -10339,6 +10861,16 @@
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
+    // Zero-size guard: while #view-perform is display:none (user on
+    // Jam Pads / Mixer / Library) the canvas rect is 0×0. Without the
+    // bail-out, the max(1, …) floor below resized the backing store
+    // to ~1×1 CSS px and the 2px-wide accent playhead fillRect then
+    // flooded the whole bitmap — CSS stretched that to a solid
+    // accent-purple rounded block when the user returned to perform
+    // paused (nothing repaints until play/seek/resize). Keep the last
+    // good bitmap; showView('perform') schedules a repaint once the
+    // layout is real again.
+    if (rect.width < 2 || rect.height < 2) return;
     const cssW = Math.max(1, Math.floor(rect.width));
     const cssH = Math.max(1, Math.floor(rect.height));
     if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
@@ -10483,7 +11015,9 @@
       state.ctx = new Ctx({ latencyHint: 'interactive' });
       state.masterGain = state.ctx.createGain();
       state.masterGain.gain.value = 1.0;
-      state.masterGain.connect(state.ctx.destination);
+      // Same master-FX routing as prepareStemAudio so the song bus
+      // sounds identical whichever path created the context first.
+      _connectMasterThroughFX();
     } catch (e) {
       console.warn('[monitor] AudioContext not available:', e);
       return null;
@@ -15090,7 +15624,7 @@
       }
       btn.addEventListener('click', () => {
         _userActed = true;
-        loadSessionById(row.id).then(ok => {
+        loadSessionById(row.id, null, row.name || row.filename).then(ok => {
           if (ok) _hydrateAndLand(row.id, true);
         });
       });
@@ -15151,7 +15685,7 @@
             if (rows.length && !_isDesktopShell()) showView('library');
             return;
           }
-          loadSessionById(feat.id, preApply).then(ok => {
+          loadSessionById(feat.id, preApply, feat.name || feat.filename).then(ok => {
             if (!ok) {
               // preApply() true here means abort (user won) — leave
               // their surface alone. Otherwise the load itself failed:

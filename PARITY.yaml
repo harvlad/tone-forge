@@ -184,6 +184,26 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: master-fx-panel
+    name: Master FX panel (D-022 — mixer FX tab, 3-band EQ / comp / reverb+delay sends / presets)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/jam.js#_ensureMasterFXChain"
+        note: "WebAudio mirror of MusicBus topology (insert EQ→comp→limiter + send convolver reverb→delay wet/dry→return); same FXSettings ranges + FXPresetCatalog presets; per-song localStorage persistence."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/FXPanelView.swift#FXPanelView"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Perform/FXPanelView.swift#FXPanelView"
+      plugin:
+        status: na
+        note: "Bus FX belong to the host DAW; the sampler stays dry."
+      connect:
+        status: na
+        note: "Master FX color the music bus only — the monitor/guitar path is deliberately untouched (MusicBus contract)."
+
   - id: remix-transforms
     name: One-tap remix transforms (Re-Drum / Flip / Humanize / Instrument Pack)
     platforms:

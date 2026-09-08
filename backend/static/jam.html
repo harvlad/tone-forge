@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>JamN — What are we playing?</title>
-<link rel="stylesheet" href="/static/jam.css?v=71" />
+<link rel="stylesheet" href="/static/jam.css?v=72" />
 <link rel="stylesheet" href="/static/kit.css?v=6">
 <link rel="stylesheet" href="/static/stage.css?v=1">
 <link rel="stylesheet" href="/static/sequencer.css?v=1">
@@ -136,6 +136,26 @@
     color: var(--jamn-accent, #a855f7);
     border: 1px solid var(--jamn-accent-dim, rgba(168,85,247,.55)); }
   .jamn-lib-empty { color: var(--jamn-text-dim, rgba(235,235,245,.6)); padding: 24px 0; }
+
+  /* --- global song-load pill (window.JamnLoading) ----------------- */
+  /* Fixed top-center feedback for library/deep-link/featured loads:
+     the Jam Pads pane is empty until the session fetch + stem decodes
+     land, so without this the tap reads as broken. Sits below the
+     sticky pill bar (z-60) but above every pane. */
+  .jamn-loading-pill { position:fixed; top:64px; left:50%; transform:translateX(-50%);
+    z-index:55; display:flex; align-items:center; gap:10px; max-width:min(92vw, 480px);
+    padding:9px 16px; border-radius:999px;
+    background: var(--jamn-surface1, #1c1c22);
+    border: 1px solid var(--jamn-border, rgba(255,255,255,.12));
+    box-shadow: 0 8px 28px rgba(0,0,0,.45);
+    color: var(--jamn-text, #f4f4f8); font-size:.88rem; }
+  .jamn-loading-pill[hidden] { display:none; }
+  .jamn-loading-pill-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .jamn-loading-spinner { flex:0 0 auto; width:14px; height:14px; border-radius:50%;
+    border: 2px solid var(--jamn-accent-dim, rgba(168,85,247,.35));
+    border-top-color: var(--jamn-accent, #a855f7);
+    animation: jamn-loading-spin .8s linear infinite; }
+  @keyframes jamn-loading-spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -197,6 +217,14 @@
     <div id="account-chip" class="account-chip"></div>
   </div>
 </nav>
+
+<!-- Global song-load pill: shown/updated by window.JamnLoading (jam.js)
+     while a library / deep-link / featured song load is in flight.
+     aria-live so screen readers announce stage changes. -->
+<div id="jamn-loading-pill" class="jamn-loading-pill" role="status" aria-live="polite" hidden>
+  <span class="jamn-loading-spinner" aria-hidden="true"></span>
+  <span id="jamn-loading-text" class="jamn-loading-pill-text">Loading…</span>
+</div>
 
 <aside id="jamn-sidebar" class="jamn-side">
   <div class="jamn-side-brand">
@@ -1474,12 +1502,26 @@
        jam.js injects per-stem rows into #stem-rack and never cared
        which pane the rack lived in. -->
   <section id="view-mixer" class="view">
+    <!-- Levels|FX segmented control — mirror of the native mixer panel
+         picker (jam-desktop StemsMixerView.swift). Levels = the stem
+         rack below; FX = the D-022 master FX panel (jam.js builds the
+         pane into #mixer-fx-pane and drives the WebAudio master chain
+         that mirrors MusicBus). -->
+    <div id="mixer-tabs" class="mixer-tabs" role="tablist" aria-label="Mixer panel">
+      <button type="button" class="mixer-tab active" role="tab"
+              aria-selected="true" data-tab="levels">Levels</button>
+      <button type="button" class="mixer-tab" role="tab"
+              aria-selected="false" data-tab="fx">FX</button>
+    </div>
     <details id="slot-right" class="stage-col stage-right" open>
       <summary class="stage-col-label">Stems</summary>
       <div class="stem-rack" id="stem-rack">
         <!-- Per-stem rows injected by JS -->
       </div>
     </details>
+    <div id="mixer-fx-pane" class="mixer-fx-pane" hidden>
+      <!-- Master FX panel injected by JS (desktop FXPanelView parity) -->
+    </div>
   </section>
 
   <!-- ============================= LIBRARY ============================== -->
@@ -1585,6 +1627,6 @@
 <script src="/static/contribute.js?v=1"></script>
 <script src="/static/chopedit.js?v=1"></script>
 <script src="/static/kit-hw.js?v=1"></script>
-<script src="/static/jam.js?v=131"></script>
+<script src="/static/jam.js?v=132"></script>
 </body>
 </html>

@@ -2545,6 +2545,131 @@ main.lp-tab-active .perform-grid {
   border-radius: 6px;
 }
 
+/* ─── Mixer Levels|FX tab (desktop StemsMixerView segmented picker) ──
+   Segmented control above the stem rack on #view-mixer: a pill track
+   with two equal segments; the active segment gets a raised surface,
+   mirroring the macOS segmented picker look. */
+.mixer-tabs {
+  display: flex;
+  width: min(320px, 100%);
+  margin: 0 0 14px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.mixer-tab {
+  appearance: none;
+  flex: 1 1 0;
+  padding: 6px 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.mixer-tab.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+}
+
+/* ─── Mixer FX pane (desktop FXPanelView parity) ───────────────────
+   Preset chips + Preset/EQ/Compressor/Reverb/Delay/FX Return slider
+   sections. Slider rows mirror the native layout: fixed-width label,
+   flexible slider, fixed-width monospace value. */
+.mixer-fx-pane {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mixer-fx-pane[hidden] { display: none; }
+.fx-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fx-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.fx-section-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.fx-section-off,
+.fx-custom-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.fx-preset-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.fx-preset-row::-webkit-scrollbar { display: none; }
+.fx-preset-chip {
+  appearance: none;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.fx-preset-chip.active {
+  background: var(--accent);
+  color: #fff;
+}
+.fx-slider-row {
+  display: grid;
+  grid-template-columns: 68px 1fr 56px;
+  gap: 8px;
+  align-items: center;
+}
+.fx-slider-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.fx-slider-value {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  text-align: right;
+  white-space: nowrap;
+}
+/* Same track/thumb styling as the stem-rack gain sliders. */
+.fx-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.fx-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.fx-reset-btn { align-self: flex-start; }
+
 /* playback bar (fixed) */
 .playback-bar {
   position: fixed;
