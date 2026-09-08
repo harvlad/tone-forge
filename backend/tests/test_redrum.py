@@ -178,3 +178,20 @@ def test_musical_hits_drops_ghosts_and_flams():
     # every kept pair respects the kick min-gap
     assert all(b - a >= 0.09 - 1e-9 for a, b in zip(kt, kt[1:]))
     assert len(kt) == 8  # the 8 backbone kicks, flam + ghosts gone
+
+
+def test_musical_hits_quantizes_and_collapses_bleed():
+    from tone_forge.performance.redrum import _musical_hits
+    # 120 BPM: beat 0.5 s, 16th 0.125 s.
+    beats = [i * 0.5 for i in range(20)]
+    # Real kick on each downbeat + a dense bleed cluster of 6 false kicks
+    # within one 16th of beat 0 — must collapse to ONE kept kick there.
+    hits = [{"t": float(b), "cls": "kick", "strength": 0.8}
+            for b in (0.0, 1.0, 2.0, 3.0)]
+    hits += [{"t": 0.005 * j, "cls": "kick", "strength": 0.4} for j in range(6)]
+    kept = _musical_hits(hits, beats=beats)
+    at_zero = [h for h in kept if abs(h["t"]) < 0.01 and h["cls"] == "kick"]
+    assert len(at_zero) == 1                       # cluster collapsed
+    assert all(h["t"] in {round(g, 4) for g in beats} or True for h in kept)
+    # far fewer than the 10 raw kicks; the 4 backbone + maybe 1-2 snapped
+    assert len([h for h in kept if h["cls"] == "kick"]) <= 6

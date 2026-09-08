@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # re-renders the mono files already sitting in the server cache.
 # v3: true stereo passthrough of render-v2 stereo composites (v2 was
 # dual-mono — crash-safe but the collapsed image was plainly audible).
-REDRUM_VERSION = 5
+REDRUM_VERSION = 6
 
 # When the target kit lacks a class the groove uses, fall through this map
 # rather than dropping the hit — a groove with holes reads as a glitch, a
@@ -112,23 +112,81 @@ _MIN_GAP = {
 }
 
 
-def _musical_hits(hits: List[Dict]) -> List[Dict]:
-    """Filter a raw hits table down to the confident, musically-spaced
-    backbone: drop ghost/bleed onsets below a strength floor, then, per
-    class in time order, drop any hit within MIN_GAP of the previous KEPT
-    hit of that class (keeping the stronger of a close pair)."""
+def _sixteenth_grid(beats: List[float]) -> List[float]:
+    """A 16th-note grid: 4 evenly-spaced subdivisions between each pair of
+    tracked beats (a beat = a quarter note). Empty when < 2 beats."""
+    grid: List[float] = []
+    for a, b in zip(beats, beats[1:]):
+        if b > a:
+            step = (b - a) / 4.0
+            grid.extend(a + k * step for k in range(4))
+    if beats:
+        grid.append(beats[-1])
+    return grid
+
+
+def _musical_hits(hits: List[Dict],
+                  beats: Optional[List[float]] = None) -> List[Dict]:
+    """Reduce a raw hits table to the confident, on-grid backbone.
+
+    The detector over-fires (sub-bass bleed retriggers the low band, ghosts
+    below usable strength, flam double-triggers), so placing a kit sample at
+    every onset is a wash. Two stages:
+
+      1. Drop onsets below a strength floor.
+      2. QUANTIZE to the song's 16th-note grid and keep ONE hit per
+         (class, grid slot) — the strongest. This collapses a bleed cluster
+         near a beat into a single hit AND tightens timing, which is what
+         makes the result read as a coherent beat rather than crunch. Hits
+         that land more than half a 16th off any grid point are off-grid
+         noise and dropped.
+
+    Without a beat grid (rare — most songs have one) it falls back to a
+    per-class minimum-gap dedupe."""
     strong = [h for h in hits if float(h.get("strength", 0.0)) >= _STRENGTH_FLOOR]
     if not strong:
-        # Nothing clears the floor (a very quiet mix): fall back to the top
-        # third by strength so re-drum still produces a groove.
         ranked = sorted(hits, key=lambda h: float(h.get("strength", 0.0)),
                         reverse=True)
         strong = ranked[: max(1, len(ranked) // 3)]
 
+    grid = _sixteenth_grid([float(b) for b in (beats or [])
+                            if isinstance(b, (int, float))])
+    if len(grid) >= 4:
+        import bisect
+
+        # tolerance = half a 16th (grids are near-uniform); a hit farther
+        # than this from every grid point is off-grid → dropped.
+        med_step = _median_step(grid)
+        tol = med_step * 0.5
+        best: Dict[tuple, Dict] = {}
+        for h in strong:
+            t = float(h["t"])
+            j = bisect.bisect_left(grid, t)
+            # nearest of the two straddling grid points
+            cand = []
+            if j < len(grid):
+                cand.append(j)
+            if j > 0:
+                cand.append(j - 1)
+            gi = min(cand, key=lambda k: abs(grid[k] - t)) if cand else None
+            if gi is None or abs(grid[gi] - t) > tol:
+                continue
+            key = (h["cls"], gi)
+            if key not in best or float(h.get("strength", 0.0)) \
+                    > float(best[key].get("strength", 0.0)):
+                # Snap the time to the grid point — tight beat, and identical
+                # false onsets collapse onto one slot.
+                snapped = dict(h)
+                snapped["t"] = round(grid[gi], 4)
+                best[key] = snapped
+        kept = list(best.values())
+        kept.sort(key=lambda h: float(h["t"]))
+        return kept
+
+    # No usable grid: per-class min-gap dedupe.
     by_cls: Dict[str, List[Dict]] = {}
     for h in strong:
         by_cls.setdefault(h["cls"], []).append(h)
-
     kept: List[Dict] = []
     for cls, group in by_cls.items():
         group.sort(key=lambda h: float(h["t"]))
@@ -139,10 +197,13 @@ def _musical_hits(hits: List[Dict]) -> List[Dict]:
             if t - last_t >= gap:
                 kept.append(h)
                 last_t = t
-            # else: too close to the last kept hit of this class — drop it
-            # (a flam/double-trigger; the kept one already covers the beat).
     kept.sort(key=lambda h: float(h["t"]))
     return kept
+
+
+def _median_step(grid: List[float]) -> float:
+    diffs = sorted(b - a for a, b in zip(grid, grid[1:]) if b > a)
+    return diffs[len(diffs) // 2] if diffs else 0.1
 
 
 def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Path]:
@@ -166,7 +227,7 @@ def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Pa
     hits = table.get("hits") if isinstance(table, dict) else None
     if not hits:
         return None
-    hits = _musical_hits(hits)
+    hits = _musical_hits(hits, beats=result.get("beats_s"))
     if not hits:
         return None
     class_files = _kit_class_files(kit_entry_id)
