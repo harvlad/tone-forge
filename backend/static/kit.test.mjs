@@ -229,6 +229,53 @@ for (const n of [7, 8, 9, 12]) {
   assert.ok((2 * Math.PI * g.radius) / n >= 77.5, "arc spacing holds at " + n);
 }
 
+// Pie-wheel geometry (desktop PadRadialMenu parity): equal 360/count
+// wedges, wedge 0 CENTERED at the top, proceeding clockwise; a solid hub.
+const { wedgeGeometry, wedgeAngles, wedgePath, wedgeLabelPoint } = K._internals;
+
+// Wedge 0 straddles the top (−90°); each slice is 360/count wide.
+assert.deepEqual(wedgeAngles(0, 4), { start: -135, end: -45, mid: -90 });
+assert.deepEqual(wedgeAngles(1, 4), { start: -45, end: 45, mid: 0 });
+assert.deepEqual(wedgeAngles(2, 4), { start: 45, end: 135, mid: 90 });
+assert.deepEqual(wedgeAngles(3, 4), { start: 135, end: 225, mid: 180 });
+
+// Wedges tile the full circle with no overlap or gap: each end meets the
+// next start, and every slice is exactly 360/count wide.
+for (const n of [3, 7, 10]) {
+  for (let i = 0; i < n; i++) {
+    const a = wedgeAngles(i, n);
+    assert.ok(Math.abs(a.end - a.start - 360 / n) < 1e-9, "slice width " + n);
+    const nxt = wedgeAngles((i + 1) % n, n);
+    const gap = (((nxt.start - a.end) % 360) + 360) % 360;
+    assert.ok(gap < 1e-9 || Math.abs(gap - 360) < 1e-9, "wedges tile " + n + "/" + i);
+  }
+}
+
+// Ring grows so the outer arc per wedge stays legible (≥66 px); the SVG
+// box tracks the outer radius; hub floor holds at the desktop-ish 126.
+{
+  const g = wedgeGeometry(10);
+  assert.ok(g.outer >= 126 && g.inner > 0);
+  assert.equal(g.size, (g.outer + 6) * 2);
+  assert.ok((2 * Math.PI * g.outer) / 10 >= 66, "outer arc per wedge");
+  assert.equal(wedgeGeometry(4).outer, 126); // small ring pinned to the floor
+}
+
+// wedgePath is a closed donut segment: moveto, outer arc, inner arc, close.
+{
+  const d = wedgePath(0, 8, 50, 120, 128, 128);
+  assert.equal(typeof d, "string");
+  assert.ok(d[0] === "M" && /Z$/.test(d));
+  assert.equal((d.match(/A/g) || []).length, 2); // outer + inner arc
+}
+
+// Label point rides the mid-angle at mid-radius: wedge 0 sits straight up.
+{
+  const lp = wedgeLabelPoint(0, 4, 50, 120, 100, 100);
+  assert.ok(Math.abs(lp.x - 100) < 1e-6, "wedge0 label centered on x");
+  assert.ok(lp.y < 100, "wedge0 label above center"); // top of the wheel
+}
+
 // FX store serialization: JSON {padIdx: fxDict}; garbage rows dropped
 // (clamping is the engine's job at apply time); empty/corrupt → null so a
 // bad blob degrades to "no FX", never a throw.

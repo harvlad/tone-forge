@@ -221,6 +221,65 @@
     return { radius: radius, disc: (radius + 34) * 2 };
   }
 
+  // ---------- pie-wheel geometry (desktop PadRadialMenu parity) ----------
+  //
+  // The radial is a ring of equal WEDGES around a solid hub — divider-
+  // stroked pie slices, not floating round buttons. These pure builders
+  // mirror PadRadialMenu.angles/SegmentShape so the web wheel matches the
+  // desktop segment layout. All angles are in DEGREES, SVG space
+  // (0° = east, positive = clockwise because SVG y grows downward).
+
+  /** Inner/outer radii + SVG box size for `count` wedges. Desktop is a
+   * fixed 120/44; the web ring carries a couple more actions (Stop/Solo/
+   * Reset/To Sequence), so the outer radius grows to keep ≥ 66 px of outer
+   * arc per wedge — past that, icon+label crowd. */
+  function wedgeGeometry(count) {
+    var n = Math.max(1, count | 0);
+    var inner = 50;
+    var outer = Math.max(126, Math.ceil((66 * n) / (2 * Math.PI)));
+    return { inner: inner, outer: outer, size: (outer + 6) * 2 };
+  }
+
+  /** Boundary + mid angles for wedge `index` of `count` evenly-sized
+   * slices. Wedge 0 is CENTERED at the top (12 o'clock); wedges proceed
+   * clockwise (PadRadialAction.angles, rotated so index 0 points up). */
+  function wedgeAngles(index, count) {
+    var n = Math.max(1, count | 0);
+    var slice = 360 / n;
+    var start = -90 - slice / 2 + index * slice;
+    return { start: start, end: start + slice, mid: start + slice / 2 };
+  }
+
+  /** Point at radius `r`, angle `deg`, offset from (cx, cy). SVG space. */
+  function polarPoint(cx, cy, r, deg) {
+    var a = (deg * Math.PI) / 180;
+    return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+  }
+
+  /** SVG path `d` for one donut wedge (outer arc CW → inner arc CCW,
+   * closed) — the pie slice desktop draws with SegmentShape. Pure. */
+  function wedgePath(index, count, inner, outer, cx, cy) {
+    var ang = wedgeAngles(index, count);
+    var large = ang.end - ang.start > 180 ? 1 : 0;
+    var oS = polarPoint(cx, cy, outer, ang.start);
+    var oE = polarPoint(cx, cy, outer, ang.end);
+    var iE = polarPoint(cx, cy, inner, ang.end);
+    var iS = polarPoint(cx, cy, inner, ang.start);
+    function f(v) { return v.toFixed(2); }
+    return (
+      "M" + f(oS.x) + "," + f(oS.y) +
+      " A" + outer + "," + outer + " 0 " + large + " 1 " + f(oE.x) + "," + f(oE.y) +
+      " L" + f(iE.x) + "," + f(iE.y) +
+      " A" + inner + "," + inner + " 0 " + large + " 0 " + f(iS.x) + "," + f(iS.y) +
+      " Z"
+    );
+  }
+
+  /** Center point for a wedge's icon/label (mid-angle, mid-radius). */
+  function wedgeLabelPoint(index, count, inner, outer, cx, cy) {
+    return polarPoint(cx, cy, (inner + outer) / 2, wedgeAngles(index, count).mid);
+  }
+
   /** Parse the persisted per-song FX store (localStorage
    * jamn.padfx.<analysisId>): JSON {padIdx: fxDict}. Value clamping is the
    * engine's job (normalizePadFx at apply time) — this only drops rows that
@@ -2449,9 +2508,11 @@
     p.badge.classList.toggle("is-on", p.loopOverride != null);
   }
 
-  /** Circular action menu around (x, y) — the mobile hold-radial / desktop
-   * right-click wheel, in DOM. Dark ring of tinted round buttons; labels on
-   * hover; click-away or Escape dismisses. */
+  /** Pie-wheel action menu around (x, y) — the mobile hold-radial / desktop
+   * right-click wheel (PadRadialMenu parity), in SVG. A ring of equal
+   * divider-stroked wedges (icon + label each) around a solid center hub
+   * that shows the pad name + a mini waveform and doubles as cancel;
+   * hovering highlights the wedge; click-away or Escape dismisses. */
   function openRadial(s, padIdx, x, y) {
     closeRadial(s);
     closeFxEditor(s); // never stack the FX popover under the wheel
@@ -2474,6 +2535,21 @@
     // A swapped source (radial "Add sound") also makes the pad resettable,
     // even when no region/gate/loop/fx override is present.
     var swapped = can(s.engine, "hasSwappedSource") && s.engine.hasSwappedSource(padIdx);
+
+    // "To Sequence" (desktop addToSequence) adds this pad to the sequencer
+    // as its own TRACK — distinct from "Sequence", which just navigates to
+    // the sequencer surface. It needs an add-track hook on JamnSequencer;
+    // that surface exposes mount/focusRow/stageDefaultSequence today but no
+    // per-pad add, so feature-detect the likely names and dim the wedge
+    // with a tooltip until one lands (never a dead click).
+    var seqAddHook = (function () {
+      var Q = window.JamnSequencer;
+      if (!Q) return null;
+      var names = ["addTrack", "addPadTrack", "addTrackForPad"];
+      for (var i = 0; i < names.length; i++)
+        if (typeof Q[names[i]] === "function") return Q[names[i]].bind(Q);
+      return null;
+    })();
 
     // Full native assigned ring (delete/chop/addSound/loop/reset/effects/
     // sequence — PadRadialMenu.assigned) plus the two web-only transport
@@ -2499,7 +2575,7 @@
       },
       {
         icon: "✎",
-        label: "Edit chop",
+        label: "Chop",
         run: function () {
           var CE = window.JamnChopEdit;
           if (CE && typeof CE.open === "function") {
@@ -2531,6 +2607,21 @@
           }
           try {
             window.location.hash = "#sequencer";
+          } catch (_) {}
+        },
+      },
+      {
+        icon: "⊞",
+        label: "To Sequence",
+        disabled: !seqAddHook,
+        tip: seqAddHook
+          ? "Add this pad to the sequencer as its own track"
+          : "Add as sequencer track (not available yet)",
+        run: function () {
+          if (!seqAddHook) return;
+          try {
+            seqAddHook(s.entry && s.entry.id, padIdx, pad);
+            toast(s, "Added to sequencer");
           } catch (_) {}
         },
       },
@@ -2634,12 +2725,14 @@
       },
     ];
 
-    var geom = radialGeometry(actions.length);
-    var R = geom.radius; // wheel radius (button centers) — scales with count
+    var geom = wedgeGeometry(actions.length);
+    var count = actions.length;
+    var cxy = geom.size / 2; // wheel center within its own SVG box
+    var R = geom.outer; // for cursor clamping so the wheel stays on-screen
     var vw = window.innerWidth || 0;
     var vh = window.innerHeight || 0;
-    var cx = Math.max(R + 36, Math.min(vw - R - 36, x));
-    var cy = Math.max(R + 36, Math.min(vh - R - 36, y));
+    var cx = Math.max(R + 12, Math.min(vw - R - 12, x));
+    var cy = Math.max(R + 12, Math.min(vh - R - 12, y));
 
     var backdrop = document.createElement("div");
     backdrop.className = "kit-radial-backdrop";
@@ -2657,55 +2750,99 @@
     menu.style.top = cy + "px";
     if (p.tint) menu.style.setProperty("--pad-tint", p.tint.r + "," + p.tint.g + "," + p.tint.b);
 
-    // Unifying wheel disc behind hub + satellites — without it the
-    // buttons read as unrelated floating circles over the pad noise.
-    var ring = document.createElement("div");
-    ring.className = "kit-radial-ring";
-    ring.style.width = geom.disc + "px"; // disc grows with the button count
-    ring.style.height = geom.disc + "px";
-    menu.appendChild(ring);
-
-    var hub = document.createElement("button");
-    hub.type = "button";
-    hub.className = "kit-radial-hub";
-    hub.textContent = (pad && pad.name) || "Pad " + (padIdx + 1);
-    hub.title = "Close";
-    hub.addEventListener("click", function () {
-      closeRadial(s);
-    });
-    menu.appendChild(hub);
+    // The wheel is a single SVG of equal pie wedges (desktop PadRadialMenu
+    // parity). Empty regions of the SVG box carry pointer-events:none so a
+    // click outside the ring falls through to the backdrop and dismisses;
+    // only the wedge slices capture (icon/label ride on top, inert).
+    var NS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("class", "kit-radial-svg");
+    svg.setAttribute("width", String(geom.size));
+    svg.setAttribute("height", String(geom.size));
+    svg.setAttribute("viewBox", "0 0 " + geom.size + " " + geom.size);
+    menu.appendChild(svg);
 
     actions.forEach(function (a, i) {
-      var b = document.createElement("button");
-      b.type = "button";
-      b.className =
-        "kit-radial-btn" +
-        (a.active ? " is-active" : "") +
-        (a.danger ? " is-danger" : "") +
-        (a.disabled ? " is-disabled" : "");
-      var angle = (-90 + (360 / actions.length) * i) * (Math.PI / 180); // start at top
-      b.style.left = Math.round(Math.cos(angle) * R) + "px";
-      b.style.top = Math.round(Math.sin(angle) * R) + "px";
-      var icon = document.createElement("span");
-      icon.className = "kit-radial-icon";
+      var g = document.createElementNS(NS, "g");
+      g.setAttribute(
+        "class",
+        "kit-wedge" +
+          (a.active ? " is-active" : "") +
+          (a.danger ? " is-danger" : "") +
+          (a.disabled ? " is-disabled" : "")
+      );
+
+      var slice = document.createElementNS(NS, "path");
+      slice.setAttribute("class", "kit-wedge-slice");
+      slice.setAttribute("d", wedgePath(i, count, geom.inner, geom.outer, cxy, cxy));
+      g.appendChild(slice);
+
+      // Native <title> = hover tooltip (the To Sequence dim explainer).
+      if (a.tip) {
+        var tt = document.createElementNS(NS, "title");
+        tt.textContent = a.tip;
+        g.appendChild(tt);
+      }
+
+      var lp = wedgeLabelPoint(i, count, geom.inner, geom.outer, cxy, cxy);
+      var icon = document.createElementNS(NS, "text");
+      icon.setAttribute("class", "kit-wedge-icon");
+      icon.setAttribute("x", lp.x.toFixed(1));
+      icon.setAttribute("y", (lp.y - 6).toFixed(1));
+      icon.setAttribute("text-anchor", "middle");
+      icon.setAttribute("dominant-baseline", "central");
       icon.textContent = a.icon;
-      var label = document.createElement("span");
-      label.className = "kit-radial-label";
+      g.appendChild(icon);
+
+      var label = document.createElementNS(NS, "text");
+      label.setAttribute("class", "kit-wedge-label");
+      label.setAttribute("x", lp.x.toFixed(1));
+      label.setAttribute("y", (lp.y + 9).toFixed(1));
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("dominant-baseline", "central");
       label.textContent = a.label;
-      b.appendChild(icon);
-      b.appendChild(label);
-      b.addEventListener("click", function () {
+      g.appendChild(label);
+
+      g.addEventListener("click", function () {
         closeRadial(s);
         if (a.disabled) return;
         try {
           a.run();
         } catch (_) {}
       });
-      menu.appendChild(b);
+      svg.appendChild(g);
     });
+
+    // Solid center hub over the SVG hole: pad name + a mini waveform (the
+    // pad's own peaks, like desktop's center identity), doubling as the
+    // cancel zone. HTML so it can host the reused <canvas> waveform.
+    var hubD = geom.inner * 2 - 8;
+    var hub = document.createElement("button");
+    hub.type = "button";
+    hub.className = "kit-radial-hub";
+    hub.title = "Close";
+    hub.style.width = hubD + "px";
+    hub.style.height = hubD + "px";
+    var hubWave = document.createElement("canvas");
+    hubWave.className = "kit-radial-hub-wave";
+    var hubName = document.createElement("span");
+    hubName.className = "kit-radial-hub-name";
+    hubName.textContent = (pad && pad.name) || "Pad " + (padIdx + 1);
+    hub.appendChild(hubWave);
+    hub.appendChild(hubName);
+    hub.addEventListener("click", function () {
+      closeRadial(s);
+    });
+    menu.appendChild(hub);
 
     backdrop.appendChild(menu);
     document.body.appendChild(backdrop);
+
+    // Paint the hub waveform once the canvas has a laid-out size (reuses
+    // engine.peaks like the grid tiles; degrades to the accent underline).
+    try {
+      drawWaveInto(s, padIdx, hubWave, p.tint || ACCENT, 18);
+    } catch (_) {}
 
     var onKey = function (ev) {
       if (ev.key === "Escape") {
@@ -3049,6 +3186,10 @@
       pushPadEvent: pushPadEvent,
       syncEngineTransport: syncEngineTransport,
       radialGeometry: radialGeometry,
+      wedgeGeometry: wedgeGeometry,
+      wedgeAngles: wedgeAngles,
+      wedgePath: wedgePath,
+      wedgeLabelPoint: wedgeLabelPoint,
       parsePadFxStore: parsePadFxStore,
       serializePadFxStore: serializePadFxStore,
       padOverrides: padOverrides,

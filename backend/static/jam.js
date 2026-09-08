@@ -15711,6 +15711,7 @@
       metaEl.textContent = _libMeta(row);
       main.appendChild(nameEl);
       main.appendChild(metaEl);
+      try { if (window.JamnArtwork) btn.appendChild(window.JamnArtwork.thumbEl(row)); } catch (_) {}
       btn.appendChild(main);
       if (row.featured === true) {
         const chip = document.createElement('span');

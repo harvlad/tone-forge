@@ -593,21 +593,6 @@
   backdrop-filter: blur(2px);
 }
 
-/* Unifying disc behind the whole wheel (kit.js inserts .kit-radial-ring). */
-.kit-radial-ring {
-  position: absolute;
-  left: 0;
-  top: 0;
-  transform: translate(-50%, -50%);
-  width: 248px;
-  height: 248px;
-  border-radius: 50%;
-  background: rgba(20, 20, 26, 0.82);
-  border: 1px solid var(--jamn-border, #2A2A36);
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
-  pointer-events: none;
-}
-
 .kit-radial {
   position: absolute; /* left/top set by kit.js at the (clamped) cursor */
   --pad-tint: 139, 92, 246;
@@ -615,95 +600,126 @@
   height: 0;
 }
 
-/* Center hub: pad name, doubles as the cancel zone (native inner circle). */
+/* The pie wheel itself — a single SVG of equal wedges (desktop
+ * PadRadialMenu parity). Empty regions carry pointer-events:none so a
+ * click outside the ring falls through to the backdrop and dismisses;
+ * only the wedge slices below re-enable hit-testing. */
+.kit-radial-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  overflow: visible;
+  pointer-events: none;
+  filter: drop-shadow(0 12px 48px rgba(0, 0, 0, 0.6));
+}
+
+/* One pie slice. The slice captures the pointer; icon/label ride on top
+ * but stay inert, so a click ANYWHERE in the wedge fires the action and a
+ * hover highlights the whole wedge (not a floating bubble). */
+.kit-wedge-slice {
+  pointer-events: fill;
+  fill: rgba(28, 28, 36, 0.92); /* --jamn-surface2 over the scrim */
+  stroke: rgba(255, 255, 255, 0.1); /* the divider line between wedges */
+  stroke-width: 1;
+  transition: fill 0.1s ease, stroke 0.1s ease;
+}
+
+.kit-wedge-icon,
+.kit-wedge-label {
+  pointer-events: none;
+  font-family: inherit;
+}
+
+.kit-wedge-icon {
+  font-size: 17px;
+  font-weight: 600;
+  fill: rgba(var(--pad-tint), 0.95); /* tinted icons over the dark ring */
+}
+
+/* Labels ALWAYS visible (mobile radial convention). */
+.kit-wedge-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  fill: var(--jamn-text2, #A1A1AA);
+}
+
+/* Hover / press highlights the WEDGE. */
+.kit-wedge:hover .kit-wedge-slice {
+  fill: rgba(var(--pad-tint), 0.28);
+  stroke: rgba(var(--pad-tint), 0.75);
+}
+.kit-wedge:hover .kit-wedge-label {
+  fill: var(--jamn-text, #fff);
+}
+.kit-wedge:active .kit-wedge-slice {
+  fill: rgba(var(--pad-tint), 0.42);
+}
+
+/* Active state (e.g. loop engaged, FX present) — a persistent tint. */
+.kit-wedge.is-active .kit-wedge-slice {
+  fill: rgba(var(--pad-tint), 0.22);
+  stroke: rgba(var(--pad-tint), 0.7);
+}
+
+.kit-wedge.is-danger .kit-wedge-icon {
+  fill: var(--jamn-danger, #EF4444);
+}
+.kit-wedge.is-danger:hover .kit-wedge-slice {
+  fill: rgba(239, 68, 68, 0.28);
+  stroke: rgba(239, 68, 68, 0.8);
+}
+
+.kit-wedge.is-disabled {
+  opacity: 0.35;
+}
+.kit-wedge.is-disabled .kit-wedge-slice {
+  pointer-events: none;
+}
+
+/* Solid center hub: pad name + mini waveform, doubles as the cancel zone
+ * (desktop's inner circle / identity icon). Size set inline by kit.js. */
 .kit-radial-hub {
   position: absolute;
   left: 0;
   top: 0;
   transform: translate(-50%, -50%);
-  width: 92px;
-  height: 92px;
   border-radius: 50%;
   appearance: none;
   border: 1px solid var(--jamn-border, #2A2A36);
   background: var(--jamn-surface1, #14141A);
   color: var(--jamn-text2, #A1A1AA);
   font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 10px;
-  overflow: hidden;
-  cursor: pointer;
-  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.55);
-}
-
-.kit-radial-btn {
-  position: absolute; /* left/top = wheel offset set by kit.js */
-  transform: translate(-50%, -50%);
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  appearance: none;
-  border: 1px solid var(--jamn-border, #2A2A36);
-  background: var(--jamn-surface2, #1C1C24);
-  color: var(--jamn-text, #fff);
-  font: inherit;
-  cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+  gap: 3px;
+  padding: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 6px 28px rgba(0, 0, 0, 0.55);
+}
+.kit-radial-hub:hover {
+  border-color: rgba(var(--pad-tint), 0.6);
 }
 
-.kit-radial-icon {
-  font-size: 17px;
-  line-height: 1;
-  color: rgba(var(--pad-tint), 0.95); /* tinted icons over the dark ring */
-  pointer-events: none;
+.kit-radial-hub-wave {
+  width: 68%;
+  height: 20px;
+  display: block;
 }
 
-/* Labels ALWAYS visible (mobile radial convention) — hover-only labels
- * made the wheel read as anonymous icon bubbles. */
-.kit-radial-label {
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--jamn-text2, #A1A1AA);
-  opacity: 0.9;
-  pointer-events: none;
+.kit-radial-hub-name {
+  font-size: 10px;
+  font-weight: 600;
+  max-width: 86%;
   white-space: nowrap;
-  max-width: 52px;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.kit-radial-btn:hover {
-  border-color: rgba(var(--pad-tint), 0.9);
-  background: var(--jamn-surface1, #14141A);
-}
-
-.kit-radial-btn:hover .kit-radial-label {
-  color: var(--jamn-text, #fff);
-}
-
-.kit-radial-btn.is-active {
-  border-color: rgba(var(--pad-tint), 0.9);
-  box-shadow: 0 0 0 2px rgba(var(--pad-tint), 0.35), 0 4px 18px rgba(0, 0, 0, 0.5);
-}
-
-.kit-radial-btn.is-danger .kit-radial-icon {
-  color: var(--jamn-danger, #EF4444);
-}
-
-.kit-radial-btn.is-danger:hover {
-  border-color: var(--jamn-danger, #EF4444);
-}
-
-.kit-radial-btn.is-disabled {
-  opacity: 0.4;
-  cursor: default;
+  text-align: center;
 }
 
 /* ---------- per-pad FX popover (radial Effects) ---------- */
