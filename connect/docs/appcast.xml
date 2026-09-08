@@ -29,6 +29,18 @@
         <title>ToneForge Connect</title>
         <link>https://mattharvey.github.io/tone-forge/connect/appcast.xml</link>
         <description>Auto-update feed for the ToneForge Connect macOS app.</description>
+                <item>
+        <title>ToneForge Connect 0.2.0</title>
+        <pubDate>Tue, 08 Sep 2026 15:48:38 +0000</pubDate>
+        <sparkle:version>1</sparkle:version>
+        <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+        <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
+        <enclosure
+            url="https://github.com/harvlad/tone-forge/releases/download/connect-v0.2.0/Connect-0.2.0.dmg"
+            type="application/octet-stream"
+            sparkle:edSignature="698MiMUhGw/nmYAjkQOwOFS8jIqwekmyvvJddX5q6k3pDPacp73gh8YePogTEzSWo1FG+F6X4X15sHVAV2/PAA==" length="1788412" />
+    </item>
+
         <language>en</language>
         <!--
           No <item> entries until the first signed release is cut.
