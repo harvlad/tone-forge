@@ -16243,7 +16243,6 @@
     const ACTIVE_VIEW_FOR = {
       launchpad: ['view-launchpad'],
       sequencer: ['view-sequencer'],
-      perform: ['view-stage', 'view-perform'],
       synth: ['view-kit'],
       record: ['view-recordings'],
       packs: ['view-packs'],
@@ -16253,7 +16252,17 @@
       switch (tool) {
         case 'launchpad': showView('launchpad'); break;
         case 'sequencer': showView('sequencer'); break;
-        case 'perform': showView('perform'); break;
+        // Desktop toolbar parity: figure.dance = Beat Capture, not Perform
+        // (Perform stays reachable via the pill nav). Opens the Contribute
+        // Beat modal.
+        case 'beat':
+          // _openContributeModal is router-local; reuse the sidebar Beat
+          // item's handler, which opens the same Contribute modal on Beat.
+          try {
+            var beatItem = document.querySelector('.jamn-side-item[data-side="beat"]');
+            if (beatItem) beatItem.click();
+          } catch (_) {}
+          break;
         case 'packs': showView('packs'); break;
         case 'record': showView('recordings'); break;
         case 'synth': showView('kit'); break; // Jam Pads = web wavetable synth

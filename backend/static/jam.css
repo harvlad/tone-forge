@@ -4856,8 +4856,8 @@ body:has(#view-intake.active) #view-intake.active { width: 100%; }
    Top toolbar (pillbar right cluster) — desktop RootView parity
    ============================================================ */
 .jamn-toolbar {
-  display: flex; align-items: center; gap: 2px;
-  padding: 3px; border-radius: 999px;
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 7px; border-radius: 999px;
   background: var(--jamn-surface2, rgba(255,255,255,.06));
   min-width: 0; /* allow horizontal scroll on narrow viewports */
   overflow-x: auto; scrollbar-width: none;
