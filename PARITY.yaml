@@ -201,3 +201,22 @@ features:
       connect:
         status: na
         note: "No sequencer."
+
+  - id: connect-local-bridge
+    name: Direct local WebSocket link to Connect (Chrome fast path + status/reconnect UI)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/jam.js#ensureLocalBridge"
+      ios:
+        status: na
+        note: "iOS app owns audio natively; no Connect helper on iOS."
+      desktop:
+        status: missing
+        note: "jam-desktop talks to ConnectCore in-process today; local WS only matters if it moves out-of-process."
+      plugin:
+        status: na
+        note: "Plugin runs inside the DAW's audio path; no Connect pairing."
+      connect:
+        status: done
+        evidence: "connect/Sources/ConnectCore/LocalBridgeServer.swift#LocalBridgeServer"

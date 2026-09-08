@@ -20,6 +20,32 @@ Prototype. The current goal is to **measure** whether <15 ms round-trip is
 achievable across a representative range of audio interfaces. Everything
 else is scaffolding for that measurement.
 
+### Measured results
+
+2026-09-08 — Apple M1 Max MacBook Pro, macOS 26.3.1, built-in devices
+(MacBook Pro Microphone in, MacBook Pro Speakers out), system default
+sample rate.
+
+- `connect monitor` driver report: input device latency 0.00 ms, output
+  device latency 0.00 ms (built-in driver reports zero here), buffer
+  5.80 ms, **estimated round-trip floor 11.61 ms**.
+- `connect latency` (impulse loopback): first two runs reported
+  `no_signal` (muted output / mic permission), one run reported a
+  noise-triggered −130 ms at `confidence=low` (the CLI verdict gate now
+  refuses those). With output audible: **measured round-trip 51.27 ms**
+  (`peak=0.333, confidence=high`). Above the 15 ms target on this path —
+  expected, since built-in devices add safety offsets and the
+  speaker→mic hop is acoustic; treat as an upper bound, not the
+  interface number.
+
+Caveats: the built-in speaker→mic path is acoustic, so even a successful
+probe on this setup would include air travel and mic/speaker transducer
+delay and overstate the electrical round-trip. A wired loopback (or an
+interface with software loopback) is the intended measurement path; no
+external interface was attached for this run. The 11.61 ms figure is the
+driver-derived floor (2× buffer + reported device latencies), not a
+measured round-trip.
+
 ## Build & run
 
 Requires Swift 5.9+ (macOS 13+ recommended). No third-party dependencies.
