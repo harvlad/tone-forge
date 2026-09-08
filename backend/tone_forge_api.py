@@ -6350,6 +6350,86 @@ async def get_song_groove(entry_id: str) -> JSONResponse:
     return JSONResponse({"analysisId": entry_id, "groove": template})
 
 
+@app.get("/api/song/{entry_id}/borrow-candidates")
+async def get_borrow_candidates(
+    entry_id: str,
+    stem: str = Query("drums", description="Stem to borrow: drums (Phase 1)"),
+) -> JSONResponse:
+    """Songs whose `stem` can be borrowed as tempo-matched loops for this
+    song (Borrow Beat). Ranked by tempo proximity (octave-folded)."""
+    from tone_forge.performance import borrow as _borrow
+
+    entry = _get_history_item(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail="Song has no analysis result")
+    history = await asyncio.to_thread(_load_history)
+    target_bpm = _borrow._tempo_of(result)
+    cands = _borrow.borrow_candidates(history, entry_id, stem, target_bpm)
+    return JSONResponse({"analysisId": entry_id, "stem": stem,
+                         "targetTempo": target_bpm, "candidates": cands[:12]})
+
+
+@app.get("/api/song/{entry_id}/borrow")
+async def get_borrow_loops(
+    entry_id: str,
+    donor: str = Query(..., description="Donor song entry id"),
+    stem: str = Query("drums", description="Stem to borrow"),
+) -> JSONResponse:
+    """Render the donor's `stem` loops time-stretched to THIS song's tempo,
+    returned as loopable pads (sampleUrl each). Real recorded loops — the
+    coherent alternative to synthesized Re-Drum."""
+    from tone_forge.performance import borrow as _borrow
+
+    entry = _get_history_item(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail="Song has no analysis result")
+    donor_entry = _get_history_item(donor)
+    if donor_entry is None:
+        raise HTTPException(status_code=404, detail="Donor song not found")
+    donor_result = donor_entry.get("result")
+    if not isinstance(donor_result, dict):
+        raise HTTPException(status_code=422, detail="Donor has no analysis result")
+    target_bpm = _borrow._tempo_of(result)
+    if not target_bpm:
+        raise HTTPException(status_code=422, detail="This song has no tempo")
+    _refresh_r2_stem_urls(donor_result)
+    pads = await asyncio.get_running_loop().run_in_executor(
+        _render_pool(), _borrow.borrow_job, donor, donor_result, stem, target_bpm)
+    if not pads:
+        raise HTTPException(
+            status_code=422,
+            detail="No borrowable loops (tempo too far, or stem/grid missing)")
+    for p in pads:
+        p["sampleUrl"] = f"/api/song/{entry_id}/borrow-sample/{p.pop('sampleFile')}"
+    return JSONResponse({
+        "analysisId": entry_id, "donor": donor, "stem": stem,
+        "packId": f"borrow-{donor}-{stem}",
+        "name": f"{donor_entry.get('name', 'Borrowed')} {stem}",
+        "pads": pads,
+    })
+
+
+@app.get("/api/song/{entry_id}/borrow-sample/{fname}")
+async def get_borrow_sample(entry_id: str, fname: str) -> FileResponse:
+    """Serve one rendered borrow loop from the cache."""
+    import re
+
+    from tone_forge.performance.borrow import sample_path
+
+    if not re.fullmatch(r"borrow_[a-f0-9]+\.wav", fname):
+        raise HTTPException(status_code=404, detail="No such sample")
+    path = sample_path(fname)
+    if path is None:
+        raise HTTPException(status_code=404, detail="No such sample")
+    return FileResponse(str(path), media_type="audio/wav")
+
+
 @app.get("/api/song/{entry_id}/redrum-candidates")
 async def get_redrum_candidates(entry_id: str) -> JSONResponse:
     """Ranked kit-donor suggestions for Re-Drum: analyzed songs whose
