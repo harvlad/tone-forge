@@ -430,6 +430,12 @@
   let _genericInputs = [];
   let _genericPadMap = {};   // midi note (int) -> chop idx 0..15
   let _learnCb = null;       // set while the learn flow captures notes
+  // Opt-in keyboard route: jam.js registers this (api.onGenericNote)
+  // only while the "MIDI keyboard plays synth" toggle is ON. It receives
+  // the notes the pad map does NOT claim, so a keyboard can play the pad
+  // synth without weakening the drop-unmapped safety for pad boxes —
+  // mapped notes still fire chops, learn capture still wins.
+  let _genericNoteCb = null; // (note, on, velocity01)
   const GENERIC_MAP_KEY = 'jamn.midiPadMap';
   try {
     const raw = localStorage.getItem(GENERIC_MAP_KEY);
@@ -1710,7 +1716,17 @@
       return; // learn mode captures; no playback side effects
     }
     const chopIdx = _genericPadMap[note];
-    if (chopIdx === undefined) return; // unmapped: dropped by design
+    if (chopIdx === undefined) {
+      // Unmapped: dropped by design (pad-controller safety) unless the
+      // keyboard-synth opt-in registered a sink. Velocity is normalised
+      // to [0, 1] at this boundary, matching the contracts convention.
+      if (typeof _genericNoteCb === 'function') {
+        try { _genericNoteCb(note, isOn, velocity / 127); } catch (e) {
+          console.warn('[launchpad] generic note callback threw:', e);
+        }
+      }
+      return;
+    }
     _fireGenericPad(chopIdx, isOn, velocity);
   }
 
@@ -2000,6 +2016,10 @@
     },
     startPadLearn(onNote) { _learnCb = onNote; },
     stopPadLearn() { _learnCb = null; },
+    // Keyboard-synth sink for unmapped notes (see _genericNoteCb).
+    // Passing null unregisters — jam.js does that when the toggle goes
+    // off, restoring the pure drop-unmapped behaviour.
+    onGenericNote(cb) { _genericNoteCb = (typeof cb === 'function') ? cb : null; },
     genericInputNames() {
       return _genericInputs.map((i) => i.name || 'MIDI input');
     },
