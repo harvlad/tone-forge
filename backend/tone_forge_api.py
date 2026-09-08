@@ -7795,15 +7795,15 @@ async def download_local_engine():
 
     system = platform.system()
 
-    # Check for built installers
+    # Studio ships for macOS only — no Windows/Linux build pipeline
+    # exists (the old dict listed a `ToneForge Local Engine.exe` that
+    # nothing ever produced). Only the macOS local-dev dist file is
+    # honored here; production macOS users get Studio through the R2
+    # redirect at /api/downloads/studio-app, and non-macOS visitors fall
+    # through to an honest "macOS only" info page rather than a phantom
+    # download.
     dist_dir = Path(__file__).parent / "dist"
-    installers = {
-        "Darwin": dist_dir / "ToneForge-Studio.dmg",
-        "Windows": dist_dir / "ToneForge Local Engine" / "ToneForge Local Engine.exe",
-        "Linux": dist_dir / "toneforge-local",
-    }
-
-    installer_path = installers.get(system)
+    installer_path = (dist_dir / "ToneForge-Studio.dmg") if system == "Darwin" else None
 
     # Serve the actual file if it exists
     if installer_path and installer_path.exists():
@@ -7822,6 +7822,18 @@ async def download_local_engine():
 
     # Fallback to info page
     platform_name = {"Darwin": "macOS", "Windows": "Windows", "Linux": "Linux"}.get(system, "macOS")
+    if system == "Darwin":
+        # Actionable on macOS: link the real R2 artifact instead of
+        # leaving the "upgrade" CTA at an informational dead end.
+        download_block = (
+            '<a href="/api/downloads/studio-app" class="cta">Download for macOS</a>'
+            '<p class="note">Runs quietly in your menu bar.</p>'
+        )
+    else:
+        download_block = (
+            f'<p class="note">Studio is macOS-only for now — '
+            f'no {platform_name} build yet.</p>'
+        )
 
     html = f"""
     <!DOCTYPE html>
@@ -7936,9 +7948,7 @@ async def download_local_engine():
             </ul>
         </div>
 
-        <p class="note">
-            Available for {platform_name}. Runs quietly in your menu bar.
-        </p>
+        {download_block}
 
         <div class="dev-section">
             <h3>Developer Preview</h3>

@@ -281,6 +281,35 @@ class TestLocalEngineDownload:
             if dmg_exists:
                 temp_path.rename(dmg_path)
 
+    def test_download_info_page_is_platform_honest(self):
+        """Non-macOS visitors must not be offered a phantom Windows/Linux
+        build — Studio ships for macOS only. The macOS info page must
+        surface a real download link."""
+        from unittest.mock import patch
+
+        from fastapi.testclient import TestClient
+        from tone_forge_api import app
+
+        client = TestClient(app)
+
+        with patch("platform.system", return_value="Windows"):
+            resp = client.get("/api/local-engine/download")
+            assert resp.status_code == 200
+            body = resp.text
+            assert "macOS-only" in body
+            # No claim of a Windows download / no installer media type.
+            assert ".exe" not in body
+            assert "Download for macOS" not in body
+
+        with patch("platform.system", return_value="Darwin"):
+            resp = client.get("/api/local-engine/download")
+            assert resp.status_code == 200
+            # macOS gets an actionable link to the real artifact — but
+            # only when the info page renders (a present dist/ dmg would
+            # be served directly instead, which is also valid).
+            if "text/html" in resp.headers.get("content-type", ""):
+                assert "/api/downloads/studio-app" in resp.text
+
 
 class TestProcessingModeIndicator:
     """Tests for processing mode indicator in app.js (conceptual)."""
