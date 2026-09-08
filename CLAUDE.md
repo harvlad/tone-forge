@@ -166,6 +166,28 @@ risk if publicly exposed. See `OUTSTANDING.md` §3.
 Tests set `TONEFORGE_DISABLE_RETENTION=1` in `tests/conftest.py` before the
 app imports; keep that ordering if you touch conftest.
 
+## TestFlight builds — HARD RULE
+
+**Every TestFlight (or App Store) upload MUST ship a changelog, usage
+instructions, AND tester instructions. No build goes up without all
+three.** The single source is `mobile-ios/WhatToTest.en-US.txt`:
+
+1. Before archiving, UPDATE that file for the build, with ALL of:
+   - **What's new** — the changelog for this build.
+   - **How to use the new features** — exact steps to reach and operate
+     each new/changed feature (a tester who's never seen it can follow).
+   - **What to test** — numbered tap paths, expected vs actual.
+   - Known limitations + what to report.
+2. The file's contents become the build's TestFlight **"What to Test"**
+   notes — set via the App Store Connect API `betaBuildLocalizations`
+   endpoint when `APPLE_ASC_*` secrets are configured (see
+   `.github/workflows/mobile-release.yml`), otherwise pasted into App
+   Store Connect manually right after upload.
+3. Commit the updated file in the same commit as the build's code.
+
+A build uploaded with stale or empty test notes is a process failure —
+testers can't report usefully against "bug fixes and improvements".
+
 ## Conventions
 
 - **Commits:** `type(scope): summary` — e.g. `fix(backend):`, `feat(mobile):`,

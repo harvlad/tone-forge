@@ -1,0 +1,39 @@
+Jamn — TestFlight build notes
+
+WHAT'S NEW THIS BUILD
+• Borrow (new): in the Remix sheet, borrow real drum/bass/chord loops from
+  your other analyzed songs. They're time-stretched to the current song's
+  tempo (and key-matched for bass/chords) and land on the pads as loops.
+• Re-Drum fixes: no longer a "crunchy soup" — the groove is filtered to the
+  musical backbone, quantized to the beat grid, and bass notes are no longer
+  mistaken for kicks. Re-Drum also no longer force-replaces your pads unless
+  you're already on the Drum Kit.
+• Drum Kit: cleaned one-shots are now true stereo (were dual-mono).
+
+HOW TO USE THE NEW FEATURES
+• Borrow: open a song, tap Remix (sparkles, top of the Jam pads). In the
+  Borrow section pick Beat / Bass / Chords, then tap a suggested song. Its
+  loops download + render, then appear on your pads — tap a pad to start the
+  loop; it's tempo-locked to your song and loops until you tap it again.
+• Re-Drum: Remix → Re-Drum → pick a donor kit (or "Tightened"). The drums in
+  the song MIX swap; "Original drums" reverts. Play the song first to hear it.
+• Keep timing: hold a pad → Chop → trim → toggle "Keep timing" → Apply.
+
+WHAT TO TEST
+1. Load a song → Play → open Remix (sparkles) → Borrow. Pick "Beat", tap a
+   donor. After it renders (~a few seconds the first time) the loops appear
+   on the pads — tap to layer them under the song. Do they lock to the tempo?
+2. Try Borrow → "Bass" or "Chords": only key-compatible songs should be
+   offered, tagged "key match". Does the borrowed part sit in key?
+3. Re-Drum a donor kit while a song plays: drums should swap in the MIX
+   without silencing playback, and sound like a coherent beat (not mud).
+4. Trim a sample in the chop editor with "Keep timing" ON vs OFF — ON keeps
+   the pad firing on the beat; OFF loops the trimmed slice (stutter).
+
+KNOWN LIMITATIONS
+• Re-Drum on very bass-heavy songs can still be busy — Borrow is the cleaner
+  path for those.
+• First Borrow/Re-Drum per (song, donor) renders on the server, then caches.
+
+Please report: what you tapped, what you expected, what you heard, and the
+song(s) involved.
