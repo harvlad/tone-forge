@@ -142,6 +142,12 @@
       if (!roles.length) roles = Object.keys(paths);
       if (!roles.length) throw new Error("song has no stems");
 
+      var stemsDone = 0;
+      function setStatus(text) {
+        if (s.alive && s.statusEl) s.statusEl.textContent = text;
+      }
+      setStatus("Loading stems 0/" + roles.length + "…");
+
       return Promise.all(
         roles.map(function (role) {
           var url = resolveStemUrl(paths[role]);
@@ -153,18 +159,33 @@
               encodeURIComponent(role);
           }
           if (!url) return null;
+          var proxied = url.indexOf("/stem-audio/") !== -1;
           return fetch(url)
             .then(function (r) {
               if (!r.ok) throw new Error(role + " HTTP " + r.status);
               return r.arrayBuffer();
             })
             .then(function (buf) {
-              return s.ctx.decodeAudioData(buf);
+              // Safari's decodeAudioData can't decode FLAC (Chrome can) —
+              // retry once via the proxy's on-the-fly WAV transcode.
+              return s.ctx.decodeAudioData(buf).catch(function (err) {
+                if (!proxied) throw err;
+                return fetch(url + "?format=wav")
+                  .then(function (r2) {
+                    if (!r2.ok) throw err;
+                    return r2.arrayBuffer();
+                  })
+                  .then(function (b2) { return s.ctx.decodeAudioData(b2); });
+              });
             })
             .then(function (audio) {
+              stemsDone++;
+              setStatus("Loading stems " + stemsDone + "/" + roles.length + "…");
               return { role: role, buffer: audio };
             })
             .catch(function () {
+              stemsDone++;
+              setStatus("Loading stems " + stemsDone + "/" + roles.length + "…");
               return null; // a single bad stem mutes its pads, not the kit
             });
         })
@@ -187,9 +208,11 @@
           if (can(s.engine, "setStems")) s.engine.setStems(stems);
           if (can(s.engine, "setKit"))
             s.engine.setKit(s.kit, { tempoBpm: entry.result.tempo_bpm });
+          setStatus("Building pads…");
           var prep = can(s.engine, "prepare") ? s.engine.prepare() : null;
           return Promise.resolve(prep).then(function () {
             if (!s.alive) return;
+            setStatus("");
             attachEngineState(s);
             renderPads(s);
             startRaf(s);
@@ -254,6 +277,13 @@
     title.textContent = "Auto Kit";
     s.titleEl = title;
 
+    // Live load status ("Loading stems 2/6…") — the bare skeleton read
+    // as a dead page during the multi-second stem fetch.
+    var status = document.createElement("div");
+    status.className = "kit-status";
+    status.textContent = "Loading kit…";
+    s.statusEl = status;
+
     var controls = document.createElement("div");
     controls.className = "kit-controls";
 
@@ -304,6 +334,7 @@
     controls.appendChild(latch);
     controls.appendChild(stop);
     head.appendChild(title);
+    head.appendChild(status);
     head.appendChild(controls);
 
     var grid = document.createElement("div");

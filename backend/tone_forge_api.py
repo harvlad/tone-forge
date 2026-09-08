@@ -4967,10 +4967,11 @@ async def get_history_stem_audio(entry_id: str, role: str,
                 proc.stdout.close()
                 proc.terminate()
 
-        return StreamingResponse(_iter_wav(), media_type="audio/wav")
+        return StreamingResponse(_iter_wav(), media_type="audio/wav",
+                                 headers={"Cache-Control": "public, max-age=86400"})
 
     if not src.startswith("http"):
-        return FileResponse(src)
+        return FileResponse(src, headers={"Cache-Control": "public, max-age=86400"})
     import requests as _requests
 
     def _iter():
@@ -4980,7 +4981,10 @@ async def get_history_stem_audio(entry_id: str, role: str,
                 yield chunk
 
     media = "audio/flac" if ".flac" in src.split("?", 1)[0] else "audio/wav"
-    return StreamingResponse(_iter(), media_type=media)
+    # Stems are immutable per analysis id — let the browser cache them so
+    # a revisit skips the multi-MB transfer entirely.
+    return StreamingResponse(_iter(), media_type=media,
+                             headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/session/{entry_id}")
