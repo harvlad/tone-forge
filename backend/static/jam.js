@@ -2037,15 +2037,18 @@
         const info = resp.ok ? await resp.json() : { online: false };
         if (info.online) {
           if (state.engineStatus !== 'on') {
-            setEngineState('on', 'Local Engine Ready',
-              'Audio never leaves your machine.');
+            // Hosted path: analysis runs on Jamn's GPU workers, not a
+            // tester's machine — the old "Local Engine / audio never
+            // leaves your machine" copy was untrue here.
+            setEngineState('on', 'Analysis engine online',
+              'Your song uploads securely for analysis.');
           }
           return true;
         }
       } catch (_err) { /* treat as offline */ }
       if (state.engineStatus !== 'off') {
-        setEngineState('off', 'Local Engine offline',
-          'Start the engine app to analyze on your machine.');
+        setEngineState('off', 'Analysis engine starting…',
+          'A GPU worker spins up on demand — the first analysis can take a few minutes.');
       }
       return false;
     }
