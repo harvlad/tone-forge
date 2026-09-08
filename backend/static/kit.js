@@ -980,6 +980,12 @@
     menu.style.top = cy + "px";
     if (p.tint) menu.style.setProperty("--pad-tint", p.tint.r + "," + p.tint.g + "," + p.tint.b);
 
+    // Unifying wheel disc behind hub + satellites — without it the
+    // buttons read as unrelated floating circles over the pad noise.
+    var ring = document.createElement("div");
+    ring.className = "kit-radial-ring";
+    menu.appendChild(ring);
+
     var hub = document.createElement("button");
     hub.type = "button";
     hub.className = "kit-radial-hub";

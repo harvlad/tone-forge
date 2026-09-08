@@ -372,7 +372,26 @@
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(0, 0, 0, 0.4); /* native dims the panel behind the wheel */
+  /* Stronger dim + blur: the wheel floats over busy waveforms — at 0.4
+   * the buttons read as unrelated circles lost in the pad noise. */
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+/* Unifying disc behind the whole wheel (kit.js inserts .kit-radial-ring). */
+.kit-radial-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  width: 248px;
+  height: 248px;
+  border-radius: 50%;
+  background: rgba(20, 20, 26, 0.82);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
 }
 
 .kit-radial {
@@ -431,16 +450,19 @@
   pointer-events: none;
 }
 
-/* Labels on hover (native shows them enlarged on the highlighted slice). */
+/* Labels ALWAYS visible (mobile radial convention) — hover-only labels
+ * made the wheel read as anonymous icon bubbles. */
 .kit-radial-label {
   font-size: 8px;
   font-weight: 700;
   letter-spacing: 0.02em;
   color: var(--jamn-text2, #A1A1AA);
-  opacity: 0;
-  transition: opacity 0.12s ease;
+  opacity: 0.9;
   pointer-events: none;
   white-space: nowrap;
+  max-width: 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .kit-radial-btn:hover {
@@ -449,7 +471,7 @@
 }
 
 .kit-radial-btn:hover .kit-radial-label {
-  opacity: 1;
+  color: var(--jamn-text, #fff);
 }
 
 .kit-radial-btn.is-active {

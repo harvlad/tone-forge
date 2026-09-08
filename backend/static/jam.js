@@ -14956,10 +14956,9 @@
       });
       if (sideNote) sideNote.hidden = true;
       if (sidebar) sidebar.classList.remove('jamn-side--open');
-      // Native parity: the desktop app hides its sidebar on Perform
-      // (stage needs the width). CSS keys off this body class.
-      document.body.classList.toggle('jamn-no-side',
-        name === 'perform' || name === 'stage');
+      // User verdict: the sidebar stays on EVERY surface (desktop hides
+      // it on Perform; web keeps it — reversed by request 2026-09-08).
+      document.body.classList.remove('jamn-no-side');
       if (surface && window.location.hash !== '#' + surface) {
         // replaceState (not location.hash=) so surface hops don't pile
         // up history entries; it also never fires hashchange, so no
