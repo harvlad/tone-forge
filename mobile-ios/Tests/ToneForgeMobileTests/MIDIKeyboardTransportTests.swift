@@ -126,6 +126,62 @@ final class MIDIKeyboardTransportTests: XCTestCase {
                        [.midiNote(note: 42, velocity: 120, on: true)])
     }
 
+    // MARK: - mappedPads routing (MIDI Learn)
+
+    func testMappedPadsRoutesLearnedNotes() {
+        let t = makeTransport()
+        plugInKeyboard()
+        // Split layout a la DJM-S7: deck A pads on 20-23, deck B on 70-73.
+        t.noteRouting = .mappedPads(map: [20: 0, 21: 1, 70: 8, 73: 15])
+        midi.receive([.noteOn(channel: 0, note: 70, velocity: 100)],
+                     from: Self.keyboard)
+        drainMainQueue()
+        // idx 8 → row 8 - 8/4 = 6, col 8%4 + 1 = 1.
+        XCTAssertEqual(events.map(\.kind), [.padDown(row: 6, col: 1)])
+    }
+
+    func testMappedPadsIgnoresUnmappedNotes() {
+        let t = makeTransport()
+        plugInKeyboard()
+        t.noteRouting = .mappedPads(map: [20: 0])
+        // Unmapped notes are DROPPED, not routed to the synth — a
+        // half-mapped controller must not spray synth notes mid-jam.
+        midi.receive([.noteOn(channel: 0, note: 55, velocity: 100)],
+                     from: Self.keyboard)
+        drainMainQueue()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testMappedPadsNoteOffReleasesPad() {
+        let t = makeTransport()
+        plugInKeyboard()
+        t.noteRouting = .mappedPads(map: [73: 15])
+        midi.receive([.noteOn(channel: 0, note: 73, velocity: 90)],
+                     from: Self.keyboard)
+        midi.receive([.noteOff(channel: 0, note: 73, velocity: 0)],
+                     from: Self.keyboard)
+        drainMainQueue()
+        XCTAssertEqual(events.map(\.kind),
+                       [.padDown(row: 5, col: 4), .padUp(row: 5, col: 4)])
+    }
+
+    func testLearnTapSeesEveryNoteOnRegardlessOfRouting() {
+        let t = makeTransport()
+        plugInKeyboard()
+        t.noteRouting = .mappedPads(map: [:])  // everything unmapped
+        var learned: [Int] = []
+        t.onLearnNote = { learned.append($0) }
+        midi.receive([.noteOn(channel: 0, note: 20, velocity: 100),
+                      .noteOff(channel: 0, note: 20, velocity: 0),
+                      .noteOn(channel: 1, note: 70, velocity: 90)],
+                     from: Self.keyboard)
+        drainMainQueue()
+        // Note-ons only (releases must not create phantom slots), even
+        // though routing dropped both notes.
+        XCTAssertEqual(learned, [20, 70])
+        XCTAssertTrue(events.isEmpty)
+    }
+
     // MARK: - samplePads routing
 
     func testSamplePadsBaseNoteMapsToPadZero() {

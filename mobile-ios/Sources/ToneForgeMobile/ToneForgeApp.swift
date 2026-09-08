@@ -1005,20 +1005,24 @@ public final class AppState: ObservableObject {
             self?.contributionBus.publish(event)
         }
         transport.noteRouting = Self.noteRouting(
-            padsToSamples: sampleSettings.midiPadsToSamples
+            padsToSamples: sampleSettings.midiPadsToSamples,
+            map: sampleSettings.midiPadNoteMap
         )
         midiKeyboard = transport
     }
 
     /// Persisted toggle → transport routing. `true` sends generic MIDI
-    /// pads to the active sample pack (note 36 = pad 0); `false` keeps
-    /// the wavetable-synth default.
+    /// pads to the active sample pack; a learned note map (Settings ->
+    /// "map controller pads") beats the contiguous note-36 default so
+    /// split-layout controllers (DJM-S7 decks, TE boxes) land on the
+    /// right pads. `false` keeps the wavetable-synth default.
     private static func noteRouting(
-        padsToSamples: Bool
+        padsToSamples: Bool, map: [Int: Int]
     ) -> MIDIKeyboardTransport.NoteRouting {
-        padsToSamples
+        guard padsToSamples else { return .synth }
+        return map.isEmpty
             ? .samplePads(baseNote: MIDIKeyboardTransport.defaultPadBaseNote)
-            : .synth
+            : .mappedPads(map: map)
     }
 
     /// Banner dismiss: clears the transport's flag (the mirror sink
@@ -1436,8 +1440,10 @@ public final class AppState: ObservableObject {
         // Generic MIDI pad routing → transport. Live edits flip the
         // attached pad box between synth and sample-pack pads.
         sampleSettings.$midiPadsToSamples
-            .sink { [weak self] on in
-                self?.midiKeyboard?.noteRouting = Self.noteRouting(padsToSamples: on)
+            .combineLatest(sampleSettings.$midiPadNoteMap)
+            .sink { [weak self] on, map in
+                self?.midiKeyboard?.noteRouting = Self.noteRouting(
+                    padsToSamples: on, map: map)
             }
             .store(in: &settingsCancellables)
 

@@ -156,6 +156,33 @@ public final class SampleSettingsStore: ObservableObject {
         didSet { save() }
     }
 
+    /// Learned MIDI-note -> sample-pad-index map (0..<16) from the
+    /// Settings "map controller pads" flow. Covers controllers whose
+    /// pads are not one contiguous note run (Pioneer DJM-S7's two
+    /// decks, TE boxes, custom LPD8 programs). Empty = use the
+    /// contiguous baseNote default. Sidecar UserDefaults key, NOT the
+    /// settings blob — same no-migration-surgery pattern as
+    /// jam.sampleLatch.
+    @Published public var midiPadNoteMap: [Int: Int] {
+        didSet {
+            let pairs = midiPadNoteMap.map { [$0.key, $0.value] }
+            defaults.set(try? JSONSerialization.data(withJSONObject: pairs),
+                         forKey: Self.midiPadNoteMapKey)
+        }
+    }
+    private static let midiPadNoteMapKey = "toneforge.midiPadNoteMap"
+
+    private static func loadNoteMap(from defaults: UserDefaults) -> [Int: Int] {
+        guard let data = defaults.data(forKey: midiPadNoteMapKey),
+              let pairs = (try? JSONSerialization.jsonObject(with: data)) as? [[Int]]
+        else { return [:] }
+        var map: [Int: Int] = [:]
+        for pair in pairs where pair.count == 2 {
+            map[pair[0]] = pair[1]
+        }
+        return map
+    }
+
     /// Built-in defaults, shared by init and the tests.
     nonisolated public static let defaultVoiceGain: Double = 0.9
     nonisolated public static let defaultChopGain: Double = 0.8
@@ -198,6 +225,7 @@ public final class SampleSettingsStore: ObservableObject {
         self.instrumentBrightness = max(0.5, min(2.0, loaded.instrumentBrightness))
         self.hiddenPadKeys = Set(loaded.hiddenPadKeys)
         self.midiPadsToSamples = loaded.midiPadsToSamples
+        self.midiPadNoteMap = Self.loadNoteMap(from: defaults)
     }
 
     // MARK: - Pad-effect override convenience

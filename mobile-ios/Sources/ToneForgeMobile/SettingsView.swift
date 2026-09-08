@@ -394,12 +394,22 @@ private struct MIDIControllersSection: View {
     /// Persisted so the virtual source re-arms on next launch (applied
     /// in bootAudio).
     @AppStorage("midiClockOut") private var clockOut = false
+    @State private var showPadLearn = false
 
     var body: some View {
         Section("MIDI controllers") {
             Toggle("Pads play samples", isOn: $settings.midiPadsToSamples)
             Text("When on, an attached MIDI pad box (LPD8/MPD) triggers "
                  + "the active sample pack. When off, pads play the synth.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button("Map controller pads…") { showPadLearn = true }
+            Text(settings.midiPadNoteMap.isEmpty
+                 ? "For controllers whose pads aren't a standard note "
+                   + "layout (DJ mixers, TE boxes): tap the pads once "
+                   + "in order and they drive the sample grid."
+                 : "Custom pad map active (\(settings.midiPadNoteMap.count) pads).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -414,6 +424,9 @@ private struct MIDIControllersSection: View {
             if let transport {
                 MIDIInputsList(transport: transport)
             }
+        }
+        .sheet(isPresented: $showPadLearn) {
+            MIDIPadLearnSheet(settings: settings, transport: transport)
         }
     }
 }
