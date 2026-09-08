@@ -6367,9 +6367,12 @@ async def get_borrow_candidates(
         raise HTTPException(status_code=422, detail="Song has no analysis result")
     history = await asyncio.to_thread(_load_history)
     target_bpm = _borrow._tempo_of(result)
-    cands = _borrow.borrow_candidates(history, entry_id, stem, target_bpm)
+    target_key = result.get("detected_key") or result.get("key")
+    cands = _borrow.borrow_candidates(
+        history, entry_id, stem, target_bpm, target_key=target_key)
     return JSONResponse({"analysisId": entry_id, "stem": stem,
-                         "targetTempo": target_bpm, "candidates": cands[:12]})
+                         "targetTempo": target_bpm, "targetKey": target_key,
+                         "candidates": cands[:12]})
 
 
 @app.get("/api/song/{entry_id}/borrow")
@@ -6398,9 +6401,14 @@ async def get_borrow_loops(
     target_bpm = _borrow._tempo_of(result)
     if not target_bpm:
         raise HTTPException(status_code=422, detail="This song has no tempo")
+    # Resolve the donor's actual stem key (handles 'other' → guitar_* etc.)
+    donor_stem = next(
+        (a for a in _borrow._stem_aliases(stem)
+         if a in (donor_result.get("stems_paths") or {})), stem)
     _refresh_r2_stem_urls(donor_result)
     pads = await asyncio.get_running_loop().run_in_executor(
-        _render_pool(), _borrow.borrow_job, donor, donor_result, stem, target_bpm)
+        _render_pool(), _borrow.borrow_job, donor, donor_result, stem,
+        target_bpm, donor_stem)
     if not pads:
         raise HTTPException(
             status_code=422,

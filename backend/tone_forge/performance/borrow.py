@@ -49,6 +49,56 @@ def _tempo_of(result: Dict) -> Optional[float]:
     return None
 
 
+# Pitchless stems need only tempo; melodic ones must be harmonically
+# compatible with the current song (Phase 2).
+_PITCHLESS = {"drums"}
+
+_PITCH_CLASS = {
+    "C": 0, "C#": 1, "DB": 1, "D": 2, "D#": 3, "EB": 3, "E": 4, "FB": 4,
+    "F": 5, "E#": 5, "F#": 6, "GB": 6, "G": 7, "G#": 8, "AB": 8, "A": 9,
+    "A#": 10, "BB": 10, "B": 11, "CB": 11,
+}
+# Mode → whether its tonic triad is minor-quality (for relative pairing).
+_MINOR_MODES = {"minor", "aeolian", "dorian", "phrygian", "locrian"}
+
+
+def _parse_key(s: Optional[str]) -> Optional[Tuple[int, bool]]:
+    """'C# minor' / 'D mixolydian' → (tonic_pitch_class, is_minor). None
+    when unparseable."""
+    if not isinstance(s, str) or not s.strip():
+        return None
+    parts = s.strip().split()
+    root = parts[0].upper()
+    pc = _PITCH_CLASS.get(root)
+    if pc is None:
+        return None
+    mode = parts[1].lower() if len(parts) > 1 else "major"
+    return pc, mode in _MINOR_MODES
+
+
+def _harmonic_score(a: Optional[str], b: Optional[str]) -> float:
+    """0..1 compatibility for mixing key `b` (donor) under key `a` (song).
+    Camelot-style: same key = 1, relative major/minor = 0.9, a perfect
+    fifth away = 0.8, up/down one semitone (a light pitch nudge) = 0.5,
+    else 0. Unknown key on either side = 0.4 (unranked-but-allowed)."""
+    ka, kb = _parse_key(a), _parse_key(b)
+    if ka is None or kb is None:
+        return 0.4
+    (pa, ma), (pb, mb) = ka, kb
+    if pa == pb and ma == mb:
+        return 1.0
+    # relative major/minor: minor tonic is 3 semitones below its relative
+    # major (Am ↔ C). Same "key signature".
+    rel = ((pa + 3) % 12, False) if ma else ((pa - 3) % 12, True)
+    if (pb, mb) == rel:
+        return 0.9
+    if ma == mb and (pb - pa) % 12 in (5, 7):   # perfect fourth / fifth
+        return 0.8
+    if ma == mb and (pb - pa) % 12 in (1, 11):   # ±1 semitone (small shift)
+        return 0.5
+    return 0.0
+
+
 def _best_loop_spans(result: Dict, n: int) -> List[Tuple[float, float]]:
     """Up to n strong 2-bar spans between downbeats, spread across the song,
     skipping intro/outro material (same selection as the Drum Kit grooves)."""
@@ -101,10 +151,12 @@ def sample_path(fname: str) -> Optional[Path]:
 
 
 def render_borrow_loops(donor_id: str, donor_result: Dict, stem: str,
-                        target_bpm: float) -> List[Dict]:
-    """Render the donor's best `stem` loops, time-stretched to target_bpm.
-    Returns pad dicts (loopable, sampleFile, name). Needs the donor stem
-    reachable + a downbeat grid + both tempos. Heavy; call off the loop."""
+                        target_bpm: float,
+                        donor_stem: Optional[str] = None) -> List[Dict]:
+    """Render the donor's best loops, time-stretched to target_bpm. `stem`
+    is the logical role (drums/bass/other); `donor_stem` the actual key in
+    the donor's stems_paths (e.g. 'guitar_center' for 'other'). Heavy."""
+    donor_stem = donor_stem or stem
     try:
         import numpy as np
         import librosa
@@ -139,8 +191,8 @@ def render_borrow_loops(donor_id: str, donor_result: Dict, stem: str,
 
     pads: List[Dict] = []
     with tempfile.TemporaryDirectory(prefix="toneforge_borrow_") as td:
-        stems = materialize_stems(donor_result, Path(td), roles=[stem])
-        wav = stems.get(stem)
+        stems = materialize_stems(donor_result, Path(td), roles=[donor_stem])
+        wav = stems.get(donor_stem)
         if wav is None:
             return []
         try:
@@ -149,7 +201,7 @@ def render_borrow_loops(donor_id: str, donor_result: Dict, stem: str,
             return []
 
         for i, (a, b) in enumerate(spans):
-            fname = _cache_key(donor_id, stem, target_bpm, (a, b))
+            fname = _cache_key(donor_id, donor_stem, target_bpm, (a, b))
             dest = out_dir / fname
             if not (dest.exists() and dest.stat().st_size > 0):
                 i0, i1 = int(a * sr), min(int(b * sr), y.shape[0])
@@ -191,11 +243,22 @@ def render_borrow_loops(donor_id: str, donor_result: Dict, stem: str,
 # Donor ranking (Phase 1: tempo only for drums; harmonic added in Phase 2)
 # ---------------------------------------------------------------------------
 
+def _stem_aliases(stem: str) -> Tuple[str, ...]:
+    # "other" (harmonic/guitar/keys) is stored under a mix of names.
+    if stem == "other":
+        return ("other", "guitar_center", "guitar_sides", "guitar",
+                "keys", "piano", "synth")
+    return (stem,)
+
+
 def borrow_candidates(entries: List[Dict], entry_id: str, stem: str,
-                      target_bpm: Optional[float]) -> List[Dict]:
-    """Rank donor songs whose `stem` is worth borrowing. Drums: tempo
-    proximity only (within a stretchable window, octave-folded). Returns
-    [{entryId, name, tempo, tempoRatio}] best-first."""
+                      target_bpm: Optional[float],
+                      target_key: Optional[str] = None) -> List[Dict]:
+    """Rank donor songs worth borrowing `stem` from. Drums: tempo proximity
+    only (octave-folded). Melodic stems (bass/other): tempo AND harmonic
+    compatibility with the current song's key. Best-first."""
+    pitchless = stem in _PITCHLESS
+    aliases = _stem_aliases(stem)
     out: List[Dict] = []
     for e in entries:
         eid = str(e.get("id") or "")
@@ -204,7 +267,9 @@ def borrow_candidates(entries: List[Dict], entry_id: str, stem: str,
         r = e.get("result")
         if not isinstance(r, dict):
             continue
-        if stem not in (r.get("stems_paths") or {}):
+        stems = r.get("stems_paths") or {}
+        donor_stem = next((a for a in aliases if a in stems), None)
+        if donor_stem is None:
             continue
         if len(r.get("downbeats_s") or []) < 3:
             continue
@@ -215,18 +280,31 @@ def borrow_candidates(entries: List[Dict], entry_id: str, stem: str,
         folded = min((abs(ratio * m - 1.0), m) for m in (0.5, 1.0, 2.0))
         if folded[0] > _STRETCH_LIMIT:
             continue
-        # Closer tempo (after octave fold) ranks higher.
+
+        harm = 1.0
+        donor_key = r.get("detected_key") or r.get("key")
+        if not pitchless:
+            harm = _harmonic_score(target_key, donor_key)
+            if harm <= 0.0:
+                continue  # harmonically clashes — never offer
+        # score: harmony dominates for melodic; tempo closeness refines.
+        score = harm - 0.3 * folded[0]
         out.append({
             "entryId": eid,
             "name": str(e.get("name") or eid),
             "tempo": round(dbpm, 1),
+            "key": donor_key,
             "tempoDistance": round(folded[0], 3),
+            "harmonic": round(harm, 2),
+            "score": round(score, 3),
+            "donorStem": donor_stem,
         })
-    out.sort(key=lambda c: c["tempoDistance"])
+    out.sort(key=lambda c: c["score"], reverse=True)
     return out
 
 
 def borrow_job(donor_id: str, donor_result: Dict, stem: str,
-               target_bpm: float):
+               target_bpm: float, donor_stem: Optional[str] = None):
     """Process-pool entry point."""
-    return render_borrow_loops(donor_id, donor_result, stem, target_bpm)
+    return render_borrow_loops(donor_id, donor_result, stem, target_bpm,
+                               donor_stem=donor_stem)
