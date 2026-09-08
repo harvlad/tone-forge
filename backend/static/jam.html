@@ -5,20 +5,30 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>JamN — What are we playing?</title>
 <link rel="stylesheet" href="/static/jam.css?v=69" />
-<link rel="stylesheet" href="/static/kit.css?v=1">
+<link rel="stylesheet" href="/static/kit.css?v=2">
 <style>
   /* Jamn desktop-chrome shell: left sidebar + centered pill nav.
      Deliberately small and local — jam.css is owned by the theming
      pass, so only jamn-* classes live here, on --jamn-* tokens with
      fallback values matching the current near-black look. */
 
-  /* --- centered pill segmented nav ------------------------------- */
+  /* --- single flat top bar (desktop-app parity) ------------------ */
+  /* The legacy marketing header stacked a second band (brand +
+     Studio/Community + purple wash) above the pill nav; the native app
+     has ONE compact bar. The header is hidden and its account chip +
+     site links live in the pill bar's right cluster instead. */
+  .jam-header { display:none !important; }
   .jamn-pillbar { position:sticky; top:0; z-index:60; display:flex;
-    justify-content:center; align-items:center; gap:8px; padding:8px 12px;
+    justify-content:space-between; align-items:center; gap:8px; padding:8px 12px;
     background: var(--jamn-bg, rgba(7,6,13,.92));
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--jamn-border, rgba(255,255,255,.08));
     overflow-x:auto; }
+  .jamn-pillbar-side { display:flex; align-items:center; gap:12px; flex:1 1 0; }
+  .jamn-pillbar-side--right { justify-content:flex-end; }
+  .jamn-toplink { font-size:.85rem; text-decoration:none;
+    color: var(--jamn-text2, rgba(235,235,245,.62)); }
+  .jamn-toplink:hover { color: var(--jamn-text, #f4f4f8); }
   .jamn-pillnav { display:flex; gap:4px; padding:4px; border-radius:999px;
     background: var(--jamn-surface2, rgba(255,255,255,.06)); flex:0 0 auto; }
   .jamn-pill { appearance:none; border:none; background:none; cursor:pointer;
@@ -68,6 +78,10 @@
     .playback-bar { left: 260px; }
     /* brand lives in the sidebar on desktop; hide the header copy */
     .jam-header .brand { visibility: hidden; }
+    /* Native parity: Perform hides the sidebar (stage needs the width). */
+    body.jamn-no-side { padding-left: 0; }
+    body.jamn-no-side .playback-bar { left: 0; }
+    body.jamn-no-side .jamn-side { display: none; }
   }
   @media (max-width: 899.98px) {
     .jamn-side { transform: translateX(-100%); transition: transform .2s ease; }
@@ -125,7 +139,8 @@
     <a href="/studio">Studio</a>
     <a href="/debug">Community</a>
   </nav>
-  <div id="account-chip" class="account-chip"></div>
+  <!-- account chip moved to the pill bar's right cluster (the header is
+       hidden — a duplicate id here would swallow account.js's lookup). -->
   <label for="nav-toggle" class="nav-burger" aria-label="Menu" aria-controls="primary-nav">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>
@@ -139,14 +154,21 @@
      (#intake/#bandroom/#rehearsal/#perform/#jampads/#mixer/#library)
      keeps the surface across refreshes. Studio stays a plain link. -->
 <nav id="jamn-pillbar" class="jamn-pillbar" aria-label="Jamn surfaces">
-  <button type="button" id="jamn-side-toggle" class="jamn-side-toggle"
-          aria-label="Menu" aria-controls="jamn-sidebar">☰</button>
+  <div class="jamn-pillbar-side">
+    <button type="button" id="jamn-side-toggle" class="jamn-side-toggle"
+            aria-label="Menu" aria-controls="jamn-sidebar">☰</button>
+    <a class="jamn-toplink" href="/studio">Studio</a>
+    <a class="jamn-toplink" href="/debug">Community</a>
+  </div>
   <div id="jamn-pillnav" class="jamn-pillnav">
     <button type="button" class="jamn-pill" data-surface="intake">Intake</button>
     <button type="button" class="jamn-pill" data-surface="bandroom">Band Room</button>
     <button type="button" class="jamn-pill" data-surface="rehearsal">Rehearsal</button>
     <button type="button" class="jamn-pill" data-surface="perform">Perform</button>
     <a class="jamn-pill" href="/studio">Studio</a>
+  </div>
+  <div class="jamn-pillbar-side jamn-pillbar-side--right">
+    <div id="account-chip" class="account-chip"></div>
   </div>
 </nav>
 
@@ -1210,6 +1232,12 @@
                     <label><input type="radio" name="lp-panel-submode" value="melody" /> Melody</label>
                     <label><input type="radio" name="lp-panel-submode" value="drum" /> Drum</label>
                     <label><input type="radio" name="lp-panel-submode" value="free-play" /> Free play</label>
+                  </div>
+
+                  <div class="lp-mode-row">
+                    <span class="lp-section-label">MIDI pads</span>
+                    <button type="button" id="lp-midi-learn" class="tab-control-btn">Map MIDI pads</button>
+                    <span id="lp-midi-learn-status" class="lp-hint"></span>
                   </div>
 
                   <div class="lp-mode-row">

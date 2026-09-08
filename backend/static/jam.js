@@ -7454,6 +7454,55 @@
     // init() is idempotent — safe to call unconditionally. The panel's
     // init call adds onGridChange / onModeChange / onLegendInfo callbacks
     // on top of these.
+    // MIDI Learn for generic pad controllers (DJM-S7 / LPD8 / TE):
+    // capture 16 notes in grid order, map them to Contribute chops.
+    // Parity with the mobile flow; map persists in localStorage via
+    // the Launchpad module.
+    (function wireMidiPadLearn() {
+      const btn = document.getElementById('lp-midi-learn');
+      const status = document.getElementById('lp-midi-learn-status');
+      if (!btn) return;
+      const refreshIdle = () => {
+        const n = Object.keys(window.Launchpad.getGenericPadMap() || {}).length;
+        btn.textContent = 'Map MIDI pads';
+        if (status) {
+          status.textContent = n
+            ? `${n} pads mapped — works in Contribute/Samples mode`
+            : 'Tap to map a DJ mixer / pad box onto the sample pads';
+        }
+      };
+      let learning = false;
+      let captured = [];
+      const finish = (save) => {
+        learning = false;
+        window.Launchpad.stopPadLearn();
+        if (save && captured.length) {
+          const map = {};
+          captured.forEach((note, i) => { map[note] = i; });
+          window.Launchpad.setGenericPadMap(map);
+        }
+        captured = [];
+        refreshIdle();
+      };
+      btn.addEventListener('click', () => {
+        if (learning) { finish(true); return; }  // early Done = partial save
+        learning = true;
+        captured = [];
+        btn.textContent = 'Done';
+        if (status) status.textContent = 'Press pad 1 of 16 on your controller…';
+        window.Launchpad.startPadLearn((note) => {
+          if (captured.includes(note)) return;   // re-press must not eat a slot
+          captured.push(note);
+          if (captured.length >= 16) { finish(true); return; }
+          if (status) {
+            status.textContent =
+              `Press pad ${captured.length + 1} of 16 (Done saves ${captured.length})`;
+          }
+        });
+      });
+      refreshIdle();
+    })();
+
     window.Launchpad.init({
       onStatusChange: _renderLaunchpadStatus,
       onPadPress: _launchpadPushPress,
@@ -14081,6 +14130,9 @@
       });
       if (sideNote) sideNote.hidden = true;
       if (sidebar) sidebar.classList.remove('jamn-side--open');
+      // Native parity: the desktop app hides its sidebar on Perform
+      // (stage needs the width). CSS keys off this body class.
+      document.body.classList.toggle('jamn-no-side', name === 'perform');
       if (surface && window.location.hash !== '#' + surface) {
         // replaceState (not location.hash=) so surface hops don't pile
         // up history entries; it also never fires hashchange, so no

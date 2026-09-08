@@ -162,9 +162,12 @@
 }
 
 .kit-pad-wave {
+  /* Fill the tile body so the waveform reads mid-pad like the native
+   * tiles (a 30px bottom strip read as a footer, not the pad's face). */
   width: 100%;
-  height: 30px;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-self: stretch;
   pointer-events: none;
 }
 
