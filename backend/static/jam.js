@@ -15837,9 +15837,10 @@
 
       // Featured songs are PINNED in the library (chip + first row) but
       // deliberately never auto-load — landing inside someone else's
-      // song uninvited read as broken on every platform. The library is
-      // the cold-boot default so the featured row is one tap away.
-      showView('library');
+      // song uninvited read as broken on every platform. Intake is the
+      // cold-boot default (user directive): the "What are we playing?"
+      // upload screen, with RECENT SONGS one click away in the sidebar.
+      showView('intake');
     })();
   })();
 })();

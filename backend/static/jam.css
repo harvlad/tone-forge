@@ -4747,7 +4747,8 @@ body:has(#view-intake.active) #jam-app {
   flex: 1 1 auto;
   min-height: 0;
   max-width: 900px;
-  padding: clamp(6px, 1.5vh, 20px) 24px;
+  /* More top breathing room so the landing never hugs the sticky pill bar. */
+  padding: clamp(20px, 4vh, 48px) 24px clamp(6px, 1.5vh, 20px);
   display: flex;
   /* Column, not row: #jam-app also holds the .plugin-download footer
      line — in a row flexbox it rendered BESIDE the upload card,
