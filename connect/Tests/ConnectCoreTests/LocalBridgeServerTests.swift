@@ -46,6 +46,17 @@ final class LocalBridgeServerTests: XCTestCase {
         XCTAssertFalse(LocalBridgeServer.isValidHello(["type": "set_gain", "gain": 0.5], expectedSessionId: "s1"))
         XCTAssertFalse(LocalBridgeServer.isValidHello(["type": "hello"], expectedSessionId: "s1"))
         XCTAssertFalse(LocalBridgeServer.isValidHello(["type": "hello", "session_id": ""], expectedSessionId: ""))
+
+        // Unpaired placeholder: even a hello whose session_id equals the
+        // literal "default" must be refused — that string is a constant
+        // every page knows, so honoring it would defeat the token gate.
+        let defaultHello: [String: Any] = ["type": "hello", "session_id": "default", "role": "browser"]
+        XCTAssertFalse(LocalBridgeServer.isValidHello(defaultHello, expectedSessionId: "default"))
+        // An empty expected token (never armed) is likewise closed.
+        let realHello: [String: Any] = ["type": "hello", "session_id": "tok", "role": "browser"]
+        XCTAssertFalse(LocalBridgeServer.isValidHello(realHello, expectedSessionId: ""))
+        // A real per-pair token still authenticates.
+        XCTAssertTrue(LocalBridgeServer.isValidHello(realHello, expectedSessionId: "tok"))
     }
 
     // MARK: - Socket-level helpers

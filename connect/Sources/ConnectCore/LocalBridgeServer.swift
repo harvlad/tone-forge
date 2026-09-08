@@ -117,6 +117,14 @@ public final class LocalBridgeServer {
     /// Hello-frame gate: first frame must be a `hello` whose
     /// session_id matches the currently paired session.
     static func isValidHello(_ dict: [String: Any], expectedSessionId: String) -> Bool {
+        // An unpaired listener still carries the "default" placeholder
+        // (PresetBridge/AppDelegate init value, or a deeplink that
+        // arrived without a session). That string is a constant every
+        // page knows, so accepting it would make the token gate
+        // worthless — any page reaching the loopback port could drive
+        // the audio engine. Refuse ALL local control until a real
+        // per-pair token has been armed via toneforge://pair.
+        guard !expectedSessionId.isEmpty, expectedSessionId != "default" else { return false }
         guard (dict["type"] as? String) == ConnectProtocol.MessageType.hello else { return false }
         guard let sid = dict["session_id"] as? String, !sid.isEmpty else { return false }
         return sid == expectedSessionId

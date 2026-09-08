@@ -1689,7 +1689,31 @@
       const fromUrl = new URLSearchParams(window.location.search).get('session');
       if (fromUrl) return fromUrl;
     } catch {}
-    return 'default';
+    // Mint (and persist) a random per-browser token instead of the old
+    // constant 'default'. This is the shared secret handed to Connect
+    // via the toneforge://pair deeplink and required back on the local
+    // WebSocket hello, so it must be unguessable and stable across
+    // reloads (a reload must not orphan an already-paired Connect).
+    // Connect's local listener now rejects 'default' outright, so this
+    // is what makes the loopback control channel actually authenticated.
+    try {
+      const KEY = 'jamn.connectSessionId';
+      let tok = window.localStorage.getItem(KEY);
+      if (!tok) {
+        tok = (window.crypto && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : Array.from(crypto.getRandomValues(new Uint8Array(16)))
+              .map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+        window.localStorage.setItem(KEY, tok);
+      }
+      return tok;
+    } catch {
+      // No localStorage/crypto (private mode, ancient engine). Ephemeral
+      // random — still unguessable, just won't survive a reload. Good
+      // enough: the relay only needs uniqueness, and the local fast path
+      // is Chrome-only where crypto.randomUUID exists.
+      return 'jamn-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
   }
 
   // Fire-and-forget push. If the socket isn't open yet, queue and connect.
