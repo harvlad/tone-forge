@@ -16,6 +16,7 @@ algorithms rather than re-implement them.
 |---|---|
 | `EXECUTION_PLAN.md` | **The execution surface.** Supersedes every `backend/*.md` strategy/RCA/roadmap doc. §0 Completion Log is ground truth for "what actually shipped". |
 | `OUTSTANDING.md` | Deferred items from the full project review, with status. |
+| `PARITY.yaml` | **Cross-platform feature parity matrix.** Every user-facing feature × every platform, with evidence anchors. CI-enforced (`backend/tests/test_platform_parity.py`). |
 | `docs/README.md` | Documentation policy (see below). |
 | `mobile-ios/DECISIONS.md`, `jam-desktop/DECISIONS.md` | Chronological decision logs. Never delete an entry — supersede it with a new one that references the old. |
 
@@ -102,6 +103,30 @@ From `EXECUTION_PLAN.md` §1–§2:
 
 Active workstreams per the priority table: subsystem boundary freeze, Connect
 hardening, retrieval confidence calibration, song understanding expansion.
+
+## Platform parity doctrine (enforced)
+
+Jamn ships on five surfaces (web, iOS, macOS desktop, plugin, Connect).
+`PARITY.yaml` at the repo root is the source of truth for which features
+exist where; `backend/tests/test_platform_parity.py` fails CI when the
+matrix rots (evidence anchors are greped against real files).
+
+Rules for ANY user-facing feature work:
+
+1. **Row first.** Before implementing, add/update the feature's row in
+   `PARITY.yaml` with an explicit status for EVERY platform. A platform
+   you're not building for gets `missing` (with what's blocking) or
+   `na` (with the design reason) — never silence.
+2. **Done means evidence.** Marking `done`/`partial` requires an
+   `path#symbol` anchor pointing at the real implementation.
+3. **One feature, one pass.** Prefer landing a feature on all applicable
+   platforms in one effort (shared engine code first — ToneForgeEngine /
+   launchpad.js port-parity rule). When that's not practical, the
+   `missing` rows ARE the follow-up queue.
+4. Behavior semantics must match across platforms (e.g. MIDI Learn drops
+   unmapped notes everywhere; melody cursor math is bit-identical between
+   launchpad.js and MelodySequence.swift). Divergence is a bug even when
+   both sides "work".
 
 ## Deployment
 

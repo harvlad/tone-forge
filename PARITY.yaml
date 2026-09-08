@@ -1,0 +1,203 @@
+# PARITY.yaml — cross-platform feature parity matrix. SOURCE OF TRUTH.
+#
+# Doctrine (enforced by backend/tests/test_platform_parity.py in CI):
+# every user-facing feature has one row here, with an explicit status
+# per platform. "It shipped on one platform" is not done — it's a row
+# with four open cells. Statuses:
+#
+#   done     — implemented; MUST carry `evidence` (path#symbol). The CI
+#              test opens the file and greps the symbol, so renames and
+#              deletions break the build instead of silently rotting
+#              the matrix.
+#   partial  — some of the feature; evidence + note required.
+#   missing  — should exist, doesn't yet; note says what's blocking.
+#   na       — deliberately not applicable; note says WHY (design
+#              decision, platform limitation). "na" without a reason is
+#              a missing in disguise.
+#
+# Platforms:
+#   web      — backend/static (jamn.app Jam page)
+#   ios      — mobile-ios (ToneForgeMobile app)
+#   desktop  — jam-desktop (native macOS Jamn app)
+#   plugin   — plugin/ (jamn Kit AU/VST3/Standalone, macOS + Windows)
+#   connect  — connect/ (macOS low-latency audio companion)
+#
+# Adding a feature: add the row FIRST (all platforms filled in), then
+# implement. Changing a status to done requires real evidence. The
+# point is that gaps are visible decisions, never accidents.
+
+features:
+  - id: melody-sequence
+    name: Song melody as playable sequence (follow-along / guide)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/launchpad.js#onMelodyPosition"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeEngine/Sequencer/MelodySequence.swift#MelodySequencePlayer"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/SessionController.swift#melodyGuideEnabled"
+      plugin:
+        status: na
+        note: "Sampler plugin plays kit slices; melody guide is a session/transport feature."
+      connect:
+        status: na
+        note: "Connect is a monitoring engine with no song UI."
+
+  - id: drum-kit-pads
+    name: Auto drum kit on pads (kind=drums)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/packs.js#kind=auto|drums"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeEngine/KitClient.swift#kind"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/LaunchpadController.swift#loadChops"
+      plugin:
+        status: done
+        evidence: "plugin/Source/KitPack.cpp#KitPack"
+      connect:
+        status: na
+        note: "No pad surface."
+
+  - id: midi-learn-pads
+    name: MIDI Learn — external pad controllers drive the sample grid
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/launchpad.js#setGenericPadMap"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Launchpad/MIDIKeyboardTransport.swift#mappedPads"
+      desktop:
+        status: missing
+        note: "USB Launchpad + MIDI keyboard transports exist; no learn-mode mapping yet."
+      plugin:
+        status: missing
+        note: "Fixed note-36 layout; in-DAW remapping covers hosted use, standalone needs learn."
+      connect:
+        status: na
+        note: "No pad surface."
+
+  - id: midi-keyboard-synth
+    name: Generic MIDI keyboard plays the synth
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/launchpad.js#onGenericNote"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Launchpad/MIDIKeyboardTransport.swift#NoteRouting"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/SessionController.swift#midiKeyboard"
+      plugin:
+        status: done
+        evidence: "plugin/Source/PluginProcessor.cpp#processBlock"
+      connect:
+        status: na
+        note: "No synth engine."
+
+  - id: midi-clock-out
+    name: MIDI clock output (24 PPQN + start/stop) for external gear
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/launchpad.js#startMidiClock"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/SettingsView.swift#midiClockOut"
+      desktop:
+        status: missing
+        note: "Desktop has Link instead; clock out not wired."
+      plugin:
+        status: na
+        note: "The DAW host owns clock; plugin follows host transport."
+      connect:
+        status: na
+        note: "Audio-only companion."
+
+  - id: ableton-link
+    name: Ableton Link tempo sync
+    platforms:
+      web:
+        status: partial
+        evidence: "backend/static/jam.js#_linkRate"
+        note: "Follow-only via native helper relay (tools/jamn-link-helper); relay-grade accuracy; licensing review pending before public."
+      ios:
+        status: missing
+        note: "No Link; licensing review queued (OUTSTANDING.md)."
+      desktop:
+        status: partial
+        evidence: "jam-desktop/Sources/JamDesktop/LinkSync.swift#LinkSync"
+        note: "Follow-only V1."
+      plugin:
+        status: na
+        note: "DAW host owns tempo/Link."
+      connect:
+        status: missing
+        note: "Would be the natural Link bridge for web; not built."
+
+  - id: live-library
+    name: Library list live-updates (new songs + in-flight analyses)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/jam.js#followJob"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/RootView.swift#refreshJobs"
+      desktop:
+        status: partial
+        evidence: "jam-desktop/Sources/JamDesktopCore/AppModel.swift#backendBaseURL"
+        note: "History loads on demand; no push/poll loop verified."
+      plugin:
+        status: partial
+        evidence: "plugin/Source/PluginProcessor.cpp#JamnKitProcessor"
+        note: "Library browser exists (sign-in feature); live-update behavior unverified."
+      connect:
+        status: na
+        note: "No library UI."
+
+  - id: launchpad-mk3
+    name: Novation Launchpad Pro MK3 grid (pads + LEDs)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/launchpad.js#SYSEX_ENTER_PROGRAMMER"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Launchpad/USBLaunchpadTransport.swift#USBLaunchpadTransport"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/SessionController.swift#usbLaunchpad"
+      plugin:
+        status: na
+        note: "Host/DAW territory."
+      connect:
+        status: na
+        note: "No pad surface."
+
+  - id: remix-transforms
+    name: One-tap remix transforms (Re-Drum / Flip / Humanize / Instrument Pack)
+    platforms:
+      web:
+        status: missing
+        note: "Remix sheet shipped iOS/desktop only; web has no transform UI (matrix audit 2026-09-08 caught this — memory claimed all surfaces)."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeEngine/RemixClients.swift#RemixClient"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Sequencer/SequencerPanelView.swift#SequencerPanelView"
+      plugin:
+        status: na
+        note: "Sampler scope; sequencing lives in the host."
+      connect:
+        status: na
+        note: "No sequencer."
