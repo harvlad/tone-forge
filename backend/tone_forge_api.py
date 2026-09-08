@@ -3336,8 +3336,15 @@ async def link_events() -> StreamingResponse:
         async for chunk in genfn:
             yield chunk
 
-    return StreamingResponse(first_then(gen()), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-store"})
+    return StreamingResponse(
+        first_then(gen()), media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-store",
+            # nginx buffers streaming responses by default — without
+            # this the first snapshot sat in the proxy and the browser
+            # saw a silent stream (observed on deploy smoke test).
+            "X-Accel-Buffering": "no",
+        })
 
 
 # ---------------------------------------------------------------------
