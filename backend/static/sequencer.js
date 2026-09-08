@@ -731,9 +731,34 @@
 
   // ---------- export ----------
 
+  /** Scroll a pad's step row into view and flash it — the kit radial's
+   * "Sequence" action lands here so the user sees WHICH row is theirs.
+   * If the row is hidden by "used only", clear that filter first. */
+  function focusRow(padIdx) {
+    var s = current;
+    if (!s) return;
+    var row = s.rowEls && s.rowEls[padIdx];
+    if (!row && s.showUsedOnly) {
+      s.showUsedOnly = false;
+      try { render(s); } catch (_) {}
+      row = s.rowEls && s.rowEls[padIdx];
+    }
+    if (!row) return;
+    try {
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (_) {
+      try { row.scrollIntoView(); } catch (_) {}
+    }
+    row.classList.add("seq-row--focus");
+    setTimeout(function () {
+      try { row.classList.remove("seq-row--focus"); } catch (_) {}
+    }, 1600);
+  }
+
   window.JamnSequencer = {
     mount: mount,
     unmount: unmount,
+    focusRow: focusRow,
     // Remix hooks (remix.js Humanize toggle; kit.js Flip activation).
     setGrooveOffsets: setGrooveOffsets,
     stageDefaultSequence: stageDefaultSequence,

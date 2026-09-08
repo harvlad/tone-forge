@@ -226,6 +226,68 @@ features:
         status: na
         note: "No sequencer."
 
+  - id: pad-radial-menu
+    name: Per-pad radial action menu (right-click / long-press ring)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#openRadial"
+        note: "Nine-action ring: Loop/one-shot toggle, Edit chop, Stop pad, Solo, Effects (per-pad FX editor), Reset, Delete (+undo toast), Sequence (jumps to the sequencer, JamnSequencer.focusRow), Add sound (navigates to Packs — no per-pad picker yet)."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Pad/PadRadialMenu.swift#PadRadialMenu"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Launchpad/LaunchpadPanelView.swift#handleRadialAction"
+      plugin:
+        status: na
+        note: "Sampler UI has its own pad controls; no radial."
+      connect:
+        status: na
+        note: "No pad surface."
+
+  - id: per-pad-fx
+    name: Per-pad effects chain (delay + resonant low-pass + gain)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/padengine.js#setPadEffects"
+        note: "Per-pad delay/lowpass/gain, persisted per song; neutral = bypass. Mirrors SamplePadEffects; edited via the radial Effects popover."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeEngine/SamplePadEffects.swift#SamplePadEffects"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/LaunchpadController.swift#PadCategory"
+        note: "Voice-pool per-pad FX via the shared ToneForgeEngine SamplePadEffects (path dependency)."
+      plugin:
+        status: na
+        note: "Plugin FX are the host's."
+      connect:
+        status: na
+        note: "Tone chains are its domain, not per-pad FX."
+
+  - id: web-tool-surfaces
+    name: Web Jam tool surfaces (Stage / Sequencer / Recordings / Packs / Contribute)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/stage.js#JamnStage"
+        note: "Fretboard Perform stage, step sequencer, jam recordings (IndexedDB), curated-pack browser, and Voice/Beat/Sample contribute flows — the desktop/mobile TOOLS surfaces brought to jamn.app 2026-09-08."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/SamplePadGrid4x4.swift#SamplePadGrid4x4"
+        note: "Native surfaces are the reference these web modules mirror."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Launchpad/LaunchpadPanelView.swift#LaunchpadPanelView"
+      plugin:
+        status: na
+        note: "Sampler scope."
+      connect:
+        status: na
+        note: "Monitoring companion, no jam tools."
+
   - id: connect-local-bridge
     name: Direct local WebSocket link to Connect (Chrome fast path + status/reconnect UI)
     platforms:
