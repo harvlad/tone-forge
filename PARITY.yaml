@@ -226,6 +226,28 @@ features:
         status: na
         note: "No sequencer."
 
+  - id: borrow-loops
+    name: Borrow — real loops from other songs as tempo/key-matched pads
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/remix.js#applyBorrow"
+        note: "Borrow section in the Remix sheet: stem picker (Beat/Bass/Chords), donor list ranked by tempo (drums) or tempo+key (melodic), loads loopable file pads via JamnKit.mountManifest. Backend performance/borrow.py time-stretches the donor's 2-bar loops to this song's tempo; harmonic ranking is Camelot-style."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/ToneForgeApp.swift#loadBorrowLoops"
+        note: "Borrow section in RemixSheet; SampleBank.autoKit pads with downloaded loop files, bar-synced. Same backend."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/SessionController.swift#loadBorrowLoops"
+        note: "Borrow section in RemixSheetView; borrowfile: sentinel routes to ChopPlayer.trigger(file:loop:), launchpad in loop mode. Same backend."
+      plugin:
+        status: missing
+        note: "Plugin has no Remix surface yet; would need a borrow browser + loop-pad playback in the JUCE editor."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: pad-radial-menu
     name: Per-pad radial action menu (right-click / long-press ring)
     platforms:
