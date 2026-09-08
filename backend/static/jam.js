@@ -5457,6 +5457,8 @@
     try { pushTransportToConnect(); } catch (_) {}
     // Mirror the play edge onto the Launchpad's Play button LED.
     try { window.Launchpad && window.Launchpad.setTransportPlaying(true); } catch (_) {}
+    // Start (or retune, on seek) the MIDI clock broadcast to external gear.
+    try { _midiClockOnTransport(true); } catch (_) {}
   }
 
   function stopSources() {
@@ -5482,6 +5484,7 @@
     // helper has the right resume point on the next play.
     try { pushTransportToConnect(); } catch (_) {}
     try { window.Launchpad && window.Launchpad.setTransportPlaying(false); } catch (_) {}
+    try { _midiClockOnTransport(false); } catch (_) {}
   }
 
   function stopAllStems() {
@@ -5490,6 +5493,7 @@
     state.playOffset = 0;
     state.isPlaying = false;
     try { window.Launchpad && window.Launchpad.setTransportPlaying(false); } catch (_) {}
+    try { _midiClockOnTransport(false); } catch (_) {}
   }
 
   function seekAll(sec) {
@@ -7166,6 +7170,43 @@
     }
   }
 
+  // MIDI clock OUT bridge. Transport edges (playAll/pauseAll/
+  // stopAllStems) call this so external gear follows Jam's play/stop
+  // and tempo — web mirror of mobile's "Tone Forge Jam" virtual source.
+  // Gated on the user toggle inside the Launchpad module; when the
+  // toggle is off these calls are free no-ops.
+  //
+  // Effective bpm = analysed song tempo × rehearsal rate: the stems'
+  // playbackRate stretches real time, so gear locked to the analysed
+  // bpm alone would drift ahead of the slowed audio. Same 40–240
+  // validation window as _launchpadBeatTick — out-of-range analysis
+  // tempo means we send NO clock at all, because gear marching at a
+  // bogus tempo is worse than gear waiting for a manual tap.
+  function _midiClockEffectiveBpm() {
+    const bpm = (typeof state.tempo_bpm === 'number' && state.tempo_bpm >= 40 && state.tempo_bpm <= 240)
+      ? state.tempo_bpm
+      : (typeof state.tempo === 'number' && state.tempo >= 40 && state.tempo <= 240)
+        ? state.tempo : null;
+    return bpm ? bpm * _rehearsalRate() : null;
+  }
+
+  function _midiClockOnTransport(playing) {
+    const lp = window.Launchpad;
+    if (!lp || typeof lp.startMidiClock !== 'function') return;
+    if (!lp.getMidiClockEnabled()) return;
+    if (playing) {
+      const bpm = _midiClockEffectiveBpm();
+      // seekAll routes through playAll, so a scrub or rehearsal speed
+      // change lands here while the clock runs — the module retunes
+      // without resending Start (external sequencers would snap to
+      // pattern-zero on every scrub otherwise).
+      if (bpm) lp.startMidiClock(bpm);
+      else lp.stopMidiClock();
+    } else {
+      lp.stopMidiClock();
+    }
+  }
+
   // Countdown bar on the Launchpad panel. Fills from 0% to 100% as we
   // approach the next distinct-symbol chord change, then drops to 0
   // at the moment of change. Uses a lookahead window derived from the
@@ -7616,6 +7657,27 @@
         // so MIDI-delivered notes (not gestures) aren't autoplay-muted.
         if (enabled) { try { _ensureLaunchpadSynth(); } catch (_) {} }
         apply();
+      });
+    })();
+
+    // MIDI clock OUT toggle. Persisted inside the Launchpad module
+    // (localStorage jamn.midiClockOut) so mobile-style semantics stay
+    // in one place; jam.js only reflects + reacts. setMidiClockEnabled
+    // is async because first enable may prompt for MIDI access — the
+    // checkbox click is the user gesture that makes that prompt legal.
+    (function wireMidiClockOut() {
+      const cb = document.getElementById('lp-midi-clock-out');
+      if (!cb) return;
+      cb.checked = window.Launchpad.getMidiClockEnabled();
+      cb.addEventListener('change', () => {
+        Promise.resolve(window.Launchpad.setMidiClockEnabled(cb.checked))
+          .then(() => {
+            // Toggled on mid-song: start immediately rather than
+            // waiting for the next play edge. Toggle-off already
+            // stopped the clock inside setMidiClockEnabled.
+            if (cb.checked && state.isPlaying) _midiClockOnTransport(true);
+          })
+          .catch(() => {});
       });
     })();
 
@@ -13961,6 +14023,9 @@
     if (!_REHEARSAL_SPEEDS.includes(speed)) return;
     state.rehearsal.speed = speed;
     if (state.isPlaying) {
+      // seekAll → playAll also retunes the outgoing MIDI clock to the
+      // new effective bpm (_midiClockOnTransport), so external gear
+      // slows down with the stems.
       try { seekAll(currentPlayTime()); } catch (_) {}
     }
     _renderRehearsalTransport();
