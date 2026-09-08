@@ -211,7 +211,10 @@
     <button type="button" class="jamn-pill" data-surface="bandroom">Band Room</button>
     <button type="button" class="jamn-pill" data-surface="rehearsal">Rehearsal</button>
     <button type="button" class="jamn-pill" data-surface="perform">Perform</button>
-    <a class="jamn-pill" href="/studio">Studio</a>
+    <!-- Studio removed from the consumer nav: /studio is the admin
+         arrangement tool (TONEFORGE_ADMIN_TOKEN-gated) and 404s for
+         normal users — a public link there was a dead end. Admins
+         reach it directly with their token. -->
   </div>
   <div class="jamn-pillbar-side jamn-pillbar-side--right">
     <div id="account-chip" class="account-chip"></div>
