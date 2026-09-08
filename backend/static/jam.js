@@ -15149,7 +15149,7 @@
     // Every sidebar item routes to a REAL pane (full-parity build) —
     // voice/beat/sample share the contribute pane, tab-selected below.
     const SIDE_TO_VIEW = {
-      jampads: 'kit', mixer: 'mixer',
+      jampads: 'kit', mixer: 'mixer', launchpad: 'launchpad',
       sequencer: 'sequencer', recordings: 'recordings', packs: 'packs',
       voice: 'contribute', beat: 'contribute', sample: 'contribute',
     };
@@ -15164,6 +15164,7 @@
     views.recordings = $('view-recordings');
     views.packs = $('view-packs');
     views.contribute = $('view-contribute');
+    views.launchpad = $('view-launchpad');
 
     const pillnav = $('jamn-pillnav');
     const pills = pillnav
@@ -15505,6 +15506,34 @@
       } catch (e) { console.warn('[jamn-router] packs mount failed:', e); }
     }
 
+    let _lpMountedId = null;
+    function _mountLaunchpad() {
+      const root = $('launchpad-root');
+      if (!root || !window.JamnLaunchpad) return;
+      const id = state.analysisId;
+      if (!id) { root.innerHTML =
+        '<div class="kit-error">Load a song to open the Launchpad.</div>'; return; }
+      if (_lpMountedId === id) return;
+      const go = entry => {
+        try {
+          window.JamnLaunchpad.mount(root, {
+            entry,
+            onClose: () => showView('kit'),
+            onOpenContribute: (tab, onSample) => {
+              _contribTab = tab; showView('contribute');
+            },
+          });
+          _lpMountedId = id;
+          // The launchpad drives the shared kit engine — force a kit
+          // remount when the user returns to Jam Pads.
+          _mountedEntryId = null;
+        } catch (e) { console.warn('[jamn-router] launchpad mount failed:', e); }
+      };
+      if (_currentEntry && _currentEntry.id === id) go(_currentEntry);
+      else fetch(`/api/history/${id}`).then(r => (r.ok ? r.json() : null))
+        .then(e => { if (e && state.analysisId === id) { _currentEntry = e; go(e); } });
+    }
+
     let _contribMounted = false;
     function _mountContribute() {
       const root = $('contribute-root');
@@ -15583,6 +15612,7 @@
       if (name === 'recordings') _mountRecordings();
       if (name === 'packs') _mountPacks();
       if (name === 'contribute') _mountContribute();
+      if (name === 'launchpad') _mountLaunchpad();
     };
 
     // ---------------------------------------------- pill nav + hash
@@ -15603,6 +15633,14 @@
         sidebar.classList.toggle('jamn-side--open');
       });
     }
+    // Brand mark → welcome/intake screen (native parity).
+    const sideBrand = $('jamn-side-brand');
+    if (sideBrand) {
+      sideBrand.addEventListener('click', () => {
+        _userActed = true;
+        showView('intake');
+      });
+    }
 
     const SIDE_LABELS = {
       voice: 'Voice', beat: 'Beat', sample: 'Sample',
@@ -15614,25 +15652,6 @@
       const view = SIDE_TO_VIEW[side];
       if (view === 'contribute') _contribTab = side; // preselect Voice/Beat/Sample tab
       if (view) { showView(view); return; }
-      if (side === 'launchpad') {
-        // Launchpad lives as a center tab inside the perform surface.
-        // Activate perform, then delegate to the existing tab button —
-        // on the NEXT frame, because the tab bar may not be laid out
-        // until the perform view is visible (clicking it while hidden
-        // silently did nothing: "launchpad doesn't work on web").
-        showView('perform');
-        requestAnimationFrame(() => {
-          const lpTab = document.querySelector(
-            '#center-tabs .center-tab[data-tab="launchpad"]');
-          if (lpTab) { try { lpTab.click(); } catch (_) {} }
-          else if (sideNote) {
-            it.insertAdjacentElement('afterend', sideNote);
-            sideNote.textContent = 'Load a song first — the Launchpad view opens inside Perform.';
-            sideNote.hidden = false;
-          }
-        });
-        return;
-      }
       // Placeholder: select the item and say so — the note moves right
       // under the clicked item (at the bottom of the sidebar it was off
       // screen, so placeholder clicks read as dead buttons).
