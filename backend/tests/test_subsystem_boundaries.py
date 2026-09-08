@@ -36,7 +36,12 @@ TONE_FORGE_ROOT = Path(__file__).resolve().parents[1] / "tone_forge"
 SUBSYSTEMS: dict[str, Set[str]] = {
     "acquisition": set(),
     "analysis": set(),
-    "stems": set(),
+    # ``stems.enhance`` reuses ir_match's magnitude/smoothing primitives
+    # for the same reason ``monitor.tuner`` does (entry below): lossy-
+    # cutoff detection and match-IR export must measure spectra with
+    # identical math or the two silently drift. Types crossing the seam
+    # are numpy arrays; no subsystem internals.
+    "stems": {"ir_match"},
     "tone": set(),
     # ``ir_match`` is a top-level shared DSP utility (minimum-phase
     # spectral matching), not a subsystem. ``monitor.tuner`` reuses its

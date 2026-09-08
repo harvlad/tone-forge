@@ -130,6 +130,10 @@ backend/.jamn_admin_token
 backend/.mt3_checkpoints/
 backend/experiments/basic_pitch_finetune/
 backend/lab_data/derived/
+# Blind-gate audit corpora — large audio (hundreds of MB), belong on the
+# volume/R2, never the repo (artifact-durability rule). Code + findings
+# are committed; the audio is not.
+backend/lab_data/*_audit_v*/
 backend/data/performance_cache/
 backend/models/
 backend/pas.json
