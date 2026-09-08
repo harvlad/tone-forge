@@ -242,3 +242,44 @@ features:
       connect:
         status: done
         evidence: "connect/Sources/ConnectCore/LocalBridgeServer.swift#LocalBridgeServer"
+
+  - id: mixer-fx
+    name: Master mixer FX (bus-level effects on song playback)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/jam.js#Mixer FX tab"
+      ios:
+        status: partial
+        evidence: "mobile-ios/Sources/ToneForgeMobile/MixerView.swift#MixerView"
+        note: "Mixer view exists; whether it exposes the same master-FX chain as desktop MusicBus / web needs audit — parity backfill 2026-09-08 (feature shipped web-only by another session)."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopAudio/MusicBus.swift#MusicBus"
+      plugin:
+        status: na
+        note: "Host DAW owns bus effects."
+      connect:
+        status: na
+        note: "Monitoring chains are its own feature domain (tone chains), not song-mix FX."
+
+  - id: layers-rack
+    name: Layers rack (category layers, 8x8 mode, pad-usage feedback)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#renderLayers"
+      ios:
+        status: partial
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Audio/LayerPlayer.swift#LayerPlayer"
+        note: "Layer recording/playback exists; the rack UI + 8x8 mode + usage feedback shipped web-only 2026-09-08 (parity backfill row — audit and close)."
+      desktop:
+        status: partial
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/LaunchpadController.swift#activeLayer"
+        note: "Category layers exist on the launchpad controller; 8x8 rack UI + usage feedback not audited."
+      plugin:
+        status: na
+        note: "Sampler scope."
+      connect:
+        status: na
+        note: "No pad/layer surface."

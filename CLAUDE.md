@@ -127,6 +127,11 @@ Rules for ANY user-facing feature work:
    unmapped notes everywhere; melody cursor math is bit-identical between
    launchpad.js and MelodySequence.swift). Divergence is a bug even when
    both sides "work".
+5. **CI guard** (`.github/workflows/parity-guard.yml`): a `feat` commit
+   touching any platform surface must touch `PARITY.yaml` in the same
+   commit, or carry a `Parity-Exempt: <reason>` trailer. This is the
+   forcing function — two web-only features shipped rowless before it
+   existed.
 
 ## Deployment
 

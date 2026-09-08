@@ -1,0 +1,71 @@
+# Parity guard — the forcing function behind CLAUDE.md's "Platform
+# parity doctrine".
+#
+# backend/tests/test_platform_parity.py keeps EXISTING PARITY.yaml rows
+# honest (evidence anchors are greped against the tree), but nothing
+# forced NEW features to get a row at all — two web-only features
+# shipped through that hole on 2026-09-08. This workflow closes it:
+#
+#   any pushed commit whose subject starts with `feat` AND touches a
+#   platform surface (backend/static, mobile-ios, jam-desktop, plugin,
+#   connect) must touch PARITY.yaml in the SAME commit.
+#
+# fix/refactor/perf/docs commits pass untouched — bugfixes don't need
+# rows. Escape hatch for genuinely matrix-irrelevant feats: put
+# `Parity-Exempt: <reason>` in the commit body (the reason lands in
+# the log where a reviewer can judge it).
+name: parity-guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: feat commits touching platform surfaces must touch PARITY.yaml
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="origin/${{ github.base_ref }}..HEAD"
+            git fetch -q origin "${{ github.base_ref }}"
+          else
+            BEFORE="${{ github.event.before }}"
+            # First push / force push: fall back to last 20 commits.
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+               || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+              RANGE="HEAD~20..HEAD"
+            else
+              RANGE="$BEFORE..HEAD"
+            fi
+          fi
+          SURFACES='^(backend/static/|mobile-ios/Sources/|jam-desktop/Sources/|plugin/Source/|connect/Sources/)'
+          FAILED=0
+          for sha in $(git rev-list --no-merges "$RANGE"); do
+            subject=$(git log -1 --format=%s "$sha")
+            case "$subject" in feat*) ;; *) continue;; esac
+            body=$(git log -1 --format=%B "$sha")
+            if grep -q '^Parity-Exempt:' <<<"$body"; then
+              echo "exempt: $sha $subject"
+              continue
+            fi
+            files=$(git show --name-only --format= "$sha")
+            if grep -qE "$SURFACES" <<<"$files" \
+               && ! grep -qx 'PARITY.yaml' <<<"$files"; then
+              echo "::error::$sha \"$subject\" adds a feature on a platform"
+              echo "::error::surface without updating PARITY.yaml. Doctrine:"
+              echo "::error::every user-facing feature gets a row with an"
+              echo "::error::explicit status per platform (CLAUDE.md"
+              echo "::error::'Platform parity doctrine'). Add the row in the"
+              echo "::error::same commit, or add 'Parity-Exempt: <reason>'"
+              echo "::error::to the commit body if it truly has no matrix row."
+              FAILED=1
+            fi
+          done
+          exit $FAILED
