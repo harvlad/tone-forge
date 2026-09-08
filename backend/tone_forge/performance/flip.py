@@ -101,7 +101,13 @@ def _track(pack_id: str, pad_idx: int, name: str, steps: List[Dict],
            volume: float = 1.0) -> Dict:
     return {
         "id": _uuid_for(pack_id, "track", name),
-        "chopRef": {"packPad": {"packId": pack_id, "padIdx": pad_idx}},
+        # ChopReference's FROZEN wire shape is flat with a "type"
+        # discriminator (ChopReference.swift:145-195) — the nested
+        # {"packPad": {...}} form this used to emit made the whole flip
+        # kit fetch throw keyNotFound("type") on iOS AND desktop
+        # (KitClient strict-decodes the full SamplePack), so Flip was a
+        # total no-op on both native apps while web happened to parse it.
+        "chopRef": {"type": "packPad", "packId": pack_id, "padIdx": pad_idx},
         "steps": steps,
         "volume": volume,
         "pan": 0,

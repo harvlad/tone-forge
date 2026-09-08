@@ -239,14 +239,24 @@
         // here is non-fatal (the mix swap already landed) but must not
         // vanish — the pads staying stale is exactly the confusion the
         // pads-follow exists to prevent.
+        // Pads follow ONLY when the user is already on the drum kit —
+        // force-switching whatever kit/mode was loaded to drums on every
+        // Re-Drum stomped the user's context (reported on all platforms).
+        var onDrumKit = false;
         try {
-          if (kit.indexOf('song:') === 0) {
-            state.ctx.loadDonorDrumKit(kit.slice(5));
-          } else {
-            state.ctx.loadKit('drums');
+          var JK = window.JamnKit;
+          onDrumKit = !!(JK && typeof JK.kind === 'function' && JK.kind() === 'drums');
+        } catch (_) {}
+        if (onDrumKit) {
+          try {
+            if (kit.indexOf('song:') === 0) {
+              state.ctx.loadDonorDrumKit(kit.slice(5));
+            } else {
+              state.ctx.loadKit('drums');
+            }
+          } catch (e) {
+            try { console.warn('[remix] pads follow-up failed:', e); } catch (_) {}
           }
-        } catch (e) {
-          try { console.warn('[remix] pads follow-up failed:', e); } catch (_) {}
         }
         // The swap restarts audio only when the song is PLAYING;
         // paused, it's inaudible until the next Play — say which.
@@ -255,7 +265,8 @@
           : 'drums swapped to “' + donorLabel(kit) + '”';
         setApplied('redrum',
           'Applied: Re-Drum — ' + what
-          + ', in the song mix and on the pads.' + hearItNote());
+          + (onDrumKit ? ', in the song mix and on the pads.'
+                       : ', in the song mix.') + hearItNote());
       })
       .catch(function (e) {
         setError('Re-Drum failed: ' + ((e && e.message) || e));

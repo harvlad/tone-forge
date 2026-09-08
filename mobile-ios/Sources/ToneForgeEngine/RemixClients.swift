@@ -89,7 +89,7 @@ public struct RemixClient: Sendable {
     /// timeout killed it on slower links and the row read as "did nothing".
     /// Mirrors REDRUM_VERSION in the backend's redrum.py — see the cache
     /// filename below.
-    private static let redrumRenderVersion = 2
+    private static let redrumRenderVersion = 3
 
     private static let longHaul: URLSession = {
         let config = URLSessionConfiguration.default
