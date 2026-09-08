@@ -165,11 +165,12 @@ struct SamplePadGrid4x4: View {
                 SampleTrimmerSheet(
                     target: target,
                     onPreview: previewTrimmed(target: target),
-                    onApply: { start, end in
+                    onApply: { start, end, preserve in
                         coordinator.commitPadTrim(
                             packId: target.packId,
                             padIdx: target.padIdx,
-                            start: start, end: end)
+                            start: start, end: end,
+                            preserveLength: preserve)
                     }
                 )
             }

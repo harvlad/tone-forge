@@ -519,26 +519,49 @@ public final class SampleScheduler: ObservableObject {
 
     public func setPadTrim(
         packId: String, padIdx: Int,
-        startFraction: Double, endFraction: Double
+        startFraction: Double, endFraction: Double,
+        preserveLength: Bool = false
     ) {
         let key = SamplePadKey(packId: packId, padIdx: padIdx)
         let lo = max(0.0, min(startFraction, endFraction))
         let hi = min(1.0, max(startFraction, endFraction))
         if lo <= 0.001 && hi >= 0.999 {
             padTrims[key] = nil  // full range = untrimmed
+            padTrimPreserve.remove(key)
         } else if hi - lo > 0.005 {
             padTrims[key] = lo...hi
+            if preserveLength {
+                padTrimPreserve.insert(key)
+            } else {
+                padTrimPreserve.remove(key)
+            }
         }
         trimRevision += 1
         persistTrims()
     }
 
+    /// "Preserve length": the trim GATES the audio but the pad keeps its
+    /// original duration — the kept region plays at its original position
+    /// in the cycle with silence around it, so a looping pad still fires
+    /// on its musical grid instead of retriggering every trimmed-length
+    /// seconds. Off = the trim is a cut (loop cycle shrinks with it, the
+    /// stutter effect). Field-requested: "sometimes I want that, sometimes
+    /// not" — hence per-pad.
+    public private(set) var padTrimPreserve: Set<SamplePadKey> = []
+
+    public func padTrimPreservesLength(packId: String, padIdx: Int) -> Bool {
+        padTrimPreserve.contains(SamplePadKey(packId: packId, padIdx: padIdx))
+    }
+
     private static let trimsDefaultsKey = "toneforge.padTrims"
 
     private func persistTrims() {
+        // Wire shape: [lo, hi] (legacy) or [lo, hi, preserve(0/1)] — the
+        // third element is additive so pre-preserve installs restore fine.
         var raw: [String: [Double]] = [:]
         for (k, v) in padTrims {
-            raw["\(k.packId)#\(k.padIdx)"] = [v.lowerBound, v.upperBound]
+            let preserve: Double = padTrimPreserve.contains(k) ? 1 : 0
+            raw["\(k.packId)#\(k.padIdx)"] = [v.lowerBound, v.upperBound, preserve]
         }
         UserDefaults.standard.set(raw, forKey: Self.trimsDefaultsKey)
     }
@@ -550,7 +573,7 @@ public final class SampleScheduler: ObservableObject {
             forKey: Self.trimsDefaultsKey) as? [String: [Double]]
         else { return }
         for (key, bounds) in raw {
-            guard bounds.count == 2,
+            guard bounds.count >= 2,
                   let hash = key.lastIndex(of: "#"),
                   let padIdx = Int(key[key.index(after: hash)...])
             else { continue }
@@ -558,7 +581,11 @@ public final class SampleScheduler: ObservableObject {
             let lo = max(0.0, min(bounds[0], bounds[1]))
             let hi = min(1.0, max(bounds[0], bounds[1]))
             if hi - lo > 0.005 && (lo > 0.001 || hi < 0.999) {
-                padTrims[SamplePadKey(packId: packId, padIdx: padIdx)] = lo...hi
+                let k = SamplePadKey(packId: packId, padIdx: padIdx)
+                padTrims[k] = lo...hi
+                if bounds.count >= 3, bounds[2] > 0.5 {
+                    padTrimPreserve.insert(k)
+                }
             }
         }
         trimRevision += 1
@@ -577,11 +604,50 @@ public final class SampleScheduler: ObservableObject {
         _ base: AVAudioPCMBuffer, packId: String, padIdx: Int
     ) -> AVAudioPCMBuffer {
         let transformed = transformResolver?(base, packId, padIdx) ?? base
-        guard let trim = padTrim(packId: packId, padIdx: padIdx),
-              let sliced = Self.slice(
-                  transformed, from: trim.lowerBound, to: trim.upperBound)
+        guard let trim = padTrim(packId: packId, padIdx: padIdx) else {
+            return transformed
+        }
+        // Preserve-length: the trim GATES instead of cutting — output stays
+        // the ORIGINAL duration with the kept region at its original offset
+        // and silence around it. A looping pad keeps its musical cycle
+        // (fires "at the right time"); a plain cut shrinks the cycle to the
+        // trimmed length (retriggers every second on a 1 s trim — sometimes
+        // the desired stutter, hence the checkbox).
+        if padTrimPreserve.contains(
+            SamplePadKey(packId: packId, padIdx: padIdx)),
+           let gated = Self.sliceGated(
+               transformed, from: trim.lowerBound, to: trim.upperBound) {
+            return gated
+        }
+        guard let sliced = Self.slice(
+            transformed, from: trim.lowerBound, to: trim.upperBound)
         else { return transformed }
         return sliced
+    }
+
+    /// Zero-filled copy at the source's full length with only
+    /// [from, to) (fractions) carrying audio — the gate behind
+    /// preserve-length trims.
+    private static func sliceGated(
+        _ buffer: AVAudioPCMBuffer, from: Double, to: Double
+    ) -> AVAudioPCMBuffer? {
+        let total = Int(buffer.frameLength)
+        let start = max(0, min(total - 1, Int(Double(total) * from)))
+        let end = max(start + 1, min(total, Int(Double(total) * to)))
+        guard end - start > 32,
+              let out = AVAudioPCMBuffer(
+                  pcmFormat: buffer.format,
+                  frameCapacity: AVAudioFrameCount(total)),
+              let src = buffer.floatChannelData,
+              let dst = out.floatChannelData
+        else { return nil }
+        for ch in 0..<Int(buffer.format.channelCount) {
+            dst[ch].update(repeating: 0, count: total)
+            dst[ch].advanced(by: start)
+                .update(from: src[ch] + start, count: end - start)
+        }
+        out.frameLength = AVAudioFrameCount(total)
+        return out
     }
 
     private static func slice(

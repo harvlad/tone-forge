@@ -286,18 +286,23 @@ extension ModeCoordinator {
             durationSec: waveform.durationSec,
             peaks: waveform.peaks,
             initialStart: existing?.lowerBound ?? 0,
-            initialEnd: existing?.upperBound ?? 1
+            initialEnd: existing?.upperBound ?? 1,
+            initialPreserve: app.sampleScheduler.padTrimPreservesLength(
+                packId: binding.packId, padIdx: binding.padIdx)
         )
     }
 
     /// Commit a trim from the trimmer sheet's Apply — scheduler slices
-    /// playback AND the pad waveform from here on.
+    /// playback AND the pad waveform from here on. ``preserveLength``
+    /// gates instead of cutting (pad keeps its musical cycle).
     func commitPadTrim(
-        packId: String, padIdx: Int, start: Double, end: Double
+        packId: String, padIdx: Int, start: Double, end: Double,
+        preserveLength: Bool = false
     ) {
         app.sampleScheduler.setPadTrim(
             packId: packId, padIdx: padIdx,
-            startFraction: start, endFraction: end)
+            startFraction: start, endFraction: end,
+            preserveLength: preserveLength)
         objectWillChange.send()
     }
 }

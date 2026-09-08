@@ -21,6 +21,8 @@ struct SampleTrimmerTarget: Identifiable, Equatable {
     /// Committed trim the sheet opens with (handles start here).
     var initialStart: Double = 0
     var initialEnd: Double = 1
+    /// Committed preserve-length flag the sheet opens with.
+    var initialPreserve: Bool = false
 
     static func == (lhs: SampleTrimmerTarget, rhs: SampleTrimmerTarget) -> Bool {
         lhs.id == rhs.id
@@ -32,13 +34,15 @@ struct SampleTrimmerSheet: View {
     /// Called when the user taps preview or the waveform, with the current trim bounds.
     let onPreview: (Double, Double) -> Void
     /// Commits the trim (scheduler stores it; pads play + draw the
-    /// trimmed region). nil hides the Apply button.
-    var onApply: ((Double, Double) -> Void)? = nil
+    /// trimmed region). Third argument = preserve length ("keep timing").
+    /// nil hides the Apply button.
+    var onApply: ((Double, Double, Bool) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
     @State private var startFraction: Double = 0
     @State private var endFraction: Double = 1
+    @State private var preserveLength = false
     @State private var seeded = false
 
     var body: some View {
@@ -101,6 +105,25 @@ struct SampleTrimmerSheet: View {
                 }
                 .padding(.horizontal, 24)
 
+                // Keep timing: the trim gates the audio but the pad keeps
+                // its original length — a looped pad still fires on its
+                // musical cycle instead of retriggering every trimmed-
+                // length seconds. Off = the classic cut (stutter effect).
+                VStack(alignment: .leading, spacing: 2) {
+                    Toggle(isOn: $preserveLength) {
+                        Text("Keep timing")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white)
+                    }
+                    .tint(.green)
+                    Text(preserveLength
+                         ? "Plays the kept region at its original spot; silence fills the rest."
+                         : "Loops the trimmed region back-to-back (retrigger effect).")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 24)
+
                 // Action buttons
                 HStack(spacing: 16) {
                     Button {
@@ -147,7 +170,7 @@ struct SampleTrimmerSheet: View {
                     // survives relaunch) — Apply is honest again.
                     if let onApply {
                         Button("Apply") {
-                            onApply(startFraction, endFraction)
+                            onApply(startFraction, endFraction, preserveLength)
                             dismiss()
                         }
                         .fontWeight(.semibold)
@@ -159,6 +182,7 @@ struct SampleTrimmerSheet: View {
                 seeded = true
                 startFraction = target.initialStart
                 endFraction = target.initialEnd
+                preserveLength = target.initialPreserve
             }
         }
     }
