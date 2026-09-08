@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # re-renders the mono files already sitting in the server cache.
 # v3: true stereo passthrough of render-v2 stereo composites (v2 was
 # dual-mono — crash-safe but the collapsed image was plainly audible).
-REDRUM_VERSION = 6
+REDRUM_VERSION = 7
 
 # When the target kit lacks a class the groove uses, fall through this map
 # rather than dropping the hit — a groove with holes reads as a glitch, a
@@ -149,35 +149,45 @@ def _musical_hits(hits: List[Dict],
                         reverse=True)
         strong = ranked[: max(1, len(ranked) // 3)]
 
-    grid = _sixteenth_grid([float(b) for b in (beats or [])
-                            if isinstance(b, (int, float))])
-    if len(grid) >= 4:
+    beat_list = [float(b) for b in (beats or []) if isinstance(b, (int, float))]
+    grid16 = _sixteenth_grid(beat_list)
+    if len(grid16) >= 4:
         import bisect
 
-        # tolerance = half a 16th (grids are near-uniform); a hit farther
-        # than this from every grid point is off-grid → dropped.
-        med_step = _median_step(grid)
-        tol = med_step * 0.5
+        # Two grids: kick/snare quantize to the 8TH-note grid, hats/perc to
+        # the 16th. The low band over-fires so badly (bass indistinguishable
+        # from kicks) that no per-hit feature separates them; the strongest
+        # musical prior left is DENSITY — a kick/snare pattern almost never
+        # lands on every 16th, so binning them to 8ths caps the machine-gun
+        # at one hit per 8th while hats keep their 16th detail. Keep the
+        # STRONGEST hit per (class, slot); drop hits >half a slot off grid.
+        grid8 = grid16[::2]
+        med16 = _median_step(grid16)
+
+        def _snap(g: List[float], t: float, tol: float):
+            j = bisect.bisect_left(g, t)
+            cand = [k for k in (j, j - 1) if 0 <= k < len(g)]
+            if not cand:
+                return None
+            gi = min(cand, key=lambda k: abs(g[k] - t))
+            return gi if abs(g[gi] - t) <= tol else None
+
+        coarse = {"kick", "snare", "tom"}
         best: Dict[tuple, Dict] = {}
         for h in strong:
             t = float(h["t"])
-            j = bisect.bisect_left(grid, t)
-            # nearest of the two straddling grid points
-            cand = []
-            if j < len(grid):
-                cand.append(j)
-            if j > 0:
-                cand.append(j - 1)
-            gi = min(cand, key=lambda k: abs(grid[k] - t)) if cand else None
-            if gi is None or abs(grid[gi] - t) > tol:
+            if h["cls"] in coarse:
+                g, tol = grid8, med16              # 8th slot, ±one 16th
+            else:
+                g, tol = grid16, med16 * 0.5        # 16th slot, ±half a 16th
+            gi = _snap(g, t, tol)
+            if gi is None:
                 continue
-            key = (h["cls"], gi)
+            key = (h["cls"], id(g), gi)
             if key not in best or float(h.get("strength", 0.0)) \
                     > float(best[key].get("strength", 0.0)):
-                # Snap the time to the grid point — tight beat, and identical
-                # false onsets collapse onto one slot.
                 snapped = dict(h)
-                snapped["t"] = round(grid[gi], 4)
+                snapped["t"] = round(g[gi], 4)
                 best[key] = snapped
         kept = list(best.values())
         kept.sort(key=lambda h: float(h["t"]))
