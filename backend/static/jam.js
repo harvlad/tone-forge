@@ -4797,7 +4797,17 @@
         loaders.push(stem.loadPromise);
         continue;
       }
-      const p = fetch(stem.url)
+      // Cross-origin R2 presigned URLs are unreachable from a browser (the
+      // bucket sends no CORS headers) — stream them via the backend proxy.
+      let stemFetchUrl = stem.url;
+      if (stemFetchUrl && /^https?:/i.test(stemFetchUrl)
+          && stemFetchUrl.indexOf(window.location.origin) !== 0
+          && state.analysisId) {
+        const role = stem.role || String(name).split('.').pop();
+        stemFetchUrl = `${window.location.origin}/api/history/` +
+          `${encodeURIComponent(state.analysisId)}/stem-audio/${encodeURIComponent(role)}`;
+      }
+      const p = fetch(stemFetchUrl)
           .then((r) => {
             if (!r.ok) throw new Error(`HTTP ${r.status} for ${name}`);
             return r.arrayBuffer();

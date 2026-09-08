@@ -145,6 +145,13 @@
       return Promise.all(
         roles.map(function (role) {
           var url = resolveStemUrl(paths[role]);
+          // Cross-origin R2 presigned URLs are unreachable from a browser
+          // (bucket sends no CORS headers) — stream via the backend proxy.
+          if (url && url.indexOf(window.location.origin) !== 0 && /^https?:/i.test(url)) {
+            url = window.location.origin + "/api/history/" +
+              encodeURIComponent(entry.id) + "/stem-audio/" +
+              encodeURIComponent(role);
+          }
           if (!url) return null;
           return fetch(url)
             .then(function (r) {

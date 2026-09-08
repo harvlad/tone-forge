@@ -4890,6 +4890,42 @@ async def get_history_entry(entry_id: str) -> JSONResponse:
     return JSONResponse(_convert_numpy_types(entry))
 
 
+@app.get("/api/history/{entry_id}/stem-audio/{role}")
+async def get_history_stem_audio(entry_id: str, role: str):
+    """Same-origin stem audio for the WEB app.
+
+    Native clients fetch the presigned R2 stem URLs directly, but a
+    browser can't: the R2 bucket sends no CORS headers and the API token
+    is object-scoped (PutBucketCors → AccessDenied), so fetch() dies with
+    a bare TypeError. A redirect wouldn't help — CORS applies to the
+    final response — so this streams the object through the backend.
+    Local stem files (dev) are served directly.
+    """
+    entry = _get_history_item(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="History entry not found")
+    result = entry.get("result") or {}
+    local = _resolve_local_stem_paths(result)
+    lp = local.get(role)
+    if lp and Path(lp).exists():
+        return FileResponse(lp)
+    _refresh_r2_stem_urls(result)
+    url = (result.get("stems_paths") or {}).get(role)
+    if not isinstance(url, str) or not url.startswith("http"):
+        raise HTTPException(status_code=404, detail=f"No stem audio for role {role!r}")
+    import requests as _requests
+
+    def _iter():
+        with _requests.get(url, stream=True, timeout=120) as r:
+            r.raise_for_status()
+            for chunk in r.iter_content(chunk_size=1 << 16):
+                yield chunk
+
+    media = "audio/flac" if ".flac" in url.split("?", 1)[0] else "audio/wav"
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(_iter(), media_type=media)
+
+
 @app.get("/api/session/{entry_id}")
 async def get_session_bundle(entry_id: str) -> JSONResponse:
     """Return the Jam-shaped ``SessionBundle`` for a persisted analysis.
