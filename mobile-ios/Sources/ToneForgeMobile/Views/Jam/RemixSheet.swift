@@ -44,6 +44,23 @@ struct RemixSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+            // "Applied: …" confirmation, pinned so it never scrolls out of
+            // view. Every transform here lands on a surface that may be
+            // silent right now (paused mix, idle sequencer) — field reports
+            // read that as "remix did nothing" — so success is stated, not
+            // inferred from the audio. Cleared when the next transform starts.
+            .safeAreaInset(edge: .bottom) {
+                if let msg = appState.remixApplied {
+                    Text(msg)
+                        .font(.footnote)
+                        .foregroundStyle(TFTheme.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.regularMaterial)
+                        .accessibilityAddTraits(.updatesFrequently)
+                }
+            }
         }
         .task { await loadCandidates() }
     }
@@ -148,7 +165,8 @@ struct RemixSheet: View {
             }
             ForEach(candidates.prefix(6)) { c in
                 redrumRow(title: c.name, kit: "song:\(c.entryId)",
-                          detail: c.classes.count >= 3 ? "full kit" : nil)
+                          detail: c.classes.count >= 3 ? "full kit" : nil,
+                          donorName: c.name)
             }
         } header: {
             Text("Re-Drum")
@@ -158,9 +176,10 @@ struct RemixSheet: View {
     }
 
     private func redrumRow(title: String, kit: String,
-                           detail: String? = nil) -> some View {
+                           detail: String? = nil,
+                           donorName: String? = nil) -> some View {
         Button {
-            appState.applyRedrum(kit: kit)
+            appState.applyRedrum(kit: kit, donorName: donorName)
         } label: {
             HStack {
                 Label(title, systemImage: "arrow.triangle.2.circlepath")
@@ -222,9 +241,14 @@ struct RemixSheet: View {
     }
 
     private func downloadInstrumentPack() {
-        guard let analysisId = appState.currentBundle?.analysisId else { return }
+        guard let analysisId = appState.currentBundle?.analysisId else {
+            // Silent return here = a dead button; say why nothing happened.
+            appState.remixError = "No song loaded."
+            return
+        }
         packDownloading = true
         appState.remixError = nil
+        appState.remixApplied = nil
         let base = appState.backendBaseURL
         Task { @MainActor in
             defer { packDownloading = false }
@@ -243,6 +267,11 @@ struct RemixSheet: View {
                     .appendingPathComponent("Instrument-\(analysisId.prefix(8)).zip")
                 try data.write(to: dest, options: .atomic)
                 packFileURL = dest
+                // The zip only lives in tmp until shared — without this
+                // line the row silently morphs and the download reads as
+                // "nothing happened".
+                appState.remixApplied =
+                    "Instrument Pack ready — tap Save Instrument Pack to save or share the .sfz zip."
             } catch {
                 appState.remixError = error.localizedDescription
             }

@@ -82,7 +82,8 @@ struct RemixSheetView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(candidates.prefix(6)) { c in
-                        redrumRow(c.name, kit: "song:\(c.entryId)")
+                        redrumRow(c.name, kit: "song:\(c.entryId)",
+                                  donorName: c.name)
                     }
                 } header: {
                     Text("Re-Drum — keep the groove, swap the kit")
@@ -104,6 +105,22 @@ struct RemixSheetView: View {
                 }
             }
             .listStyle(.inset)
+
+            // "Applied: …" confirmation, pinned below the list so it can't
+            // scroll out of the fixed-height sheet. Every transform here
+            // lands on a surface that may be silent right now (paused mix,
+            // idle sequencer, a background browser download) — field reports
+            // read that as "remix did nothing" — so success is stated, not
+            // inferred from the audio. Cleared when the next transform starts.
+            if let msg = session.remixApplied {
+                Divider()
+                Text(msg)
+                    .font(.callout)
+                    .foregroundStyle(JamTheme.accent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+            }
         }
         .frame(width: 440, height: 520)
         .task {
@@ -148,9 +165,10 @@ struct RemixSheetView: View {
         .disabled(session.autoKitLoading)
     }
 
-    private func redrumRow(_ title: String, kit: String) -> some View {
+    private func redrumRow(_ title: String, kit: String,
+                           donorName: String? = nil) -> some View {
         Button {
-            Task { await session.applyRedrum(kit: kit) }
+            Task { await session.applyRedrum(kit: kit, donorName: donorName) }
         } label: {
             row(title, icon: "arrow.triangle.2.circlepath",
                 subtitle: kit == "self"

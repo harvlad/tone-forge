@@ -1978,7 +1978,9 @@ public final class AppState: ObservableObject {
             // song-DNA pack activated above and autoKitError carries why.
             // kind explicit: every song opens on the Auto Kit — a Drum Kit
             // choice on the previous song must not leak across songs.
-            if !localURLs.isEmpty { loadAutoKit(kind: "auto") }
+            // announce: false — this is the automatic song-open load, not a
+            // Remix action; it must not seed a stale "Applied:" line.
+            if !localURLs.isEmpty { loadAutoKit(kind: "auto", announce: false) }
             // Surface a "no audio" state when the song expected stems but
             // none downloaded (backend/R2 unavailable — e.g. jamn.app
             // analyses with no stored stems). The bundled demo is offline
@@ -2050,7 +2052,12 @@ public final class AppState: ObservableObject {
     /// clobber the next song's pack. Buffers are decoded BEFORE the kit
     /// fronts the grid, so the DNA→kit swap has no silent-tap window —
     /// the song-DNA pack keeps playing until the kit is actually ready.
-    public func loadAutoKit(skill: String = "intermediate", kind: String? = nil) {
+    ///
+    /// `announce: false` for programmatic loads (song-open Auto Kit, the
+    /// Re-Drum pads follow-up) — only a user-initiated kit tap should
+    /// write the Remix sheet's "Applied:" confirmation.
+    public func loadAutoKit(skill: String = "intermediate", kind: String? = nil,
+                            announce: Bool = true) {
         guard let analysisId = currentBundle?.analysisId else {
             autoKitError = "No song loaded."
             return
@@ -2058,6 +2065,7 @@ public final class AppState: ObservableObject {
         guard !autoKitLoading else { return }
         autoKitLoading = true
         autoKitError = nil
+        if announce { remixApplied = nil }
         let kitKind = kind ?? lastKitKind
         lastKitKind = kitKind
         let base = backendBaseURL
@@ -2090,12 +2098,33 @@ public final class AppState: ObservableObject {
                     // defaultSequence to the store (idempotent by id) —
                     // start it on the style-beat pad so the flip PLAYS the
                     // moment it loads, not after a picker safari.
+                    var flipStarted = false
                     if kitKind == "flip",
                        let pattern = pack.defaultSequence {
                         self.modeCoordinator.sequencePadManager.start(
                             patternId: pattern.id,
                             padIdx: Self.styleBeatPadIdx,
                             songBPM: self.currentBundle?.meta.tempoBpm ?? 120)
+                        flipStarted = true
+                    }
+                    if announce {
+                        // Kits land on a surface that only sounds when
+                        // TOUCHED (or, for Flip, when its sequence runs) —
+                        // state the success and where to hear it, or the
+                        // tap reads as a no-op. iOS auto-starts the flip
+                        // beat; the message must match what just happened.
+                        switch kitKind {
+                        case "flip":
+                            self.remixApplied = flipStarted
+                                ? "Applied: Flip — a new beat from this song's DNA is on the pads and playing now."
+                                : "Applied: Flip — new kit on the pads; the beat is armed in the Sequencer. Press its play to hear it."
+                        case "drums":
+                            self.remixApplied =
+                                "Applied: Drum Kit — kick, snare and hats are on the pads as one-shots. Tap a pad to hear them."
+                        default:
+                            self.remixApplied =
+                                "Applied: Auto Kit — the song's best loops are on the pads. Tap a pad to hear them."
+                        }
                     }
                     return
                 } catch {
@@ -2164,18 +2193,42 @@ public final class AppState: ObservableObject {
     /// flag painted every donor row busy at once (field-reported).
     @Published public private(set) var redrumBusyKit: String?
     @Published public var remixError: String?
+    /// Post-apply confirmation line ("Applied: …") for the Remix sheet.
+    /// Every transform lands on a surface that may be SILENT right now
+    /// (paused song mix, idle sequencer, a zip in tmp) — field reports
+    /// read that as "remix did nothing" — so success is stated, not
+    /// inferred from the audio. Set on success, cleared the moment
+    /// another transform starts. Public setter: the sheet's Instrument
+    /// Pack download reports here too.
+    @Published public var remixApplied: String?
+
+    /// Steer the user to where a song-mix change becomes audible. Reads
+    /// the live transport flag (`isPlaying`, driven by the engine); while
+    /// paused, a drum swap is inaudible until the next Play — say so.
+    private var remixHearItNote: String {
+        isPlaying ? "" : " Press Play to hear it."
+    }
+
+    /// Humanize is 1-24 ms of step swing — real but subtle, and only
+    /// audible while a sequence runs; without saying so it reads as a no-op.
+    private static let humanizeOnMessage =
+        "Humanize on — sequencer steps now swing with this song's own "
+        + "micro-timing. Subtle by design; audible while a sequence plays."
 
     /// Toggle groove humanize; fetches the template on first use.
     public func toggleHumanize() {
         guard let analysisId = currentBundle?.analysisId else { return }
+        remixApplied = nil
         if remixHumanizeOn {
             remixHumanizeOn = false
             modeCoordinator.sequencePadManager.grooveOffsets = nil
+            remixApplied = "Humanize off — sequencer timing back to the grid."
             return
         }
         if let template = grooveTemplate {
             remixHumanizeOn = true
             modeCoordinator.sequencePadManager.grooveOffsets = template
+            remixApplied = Self.humanizeOnMessage
             return
         }
         remixBusy = "humanize"
@@ -2190,6 +2243,7 @@ public final class AppState: ObservableObject {
                 self.grooveTemplate = offsets
                 self.remixHumanizeOn = true
                 self.modeCoordinator.sequencePadManager.grooveOffsets = offsets
+                self.remixApplied = Self.humanizeOnMessage
             } catch {
                 self.remixError = error.localizedDescription
             }
@@ -2206,13 +2260,16 @@ public final class AppState: ObservableObject {
     /// Apply Re-Drum: swap the drums stem for the rendered replacement
     /// (this song's groove on `kit`'s drums). Reloads the stem player —
     /// the only supported swap path (AVAudioFile can't rebind buffers).
-    public func applyRedrum(kit: String) {
+    /// `donorName` (the sheet's candidate title) makes the "Applied:"
+    /// line name WHOSE drums landed instead of a bare id.
+    public func applyRedrum(kit: String, donorName: String? = nil) {
         guard let bundle = currentBundle else { return }
         guard redrumBusyKit == nil else { return }
         let analysisId = bundle.analysisId
         remixBusy = "redrum"
         redrumBusyKit = kit
         remixError = nil
+        remixApplied = nil
         let base = backendBaseURL
         Task { @MainActor in
             defer { self.remixBusy = nil; self.redrumBusyKit = nil }
@@ -2232,13 +2289,28 @@ public final class AppState: ObservableObject {
                 self.redrumActiveKit = kit
                 Haptics.padTrigger()
                 // The kit lands on the PADS too — field feedback: a stem-only
-                // swap left users hunting for where the new drums lived.
+                // swap left users hunting for where the new drums lived. A
+                // failure here is non-fatal (the mix swap already landed) but
+                // must not vanish: the "Applied:" line says whether the pads
+                // followed, instead of promising a grid that never changed.
+                var padsFollowed = true
                 if kit.hasPrefix("song:") {
-                    await self.loadDonorKitPads(
+                    padsFollowed = await self.loadDonorKitPads(
                         donorId: String(kit.dropFirst(5)))
                 } else {
-                    self.loadAutoKit(kind: "drums")
+                    // Fire-and-forget by design (own-song stems are local, the
+                    // kit fetch has its own retry + error surface). announce:
+                    // false so its "Applied: Drum Kit" can't clobber this line.
+                    self.loadAutoKit(kind: "drums", announce: false)
                 }
+                let what = kit == "self"
+                    ? "drums re-triggered from this song's own tightened kit"
+                    : "drums swapped to \u{201C}\(donorName ?? String(kit.dropFirst(5)).prefix(8).description)\u{201D}"
+                let whereTo = padsFollowed
+                    ? ", in the song mix and on the pads."
+                    : ", in the song mix (the donor kit couldn't load onto the pads)."
+                self.remixApplied =
+                    "Applied: Re-Drum — " + what + whereTo + self.remixHearItNote
             } catch {
                 self.remixError = error.localizedDescription
             }
@@ -2252,6 +2324,8 @@ public final class AppState: ObservableObject {
         let analysisId = bundle.analysisId
         remixBusy = "redrum"
         redrumBusyKit = "original"
+        remixError = nil
+        remixApplied = nil
         Task { @MainActor in
             defer { self.remixBusy = nil; self.redrumBusyKit = nil }
             do {
@@ -2262,6 +2336,8 @@ public final class AppState: ObservableObject {
                 guard self.currentBundle?.analysisId == analysisId else { return }
                 self.currentStemLocalURLs = urls
                 self.redrumActiveKit = nil
+                self.remixApplied =
+                    "Original drums restored in the song mix." + self.remixHearItNote
             } catch {
                 self.remixError = error.localizedDescription
             }
@@ -2295,10 +2371,12 @@ public final class AppState: ObservableObject {
     /// downloaded make the grid — the stemSlice fallback would slice the
     /// CURRENT song's drums stem at the donor's timestamps, i.e. garbage.
     /// Groove pads (stem-window loops) are dropped for the same reason.
-    private func loadDonorKitPads(donorId: String) async {
+    /// Returns whether the donor pads actually landed — the caller's
+    /// "Applied:" line must not claim a grid that never changed.
+    private func loadDonorKitPads(donorId: String) async -> Bool {
         let base = backendBaseURL
         guard let donorPack = try? await KitClient().fetchKit(
-            baseURL: base, analysisId: donorId, kind: "drums") else { return }
+            baseURL: base, analysisId: donorId, kind: "drums") else { return false }
         let files = await Self.downloadKitSamples(pack: donorPack, base: base)
         let pads: [SamplePad] = donorPack.pads.compactMap { pad in
             guard files[pad.padIdx] != nil,
@@ -2314,7 +2392,7 @@ public final class AppState: ObservableObject {
                 category: pad.category
             )
         }
-        guard !pads.isEmpty else { return }
+        guard !pads.isEmpty else { return false }
         let pack = SamplePack(
             manifestVersion: donorPack.manifestVersion,
             packId: donorPack.packId,
@@ -2327,6 +2405,7 @@ public final class AppState: ObservableObject {
         await sampleScheduler.preloadPackAsync(
             resolved, stemFiles: currentStemLocalURLs)
         activateSamplePack(resolved, stemFiles: currentStemLocalURLs)
+        return true
     }
 
     /// Song-switch hygiene for remix state (called from the load path).
@@ -2338,6 +2417,7 @@ public final class AppState: ObservableObject {
         originalDrumsURL = nil
         remixBusy = nil
         remixError = nil
+        remixApplied = nil
     }
 
     /// Instant Groove: fire the single best-scoring loop in each core category

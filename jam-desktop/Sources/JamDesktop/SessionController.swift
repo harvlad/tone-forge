@@ -823,7 +823,9 @@ final class SessionController: ObservableObject {
             await self?.chopPlayer.prewarm(presetAssignments)
             // kind explicit: every song opens on the Auto Kit — a Drum Kit
             // choice on the previous song must not leak across songs.
-            await self?.loadAutoKit(kind: "auto")
+            // announce: false — automatic attach-time load, not a Remix
+            // action; it must not seed a stale "Applied:" line.
+            await self?.loadAutoKit(kind: "auto", announce: false)
         }
     }
 
@@ -867,8 +869,12 @@ final class SessionController: ObservableObject {
     /// sentinel assetId, so stale entries can never hijack preset chops.
     private var drumKitSampleFiles: [Int: URL] = [:]
 
+    /// `announce: false` for programmatic loads (song-attach Auto Kit, the
+    /// Re-Drum pads follow-up) — only a user-initiated kit tap should
+    /// write the Remix sheet's "Applied:" confirmation.
     @MainActor
-    func loadAutoKit(skill: String = "intermediate", kind: String? = nil) async {
+    func loadAutoKit(skill: String = "intermediate", kind: String? = nil,
+                     announce: Bool = true) async {
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL else {
             autoKitError = "No song loaded."
             return
@@ -876,6 +882,7 @@ final class SessionController: ObservableObject {
         guard !autoKitLoading else { return }
         autoKitLoading = true
         autoKitError = nil
+        if announce { remixApplied = nil }
         let kitKind = kind ?? lastKitKind
         lastKitKind = kitKind
         defer { autoKitLoading = false }
@@ -934,6 +941,24 @@ final class SessionController: ObservableObject {
             // Decode the kit's buffers off the touch path so the first
             // press of every pad fires without the read+SRC delay.
             Task { [weak self] in await self?.chopPlayer.prewarm(pairs) }
+            if announce {
+                // Kits land on a surface that only sounds when TOUCHED —
+                // state the success and where to hear it, or the tap reads
+                // as a no-op. Unlike iOS, desktop does not auto-start the
+                // flip beat (no defaultSequence adoption), so the Flip
+                // message points at the pads, not a running sequence.
+                switch kitKind {
+                case "flip":
+                    remixApplied =
+                        "Applied: Flip — a new beat from this song's DNA is on the pads. Tap the pads to hear it."
+                case "drums":
+                    remixApplied =
+                        "Applied: Drum Kit — kick, snare and hats are on the pads as one-shots. Tap a pad to hear them."
+                default:
+                    remixApplied =
+                        "Applied: Auto Kit — the song's best loops are on the pads. Tap a pad to hear them."
+                }
+            }
         } catch is CancellationError {
             // Song changed mid-retry — not an error for the new song.
         } catch {
@@ -1022,15 +1047,37 @@ final class SessionController: ObservableObject {
     /// painted every donor row busy at once).
     @Published private(set) var redrumBusyKit: String?
     @Published var remixError: String?
+    /// Post-apply confirmation line ("Applied: …") for the Remix sheet.
+    /// Every transform lands on a surface that may be SILENT right now
+    /// (paused song mix, idle sequencer, a browser download) — field
+    /// reports read that as "remix did nothing" — so success is stated,
+    /// not inferred from the audio. Set on success, cleared the moment
+    /// another transform starts.
+    @Published var remixApplied: String?
+
+    /// Steer the user to where a song-mix change becomes audible. Reads
+    /// the live transport (`transport.isPlaying`); while paused, a drum
+    /// swap is inaudible until the next Play — say so.
+    private var remixHearItNote: String {
+        transport.isPlaying ? "" : " Press Play to hear it."
+    }
+
+    /// Humanize is a few ms of step swing — real but subtle, and only
+    /// audible while a sequence runs; without saying so it reads as a no-op.
+    private static let humanizeOnMessage =
+        "Humanize on — sequencer steps now swing with this song's own "
+        + "micro-timing. Subtle by design; audible while a sequence plays."
 
     @MainActor
     func toggleHumanize() async {
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL
         else { return }
+        remixApplied = nil
         if remixHumanizeOn {
             remixHumanizeOn = false
             sequencer.grooveOffsets = nil
             sequencePadManager.grooveOffsets = nil
+            remixApplied = "Humanize off — sequencer timing back to the grid."
             return
         }
         if grooveTemplate == nil {
@@ -1048,6 +1095,7 @@ final class SessionController: ObservableObject {
         remixHumanizeOn = true
         sequencer.grooveOffsets = grooveTemplate
         sequencePadManager.grooveOffsets = grooveTemplate
+        remixApplied = Self.humanizeOnMessage
     }
 
     func redrumCandidates() async -> [RedrumCandidate] {
@@ -1057,13 +1105,16 @@ final class SessionController: ObservableObject {
             baseURL: base, analysisId: analysisId)) ?? []
     }
 
+    /// `donorName` (the sheet's candidate title) makes the "Applied:"
+    /// line name WHOSE drums landed instead of a bare id.
     @MainActor
-    func applyRedrum(kit: String) async {
+    func applyRedrum(kit: String, donorName: String? = nil) async {
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL,
               let bundle = attachedBundle, redrumBusyKit == nil else { return }
         remixBusy = "redrum"
         redrumBusyKit = kit
         remixError = nil
+        remixApplied = nil
         defer { remixBusy = nil; redrumBusyKit = nil }
         do {
             let wav = try await RemixClient().fetchRedrumStem(
@@ -1079,12 +1130,28 @@ final class SessionController: ObservableObject {
             attachedStemURLs = urls
             redrumActiveKit = kit
             // The kit lands on the PADS too — a stem-only swap left users
-            // hunting for where the new drums lived.
+            // hunting for where the new drums lived. A failure here is
+            // non-fatal (the mix swap already landed) but must not vanish:
+            // the "Applied:" line says whether the pads followed, instead
+            // of promising a grid that never changed.
+            var padsFollowed = true
             if kit.hasPrefix("song:") {
-                await loadDonorKitPads(donorId: String(kit.dropFirst(5)))
+                padsFollowed = await loadDonorKitPads(
+                    donorId: String(kit.dropFirst(5)))
             } else {
-                await loadAutoKit(kind: "drums")
+                // announce: false so the kit load's own "Applied: Drum
+                // Kit" can't clobber the Re-Drum confirmation.
+                await loadAutoKit(kind: "drums", announce: false)
+                padsFollowed = autoKitError == nil
             }
+            let what = kit == "self"
+                ? "drums re-triggered from this song's own tightened kit"
+                : "drums swapped to \u{201C}\(donorName ?? String(kit.dropFirst(5)).prefix(8).description)\u{201D}"
+            let whereTo = padsFollowed
+                ? ", in the song mix and on the pads."
+                : ", in the song mix (the donor kit couldn't load onto the pads)."
+            remixApplied =
+                "Applied: Re-Drum — " + what + whereTo + remixHearItNote
         } catch {
             remixError = error.localizedDescription
         }
@@ -1095,13 +1162,15 @@ final class SessionController: ObservableObject {
     /// aren't local, so a chop-window fallback would play the WRONG song's
     /// drums); groove pads are dropped for the same reason. Trigger routes
     /// through the drumfile: sentinel → ChopPlayer.trigger(file:).
+    /// Returns whether the donor pads actually landed — the caller's
+    /// "Applied:" line must not claim a grid that never changed.
     @MainActor
-    private func loadDonorKitPads(donorId: String) async {
-        guard let base = backendBaseURL else { return }
+    private func loadDonorKitPads(donorId: String) async -> Bool {
+        guard let base = backendBaseURL else { return false }
         guard let donorPack = try? await KitClient().fetchKit(
-            baseURL: base, analysisId: donorId, kind: "drums") else { return }
+            baseURL: base, analysisId: donorId, kind: "drums") else { return false }
         let files = await Self.downloadKitSamples(pack: donorPack, base: base)
-        guard !files.isEmpty else { return }
+        guard !files.isEmpty else { return false }
         drumKitSampleFiles = files
         let pairs: [(chop: Chop, stem: String)] = donorPack.pads.compactMap { pad in
             guard files[pad.padIdx] != nil, pad.loopable != true else { return nil }
@@ -1123,8 +1192,9 @@ final class SessionController: ObservableObject {
             )
             return (chop, "drums")
         }
-        guard !pairs.isEmpty else { return }
+        guard !pairs.isEmpty else { return false }
         launchpad.adoptAssignments(pairs)
+        return true
     }
 
     @MainActor
@@ -1133,12 +1203,16 @@ final class SessionController: ObservableObject {
               redrumActiveKit != nil, redrumBusyKit == nil else { return }
         remixBusy = "redrum"
         redrumBusyKit = "original"
+        remixError = nil
+        remixApplied = nil
         defer { remixBusy = nil; redrumBusyKit = nil }
         var urls = attachedStemURLs
         urls["drums"] = original
         await swapStemsPreservingPlayback(bundle: bundle, urls: urls)
         attachedStemURLs = urls
         redrumActiveKit = nil
+        remixApplied =
+            "Original drums restored in the song mix." + remixHearItNote
     }
 
     /// Stem reload with playback AND mix continuity — the only supported
@@ -1176,14 +1250,28 @@ final class SessionController: ObservableObject {
     }
 
     /// Instrument Pack downloads through the browser — the zip lands in
-    /// ~/Downloads with zero in-app plumbing.
+    /// ~/Downloads with zero in-app plumbing. The handoff is invisible
+    /// from the app (the browser may open behind it), so both outcomes
+    /// must be stated: silent success reads as a dead button, and a
+    /// swallowed `open` failure (no browser, sandbox denial) was exactly
+    /// the "remix did nothing" class of bug.
     func openInstrumentPack() {
+        remixApplied = nil
+        remixError = nil
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL
-        else { return }
+        else {
+            remixError = "No song loaded."
+            return
+        }
         let url = base.appendingPathComponent("api/song")
             .appendingPathComponent(analysisId)
             .appendingPathComponent("instrument-pack")
-        NSWorkspace.shared.open(url)
+        if NSWorkspace.shared.open(url) {
+            remixApplied =
+                "Instrument Pack — download started in your browser; the .sfz zip lands in Downloads."
+        } else {
+            remixError = "Couldn't open the browser to download the Instrument Pack."
+        }
     }
 
     private func resetRemixState() {
@@ -1195,6 +1283,7 @@ final class SessionController: ObservableObject {
         originalDrumsURL = nil
         remixBusy = nil
         remixError = nil
+        remixApplied = nil
     }
 
     // MARK: - Layer recording (P4)

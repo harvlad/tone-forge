@@ -214,9 +214,11 @@ features:
       ios:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeEngine/RemixClients.swift#RemixClient"
+        note: "Includes the web remix bar's applied-confirmation semantics (AppState.remixApplied): every transform states what changed and where to hear it, with a live transport-aware 'Press Play to hear it' on song-mix changes. Flip auto-starts its beat (unlike web/desktop) and the message says so."
       desktop:
         status: done
         evidence: "jam-desktop/Sources/JamDesktop/Sequencer/SequencerPanelView.swift#SequencerPanelView"
+        note: "Includes the applied-confirmation line (SessionController.remixApplied), transport-aware via TransportController.isPlaying. Flip does NOT auto-start (no defaultSequence adoption on desktop) — its message points at the pads."
       plugin:
         status: na
         note: "Sampler scope; sequencing lives in the host."
