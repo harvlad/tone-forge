@@ -192,6 +192,12 @@ struct Connect {
                          result.roundTripMs, result.inputPeakAmplitude, result.confidence))
             if result.confidence == "no_signal" {
                 print("  No impulse detected. Check input gain and routing.")
+            } else if result.confidence != "high" || result.roundTripMs <= 0 {
+                // A negative or low-confidence reading means the detector
+                // fired on ambient noise, not the emitted impulse — passing
+                // verdict on it would report "within target" for garbage.
+                print("  Reading unreliable (noise-triggered or out of range). No verdict.")
+                print("  Raise output volume / move mic closer and re-run.")
             } else if result.roundTripMs > 30 {
                 print("  WARN: round-trip > 30 ms. Real-time jamming will feel laggy.")
             } else if result.roundTripMs > 15 {
@@ -433,6 +439,12 @@ struct Connect {
                 }
             }
         }
+        // Local fast path (mirrors AppDelegate): loopback WS listener
+        // so a Chrome tab can bypass the relay for latency-sensitive
+        // frames. Token gate = this session id. If the port is taken
+        // (e.g. the GUI app is also running) the listener logs and
+        // no-ops; the relay path is unaffected.
+        bridge.attachLocalBridge(LocalBridgeServer(sessionId: sessionId))
         bridge.start()
 
         // Keep the process alive until Ctrl-C.

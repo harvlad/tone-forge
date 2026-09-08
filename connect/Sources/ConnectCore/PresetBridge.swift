@@ -93,6 +93,15 @@ public final class PresetBridge {
     public private(set) var serverURL: URL
     public private(set) var isRunning = false
 
+    /// Optional loopback listener (LocalBridgeServer). When attached,
+    /// inbound local frames run through the same `dispatch` as relay
+    /// frames, and outbound telemetry (connect_state, latency_report,
+    /// input_meter, device_lost) is mirrored to authenticated local
+    /// peers in addition to the relay — the relay stays connected so
+    /// server-side caching/replay and chain_id resolution keep
+    /// working; the local socket is purely a latency fast path.
+    public private(set) var localBridge: LocalBridgeServer?
+
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
     private var reconnectDelay: TimeInterval = 1.0
@@ -138,6 +147,25 @@ public final class PresetBridge {
         task = nil
         session?.invalidateAndCancel()
         session = nil
+        localBridge?.stop()
+        localBridge = nil
+    }
+
+    /// Attach (and start) the loopback listener. The listener's token
+    /// gate is armed with this bridge's session id — the same id the
+    /// browser passed in the toneforge://pair deeplink, so both ends
+    /// already agree on it. Inbound authenticated local frames feed
+    /// the same `dispatch` core as relay frames, which is what makes
+    /// the two transports behaviorally identical for gain / chain /
+    /// stems / session handling.
+    public func attachLocalBridge(_ local: LocalBridgeServer) {
+        localBridge?.stop()
+        localBridge = local
+        local.updateExpectedSession(sessionId)
+        local.onFrame = { [weak self] dict in
+            self?.dispatch(dict)
+        }
+        local.start()
     }
 
     private func openSocket() {
@@ -184,15 +212,19 @@ public final class PresetBridge {
     /// engine is already in `.failed`; there's nothing more to do
     /// from here.
     public func sendDeviceLost(reason: String) {
-        guard task != nil else {
-            onStatus?("device_lost not sent — no active WS")
-            return
-        }
         let frame: [String: Any] = [
             "v": ConnectProtocol.version,
             "type": ConnectProtocol.MessageType.deviceLost,
             "reason": reason,
         ]
+        // Local peers hear about the dead audio path even if the
+        // relay WS is also down (which is likely when the machine is
+        // misbehaving) — broadcast() no-ops with zero peers.
+        localBridge?.broadcast(frame)
+        guard task != nil else {
+            onStatus?("device_lost not sent — no active WS")
+            return
+        }
         sendJSON(frame) { [weak self] err in
             if let err = err {
                 self?.onStatus?("device_lost send failed: \(err.localizedDescription)")
@@ -266,11 +298,16 @@ public final class PresetBridge {
     }
 
     private func transmitConnectState(_ snapshot: AudioEngine.ConnectStateSnapshot) {
+        let frame = PresetBridge.buildConnectStateFrame(snapshot)
+        // Telemetry mirroring: local peers get every frame the relay
+        // gets. Duplicates on the browser side are harmless — jam.js
+        // stores last-value only for all three telemetry types.
+        localBridge?.broadcast(frame)
         guard task != nil else {
             onStatus?("connect_state not sent — no active WS")
             return
         }
-        sendJSON(PresetBridge.buildConnectStateFrame(snapshot)) { [weak self] err in
+        sendJSON(frame) { [weak self] err in
             if let err = err {
                 self?.onStatus?("connect_state send failed: \(err.localizedDescription)")
             }
@@ -317,11 +354,13 @@ public final class PresetBridge {
     /// low-frequency. Wire numbers are milliseconds; struct fields
     /// are seconds, so we convert here.
     public func sendLatencyReport(_ report: AudioEngine.LatencyReport) {
+        let frame = PresetBridge.buildLatencyReportFrame(report)
+        localBridge?.broadcast(frame)
         guard task != nil else {
             onStatus?("latency_report not sent — no active WS")
             return
         }
-        sendJSON(PresetBridge.buildLatencyReportFrame(report)) { [weak self] err in
+        sendJSON(frame) { [weak self] err in
             if let err = err {
                 self?.onStatus?("latency_report send failed: \(err.localizedDescription)")
             }
@@ -359,8 +398,10 @@ public final class PresetBridge {
     /// tap calling it on every render-quantum would flood the wire.
     /// NOT cached server-side: meter levels are stale-on-arrival.
     public func sendInputMeter(peakDbfs: Double, rmsDbfs: Double) {
+        let frame = PresetBridge.buildInputMeterFrame(peakDbfs: peakDbfs, rmsDbfs: rmsDbfs)
+        localBridge?.broadcast(frame)
         guard task != nil else { return }
-        sendJSON(PresetBridge.buildInputMeterFrame(peakDbfs: peakDbfs, rmsDbfs: rmsDbfs))
+        sendJSON(frame)
     }
 
     /// Build the v2 `input_meter` JSON-encodable dict. Internal for

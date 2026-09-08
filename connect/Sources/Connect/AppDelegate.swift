@@ -448,6 +448,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        // Local fast path: loopback WS listener on 127.0.0.1:17995 so
+        // a Chrome tab on jamn.app can skip the relay round-trip for
+        // latency-sensitive frames. Token gate = this session id (the
+        // browser sent it to us via the toneforge://pair deeplink, so
+        // both ends already share it). The relay client above stays
+        // up regardless — the listener is additive.
+        bridge.attachLocalBridge(LocalBridgeServer(sessionId: sessionId))
         bridge.start()
 
         self.engine = engine

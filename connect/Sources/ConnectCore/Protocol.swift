@@ -32,6 +32,12 @@ public enum ConnectProtocol {
     /// unknown types from a future server land in the default branch
     /// of the dispatcher rather than crashing JSON decode.
     public enum MessageType {
+        /// Also the first frame on the LOCAL loopback transport
+        /// (LocalBridgeServer): there it doubles as the auth token —
+        /// `session_id` must match the currently paired session or
+        /// the connection is dropped. Local hello/hello_ack carry an
+        /// additive `transport: "local"` field; additive, so no
+        /// version bump.
         public static let hello             = "hello"
         public static let helloAck          = "hello_ack"
         public static let versionMismatch   = "version_mismatch"
