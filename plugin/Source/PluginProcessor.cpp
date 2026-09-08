@@ -183,6 +183,98 @@ juce::String JamnKitProcessor::loadPack(const juce::File& source)
     return {};
 }
 
+// --- Account store -------------------------------------------------------
+
+juce::File JamnKitProcessor::authFile() const
+{
+    return juce::File::getSpecialLocation(
+               juce::File::userApplicationDataDirectory)
+        .getChildFile("jamnKit")
+        .getChildFile("account.json");
+}
+
+void JamnKitProcessor::loadAuthIfNeeded()
+{
+    const juce::ScopedLock lock(authLock);
+    if (authLoaded)
+        return;
+    authLoaded = true;
+    auto parsed = juce::JSON::parse(authFile().loadFileAsString());
+    if (auto* obj = parsed.getDynamicObject())
+    {
+        deviceIdValue = obj->getProperty("deviceId").toString();
+        sessionTokenValue = obj->getProperty("token").toString();
+        signedInEmailValue = obj->getProperty("email").toString();
+    }
+    if (deviceIdValue.isEmpty())
+    {
+        deviceIdValue = juce::Uuid().toString();
+        saveAuth();
+    }
+}
+
+void JamnKitProcessor::saveAuth()
+{
+    // Caller holds authLock.
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("deviceId", deviceIdValue);
+    obj->setProperty("token", sessionTokenValue);
+    obj->setProperty("email", signedInEmailValue);
+    auto f = authFile();
+    f.getParentDirectory().createDirectory();
+    f.replaceWithText(juce::JSON::toString(juce::var(obj), true));
+}
+
+juce::String JamnKitProcessor::deviceId()
+{
+    loadAuthIfNeeded();
+    const juce::ScopedLock lock(authLock);
+    return deviceIdValue;
+}
+
+juce::String JamnKitProcessor::sessionToken()
+{
+    loadAuthIfNeeded();
+    const juce::ScopedLock lock(authLock);
+    return sessionTokenValue;
+}
+
+juce::String JamnKitProcessor::signedInEmail()
+{
+    loadAuthIfNeeded();
+    const juce::ScopedLock lock(authLock);
+    return signedInEmailValue;
+}
+
+void JamnKitProcessor::setSession(const juce::String& token,
+                                  const juce::String& email)
+{
+    loadAuthIfNeeded();
+    const juce::ScopedLock lock(authLock);
+    sessionTokenValue = token;
+    signedInEmailValue = email;
+    saveAuth();
+}
+
+void JamnKitProcessor::clearSession()
+{
+    loadAuthIfNeeded();
+    const juce::ScopedLock lock(authLock);
+    sessionTokenValue.clear();
+    signedInEmailValue.clear();
+    saveAuth();
+}
+
+juce::String JamnKitProcessor::authHeaders()
+{
+    loadAuthIfNeeded();
+    const juce::ScopedLock lock(authLock);
+    juce::String h = "X-Device-Id: " + deviceIdValue;
+    if (sessionTokenValue.isNotEmpty())
+        h = "Authorization: Bearer " + sessionTokenValue + "\r\n" + h;
+    return h;
+}
+
 juce::File JamnKitProcessor::kitStoreDir()
 {
     auto dir = juce::File::getSpecialLocation(
@@ -813,7 +905,10 @@ void JamnKitProcessor::setStateInformation(const void* data, int size)
         return;
     apvts.replaceState(state);
     const juce::String url = state.getProperty("backendUrl", juce::String());
-    if (url.isNotEmpty())
+    // Migration: projects saved under the old dev default would pin every
+    // fresh machine back to a localhost that isn't running. Anyone who
+    // really wants the dev URL re-types it once.
+    if (url.isNotEmpty() && url != "http://127.0.0.1:8300")
         backendUrlValue = url;
     const juce::String path = state.getProperty("packPath", juce::String());
     if (path.isNotEmpty())

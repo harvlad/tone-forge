@@ -201,7 +201,8 @@ static void jlog(const juce::String& s)
 
 static juce::MemoryBlock fetchHttp(const juce::String& urlString,
                                    int& statusCode, int timeoutMs,
-                                   const juce::String& postJson = {})
+                                   const juce::String& postJson = {},
+                                   const juce::String& extraHeaders = {})
 {
     statusCode = 0;
     juce::URL url(urlString);
@@ -209,13 +210,15 @@ static juce::MemoryBlock fetchHttp(const juce::String& urlString,
     {
         juce::MemoryBlock body;
         auto u = postJson.isNotEmpty() ? url.withPOSTData(postJson) : url;
+        juce::String headers = extraHeaders;
+        if (postJson.isNotEmpty())
+            headers = juce::String("Content-Type: application/json")
+                + (headers.isNotEmpty() ? "\r\n" + headers : "");
         if (auto stream = u.createInputStream(
                 juce::URL::InputStreamOptions(
                     juce::URL::ParameterHandling::inAddress)
                     .withConnectionTimeoutMs(timeoutMs)
-                    .withExtraHeaders(postJson.isNotEmpty()
-                                          ? "Content-Type: application/json"
-                                          : "")
+                    .withExtraHeaders(headers)
                     .withStatusCode(&statusCode)))
             stream->readIntoMemoryBlock(body);
         return body;
@@ -236,15 +239,17 @@ static juce::MemoryBlock fetchHttp(const juce::String& urlString,
         jlog("CONNECT FAILED " + host + ":" + juce::String(port));
         return {};
     }
+    const juce::String extra =
+        extraHeaders.isNotEmpty() ? "\r\n" + extraHeaders : juce::String();
     juce::String request;
     if (postJson.isNotEmpty())
         request = "POST " + path + " HTTP/1.0\r\nHost: " + host
             + "\r\nContent-Type: application/json\r\nContent-Length: "
             + juce::String((int) postJson.getNumBytesAsUTF8())
-            + "\r\nConnection: close\r\n\r\n" + postJson;
+            + extra + "\r\nConnection: close\r\n\r\n" + postJson;
     else
         request = "GET " + path + " HTTP/1.0\r\nHost: " + host
-            + "\r\nConnection: close\r\n\r\n";
+            + extra + "\r\nConnection: close\r\n\r\n";
     if (socket.write(request.toRawUTF8(),
                      (int) request.getNumBytesAsUTF8()) < 0)
     {
@@ -358,6 +363,27 @@ JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
         processor.setBackendUrl(urlEditor.getText().trim());
     };
 
+    // Account row: /api/history is owner-filtered on jamn.app, so Browse
+    // shows the user's library only once the plugin carries their session
+    // (email-code flow, same endpoints as the apps). Device id rides every
+    // request regardless so device-stamped analyses appear pre-sign-in.
+    auto themeField = [&](juce::TextEditor& e, const juce::String& hint) {
+        addAndMakeVisible(e);
+        e.setColour(juce::TextEditor::backgroundColourId, theme::surface);
+        e.setColour(juce::TextEditor::textColourId, theme::textSecondary);
+        e.setColour(juce::TextEditor::outlineColourId, theme::stroke);
+        e.setFont(juce::Font(juce::FontOptions(11.0f)));
+        e.setTextToShowWhenEmpty(hint, theme::textSecondary.withAlpha(0.5f));
+    };
+    themeField(emailEditor, "email");
+    themeField(codeEditor, "code");
+    codeEditor.setInputRestrictions(6, "0123456789");
+    addAndMakeVisible(accountButton);
+    accountButton.setColour(juce::TextButton::buttonColourId,
+                            theme::panelDeep);
+    accountButton.onClick = [this] { handleAccountButton(); };
+    updateAccountUi();
+
     themeKnob(knobFilter, labelFilter, "FILTER");
     themeKnob(knobSpace, labelSpace, "SPACE");
     themeKnob(knobDrive, labelDrive, "DRIVE");
@@ -441,10 +467,15 @@ void JamnKitEditor::resized()
         clockRow.removeFromRight(70).reduced(4, 3));
     area.removeFromTop(gapM);
     auto knobPanel = area.removeFromTop(knobPanelH).reduced(6, 8);
-    urlEditor.setBounds(getLocalBounds()
-                            .removeFromBottom(footerH)
-                            .reduced(margin, 4)
-                            .removeFromLeft(210));
+    auto footer = getLocalBounds().removeFromBottom(footerH)
+                      .reduced(margin, 4);
+    urlEditor.setBounds(footer.removeFromLeft(180));
+    footer.removeFromLeft(8);
+    accountButton.setBounds(footer.removeFromRight(78));
+    footer.removeFromRight(6);
+    if (authStep == 1)
+        codeEditor.setBounds(footer.removeFromRight(64));
+    emailEditor.setBounds(footer.reduced(0, 0));
     const int kw = knobPanel.getWidth() / 4;
     auto place = [&](juce::Slider& s, juce::Label& l, int i) {
         auto cell = juce::Rectangle<int>(knobPanel.getX() + i * kw,
@@ -488,11 +519,12 @@ void JamnKitEditor::browseBackend()
     busy = true;
     busyStartMs = juce::Time::currentTimeMillis();
     const juce::String base = processor.backendUrl();
+    const juce::String auth = processor.authHeaders();
     auto self = juce::Component::SafePointer<JamnKitEditor>(this);
 
     if (worker != nullptr && worker->joinable())
         worker->join();
-    worker = std::make_unique<std::thread>([self, base] {
+    worker = std::make_unique<std::thread>([self, base, auth] {
         // Bulletproofing: the dev backend can stall for seconds while
         // it renders a kit (single worker + R2-backed history), which
         // used to read as "unreachable". Retry with patience before
@@ -502,7 +534,7 @@ void JamnKitEditor::browseBackend()
         for (int attempt = 0; attempt < 3; ++attempt)
         {
             raw = fetchHttp(base + "/api/history?limit=25", statusCode,
-                            15000);
+                            15000, {}, auth);
             if (statusCode == 200 && raw.getSize() > 0)
                 break;
             juce::Thread::sleep(1500);
@@ -572,11 +604,12 @@ void JamnKitEditor::downloadKit(const juce::String& entryId,
     statusLine = "downloading kit: " + name.substring(0, 32) + "...";
     repaint();
     const juce::String base = processor.backendUrl();
+    const juce::String auth = processor.authHeaders();
     auto self = juce::Component::SafePointer<JamnKitEditor>(this);
 
     if (worker != nullptr && worker->joinable())
         worker->join();
-    worker = std::make_unique<std::thread>([self, base, entryId] {
+    worker = std::make_unique<std::thread>([self, base, auth, entryId] {
         // Durable store, not temp: the saved DAW project's packPath
         // must survive OS temp cleanup (kitStoreDir doc).
         auto dest = JamnKitProcessor::kitStoreDir()
@@ -591,7 +624,7 @@ void JamnKitEditor::downloadKit(const juce::String& entryId,
         {
             raw = fetchHttp(
                 base + "/api/song/" + entryId + "/ableton-kit?pads=16",
-                statusCode, 600000);
+                statusCode, 600000, {}, auth);
             if (statusCode == 200 && raw.getSize() > 0)
                 break;
             juce::Thread::sleep(2000);
@@ -635,9 +668,10 @@ void JamnKitEditor::flushFeedback()
         + "/api/song/" + pack->entryId + "/pad-feedback";
 
     // Fire-and-forget: feedback is best-effort telemetry.
-    std::thread([target, body] {
+    const auto headers = processor.authHeaders();
+    std::thread([target, body, headers] {
         int status = 0;
-        fetchHttp(target, status, 8000, body);
+        fetchHttp(target, status, 8000, body, headers);
         jlog("FEEDBACK status=" + juce::String(status) + " bytes="
              + juce::String((int) body.getNumBytesAsUTF8()));
     }).detach();
@@ -720,6 +754,124 @@ void JamnKitEditor::mouseDrag(const juce::MouseEvent& e)
 {
     if (trimDragPad >= 0)
         applyTrimDrag(trimDragPad, e.getPosition());
+}
+
+// --- Account flow (footer) -------------------------------------------------
+
+void JamnKitEditor::updateAccountUi()
+{
+    if (processor.sessionToken().isNotEmpty())
+        authStep = 2;
+    emailEditor.setVisible(authStep == 0 || authStep == 1);
+    codeEditor.setVisible(authStep == 1);
+    accountButton.setButtonText(authStep == 2   ? "Sign out"
+                                : authStep == 1 ? "Verify"
+                                                : "Sign in");
+    if (authStep == 2)
+        statusLine = "Signed in: " + processor.signedInEmail();
+    resized();
+    repaint();
+}
+
+void JamnKitEditor::handleAccountButton()
+{
+    const auto base = processor.backendUrl();
+    if (authStep == 2)
+    {
+        processor.clearSession();
+        authStep = 0;
+        statusLine = "Signed out";
+        updateAccountUi();
+        return;
+    }
+    if (authStep == 0)
+    {
+        const auto email = emailEditor.getText().trim().toLowerCase();
+        if (!email.contains("@"))
+        {
+            statusLine = "Enter your account email";
+            repaint();
+            return;
+        }
+        auto* body = new juce::DynamicObject();
+        body->setProperty("email", email);
+        const auto json = juce::JSON::toString(juce::var(body), true);
+        juce::Component::SafePointer<JamnKitEditor> safe(this);
+        std::thread([safe, base, json] {
+            int status = 0;
+            fetchHttp(base + "/api/auth/email-code", status, 15000, json);
+            juce::MessageManager::callAsync([safe, status] {
+                if (safe == nullptr)
+                    return;
+                if (status == 202 || status == 200)
+                {
+                    safe->authStep = 1;
+                    safe->statusLine = "Code sent - check your email";
+                }
+                else
+                    safe->statusLine =
+                        "Couldn't send code (HTTP "
+                        + juce::String(status) + ")";
+                safe->updateAccountUi();
+            });
+        }).detach();
+        statusLine = "Sending code...";
+        repaint();
+        return;
+    }
+    // authStep == 1: verify the 6-digit code; device_id in the body claims
+    // this machine for the account (same contract as the apps).
+    const auto email = emailEditor.getText().trim().toLowerCase();
+    const auto code = codeEditor.getText().trim();
+    if (code.length() < 4)
+    {
+        statusLine = "Enter the 6-digit code";
+        repaint();
+        return;
+    }
+    auto* body = new juce::DynamicObject();
+    body->setProperty("email", email);
+    body->setProperty("code", code);
+    body->setProperty("device_id", processor.deviceId());
+    const auto json = juce::JSON::toString(juce::var(body), true);
+    juce::Component::SafePointer<JamnKitEditor> safe(this);
+    auto* proc = &processor;
+    std::thread([safe, proc, base, json] {
+        int status = 0;
+        const auto raw = fetchHttp(base + "/api/auth/email-verify", status,
+                                   15000, json);
+        auto parsed = juce::JSON::parse(raw.toString());
+        juce::String token, userEmail;
+        if (auto* obj = parsed.getDynamicObject())
+        {
+            token = obj->getProperty("token").toString();
+            if (auto* user = obj->getProperty("user").getDynamicObject())
+                userEmail = user->getProperty("email").toString();
+        }
+        juce::MessageManager::callAsync([safe, proc, status, token,
+                                         userEmail] {
+            if (status == 200 && token.isNotEmpty())
+            {
+                // Processor outlives editors; safe even if the window
+                // closed mid-verify.
+                proc->setSession(token, userEmail);
+                if (safe != nullptr)
+                {
+                    safe->authStep = 2;
+                    safe->updateAccountUi();
+                }
+            }
+            else if (safe != nullptr)
+            {
+                safe->statusLine = status == 401
+                    ? "Wrong or expired code"
+                    : "Sign-in failed (HTTP " + juce::String(status) + ")";
+                safe->repaint();
+            }
+        });
+    }).detach();
+    statusLine = "Verifying...";
+    repaint();
 }
 
 double JamnKitEditor::padFracAt(int pad, juce::Point<int> pos) const

@@ -54,6 +54,13 @@ private:
     juce::TextButton armButton { "ARM" };
     juce::TextButton learnButton { "LEARN" };
     juce::TextEditor urlEditor;
+    // Account row (footer): email → code → signed in. Machine-level
+    // session lives on the processor; this is just the flow UI.
+    juce::TextEditor emailEditor, codeEditor;
+    juce::TextButton accountButton { "Sign in" };
+    int authStep = 0;  // 0 = enter email, 1 = enter code, 2 = signed in
+    void updateAccountUi();
+    void handleAccountButton();
     juce::Slider knobFilter, knobSpace, knobDrive, knobGain;
     juce::Label labelFilter, labelSpace, labelDrive, labelGain;
     using Attachment = juce::AudioProcessorValueTreeState::SliderAttachment;

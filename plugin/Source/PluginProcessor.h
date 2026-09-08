@@ -159,6 +159,20 @@ public:
     juce::String backendUrl() const { return backendUrlValue; }
     void setBackendUrl(const juce::String& url) { backendUrlValue = url; }
 
+    // --- Account (machine-level; NOT plugin state — a session token in a
+    // project file would leak the account to anyone the project is sent
+    // to, and the library is per-machine anyway). Stored next to the kit
+    // cache in userApplicationDataDirectory/jamnKit/account.json.
+    juce::String deviceId();
+    juce::String sessionToken();
+    juce::String signedInEmail();
+    void setSession(const juce::String& token, const juce::String& email);
+    void clearSession();
+    /// "Authorization: Bearer …\r\nX-Device-Id: …" ready to append to a
+    /// request — device id always present so device-owned analyses show
+    /// even before sign-in; Bearer only when signed in.
+    juce::String authHeaders();
+
     /// Feedback loop: drain queued pad events ({assetId, "play"|"skip"})
     /// — the editor batches these to POST /pad-feedback. Message thread.
     std::vector<std::pair<juce::String, juce::String>> drainFeedback()
@@ -266,7 +280,18 @@ private:
     std::vector<std::pair<juce::String, juce::String>> pendingFeedback;
     juce::int64 sampleClock = 0;
 
-    juce::String backendUrlValue { "http://127.0.0.1:8300" };
+    // Production default: a fresh install (Windows Ableton user with no
+    // local server) browses their jamn.app library out of the box. Dev
+    // boxes type their local URL into the editor's field once.
+    juce::String backendUrlValue { "https://jamn.app" };
+
+    // Account store (see public accessors above).
+    void loadAuthIfNeeded();
+    void saveAuth();
+    juce::File authFile() const;
+    bool authLoaded = false;
+    juce::String deviceIdValue, sessionTokenValue, signedInEmailValue;
+    juce::CriticalSection authLock;
     double currentSampleRate = 44100.0;
 
     juce::SpinLock packLock;
