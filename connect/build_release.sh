@@ -262,6 +262,31 @@ if [[ $DRY_RUN -eq 1 ]]; then
     exit 0
 fi
 
+# Sparkle ships pre-signed by the Sparkle project; notarization rejects
+# every nested Mach-O that isn't signed by OUR Developer ID with a
+# secure timestamp ("The binary is not signed with a valid Developer ID
+# certificate"). Re-sign inside-out — XPC services, then Updater.app,
+# then Autoupdate, then the framework slice — before the outer bundle,
+# preserving Sparkle's own entitlements on its helpers (they are not
+# ours to replace).
+SPARKLE_B="$APP_BUNDLE/Contents/lib/Sparkle.framework/Versions/B"
+log "Re-signing Sparkle nested components"
+for nested in \
+    "$SPARKLE_B/XPCServices/Downloader.xpc" \
+    "$SPARKLE_B/XPCServices/Installer.xpc" \
+    "$SPARKLE_B/Updater.app" \
+    "$SPARKLE_B/Autoupdate" \
+    "$SPARKLE_B"; do
+    [[ -e "$nested" ]] || die "expected Sparkle component missing: $nested"
+    codesign \
+        --sign "$DEVELOPER_ID" \
+        --options runtime \
+        --preserve-metadata=entitlements \
+        --timestamp \
+        --force \
+        "$nested"
+done
+
 log "Code-signing $APP_BUNDLE with hardened runtime"
 codesign \
     --sign "$DEVELOPER_ID" \
