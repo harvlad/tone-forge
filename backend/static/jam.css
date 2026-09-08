@@ -233,7 +233,9 @@ html, body {
   transition: background 0.3s, border-color 0.3s, transform 0.3s;
   opacity: 0.55;
 }
-.slot.ready { opacity: 1; border-color: var(--good); }
+/* Native parity: ready is signalled by the state TEXT going green
+   (below); the card border stays near-invisible --jamn-border. */
+.slot.ready { opacity: 1; }
 .slot.user-slot {
   background: var(--panel-2);
   border-color: var(--accent);
@@ -4408,14 +4410,13 @@ body.debug-tags-visible .rehearsal-row-debug-tags {
   --brand-grad: linear-gradient(120deg, var(--jamn-brand-a) 0%, var(--jamn-brand-b) 100%);
 }
 
-/* Deep purple-black backdrop (harmonises every view, fixed while scrolling). */
+/* Flat near-black backdrop — native-app parity. The old marketing wash
+   (viewport-anchored purple radials) also broke the sidebar layout: with
+   background-attachment:fixed it centered on the full viewport while the
+   content column centers in the 260px-padded area, so every view read as
+   pushed right. Purple lives only on controls/accents now. */
 body {
-  background:
-    radial-gradient(1200px 620px at 50% -12%, rgba(140, 89, 242, 0.34), transparent 60%),
-    radial-gradient(900px 520px at 10% 6%, rgba(140, 89, 242, 0.12), transparent 55%),
-    radial-gradient(900px 520px at 90% 6%, rgba(64, 115, 242, 0.12), transparent 55%),
-    var(--jamn-bg);
-  background-attachment: fixed;
+  background: var(--jamn-bg);
 }
 
 /* header */
@@ -4455,21 +4456,9 @@ body {
   box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.35);
 }
 
-/* decorative waveform wisps flanking the intake column */
+/* Decorative waveform wisps removed — native shell keeps the backdrop
+   flat; the purple haze fought the flat --jamn-bg parity. */
 #view-intake { position: relative; }
-#view-intake::before,
-#view-intake::after {
-  content: "";
-  position: absolute; top: 40px;
-  width: 42%; height: 320px;
-  pointer-events: none; z-index: 0; opacity: 0.7;
-  background: radial-gradient(60% 80% at 50% 50%, rgba(139, 92, 246, 0.22), transparent 70%);
-  filter: blur(2px);
-  -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 6px);
-          mask-image: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 6px);
-}
-#view-intake::before { left: -6%; transform: rotate(-6deg); }
-#view-intake::after  { right: -6%; transform: rotate(6deg); }
 
 .landing {
   position: relative; z-index: 1;
@@ -4493,24 +4482,16 @@ body {
 .upload-card {
   position: relative;
   width: 100%; max-width: 600px; margin: 0 auto;
-  background: linear-gradient(180deg, rgba(28, 28, 36, 0.72), rgba(20, 20, 26, 0.72));
-  border: 1px solid rgba(139, 92, 246, 0.22);
+  background: var(--jamn-surface1);
+  border: 1px solid var(--jamn-border);
   border-radius: 26px;
   padding: 44px 48px 40px;
   text-align: center;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 24px 60px rgba(6, 4, 16, 0.55);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
 }
-/* soft purple radial glow that lifts the card off the background */
-.upload-card__glow {
-  position: absolute; inset: -16% -12% -22%;
-  z-index: -1; pointer-events: none;
-  background: radial-gradient(closest-side,
-    rgba(139, 92, 246, 0.40),
-    rgba(139, 92, 246, 0.14) 58%,
-    transparent 80%);
-  filter: blur(48px);
-}
+/* Glow retired — native cards sit flat on --jamn-bg (markup keeps the
+   element so jam.js/DOM contracts stay untouched). */
+.upload-card__glow { display: none; }
 .upload-card__badge {
   width: 60px; height: 60px; margin: 0 auto 16px;
   display: grid; place-items: center; border-radius: 50%;
