@@ -435,6 +435,30 @@
     const raw = localStorage.getItem(GENERIC_MAP_KEY);
     if (raw) _genericPadMap = JSON.parse(raw) || {};
   } catch (_) { _genericPadMap = {}; }
+  // --- MIDI clock OUT (generic outputs) -----------------------------
+  // Mirror of mobile's "Tone Forge Jam" virtual source: 24 PPQN 0xF8
+  // ticks + 0xFA/0xFC transport edges, broadcast to every non-Launchpad
+  // output so drum machines / synth arps follow the Jam transport. The
+  // MK3 itself is excluded — it owns the LED SysEx channel and treats
+  // clock as noise.
+  //
+  // Timing: a naive setInterval at tick rate (~20ms at 120bpm) jitters
+  // by whatever the event loop is doing (RAF paints, GC), which external
+  // sequencers hear as tempo wobble. Instead a coarse ~25ms pump
+  // schedules ticks up to ~120ms ahead via output.send(msg, timestamp)
+  // — the browser's MIDI thread then emits them on time regardless of
+  // main-thread load. Tempo changes take effect within one lookahead
+  // window (inaudible for the coarse 0.5×/0.75×/1× rehearsal rates).
+  const MIDI_CLOCK_KEY = 'jamn.midiClockOut';
+  const CLOCK_PUMP_MS = 25;        // pump cadence (main-thread tolerant)
+  const CLOCK_LOOKAHEAD_MS = 120;  // schedule horizon; also bounds the
+                                   // stale-tick tail after stop/retune
+  let _clockEnabled = false;
+  let _clockRunning = false;
+  let _clockBpm = 120;
+  let _clockTimer = null;
+  let _clockNextTickAt = 0;        // performance.now() ms of next unscheduled tick
+  try { _clockEnabled = localStorage.getItem(MIDI_CLOCK_KEY) === '1'; } catch (_) {}
   // Expanded mode taxonomy. See jam.js state.settings.launchpadMode for
   // the full list + semantics; here we only need to know which grid
   // painter to invoke.
@@ -1754,6 +1778,71 @@
     } catch (_) {}
   }
 
+  // ---- MIDI clock OUT engine ----------------------------------------
+  // See the state block above for the design rationale (lookahead
+  // scheduling vs setInterval jitter).
+
+  // Enumerated fresh on every broadcast so hot-plugged gear joins the
+  // clock without a rebind step — cheap at pump cadence (a Map walk
+  // every 25ms).
+  function _clockBroadcast(bytes, timestamp) {
+    if (!_access) return;
+    for (const out of _access.outputs.values()) {
+      if (_isLaunchpadPort(out)) continue;
+      // Per-port try: one unplugged/wedged device must not silence the
+      // rest of the rig.
+      try { out.send(bytes, timestamp); } catch (_) {}
+    }
+  }
+
+  function _clockPump() {
+    if (!_clockRunning) return;
+    const horizon = performance.now() + CLOCK_LOOKAHEAD_MS;
+    const tickMs = 60000 / (_clockBpm * 24); // 24 PPQN
+    // If the pump stalled well past the horizon (background-tab timer
+    // throttling), jump the grid to "now" instead of machine-gunning
+    // the backlog — a burst of hundreds of ticks makes external gear
+    // sprint to catch up, which sounds far worse than a dropped bar.
+    if (_clockNextTickAt < performance.now() - CLOCK_LOOKAHEAD_MS) {
+      _clockNextTickAt = performance.now();
+    }
+    while (_clockNextTickAt < horizon) {
+      _clockBroadcast([0xF8], _clockNextTickAt);
+      _clockNextTickAt += tickMs;
+    }
+  }
+
+  function _startClock(bpm) {
+    const b = Number(bpm);
+    if (!isFinite(b) || b < 20 || b > 400) return; // garbage tempo: stay silent
+    _clockBpm = b;
+    if (_clockRunning) {
+      // Already running (seek-while-playing re-enters here via
+      // playAll): retune only, keep the tick grid phase, and do NOT
+      // resend 0xFA — a second Start makes external sequencers snap
+      // back to their pattern start on every scrub.
+      return;
+    }
+    _clockRunning = true;
+    // 0xFA first, then the tick stream — receivers arm on Start and
+    // advance on the following clocks (MIDI 1.0 realtime semantics).
+    _clockBroadcast([0xFA]);
+    _clockNextTickAt = performance.now();
+    _clockPump();
+    _clockTimer = setInterval(_clockPump, CLOCK_PUMP_MS);
+  }
+
+  function _stopClock() {
+    if (!_clockRunning) return;
+    _clockRunning = false;
+    if (_clockTimer) { clearInterval(_clockTimer); _clockTimer = null; }
+    // Up to CLOCK_LOOKAHEAD_MS of already-scheduled ticks may still
+    // drain after Stop; harmless (stopped gear tracks tempo from them
+    // but doesn't advance). output.clear() would drop them but is
+    // unimplemented in Chrome, so we don't rely on it.
+    _clockBroadcast([0xFC]);
+  }
+
   async function _requestAccess() {
     if (!navigator || !navigator.requestMIDIAccess) {
       _emitStatus({ supported: false });
@@ -1800,9 +1889,12 @@
       _modeChangeCb = (opts && opts.onModeChange) || null;
       _legendInfoCb = (opts && opts.onLegendInfo) || null;
       _ccMessageCb = (opts && opts.onCcMessage) || null;
-      // Leave Programmer Mode cleanly on unload.
+      // Leave Programmer Mode cleanly on unload. The clock gets an
+      // explicit Stop too — closing the tab mid-song must not leave
+      // external gear free-running with nobody left to send 0xFC.
       try {
         window.addEventListener('beforeunload', () => {
+          try { api.stopMidiClock(); } catch (_) {}
           try { api.disable(); } catch (_) {}
         });
       } catch (_) {}
@@ -2002,6 +2094,37 @@
     stopPadLearn() { _learnCb = null; },
     genericInputNames() {
       return _genericInputs.map((i) => i.name || 'MIDI input');
+    },
+
+    // ---- MIDI clock OUT ----
+    // jam.js drives these from its transport edges (playAll/pauseAll/
+    // stopAllStems) and gates them on getMidiClockEnabled(); the module
+    // itself never decides when the song is playing.
+    startMidiClock(bpm) {
+      if (!_clockEnabled) return;
+      _startClock(bpm);
+    },
+    // No-op while stopped: the next startMidiClock carries the fresh
+    // bpm anyway, so there is no stale-tempo window to patch.
+    updateMidiClockTempo(bpm) {
+      const b = Number(bpm);
+      if (!_clockRunning || !isFinite(b) || b < 20 || b > 400) return;
+      _clockBpm = b;
+    },
+    stopMidiClock() { _stopClock(); },
+    getMidiClockEnabled() { return _clockEnabled; },
+    // Returns a Promise: enabling may have to request MIDI access
+    // (the clock toggle works without the Launchpad checkbox — clock
+    // targets generic gear, not the MK3), and callers that want to
+    // start the clock mid-song must wait for the permission grant.
+    async setMidiClockEnabled(on) {
+      _clockEnabled = !!on;
+      try { localStorage.setItem(MIDI_CLOCK_KEY, _clockEnabled ? '1' : '0'); } catch (_) {}
+      if (!_clockEnabled) {
+        _stopClock();
+      } else if (!_access) {
+        await _requestAccess();
+      }
     },
 
     // ---- Song melody follow-along ----
