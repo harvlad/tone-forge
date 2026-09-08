@@ -372,6 +372,13 @@ export class PadEngine {
     this._baked = new Map();
     /** padIdx → active voice */
     this._voices = new Map();
+    /**
+     * padIdx → the baked entry resident BEFORE the first setPadSource swap
+     * (null when the pad was empty). Snapshotted once per pad so
+     * restorePadSource() returns the true original, not an intermediate
+     * swap. Cleared on setStems/setKit — a new kit voids every snapshot.
+     */
+    this._origSource = new Map();
     /** padIdx → token for a trigger deferred behind ctx.resume(). */
     this._pendingTriggers = new Map();
     /** Lock-grid anchor: audioContext time of the first loop launch. */
@@ -469,6 +476,7 @@ export class PadEngine {
   setStems(buffersByRole) {
     this._stems = buffersByRole || {};
     this._baked.clear();
+    this._origSource.clear();
   }
 
   /**
@@ -479,6 +487,7 @@ export class PadEngine {
     this._pads = (kit && kit.pads) || [];
     this._tempoBpm = opts.tempoBpm != null ? opts.tempoBpm : null;
     this._baked.clear();
+    this._origSource.clear();
   }
 
   /** One 4/4 bar at the song tempo, or null without tempo. */
@@ -601,6 +610,126 @@ export class PadEngine {
     this._baked.set(padIdx, token.entry);
     if (token.fx) this._padFx.set(padIdx, token.fx); // pad comes back with its fx
     return true;
+  }
+
+  /**
+   * Replace ONE pad's baked source with an external decoded AudioBuffer
+   * (a curated sample-pack pad, or another kit pad's sound) — the web twin
+   * of the native SoundPickerSheet "add sound" that reassigns a pad's
+   * sample while keeping its slot. The buffer is baked through the SAME
+   * normalize → edge-fade → exact-length seam path prepare() uses, over a
+   * whole-buffer loop region. Onset-phase snap is deliberately skipped: the
+   * chosen sample's own start is authoritative (same call as a user-set
+   * region in the chop editor), so the attack is never clipped.
+   *
+   * The pre-swap entry is snapshotted ONCE (first swap wins) so
+   * restorePadSource() — driven by the radial Reset — can return the pad to
+   * exactly how it sounded before ANY swap. A swapped pad carries no song
+   * stem role, so stem takeover stays inert (an external sample has no
+   * song stem to duck).
+   * @param {number} padIdx
+   * @param {AudioBuffer} audioBuffer decoded source (any rate / channels)
+   * @param {{name?: string, colorHint?: string, loop?: boolean}} [opts]
+   *   loop defaults true (whole-buffer loop region); pass false for a
+   *   one-shot-only source.
+   * @returns {boolean} true when the pad now plays the new source
+   */
+  setPadSource(padIdx, audioBuffer, opts = {}) {
+    if (
+      !audioBuffer ||
+      !(audioBuffer.length > 0) ||
+      !(audioBuffer.numberOfChannels > 0) ||
+      !(audioBuffer.sampleRate > 0)
+    ) {
+      return false;
+    }
+    // Snapshot the pre-swap state before the map mutates (undefined pad →
+    // null, so restore knows to go back to empty).
+    if (!this._origSource.has(padIdx)) {
+      this._origSource.set(padIdx, this._baked.get(padIdx) || null);
+    }
+
+    const sr = audioBuffer.sampleRate;
+    const frames = audioBuffer.length;
+    const numCh = audioBuffer.numberOfChannels;
+    const channels = [];
+    for (let c = 0; c < numCh; c++) {
+      channels.push(new Float32Array(audioBuffer.getChannelData(c)));
+    }
+    normalizePeak(channels);
+    applyEdgeFades(channels, sr);
+
+    const mayLoop = opts.loop !== false;
+    // A synthetic pad keeps the slot identity (padIdx) but carries no
+    // stemSlice — the trigger path reads entry.pad.stemSlice?.stemRole and
+    // treats null as "no takeover", exactly what an external sample wants.
+    const prev = this._baked.get(padIdx);
+    const base =
+      (prev && prev.pad) ||
+      this._pads.find((p) => p && p.padIdx === padIdx) ||
+      { padIdx };
+    const srcPad = {
+      padIdx,
+      name: opts.name != null ? opts.name : base.name,
+      colorHint: opts.colorHint != null ? opts.colorHint : base.colorHint,
+      stemSlice: null,
+      loopable: mayLoop,
+    };
+
+    const oneShotBuffer = this._toAudioBuffer(channels, sr);
+    let loopChannels = null;
+    let loopBuffer = null;
+    if (mayLoop) {
+      loopChannels = exactCrossfaded(channels, sr, frames, chooseCrossfadeMs(srcPad));
+      loopBuffer = this._toAudioBuffer(loopChannels, sr);
+    }
+
+    this._stopVoice(padIdx, /* notify */ true); // stale buffer/length must not keep playing
+    this._baked.set(padIdx, {
+      pad: srcPad,
+      sampleRate: sr,
+      bodySec: frames / sr,
+      shiftSec: 0,
+      oneShotBuffer,
+      oneShotChannels: channels,
+      loopBuffer,
+      loopChannels,
+    });
+    return true;
+  }
+
+  /**
+   * Undo every source swap on a pad: restore the entry snapshotted by the
+   * first setPadSource. A pad that was empty before the swap becomes empty
+   * again (baked entry dropped so trigger() returns null). Idempotent — a
+   * no-op (false) when the pad was never swapped.
+   * @returns {boolean} true when a swap was undone
+   */
+  restorePadSource(padIdx) {
+    if (!this._origSource.has(padIdx)) return false;
+    const orig = this._origSource.get(padIdx);
+    this._origSource.delete(padIdx);
+    this._stopVoice(padIdx, /* notify */ true);
+    if (orig) this._baked.set(padIdx, orig);
+    else this._baked.delete(padIdx);
+    return true;
+  }
+
+  /** @returns {boolean} whether this pad's source was swapped (and is thus
+   * restorable) — drives the radial Reset enabled state. */
+  hasSwappedSource(padIdx) {
+    return this._origSource.has(padIdx);
+  }
+
+  /**
+   * The baked one-shot AudioBuffer currently assigned to a pad — what a
+   * short preview should play, and the source another slot copies when the
+   * picker swaps in "this song's" pad. Null when the pad is empty.
+   * @returns {?AudioBuffer}
+   */
+  sourceBuffer(padIdx) {
+    const entry = this._baked.get(padIdx);
+    return (entry && entry.oneShotBuffer) || null;
   }
 
   _bakePad(pad, slice, stem) {
