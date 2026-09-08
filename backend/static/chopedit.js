@@ -381,6 +381,25 @@
     var tLen = el("span", "chopedit-time chopedit-time--len", times);
     var tEnd = el("span", "chopedit-time chopedit-time--edge", times);
 
+    // "Keep timing" (mobile SampleTrimmerSheet parity): the trim GATES
+    // the audio but the pad keeps its original loop length — a looped
+    // pad still fires on its musical cycle with silence filling the
+    // rest. Off = classic cut (region becomes the new loop window).
+    var preserveRow = el("label", "chopedit-preserve", modal);
+    var preserveCb = el("input", "", preserveRow);
+    preserveCb.type = "checkbox";
+    var preserveText = el("span", "chopedit-preserve-label", preserveRow);
+    preserveText.textContent = "Keep timing";
+    var preserveHint = el("div", "chopedit-preserve-hint", modal);
+    function syncPreserveHint() {
+      preserveHint.textContent = preserveCb.checked
+        ? "Plays the kept region at its original spot; silence fills the rest."
+        : "Loops the trimmed region back-to-back (retrigger effect).";
+    }
+    preserveCb.addEventListener("change", syncPreserveHint);
+    syncPreserveHint();
+    s.preserveCb = preserveCb;
+
     var actions = el("div", "chopedit-actions", modal);
     var bPlay = el("button", "chopedit-btn", actions);
     bPlay.type = "button";
@@ -507,7 +526,11 @@
   }
 
   function save(s) {
-    if (s.onSave) s.onSave({ startSec: s.startSec, endSec: s.endSec });
+    if (s.onSave) s.onSave({
+      startSec: s.startSec,
+      endSec: s.endSec,
+      preserveLength: !!(s.preserveCb && s.preserveCb.checked),
+    });
     close();
   }
 

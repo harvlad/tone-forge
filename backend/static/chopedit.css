@@ -155,3 +155,26 @@
 .chopedit-btn--accent:hover:not(:disabled) {
   filter: brightness(1.1);
 }
+
+/* "Keep timing" toggle — mobile SampleTrimmerSheet parity. */
+.chopedit-preserve {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--jamn-text, #fff);
+  cursor: pointer;
+  user-select: none;
+}
+.chopedit-preserve input {
+  accent-color: var(--jamn-success, #22C55E);
+  width: 16px;
+  height: 16px;
+}
+.chopedit-preserve-hint {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--jamn-text2, #A1A1AA);
+}
