@@ -78,6 +78,15 @@ public final class AnalysisQueueModel: ObservableObject {
     /// Last refreshFromServer failure (UI may show quietly or ignore).
     @Published public private(set) var refreshError: String?
 
+    /// Fired when a watched job reaches ``.done`` — a new song just
+    /// landed in server history. RootView wires this to
+    /// ``HistoryModel.refresh`` so the Recent-songs list shows the
+    /// finished song without a manual search/relaunch (parity with the
+    /// iOS live-library fix; the watcher used to update only the queue
+    /// card, leaving the history list stale). No-arg: the callee already
+    /// knows the backend URL.
+    public var onJobCompleted: (() -> Void)?
+
     public var activeCount: Int {
         items.filter { $0.status.isActive }.count
     }
@@ -400,7 +409,10 @@ public final class AnalysisQueueModel: ObservableObject {
 
     private func setStatus(itemId: String, _ status: QueueItemStatus) {
         guard let index = items.firstIndex(where: { $0.id == itemId }) else { return }
+        let wasActive = items[index].status.isActive
         items[index].status = status
+        // Transition into a completed job = a new history row exists.
+        if wasActive, case .done = status { onJobCompleted?() }
     }
 
     /// Server row → local status.

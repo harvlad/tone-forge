@@ -154,9 +154,9 @@ features:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeMobile/RootView.swift#refreshJobs"
       desktop:
-        status: partial
-        evidence: "jam-desktop/Sources/JamDesktopCore/AppModel.swift#backendBaseURL"
-        note: "History loads on demand; no push/poll loop verified."
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopCore/Intake/AnalysisQueueModel.swift#onJobCompleted"
+        note: "In-flight analyses live via followJob SSE (progress + completion, reattach-on-drop); job completion + scene-active now refresh the Recent-songs history list (RootView onJobCompleted / scenePhase). Verified 2026-09-08: swift build clean."
       plugin:
         status: partial
         evidence: "plugin/Source/PluginProcessor.cpp#JamnKitProcessor"

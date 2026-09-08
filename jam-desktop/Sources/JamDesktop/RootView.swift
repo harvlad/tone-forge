@@ -10,6 +10,7 @@ import ToneForgeEngine
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var session: SessionController
+    @Environment(\.scenePhase) private var scenePhase
 
     @StateObject private var intake = IntakeModel()
     @StateObject private var history = HistoryModel()
@@ -290,8 +291,25 @@ struct RootView: View {
             // Recover this device's server-side jobs after a relaunch
             // without requiring a visit to the Band Room.
             await queue.refreshFromServer(baseURL: model.backendBaseURL)
+            // A watched job finishing = a new song in server history;
+            // refresh the Recent-songs list so it appears without a
+            // manual search/relaunch.
+            queue.onJobCompleted = {
+                Task { await history.refresh(baseURL: model.backendBaseURL) }
+            }
             // Featured songs stay pinned in Recent Songs but never
             // auto-load — opening a song uninvited read as broken.
+        }
+        // Foreground pickup: songs finished while backgrounded, or
+        // analyzed on another device, appear on return without a
+        // manual refresh.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task {
+                    await history.refresh(baseURL: model.backendBaseURL)
+                    await queue.refreshFromServer(baseURL: model.backendBaseURL)
+                }
+            }
         }
     }
 
