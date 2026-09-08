@@ -343,6 +343,197 @@
   50%      { opacity: 0.85; }
 }
 
+/* ---------- 8×8 compact grid (header 64 toggle / ?pads=64) ---------- */
+
+/* Header + transport track the wider grid so the surface stays one column. */
+.kit-surface.kit-is-64 .kit-head,
+.kit-surface.kit-is-64 .kit-transport {
+  max-width: 840px;
+}
+
+.kit-grid.kit-grid-64 {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
+  max-width: 840px; /* ~100px pads at 8-up */
+}
+
+.kit-grid.kit-grid-64 .kit-pad {
+  min-height: 44px;
+  padding: 5px;
+  border-radius: 10px;
+}
+
+.kit-grid.kit-grid-64 .kit-pad-name {
+  font-size: 9px;
+  -webkit-line-clamp: 1;
+}
+
+.kit-grid.kit-grid-64 .kit-pad-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+}
+
+/* Step dots don't survive ~100px tiles — the simplified waveform is the
+ * only chrome the compact grid keeps. */
+.kit-grid.kit-grid-64 .kit-pad-steps {
+  display: none;
+}
+
+/* ---------- sequence step dots (kit defaultSequence, kind=flip) ---------- */
+
+.kit-pad-steps {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.kit-pad-step {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  flex: none;
+}
+
+.kit-pad-step.is-on {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+/* ---------- layers view (desktop LayerStackView rack) ---------- */
+
+.kit-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 720px; /* stay aligned with .kit-grid */
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+.kit-layer-row {
+  --pad-tint: 139, 92, 246;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-md, 12px);
+  background: var(--jamn-surface1, #14141A);
+}
+
+.kit-layer-row.is-live {
+  border-color: rgba(var(--pad-tint), 0.55);
+  background:
+    linear-gradient(rgba(var(--pad-tint), 0.10), rgba(var(--pad-tint), 0.10)),
+    var(--jamn-surface1, #14141A);
+}
+
+/* Armed layer: same "waiting for the beat" pulse as the grid pads. */
+.kit-layer-row.is-armed {
+  animation: kit-armed-pulse 0.9s ease-in-out infinite;
+}
+
+.kit-layer-bar {
+  width: 6px;
+  height: 32px;
+  border-radius: 3px;
+  background: rgba(var(--pad-tint), 0.95);
+  flex: none;
+}
+
+.kit-layer-cat {
+  width: 66px;
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: rgba(var(--pad-tint), 0.95);
+}
+
+.kit-layer-active {
+  flex: 0 0 150px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kit-layer-wave {
+  width: 100%;
+  height: 22px;
+}
+
+.kit-layer-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--jamn-text, #fff);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kit-layer-play {
+  appearance: none;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.kit-layer-row.is-live .kit-layer-play {
+  border-color: rgba(var(--pad-tint), 0.9);
+  color: rgba(var(--pad-tint), 0.95);
+}
+
+/* Swap picker: the category's pads as chips, best score first. */
+.kit-layer-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.kit-layer-chip {
+  appearance: none;
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text2, #A1A1AA);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kit-layer-chip:hover {
+  color: var(--jamn-text, #fff);
+}
+
+.kit-layer-chip.is-on {
+  border-color: rgba(var(--pad-tint), 0.9);
+  color: var(--jamn-text, #fff);
+  background:
+    linear-gradient(rgba(var(--pad-tint), 0.25), rgba(var(--pad-tint), 0.25)),
+    var(--jamn-surface2, #1C1C24);
+}
+
 /* ---------- per-pad override badge ---------- */
 
 /* Radial loop/one-shot override marker: ∞ (forced loop) or 1 (forced

@@ -50,6 +50,94 @@
     return !!obj && typeof obj[method] === "function";
   }
 
+  /** Pad-count preference: the page URL's ?pads= wins, else the persisted
+   * choice, else 16. Only 16 (4×4) and 64 (8×8) are real layouts — any
+   * other value falls back to 16 rather than a broken grid. */
+  function resolvePadCount(search, stored) {
+    var m = /[?&]pads=(\d+)\b/.exec(search || "");
+    var v = m ? parseInt(m[1], 10) : parseInt(stored, 10);
+    return v === 64 ? 64 : 16;
+  }
+
+  /** Score used everywhere ranking pads (native `??` chain:
+   * performanceScore ?? loopScore ?? 0). */
+  function padScore(p) {
+    return p.performanceScore != null ? p.performanceScore : p.loopScore != null ? p.loopScore : 0;
+  }
+
+  // Layer-row order — the full category set the kit builder emits, in its
+  // grid grouping order (desktop LayerStackView shows a subset; the web rack
+  // shows every category actually present).
+  var LAYER_ORDER = ["DRUMS", "BASS", "CHORDS", "LEAD", "RHYTHM", "TEXTURE", "VOCAL"];
+
+  /** Categories present in the kit, in fixed LAYER_ORDER. */
+  function layerCategories(pads) {
+    var present = {};
+    (pads || []).forEach(function (p) {
+      if (p && typeof p.padIdx === "number")
+        present[String(p.category || "").toUpperCase()] = true;
+    });
+    return LAYER_ORDER.filter(function (c) {
+      return !!present[c];
+    });
+  }
+
+  /** pads(in:) — a category's pads, best performanceScore first (the swap
+   * picker for a layer row). Mirrors LaunchpadController.pads(in:). */
+  function padsInCategory(pads, category) {
+    var cat = String(category || "").toUpperCase();
+    return (pads || [])
+      .filter(function (p) {
+        return (
+          p && typeof p.padIdx === "number" && String(p.category || "").toUpperCase() === cat
+        );
+      })
+      .slice()
+      .sort(function (a, b) {
+        return padScore(b) - padScore(a);
+      });
+  }
+
+  /** Per-pad sequence step flags from the KIT-LEVEL defaultSequence
+   * (kind=flip wire format: tracks[].chopRef.packPad.padIdx +
+   * steps[].velocity). Pad dicts themselves carry no step fields
+   * server-side — this is the only source. Null when the kit has none. */
+  function padStepFlags(kit) {
+    var seq = kit && kit.defaultSequence;
+    var tracks = seq && Array.isArray(seq.tracks) ? seq.tracks : null;
+    if (!tracks) return null;
+    var out = {};
+    var any = false;
+    tracks.forEach(function (t) {
+      if (!t || !Array.isArray(t.steps)) return;
+      var ref = t.chopRef && t.chopRef.packPad;
+      var idx = ref && typeof ref.padIdx === "number" ? ref.padIdx : null;
+      if (idx === null) return;
+      var flags = t.steps.map(function (st) {
+        return !!(st && typeof st.velocity === "number" && st.velocity > 0);
+      });
+      if (out[idx]) {
+        // Two tracks on one pad (e.g. kick + ghost layer): a step lights
+        // when either track fires.
+        for (var i = 0; i < flags.length && i < out[idx].length; i++)
+          out[idx][i] = out[idx][i] || flags[i];
+      } else out[idx] = flags;
+      any = true;
+    });
+    return any ? out : null;
+  }
+
+  /** Feedback queue push — native cap parity (SessionController drops the
+   * oldest past 256 so an abandoned tab can't grow unbounded). */
+  function pushPadEvent(queue, assetId, kind, cap) {
+    if (typeof assetId !== "string" || !assetId) return queue;
+    if (kind !== "play" && kind !== "skip") return queue;
+    queue.push({ assetId: assetId, kind: kind });
+    var max = cap || 256;
+    while (queue.length > max) queue.shift();
+    return queue;
+  }
+
   // ---------- mount state (one surface at a time) ----------
 
   var current = null;
@@ -80,12 +168,31 @@
         radial: null, // open radial-menu state, or null
         transportTimer: 0,
         kitKind: (opts && opts.kind && opts.kind !== "auto") ? opts.kind : null,
+        view: "grid", // "grid" | "layers" (desktop LayerStackView port)
+        padCount: 16, // 16 (4×4) or 64 (8×8 compact); resolved below
+        layersEl: null,
+        layerRows: null, // category → row elements, built by renderLayers
+        // Usage feedback (assetId-keyed play/skip events, batched to
+        // /api/song/{id}/pad-feedback like the native SessionController).
+        fb: { events: [], startedAt: {}, timer: 0 },
       };
       if (!entry || !entry.id || !entry.result) {
         showError(current, "No analysis loaded.");
         return;
       }
+      try {
+        var stored = window.localStorage ? window.localStorage.getItem("jamn.kit.pads") : null;
+        current.padCount = resolvePadCount(
+          window.location && window.location.search, stored);
+      } catch (_) {}
       renderShell(current);
+      // Feedback batches every 20 s (native parity); unmount flushes the
+      // remainder via sendBeacon. Failures are silent — best-effort telemetry.
+      (function (s) {
+        s.fb.timer = setInterval(function () {
+          if (s.alive) flushPadFeedback(s);
+        }, 20000);
+      })(current);
       load(current).catch(function (err) {
         if (current && current.alive) {
           showError(current, "Kit failed to load: " + ((err && err.message) || err));
@@ -106,6 +213,8 @@
     s.alive = false;
     if (s.raf) cancelAnimationFrame(s.raf);
     if (s.transportTimer) clearInterval(s.transportTimer);
+    if (s.fb && s.fb.timer) clearInterval(s.fb.timer);
+    flushPadFeedback(s, true); // last batch rides sendBeacon past teardown
     closeRadial(s);
     for (var i = 0; i < s.padEls.length; i++) {
       if (s.padEls[i] && s.padEls[i].lp) clearTimeout(s.padEls[i].lp);
@@ -124,19 +233,71 @@
 
   // ---------- data + audio load ----------
 
+  /** Fetch the kit manifest at the surface's current pad count. The server
+   * clamps pads at 16 today (Query le=16) — a 64 ask degrades to 16 in
+   * place (grid follows padCount, so the fallback renders 4×4, not a
+   * half-empty 8×8) instead of erroring the whole surface. */
+  function fetchKitJson(s, entry) {
+    var kindQ = s.kitKind ? "&kind=" + encodeURIComponent(s.kitKind) : "";
+    var urlFor = function (n) {
+      return "/api/song/" + encodeURIComponent(entry.id) + "/kit?pads=" + n + kindQ;
+    };
+    return fetch(urlFor(s.padCount)).then(function (r) {
+      if (r.ok) return r.json();
+      if (s.padCount > 16) {
+        s.padCount = 16;
+        syncPadCountUi(s);
+        return fetch(urlFor(16)).then(function (r2) {
+          if (!r2.ok) throw new Error("kit HTTP " + r2.status);
+          return r2.json();
+        });
+      }
+      throw new Error("kit HTTP " + r.status);
+    });
+  }
+
+  /** Fetch + decode one stem role (proxying cross-origin R2 URLs, and
+   * retrying Safari's FLAC decode failure via the proxy's WAV transcode).
+   * Resolves null on any failure — a single bad stem mutes its pads, not
+   * the kit. */
+  function fetchStemBuffer(s, entry, paths, role) {
+    var url = resolveStemUrl(paths[role]);
+    // Cross-origin R2 presigned URLs are unreachable from a browser
+    // (bucket sends no CORS headers) — stream via the backend proxy.
+    if (url && url.indexOf(window.location.origin) !== 0 && /^https?:/i.test(url)) {
+      url = window.location.origin + "/api/history/" +
+        encodeURIComponent(entry.id) + "/stem-audio/" +
+        encodeURIComponent(role);
+    }
+    if (!url) return Promise.resolve(null);
+    var proxied = url.indexOf("/stem-audio/") !== -1;
+    return fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error(role + " HTTP " + r.status);
+        return r.arrayBuffer();
+      })
+      .then(function (buf) {
+        return s.ctx.decodeAudioData(buf).catch(function (err) {
+          if (!proxied) throw err;
+          return fetch(url + "?format=wav")
+            .then(function (r2) {
+              if (!r2.ok) throw err;
+              return r2.arrayBuffer();
+            })
+            .then(function (b2) { return s.ctx.decodeAudioData(b2); });
+        });
+      })
+      .then(function (audio) { return { role: role, buffer: audio }; })
+      .catch(function () { return null; });
+  }
+
   function load(s) {
     var entry = s.entry;
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return Promise.reject(new Error("Web Audio unsupported"));
     s.ctx = new AC();
 
-    var kindQ = s.kitKind ? "&kind=" + encodeURIComponent(s.kitKind) : "";
-    var kitP = fetch("/api/song/" + encodeURIComponent(entry.id) + "/kit?pads=16" + kindQ).then(
-      function (r) {
-        if (!r.ok) throw new Error("kit HTTP " + r.status);
-        return r.json();
-      }
-    );
+    var kitP = fetchKitJson(s, entry);
     var engineP = import("./padengine.js");
 
     return kitP.then(function (kit) {
@@ -177,44 +338,11 @@
 
       return Promise.all(
         roles.map(function (role) {
-          var url = resolveStemUrl(paths[role]);
-          // Cross-origin R2 presigned URLs are unreachable from a browser
-          // (bucket sends no CORS headers) — stream via the backend proxy.
-          if (url && url.indexOf(window.location.origin) !== 0 && /^https?:/i.test(url)) {
-            url = window.location.origin + "/api/history/" +
-              encodeURIComponent(entry.id) + "/stem-audio/" +
-              encodeURIComponent(role);
-          }
-          if (!url) return null;
-          var proxied = url.indexOf("/stem-audio/") !== -1;
-          return fetch(url)
-            .then(function (r) {
-              if (!r.ok) throw new Error(role + " HTTP " + r.status);
-              return r.arrayBuffer();
-            })
-            .then(function (buf) {
-              // Safari's decodeAudioData can't decode FLAC (Chrome can) —
-              // retry once via the proxy's on-the-fly WAV transcode.
-              return s.ctx.decodeAudioData(buf).catch(function (err) {
-                if (!proxied) throw err;
-                return fetch(url + "?format=wav")
-                  .then(function (r2) {
-                    if (!r2.ok) throw err;
-                    return r2.arrayBuffer();
-                  })
-                  .then(function (b2) { return s.ctx.decodeAudioData(b2); });
-              });
-            })
-            .then(function (audio) {
-              stemsDone++;
-              setStatus("Loading stems " + stemsDone + "/" + roles.length + "…");
-              return { role: role, buffer: audio };
-            })
-            .catch(function () {
-              stemsDone++;
-              setStatus("Loading stems " + stemsDone + "/" + roles.length + "…");
-              return null; // a single bad stem mutes its pads, not the kit
-            });
+          return fetchStemBuffer(s, entry, paths, role).then(function (d) {
+            stemsDone++;
+            setStatus("Loading stems " + stemsDone + "/" + roles.length + "…");
+            return d; // null = a single bad stem mutes its pads, not the kit
+          });
         })
       ).then(function (decoded) {
         if (!s.alive) return;
@@ -290,6 +418,9 @@
       p.ring.style.background = "none";
       p.sweep.style.width = "0";
     }
+    // Layer rows mirror pad state (setUi only fires on transitions, so
+    // this is a handful of class/text updates, not per-frame work).
+    if (s.layerRows) refreshLayers(s);
   }
 
   // ---------- rendering ----------
@@ -315,6 +446,43 @@
 
     var controls = document.createElement("div");
     controls.className = "kit-controls";
+
+    // Grid ⇄ Layers view toggle — Layers is the desktop hand-jam rack
+    // (LayerStackView): one active loop per category with a swap picker.
+    var viewSeg = document.createElement("div");
+    viewSeg.className = "kit-seg kit-viewseg";
+    viewSeg.setAttribute("role", "group");
+    viewSeg.title = "Grid of pads, or one layer row per category";
+    s.viewBtns = {};
+    [["grid", "Grid"], ["layers", "Layers"]].forEach(function (pair) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "kit-seg-btn" + (pair[0] === s.view ? " is-on" : "");
+      b.textContent = pair[1];
+      b.addEventListener("click", function () {
+        setView(s, pair[0]);
+      });
+      s.viewBtns[pair[0]] = b;
+      viewSeg.appendChild(b);
+    });
+
+    // Pad-count toggle: 16 = the native 4×4 scale, 64 = 8×8 compact.
+    var sizeSeg = document.createElement("div");
+    sizeSeg.className = "kit-seg kit-sizeseg";
+    sizeSeg.setAttribute("role", "group");
+    sizeSeg.title = "Pad count";
+    s.sizeBtns = {};
+    [16, 64].forEach(function (n) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "kit-seg-btn" + (n === s.padCount ? " is-on" : "");
+      b.textContent = String(n);
+      b.addEventListener("click", function () {
+        setPadCount(s, n);
+      });
+      s.sizeBtns[n] = b;
+      sizeSeg.appendChild(b);
+    });
 
     // Tap / Loop segmented toggle (DEFAULT Tap). Buttons kept on state so
     // Instant Groove can flip the mode programmatically (setMode).
@@ -394,6 +562,8 @@
       for (var i = 0; i < s.padEls.length; i++) if (s.padEls[i]) setUi(s, i, "idle");
     });
 
+    controls.appendChild(viewSeg);
+    controls.appendChild(sizeSeg);
     controls.appendChild(quant);
     controls.appendChild(seg);
     controls.appendChild(latch);
@@ -451,16 +621,25 @@
     grid.className = "kit-grid";
     s.gridEl = grid;
 
-    // Loading skeleton: 16 shimmer tiles while stems fetch + decode.
-    for (var i = 0; i < PAD_COUNT; i++) {
+    // Loading skeleton: one shimmer tile per pad while stems fetch + decode.
+    for (var i = 0; i < (s.padCount || PAD_COUNT); i++) {
       var sk = document.createElement("div");
       sk.className = "kit-pad is-skeleton";
       grid.appendChild(sk);
     }
 
+    // Layers view container (hidden until the Layers toggle) — rows are
+    // built from real pads by renderLayers once the kit loads.
+    var layers = document.createElement("div");
+    layers.className = "kit-layers";
+    layers.style.display = "none";
+    s.layersEl = layers;
+
     s.root.appendChild(head);
     s.root.appendChild(transport);
     s.root.appendChild(grid);
+    s.root.appendChild(layers);
+    syncPadCountUi(s);
 
     // Transport polls on its own slow clock (not the pad rAF, which only
     // runs once pads exist) so time/play state stay live from mount.
@@ -573,15 +752,335 @@
       p.loop = true;
       try {
         s.engine.trigger(idx, { loop: true, quantized: true, grid: grid });
+        noteTrigger(s, idx);
         setUi(s, idx, "armed");
       } catch (_) {}
     });
+  }
+
+  // ---------- view toggle (Grid ⇄ Layers) ----------
+
+  function setView(s, view) {
+    s.view = view;
+    if (s.viewBtns) {
+      for (var k in s.viewBtns) s.viewBtns[k].classList.toggle("is-on", k === view);
+    }
+    if (s.gridEl) s.gridEl.style.display = view === "grid" ? "" : "none";
+    if (s.layersEl) s.layersEl.style.display = view === "layers" ? "" : "none";
+    if (view === "layers") renderLayers(s);
+    else drawAllWaves(s); // grid canvases may have resized while hidden
+  }
+
+  // ---------- pad count (16 | 64) ----------
+
+  function syncPadCountUi(s) {
+    if (s.sizeBtns) {
+      for (var k in s.sizeBtns)
+        s.sizeBtns[k].classList.toggle("is-on", Number(k) === s.padCount);
+    }
+    try {
+      s.root.classList.toggle("kit-is-64", s.padCount === 64);
+    } catch (_) {}
+    if (s.gridEl) s.gridEl.classList.toggle("kit-grid-64", s.padCount === 64);
+  }
+
+  function setPadCount(s, n) {
+    if (s.padCount === n) return;
+    s.padCount = n;
+    try {
+      if (window.localStorage) window.localStorage.setItem("jamn.kit.pads", String(n));
+    } catch (_) {}
+    syncPadCountUi(s);
+    reloadKit(s);
+  }
+
+  /** Refetch the kit at the current pad count and rebuild pads in place.
+   * Stems stay decoded — only roles the new pads reference that we don't
+   * already hold are fetched. No-op before the initial load finishes (that
+   * load reads s.padCount when it builds its URL anyway). */
+  function reloadKit(s) {
+    if (!s.engine || !s.stems || !s.entry) return;
+    try {
+      if (can(s.engine, "stopAll")) s.engine.stopAll();
+    } catch (_) {}
+    s.fb.startedAt = {}; // padIdx keys change meaning across a rebuild
+    if (s.statusEl) s.statusEl.textContent = "Rebuilding pads…";
+    var entry = s.entry;
+    fetchKitJson(s, entry)
+      .then(function (kit) {
+        if (!s.alive) return;
+        var pads = (kit && kit.pads) || [];
+        if (!pads.length) throw new Error("kit has no pads");
+        var paths = entry.result.stems_paths || {};
+        var missing = {};
+        pads.forEach(function (p) {
+          var role = p && p.stemSlice && p.stemSlice.stemRole;
+          if (role && paths[role] && !s.stems[role]) missing[role] = true;
+        });
+        return Promise.all(
+          Object.keys(missing).map(function (role) {
+            return fetchStemBuffer(s, entry, paths, role);
+          })
+        ).then(function (decoded) {
+          if (!s.alive) return;
+          decoded.forEach(function (d) {
+            if (d) s.stems[d.role] = d.buffer;
+          });
+          s.kit = kit;
+          s.pads = pads;
+          if (can(s.engine, "setStems")) s.engine.setStems(s.stems);
+          if (can(s.engine, "setKit"))
+            s.engine.setKit(kit, { tempoBpm: entry.result.tempo_bpm });
+          var prep = can(s.engine, "prepare") ? s.engine.prepare() : null;
+          return Promise.resolve(prep).then(function () {
+            if (!s.alive) return;
+            if (s.statusEl) s.statusEl.textContent = "";
+            renderPads(s);
+          });
+        });
+      })
+      .catch(function () {
+        if (s.alive && s.statusEl) s.statusEl.textContent = "Kit rebuild failed.";
+      });
+  }
+
+  // ---------- layers view (desktop LayerStackView port) ----------
+
+  /** The padIdx currently sounding in a category (the active layer), or
+   * null. "Sounding" includes armed — a queued layer is already claimed. */
+  function activeLayerIdx(s, cat) {
+    var members = padsInCategory(s.pads, cat);
+    for (var i = 0; i < members.length; i++) {
+      var pe = s.padEls[members[i].padIdx];
+      if (pe && pe.ui !== "idle") return members[i].padIdx;
+    }
+    return null;
+  }
+
+  /** setLayer: stop whatever loops in the category, start this pad —
+   * looping, quantized (category-exclusive, LaunchpadController.setLayer). */
+  function setLayer(s, cat, padIdx) {
+    if (!can(s.engine, "trigger")) return;
+    setMode(s, "loop");
+    var members = padsInCategory(s.pads, cat);
+    for (var i = 0; i < members.length; i++) {
+      var idx = members[i].padIdx;
+      if (idx === padIdx) continue;
+      var pe = s.padEls[idx];
+      if (pe && pe.ui !== "idle") {
+        try {
+          if (can(s.engine, "release")) s.engine.release(idx);
+        } catch (_) {}
+        setUi(s, idx, "idle");
+      }
+    }
+    var p = s.padEls[padIdx];
+    if (!p || p.ui !== "idle") {
+      refreshLayers(s); // already the live layer — nothing to start
+      return;
+    }
+    p.loop = true;
+    var grid = s.quantize === "off" ? "bar" : s.quantize;
+    try {
+      s.engine.trigger(padIdx, { loop: true, quantized: true, grid: grid });
+      noteTrigger(s, padIdx);
+      setUi(s, padIdx, "armed");
+    } catch (_) {}
+  }
+
+  /** clearLayer: stop the category's active loop (empty the row). */
+  function clearLayer(s, cat) {
+    var members = padsInCategory(s.pads, cat);
+    for (var i = 0; i < members.length; i++) {
+      var idx = members[i].padIdx;
+      var pe = s.padEls[idx];
+      if (pe && pe.ui !== "idle") {
+        try {
+          if (can(s.engine, "release")) s.engine.release(idx);
+        } catch (_) {}
+        setUi(s, idx, "idle");
+      }
+    }
+  }
+
+  /** toggleLayer: stop if active, else start the category's best pad. */
+  function toggleLayer(s, cat) {
+    if (activeLayerIdx(s, cat) != null) {
+      clearLayer(s, cat);
+      return;
+    }
+    var members = padsInCategory(s.pads, cat);
+    if (members.length) setLayer(s, cat, members[0].padIdx);
+  }
+
+  /** Build the layer rack: one row per category present in the kit —
+   * color bar + label, the active pad (name + mini waveform), play/stop,
+   * and a swap-chip strip (all category pads, best score first). */
+  function renderLayers(s) {
+    if (!s.layersEl) return;
+    s.layersEl.innerHTML = "";
+    s.layerRows = null;
+    var cats = layerCategories(s.pads);
+    if (!cats.length) {
+      var note = document.createElement("div");
+      note.className = "kit-error";
+      note.textContent = s.pads.length
+        ? "This kit has no layered categories."
+        : "Load a song to build layers.";
+      s.layersEl.appendChild(note);
+      return;
+    }
+    s.layerRows = {};
+    cats.forEach(function (cat) {
+      var members = padsInCategory(s.pads, cat);
+      var row = document.createElement("div");
+      row.className = "kit-layer-row";
+      var tint = parseColor(members[0] && members[0].colorHint);
+      row.style.setProperty("--pad-tint", tint.r + "," + tint.g + "," + tint.b);
+
+      var bar = document.createElement("span");
+      bar.className = "kit-layer-bar";
+
+      var label = document.createElement("span");
+      label.className = "kit-layer-cat";
+      label.textContent = cat;
+
+      var active = document.createElement("div");
+      active.className = "kit-layer-active";
+      var wave = document.createElement("canvas");
+      wave.className = "kit-layer-wave";
+      var name = document.createElement("span");
+      name.className = "kit-layer-name";
+      active.appendChild(wave);
+      active.appendChild(name);
+
+      var play = document.createElement("button");
+      play.type = "button";
+      play.className = "kit-layer-play";
+      play.addEventListener("click", function () {
+        try {
+          if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+          toggleLayer(s, cat);
+        } catch (_) {}
+      });
+
+      var chips = document.createElement("div");
+      chips.className = "kit-layer-chips";
+      members.forEach(function (pd) {
+        var chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "kit-layer-chip";
+        chip.textContent = pd.name || "Pad " + (pd.padIdx + 1);
+        chip.title = "Swap the " + cat + " layer to this loop";
+        chip.addEventListener("click", function () {
+          try {
+            if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+            setLayer(s, cat, pd.padIdx);
+          } catch (_) {}
+        });
+        chips.appendChild(chip);
+      });
+
+      row.appendChild(bar);
+      row.appendChild(label);
+      row.appendChild(active);
+      row.appendChild(play);
+      row.appendChild(chips);
+      s.layersEl.appendChild(row);
+      s.layerRows[cat] = {
+        row: row, name: name, wave: wave, play: play, chips: chips,
+        members: members, shownIdx: -1,
+      };
+    });
+    refreshLayers(s);
+  }
+
+  /** Sync every layer row to current pad state: live highlight, shown pad
+   * name/waveform (active layer, else the category's best), play glyph,
+   * and the active swap chip. Waveform redraws only when the shown pad
+   * changes (and only once it has laid-out size). */
+  function refreshLayers(s) {
+    if (!s.layerRows) return;
+    for (var cat in s.layerRows) {
+      var row = s.layerRows[cat];
+      var activeIdx = activeLayerIdx(s, cat);
+      var shown = activeIdx != null ? padByIdx(s, activeIdx)
+        : row.members.length ? row.members[0] : null;
+      var live = activeIdx != null;
+      var pe = live ? s.padEls[activeIdx] : null;
+      row.row.classList.toggle("is-live", live);
+      row.row.classList.toggle("is-armed", !!(pe && pe.ui === "armed"));
+      row.name.textContent = shown ? shown.name || "Pad " + (shown.padIdx + 1) : "—";
+      var glyph = live ? "■" : "▶";
+      if (row.play.textContent !== glyph) row.play.textContent = glyph;
+      row.play.title = live ? "Stop this layer" : "Start the best " + cat + " loop";
+      var chipEls = row.chips.children;
+      for (var i = 0; i < row.members.length && i < chipEls.length; i++) {
+        chipEls[i].classList.toggle("is-on", row.members[i].padIdx === activeIdx);
+      }
+      var shownIdx = shown ? shown.padIdx : -1;
+      if (row.shownIdx !== shownIdx && shownIdx >= 0) {
+        var tint = parseColor(shown.colorHint);
+        if (drawWaveInto(s, shownIdx, row.wave, tint, 0)) row.shownIdx = shownIdx;
+      }
+    }
+  }
+
+  // ---------- usage feedback (assetId play/skip → pad-feedback) ----------
+
+  /** Any trigger counts as a play (kit ranking rewards reach-for), and
+   * stamps a start time so a radial Stop inside 1.5 s downgrades intent
+   * to a skip. Pads without a stable assetId (packs, drumfile pads) are
+   * ignored — they mean nothing to the server's ranking loop. */
+  function noteTrigger(s, padIdx) {
+    if (!s.fb || !s.entry) return;
+    var pad = padByIdx(s, padIdx);
+    var assetId = pad && pad.assetId;
+    if (typeof assetId !== "string" || !assetId) return;
+    s.fb.startedAt[padIdx] = Date.now();
+    pushPadEvent(s.fb.events, assetId, "play", 256);
+  }
+
+  /** Radial Stop within 1.5 s of the trigger = "launched but didn't want
+   * it" — the explicit skip signal (native judges loops at toggle-off). */
+  function noteRadialStop(s, padIdx) {
+    if (!s.fb || !s.entry) return;
+    var t0 = s.fb.startedAt[padIdx];
+    delete s.fb.startedAt[padIdx];
+    if (typeof t0 !== "number" || Date.now() - t0 >= 1500) return;
+    var pad = padByIdx(s, padIdx);
+    var assetId = pad && pad.assetId;
+    if (typeof assetId === "string" && assetId)
+      pushPadEvent(s.fb.events, assetId, "skip", 256);
+  }
+
+  /** Batch-post queued events. Fire-and-forget: feedback is best-effort
+   * telemetry, so every failure path is silent. `final` (unmount) rides
+   * sendBeacon so the POST survives page teardown. */
+  function flushPadFeedback(s, final) {
+    try {
+      if (!s || !s.fb || !s.fb.events.length || !s.entry || !s.entry.id) return;
+      var events = s.fb.events.splice(0, s.fb.events.length);
+      var url = "/api/song/" + encodeURIComponent(s.entry.id) + "/pad-feedback";
+      var body = JSON.stringify({ events: events });
+      if (final && typeof navigator !== "undefined" && navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([body], { type: "application/json" }));
+        return;
+      }
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body,
+        keepalive: !!final,
+      }).catch(function () {});
+    } catch (_) {}
   }
 
   function renderPads(s) {
     if (s.kit && s.kit.name) s.titleEl.textContent = s.kit.name;
     s.gridEl.innerHTML = "";
     s.padEls = [];
+    syncPadCountUi(s);
 
     // Server pad order — kit=5+ already lays rows out grouped by category,
     // so a straight padIdx grid reproduces the mobile grouped rack.
@@ -590,7 +1089,12 @@
       if (p && typeof p.padIdx === "number") byIdx[p.padIdx] = p;
     });
 
-    for (var i = 0; i < PAD_COUNT; i++) {
+    // Step dots come from the kit-level defaultSequence (kind=flip only);
+    // per-pad dicts carry no step metadata server-side.
+    var stepFlags = padStepFlags(s.kit);
+
+    var count = s.padCount || PAD_COUNT;
+    for (var i = 0; i < count; i++) {
       var pad = byIdx[i];
       var el = document.createElement("button");
       el.type = "button";
@@ -610,6 +1114,20 @@
       name.className = "kit-pad-name";
       name.textContent = pad.name || "Pad " + (i + 1);
 
+      // Sequence step dots (light version): which 16th-steps of the kit's
+      // defaultSequence this pad fires on.
+      var flags = stepFlags && stepFlags[i];
+      var dots = null;
+      if (flags && flags.length) {
+        dots = document.createElement("span");
+        dots.className = "kit-pad-steps";
+        for (var d = 0; d < flags.length; d++) {
+          var dot = document.createElement("i");
+          dot.className = "kit-pad-step" + (flags[d] ? " is-on" : "");
+          dots.appendChild(dot);
+        }
+      }
+
       var canvas = document.createElement("canvas");
       canvas.className = "kit-pad-wave";
 
@@ -624,6 +1142,7 @@
       badge.className = "kit-pad-badge";
 
       el.appendChild(name);
+      if (dots) el.appendChild(dots);
       el.appendChild(canvas);
       el.appendChild(sweep);
       el.appendChild(ring);
@@ -643,10 +1162,15 @@
     requestAnimationFrame(function () {
       drawAllWaves(s);
     });
-    s.onResize = function () {
-      drawAllWaves(s);
-    };
-    window.addEventListener("resize", s.onResize);
+    if (!s.onResize) {
+      s.onResize = function () {
+        drawAllWaves(s);
+      };
+      window.addEventListener("resize", s.onResize);
+    }
+
+    // Rebuild the layer rack against the (possibly new) pads.
+    renderLayers(s);
   }
 
   function wirePad(s, padIdx, el) {
@@ -739,6 +1263,7 @@
       // One-shot fire-and-forget; release is ignored (padUp checks .loop).
       p.loop = false;
       s.engine.trigger(padIdx, opts);
+      noteTrigger(s, padIdx);
       setUi(s, padIdx, "playing"); // immediate start; rAF ends it via padProgress
       return;
     }
@@ -752,6 +1277,7 @@
     }
     p.loop = true;
     s.engine.trigger(padIdx, opts);
+    noteTrigger(s, padIdx);
     // Armed until padProgress (or onstate) reports actual start — the
     // pulsing border says "waiting for the beat", not silence. Unquantized
     // loops start now, so they're playing already.
@@ -823,19 +1349,33 @@
   }
 
   function drawWave(s, padIdx, p) {
-    var canvas = p.canvas;
+    // 8×8 tiles are too small for a dense waveform — coarser bins read
+    // as a clean silhouette instead of noise.
+    var bins = s.padCount === 64 ? -6 : 0; // sentinel: px-per-bin override
+    drawWaveInto(s, padIdx, p.canvas, p.tint, bins);
+  }
+
+  /** Waveform painter shared by grid pads and layer rows.
+   * `binsOpt`: 0 = default density (w/4, 16..64 bins); negative = px per
+   * bin with a lower cap (compact 64-grid simplification); positive =
+   * exact bin count. Returns true when something was drawn (false when
+   * the canvas has no laid-out size yet). */
+  function drawWaveInto(s, padIdx, canvas, tint, binsOpt) {
     var w = canvas.clientWidth,
       h = canvas.clientHeight;
-    if (!w || !h) return;
+    if (!w || !h) return false;
     var dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     var g = canvas.getContext("2d");
-    if (!g) return;
+    if (!g) return false;
     g.scale(dpr, dpr);
     g.clearRect(0, 0, w, h);
 
-    var bins = Math.max(16, Math.min(64, Math.round(w / 4)));
+    var bins;
+    if (binsOpt > 0) bins = binsOpt;
+    else if (binsOpt < 0) bins = Math.max(6, Math.min(20, Math.round(w / -binsOpt)));
+    else bins = Math.max(16, Math.min(64, Math.round(w / 4)));
     var peaks = null;
     if (can(s.engine, "peaks")) {
       try {
@@ -846,19 +1386,20 @@
     }
     if (!peaks || !peaks.length) {
       // Fallback accent underline (no buffer resident) — mobile parity.
-      g.fillStyle = rgba(p.tint, 0.9);
+      g.fillStyle = rgba(tint, 0.9);
       g.fillRect(0, h - 3, 26, 3);
-      return;
+      return true;
     }
     // Mirrored bars, light strokes — PadWaveformBars look.
     var n = peaks.length;
     var bw = w / n;
-    g.fillStyle = rgba(p.tint, 0.9);
+    g.fillStyle = rgba(tint, 0.9);
     for (var i = 0; i < n; i++) {
       var v = Math.max(0, Math.min(1, Number(peaks[i]) || 0));
       var bh = Math.max(1.5, v * h);
       g.fillRect(i * bw + bw * 0.15, (h - bh) / 2, Math.max(0.6, bw * 0.7), bh);
     }
+    return true;
   }
 
   // ---------- radial pad menu (right-click / long-press) ----------
@@ -936,6 +1477,7 @@
         danger: true,
         disabled: !sounding,
         run: function () {
+          noteRadialStop(s, padIdx); // <1.5 s since trigger = skip signal
           try {
             if (can(s.engine, "release")) s.engine.release(padIdx);
           } catch (_) {}
@@ -1174,6 +1716,10 @@
       pads: [], padEls: [], mode: "tap", quantize: "bar", latch: false,
       raf: 0, onResize: null, stems: null, dsp: null, radial: null,
       transportTimer: 0,
+      // Packs keep the 16 grid (their manifests are 16-pad) and have no
+      // entry, so feedback stays inert (noteTrigger requires s.entry).
+      view: "grid", padCount: 16, layersEl: null, layerRows: null,
+      fb: { events: [], startedAt: {}, timer: 0 },
     };
     renderShell(current);
     var s = current;
@@ -1260,6 +1806,11 @@
       parseColor: parseColor,
       pickInstantGroove: pickInstantGroove,
       fmtTime: fmtTime,
+      resolvePadCount: resolvePadCount,
+      layerCategories: layerCategories,
+      padsInCategory: padsInCategory,
+      padStepFlags: padStepFlags,
+      pushPadEvent: pushPadEvent,
     },
   };
 })();

@@ -6008,7 +6008,7 @@ async def get_song_performance(entry_id: str) -> JSONResponse:
 async def get_song_kit(
     entry_id: str,
     skill: str = Query("intermediate", description="beginner|intermediate|advanced"),
-    pads: int = Query(8, ge=1, le=16),
+    pads: int = Query(8, ge=1, le=64),
     kind: str = Query("auto", description="auto (mixed performance kit) | drums (one-shot drum kit) | flip (generated beat from the song's DNA)"),
 ) -> JSONResponse:
     """Auto-built Launchpad kit for a song — a SamplePack manifest the existing
@@ -6296,7 +6296,7 @@ async def post_pad_feedback(entry_id: str, request: Request) -> JSONResponse:
 async def get_song_ableton_kit(
     entry_id: str,
     skill: str = Query("intermediate", description="beginner|intermediate|advanced"),
-    pads: int = Query(16, ge=1, le=16),
+    pads: int = Query(16, ge=1, le=64),
 ):
     """Export the song's Auto Kit as an Ableton Live Pack zip: a Drum Rack
     (.adg) with one color-coded chain per kit pad, the rendered stem-slice
