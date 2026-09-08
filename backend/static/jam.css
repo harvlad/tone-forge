@@ -4851,3 +4851,159 @@ body:has(#view-intake.active) #view-intake.active { width: 100%; }
     padding: 7px 12px; font-size: 13px; white-space: nowrap; line-height: 1;
   }
 }
+
+/* ============================================================
+   Top toolbar (pillbar right cluster) — desktop RootView parity
+   ============================================================ */
+.jamn-toolbar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 3px; border-radius: 999px;
+  background: var(--jamn-surface2, rgba(255,255,255,.06));
+  min-width: 0; /* allow horizontal scroll on narrow viewports */
+  overflow-x: auto; scrollbar-width: none;
+}
+.jamn-toolbar::-webkit-scrollbar { display: none; }
+.jamn-tool {
+  appearance: none; border: none; background: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; flex: 0 0 auto; padding: 0;
+  border-radius: 999px; color: var(--jamn-text2, #A1A1AA);
+  transition: color .12s ease, background .12s ease;
+}
+.jamn-tool:hover { color: var(--jamn-text, #fff);
+  background: rgba(255,255,255,.08); }
+.jamn-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.jamn-tool svg { display: block; }
+/* Active (view-backed tools reflect the current surface). */
+.jamn-tool--active { color: var(--accent-2, #A78BFA);
+  background: rgba(139,92,246,.16); }
+/* Play tool lights green while the transport is rolling. */
+.jamn-tool--playing { color: var(--jamn-success, #22C55E);
+  background: rgba(34,197,94,.14); }
+/* Dimmed = feature not available in this session (e.g. no melody). */
+.jamn-tool--dim { opacity: .32; cursor: default; }
+.jamn-tool--dim:hover { color: var(--jamn-text2, #A1A1AA); background: none; }
+
+/* Session / Connect pill. Dot is grey offline, green when linked. */
+.jamn-tool--session {
+  width: auto; gap: 6px; padding: 0 11px 0 9px; height: 30px;
+  border-radius: 999px; font: inherit; font-size: .82rem;
+  color: var(--jamn-text2, #A1A1AA);
+}
+.jamn-tool-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--jamn-text2, #A1A1AA); opacity: .55; flex: 0 0 auto;
+}
+.jamn-tool--session.jamn-tool--linked { color: var(--jamn-text, #fff); }
+.jamn-tool--session.jamn-tool--linked .jamn-tool-dot {
+  background: var(--jamn-success, #22C55E); opacity: 1;
+  box-shadow: 0 0 0 3px rgba(34,197,94,.18);
+}
+.jamn-tool-session-label { line-height: 1; }
+
+@media (max-width: 720px) {
+  /* Keep the session pill + a couple of transport icons; the rest
+     scroll. Label collapses to just the dot to save room. */
+  .jamn-tool-session-label { display: none; }
+  .jamn-tool--session { padding: 0; width: 32px; }
+  .jamn-toolbar { gap: 0; }
+}
+
+/* ============================================================
+   Band Room = analysis job queue (desktop BandRoomView parity)
+   ============================================================ */
+.br-queue-wrap {
+  max-width: 560px; margin: 0 auto; width: 100%;
+  padding: 28px 20px 48px; box-sizing: border-box;
+}
+.br-queue-header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; margin-bottom: 18px;
+}
+.br-queue-title { font-size: 1.8rem; font-weight: 700; margin: 0;
+  color: var(--jamn-text, #fff); }
+.br-queue-clear {
+  font-size: .85rem; padding: 6px 12px; flex: 0 0 auto;
+}
+.br-queue { display: flex; flex-direction: column; gap: 12px; }
+
+.br-card {
+  background: var(--jamn-surface1, #14141A);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-md, 12px);
+  padding: 16px;
+}
+.br-card-top {
+  display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px;
+}
+.br-card-title {
+  font-size: 1rem; font-weight: 600; color: var(--jamn-text, #fff);
+  flex: 1 1 auto; min-width: 0; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.br-card-dismiss {
+  appearance: none; border: none; background: none; cursor: pointer;
+  font: inherit; font-size: .8rem; color: var(--jamn-text2, #A1A1AA);
+  flex: 0 0 auto; padding: 2px 2px;
+}
+.br-card-dismiss:hover { color: var(--jamn-text, #fff); text-decoration: underline; }
+
+.br-card-body { display: flex; flex-direction: column; gap: 8px; }
+.br-status-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: .9rem; color: var(--jamn-text2, #A1A1AA);
+}
+.br-status-row .br-percent {
+  margin-left: auto; font-variant-numeric: tabular-nums;
+  font-size: .82rem; color: var(--jamn-text2, #A1A1AA);
+}
+/* Inline spinner for queued cards. */
+.br-spinner {
+  width: 14px; height: 14px; flex: 0 0 auto;
+  border: 2px solid rgba(255,255,255,.18);
+  border-top-color: var(--accent-2, #A78BFA);
+  border-radius: 50%; animation: br-spin .8s linear infinite;
+}
+@keyframes br-spin { to { transform: rotate(360deg); } }
+
+.br-progress {
+  height: 6px; border-radius: 3px; overflow: hidden;
+  background: rgba(255,255,255,.08);
+}
+.br-progress-bar {
+  height: 100%; width: 2%;
+  background: linear-gradient(90deg, var(--jamn-brand-a, #8C59F2), var(--jamn-brand-b, #4073F2));
+  border-radius: 3px; transition: width .3s ease;
+}
+
+.br-done-row { display: flex; align-items: center; gap: 12px; }
+.br-ready {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--jamn-success, #22C55E); font-weight: 600; font-size: .92rem;
+}
+.br-start {
+  margin-left: auto; flex: 0 0 auto;
+  appearance: none; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--jamn-success, #22C55E); color: #06210f;
+  font: inherit; font-weight: 600; font-size: .92rem;
+  padding: 8px 16px; border-radius: 999px;
+}
+.br-start:hover { filter: brightness(1.08); }
+.br-start:disabled { opacity: .6; cursor: default; }
+
+.br-error {
+  display: flex; align-items: flex-start; gap: 8px;
+  color: var(--jamn-danger, #EF4444); font-size: .9rem;
+}
+
+.br-hint { font-size: .78rem; color: var(--jamn-text2, #A1A1AA); opacity: .8; }
+
+/* Empty state */
+.br-empty {
+  text-align: center; padding: 48px 16px; color: var(--jamn-text2, #A1A1AA);
+}
+.br-empty-icon { font-size: 2.4rem; margin-bottom: 12px; }
+.br-empty-title { font-size: 1.1rem; font-weight: 600;
+  color: var(--jamn-text, #fff); margin-bottom: 6px; }
+.br-empty-sub { font-size: .9rem; margin-bottom: 20px; }

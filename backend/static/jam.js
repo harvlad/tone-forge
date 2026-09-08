@@ -2098,11 +2098,13 @@
       resetTtfj();
       markTtfj('submit', { upload: file.name });
       state.pendingJobId = info.job_id;
-      enterBandRoom();
-      $('bandroom-title').textContent = file.name.replace(/\.[^.]+$/, '');
-      $('bandroom-status').textContent = info.engine_online
-        ? 'Queued for your GPU engine…'
-        : 'Waiting for your GPU engine to come online…';
+      enterBandRoom({
+        jobId: info.job_id,
+        title: file.name.replace(/\.[^.]+$/, ''),
+        message: info.engine_online
+          ? 'Queued for your GPU engine…'
+          : 'Waiting for your GPU engine to come online…',
+      });
     } catch (err) {
       console.error('[jam] upload failed:', err);
       showErr('Upload failed: ' + (err.message || err));
@@ -2117,9 +2119,11 @@
   // ---------------------------------------------- demo tracks (D-024)
   // Curated CC0/CC-BY catalog. The server carries the license metadata
   // and queues a pre-attested engine job on import, so everything after
-  // the POST is identical to the file-upload path: pendingJobId →
-  // enterBandRoom → followJob → /jam/:id redirect (which then renders
-  // the credit line from the bundle's attribution sidecar).
+  // the POST is identical to the file-upload path: the job id becomes a
+  // Band Room queue card (enterBandRoom → BandRoomQueue.addJob) that
+  // follows the job SSE and, on completion, exposes "Start Jamming"
+  // (loadSessionById → Perform; the bundle's attribution sidecar then
+  // renders the credit line).
   (function wireCcTracks() {
     const modal = $('cc-tracks-modal');
     const openBtn = $('cc-tracks-open');
@@ -2185,11 +2189,13 @@
         resetTtfj();
         markTtfj('submit', { cc_track: track.id });
         state.pendingJobId = info.job_id;
-        enterBandRoom();
-        $('bandroom-title').textContent = track.title || 'Demo track';
-        $('bandroom-status').textContent = info.engine_online
-          ? 'Queued for the analysis engine…'
-          : 'Waiting for the analysis engine to come online…';
+        enterBandRoom({
+          jobId: info.job_id,
+          title: track.title || 'Demo track',
+          message: info.engine_online
+            ? 'Queued for the analysis engine…'
+            : 'Waiting for the analysis engine to come online…',
+        });
       } catch (err) {
         console.error('[jam] demo-track import failed:', err);
         row.disabled = false;
@@ -2454,7 +2460,11 @@
     if (!state.engineStartInFlight) checkEngine();
   }, ENGINE_POLL_MS);
 
-  $('bandroom-cancel').addEventListener('click', () => {
+  // Legacy single-song "Cancel" button — removed with the Band Room
+  // job-queue rewrite. Guard so a missing element can't throw at init;
+  // per-card "Dismiss" replaces it (BandRoomQueue.dismiss).
+  const _bandroomCancel = $('bandroom-cancel');
+  if (_bandroomCancel) _bandroomCancel.addEventListener('click', () => {
     if (state.eventSource) {
       state.eventSource.close();
       state.eventSource = null;
@@ -2614,80 +2624,363 @@
   });
 
   // ---------------------------------------------- band-room: kick off analysis
-  function enterBandRoom() {
-    $('bandroom-title').textContent = 'Setting up your band…';
-    $('bandroom-status').textContent = 'Downloading audio';
-    $('bandroom-bar').style.width = '5%';
-    // Reset the post-analysis CTA and re-show the cancel button so the
-    // bandroom starts each new jam in its "still working" shape.
-    const _ctaRow = $('bandroom-cta');
-    if (_ctaRow) _ctaRow.hidden = true;
-    const _cancelBtn = $('bandroom-cancel');
-    if (_cancelBtn) _cancelBtn.hidden = false;
-    // Reset slot states.
-    // Remove any guitar-split slots injected by a previous jam, then
-    // reset the static slot states back to Waiting.
-    document.querySelectorAll('.bandroom-stage .slot[data-stem^="guitar_"]').forEach(el => el.remove());
-    document.querySelectorAll('.slot[data-stem]').forEach(el => {
-      if (el.dataset.stem === 'user') return;
-      el.classList.remove('ready');
-      el.querySelector('.slot-state').textContent = 'Waiting';
-    });
-    showView('bandroom');
-    if (state.pendingJobId) {
+  //
+  // The Band Room is now a job QUEUE (desktop BandRoomView parity), not
+  // a single-song progress ceremony. enterBandRoom just navigates to
+  // the queue and enqueues the analysis that was just started:
+  //   * upload / demo-track  -> a real backend job (desc.jobId), followed
+  //                             via BandRoomQueue.addJob (SSE + /api/jobs)
+  //   * dev URL SSE          -> a transient local card driven inline
+  // Completion NEVER auto-navigates — the finished card exposes an
+  // explicit "Start Jamming" button (parity with the native apps).
+  function enterBandRoom(desc) {
+    showView('bandroom');           // wrapper calls BandRoomQueue.enter()
+    if (desc && desc.jobId) {
+      state.pendingJobId = null;    // consumed — the queue owns it now
+      BandRoomQueue.addJob(desc.jobId, desc.title || 'Analysis', desc.message || '');
+    } else if (state.pendingJobId) {
+      // Defensive: a job id set without a descriptor (legacy callers).
       const jobId = state.pendingJobId;
       state.pendingJobId = null;
-      followJob(jobId);
+      BandRoomQueue.addJob(jobId, 'Analysis', '');
     } else {
+      // Dev-only URL ingest: no persistent job id until the result lands.
+      const handle = BandRoomQueue.addLocalSse(state.sourceUrl || 'Analysis');
+      state.sseCard = handle;
       startSseAnalysis();
     }
   }
 
-  // ---------------------------------------------- engine job progress
-  // Upload analyses run as backend jobs executed by the desktop GPU
-  // worker. /api/job/{id}/events is a real (GET) SSE endpoint that
-  // replays the current snapshot on connect and streams every change —
-  // reconnects are free, so EventSource's auto-retry is enough.
-  function followJob(jobId) {
-    if (state.eventSource) {
-      try { state.eventSource.close(); } catch (_) {}
+  // ---------------------------------------------- Band Room job queue
+  //
+  // Cards are keyed by job id (or a synthetic "sse:N" id for the dev URL
+  // path). The queue is populated from GET /api/jobs — which carries
+  // queued / running / done / error rows, each done row bearing its
+  // history_id — with live percent off each job's /api/job/{id}/events
+  // SSE feed. Dismissals are persisted so a killed/finished job can't
+  // haunt the room across reloads. "Start Jamming" loads the finished
+  // song (loadSessionById) and lands on Perform.
+  const BandRoomQueue = (function () {
+    const DISMISS_KEY = 'bandroom.dismissedJobIds';
+    const DISMISS_CAP = 300;
+    const cards = new Map();          // id -> card
+    const followers = new Map();      // jobId -> EventSource
+    let sseCounter = 0;
+    let pollTimer = null;
+    let onDone = null;                // set by the router (refresh library)
+
+    function _loadDismissed() {
+      try { return new Set(JSON.parse(localStorage.getItem(DISMISS_KEY) || '[]')); }
+      catch (_) { return new Set(); }
     }
-    const es = new EventSource(`/api/job/${encodeURIComponent(jobId)}/events`);
-    state.eventSource = es;
-    es.onmessage = (ev) => {
-      let job = null;
-      try { job = JSON.parse(ev.data); } catch (_) { return; }
-      if (!job) return;
-      if (typeof job.percent === 'number') {
-        const pct = Math.min(100, Math.max(2, Math.round(job.percent)));
-        $('bandroom-bar').style.width = pct + '%';
-      }
-      if (job.message) $('bandroom-status').textContent = job.message;
-      if (job.status === 'done') {
-        es.close();
-        state.eventSource = null;
-        markTtfj('result_received');
-        if (job.history_id) {
-          // The deep-link loader rebuilds the full band room (stems,
-          // chords, sections) from the persisted history bundle.
-          window.location.href = `/jam/${job.history_id}`;
-        } else {
-          $('bandroom-status').textContent = 'Analysis finished but no result was saved.';
+    let dismissed = _loadDismissed();
+    function _persistDismissed() {
+      try {
+        localStorage.setItem(DISMISS_KEY,
+          JSON.stringify([...dismissed].slice(-DISMISS_CAP)));
+      } catch (_) {}
+    }
+
+    function _clampPct(p) { return Math.min(100, Math.max(2, Math.round(p))); }
+
+    // Middle-truncate long filenames (parity with desktop
+    // .truncationMode(.middle)) — keeps the extension visible.
+    function _middleTruncate(s, max) {
+      s = String(s || '');
+      if (s.length <= max) return s;
+      const head = Math.ceil((max - 1) / 2);
+      const tail = Math.floor((max - 1) / 2);
+      return s.slice(0, head) + '…' + s.slice(s.length - tail);
+    }
+
+    function _visibleCards() {
+      return [...cards.values()]
+        .filter(c => !dismissed.has(c.id))
+        .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    }
+
+    function _startJamming(card, btn) {
+      // SSE card: the result is already loaded in memory — just show it.
+      if (card.playNow) { showView('perform'); return; }
+      if (!card.historyId) return;
+      if (btn) btn.disabled = true;
+      loadSessionById(card.historyId, null, card.title).then(ok => {
+        if (btn) btn.disabled = false;
+        if (ok) showView('perform');
+      });
+    }
+
+    function _renderCard(card) {
+      const el = document.createElement('div');
+      el.className = 'br-card';
+      el.dataset.cardId = card.id;
+
+      const top = document.createElement('div');
+      top.className = 'br-card-top';
+      const title = document.createElement('div');
+      title.className = 'br-card-title';
+      title.textContent = _middleTruncate(card.title, 46);
+      title.title = card.title || '';
+      const dismissBtn = document.createElement('button');
+      dismissBtn.type = 'button';
+      dismissBtn.className = 'br-card-dismiss';
+      dismissBtn.textContent = 'Dismiss';
+      dismissBtn.addEventListener('click', () => dismiss(card.id));
+      top.appendChild(title);
+      top.appendChild(dismissBtn);
+      el.appendChild(top);
+
+      const body = document.createElement('div');
+      body.className = 'br-card-body';
+
+      if (card.status === 'queued') {
+        const row = document.createElement('div');
+        row.className = 'br-status-row';
+        const spin = document.createElement('span');
+        spin.className = 'br-spinner';
+        const txt = document.createElement('span');
+        txt.textContent = (typeof card.queuePos === 'number')
+          ? `Waiting for engine — #${card.queuePos} in queue`
+          : (card.message || 'Waiting for engine…');
+        row.appendChild(spin);
+        row.appendChild(txt);
+        body.appendChild(row);
+        if (card.workerOnline === false) {
+          const hint = document.createElement('div');
+          hint.className = 'br-hint';
+          hint.textContent = 'Waiting for a GPU worker to come online…';
+          body.appendChild(hint);
         }
-      } else if (job.status === 'error') {
-        es.close();
-        state.eventSource = null;
-        $('bandroom-status').textContent = 'Error: ' + (job.error || 'analysis failed');
+      } else if (card.status === 'running') {
+        const bar = document.createElement('div');
+        bar.className = 'br-progress';
+        const fill = document.createElement('div');
+        fill.className = 'br-progress-bar';
+        fill.style.width = (card.percent || 2) + '%';
+        bar.appendChild(fill);
+        body.appendChild(bar);
+        const row = document.createElement('div');
+        row.className = 'br-status-row';
+        const txt = document.createElement('span');
+        txt.textContent = card.message || 'Working…';
+        row.appendChild(txt);
+        if (typeof card.percent === 'number') {
+          const pct = document.createElement('span');
+          pct.className = 'br-percent';
+          pct.textContent = Math.round(card.percent) + '%';
+          row.appendChild(pct);
+        }
+        body.appendChild(row);
+      } else if (card.status === 'done') {
+        const row = document.createElement('div');
+        row.className = 'br-done-row';
+        const ready = document.createElement('span');
+        ready.className = 'br-ready';
+        ready.textContent = '✓ Ready to play';
+        const start = document.createElement('button');
+        start.type = 'button';
+        start.className = 'br-start';
+        start.textContent = '▶ Start Jamming';
+        start.addEventListener('click', () => _startJamming(card, start));
+        row.appendChild(ready);
+        row.appendChild(start);
+        body.appendChild(row);
+      } else { // error
+        const row = document.createElement('div');
+        row.className = 'br-error';
+        const txt = document.createElement('span');
+        txt.textContent = card.error || card.message || 'Analysis failed';
+        row.appendChild(txt);
+        body.appendChild(row);
       }
-    };
-    es.onerror = () => {
-      // EventSource retries on its own; only surface a hint so a dead
-      // server isn't a silent stall.
-      if (es.readyState === EventSource.CLOSED) {
-        $('bandroom-status').textContent = 'Lost connection to the server — retrying…';
+
+      el.appendChild(body);
+      return el;
+    }
+
+    function render() {
+      const list = document.getElementById('bandroom-queue');
+      const empty = document.getElementById('bandroom-empty');
+      const clearBtn = document.getElementById('bandroom-clear');
+      if (!list) return;
+      const items = _visibleCards();
+      list.textContent = '';
+      for (const c of items) list.appendChild(_renderCard(c));
+      const anyFinished = items.some(c => c.status === 'done' || c.status === 'error');
+      if (empty) empty.hidden = items.length > 0;
+      if (clearBtn) clearBtn.hidden = !anyFinished;
+    }
+
+    function _stopFollow(jobId) {
+      const es = followers.get(jobId);
+      if (es) { try { es.close(); } catch (_) {} followers.delete(jobId); }
+    }
+
+    // Live per-job SSE — the reused followJob pattern, now updating a
+    // card instead of the old single-song progress header. /api/job/
+    // {id}/events replays a snapshot on connect and auto-retries, so
+    // there is nothing to reconnect by hand.
+    function follow(jobId) {
+      if (followers.has(jobId) || dismissed.has(jobId)) return;
+      const es = new EventSource(`/api/job/${encodeURIComponent(jobId)}/events`);
+      followers.set(jobId, es);
+      es.onmessage = (ev) => {
+        let job = null;
+        try { job = JSON.parse(ev.data); } catch (_) { return; }
+        if (!job) return;
+        const c = cards.get(jobId) || {
+          id: jobId, kind: 'job', title: job.filename || 'Analysis',
+          created_at: job.created_at || (Date.now() / 1000),
+        };
+        c.status = job.status;
+        if (typeof job.percent === 'number') c.percent = _clampPct(job.percent);
+        if (job.message) c.message = job.message;
+        if (job.filename && (!c.title || c.title === 'Analysis')) c.title = job.filename;
+        c.historyId = job.history_id || c.historyId || null;
+        c.error = job.error || null;
+        cards.set(jobId, c);
+        if (job.status === 'done') {
+          markTtfj('result_received');
+          _stopFollow(jobId);
+          if (!job.history_id) { c.status = 'error'; c.error = 'Analysis finished but no result was saved.'; }
+          if (typeof onDone === 'function') { try { onDone(); } catch (_) {} }
+        } else if (job.status === 'error') {
+          _stopFollow(jobId);
+        }
+        render();
+      };
+      es.onerror = () => { /* EventSource retries on its own */ };
+    }
+
+    // Enqueue a freshly-created backend job (upload / demo track).
+    function addJob(jobId, title, message) {
+      if (!jobId) return;
+      dismissed.delete(jobId); // an explicit new import un-dismisses
+      _persistDismissed();
+      const c = cards.get(jobId) || { id: jobId, kind: 'job', created_at: Date.now() / 1000 };
+      c.title = title || c.title || 'Analysis';
+      c.status = c.status || 'queued';
+      c.message = message || c.message || '';
+      cards.set(jobId, c);
+      render();
+      follow(jobId);
+    }
+
+    // Dev-only URL-ingest path: a transient local card driven inline by
+    // the SSE analysis loop. No job id => not recoverable across reloads.
+    function addLocalSse(title) {
+      const id = 'sse:' + (++sseCounter);
+      const c = {
+        id, kind: 'sse', title: title || 'Analysis', status: 'running',
+        percent: 2, message: 'Starting analysis…', created_at: Date.now() / 1000,
+        playNow: false, historyId: null,
+      };
+      cards.set(id, c);
+      render();
+      return {
+        onProgress(pct, msg) {
+          c.status = 'running';
+          if (typeof pct === 'number') c.percent = _clampPct(pct);
+          if (msg) c.message = msg;
+          render();
+        },
+        onDone(historyId) {
+          c.status = 'done'; c.percent = 100;
+          c.historyId = historyId || null;
+          c.playNow = true;            // result already in memory
+          render();
+          if (typeof onDone === 'function') { try { onDone(); } catch (_) {} }
+        },
+        onError(msg) { c.status = 'error'; c.error = msg || 'Analysis failed'; render(); },
+      };
+    }
+
+    function dismiss(id) {
+      const card = cards.get(id);
+      cards.delete(id);
+      if (card && card.kind !== 'sse') { dismissed.add(id); _persistDismissed(); }
+      // A live URL analysis: dismissing it also stops the inline stream.
+      if (card && card.kind === 'sse' && state.sseCard) {
+        state.sseCard = null;
+        if (state.abortController) { try { state.abortController.abort(); } catch (_) {} }
+        if (state.eventSource) { try { state.eventSource.close(); } catch (_) {} state.eventSource = null; }
       }
+      _stopFollow(id);
+      render();
+    }
+
+    function clearFinished() {
+      for (const c of [...cards.values()]) {
+        if (c.status === 'done' || c.status === 'error') {
+          cards.delete(c.id);
+          if (c.kind !== 'sse') { dismissed.add(c.id); }
+        }
+      }
+      _persistDismissed();
+      render();
+    }
+
+    // Merge this caller's server-side jobs into the queue. Live-followed
+    // active cards only take a queue-position refresh (their SSE stream
+    // is fresher); everything else adopts the server row. Unknown active
+    // jobs get a follower.
+    function refresh() {
+      const headers = window.tfAccount ? window.tfAccount.deviceHeaders() : {};
+      return fetch('/api/jobs?limit=50', { headers })
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          const jobs = (data && data.jobs) || [];
+          for (const job of jobs) {
+            const id = job.job_id;
+            if (!id || dismissed.has(id)) continue;
+            const active = job.status === 'queued' || job.status === 'running';
+            const c = cards.get(id);
+            if (c && followers.has(id)) {
+              // Live stream owns status/percent; only adopt queue position.
+              if (typeof job.queue_position === 'number') c.queuePos = job.queue_position;
+              if (typeof job.worker_online === 'boolean') c.workerOnline = job.worker_online;
+            } else {
+              const card = c || { id, kind: 'job', created_at: job.created_at || (Date.now() / 1000) };
+              card.title = job.filename || card.title || 'Analysis';
+              card.status = job.status;
+              card.percent = (typeof job.percent === 'number') ? _clampPct(job.percent) : card.percent;
+              card.message = job.message || card.message || '';
+              card.historyId = job.history_id || card.historyId || null;
+              card.error = job.error || null;
+              card.queuePos = (typeof job.queue_position === 'number') ? job.queue_position : null;
+              if (typeof job.worker_online === 'boolean') card.workerOnline = job.worker_online;
+              cards.set(id, card);
+              if (active) follow(id);
+            }
+          }
+          render();
+        })
+        .catch(() => { render(); });
+    }
+
+    // View lifecycle: poll while the Band Room is on-screen (queue
+    // positions + jobs started elsewhere); SSE followers keep running in
+    // the background so a song still finishes if the user navigates away.
+    function enter() {
+      render();
+      refresh();
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => {
+        if (_visibleCards().some(c => c.status === 'queued' || c.status === 'running')) {
+          refresh();
+        }
+      }, 4000);
+    }
+    function leave() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    return {
+      addJob, addLocalSse, refresh, render, dismiss, clearFinished,
+      enter, leave,
+      set onJobCompleted(fn) { onDone = fn; },
     };
-  }
+  })();
 
   // ---------------------------------------------- SSE analysis
   function startSseAnalysis() {
@@ -2744,7 +3037,7 @@
     }).catch((err) => {
       if (err.name === 'AbortError') return;
       console.error('[jam] analyze stream failed:', err);
-      $('bandroom-status').textContent = 'Analysis failed: ' + (err.message || err);
+      if (state.sseCard) state.sseCard.onError('Analysis failed: ' + (err.message || err));
     });
   }
 
@@ -2772,15 +3065,14 @@
 
   function onSseEvent(name, data) {
     if (name === 'progress' && data) {
+      let pct = null;
       if (typeof data.percent === 'number') {
-        const pct = Math.min(100, Math.max(2, Math.round(data.percent)));
-        $('bandroom-bar').style.width = pct + '%';
+        pct = Math.min(100, Math.max(2, Math.round(data.percent)));
       } else if (typeof data.progress === 'number') {
-        const pct = Math.min(100, Math.max(2, Math.round(data.progress * 100)));
-        $('bandroom-bar').style.width = pct + '%';
+        pct = Math.min(100, Math.max(2, Math.round(data.progress * 100)));
       }
       const label = data.stage ? humanStage(data.stage) : data.message;
-      if (label) $('bandroom-status').textContent = label;
+      if (state.sseCard) state.sseCard.onProgress(pct, label);
       // Mark each pipeline stage the first time we see it.
       if (data.stage && !state.ttfj.stages.has(data.stage)) {
         state.ttfj.stages.add(data.stage);
@@ -2807,14 +3099,23 @@
     if (name === 'result' && data) {
       markTtfj('result_received');
       const result = data.data || data;
-      onAnalysisComplete(result);
+      Promise.resolve(onAnalysisComplete(result)).then(() => {
+        // Result is loaded in memory — the card's Start Jamming just
+        // reveals Perform (no re-fetch). historyId still recorded for
+        // deep-link / library parity.
+        if (state.sseCard) {
+          const hid = result.history_id || result.analysis_id || result.id || null;
+          state.sseCard.onDone(hid);
+          state.sseCard = null;
+        }
+      });
       return;
     }
 
     if (name === 'error') {
       const msg = (data && (data.message || data.error || data.detail)) || 'unknown';
       console.error('[jam] sse error:', data);
-      $('bandroom-status').textContent = 'Error: ' + msg;
+      if (state.sseCard) state.sseCard.onError('Error: ' + msg);
     }
   }
 
@@ -2972,10 +3273,8 @@
     // Merge instead of clear+rebuild so any stems already decoded from an
     // earlier `stems_partial` event keep their AudioBuffers.
     applyStemRecords(stemRecords);
-    // Drive the progress bar all the way to 100 so the user sees the
-    // band-room hit "Ready" before we cross-fade to the perform view.
-    $('bandroom-bar').style.width = '100%';
-    $('bandroom-status').textContent = 'Ready';
+    // (The legacy single-song band-room progress bar was replaced by the
+    // job-queue cards; completion is reflected on the card, not here.)
 
     // Title / meta
     //
@@ -3183,29 +3482,14 @@
     await prepareStemAudio();
     markTtfj('audio_ready', { stems: state.stems.size });
 
-    // Rehearsal opt-in surface — expose the "Start rehearsal" / "Skip
-    // to jam" CTA pair on the bandroom before switching views. If the
-    // bandroom-cta container is missing (e.g. deep-link path without
-    // the new markup) we fall back to the pre-rehearsal behaviour of
-    // going straight to perform.
-    const ctaRow = $('bandroom-cta');
-    const cancelBtn = $('bandroom-cancel');
-    if (ctaRow) {
-      ctaRow.hidden = false;
-      if (cancelBtn) cancelBtn.hidden = true;
-      // Load any prior completion state now that analysisId is known.
-      _loadRehearsalProgress();
-      // Phase C: refresh the warm-up suggestion chip now that the
-      // session's rehearsal groups are known and any prior barre
-      // difficulty hints are computable. Same IIFE, direct call —
-      // function-declaration hoisting makes this safe even though
-      // the definition is further down the file.
-      try { _refreshWarmupSuggestion(); } catch (_) {}
-      // Stay on the bandroom so the user can pick between rehearsal
-      // and karaoke. The perform view is entered by the CTA handlers.
-    } else {
-      showView('perform');
-    }
+    // onAnalysisComplete no longer navigates. With the Band Room now a
+    // job queue, callers own the landing surface: loadSessionById lands
+    // on Jam Pads, and a finished queue card's "Start Jamming" jumps to
+    // Perform. We still prime the rehearsal/warm-up state here (the
+    // Rehearsal + Warm-up surfaces stay reachable via the pill nav) so
+    // those views have their per-session data the moment they're opened.
+    try { _loadRehearsalProgress(); } catch (_) {}
+    try { _refreshWarmupSuggestion(); } catch (_) {}
     // The browser is the session "owner"; open the Connect bridge so
     // the helper has a channel to join even if no preset has been
     // pushed yet. The push has already happened above on success.
@@ -15613,7 +15897,22 @@
       if (name === 'packs') _mountPacks();
       if (name === 'contribute') _mountContribute();
       if (name === 'launchpad') _mountLaunchpad();
+      // Band Room job queue: refresh + poll while on-screen; stop the
+      // poll (SSE followers keep running) when leaving.
+      if (name === 'bandroom') BandRoomQueue.enter();
+      else BandRoomQueue.leave();
     };
+
+    // A finished analysis = a new song in server history. Refresh the
+    // Recent-songs / Library lists so it appears without a reload (parity
+    // with the desktop AnalysisQueueModel.onJobCompleted hook).
+    BandRoomQueue.onJobCompleted = () => { try { _renderLibrary(); } catch (_) {} };
+
+    // Band Room queue chrome (header + empty-state actions).
+    const _brClear = document.getElementById('bandroom-clear');
+    if (_brClear) _brClear.addEventListener('click', () => BandRoomQueue.clearFinished());
+    const _brBack = document.getElementById('bandroom-back-intake');
+    if (_brBack) _brBack.addEventListener('click', () => showView('intake'));
 
     // ---------------------------------------------- pill nav + hash
     pills.forEach(p => p.addEventListener('click', () => {
@@ -15842,5 +16141,117 @@
       // upload screen, with RECENT SONGS one click away in the sidebar.
       showView('intake');
     })();
+  })();
+
+  // ==================================================================
+  // Top toolbar (pillbar right cluster) — desktop RootView parity.
+  //
+  // Icon buttons + a Connect/Session pill, each wired to the real web
+  // action. Runs after the router IIFE so `showView` is the wrapped
+  // version and BandRoomQueue exists; playAll / pauseAll / state /
+  // loadSessionById are function-scope + hoisted so they resolve at
+  // click time.
+  // ==================================================================
+  (function initTopToolbar() {
+    const bar = document.getElementById('jamn-toolbar');
+    if (!bar) return;
+    const byTool = {};
+    bar.querySelectorAll('.jamn-tool[data-tool]').forEach(b => { byTool[b.dataset.tool] = b; });
+
+    const PLAY_SVG = '<path fill="currentColor" d="M7 5.5v13a1 1 0 0 0 1.5.87l11-6.5a1 1 0 0 0 0-1.74l-11-6.5A1 1 0 0 0 7 5.5Z"/>';
+    const PAUSE_SVG = '<rect x="6" y="5" width="4.2" height="14" rx="1" fill="currentColor"/><rect x="13.8" y="5" width="4.2" height="14" rx="1" fill="currentColor"/>';
+
+    // Which active section id lights each view-backed tool.
+    const ACTIVE_VIEW_FOR = {
+      launchpad: ['view-launchpad'],
+      sequencer: ['view-sequencer'],
+      perform: ['view-stage', 'view-perform'],
+      synth: ['view-kit'],
+      record: ['view-recordings'],
+      packs: ['view-packs'],
+    };
+
+    function act(tool) {
+      switch (tool) {
+        case 'launchpad': showView('launchpad'); break;
+        case 'sequencer': showView('sequencer'); break;
+        case 'perform': showView('perform'); break;
+        case 'packs': showView('packs'); break;
+        case 'record': showView('recordings'); break;
+        case 'synth': showView('kit'); break; // Jam Pads = web wavetable synth
+        case 'play':
+          try { if (state.isPlaying) pauseAll(); else playAll(); } catch (_) {}
+          break;
+        case 'stop':
+          try { pauseAll(); } catch (_) {}
+          try { window.JamnKit && window.JamnKit.engine && window.JamnKit.engine() &&
+                window.JamnKit.engine().stopAll && window.JamnKit.engine().stopAll(); } catch (_) {}
+          break;
+        case 'melody':
+          // Dimmed (no-op) when the song carries no melody lane.
+          if (!state.melody) return;
+          showView('launchpad');
+          try { window.Launchpad && window.Launchpad.setInstrumentSubmode &&
+                window.Launchpad.setInstrumentSubmode('melody'); } catch (_) {}
+          try { window.Launchpad && window.Launchpad.setMode &&
+                window.Launchpad.setMode('instrument-melody'); } catch (_) {}
+          break;
+        case 'remix':
+          try { window.JamnRemix && window.JamnRemix.open && window.JamnRemix.open(); } catch (_) {}
+          break;
+        case 'session':
+          // Connect lives in the Perform header — surface it, then pop
+          // its monitor/status popover open.
+          showView('perform');
+          setTimeout(() => {
+            const p = document.getElementById('header-connect-pill');
+            if (p && p.getAttribute('aria-expanded') !== 'true') p.click();
+          }, 60);
+          break;
+        default: break;
+      }
+    }
+
+    bar.querySelectorAll('.jamn-tool[data-tool]').forEach(b => {
+      b.addEventListener('click', () => act(b.dataset.tool));
+    });
+
+    // Reflect live state: active surface, transport, melody availability,
+    // Connect link. Cheap poll — no new event plumbing into the engine.
+    let _prevPlaying = null;
+    function update() {
+      const activeId = (document.querySelector('#jam-app .view.active') ||
+                        document.querySelector('.view.active') || {}).id || '';
+      for (const tool in ACTIVE_VIEW_FOR) {
+        const btn = byTool[tool];
+        if (btn) btn.classList.toggle('jamn-tool--active', ACTIVE_VIEW_FOR[tool].includes(activeId));
+      }
+      const playing = !!state.isPlaying;
+      const playBtn = byTool.play;
+      if (playBtn && playing !== _prevPlaying) {
+        _prevPlaying = playing;
+        playBtn.classList.toggle('jamn-tool--playing', playing);
+        const svg = playBtn.querySelector('svg');
+        if (svg) svg.innerHTML = playing ? PAUSE_SVG : PLAY_SVG;
+        playBtn.title = playing ? 'Pause' : 'Play';
+      }
+      const melodyBtn = byTool.melody;
+      if (melodyBtn) {
+        const has = !!state.melody;
+        melodyBtn.classList.toggle('jamn-tool--dim', !has);
+        melodyBtn.title = has
+          ? 'Melody guide — play this song\'s melody on the pads'
+          : 'No melody line in this song';
+      }
+      const sessionBtn = byTool.session;
+      if (sessionBtn) {
+        const cb = state.connectBridge;
+        const linked = !!(cb && ((cb.status === 'open' && cb.peers > 0) || cb.localStatus === 'open'));
+        sessionBtn.classList.toggle('jamn-tool--linked', linked);
+        sessionBtn.title = linked ? 'Connect linked' : 'Connect / Session status';
+      }
+    }
+    setInterval(update, 300);
+    update();
   })();
 })();

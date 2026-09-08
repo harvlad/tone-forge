@@ -301,6 +301,18 @@
   pointer-events: none;
 }
 
+/* Baked-buffer waveform silhouette (parity with Jam Pads / .kit-pad-wave).
+   Fills the tile face and sits under the label — dimmed so the text stays
+   legible over it. Painted by JamnKit.drawPadWave into this canvas. */
+.lp-pad-wave {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .lpv-pad-label {
   position: absolute;
   left: 5px;

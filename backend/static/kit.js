@@ -46,6 +46,33 @@
     return "rgba(" + c.r + "," + c.g + "," + c.b + "," + a + ")";
   }
 
+  // Cached 2D context to normalize an arbitrary CSS color (name, rgb(),
+  // #hex) to {r,g,b}. Sibling surfaces (Launchpad) pass CSS-string tints
+  // from their own palette; kit's own callers already pass {r,g,b}. The
+  // browser resolves fillStyle to a canonical "#rrggbb"/"rgb(...)" we read
+  // back — so drawPadWave stays a thin wrapper over the exact kit renderer.
+  var _tintCtx = null;
+  function resolveTint(tint) {
+    if (tint && typeof tint.r === "number") return tint;
+    if (typeof tint === "number") return parseColor(tint);
+    if (typeof tint === "string") {
+      try {
+        if (!_tintCtx) _tintCtx = document.createElement("canvas").getContext("2d");
+        _tintCtx.fillStyle = "#000";
+        _tintCtx.fillStyle = tint; // invalid strings leave the prior value
+        var v = _tintCtx.fillStyle;
+        var m = v.match(/^#([0-9a-f]{6})$/i);
+        if (m) {
+          var n = parseInt(m[1], 16);
+          return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff };
+        }
+        m = v.match(/(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+        if (m) return { r: +m[1], g: +m[2], b: +m[3] };
+      } catch (_) {}
+    }
+    return ACCENT;
+  }
+
   function can(obj, method) {
     return !!obj && typeof obj[method] === "function";
   }
@@ -3173,6 +3200,16 @@
     // Chop-editor integration: re-slice a pad from its stem with a
     // user-set region (onset snap skipped) and swap buffers in place.
     applyPadRegion: applyPadRegion,
+    // Shared pad-waveform painter for sibling surfaces (Launchpad) so they
+    // draw the SAME coarse silhouette as Jam Pads instead of duplicating the
+    // renderer — the pad's baked buffer lives on the shared engine, keyed by
+    // padIdx. `tint` may be {r,g,b} or any CSS color string; `binsOpt`
+    // matches drawWaveInto (0 default, <0 px-per-bin, >0 exact). Returns
+    // false when there's no active kit or the canvas has no laid-out size.
+    drawPadWave: function (canvas, padIdx, tint, binsOpt) {
+      if (!current || !canvas) return false;
+      return drawWaveInto(current, padIdx, canvas, resolveTint(tint), binsOpt || 0);
+    },
     // Pure helpers exposed for the DOM-free smoke test only.
     _internals: {
       resolveStemUrl: resolveStemUrl,

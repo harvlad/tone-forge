@@ -338,6 +338,13 @@
     buildShell(s);
     ensureEngine(s);
     startRaf(s);
+
+    // Re-fit the coarse waveforms when the tile size changes (canvas backing
+    // store is dpr-scaled off clientWidth/Height, so a resize needs a repaint).
+    s.onResize = function () {
+      drawPadWaves(s);
+    };
+    window.addEventListener("resize", s.onResize);
   }
 
   function unmount() {
@@ -346,6 +353,10 @@
     if (!s) return;
     s.alive = false;
     if (s.raf) cancelAnimationFrame(s.raf);
+    if (s.onResize) {
+      window.removeEventListener("resize", s.onResize);
+      s.onResize = null;
+    }
     try {
       if (can(s.engine, "stopAll")) s.engine.stopAll();
     } catch (_) {}
@@ -722,6 +733,31 @@
     for (var idx = 0; idx < CAPACITY; idx++) {
       grid.appendChild(buildTile(s, idx));
     }
+    // Waveforms need laid-out canvas sizes — draw on the next frame (kit.js
+    // does the same after its grid build). renderGrid is the single funnel
+    // for every repopulate (Load / Auto Kit / Drum Kit / Stem / Slices),
+    // so this one hook keeps the silhouettes current across all of them.
+    requestAnimationFrame(function () {
+      drawPadWaves(s);
+    });
+  }
+
+  /** Paint each real pad's baked-buffer waveform via the shared kit renderer
+   * (JamnKit.drawPadWave) so Launchpad tiles match Jam Pads exactly instead
+   * of duplicating the DSP. bins = -6 is kit's px-per-bin sentinel for the
+   * compact 64-grid (coarse silhouette, not noise). */
+  function drawPadWaves(s) {
+    if (!s.alive) return;
+    var K = window.JamnKit;
+    if (!can(K, "drawPadWave")) return;
+    for (var idx = 0; idx < CAPACITY; idx++) {
+      var t = s.tiles[idx];
+      var meta = s.padMeta[idx];
+      if (!t || !t.wave || !meta) continue;
+      try {
+        K.drawPadWave(t.wave, idx, padFill(meta), -6);
+      } catch (_) {}
+    }
   }
 
   function buildTile(s, idx) {
@@ -744,6 +780,16 @@
     );
     if (!hasContent) tile.classList.add("is-empty");
     if (isVoice) tile.classList.add("is-voice");
+
+    // Baked-buffer waveform (parity with Jam Pads / kit.js). Only real pads
+    // carry a resident buffer — the voice placeholder and pure step-dot
+    // tiles have no audio to draw. Appended first so it sits UNDER the glyph
+    // and label; painted on the next frame once the canvas has a size.
+    var wave = null;
+    if (meta) {
+      wave = el("canvas", "lp-pad-wave");
+      tile.appendChild(wave);
+    }
 
     // glyph + step-dots + label
     if (isVoice && !meta) {
@@ -769,7 +815,7 @@
       onPadUp(s, idx);
     });
 
-    s.tiles[idx] = { el: tile };
+    s.tiles[idx] = { el: tile, wave: wave };
     applyUi(s, idx);
     return tile;
   }
