@@ -92,4 +92,9 @@ def test_kind_flip_serves_pack_with_sequence(monkeypatch):
     assert seq["stepCount"] == 16
     assert seq["tracks"], "flip must ship a playable pattern"
     for t in seq["tracks"]:
-        assert t["chopRef"]["packPad"]["packId"] == "flip-e1"
+        # ChopReference's frozen wire shape is FLAT with a "type"
+        # discriminator (ChopReference.swift); the old nested
+        # {"packPad": {...}} form threw keyNotFound("type") on iOS +
+        # desktop. See tone_forge/performance/flip.py:_track.
+        assert t["chopRef"]["type"] == "packPad"
+        assert t["chopRef"]["packId"] == "flip-e1"
