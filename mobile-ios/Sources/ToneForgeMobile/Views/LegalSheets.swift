@@ -95,6 +95,12 @@ private struct LegalDocumentSheet: View {
                             Text(section.body).font(.body)
                         }
                     }
+                    // Canonical hosted copy (backend /legal) — the App
+                    // Store privacy URL and the authoritative version.
+                    Link("View the full Terms & Privacy online",
+                         destination: AppConfig.legalURL)
+                        .font(.footnote)
+                        .padding(.top, 4)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()

@@ -17,6 +17,11 @@ public enum AppConfig {
     /// DMCA / copyright takedown contact surfaced in Settings → Legal.
     public static let takedownEmail = "copyright@jamn.app"
 
+    /// Hosted Terms + Privacy (backend /legal). The App Store privacy
+    /// URL points here and the in-app Legal sheets link to it, so the
+    /// canonical copy lives server-side and updates without a release.
+    public static let legalURL = defaultBackendURL.appendingPathComponent("legal")
+
     /// Request timeout for the analyze upload + SSE stream. Analyses
     /// can take minutes on long songs, so this is generous.
     public static let analyzeTimeout: TimeInterval = 15 * 60
