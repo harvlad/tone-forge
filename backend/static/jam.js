@@ -7806,6 +7806,15 @@
       _paint('Web MIDI not supported (use Chrome or Edge)', 'launchpad-status--error');
     } else if (status.error === 'permission_denied') {
       _paint('Permission denied — click again to retry', 'launchpad-status--error');
+    } else if (status.error === 'device_not_connected'
+               && status.genericInputs && status.genericInputs.length) {
+      // A pad controller IS here — it just isn't a grid device. Say so:
+      // "no controller detected" while an LPD8 was plugged in and working
+      // read as broken hardware detection.
+      const names = status.genericInputs.slice(0, 2).join(', ')
+        + (status.genericInputs.length > 2
+           ? ` +${status.genericInputs.length - 2}` : '');
+      _paint(`🎛 ${names} connected — map pads with MIDI Learn`, 'launchpad-status--ok');
     } else if (status.error === 'device_not_connected') {
       _paint('🔌 No controller detected — plug in a Launchpad or Push', 'launchpad-status--error');
     } else if (status.error === 'disconnected' || status.error === 'send_failed') {

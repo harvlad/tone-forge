@@ -601,6 +601,11 @@
       supported: !!(navigator && navigator.requestMIDIAccess),
       connected: !!_output && !!_input,
       deviceName: _deviceName,
+      // Non-grid controllers (LPD8 / DJ gear / pad boxes) bound for the
+      // MIDI-Learn path. The status UI must acknowledge these — "no
+      // controller detected" while an LPD8 is plugged in and WORKING
+      // read as broken hardware detection in the field.
+      genericInputs: _genericInputs.map((i) => (i && i.name) || 'MIDI device'),
       error: null,
       mode: _mode,
       ...(extra || {}),
@@ -1718,6 +1723,14 @@
       _output = null;
       _deviceName = null;
       _emitStatus({ error: 'disconnected' });
+      return;
+    }
+    // Generic-only change (an LPD8 plugged in after enable, a DJ mixer
+    // unplugged): the grid-port state didn't move, but the panel must
+    // still refresh — silence here left hot-plugged pad controllers
+    // looking undetected.
+    if (_enabled) {
+      _emitStatus(bound ? {} : { error: 'device_not_connected' });
     }
   }
 
