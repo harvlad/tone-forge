@@ -78,8 +78,9 @@ features:
         status: done
         evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/MIDIKeyboardTransport.swift#mappedPads"
       plugin:
-        status: missing
-        note: "Fixed note-36 layout; in-DAW remapping covers hosted use, standalone needs learn."
+        status: done
+        evidence: "plugin/Source/PluginProcessor.cpp#finishMidiLearn"
+        note: "Deliberate deviation from the ios/web drop rule: unmapped notes fall back to the fixed kFirstNote (C1) layout instead of being dropped — the fixed layout is the plugin's documented default and DAW users rely on it (learned entries still win; learn capture consumes note-ons)."
       connect:
         status: na
         note: "No pad surface."

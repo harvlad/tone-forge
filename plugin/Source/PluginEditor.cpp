@@ -424,6 +424,42 @@ JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
     attLearn = std::make_unique<BtnAttachment>(processor.apvts, "learn",
                                                learnButton);
 
+    // MIDI Learn: MAP starts capture (press controller pads 1..16 in
+    // order), turns into SAVE while learning (partial save — a 12-pad
+    // controller stops at 12), auto-saves at 16. Alt-click clears the
+    // map back to the fixed C1 layout.
+    addAndMakeVisible(mapButton);
+    mapButton.setColour(juce::TextButton::buttonColourId, theme::panelDeep);
+    mapButton.setColour(juce::TextButton::textColourOffId,
+                        theme::textSecondary);
+    mapButton.setTooltip(
+        "MIDI Learn: map an external pad controller onto the 16 pads. "
+        "Click, then press controller pads 1..16 in order; click SAVE "
+        "any time to keep a partial map. Unmapped notes keep the fixed "
+        "C1 layout. Alt-click clears the map.");
+    mapButton.onClick = [this] {
+        if (processor.midiLearnActive())
+        {
+            const int captured = processor.midiLearnSlot();
+            processor.finishMidiLearn();
+            statusLine = captured > 0
+                ? "MIDI map saved (" + juce::String(captured) + " pads)"
+                : juce::String("MIDI learn cancelled");
+        }
+        else if (juce::ModifierKeys::getCurrentModifiers().isAltDown())
+        {
+            processor.clearMidiMap();
+            statusLine = "MIDI map cleared - fixed C1 layout";
+        }
+        else
+        {
+            processor.startMidiLearn();
+            statusLine.clear();
+        }
+        updateMidiLearnUi();
+        repaint();
+    };
+
     attFilter = std::make_unique<Attachment>(processor.apvts, "filter", knobFilter);
     attSpace = std::make_unique<Attachment>(processor.apvts, "space", knobSpace);
     attDrive = std::make_unique<Attachment>(processor.apvts, "drive", knobDrive);
@@ -437,6 +473,10 @@ JamnKitEditor::JamnKitEditor(JamnKitProcessor& p)
 
 JamnKitEditor::~JamnKitEditor()
 {
+    // Window closed mid-learn: cancel, or the processor would keep
+    // consuming note-ons forever with no UI left to finish the flow.
+    if (processor.midiLearnActive())
+        processor.cancelMidiLearn();
     for (auto* s : { &knobFilter, &knobSpace, &knobDrive, &knobGain })
         s->setLookAndFeel(nullptr);
     if (worker != nullptr && worker->joinable())
@@ -465,6 +505,8 @@ void JamnKitEditor::resized()
         clockRow.removeFromRight(64).reduced(4, 3));
     learnButton.setBounds(
         clockRow.removeFromRight(70).reduced(4, 3));
+    mapButton.setBounds(
+        clockRow.removeFromRight(58).reduced(4, 3));
     area.removeFromTop(gapM);
     auto knobPanel = area.removeFromTop(knobPanelH).reduced(6, 8);
     auto footer = getLocalBounds().removeFromBottom(footerH)
@@ -651,6 +693,33 @@ void JamnKitEditor::downloadKit(const juce::String& entryId,
             self->repaint();
         });
     });
+}
+
+void JamnKitEditor::updateMidiLearnUi()
+{
+    const int slot = processor.midiLearnSlot();
+    if (slot < 0)
+    {
+        if (mapButton.getButtonText() != "MAP")
+            mapButton.setButtonText("MAP");
+        // Amber text = a learned map is live (alt-click clears it).
+        mapButton.setColour(juce::TextButton::textColourOffId,
+                            processor.hasMidiMap() ? theme::armedAmber
+                                                   : theme::textSecondary);
+        return;
+    }
+    if (slot >= JamnKitProcessor::kVoices)
+    {
+        // All 16 captured — save without needing a second click.
+        processor.finishMidiLearn();
+        mapButton.setButtonText("MAP");
+        statusLine = "MIDI map saved (16 pads)";
+        return;
+    }
+    mapButton.setButtonText("SAVE");
+    // Footer doubles as the progress label (existing status pattern).
+    statusLine = "MIDI learn: press controller pad "
+        + juce::String(slot + 1) + " of 16 - SAVE keeps a partial map";
 }
 
 void JamnKitEditor::flushFeedback()
@@ -1196,7 +1265,9 @@ void JamnKitEditor::paint(juce::Graphics& g)
         if (secs > 15)
             footer << " (first export renders server-side; repeats instant)";
     }
-    g.setColour(statusLine.isNotEmpty() && !busy
+    // Learn progress is a live state, not an error — amber, not red.
+    g.setColour(processor.midiLearnActive() ? armedAmber
+                : statusLine.isNotEmpty() && !busy
                     ? juce::Colour(0xffef4444)
                     : textSecondary);
     g.setFont(juce::Font(juce::FontOptions(11.0f)));

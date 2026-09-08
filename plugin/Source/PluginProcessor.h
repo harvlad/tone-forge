@@ -183,6 +183,33 @@ public:
         return out;
     }
 
+    // MARK: MIDI Learn (message thread drives; audio thread reads)
+    //
+    // Controllers with scattered pad notes (DJM-S7's per-deck ranges,
+    // TE boxes) can't reach the fixed C1 run — and the STANDALONE
+    // build has no DAW in front to remap them. The learned note→slot
+    // map is checked first; UNMAPPED notes fall back to the fixed
+    // kFirstNote layout (deliberate deviation from the ios/web drop
+    // rule: the fixed layout is this plugin's documented default and
+    // DAW users rely on it).
+
+    /// Begin capture: the next hardware note-on maps to slot 0, then
+    /// slot 1, ... While active, note events are CONSUMED (learn
+    /// swallows them; nothing sounds).
+    void startMidiLearn();
+    /// Discard staged captures; the previous map stays live.
+    void cancelMidiLearn();
+    /// Commit staged captures — PARTIAL saves are fine (a 12-pad
+    /// controller maps 12 slots; the rest keep the fixed layout).
+    /// Zero captures = cancel, so a double-click can't wipe a map.
+    void finishMidiLearn();
+    /// Drop the learned map entirely (back to the fixed C1 layout).
+    void clearMidiMap();
+    bool midiLearnActive() const { return learnSlot.load() >= 0; }
+    /// Slot awaiting capture (0-based); kVoices = all 16 captured.
+    int midiLearnSlot() const { return learnSlot.load(); }
+    bool hasMidiMap() const;
+
     static constexpr int kVoices = 16;
     static constexpr int kFirstNote = 36;  // C1
 
@@ -221,17 +248,34 @@ private:
     };
 
     /// `eventPpq` = host ppq at the event's sample offset; < 0 = host
-    /// clock unusable (fire immediately).
+    /// clock unusable (fire immediately). `applyLearnedMap` is false
+    /// for editor-pad events — those are slot-addressed already, and
+    /// must not reroute if their fixed note is learned onto another
+    /// slot.
     void handleNoteOn(int note, float velocity, double eventPpq,
-                      double samplesPerPpq, double barPpq);
+                      double samplesPerPpq, double barPpq,
+                      bool applyLearnedMap);
     double sharedCyclePpq(double barPpq) const;
-    void handleNoteOff(int note);
+    void handleNoteOff(int note, bool applyLearnedMap);
+    /// Learned map first, fixed kFirstNote layout for unmapped notes;
+    /// -1 = outside both. Audio thread (relaxed atomic reads).
+    int slotForNote(int note) const;
     void renderVoice(Voice& v, int slot, float* left, float* right,
                      int numSamples);
 
     static juce::AudioProcessorValueTreeState::ParameterLayout
         parameterLayout();
     void applyMacros(juce::AudioBuffer<float>&);
+
+    // MIDI Learn state. The live map is a 128-entry array of atomics
+    // (-1 = unmapped) — per-entry stores, no locks: the audio thread
+    // reads single entries and a mid-commit read just sees the map
+    // fill in entry by entry, which is harmless. Staging is separate
+    // so cancel costs nothing and a partial learn commits atomically
+    // enough (message thread writes, audio thread never reads staging).
+    std::array<std::atomic<int>, 128> midiNoteSlots {};
+    std::atomic<int> learnSlot { -1 };  // -1 idle; 0..15 capturing; 16 full
+    std::array<std::atomic<int>, kVoices> learnNotes {};  // staged, -1 empty
 
     std::array<Voice, kVoices> voices {};
     std::array<std::atomic<bool>, 128> activeNotes {};
