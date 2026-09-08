@@ -16,7 +16,7 @@ cmake_minimum_required(VERSION 3.24)
 # Single source of truth for the plugin version: package.sh greps it for
 # the pkg filename and the release workflow REFUSES a jamnkit-v* tag that
 # doesn't match — bump this in the same commit you intend to tag.
-project(JamnKit VERSION 0.2.0)
+project(JamnKit VERSION 0.2.1)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
