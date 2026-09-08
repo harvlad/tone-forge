@@ -3260,6 +3260,87 @@ async def health() -> dict:
 
 
 # ---------------------------------------------------------------------
+# Ableton Link relay (internal testing)
+# ---------------------------------------------------------------------
+#
+# Browsers cannot join a Link session (Link is LAN UDP multicast; the
+# web platform has no UDP), so a small native helper on the user's
+# machine joins Link and POSTs tempo/beat here; browsers follow via the
+# SSE stream. Accuracy is relay-grade (~tens of ms) — jam-along, not
+# pro beatmatching. INTERNAL TESTING scope: single global Link state
+# (this deployment has one active user), optional shared-secret gate
+# via TONEFORGE_LINK_TOKEN (unset = open). Ship-blocking follow-ups
+# before any public exposure: per-session scoping + the Link SDK
+# licensing review already queued in OUTSTANDING.md.
+
+_LINK_STATE: dict = {"active": False, "bpm": 0.0, "beat": 0.0,
+                     "peers": 0, "ts": 0.0, "version": 0}
+_LINK_COND = asyncio.Condition()
+_LINK_STALE_SEC = 5.0
+
+
+@app.post("/api/link/state")
+async def post_link_state(request: Request) -> JSONResponse:
+    """Helper heartbeat: {bpm, beat, peers}. Beat is the Link beat
+    counter at send time; browsers extrapolate phase from it."""
+    token = os.environ.get("TONEFORGE_LINK_TOKEN")
+    if token and request.headers.get("x-link-token") != token:
+        raise HTTPException(status_code=403, detail="bad link token")
+    try:
+        body = await request.json()
+        bpm = float(body.get("bpm") or 0)
+        beat = float(body.get("beat") or 0)
+        peers = int(body.get("peers") or 0)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bpm/beat/peers required")
+    if not (10.0 <= bpm <= 999.0):
+        raise HTTPException(status_code=400, detail="implausible bpm")
+    async with _LINK_COND:
+        _LINK_STATE.update(
+            active=True, bpm=bpm, beat=beat, peers=peers,
+            ts=time.time(), version=_LINK_STATE["version"] + 1,
+        )
+        _LINK_COND.notify_all()
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/link/events")
+async def link_events() -> StreamingResponse:
+    """SSE stream of Link state. Emits a snapshot immediately, then on
+    every helper post; a stale helper (silent > 5 s) emits active:false
+    once so the browser UI can drop its Link chip honestly."""
+
+    def _payload() -> dict:
+        stale = time.time() - _LINK_STATE["ts"] > _LINK_STALE_SEC
+        return {"v": 1, **_LINK_STATE,
+                "active": _LINK_STATE["active"] and not stale,
+                "server_ts": time.time()}
+
+    async def gen():
+        last_version = -1
+        last_active = None
+        while True:
+            async with _LINK_COND:
+                try:
+                    await asyncio.wait_for(_LINK_COND.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    pass
+            snap = _payload()
+            if snap["version"] != last_version or snap["active"] != last_active:
+                last_version = snap["version"]
+                last_active = snap["active"]
+                yield f"data: {json.dumps(snap)}\n\n"
+
+    async def first_then(genfn):
+        yield f"data: {json.dumps(_payload())}\n\n"
+        async for chunk in genfn:
+            yield chunk
+
+    return StreamingResponse(first_then(gen()), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store"})
+
+
+# ---------------------------------------------------------------------
 # Sample packs (ToneForge Mobile Phase 3)
 # ---------------------------------------------------------------------
 #

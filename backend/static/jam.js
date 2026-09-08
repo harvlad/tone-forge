@@ -5034,10 +5034,49 @@
     return (state.rehearsal && state.rehearsal.active) ? state.rehearsal.speed : 1.0;
   }
 
+  // Ableton Link follow (via the native Link helper -> backend SSE).
+  // Ratio of the Link session tempo to the song's analyzed tempo,
+  // clamped so a wild helper value can't chipmunk the stems. 1.0
+  // whenever follow is off, no helper is posting, or the song has no
+  // usable tempo. NB varispeed: AudioBufferSource.playbackRate shifts
+  // pitch too — accepted for jam-along (internal testing).
+  function _linkRate() {
+    const link = state.link;
+    if (!link || !link.follow || !link.active) return 1.0;
+    const songBpm = (typeof state.tempo_bpm === 'number'
+      && state.tempo_bpm >= 40 && state.tempo_bpm <= 240)
+      ? state.tempo_bpm : null;
+    if (!songBpm || !(link.bpm > 0)) return 1.0;
+    return Math.min(2.0, Math.max(0.5, link.bpm / songBpm));
+  }
+
+  // One choke point for playback speed: rehearsal slow-down x Link
+  // follow. Source creation AND the position clock both read this, so
+  // every consumer of currentPlayTime() stays consistent.
+  function _playRate() {
+    return _rehearsalRate() * _linkRate();
+  }
+
   function currentPlayTime() {
     if (!state.ctx) return 0;
     if (!state.isPlaying) return state.playOffset;
-    return state.playOffset + (state.ctx.currentTime - state.playClockAnchor) * _rehearsalRate();
+    return state.playOffset + (state.ctx.currentTime - state.playClockAnchor) * _playRate();
+  }
+
+  // Live rate change mid-play (Link tempo moved): re-anchor the clock
+  // at the CURRENT position first — currentPlayTime() assumes a
+  // constant rate since the anchor, so changing rate without
+  // re-anchoring would teleport the playhead — then push the new rate
+  // into every live stem source.
+  function _applyPlayRateLive() {
+    if (!state.ctx || !state.isPlaying) return;
+    state.playOffset = currentPlayTime();
+    state.playClockAnchor = state.ctx.currentTime;
+    for (const stem of state.stems.values()) {
+      if (stem.source) {
+        try { stem.source.playbackRate.value = _playRate(); } catch (_) {}
+      }
+    }
   }
 
   $('t-play').addEventListener('click', () => {
@@ -5356,7 +5395,7 @@
       // click scheduler and section-loop math read currentPlayTime()
       // which is now scaled by _rehearsalRate().
       try {
-        src.playbackRate.value = _rehearsalRate();
+        src.playbackRate.value = _playRate();
       } catch (_) {}
       src.connect(stem.gainNode);
       // Clamp offset to buffer duration; .start() throws otherwise.
@@ -7457,6 +7496,53 @@
     // init() is idempotent — safe to call unconditionally. The panel's
     // init call adds onGridChange / onModeChange / onLegendInfo callbacks
     // on top of these.
+    // Ableton Link follow. A native helper (tools/jamn-link-helper)
+    // joins the LAN Link session and posts tempo to the backend; we
+    // consume the SSE fan-out. Browsers cannot join Link directly (no
+    // UDP), so accuracy is relay-grade — jam-along, not beatmatching.
+    (function wireLinkFollow() {
+      const chip = document.getElementById('lp-link-status');
+      const toggle = document.getElementById('lp-link-follow');
+      state.link = {
+        active: false, bpm: 0, peers: 0,
+        follow: localStorage.getItem('jamn.linkFollow') === '1',
+      };
+      if (toggle) toggle.checked = state.link.follow;
+      const render = () => {
+        if (chip) {
+          chip.textContent = state.link.active
+            ? state.link.bpm.toFixed(1) + ' bpm · ' + state.link.peers + ' peer(s)'
+            : 'no helper detected';
+        }
+      };
+      if (toggle) {
+        toggle.addEventListener('change', () => {
+          state.link.follow = toggle.checked;
+          localStorage.setItem('jamn.linkFollow', toggle.checked ? '1' : '0');
+          _applyPlayRateLive();
+        });
+      }
+      let es = null;
+      try {
+        es = new EventSource('/api/link/events');
+        es.onmessage = (evt) => {
+          let data = null;
+          try { data = JSON.parse(evt.data); } catch (_) { return; }
+          const was = state.link.bpm;
+          state.link.active = !!data.active;
+          state.link.bpm = Number(data.bpm) || 0;
+          state.link.peers = Number(data.peers) || 0;
+          render();
+          // Mid-play tempo move: re-anchor + push the new rate live.
+          if (state.link.follow && Math.abs(state.link.bpm - was) > 0.01) {
+            _applyPlayRateLive();
+          }
+        };
+        // EventSource auto-reconnects; no manual retry needed.
+      } catch (_) { /* SSE unsupported: chip stays "no helper" */ }
+      render();
+    })();
+
     // MIDI Learn for generic pad controllers (DJM-S7 / LPD8 / TE):
     // capture 16 notes in grid order, map them to Contribute chops.
     // Parity with the mobile flow; map persists in localStorage via
