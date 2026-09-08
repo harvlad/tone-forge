@@ -8458,14 +8458,20 @@
         learning = true;
         captured = [];
         btn.textContent = 'Done';
-        if (status) status.textContent = 'Press pad 1 of 16 on your controller…';
+        // Up to 16 (the 4×4 sample grid), but most pad boxes are 8 (LPD8,
+        // DJM deck) — tap however many your controller has, then Done.
+        // Copy must not imply 16 are required or an 8-pad user stalls.
+        if (status) {
+          status.textContent =
+            'Tap each pad on your controller once, then press Done';
+        }
         window.Launchpad.startPadLearn((note) => {
           if (captured.includes(note)) return;   // re-press must not eat a slot
           captured.push(note);
-          if (captured.length >= 16) { finish(true); return; }
+          if (captured.length >= 16) { finish(true); return; }  // grid full
           if (status) {
             status.textContent =
-              `Press pad ${captured.length + 1} of 16 (Done saves ${captured.length})`;
+              `${captured.length} pad${captured.length === 1 ? '' : 's'} mapped — keep tapping, or press Done to save`;
           }
         });
       });
