@@ -17,6 +17,10 @@ import {
   chooseCrossfadeMs,
   armedWatchdogDelayMs,
   ARMED_WATCHDOG_GRACE_SEC,
+  NEUTRAL_PAD_FX,
+  normalizePadFx,
+  isNeutralPadFx,
+  gateRegionInPlace,
   PadEngine,
 } from "./padengine.js";
 
@@ -265,7 +269,10 @@ class FakeAudioContext {
       loopStart: 0,
       loopEnd: 0,
       onended: null,
-      connect() {},
+      connections: [],
+      connect(t) {
+        this.connections.push(t);
+      },
       start(t) {
         this.startedAt = t;
       },
@@ -273,7 +280,41 @@ class FakeAudioContext {
     };
   }
   createGain() {
-    return { gain: new FakeParam(), connect() {} };
+    return {
+      kind: "gain",
+      gain: new FakeParam(),
+      connections: [],
+      connect(t) {
+        this.connections.push(t);
+      },
+    };
+  }
+  // FX-node factories (per-pad FX chain). Counters let tests assert the
+  // neutral path builds ZERO extra nodes.
+  createBiquadFilter() {
+    this.biquadsCreated = (this.biquadsCreated || 0) + 1;
+    return {
+      kind: "biquad",
+      type: "",
+      frequency: new FakeParam(),
+      Q: new FakeParam(),
+      connections: [],
+      connect(t) {
+        this.connections.push(t);
+      },
+    };
+  }
+  createDelay(maxDelay) {
+    this.delaysCreated = (this.delaysCreated || 0) + 1;
+    return {
+      kind: "delay",
+      maxDelay,
+      delayTime: new FakeParam(),
+      connections: [],
+      connect(t) {
+        this.connections.push(t);
+      },
+    };
   }
 }
 
@@ -551,6 +592,191 @@ test("armed watchdog force-starts a voice the clock never launched", () => {
   const before = engine._voices.get(1);
   engine._watchdogCheck(1, v2);
   assert.equal(engine._voices.get(1), before);
+});
+
+// --- per-pad FX (SamplePadEffects twin) ------------------------------------
+
+test("normalizePadFx clamps to the native ranges and fills defaults", () => {
+  // Missing/garbage fields default to neutral (Codable decode parity).
+  assert.deepEqual(normalizePadFx(null), { ...NEUTRAL_PAD_FX });
+  assert.deepEqual(normalizePadFx({}), { ...NEUTRAL_PAD_FX });
+  assert.deepEqual(normalizePadFx({ delayMix: "loud", gain: NaN }), { ...NEUTRAL_PAD_FX });
+  // Clamps mirror SamplePadEffects.clamped.
+  const f = normalizePadFx({
+    delayTimeSec: 9, // → 2
+    delayFeedback: 120, // → 95 (≥100 self-oscillates)
+    delayMix: -5, // → 0
+    filterCutoffHz: 10, // → 100
+    filterResonanceDb: 99, // → 24
+    gain: 7, // → 2
+  });
+  assert.deepEqual(f, {
+    delayTimeSec: 2,
+    delayFeedback: 95,
+    delayMix: 0,
+    filterCutoffHz: 100,
+    filterResonanceDb: 24,
+    gain: 2,
+  });
+  // In-range values pass through untouched.
+  const g = { delayTimeSec: 0.5, delayFeedback: 40, delayMix: 30, filterCutoffHz: 800, filterResonanceDb: 6, gain: 1.2 };
+  assert.deepEqual(normalizePadFx(g), g);
+});
+
+test("isNeutralPadFx: bypass detection ignores inaudible delay time", () => {
+  assert.equal(isNeutralPadFx(null), true);
+  assert.equal(isNeutralPadFx({}), true);
+  assert.equal(isNeutralPadFx(NEUTRAL_PAD_FX), true);
+  // Delay time differs but mix+feedback are 0 → still inaudible → neutral.
+  assert.equal(isNeutralPadFx({ delayTimeSec: 1.5 }), true);
+  assert.equal(isNeutralPadFx({ delayMix: 10 }), false);
+  assert.equal(isNeutralPadFx({ delayFeedback: 10 }), false);
+  assert.equal(isNeutralPadFx({ filterCutoffHz: 5000 }), false);
+  assert.equal(isNeutralPadFx({ filterResonanceDb: 3 }), false);
+  assert.equal(isNeutralPadFx({ gain: 0.5 }), false);
+});
+
+test("setPadEffects stores normalized fx; neutral/null clears", () => {
+  const { engine } = makeEngine();
+  assert.equal(engine.getPadEffects(0), null);
+  const norm = engine.setPadEffects(0, { delayMix: 150, filterCutoffHz: 900 });
+  assert.equal(norm.delayMix, 100); // clamped
+  assert.equal(norm.filterCutoffHz, 900);
+  assert.equal(norm.gain, 1); // default filled
+  assert.deepEqual(engine.getPadEffects(0), norm);
+  // Neutral set → cleared, not stored-as-zeroes.
+  assert.equal(engine.setPadEffects(0, { delayTimeSec: 0.9 }), null);
+  assert.equal(engine.getPadEffects(0), null);
+  assert.equal(engine.setPadEffects(0, null), null);
+});
+
+test("trigger builds the fx chain only for non-neutral pads", () => {
+  const { engine, ctx } = makeEngine();
+  // No fx → the legacy source→gain chain, zero extra nodes.
+  engine.trigger(0, {});
+  assert.equal(ctx.biquadsCreated || 0, 0);
+  assert.equal(ctx.delaysCreated || 0, 0);
+  let v = engine._voices.get(0);
+  assert.equal(v.source.connections[0].kind, "gain");
+  assert.equal(v.gain.gain.value, 1);
+
+  // FX set → source→lowpass→{dry, delay→wet}→padGain, fx gain on the
+  // voice gain node the release fade ramps.
+  engine.setPadEffects(1, {
+    delayTimeSec: 0.4, delayFeedback: 50, delayMix: 40,
+    filterCutoffHz: 1200, filterResonanceDb: 8, gain: 1.5,
+  });
+  engine.trigger(1, {});
+  assert.equal(ctx.biquadsCreated, 1);
+  assert.equal(ctx.delaysCreated, 1);
+  v = engine._voices.get(1);
+  const lp = v.source.connections[0];
+  assert.equal(lp.kind, "biquad");
+  assert.equal(lp.type, "lowpass");
+  assert.equal(lp.frequency.value, 1200);
+  assert.equal(lp.Q.value, 8); // lowpass Q is in dB — direct map
+  // Filter fans out to the dry gain and the delay.
+  const dry = lp.connections.find((n) => n.kind === "gain");
+  const delay = lp.connections.find((n) => n.kind === "delay");
+  assert.ok(dry && delay);
+  assert.ok(Math.abs(dry.gain.value - 0.6) < 1e-9); // 1 - mix
+  assert.equal(delay.delayTime.value, 0.4);
+  // Delay feeds its feedback gain (which loops back) and the wet gain.
+  const fb = delay.connections.find((n) => n.kind === "gain" && n.connections.includes(delay));
+  const wet = delay.connections.find((n) => n.kind === "gain" && !n.connections.includes(delay));
+  assert.ok(fb && wet);
+  assert.ok(Math.abs(fb.gain.value - 0.5) < 1e-9);
+  assert.ok(Math.abs(wet.gain.value - 0.4) < 1e-9);
+  // Dry + wet both land on the voice gain, which carries the fx gain.
+  assert.equal(dry.connections[0], v.gain);
+  assert.equal(wet.connections[0], v.gain);
+  assert.equal(v.gain.gain.value, 1.5);
+});
+
+// --- removePad / restorePad / rebakePad ------------------------------------
+
+test("removePad kills the pad; restorePad brings it (and its fx) back", () => {
+  const { engine } = makeEngine();
+  engine.setPadEffects(0, { delayMix: 25 });
+  engine.trigger(0, { loop: true });
+  assert.ok(engine._voices.get(0));
+
+  const token = engine.removePad(0);
+  assert.ok(token);
+  assert.equal(engine._voices.get(0), undefined, "active voice stopped");
+  assert.equal(engine.trigger(0, {}), null, "removed pad is dead");
+  assert.equal(engine.getPadEffects(0), null, "fx cleared with the pad");
+  assert.equal(engine.removePad(0), null, "double remove is a no-op");
+  assert.equal(engine.removePad(99), null);
+
+  // Token is pad-bound: restoring onto another pad is refused.
+  assert.equal(engine.restorePad(1, token), false);
+  assert.equal(engine.restorePad(0, null), false);
+  assert.equal(engine.restorePad(0, token), true);
+  assert.ok(engine.trigger(0, {}), "restored pad plays again");
+  assert.equal(engine.getPadEffects(0).delayMix, 25, "fx rode the token");
+});
+
+test("rebakePad rebuilds one pad from its dict and stops its voice", () => {
+  const { engine } = makeEngine();
+  engine.trigger(0, { loop: true });
+  assert.ok(engine._voices.get(0));
+  const info = engine.rebakePad(0);
+  assert.ok(info && Math.abs(info.bodySec - 2) < 1e-6);
+  assert.equal(engine._voices.get(0), undefined, "stale-buffer voice stopped");
+  assert.ok(engine.trigger(0, {}), "rebaked pad plays");
+  assert.equal(engine.rebakePad(99), null, "unknown pad → null");
+});
+
+// --- gateRegionInPlace (preserve-length trim) ------------------------------
+
+test("gateRegionInPlace: zeros outside, ramps inside, length preserved", () => {
+  const sr = 8000;
+  const n = 1000;
+  const ch = [new Float32Array(n).fill(1), new Float32Array(n).fill(1)];
+  gateRegionInPlace(ch, sr, 200, 600); // default 5 ms ramp = 40 frames
+  const r = 40;
+  for (const d of ch) {
+    assert.equal(d.length, n, "length untouched — the trim only gates");
+    for (let i = 0; i < 200; i++) assert.equal(d[i], 0, "pre-gate zeroed @" + i);
+    for (let i = 600; i < n; i++) assert.equal(d[i], 0, "post-gate zeroed @" + i);
+    // Fade-in: 0 at the gate start, linear up, unity after r frames.
+    assert.equal(d[200], 0);
+    assert.ok(Math.abs(d[200 + 20] - 20 / r) < 1e-6);
+    assert.equal(d[200 + r], 1, "interior untouched past the ramp");
+    // Fade-out: unity before the ramp, linear down, 0 at the last frame.
+    assert.equal(d[599 - r], 1);
+    assert.ok(Math.abs(d[599 - 20] - 20 / r) < 1e-6);
+    assert.equal(d[599], 0);
+  }
+});
+
+test("gateRegionInPlace: ramps shrink to fit tiny gates; edges clamp", () => {
+  const sr = 8000;
+  const ch = [new Float32Array(100).fill(1)];
+  // 10-frame gate → ramp clamps to 5 (half the gate), never overlapping.
+  gateRegionInPlace(ch, sr, 40, 50);
+  assert.equal(ch[0][39], 0);
+  assert.equal(ch[0][40], 0); // fade-in start
+  assert.ok(Math.abs(ch[0][43] - 3 / 5) < 1e-6);
+  assert.ok(Math.abs(ch[0][46] - 3 / 5) < 1e-6); // fade-out mirror
+  assert.equal(ch[0][49], 0);
+  assert.equal(ch[0][50], 0);
+  // Out-of-range gate clamps instead of throwing; the interior survives
+  // (edges still get the ramp — same idiom as applyEdgeFades).
+  const ch2 = [new Float32Array(50).fill(1)];
+  gateRegionInPlace(ch2, sr, -10, 999);
+  // 50-frame gate → ramps clamp to 25 each and meet at the middle: the
+  // center peaks at 24/25, edges at 0 (same idiom as applyEdgeFades).
+  assert.ok(Math.abs(ch2[0][24] - 24 / 25) < 1e-6, "center survives the clamped ramps");
+  assert.equal(ch2[0][0], 0, "clamped gate edge still ramps");
+  const ch3 = [new Float32Array(50).fill(1)];
+  gateRegionInPlace(ch3, sr, 40, 10);
+  for (let i = 0; i < 50; i++) assert.equal(ch3[0][i], 0, "inverted gate silences");
+  // Degenerate inputs: no channels / bad sample rate are no-ops.
+  gateRegionInPlace([], sr, 0, 10);
+  gateRegionInPlace([new Float32Array(0)], sr, 0, 10);
+  gateRegionInPlace([new Float32Array(4).fill(1)], 0, 0, 2);
 });
 
 // --- runner ----------------------------------------------------------------

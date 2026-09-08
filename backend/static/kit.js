@@ -140,6 +140,75 @@
     return queue;
   }
 
+  /** Radial wheel geometry for `count` satellites. 92 px radius was tuned
+   * for the original 4-button wheel; past ~6 the 54 px buttons collide, so
+   * the radius grows to keep ≥78 px of arc per button (labels included).
+   * `disc` is the unifying ring diameter behind hub + satellites. */
+  function radialGeometry(count) {
+    var n = Math.max(1, count | 0);
+    var radius = Math.max(92, Math.round((78 * n) / (2 * Math.PI)));
+    return { radius: radius, disc: (radius + 34) * 2 };
+  }
+
+  /** Parse the persisted per-song FX store (localStorage
+   * jamn.padfx.<analysisId>): JSON {padIdx: fxDict}. Value clamping is the
+   * engine's job (normalizePadFx at apply time) — this only drops rows that
+   * can't possibly be FX (non-numeric keys, non-object values) so a
+   * corrupted blob degrades to "fewer pads have FX", never a throw. */
+  function parsePadFxStore(json) {
+    var out = {};
+    var any = false;
+    var obj;
+    try {
+      obj = JSON.parse(json);
+    } catch (_) {
+      return null;
+    }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+    for (var k in obj) {
+      var idx = parseInt(k, 10);
+      var fx = obj[k];
+      if (!isFinite(idx) || idx < 0 || String(idx) !== String(k)) continue;
+      if (!fx || typeof fx !== "object" || Array.isArray(fx)) continue;
+      out[idx] = fx;
+      any = true;
+    }
+    return any ? out : null;
+  }
+
+  /** Serialize the FX map for localStorage; null when there is nothing to
+   * store (caller removes the key instead of writing "{}"). */
+  function serializePadFxStore(map) {
+    if (!map) return null;
+    var any = false;
+    for (var k in map) {
+      if (map[k]) {
+        any = true;
+        break;
+      }
+    }
+    return any ? JSON.stringify(map) : null;
+  }
+
+  /** Reset-state math (pure): which radial-era overrides a pad carries.
+   * `orig` = bake-time region snapshot (chop edit applied), `gated` =
+   * preserve-length trim applied, `loopOverride` = radial loop/one-shot
+   * force, `fx` = non-neutral pad FX. Drives the Reset button's enabled
+   * state and what Reset must undo. */
+  function padOverrides(orig, gated, loopOverride, fx) {
+    var region = orig != null;
+    var gate = gated != null;
+    var loop = loopOverride != null;
+    var hasFx = fx != null;
+    return {
+      region: region,
+      gate: gate,
+      loop: loop,
+      fx: hasFx,
+      any: region || gate || loop || hasFx,
+    };
+  }
+
   // ---------- mount state (one surface at a time) ----------
 
   var current = null;
@@ -179,6 +248,13 @@
         // Usage feedback (assetId-keyed play/skip events, batched to
         // /api/song/{id}/pad-feedback like the native SessionController).
         fb: { events: [], startedAt: {}, timer: 0 },
+        // Radial per-pad state beyond loopOverride:
+        origRegions: {}, // padIdx → bake-time region snapshot (radial Reset)
+        gated: {}, // padIdx → {startSec, endSec} preserve-length gate applied
+        padFx: {}, // padIdx → normalized FX dict (persisted per song)
+        fxKey: entry && entry.id ? entry.id : null, // localStorage jamn.padfx.<id>
+        fxPop: null, // open FX-editor popover state, or null
+        deleted: {}, // padIdx → {pad, token, timer} undo window after Delete
       };
       if (!entry || !entry.id || !entry.result) {
         showError(current, "No analysis loaded.");
@@ -221,6 +297,10 @@
     if (s.fb && s.fb.timer) clearInterval(s.fb.timer);
     flushPadFeedback(s, true); // last batch rides sendBeacon past teardown
     closeRadial(s);
+    closeFxEditor(s);
+    for (var k in s.deleted) {
+      if (s.deleted[k] && s.deleted[k].timer) clearTimeout(s.deleted[k].timer);
+    }
     for (var i = 0; i < s.padEls.length; i++) {
       if (s.padEls[i] && s.padEls[i].lp) clearTimeout(s.padEls[i].lp);
     }
@@ -335,7 +415,7 @@
     s.ctx = new AC();
 
     var kitP = fetchKitJson(s, entry);
-    var engineP = import("./padengine.js?v=2");
+    var engineP = import("./padengine.js?v=3");
 
     return kitP.then(function (kit) {
       if (!s.alive) return;
@@ -437,6 +517,7 @@
           return Promise.resolve(prep).then(function () {
             if (!s.alive) return;
             setStatus("");
+            applyStoredFx(s); // persisted per-pad FX ride every fresh bake
             attachEngineState(s);
             // Song-bar quantize while the transport rolls: wire now and
             // re-check on a slow clock (jam.js defines JamnKitHost in its
@@ -726,7 +807,14 @@
   // ---------- transport (host bridge) ----------
 
   /** Host callbacks, if the embedding page provides them. Every method is
-   * feature-checked at call time — a partial host degrades per-control. */
+   * feature-checked at call time — a partial host degrades per-control.
+   *
+   * Separate from JamnKitHost, the OPTIONAL `window.JamnKitHooks` object
+   * lets the host own navigation the kit can request but not perform:
+   *   openSequencer(padIdx) — switch to the Sequencer surface with the
+   *     given pad's track highlighted (radial "Sequence" action). When
+   *     absent the kit falls back to `location.hash = '#sequencer'` and
+   *     the page router (if any) owns the view switch. */
   function getHost() {
     var h = window.JamnKitHost;
     return h && typeof h === "object" ? h : null;
@@ -933,6 +1021,15 @@
       if (can(s.engine, "stopAll")) s.engine.stopAll();
     } catch (_) {}
     s.fb.startedAt = {}; // padIdx keys change meaning across a rebuild
+    // Per-pad override snapshots are keyed by padIdx too — a rebuilt kit
+    // reassigns those indices, so stale snapshots would restore the wrong
+    // pad. FX re-applies from the persisted store after prepare().
+    s.origRegions = {};
+    s.gated = {};
+    for (var dk in s.deleted) {
+      if (s.deleted[dk] && s.deleted[dk].timer) clearTimeout(s.deleted[dk].timer);
+    }
+    s.deleted = {};
     if (s.statusEl) s.statusEl.textContent = "Rebuilding pads…";
     var entry = s.entry;
     fetchKitJson(s, entry)
@@ -964,6 +1061,7 @@
           return Promise.resolve(prep).then(function () {
             if (!s.alive) return;
             if (s.statusEl) s.statusEl.textContent = "";
+            applyStoredFx(s);
             renderPads(s);
           });
         });
@@ -1224,67 +1322,7 @@
 
     var count = s.padCount || PAD_COUNT;
     for (var i = 0; i < count; i++) {
-      var pad = byIdx[i];
-      var el = document.createElement("button");
-      el.type = "button";
-      el.className = "kit-pad";
-      if (!pad) {
-        el.classList.add("is-empty");
-        el.disabled = true;
-        s.gridEl.appendChild(el);
-        s.padEls[i] = null;
-        continue;
-      }
-      var tint = parseColor(pad.colorHint);
-      el.style.setProperty("--pad-tint", tint.r + "," + tint.g + "," + tint.b);
-      el.title = (pad.category ? pad.category + " — " : "") + (pad.name || "Pad " + (i + 1));
-
-      var name = document.createElement("span");
-      name.className = "kit-pad-name";
-      name.textContent = pad.name || "Pad " + (i + 1);
-
-      // Sequence step dots (light version): which 16th-steps of the kit's
-      // defaultSequence this pad fires on.
-      var flags = stepFlags && stepFlags[i];
-      var dots = null;
-      if (flags && flags.length) {
-        dots = document.createElement("span");
-        dots.className = "kit-pad-steps";
-        for (var d = 0; d < flags.length; d++) {
-          var dot = document.createElement("i");
-          dot.className = "kit-pad-step" + (flags[d] ? " is-on" : "");
-          dots.appendChild(dot);
-        }
-      }
-
-      var canvas = document.createElement("canvas");
-      canvas.className = "kit-pad-wave";
-
-      var sweep = document.createElement("span");
-      sweep.className = "kit-pad-sweep";
-
-      var ring = document.createElement("span");
-      ring.className = "kit-pad-ring";
-
-      // Corner badge showing a radial per-pad loop/one-shot override.
-      var badge = document.createElement("span");
-      badge.className = "kit-pad-badge";
-
-      el.appendChild(name);
-      if (dots) el.appendChild(dots);
-      el.appendChild(canvas);
-      el.appendChild(sweep);
-      el.appendChild(ring);
-      el.appendChild(badge);
-      s.gridEl.appendChild(el);
-
-      s.padEls[i] = {
-        el: el, ring: ring, sweep: sweep, canvas: canvas, badge: badge, tint: tint,
-        ui: "idle", loop: false,
-        loopOverride: null, // radial per-pad override: true=loop, false=one-shot, null=follow mode
-        lp: null, lpX: 0, lpY: 0, // long-press (radial) timer state
-      };
-      wirePad(s, i, el);
+      s.gridEl.appendChild(buildPadTile(s, i, byIdx[i], stepFlags));
     }
 
     // Waveforms need laid-out canvas sizes — draw on the next frame.
@@ -1300,6 +1338,79 @@
 
     // Rebuild the layer rack against the (possibly new) pads.
     renderLayers(s);
+  }
+
+  /** Build one grid tile (assigned or empty) and register it in s.padEls.
+   * Shared by renderPads and the Delete/Undo path, which swaps a single
+   * tile in place instead of rebuilding the grid (a full renderPads would
+   * reset the ui state of every other, possibly sounding, pad). */
+  function buildPadTile(s, i, pad, stepFlags) {
+    var el = document.createElement("button");
+    el.type = "button";
+    el.className = "kit-pad";
+    if (!pad) {
+      el.classList.add("is-empty");
+      el.disabled = true;
+      s.padEls[i] = null;
+      return el;
+    }
+    var tint = parseColor(pad.colorHint);
+    el.style.setProperty("--pad-tint", tint.r + "," + tint.g + "," + tint.b);
+    el.title = (pad.category ? pad.category + " — " : "") + (pad.name || "Pad " + (i + 1));
+
+    var name = document.createElement("span");
+    name.className = "kit-pad-name";
+    name.textContent = pad.name || "Pad " + (i + 1);
+
+    // Sequence step dots (light version): which 16th-steps of the kit's
+    // defaultSequence this pad fires on.
+    var flags = stepFlags && stepFlags[i];
+    var dots = null;
+    if (flags && flags.length) {
+      dots = document.createElement("span");
+      dots.className = "kit-pad-steps";
+      for (var d = 0; d < flags.length; d++) {
+        var dot = document.createElement("i");
+        dot.className = "kit-pad-step" + (flags[d] ? " is-on" : "");
+        dots.appendChild(dot);
+      }
+    }
+
+    var canvas = document.createElement("canvas");
+    canvas.className = "kit-pad-wave";
+
+    var sweep = document.createElement("span");
+    sweep.className = "kit-pad-sweep";
+
+    var ring = document.createElement("span");
+    ring.className = "kit-pad-ring";
+
+    // Corner badge showing a radial per-pad loop/one-shot override.
+    var badge = document.createElement("span");
+    badge.className = "kit-pad-badge";
+
+    // "FX" chip — lit while the pad carries non-neutral effects.
+    var fxBadge = document.createElement("span");
+    fxBadge.className = "kit-pad-fx";
+    fxBadge.textContent = "FX";
+
+    el.appendChild(name);
+    if (dots) el.appendChild(dots);
+    el.appendChild(canvas);
+    el.appendChild(sweep);
+    el.appendChild(ring);
+    el.appendChild(badge);
+    el.appendChild(fxBadge);
+
+    s.padEls[i] = {
+      el: el, ring: ring, sweep: sweep, canvas: canvas, badge: badge, fxBadge: fxBadge, tint: tint,
+      ui: "idle", loop: false,
+      loopOverride: null, // radial per-pad override: true=loop, false=one-shot, null=follow mode
+      lp: null, lpX: 0, lpY: 0, // long-press (radial) timer state
+    };
+    wirePad(s, i, el);
+    updateFxBadge(s, i);
+    return el;
   }
 
   function wirePad(s, padIdx, el) {
@@ -1531,6 +1642,292 @@
     return true;
   }
 
+  // ---------- delete / undo (radial Delete) ----------
+
+  /** Clear a pad assignment (native radial Delete). The engine entry is
+   * removed (trigger() goes dead) and the tile swaps to .is-empty. Unlike
+   * native, a 5 s Undo toast can restore it — web has no per-pad re-add
+   * picker yet, so an un-undoable delete would be a dead end. */
+  function deletePad(s, padIdx) {
+    var pad = padByIdx(s, padIdx);
+    var p = s.padEls[padIdx];
+    if (!pad || !p) return;
+    try {
+      if (can(s.engine, "release")) s.engine.release(padIdx);
+    } catch (_) {}
+    setUi(s, padIdx, "idle");
+    var token = null;
+    try {
+      token = can(s.engine, "removePad") ? s.engine.removePad(padIdx) : null;
+    } catch (_) {}
+    var at = s.pads.indexOf(pad);
+    if (at !== -1) s.pads.splice(at, 1); // layers/groove stop offering it
+    delete s.padFx[padIdx]; // token carries the fx for undo
+    savePadFx(s);
+    delete s.origRegions[padIdx];
+    delete s.gated[padIdx];
+    if (p.lp) clearTimeout(p.lp);
+    var emptyEl = buildPadTile(s, padIdx, null, null);
+    try {
+      p.el.parentNode.replaceChild(emptyEl, p.el);
+    } catch (_) {}
+    renderLayers(s);
+    var snap = { pad: pad, token: token, timer: 0 };
+    s.deleted[padIdx] = snap;
+    snap.timer = setTimeout(function () {
+      if (s.deleted[padIdx] === snap) delete s.deleted[padIdx]; // undo window over
+    }, 5000);
+    toastAction(s, "Pad deleted", "Undo", function () {
+      undoDeletePad(s, padIdx);
+    }, 5000);
+  }
+
+  function undoDeletePad(s, padIdx) {
+    var snap = s.deleted[padIdx];
+    if (!snap || !s.alive) return;
+    delete s.deleted[padIdx];
+    if (snap.timer) clearTimeout(snap.timer);
+    s.pads.push(snap.pad);
+    try {
+      if (snap.token && can(s.engine, "restorePad")) s.engine.restorePad(padIdx, snap.token);
+    } catch (_) {}
+    if (snap.token && snap.token.fx) s.padFx[padIdx] = snap.token.fx; // engine restored it too
+    savePadFx(s);
+    var el = buildPadTile(s, padIdx, snap.pad, padStepFlags(s.kit));
+    var old = s.gridEl.children[padIdx];
+    if (old) s.gridEl.replaceChild(el, old);
+    var pEl = s.padEls[padIdx];
+    if (pEl) drawWave(s, padIdx, pEl);
+    renderLayers(s);
+  }
+
+  // ---------- per-pad FX (SamplePadEffects twin) ----------
+
+  /** Load the song's persisted FX map and push it into the engine.
+   * Called once per prepare() — a rebuilt engine starts FX-empty. */
+  function applyStoredFx(s) {
+    if (!s.fxKey || !can(s.engine, "setPadEffects")) return;
+    var map = null;
+    try {
+      map = window.localStorage
+        ? parsePadFxStore(window.localStorage.getItem("jamn.padfx." + s.fxKey))
+        : null;
+    } catch (_) {}
+    s.padFx = {};
+    if (!map) return;
+    for (var k in map) {
+      var idx = parseInt(k, 10);
+      try {
+        var norm = s.engine.setPadEffects(idx, map[k]); // clamps; null = neutral
+        if (norm) s.padFx[idx] = norm;
+      } catch (_) {}
+    }
+  }
+
+  function savePadFx(s) {
+    if (!s.fxKey) return;
+    try {
+      if (!window.localStorage) return;
+      var json = serializePadFxStore(s.padFx);
+      if (json) window.localStorage.setItem("jamn.padfx." + s.fxKey, json);
+      else window.localStorage.removeItem("jamn.padfx." + s.fxKey);
+    } catch (_) {}
+  }
+
+  /** "FX" corner chip — a pad carrying non-neutral FX shows it (the web
+   * stand-in for the native editor's clean/dirty indicator). */
+  function updateFxBadge(s, padIdx) {
+    var p = s.padEls[padIdx];
+    if (!p || !p.fxBadge) return;
+    p.fxBadge.classList.toggle("is-on", s.padFx[padIdx] != null);
+  }
+
+  function closeFxEditor(s) {
+    var f = s && s.fxPop;
+    if (!f) return;
+    s.fxPop = null;
+    try {
+      document.removeEventListener("keydown", f.onKey, true);
+      document.removeEventListener("pointerdown", f.onDown, true);
+    } catch (_) {}
+    try {
+      if (f.el && f.el.parentNode) f.el.parentNode.removeChild(f.el);
+    } catch (_) {}
+  }
+
+  /** Log-scale cutoff mapping: slider t∈[0,1] ↔ 100..20000 Hz. A linear
+   * Hz slider wastes 90% of its travel above 2 kHz where nothing musical
+   * happens; log spacing matches how the filter is heard. */
+  function cutoffFromSlider(t) {
+    return Math.round(100 * Math.pow(200, Math.max(0, Math.min(1, t))));
+  }
+  function sliderFromCutoff(hz) {
+    var v = Math.max(100, Math.min(20000, hz || 20000));
+    return Math.log(v / 100) / Math.log(200);
+  }
+
+  /** Small per-pad FX popover (not a page): delay time/feedback/mix +
+   * resonant low-pass cutoff/resonance + gain — mirror of the mobile
+   * PadEffectsEditor over SamplePadEffects. Values apply live to the
+   * ENGINE but, like the native voice pool, a sounding voice keeps its
+   * chain until the pad is retriggered. */
+  function openFxEditor(s, padIdx) {
+    closeFxEditor(s);
+    var p = s.padEls[padIdx];
+    if (!p || !can(s.engine, "setPadEffects")) {
+      toast(s, "Effects need the current pad engine");
+      return;
+    }
+    var pad = padByIdx(s, padIdx);
+    var neutral = (s.dsp && s.dsp.NEUTRAL_PAD_FX) || {
+      delayTimeSec: 0.25, delayFeedback: 0, delayMix: 0,
+      filterCutoffHz: 20000, filterResonanceDb: 0, gain: 1.0,
+    };
+    var fx = {};
+    var stored = s.padFx[padIdx];
+    for (var k in neutral) fx[k] = stored && stored[k] != null ? stored[k] : neutral[k];
+
+    var pop = document.createElement("div");
+    pop.className = "kit-fx-pop";
+    if (p.tint) pop.style.setProperty("--pad-tint", p.tint.r + "," + p.tint.g + "," + p.tint.b);
+
+    var head = document.createElement("div");
+    head.className = "kit-fx-head";
+    var title = document.createElement("span");
+    title.className = "kit-fx-title";
+    title.textContent = ((pad && pad.name) || "Pad " + (padIdx + 1)) + " — Effects";
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "kit-fx-close";
+    close.textContent = "✕";
+    close.title = "Close";
+    close.addEventListener("click", function () {
+      closeFxEditor(s);
+    });
+    head.appendChild(title);
+    head.appendChild(close);
+    pop.appendChild(head);
+
+    function push() {
+      try {
+        var norm = s.engine.setPadEffects(padIdx, fx); // null = neutral/cleared
+        if (norm) s.padFx[padIdx] = norm;
+        else delete s.padFx[padIdx];
+        savePadFx(s);
+        updateFxBadge(s, padIdx);
+      } catch (_) {}
+    }
+
+    var readouts = [];
+    /** One slider row. `toFx` maps slider value → fx field; `fmt` renders
+     * the readout from the current fx. */
+    function row(label, min, max, step, value, toFx, fmt) {
+      var r = document.createElement("label");
+      r.className = "kit-fx-row";
+      var name = document.createElement("span");
+      name.className = "kit-fx-name";
+      name.textContent = label;
+      var input = document.createElement("input");
+      input.type = "range";
+      input.min = String(min);
+      input.max = String(max);
+      input.step = String(step);
+      input.value = String(value);
+      var out = document.createElement("span");
+      out.className = "kit-fx-val";
+      var render = function () {
+        out.textContent = fmt();
+      };
+      readouts.push({ input: input, render: render, reset: null });
+      input.addEventListener("input", function () {
+        toFx(parseFloat(input.value));
+        render();
+        push();
+      });
+      r.appendChild(name);
+      r.appendChild(input);
+      r.appendChild(out);
+      pop.appendChild(r);
+      render();
+      return input;
+    }
+
+    var inTime = row("Delay time", 0, 2, 0.01, fx.delayTimeSec,
+      function (v) { fx.delayTimeSec = v; },
+      function () { return fx.delayTimeSec.toFixed(2) + " s"; });
+    var inFb = row("Feedback", 0, 95, 1, fx.delayFeedback,
+      function (v) { fx.delayFeedback = v; },
+      function () { return Math.round(fx.delayFeedback) + " %"; });
+    var inMix = row("Delay mix", 0, 100, 1, fx.delayMix,
+      function (v) { fx.delayMix = v; },
+      function () { return Math.round(fx.delayMix) + " %"; });
+    var inCut = row("Cutoff", 0, 1, 0.001, sliderFromCutoff(fx.filterCutoffHz),
+      function (v) { fx.filterCutoffHz = cutoffFromSlider(v); },
+      function () {
+        var hz = fx.filterCutoffHz;
+        return hz >= 19999 ? "open" : hz >= 1000 ? (hz / 1000).toFixed(1) + " kHz" : Math.round(hz) + " Hz";
+      });
+    var inRes = row("Resonance", 0, 24, 0.5, fx.filterResonanceDb,
+      function (v) { fx.filterResonanceDb = v; },
+      function () { return fx.filterResonanceDb.toFixed(1) + " dB"; });
+    var inGain = row("Gain", 0, 200, 1, fx.gain * 100,
+      function (v) { fx.gain = v / 100; },
+      function () { return Math.round(fx.gain * 100) + " %"; });
+
+    var foot = document.createElement("div");
+    foot.className = "kit-fx-foot";
+    var hint = document.createElement("span");
+    hint.className = "kit-fx-hint";
+    hint.textContent = "Applies on the next trigger"; // native voice-pool semantics
+    var reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "kit-fx-reset";
+    reset.textContent = "Neutral";
+    reset.title = "Clear this pad's effects";
+    reset.addEventListener("click", function () {
+      for (var k in neutral) fx[k] = neutral[k];
+      inTime.value = String(fx.delayTimeSec);
+      inFb.value = String(fx.delayFeedback);
+      inMix.value = String(fx.delayMix);
+      inCut.value = String(sliderFromCutoff(fx.filterCutoffHz));
+      inRes.value = String(fx.filterResonanceDb);
+      inGain.value = String(fx.gain * 100);
+      readouts.forEach(function (r) { r.render(); });
+      push();
+    });
+    foot.appendChild(hint);
+    foot.appendChild(reset);
+    pop.appendChild(foot);
+
+    document.body.appendChild(pop);
+    // Anchor beside the pad, clamped on-viewport (position: fixed).
+    try {
+      var rect = p.el.getBoundingClientRect();
+      var vw = window.innerWidth || 0;
+      var vh = window.innerHeight || 0;
+      var w = pop.offsetWidth || 260;
+      var h = pop.offsetHeight || 220;
+      var left = Math.max(8, Math.min(vw - w - 8, rect.right + 10));
+      var top = Math.max(8, Math.min(vh - h - 8, rect.top));
+      pop.style.left = left + "px";
+      pop.style.top = top + "px";
+    } catch (_) {}
+
+    var onKey = function (ev) {
+      if (ev.key === "Escape") {
+        ev.stopPropagation();
+        closeFxEditor(s);
+      }
+    };
+    var onDown = function (ev) {
+      if (pop.contains(ev.target)) return;
+      closeFxEditor(s);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onDown, true);
+    s.fxPop = { el: pop, onKey: onKey, onDown: onDown, padIdx: padIdx };
+  }
+
   // ---------- radial pad menu (right-click / long-press) ----------
 
   function padByIdx(s, padIdx) {
@@ -1566,12 +1963,27 @@
    * hover; click-away or Escape dismisses. */
   function openRadial(s, padIdx, x, y) {
     closeRadial(s);
+    closeFxEditor(s); // never stack the FX popover under the wheel
     var p = s.padEls[padIdx];
     if (!p) return;
     var pad = padByIdx(s, padIdx);
     var effLoop = effectiveLoop(s, p);
     var sounding = p.ui === "armed" || p.ui === "playing";
+    // Solo only means something while ANOTHER pad sounds.
+    var anyOther = false;
+    for (var oi = 0; oi < s.padEls.length; oi++) {
+      if (oi !== padIdx && s.padEls[oi] && s.padEls[oi].ui !== "idle") {
+        anyOther = true;
+        break;
+      }
+    }
+    var overrides = padOverrides(
+      s.origRegions[padIdx], s.gated[padIdx], p.loopOverride, s.padFx[padIdx]);
 
+    // Full native assigned ring (delete/chop/addSound/loop/reset/effects/
+    // sequence — PadRadialMenu.assigned) plus the two web-only transport
+    // actions (Stop pad, Solo). Inapplicable actions render dimmed with
+    // their label, like the native ring.
     var actions = [
       {
         icon: "∞",
@@ -1580,6 +1992,14 @@
         run: function () {
           p.loopOverride = !effLoop;
           updateOverrideBadge(s, padIdx);
+        },
+      },
+      {
+        icon: "≡",
+        label: "Effects",
+        active: overrides.fx,
+        run: function () {
+          openFxEditor(s, padIdx);
         },
       },
       {
@@ -1601,6 +2021,37 @@
         },
       },
       {
+        icon: "▦",
+        label: "Sequence",
+        run: function () {
+          // Host hook first (window.JamnKitHooks.openSequencer — see the
+          // JamnKitHooks doc above getHost); the hash fallback hands the
+          // view switch to whatever router owns the page.
+          var hooks = window.JamnKitHooks;
+          if (hooks && typeof hooks.openSequencer === "function") {
+            try {
+              hooks.openSequencer(padIdx);
+              return;
+            } catch (_) {}
+          }
+          try {
+            window.location.hash = "#sequencer";
+          } catch (_) {}
+        },
+      },
+      {
+        icon: "＋",
+        label: "Add sound",
+        run: function () {
+          // Honest navigation: web has no per-pad sound picker yet, so
+          // this walks to Packs instead of stubbing a picker.
+          try {
+            window.location.hash = "#packs";
+          } catch (_) {}
+          toast(s, "Pick a pack to mount");
+        },
+      },
+      {
         icon: "■",
         label: "Stop pad",
         danger: true,
@@ -1616,6 +2067,7 @@
       {
         icon: "◎",
         label: "Solo",
+        disabled: !anyOther,
         run: function () {
           for (var i = 0; i < s.padEls.length; i++) {
             var other = s.padEls[i];
@@ -1627,9 +2079,56 @@
           }
         },
       },
+      {
+        icon: "✕",
+        label: "Delete",
+        danger: true,
+        run: function () {
+          deletePad(s, padIdx);
+        },
+      },
+      {
+        icon: "↺",
+        label: "Reset",
+        disabled: !overrides.any,
+        run: function () {
+          // Undo the radial-era overrides: FX → neutral, loop override →
+          // follow mode, chop/gate → rebake from the server pad dict.
+          if (overrides.fx && can(s.engine, "setPadEffects")) {
+            try {
+              s.engine.setPadEffects(padIdx, null);
+            } catch (_) {}
+            delete s.padFx[padIdx];
+            savePadFx(s);
+            updateFxBadge(s, padIdx);
+          }
+          p.loopOverride = null;
+          updateOverrideBadge(s, padIdx);
+          var orig = s.origRegions[padIdx];
+          if (orig && pad && pad.stemSlice) {
+            pad.stemSlice.startSec = orig.startSec;
+            pad.stemSlice.endSec = orig.endSec;
+            pad.loopStartSec = orig.loopStartSec;
+            pad.loopEndSec = orig.loopEndSec;
+            delete s.origRegions[padIdx];
+          }
+          if (orig || overrides.gate) {
+            delete s.gated[padIdx];
+            try {
+              // Full server-state bake (onset snap included) — the voice
+              // playing the stale buffer is stopped by the engine.
+              if (can(s.engine, "rebakePad")) s.engine.rebakePad(padIdx);
+            } catch (_) {}
+            setUi(s, padIdx, "idle");
+            drawWave(s, padIdx, p);
+          }
+          toast(s, "Pad reset");
+        },
+      },
     ];
 
-    var R = 92; // wheel radius (button centers)
+    var geom = radialGeometry(actions.length);
+    var R = geom.radius; // wheel radius (button centers) — scales with count
     var vw = window.innerWidth || 0;
     var vh = window.innerHeight || 0;
     var cx = Math.max(R + 36, Math.min(vw - R - 36, x));
@@ -1655,6 +2154,8 @@
     // buttons read as unrelated floating circles over the pad noise.
     var ring = document.createElement("div");
     ring.className = "kit-radial-ring";
+    ring.style.width = geom.disc + "px"; // disc grows with the button count
+    ring.style.height = geom.disc + "px";
     menu.appendChild(ring);
 
     var hub = document.createElement("button");
@@ -1726,6 +2227,37 @@
     } catch (_) {}
   }
 
+  /** Toast with one action button (Delete's Undo). Same lifecycle as
+   * toast(); the button removes the toast before running the action. */
+  function toastAction(s, msg, actionLabel, fn, ms) {
+    try {
+      if (s.toastEl && s.toastEl.parentNode) s.toastEl.parentNode.removeChild(s.toastEl);
+      var t = document.createElement("div");
+      t.className = "kit-toast";
+      var text = document.createElement("span");
+      text.textContent = msg;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "kit-toast-act";
+      b.textContent = actionLabel;
+      b.addEventListener("click", function () {
+        if (t.parentNode) t.parentNode.removeChild(t);
+        if (s.toastEl === t) s.toastEl = null;
+        try {
+          fn();
+        } catch (_) {}
+      });
+      t.appendChild(text);
+      t.appendChild(b);
+      s.root.appendChild(t);
+      s.toastEl = t;
+      setTimeout(function () {
+        if (t.parentNode) t.parentNode.removeChild(t);
+        if (s.toastEl === t) s.toastEl = null;
+      }, ms || 5000);
+    } catch (_) {}
+  }
+
   // ---------- chop-editor integration ----------
 
   /**
@@ -1734,8 +2266,17 @@
    * seam bake) EXCEPT the onset-phase snap, which is skipped: the user put
    * the cut exactly where they want it. Swaps the engine's baked entry and
    * redraws the pad waveform in place.
+   *
+   * `region.preserveLength` (chop editor "Keep timing", mobile
+   * SampleTrimmerSheet parity): the pad KEEPS its original window/loop
+   * length and the trim only GATES the audio — the full original region is
+   * baked with everything outside [startSec, endSec] silenced (5 ms ramps
+   * at the gate edges), so a looping pad still fires on its musical cycle
+   * with silence filling the rest. The pad dict is NOT mutated in this
+   * mode; the radial Reset rebakes the ungated server state.
    * @param {number} padIdx
-   * @param {{startSec: number, endSec: number}} region seconds into the stem
+   * @param {{startSec: number, endSec: number, preserveLength?: boolean}}
+   *   region seconds into the stem
    * @returns {boolean} true when the pad was re-sliced
    */
   function applyPadRegion(padIdx, region) {
@@ -1755,10 +2296,29 @@
     // guard keeps a differently-built engine from throwing.
     if (!(s.engine._baked instanceof Map)) return false;
 
+    var preserve = !!region.preserveLength;
+    if (preserve && typeof s.dsp.gateRegionInPlace !== "function") return false;
+
     var sr = stem.sampleRate;
     var stemLen = stem.length;
-    var startFrame = Math.trunc(startSec * sr);
-    var endFrame = Math.min(Math.trunc(endSec * sr), stemLen);
+    // Preserve mode bakes the pad's CURRENT window (analyzer loop region
+    // when present — the engine's own region preference — else the slice);
+    // normal mode re-windows to the user's region.
+    var winStartSec = startSec;
+    var winEndSec = endSec;
+    if (preserve) {
+      if (pad.loopStartSec != null && pad.loopEndSec != null && pad.loopEndSec > pad.loopStartSec) {
+        winStartSec = pad.loopStartSec;
+        winEndSec = pad.loopEndSec;
+      } else {
+        winStartSec = pad.stemSlice.startSec;
+        winEndSec = pad.stemSlice.endSec;
+      }
+      winStartSec = Math.max(0, winStartSec);
+      if (!isFinite(winStartSec) || !isFinite(winEndSec)) return false;
+    }
+    var startFrame = Math.trunc(winStartSec * sr);
+    var endFrame = Math.min(Math.trunc(winEndSec * sr), stemLen);
     var bodyCount = endFrame - startFrame;
     if (!(bodyCount > 8) || startFrame >= stemLen) return false;
 
@@ -1773,6 +2333,16 @@
       channels.push(
         new Float32Array(stem.getChannelData(c).subarray(startFrame, startFrame + bodyCount + extra))
       );
+    }
+    if (preserve) {
+      // Gate BEFORE normalize so the peak target measures what will
+      // actually sound. Gate frames are window-relative; the continuation
+      // tail past the gate end is silenced too (gateRegionInPlace zeroes
+      // to the buffer end) so the seam bake can't reintroduce gated audio.
+      var gs = Math.trunc(Math.max(winStartSec, startSec) * sr) - startFrame;
+      var ge = Math.trunc(Math.min(winEndSec, endSec) * sr) - startFrame;
+      if (!(ge > gs + Math.trunc(0.02 * sr))) return false; // gate misses the window
+      s.dsp.gateRegionInPlace(channels, sr, gs, ge);
     }
     s.dsp.normalizePeak(channels);
     s.dsp.applyEdgeFades(channels, sr);
@@ -1808,12 +2378,29 @@
       loopChannels: loopChannels,
     });
 
-    // Keep the pad dict honest so any later full re-bake agrees.
-    pad.stemSlice.startSec = startSec;
-    pad.stemSlice.endSec = endSec;
-    if (pad.loopStartSec != null) {
-      pad.loopStartSec = startSec;
-      pad.loopEndSec = endSec;
+    if (preserve) {
+      // Window untouched — record the gate so the radial Reset knows this
+      // pad diverges from server state (and what the gate was).
+      if (s.gated) s.gated[padIdx] = { startSec: startSec, endSec: endSec };
+    } else {
+      // Snapshot the pre-edit region ONCE (first edit wins) so the radial
+      // Reset can return the pad to the state it was baked with.
+      if (s.origRegions && s.origRegions[padIdx] == null) {
+        s.origRegions[padIdx] = {
+          startSec: pad.stemSlice.startSec,
+          endSec: pad.stemSlice.endSec,
+          loopStartSec: pad.loopStartSec,
+          loopEndSec: pad.loopEndSec,
+        };
+      }
+      // Keep the pad dict honest so any later full re-bake agrees.
+      pad.stemSlice.startSec = startSec;
+      pad.stemSlice.endSec = endSec;
+      if (pad.loopStartSec != null) {
+        pad.loopStartSec = startSec;
+        pad.loopEndSec = endSec;
+      }
+      if (s.gated) delete s.gated[padIdx]; // a re-window supersedes any gate
     }
 
     if (pEl) drawWave(s, padIdx, pEl); // peaks() now reads the new bake
@@ -1849,6 +2436,9 @@
       // entry, so feedback stays inert (noteTrigger requires s.entry).
       view: "grid", padCount: 16, layersEl: null, layerRows: null,
       fb: { events: [], startedAt: {}, timer: 0 },
+      origRegions: {}, gated: {}, padFx: {},
+      fxKey: "pack:" + desc.packId, // pack FX persist per pack, not per song
+      fxPop: null, deleted: {},
     };
     renderShell(current);
     var s = current;
@@ -1896,7 +2486,7 @@
           kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
           s.kit = { name: desc.name || manifest.name || "Pack", pads: kitPads };
           s.pads = kitPads;
-          return import("./padengine.js?v=2").then(function (mod) {
+          return import("./padengine.js?v=3").then(function (mod) {
             if (!s.alive) return;
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
             s.dsp = mod;
@@ -1906,6 +2496,7 @@
             s.engine.setKit(s.kit, { tempoBpm: manifest.tempoBpm || 0 });
             return Promise.resolve(s.engine.prepare()).then(function () {
               if (!s.alive) return;
+              applyStoredFx(s);
               attachEngineState(s);
               renderPads(s);
               startRaf(s);
@@ -1949,6 +2540,12 @@
       padStepFlags: padStepFlags,
       pushPadEvent: pushPadEvent,
       syncEngineTransport: syncEngineTransport,
+      radialGeometry: radialGeometry,
+      parsePadFxStore: parsePadFxStore,
+      serializePadFxStore: serializePadFxStore,
+      padOverrides: padOverrides,
+      cutoffFromSlider: cutoffFromSlider,
+      sliderFromCutoff: sliderFromCutoff,
     },
   };
 })();

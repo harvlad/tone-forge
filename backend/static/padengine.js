@@ -235,6 +235,100 @@ export function exactCrossfaded(channels, sampleRate, loopFrames, crossfadeMs) {
 }
 
 /**
+ * Silence everything OUTSIDE [startFrame, endFrame) in place, with linear
+ * ramps INSIDE the gate edges so the gate doesn't click. The buffer length
+ * is untouched — this is the "Keep timing" trim (mobile SampleTrimmerSheet
+ * preserve-length mode): a looping pad keeps its musical cycle and the trim
+ * only gates the audio, silence filling the rest. Frames past `endFrame`
+ * are zeroed too, so a loop's continuation tail can't reintroduce gated
+ * audio at the seam bake. Ramps shrink to fit tiny gates (never overlap).
+ * @param {Float32Array[]} channels gated in place
+ * @param {number} sampleRate
+ * @param {number} startFrame gate start within the buffer
+ * @param {number} endFrame gate end (exclusive)
+ * @param {number} [rampMs] edge ramp length, default 5 ms
+ */
+export function gateRegionInPlace(channels, sampleRate, startFrame, endFrame, rampMs = 5.0) {
+  const n = channels.length ? channels[0].length : 0;
+  if (!(n > 0) || !(sampleRate > 0)) return;
+  const gs = Math.max(0, Math.min(n, Math.trunc(startFrame)));
+  const ge = Math.max(gs, Math.min(n, Math.trunc(endFrame)));
+  let r = Math.trunc((Math.max(0, rampMs) / 1000.0) * sampleRate);
+  r = Math.max(0, Math.min(r, Math.trunc((ge - gs) / 2)));
+  for (const d of channels) {
+    for (let i = 0; i < gs; i++) d[i] = 0;
+    for (let i = ge; i < n; i++) d[i] = 0;
+    for (let i = 0; i < r; i++) {
+      d[gs + i] *= i / r; // fade in from the gate start
+      d[ge - 1 - i] *= i / r; // fade out into the gate end
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-pad FX (SamplePadEffects twin)
+// ---------------------------------------------------------------------------
+
+/**
+ * Neutral per-pad FX — the web twin of SamplePadEffects.neutral: fully-open
+ * filter + zero-mix delay + unity gain, so a pad carrying it sounds
+ * bit-identical to the no-FX path. Field names and ranges mirror the iOS
+ * struct (AVAudioUnitDelay/AVAudioUnitEQ conventions) so persisted values
+ * mean the same thing on both platforms; `gain` is the one web addition
+ * (the native pool balances per-voice level elsewhere).
+ */
+export const NEUTRAL_PAD_FX = Object.freeze({
+  delayTimeSec: 0.25,
+  delayFeedback: 0, // percent, 0..95 (>=100 self-oscillates)
+  delayMix: 0, // percent dry/wet, 0..100
+  filterCutoffHz: 20000, // 20 kHz = open
+  filterResonanceDb: 0, // 0..24 dB peak at cutoff
+  gain: 1.0, // linear, 0..2
+});
+
+/**
+ * Clamp an FX dict into its documented ranges, filling absent/invalid
+ * fields from NEUTRAL_PAD_FX (SamplePadEffects.clamped + its decode-with-
+ * defaults behavior). Pure; always returns a fresh complete object.
+ * @param {?Object} fx
+ */
+export function normalizePadFx(fx) {
+  const src = fx && typeof fx === "object" ? fx : {};
+  const pick = (key, lo, hi) => {
+    const v = src[key];
+    if (typeof v !== "number" || !Number.isFinite(v)) return NEUTRAL_PAD_FX[key];
+    return Math.max(lo, Math.min(hi, v));
+  };
+  return {
+    delayTimeSec: pick("delayTimeSec", 0, 2),
+    delayFeedback: pick("delayFeedback", 0, 95),
+    delayMix: pick("delayMix", 0, 100),
+    filterCutoffHz: pick("filterCutoffHz", 100, 20000),
+    filterResonanceDb: pick("filterResonanceDb", 0, 24),
+    gain: pick("gain", 0, 2),
+  };
+}
+
+/**
+ * True when `fx` is audibly the neutral set (SamplePadEffects.isNeutral):
+ * such a pad gets NO extra nodes — bypass, not zeroed effects. Delay time
+ * is ignored at mix 0 + feedback 0 (a silent tap's length is inaudible),
+ * matching the native pool leaving idle delays at any delayTime.
+ * @param {?Object} fx
+ */
+export function isNeutralPadFx(fx) {
+  const f = normalizePadFx(fx);
+  const eps = 1e-6;
+  return (
+    f.delayMix < eps &&
+    f.delayFeedback < eps &&
+    f.filterCutoffHz > 20000 - 1e-3 &&
+    f.filterResonanceDb < eps &&
+    Math.abs(f.gain - 1.0) < eps
+  );
+}
+
+/**
  * Seam crossfade length for a kit pad: the analyzer's per-seam measurement
  * (pad.crossfadeMs) when present, else the coarse loopScore→ms map — a worse
  * seam gets a longer fade — else the 12 ms default floor. Clamped musical
@@ -288,6 +382,9 @@ export class PadEngine {
     this._rate = 1.0;
     /** stem role → sounding-voice count (ChopPlayer.takeoverCounts twin). */
     this._takeoverCounts = new Map();
+    /** padIdx → normalized non-neutral FX (SamplePadEffects twin). Voices
+     * pick the pad's CURRENT fx up at trigger time, native-style. */
+    this._padFx = new Map();
     /** @type {?function(number, {playing: boolean, armedUntil: ?number}): void} */
     this.onstate = null;
     /**
@@ -340,6 +437,32 @@ export class PadEngine {
    */
   lockInfo() {
     return { anchor: this._lockAnchor, cycle: this.loopLengthSeconds / this._rate };
+  }
+
+  /**
+   * Per-pad FX (delay + resonant lowpass + gain — the SamplePadEffects
+   * twin). Values are clamped via normalizePadFx; a null/neutral set
+   * CLEARS the entry so neutral pads keep the bare source→gain chain (no
+   * extra nodes = bit-identical to the pre-FX path). Like the native
+   * voice pool, fx apply at TRIGGER time — an already-sounding voice
+   * keeps the chain it launched with until retriggered.
+   * @param {number} padIdx
+   * @param {?Object} fx partial dict; missing fields default to neutral
+   * @returns {?Object} the stored normalized fx, or null when cleared
+   */
+  setPadEffects(padIdx, fx) {
+    if (fx == null || isNeutralPadFx(fx)) {
+      this._padFx.delete(padIdx);
+      return null;
+    }
+    const norm = normalizePadFx(fx);
+    this._padFx.set(padIdx, norm);
+    return norm;
+  }
+
+  /** @returns {?Object} the pad's stored normalized fx, or null. */
+  getPadEffects(padIdx) {
+    return this._padFx.get(padIdx) || null;
   }
 
   /** @param {Object<string, AudioBuffer>} buffersByRole */
@@ -426,6 +549,58 @@ export class PadEngine {
       info[pad.padIdx] = { shiftSec: entry.shiftSec, bodySec: entry.bodySec };
     }
     return info;
+  }
+
+  /**
+   * Rebake ONE pad from its current pad dict + stem — the same path
+   * prepare() runs (onset snap included), scoped to a single pad. The
+   * radial Reset uses this to return an edited pad to server state after
+   * the host restores the pad dict's original region. Stops the pad's
+   * voice first: it would keep playing the stale buffer at the stale
+   * length.
+   * @returns {?{shiftSec: number, bodySec: number}} null when the pad
+   *   can't bake (unknown pad / missing stem)
+   */
+  rebakePad(padIdx) {
+    const pad = this._pads.find((p) => p && p.padIdx === padIdx);
+    const slice = pad && pad.stemSlice;
+    const stem = slice && this._stems[slice.stemRole];
+    if (!stem) return null;
+    const entry = this._bakePad(pad, slice, stem);
+    if (!entry) return null;
+    this._stopVoice(padIdx, /* notify */ true);
+    this._baked.set(padIdx, entry);
+    return { shiftSec: entry.shiftSec, bodySec: entry.bodySec };
+  }
+
+  /**
+   * Clear a pad assignment: stop its voice and drop the baked entry so
+   * trigger() returns null (the pad is empty). Returns an OPAQUE token
+   * the host can hand back to restorePad — web-only undo affordance (the
+   * native delete is final, but web has no re-add picker yet, so an
+   * undoable delete prevents dead-ends).
+   * @returns {?Object} restore token, or null when the pad wasn't baked
+   */
+  removePad(padIdx) {
+    const entry = this._baked.get(padIdx);
+    if (!entry) return null;
+    this._stopVoice(padIdx, /* notify */ true);
+    this._baked.delete(padIdx);
+    const fx = this._padFx.get(padIdx) || null;
+    this._padFx.delete(padIdx);
+    return { padIdx, entry, fx };
+  }
+
+  /**
+   * Undo removePad with its token. Refuses a token minted for a
+   * different pad — restoring drums onto the bass tile is never right.
+   * @returns {boolean} true when the pad is playable again
+   */
+  restorePad(padIdx, token) {
+    if (!token || token.padIdx !== padIdx || !token.entry) return false;
+    this._baked.set(padIdx, token.entry);
+    if (token.fx) this._padFx.set(padIdx, token.fx); // pad comes back with its fx
+    return true;
   }
 
   _bakePad(pad, slice, stem) {
@@ -628,7 +803,48 @@ export class PadEngine {
 
     const source = this.ctx.createBufferSource();
     const gain = this.ctx.createGain();
-    source.connect(gain);
+    // Per-pad FX chain (SampleVoicePool twin: player → delay → eq → mixer,
+    // reordered filter-first so the delay repeats the FILTERED sound):
+    //   source → lowpass(Biquad) → { dry gain, delay + feedback → wet gain }
+    //          → padGain → destination
+    // Neutral fx (no map entry) = the bare legacy chain — zero extra nodes,
+    // bit-identical output. Feature-checked so a context without the FX
+    // factories (older shims) degrades to bypass instead of throwing.
+    const fx = this._padFx.get(padIdx);
+    const canFx =
+      !!fx &&
+      typeof this.ctx.createBiquadFilter === "function" &&
+      typeof this.ctx.createDelay === "function";
+    if (canFx) {
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = fx.filterCutoffHz;
+      // WebAudio lowpass Q is specified IN dB — the native band's
+      // resonance dB maps straight across, no conversion.
+      lp.Q.value = fx.filterResonanceDb;
+      const mix = fx.delayMix / 100;
+      const dry = this.ctx.createGain();
+      dry.gain.value = 1 - mix;
+      const delay = this.ctx.createDelay(2.0);
+      delay.delayTime.value = fx.delayTimeSec;
+      const fb = this.ctx.createGain();
+      fb.gain.value = fx.delayFeedback / 100;
+      const wet = this.ctx.createGain();
+      wet.gain.value = mix;
+      source.connect(lp);
+      lp.connect(dry);
+      dry.connect(gain);
+      lp.connect(delay);
+      delay.connect(fb);
+      fb.connect(delay); // feedback loop (delay tap feeds itself)
+      delay.connect(wet);
+      wet.connect(gain);
+      // FX gain rides the voice gain node the release fade already ramps,
+      // so stop fades from the pad's level, not from unity.
+      gain.gain.value = fx.gain;
+    } else {
+      source.connect(gain);
+    }
     gain.connect(this.destination);
     if (willLoop) {
       // Baked buffer is exactly the body length; the seam is baked so the

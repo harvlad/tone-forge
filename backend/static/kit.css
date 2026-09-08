@@ -557,6 +557,29 @@
   display: block;
 }
 
+/* "FX" chip: pad carries non-neutral per-pad effects (radial Effects).
+ * Bottom-right corner — the name owns the top-left and the loop badge the
+ * top-right, and the dark scrim keeps it readable over the waveform. */
+.kit-pad-fx {
+  position: absolute;
+  bottom: 5px;
+  right: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(var(--pad-tint), 0.95);
+  display: none;
+  pointer-events: none;
+}
+
+.kit-pad-fx.is-on {
+  display: block;
+}
+
 /* ---------- radial pad menu ---------- */
 
 .kit-radial-backdrop {
@@ -683,6 +706,111 @@
   cursor: default;
 }
 
+/* ---------- per-pad FX popover (radial Effects) ---------- */
+
+.kit-fx-pop {
+  position: fixed;
+  z-index: 1002; /* above the radial backdrop — Effects opens from it */
+  --pad-tint: 139, 92, 246;
+  width: 264px;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-top: 2px solid rgba(var(--pad-tint), 0.9);
+  border-radius: var(--jamn-radius-md, 12px);
+  background: var(--jamn-surface1, #14141A);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+
+.kit-fx-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.kit-fx-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--jamn-text, #fff);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kit-fx-close {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.kit-fx-close:hover {
+  color: var(--jamn-text, #fff);
+}
+
+.kit-fx-row {
+  display: grid;
+  grid-template-columns: 74px 1fr 52px;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.kit-fx-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--jamn-text2, #A1A1AA);
+  white-space: nowrap;
+}
+
+.kit-fx-row input[type="range"] {
+  width: 100%;
+  accent-color: rgb(var(--pad-tint));
+}
+
+.kit-fx-val {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--jamn-text, #fff);
+}
+
+.kit-fx-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.kit-fx-hint {
+  font-size: 10px;
+  color: var(--jamn-text2, #A1A1AA);
+  opacity: 0.8;
+}
+
+.kit-fx-reset {
+  appearance: none;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.kit-fx-reset:hover {
+  border-color: rgba(var(--pad-tint), 0.9);
+}
+
 /* ---------- toast ---------- */
 
 .kit-toast {
@@ -700,6 +828,26 @@
   font-weight: 600;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
   animation: kit-toast-in 0.18s ease-out;
+}
+
+/* Action button inside a toast (Delete's Undo). */
+.kit-toast .kit-toast-act {
+  appearance: none;
+  border: none;
+  background: none;
+  margin-left: 12px;
+  padding: 0;
+  color: var(--jamn-accent, #8B5CF6);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.kit-toast .kit-toast-act:hover {
+  text-decoration: underline;
 }
 
 @keyframes kit-toast-in {

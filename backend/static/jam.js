@@ -15321,6 +15321,15 @@
       } catch (e) { console.warn('[jamn-router] remix mount failed:', e); }
     }
 
+    // Radial "Sequence" action: jump to the Sequencer with the pad's
+    // row in view (kit.js falls back to location.hash without this).
+    window.JamnKitHooks = {
+      openSequencer: padIdx => {
+        showView('sequencer');
+        try { window.JamnSequencer?.focusRow?.(padIdx); } catch (_) {}
+      },
+    };
+
     // ------------------------------------------ tool-surface mounts
     // Each tool pane hosts a self-contained module (stage/sequencer/
     // recordings/packs/contribute). Mount lazily on first visit; every

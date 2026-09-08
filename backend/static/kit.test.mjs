@@ -216,6 +216,80 @@ const { syncEngineTransport } = K._internals;
   delete window.JamnKitHost;
 }
 
+// Radial wheel geometry: 92 px floor for small wheels (the tuned 4-button
+// look); larger rings grow to keep ≥78 px of arc per 54 px button; the
+// unifying disc tracks the radius.
+const { radialGeometry } = K._internals;
+assert.deepEqual(radialGeometry(4), { radius: 92, disc: 252 });
+assert.deepEqual(radialGeometry(1), { radius: 92, disc: 252 });
+assert.deepEqual(radialGeometry(9), { radius: 112, disc: 292 }); // full parity ring
+assert.ok(radialGeometry(12).radius > radialGeometry(9).radius); // monotonic growth
+for (const n of [7, 8, 9, 12]) {
+  const g = radialGeometry(n);
+  assert.ok((2 * Math.PI * g.radius) / n >= 77.5, "arc spacing holds at " + n);
+}
+
+// FX store serialization: JSON {padIdx: fxDict}; garbage rows dropped
+// (clamping is the engine's job at apply time); empty/corrupt → null so a
+// bad blob degrades to "no FX", never a throw.
+const { parsePadFxStore, serializePadFxStore } = K._internals;
+assert.equal(parsePadFxStore(null), null);
+assert.equal(parsePadFxStore("not json"), null);
+assert.equal(parsePadFxStore("{}"), null);
+assert.equal(parsePadFxStore("[1,2]"), null);
+assert.equal(parsePadFxStore('"str"'), null);
+assert.deepEqual(
+  parsePadFxStore(
+    JSON.stringify({
+      0: { delayMix: 40, filterCutoffHz: 900 },
+      3: { gain: 1.5 },
+      "-1": { delayMix: 10 }, // negative index dropped
+      "2.5": { delayMix: 10 }, // non-integer key dropped
+      x: { delayMix: 10 }, // non-numeric key dropped
+      5: "loud", // non-object value dropped
+      6: [1, 2], // array value dropped
+      7: null,
+    })
+  ),
+  { 0: { delayMix: 40, filterCutoffHz: 900 }, 3: { gain: 1.5 } }
+);
+// All rows invalid → null (caller removes the storage key).
+assert.equal(parsePadFxStore(JSON.stringify({ x: 1, 5: "junk" })), null);
+assert.equal(serializePadFxStore(null), null);
+assert.equal(serializePadFxStore({}), null);
+{
+  const map = { 2: { delayMix: 30 } };
+  const json = serializePadFxStore(map);
+  assert.deepEqual(parsePadFxStore(json), map); // round-trips
+}
+
+// Reset-state math: which overrides a pad carries (drives the radial
+// Reset enabled state). loopOverride false (forced one-shot) still counts.
+const { padOverrides } = K._internals;
+assert.deepEqual(padOverrides(null, null, null, null), {
+  region: false, gate: false, loop: false, fx: false, any: false,
+});
+assert.equal(padOverrides({ startSec: 0, endSec: 1 }, null, null, null).any, true);
+assert.equal(padOverrides(null, { startSec: 0.5, endSec: 1 }, null, null).gate, true);
+assert.equal(padOverrides(null, null, false, null).loop, true); // forced one-shot
+assert.equal(padOverrides(null, null, true, null).any, true);
+assert.equal(padOverrides(null, null, null, { delayMix: 20 }).fx, true);
+{
+  const all = padOverrides({ s: 1 }, { s: 2 }, true, { gain: 2 });
+  assert.deepEqual(all, { region: true, gate: true, loop: true, fx: true, any: true });
+}
+
+// Log cutoff slider mapping: endpoints exact, round-trip within a step.
+const { cutoffFromSlider, sliderFromCutoff } = K._internals;
+assert.equal(cutoffFromSlider(0), 100);
+assert.equal(cutoffFromSlider(1), 20000);
+assert.equal(cutoffFromSlider(-2), 100); // clamped
+assert.equal(cutoffFromSlider(9), 20000);
+assert.ok(Math.abs(sliderFromCutoff(20000) - 1) < 1e-9);
+assert.ok(Math.abs(sliderFromCutoff(100) - 0) < 1e-9);
+assert.ok(Math.abs(sliderFromCutoff(cutoffFromSlider(0.5)) - 0.5) < 0.001);
+assert.equal(sliderFromCutoff(undefined), 1); // absent → open
+
 // applyPadRegion with nothing mounted → false, never a throw.
 assert.equal(K.applyPadRegion(0, { startSec: 0, endSec: 1 }), false);
 
