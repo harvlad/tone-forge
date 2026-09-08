@@ -1669,16 +1669,38 @@
     } catch (e) {
       console.warn('[launchpad] failed to attach onmidimessage:', e);
     }
-    _send(SYSEX_ENTER_PROGRAMMER);
-    _emitStatus({});
-    // Immediately paint the current mode's grid so the device isn't
-    // left blank between connect and the next chord transition.
-    _repaintForMode();
-    // Light the Play transport button dim green so the user has a
-    // clear "you can start the song from here" affordance the moment
-    // the device connects, without having to touch the mouse first.
-    _lastPlayingState = null;
-    _paintPlayButton(false);
+    // EXPLICITLY open the output before painting. Chrome is supposed to
+    // implicitly open on the first send(), but after a device
+    // re-enumeration (replug, another process touching the port) it can
+    // queue sends against a forever-pending port with no error — input
+    // keeps working while every LED write silently vanishes. Field
+    // signature: green "connected" pill, pads make sound, hardware dark.
+    const paintNow = () => {
+      _send(SYSEX_ENTER_PROGRAMMER);
+      _emitStatus({});
+      // Immediately paint the current mode's grid so the device isn't
+      // left blank between connect and the next chord transition.
+      _repaintForMode();
+      // Light the Play transport button dim green so the user has a
+      // clear "you can start the song from here" affordance the moment
+      // the device connects, without having to touch the mouse first.
+      _lastPlayingState = null;
+      _paintPlayButton(false);
+    };
+    if (typeof _output.open === 'function') {
+      const opened = _output.open();
+      if (opened && typeof opened.then === 'function') {
+        opened.then(paintNow).catch((e) => {
+          console.warn('[launchpad] output open failed:', e);
+          _output = null;
+          _emitStatus({ error: 'send_failed' });
+        });
+      } else {
+        paintNow();
+      }
+    } else {
+      paintNow();
+    }
     return true;
   }
 
