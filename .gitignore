@@ -146,3 +146,7 @@ tools/handrig/benchmark/results/*.gif
 
 # one-off data-ops scratch scripts
 scratchpad_cambridge218_to_r2.sh
+
+# App Store Connect API keys — NEVER commit
+*.p8
+AuthKey_*.p8

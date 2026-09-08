@@ -179,11 +179,18 @@ three.** The single source is `mobile-ios/WhatToTest.en-US.txt`:
    - **What to test** — numbered tap paths, expected vs actual.
    - Known limitations + what to report.
 2. The file's contents become the build's TestFlight **"What to Test"**
-   notes — set via the App Store Connect API `betaBuildLocalizations`
-   endpoint when `APPLE_ASC_*` secrets are configured (see
-   `.github/workflows/mobile-release.yml`), otherwise pasted into App
-   Store Connect manually right after upload.
+   notes. Set them with `scripts/set_testflight_notes.py` after the
+   upload finishes processing — it reads the committed file and stamps
+   the latest build via the App Store Connect API. Needs an ASC API key
+   (App Manager role) exported as `ASC_KEY_ID` / `ASC_ISSUER_ID` /
+   `ASC_KEY_PATH` (the `.p8` lives OUTSIDE the repo — never commit it).
+   Until the key is set, paste the file into App Store Connect manually.
 3. Commit the updated file in the same commit as the build's code.
+
+Upload flow (manual, the working path): archive, then
+`xcodebuild -exportArchive -exportOptionsPlist mobile-ios/ExportOptions.plist`
+(committed, so it can't vanish from /tmp) — auth is Xcode's signed-in
+Apple ID, no API key needed for the upload itself, only for the notes.
 
 A build uploaded with stale or empty test notes is a process failure —
 testers can't report usefully against "bug fixes and improvements".
