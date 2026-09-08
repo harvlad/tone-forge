@@ -336,9 +336,9 @@ features:
         status: done
         evidence: "backend/static/jam.js#Mixer FX tab"
       ios:
-        status: partial
-        evidence: "mobile-ios/Sources/ToneForgeMobile/MixerView.swift#MixerView"
-        note: "Mixer view exists; whether it exposes the same master-FX chain as desktop MusicBus / web needs audit — parity backfill 2026-09-08 (feature shipped web-only by another session)."
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/FXPanelView.swift#FXPanelBody"
+        note: "iOS is the REFERENCE master-FX graph — MixerView [Levels|FX] hosts FXPanelBody (3-band EQ, compressor, reverb/delay sends, FX return, presets); desktop MusicBus + web are documented 1:1 ports of it. Verified 2026-09-08."
       desktop:
         status: done
         evidence: "jam-desktop/Sources/JamDesktopAudio/MusicBus.swift#MusicBus"
