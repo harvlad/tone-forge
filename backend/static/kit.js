@@ -133,6 +133,18 @@
       s.kit = kit;
       s.pads = pads;
 
+      // Flip kits ship a ready-to-play defaultSequence. Stage it into the
+      // sequencer store on activation — same semantic point where iOS
+      // saves it to SequencerPatternStore (activateSamplePack) — so the
+      // beat is armed when the Sequencer pane opens. Web has no headless
+      // sequencer clock, so unlike iOS the flip does not auto-start.
+      if (kit.defaultSequence && window.JamnSequencer &&
+          typeof window.JamnSequencer.stageDefaultSequence === "function") {
+        try {
+          window.JamnSequencer.stageDefaultSequence(entry.id, kit.defaultSequence);
+        } catch (_) {}
+      }
+
       // Only fetch stem roles the pads actually slice; fall back to all.
       var paths = entry.result.stems_paths || {};
       var wanted = {};

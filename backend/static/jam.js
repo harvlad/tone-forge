@@ -14631,6 +14631,12 @@
     function _setCurrentEntry(entry) {
       _currentEntry = entry || null;
       _mountedEntryId = null; // force a remount for the new song
+      // Remix state is strictly per-song (native resetRemixState): drop
+      // the saved original-drums buffer and clear the Humanize template
+      // so the previous song's groove never leaks onto the new one.
+      _remixOriginalDrums = null;
+      try { window.JamnSequencer?.setGrooveOffsets?.(null); } catch (_) {}
+      _remixMountedId = null;
     }
 
     function _mountKitIfReady() {
@@ -14655,8 +14661,90 @@
           if (!entry || state.analysisId !== id) return;
           _currentEntry = entry;
           _mountKitIfReady();
+          _mountRemix(); // entry just arrived — the pane dispatch missed it
         })
         .catch(() => {});
+    }
+
+    // ------------------------------------------ Remix (one-tap transforms)
+    // Web home of the native Remix sheets (mobile RemixSheet.swift,
+    // desktop RemixSheetView.swift): remix.js owns fetch + rows in
+    // #remix-root; these host hooks are the only code that touches
+    // audio, mirroring AppState/SessionController.
+    let _remixMountedId = null;
+    let _remixOriginalDrums = null; // pre-Re-Drum drums buffer, per song
+
+    function _remixDrumsStem() {
+      for (const [name, s] of state.stems.entries()) {
+        const r = s.role || String(name).split('.').pop();
+        if (r === 'drums') return s;
+      }
+      return null;
+    }
+
+    // Swap the drums stem's decoded buffer in place, preserving playback
+    // position AND the mix (swapStemsPreservingPlayback parity). Gain
+    // nodes are untouched — unlike the native players there is nothing
+    // to rebuild, so mute/solo/volume survive for free. pauseAll/playAll
+    // carry the click scheduler and the Connect mirror along.
+    async function _remixApplyDrumsBuffer(buf) {
+      const stem = _remixDrumsStem();
+      if (!stem || !stem.buffer) throw new Error('no drums stem loaded');
+      const wasPlaying = state.isPlaying;
+      if (wasPlaying) pauseAll();
+      if (_remixOriginalDrums == null) _remixOriginalDrums = stem.buffer;
+      stem.buffer = buf;
+      if (wasPlaying) await playAll();
+    }
+
+    function _mountRemix() {
+      const root = $('remix-root');
+      if (!root || !window.JamnRemix) return;
+      const id = state.analysisId;
+      if (!id || !_currentEntry || _currentEntry.id !== id) return;
+      if (_remixMountedId === id) return;
+      try {
+        window.JamnRemix.mount(root, {
+          entry: _currentEntry,
+          // auto|drums|flip on the current song's pads — same mount path
+          // the Packs browser uses, so Flip inherits the kit surface's
+          // stem loading and (via kit.js) stages its defaultSequence.
+          loadKit: kind => {
+            if (!_currentEntry) return;
+            window.JamnKit?.mount(_currentEntry, { kind });
+            _mountedEntryId = _currentEntry.id;
+          },
+          // Re-Drum donor kit on the pads ("the kit lands on the PADS
+          // too" — native field feedback). _mountedEntryId stays the
+          // CURRENT song so pane switches don't silently stomp the donor
+          // pads with a song-kit remount; any explicit kit/pack load
+          // replaces them, same as native.
+          loadDonorDrumKit: donorId => {
+            fetch(`/api/history/${donorId}`)
+              .then(r => (r.ok ? r.json() : null))
+              .then(donor => {
+                if (!donor || state.analysisId !== id) return;
+                window.JamnKit?.mount(donor, { kind: 'drums' });
+                _mountedEntryId = id;
+              })
+              .catch(() => {});
+          },
+          swapDrums: async ab => {
+            if (!state.ctx) throw new Error('song audio not loaded yet');
+            const buf = await state.ctx.decodeAudioData(ab);
+            await _remixApplyDrumsBuffer(buf);
+          },
+          restoreDrums: async () => {
+            if (_remixOriginalDrums == null) return;
+            await _remixApplyDrumsBuffer(_remixOriginalDrums);
+            _remixOriginalDrums = null;
+          },
+          setGrooveOffsets: offsets => {
+            window.JamnSequencer?.setGrooveOffsets?.(offsets);
+          },
+        });
+        _remixMountedId = id;
+      } catch (e) { console.warn('[jamn-router] remix mount failed:', e); }
     }
 
     // ------------------------------------------ tool-surface mounts
@@ -14858,7 +14946,7 @@
         // feedback loop with the listener below.
         try { window.history.replaceState(null, '', '#' + surface); } catch (_) {}
       }
-      if (name === 'kit') _mountKitIfReady();
+      if (name === 'kit') { _mountKitIfReady(); _mountRemix(); }
       if (name === 'library') _renderLibrary();
       if (name === 'stage') _mountStage();
       if (name === 'sequencer') _mountSequencer();
