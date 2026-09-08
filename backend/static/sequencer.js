@@ -274,8 +274,10 @@
     var any = false;
     for (var i = 0; i < seq.tracks.length; i++) {
       var t = seq.tracks[i];
-      var padIdx = t && t.chopRef && t.chopRef.packPad
-        ? t.chopRef.packPad.padIdx : null;
+      var ref = t && t.chopRef
+        ? (t.chopRef.type === "packPad" ? t.chopRef : t.chopRef.packPad)
+        : null;
+      var padIdx = ref ? ref.padIdx : null;
       if (typeof padIdx !== "number" || !isFinite(padIdx) || padIdx < 0
           || !Array.isArray(t.steps)) continue;
       var steps = [];

@@ -75,10 +75,15 @@ def test_pattern_wire_format_swift_decodable(kit):
     assert pattern["isLooping"] is True
     assert isinstance(pattern["id"], str) and len(pattern["id"]) == 36
     for t in pattern["tracks"]:
+        # ChopReference's FROZEN wire shape is flat with a "type"
+        # discriminator (ChopReference.swift custom Codable + the iOS
+        # DefaultSequenceManifestTests fixture). The nested
+        # {"packPad": {...}} form this test used to assert made the whole
+        # flip kit fetch throw keyNotFound("type") on iOS and desktop.
         ref = t["chopRef"]
-        assert set(ref.keys()) == {"packPad"}
-        assert ref["packPad"]["packId"] == kit["packId"]
-        assert any(p["padIdx"] == ref["packPad"]["padIdx"] for p in kit["pads"])
+        assert ref["type"] == "packPad"
+        assert ref["packId"] == kit["packId"]
+        assert any(p["padIdx"] == ref["padIdx"] for p in kit["pads"])
         assert len(t["steps"]) == 16
         for s in t["steps"]:
             assert 0 <= s["velocity"] <= 1

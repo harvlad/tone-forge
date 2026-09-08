@@ -110,7 +110,9 @@
     var any = false;
     tracks.forEach(function (t) {
       if (!t || !Array.isArray(t.steps)) return;
-      var ref = t.chopRef && t.chopRef.packPad;
+      // Frozen wire form is flat {type:'packPad', packId, padIdx};
+      // tolerate the legacy nested {packPad:{...}} for old caches.
+      var ref = t.chopRef && (t.chopRef.type === "packPad" ? t.chopRef : t.chopRef.packPad);
       var idx = ref && typeof ref.padIdx === "number" ? ref.padIdx : null;
       if (idx === null) return;
       var flags = t.steps.map(function (st) {
@@ -1924,6 +1926,14 @@
     engine: function () { return current && current.engine; },
     pads: function () { return (current && current.pads) || []; },
     audioContext: function () { return current && current.ctx; },
+    // Current kit kind: 'auto' (default song kit), 'drums', 'flip', or
+    // 'pack' — lets Remix's pads-follow respect the mode the user chose
+    // instead of force-switching to the drum kit on every Re-Drum.
+    kind: function () {
+      if (!current) return null;
+      if (!current.entry) return "pack";
+      return current.kitKind || "auto";
+    },
     // Chop-editor integration: re-slice a pad from its stem with a
     // user-set region (onset snap skipped) and swap buffers in place.
     applyPadRegion: applyPadRegion,
