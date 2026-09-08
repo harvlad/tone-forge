@@ -71,8 +71,9 @@ def test_places_kit_samples_at_hit_times(env):
     assert _at(1.0) > 0.4
     assert _at(2.0) > 0.2
     assert float(np.abs(y[int(0.5 * sr)])) < 1e-6
-    # strength 0.0 → velocity floor 0.4, so the 3.0 s kick is quieter but real.
-    assert 0.1 < _at(3.0) < _at(1.0)
+    # strength 0.0 → velocity floor 0.15, so the 3.0 s kick is much quieter
+    # (ghost-note dynamics) but still audible.
+    assert 0.03 < _at(3.0) < _at(1.0)
 
 
 def test_class_fallback_when_kit_lacks_class(env):
@@ -136,3 +137,25 @@ def test_kit_candidates_ranking():
     assert "none" not in ids         # no hits table → not suggested
     assert "me" not in ids           # never suggest the song itself
     assert ranked[0]["classes"] == ["hat_closed", "kick", "snare"]
+
+
+def test_same_class_hits_choke_no_tail_soup(env):
+    """A long kick sample placed on fast repeats must be CHOKED by the next
+    kick, not ring full-length into overlap. Kit sample is 0.5 s of constant
+    0.5; hits every 0.1 s. Without choke the sustained overlap pushes the
+    steady-state level far above one sample; with choke each is cut to ~0.1 s
+    so the level stays near a single hit."""
+    import numpy as np
+    import soundfile as sf
+    _make_kit(env, "kitsong", [("kick", 0.5)])
+    result = {
+        DRUM_HITS_RESULT_KEY: _hits(*[(1.0 + i * 0.1, "kick", 1.0) for i in range(8)]),
+        "duration_sec": 4.0,
+    }
+    path = redrum.render_redrum("choketest", result, "kitsong")
+    y, sr = sf.read(str(path), always_2d=True)
+    # Sample level for one full-gain hit is 0.5. With choke the summed
+    # signal in the dense run stays close to that (brief cross-fade overlap
+    # only); uncontrolled overlap of 5+ full samples would blow past 1.0.
+    dense = np.abs(y[int(1.2 * sr):int(1.7 * sr)]).max()
+    assert dense < 0.8, dense

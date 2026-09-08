@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # re-renders the mono files already sitting in the server cache.
 # v3: true stereo passthrough of render-v2 stereo composites (v2 was
 # dual-mono — crash-safe but the collapsed image was plainly audible).
-REDRUM_VERSION = 3
+REDRUM_VERSION = 4
 
 # When the target kit lacks a class the groove uses, fall through this map
 # rather than dropping the hit — a groove with holes reads as a glitch, a
@@ -162,21 +162,58 @@ def render_redrum(entry_id: str, result: Dict, kit_entry_id: str) -> Optional[Pa
                   else 0.0, last_end + 3.0)
     out = np.zeros((int(total_s * sr) + sr, 2), dtype=np.float64)
 
-    used_count: Dict[str, int] = {}
+    # Next onset of the SAME class, so a placed composite is CHOKED by its
+    # own next hit — the whole reason the original stem didn't turn to soup.
+    # Without this, a 0.5 s kick placed every 0.13 s (16ths) rings eight
+    # deep, and a 2.5 s cymbal never stops: dozens of full, peak-normalized
+    # one-shots overlap into mud ("sounds like soup"). Hats also choke each
+    # other (closed→closed is a real choke on the kit). Cross-class ring is
+    # kept — a crash SHOULD ring over the next kick — but same-class stacking
+    # is what smears.
+    same_next: Dict[int, float] = {}
+    by_cls_times: Dict[str, List[float]] = {}
     for h in hits:
+        by_cls_times.setdefault(h["cls"], []).append(float(h["t"]))
+    # Hats share one choke timeline (open + closed cut each other).
+    hat_times = sorted(
+        t for c, ts in by_cls_times.items() if c.startswith("hat") for t in ts)
+    fade = int(0.006 * sr)  # 6 ms release so the choke doesn't click
+
+    used_count: Dict[str, int] = {}
+    for idx, h in enumerate(hits):
         cls = h["cls"]
         smp = _pick(cls, used_count.get(cls, 0))
         if smp is None:
             continue
         used_count[cls] = used_count.get(cls, 0) + 1
-        # Velocity floor at 0.4: strength is peak-normalized per song, and a
-        # fully linear map makes ghost notes vanish under the composite's
-        # already-normalized level.
-        gain = 0.4 + 0.6 * float(h.get("strength", 1.0))
-        i0 = int(float(h["t"]) * sr)
-        seg = smp[: out.shape[0] - i0]
-        if seg.shape[0] <= 0:
+        t = float(h["t"])
+        # Velocity floor 0.15 (was 0.4): the old floor made every ghost
+        # note nearly as loud as an accent, flattening the groove's
+        # dynamics into a constant barrage.
+        gain = 0.15 + 0.85 * float(h.get("strength", 1.0))
+        i0 = int(t * sr)
+
+        # Choke length: distance to this class's next onset (hats: next hat
+        # of either kind), capped by the sample's own length.
+        choke_times = hat_times if cls.startswith("hat") else by_cls_times[cls]
+        nxt = None
+        for tt in choke_times:
+            if tt > t + 1e-4:
+                nxt = tt
+                break
+        max_len = smp.shape[0]
+        if nxt is not None:
+            max_len = min(max_len, max(int(0.03 * sr), int((nxt - t) * sr)))
+        seg = smp[:max_len]
+        avail = out.shape[0] - i0
+        if avail <= 0 or seg.shape[0] <= 0:
             continue
+        seg = seg[:avail]
+        if seg.shape[0] > fade * 2:
+            # Release fade so a choked tail ends clean, not on a cliff.
+            ramp = np.linspace(1.0, 0.0, fade)[:, None]
+            seg = seg.copy()
+            seg[-fade:] *= ramp
         out[i0: i0 + seg.shape[0]] += seg * gain
 
     peak = float(np.max(np.abs(out)))

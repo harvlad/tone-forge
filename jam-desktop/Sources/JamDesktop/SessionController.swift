@@ -1129,27 +1129,29 @@ final class SessionController: ObservableObject {
             guard attachedAnalysisId == analysisId else { return }
             attachedStemURLs = urls
             redrumActiveKit = kit
-            // The kit lands on the PADS too — a stem-only swap left users
-            // hunting for where the new drums lived. A failure here is
-            // non-fatal (the mix swap already landed) but must not vanish:
-            // the "Applied:" line says whether the pads followed, instead
-            // of promising a grid that never changed.
-            var padsFollowed = true
-            if kit.hasPrefix("song:") {
-                padsFollowed = await loadDonorKitPads(
-                    donorId: String(kit.dropFirst(5)))
-            } else {
-                // announce: false so the kit load's own "Applied: Drum
-                // Kit" can't clobber the Re-Drum confirmation.
-                await loadAutoKit(kind: "drums", announce: false)
-                padsFollowed = autoKitError == nil
+            // Pads follow ONLY when the user is already ON the drum kit.
+            // Re-Drum's product is the MIX swap; force-switching whatever
+            // kit/mode was loaded (Auto Kit, Flip, a pack) to drums on every
+            // Re-Drum stomped the user's context — reported on all platforms
+            // ("pads always replaced with the drum kit regardless"). Matches
+            // the web guard (remix.js onDrumKit).
+            let onDrumKit = lastKitKind == "drums"
+            var padsFollowed = false
+            if onDrumKit {
+                if kit.hasPrefix("song:") {
+                    padsFollowed = await loadDonorKitPads(
+                        donorId: String(kit.dropFirst(5)))
+                } else {
+                    await loadAutoKit(kind: "drums", announce: false)
+                    padsFollowed = autoKitError == nil
+                }
             }
             let what = kit == "self"
                 ? "drums re-triggered from this song's own tightened kit"
                 : "drums swapped to \u{201C}\(donorName ?? String(kit.dropFirst(5)).prefix(8).description)\u{201D}"
             let whereTo = padsFollowed
                 ? ", in the song mix and on the pads."
-                : ", in the song mix (the donor kit couldn't load onto the pads)."
+                : ", in the song mix."
             remixApplied =
                 "Applied: Re-Drum — " + what + whereTo + remixHearItNote
         } catch {

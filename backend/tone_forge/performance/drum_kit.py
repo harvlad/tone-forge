@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Persisted-result key, analog of serve.GRAPH_RESULT_KEY. Version gates the
 # table: bump HITS_VERSION to invalidate stale tables after algorithm changes.
 DRUM_HITS_RESULT_KEY = "drum_hits"
-HITS_VERSION = 1
+HITS_VERSION = 2
 
 _SR = 22050
 
@@ -248,7 +248,15 @@ def detect_drum_hits(wav_path: Path) -> Dict:
             cls = "hat_closed" if decay < 0.25 else (
                 "hat_open" if decay < 0.7 else "cymbal")
         elif dominant == "mid":
-            cls = "snare"
+            # A bright, fast-decaying mid-dominant hit is a closed HAT, not a
+            # snare: hat energy sits ~2-8 kHz and straddles the mid/high band
+            # split, so the wide mid band (350-4000) can out-RMS the narrow
+            # high band even for an obvious hat. Snares ring longer and
+            # darker. (Field report: a closed hi-hat labeled as a snare.)
+            if ratios.get("high", 0.0) > 0.3 and decay < 0.12:
+                cls = "hat_closed"
+            else:
+                cls = "snare"
         elif dominant == "lowmid":
             # Toms are tonal lowmid thumps with little top; snare wires put
             # real energy in the high band. (Flatness alone can't split them
