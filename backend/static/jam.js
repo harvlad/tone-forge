@@ -11113,7 +11113,13 @@
       // reverts to toggling the monitor popover.
       const cb = state.connectBridge;
       const paired = cb && cb.status === 'open' && cb.peers > 0;
-      if (!paired) {
+      // Pairing is macOS-only (Connect ships for macOS only). On Windows/
+      // Linux there is no toneforge:// handler, so firing the deep link is a
+      // dead no-op — the pill just opens the browser monitor popover (Web
+      // Audio input monitoring, which is cross-platform) instead.
+      const isMac = (navigator.userAgentData?.platform === 'macOS')
+        || /Mac/.test(navigator.platform || '');
+      if (!paired && isMac) {
         const cbtn = document.getElementById('connect-btn');
         if (cbtn) { cbtn.click(); return; }
       }
