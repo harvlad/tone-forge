@@ -2491,6 +2491,10 @@
 
   $('perform-back').addEventListener('click', () => {
     stopAllStems();
+    // Release solo/mute before the rack DOM goes away — masterGain and
+    // monitor.gainNode survive the song change, so a solo left active
+    // here would silence the next song with nothing on screen to undo.
+    try { clearSoloGroup(); } catch (_) {}
     // Drop decoded buffers so we don't hold ~340 MB across jams.
     for (const stem of state.stems.values()) {
       stem.buffer = null;
@@ -6812,25 +6816,69 @@
     });
   }
 
-  function _applyAllSoloMutes() {
-    const anySolo = !!document.querySelector('.solo-btn.active');
-    // Stems
-    for (const [n] of state.stems.entries()) {
-      const soloBtn = document.querySelector(`.solo-btn[data-stem="${n}"]`);
-      const isSolo = !!(soloBtn && soloBtn.classList.contains('active'));
-      if (anySolo) setStemMuted(n, !isSolo);
-      else setStemMuted(n, false);
+  // Pure solo resolver — no DOM, no audio nodes, so the routing rule
+  // below is testable (see __jam._resolveSoloMutes).
+  //
+  // The rule that used to be wrong: the "Song" row is NOT a peer of the
+  // stem rows, it is their SUM BUS (every stem.gainNode connects to
+  // state.masterGain, which is what the Song row mutes). Treating it as
+  // a peer meant soloing any stem also muted the master — zeroing the
+  // one node the soloed stem had to pass through, so Solo produced
+  // total silence instead of that stem alone.
+  //
+  // Returns the muted flag each channel should end up at.
+  function _resolveSoloMutes({ stemNames, soloedStems, songSoloed, guitarSoloed }) {
+    const stemSolo = soloedStems.size > 0;
+    const anySolo = stemSolo || songSoloed || guitarSoloed;
+    const stems = new Map();
+    for (const n of stemNames) {
+      // Audible when it IS the solo target, or when the whole song mix
+      // is soloed and no individual stem narrowed it further.
+      const audible = !anySolo || soloedStems.has(n) || (songSoloed && !stemSolo);
+      stems.set(n, !audible);
     }
-    // Song master
+    return {
+      stems,
+      // The master only drops for a solo that lives OUTSIDE the song bus
+      // (i.e. the guitar input alone). A stem solo keeps it open.
+      song: anySolo && !songSoloed && !stemSolo,
+      // The monitor taps ctx.destination directly, so it is a true peer.
+      guitar: anySolo && !guitarSoloed,
+    };
+  }
+
+  function _applyAllSoloMutes() {
+    // Read the group off the buttons themselves rather than querying per
+    // stem name — stem ids carry dots ("legacy.other") and would need
+    // CSS escaping in an attribute selector.
+    const soloedStems = new Set();
+    document.querySelectorAll('.solo-btn[data-stem]').forEach((b) => {
+      if (b.classList.contains('active')) soloedStems.add(b.dataset.stem);
+    });
     const songSoloBtn = document.querySelector('.solo-btn[data-channel="song"]');
-    const songSoloed = !!(songSoloBtn && songSoloBtn.classList.contains('active'));
-    if (anySolo) setSongMuted(!songSoloed);
-    else setSongMuted(false);
-    // Guitar input
     const guitarSoloBtn = document.querySelector('.solo-btn[data-channel="guitar"]');
-    const guitarSoloed = !!(guitarSoloBtn && guitarSoloBtn.classList.contains('active'));
-    if (anySolo) _setMonitorMuted(!guitarSoloed);
-    else _setMonitorMuted(false);
+    const plan = _resolveSoloMutes({
+      stemNames: [...state.stems.keys()],
+      soloedStems,
+      songSoloed: !!(songSoloBtn && songSoloBtn.classList.contains('active')),
+      guitarSoloed: !!(guitarSoloBtn && guitarSoloBtn.classList.contains('active')),
+    });
+    for (const [n, muted] of plan.stems.entries()) setStemMuted(n, muted);
+    setSongMuted(plan.song);
+    _setMonitorMuted(plan.guitar);
+  }
+
+  // Solo state lives half in the DOM (button .active) and half on nodes
+  // that OUTLIVE the song — masterGain and monitor.gainNode are owned by
+  // the AudioContext, not the rack. buildStemRack() replaces the rack's
+  // innerHTML per song, silently dropping every .active class, so a solo
+  // left on when the user backed out of a jam stranded masterGain at 0
+  // and the NEXT song loaded dead silent. Clear the group explicitly
+  // while the buttons are still there to clear.
+  function clearSoloGroup() {
+    document.querySelectorAll('.solo-btn.active')
+      .forEach((b) => b.classList.remove('active'));
+    _applyAllSoloMutes();
   }
 
   // ---------------------------------------------- util
@@ -12156,6 +12204,7 @@
       get state() { return state; },
       _isConnectPaired,
       _pickLeadMidiNotes,
+      _resolveSoloMutes,
     };
   } catch (_) {}
 
@@ -15706,8 +15755,12 @@
             entry, bundle,
             getTime: () => { try { return currentPlayTime(); } catch (_) { return 0; } },
             onSongGain: g => { try { if (state.masterGain) state.masterGain.gain.value = g; } catch (_) {} },
-            onStemGain: (role, g) => _stageStem(role, s => { s.lastGain = g; if (s.gainNode && !s._muted) s.gainNode.gain.value = g; }),
-            onStemMute: (role, m) => _stageStem(role, s => { s._muted = m; if (s.gainNode) s.gainNode.gain.value = m ? 0 : (s.lastGain ?? 1); }),
+            // `muted` (not a stage-private `_muted`): the rack's
+            // setStemMuted/setStemGain read the same flag, so a stem
+            // muted on one surface stays muted when the other's fader
+            // moves.
+            onStemGain: (role, g) => _stageStem(role, s => { s.lastGain = g; if (s.gainNode && !s.muted) s.gainNode.gain.value = g; }),
+            onStemMute: (role, m) => _stageStem(role, s => { s.muted = !!m; if (s.gainNode) s.gainNode.gain.value = s.muted ? 0 : (s.lastGain ?? 1); }),
             onSolo: (role, on) => {
               // Solo semantics: any solo silences the rest (mute wins).
               const solos = (_stageSolos ||= new Set());
@@ -15715,7 +15768,7 @@
               for (const [name, s] of state.stems.entries()) {
                 const r = s.role || String(name).split('.').pop();
                 const audible = !solos.size || solos.has(r);
-                if (s.gainNode) s.gainNode.gain.value = (!audible || s._muted) ? 0 : (s.lastGain ?? 1);
+                if (s.gainNode) s.gainNode.gain.value = (!audible || s.muted) ? 0 : (s.lastGain ?? 1);
               }
             },
           });
