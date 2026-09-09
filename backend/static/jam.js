@@ -15432,9 +15432,13 @@
       bandroom: 'bandroom',
       rehearsal: 'rehearsal',
       // Native parity: the Perform pill opens the fretboard STAGE
-      // (stage.js) like the desktop app; the legacy chord-card perform
-      // view stays reachable via the Launchpad sidebar item.
+      // (stage.js) like the desktop app.
       perform: 'stage',
+      // "Launchpad" is the merged pad surface (kit.js, #view-kit): the
+      // former "Jam Pads" kit and the retired 8×8 lpview chop grid are now
+      // one surface. `launchpad` is the canonical hash; `jampads` is kept
+      // as an alias so old #jampads deep links still land here.
+      launchpad: 'kit',
       jampads: 'kit',
       mixer: 'mixer',
       library: 'library', // fallback pane; primary access is the sidebar
@@ -15445,14 +15449,15 @@
       rehearsal: 'rehearsal',
       perform: 'perform',
       stage: 'perform',
-      kit: 'jampads',
+      kit: 'launchpad', // canonical hash for the merged Launchpad surface
       mixer: 'mixer',
       library: 'library',
     };
     // Every sidebar item routes to a REAL pane (full-parity build) —
     // voice/beat/sample share the contribute pane, tab-selected below.
+    // The single "Launchpad" tools item opens the merged kit surface.
     const SIDE_TO_VIEW = {
-      jampads: 'kit', mixer: 'mixer', launchpad: 'launchpad',
+      launchpad: 'kit', mixer: 'mixer',
       sequencer: 'sequencer', recordings: 'recordings', packs: 'packs',
       voice: 'contribute', beat: 'contribute', sample: 'contribute',
     };
@@ -15467,7 +15472,6 @@
     views.recordings = $('view-recordings');
     views.packs = $('view-packs');
     views.contribute = $('view-contribute');
-    views.launchpad = $('view-launchpad');
 
     const pillnav = $('jamn-pillnav');
     const pills = pillnav
@@ -15542,9 +15546,10 @@
         try {
           window.JamnKit?.mount(_currentEntry);
           _mountedEntryId = id;
-          // Hardware Launchpad LED mirror + Link sync for the kit —
-          // inert without WebMIDI/device (resolves 'unavailable').
-          window.JamnKitHW?.attach?.().catch(() => {});
+          // Physical Launchpad mirror + Link sync for the merged pad
+          // surface — inert without WebMIDI/device (resolves 'unavailable').
+          // JamnLpHW mirrors the kit grid (16→top-left 4×4, 64→full 8×8).
+          window.JamnLpHW?.attach?.().catch(() => {});
         } catch (e) {
           console.warn('[jamn-router] kit mount failed:', e);
         }
@@ -15840,34 +15845,10 @@
       } catch (e) { console.warn('[jamn-router] packs mount failed:', e); }
     }
 
-    let _lpMountedId = null;
-    function _mountLaunchpad() {
-      const root = $('launchpad-root');
-      if (!root || !window.JamnLaunchpad) return;
-      const id = state.analysisId;
-      if (!id) { root.innerHTML =
-        '<div class="kit-error">Load a song to open the Launchpad.</div>'; return; }
-      if (_lpMountedId === id) return;
-      const go = entry => {
-        try {
-          window.JamnLaunchpad.mount(root, {
-            entry,
-            onClose: () => showView('kit'),
-            onOpenContribute: (tab, onSample) => {
-              // Popup, not the inline pane (desktop parity).
-              _openContributeModal(tab);
-            },
-          });
-          _lpMountedId = id;
-          // The launchpad drives the shared kit engine — force a kit
-          // remount when the user returns to Jam Pads.
-          _mountedEntryId = null;
-        } catch (e) { console.warn('[jamn-router] launchpad mount failed:', e); }
-      };
-      if (_currentEntry && _currentEntry.id === id) go(_currentEntry);
-      else fetch(`/api/history/${id}`).then(r => (r.ok ? r.json() : null))
-        .then(e => { if (e && state.analysisId === id) { _currentEntry = e; go(e); } });
-    }
+    // NOTE: the old #view-launchpad chop-grid surface (lpview.js /
+    // window.JamnLaunchpad) has been retired. "Launchpad" in the nav now
+    // opens the merged kit surface (#view-kit) via SIDE_TO_VIEW.launchpad
+    // = 'kit', so there is no separate mount path here anymore.
 
     let _contribMounted = false;
     function _mountContribute() {
@@ -15997,17 +15978,17 @@
       if (name === 'kit') {
         _mountKitIfReady();
         _mountRemix();
-        // Returning to Jam Pads with the same song mounted skips the
-        // mount branch (and its attach), so re-arm the LED mirror here.
-        try { window.JamnKitHW?.attach?.().catch(() => {}); } catch (_) {}
+        // Returning to the Launchpad surface with the same song mounted
+        // skips the mount branch (and its attach), so re-arm the physical
+        // Launchpad mirror here.
+        try { window.JamnLpHW?.attach?.().catch(() => {}); } catch (_) {}
       } else {
-        // Leaving Jam Pads: stop the kit's hardware LED mirror. Its
-        // ledTick kept repainting the bottom-left 4×4 over whatever the
-        // chord/launchpad modes painted — field report: "two rows never
-        // change, UI tells a different story on pads". detach() blanks
-        // its block, so hand the driver a full repaint to restore the
-        // mode's own colors on those pads.
-        try { window.JamnKitHW?.detach?.(); } catch (_) {}
+        // Leaving the Launchpad surface: stop the kit's hardware LED
+        // mirror. Its tick kept repainting the kit grid over whatever the
+        // driver's own song/chord modes painted. detach() blanks its
+        // block, so hand the driver a full repaint to restore the mode's
+        // own colors.
+        try { window.JamnLpHW?.detach?.(); } catch (_) {}
         try { window.Launchpad?.repaint?.(); } catch (_) {}
       }
       if (name === 'library') _renderLibrary();
@@ -16016,7 +15997,6 @@
       if (name === 'recordings') _mountRecordings();
       if (name === 'packs') _mountPacks();
       if (name === 'contribute') _mountContribute();
-      if (name === 'launchpad') _mountLaunchpad();
       // Band Room job queue: refresh + poll while on-screen; stop the
       // poll (SSE followers keep running) when leaving.
       if (name === 'bandroom') BandRoomQueue.enter();
@@ -16287,7 +16267,8 @@
 
     // Which active section id lights each view-backed tool.
     const ACTIVE_VIEW_FOR = {
-      launchpad: ['view-launchpad'],
+      // Launchpad + synth both open the merged pad surface (#view-kit).
+      launchpad: ['view-kit'],
       sequencer: ['view-sequencer'],
       synth: ['view-kit'],
       record: ['view-recordings'],
@@ -16296,7 +16277,7 @@
 
     function act(tool) {
       switch (tool) {
-        case 'launchpad': showView('launchpad'); break;
+        case 'launchpad': showView('kit'); break; // merged pad surface
         case 'sequencer': showView('sequencer'); break;
         // Desktop toolbar parity: figure.dance = Beat Capture, not Perform
         // (Perform stays reachable via the pill nav). Opens the Contribute
@@ -16323,7 +16304,10 @@
         case 'melody':
           // Dimmed (no-op) when the song carries no melody lane.
           if (!state.melody) return;
-          showView('launchpad');
+          // Lands on the merged pad surface; the melody-guide submode
+          // calls below target the untouched in-stage Launchpad panel
+          // driver (window.Launchpad) and stay feature-checked no-ops here.
+          showView('kit');
           try { window.Launchpad && window.Launchpad.setInstrumentSubmode &&
                 window.Launchpad.setInstrumentSubmode('melody'); } catch (_) {}
           try { window.Launchpad && window.Launchpad.setMode &&

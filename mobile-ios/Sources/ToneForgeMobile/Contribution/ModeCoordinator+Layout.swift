@@ -150,7 +150,8 @@ extension ModeCoordinator {
                     ?? (pad.loopPointSec != nil || (pad.loopable ?? false))
                 content[grid.rawValue] = PadContent(
                     label: pad.name,
-                    colorHint: Self.familyColor(pad.family),
+                    colorHint: Self.hexColorHint(pad.colorHint)
+                        ?? Self.familyColor(pad.family),
                     badge: hasEffectsOverride ? .edited : nil,
                     loops: loops
                 )
@@ -280,6 +281,20 @@ extension ModeCoordinator {
         case .vocals:     return 0x22C55E
         case .mixed:      return 0x9CA3AF
         }
+    }
+
+    /// An EXPLICIT per-pad colorHint from the manifest, as 0xRRGGBB — or nil
+    /// when it's a named color ("purple") or unparseable, so normal packs keep
+    /// falling back to the family palette above. Borrow pads carry a real hex
+    /// per SOURCE (this song = blue, the borrowed song = amber); without this
+    /// both collapsed to family `.mixed` grey and you couldn't tell which song
+    /// a pad came from (web/desktop already honour the hex).
+    static func hexColorHint(_ s: String?) -> UInt32? {
+        guard var h = s?.trimmingCharacters(in: .whitespaces), !h.isEmpty
+        else { return nil }
+        if h.hasPrefix("#") { h.removeFirst() }
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return nil }
+        return v
     }
 
     // MARK: - Chord context

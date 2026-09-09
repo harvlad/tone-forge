@@ -65,6 +65,26 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: launchpad-pad-grid
+    name: Launchpad pad surface — 16/64 toggle + physical Launchpad mirror
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#resolvePadCount"
+      ios:
+        status: partial
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Jam/JamView.swift#launchpadSizeRow"
+        note: "16/64 toggle + rename to Launchpad shipped; external hardware LED mirror is Mac-only."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Launchpad/LaunchpadPanelView.swift#padCountBinding"
+      plugin:
+        status: na
+        note: "Plugin has kit pads (KitPack) but no 16/64 grid-toggle surface."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: midi-learn-pads
     name: MIDI Learn — external pad controllers drive the sample grid
     platforms:
