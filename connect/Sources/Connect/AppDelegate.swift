@@ -110,34 +110,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            // SF Symbol so the menu-bar presence is recognizable at a
-            // glance (the old plain "TF" text read as noise and users
-            // couldn't tell Connect was even running). Tinted green once
-            // paired; falls back to "TF" text if the symbol is missing.
-            if let img = NSImage(systemSymbolName: "waveform.circle",
-                                 accessibilityDescription: "Jamn Connect") {
-                img.isTemplate = true
-                button.image = img
-            } else {
-                button.title = "TF"
-            }
+            // The Jamn brand mark (5 waveform bars) drawn in code, so the
+            // menu-bar presence is unmistakably Jamn — not the old "TF"
+            // text nobody recognized. Template image: AppKit tints it for
+            // light/dark automatically; paired flips the tint to green.
+            button.image = Self.jamnLogoImage()
             button.toolTip = "Jamn Connect — running (not paired)"
         }
         item.menu = buildMenu()
         statusItem = item
     }
 
+    /// The 5-bar Jamn waveform logo (mirrors backend/static/jam.html
+    /// .brand-mark: bars at x 0/5/10/15/20, heights 6/14/20/12/6 in a
+    /// 24×20 box) rendered as a menu-bar-sized template NSImage.
+    private static func jamnLogoImage() -> NSImage {
+        let w: CGFloat = 19, h: CGFloat = 16
+        let img = NSImage(size: NSSize(width: w, height: h))
+        img.lockFocus()
+        NSColor.black.set() // template — recolored by AppKit / contentTintColor
+        // Bars in the 24×20 source, scaled into w×h. Source y is top-down;
+        // AppKit is bottom-up, so flip: originYFromBottom = 20 - (y + barH).
+        let bars: [(x: CGFloat, y: CGFloat, bh: CGFloat)] = [
+            (0, 7, 6), (5, 3, 14), (10, 0, 20), (15, 4, 12), (20, 7, 6),
+        ]
+        let sx = w / 24.0, sy = h / 20.0
+        for b in bars {
+            let rx = b.x * sx
+            let rw = 3 * sx
+            let rh = b.bh * sy
+            let ry = (20 - (b.y + b.bh)) * sy
+            let path = NSBezierPath(roundedRect: NSRect(x: rx, y: ry, width: rw, height: rh),
+                                    xRadius: 1.5 * sx, yRadius: 1.5 * sx)
+            path.fill()
+        }
+        img.unlockFocus()
+        img.isTemplate = true
+        return img
+    }
+
     /// Reflect paired/unpaired in the menu-bar icon itself so "is Connect
     /// running and linked?" is answerable without opening the menu.
     private func setPairedAppearance(_ paired: Bool) {
         guard let button = statusItem?.button else { return }
+        // Green when paired; nil restores the default template tint.
         button.contentTintColor = paired ? NSColor.systemGreen : nil
-        if button.image != nil {
-            button.image = NSImage(
-                systemSymbolName: paired ? "waveform.circle.fill" : "waveform.circle",
-                accessibilityDescription: "Jamn Connect")
-            button.image?.isTemplate = !paired
-        }
         button.toolTip = paired
             ? "Jamn Connect — paired"
             : "Jamn Connect — running (not paired)"
