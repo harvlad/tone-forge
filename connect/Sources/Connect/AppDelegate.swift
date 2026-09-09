@@ -111,10 +111,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
             // The Jamn brand mark (5 waveform bars) drawn in code, so the
-            // menu-bar presence is unmistakably Jamn — not the old "TF"
-            // text nobody recognized. Template image: AppKit tints it for
-            // light/dark automatically; paired flips the tint to green.
+            // menu-bar presence is unmistakably Jamn. A "Jamn" text label
+            // rides alongside it: a status item with only an image that
+            // fails to render collapses to zero width and vanishes (field
+            // report: "doesn't show"), so the label guarantees a visible,
+            // clickable target regardless. Template image tints for
+            // light/dark; paired flips it green.
             button.image = Self.jamnLogoImage()
+            button.imagePosition = .imageLeading
+            button.title = "Jamn"
             button.toolTip = "Jamn Connect — running (not paired)"
         }
         item.menu = buildMenu()
