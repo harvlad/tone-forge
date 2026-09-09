@@ -1302,11 +1302,13 @@
           ver.textContent = ` v${cb.installedVersion}`;
           statusEl.appendChild(ver);
         }
-      } else if (!paired && cb.installed === false) {
-        // The installer is a macOS .dmg and no other build exists yet —
-        // offering the link to a Windows/Linux user hands them a file
-        // they can't run, so non-Mac platforms get an honest note
-        // instead of a dead-end download.
+      } else if (!paired && cb.installed !== true) {
+        // Not confirmed-installed (false OR probe still pending/null):
+        // always offer the download so it's never hidden behind a probe
+        // that may not resolve. The installer is a macOS .dmg and no other
+        // build exists yet — offering the link to a Windows/Linux user
+        // hands them a file they can't run, so non-Mac platforms get an
+        // honest note instead of a dead-end download.
         const isMac = (navigator.userAgentData?.platform === 'macOS')
           || /Mac/.test(navigator.platform || '');
         statusEl.appendChild(document.createElement('br'));
