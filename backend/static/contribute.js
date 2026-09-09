@@ -649,19 +649,33 @@
     container.textContent = "";
     container.classList.add("jc-root");
 
-    // Header + tab strip
-    var tabs = el("div", "jc-tabs");
+    // Single-section mode: each sidebar item (Voice / Beat / Sample) opens
+    // its OWN popup showing only that section — no shared tab strip. The
+    // inline #view-contribute pane (no `only`) still gets all three tabs.
+    var ALL = ["voice", "beat", "sample"];
+    var only = ctx.only && ALL.indexOf(ctx.only) !== -1 ? ctx.only : null;
+    var visible = only ? [only] : ALL;
+
     var panes = {};
     var tabBtns = {};
-    [["voice", "Voice"], ["beat", "Beat"], ["sample", "Sample"]].forEach(function (t) {
-      var id = t[0];
-      tabBtns[id] = button("jc-tab", t[1], function () { selectTab(id); });
-      tabs.appendChild(tabBtns[id]);
+
+    // Tab strip only when showing more than one section.
+    var tabs = null;
+    if (!only) {
+      tabs = el("div", "jc-tabs");
+      var LABEL = { voice: "Voice", beat: "Beat", sample: "Sample" };
+      visible.forEach(function (id) {
+        tabBtns[id] = button("jc-tab", LABEL[id], function () { selectTab(id); });
+        tabs.appendChild(tabBtns[id]);
+      });
+      container.appendChild(tabs);
+    }
+
+    visible.forEach(function (id) {
       panes[id] = el("div", "jc-pane");
       panes[id].hidden = true;
+      container.appendChild(panes[id]);
     });
-    container.appendChild(tabs);
-    Object.keys(panes).forEach(function (k) { container.appendChild(panes[k]); });
 
     function selectTab(id) {
       // Leaving a tab mid-recording abandons the take, mirroring the
@@ -670,16 +684,19 @@
       state.metronome.stop();
       state.player.stop();
       state.activeTab = id;
-      Object.keys(panes).forEach(function (k) {
+      visible.forEach(function (k) {
+        // style.display (not the `hidden` attr) so a .jc-pane{display:block}
+        // rule can't override it and stack every section (the old bug).
+        panes[k].style.display = k === id ? "" : "none";
         panes[k].hidden = k !== id;
-        tabBtns[k].classList.toggle("jc-tab--active", k === id);
+        if (tabBtns[k]) tabBtns[k].classList.toggle("jc-tab--active", k === id);
       });
     }
 
-    buildVoicePane(state, panes.voice);
-    buildBeatPane(state, panes.beat);
-    buildSamplePane(state, panes.sample);
-    selectTab("voice");
+    if (visible.indexOf("voice") !== -1) buildVoicePane(state, panes.voice);
+    if (visible.indexOf("beat") !== -1) buildBeatPane(state, panes.beat);
+    if (visible.indexOf("sample") !== -1) buildSamplePane(state, panes.sample);
+    selectTab(only || "voice");
 
     // Autoplay policy: the context may arrive suspended; resume on the
     // first gesture inside the surface so play/click buttons work.

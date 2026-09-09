@@ -15898,18 +15898,26 @@
       // Always mount fresh into the modal so the popup opens clean and
       // the previous surface (inline pane or a prior popup) is torn
       // down — mount() calls unmount() for us.
+      const only = ['voice', 'beat', 'sample'].includes(tab) ? tab : 'voice';
       try {
+        // Single-section popup: each sidebar item opens ONLY its own
+        // section (no shared tab strip) — user directive.
         window.JamnContribute.mount(_contribModalRoot, {
           audioContext: state.ctx || undefined,
           entry: _currentEntry,
+          only,
         });
         _contribMounted = false; // the inline pane, if ever used, must remount
       } catch (e) {
         console.warn('[jamn-router] contribute modal mount failed:', e);
         return;
       }
+      const heading = $('contribute-modal-heading');
+      if (heading) {
+        heading.textContent =
+          { voice: 'Voice', beat: 'Beat', sample: 'Sample' }[only];
+      }
       _contribModal.hidden = false;
-      _contribSelectTab(_contribModalRoot, tab || null);
     }
 
     function _closeContributeModal() {
