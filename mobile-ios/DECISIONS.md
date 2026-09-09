@@ -845,3 +845,61 @@ slice the full note list).
 (`onMelodyPosition` / `_padForMidi`) — the engine-port rule applies,
 change both in the same commit. Player is edge-driven and idempotent
 per cursor state, so seeks and paused ticks need no special casing.
+
+## D-026: One "Launchpad" pad surface with a 16 | 64 pad-count toggle
+
+**Date:** 2026-09-09
+**Decision:** the Jam tab's `.samples` pad surface is renamed
+**"Launchpad"** and gains a **16 | 64** pad-count toggle, mirroring the
+web kit (`backend/static/kit.js` `resolvePadCount` + its 16|64 segmented
+control). There is exactly ONE on-screen pad-kit surface on iOS — the
+song-chops kit that Jam already called "the familiar Launchpad" — so this
+is a rename + toggle-add, not a two-surface merge. The rename touches
+only `JamPadMode.samples.displayName` ("Samples" → "Launchpad"); the enum
+**raw value stays `"samples"`**, so persisted `padMode` blobs and every
+`.samples` route (ModeCoordinator, PerformView, JamSettingsSheet) keep
+resolving unchanged. iOS's hardware Novation Launchpad support
+(`USBLaunchpadTransport` + LED mirror) is transport/LED only, never a
+separate on-screen surface, so nothing was removed and no nav entry
+changed.
+
+**Architecture decisions:**
+
+1. **`launchpadPadCount: Int` (16 | 64) on `JamSettingsStore`**, persisted
+   in its own UserDefaults key (`jam.launchpadPadCount`) like `sampleLatch`
+   — no versioned-blob migration surgery. Clamped to 16 on persist so a
+   stray value can never survive a relaunch as a half-empty grid. Default
+   16 (the native 4×4 kit scale), matching web's `PAD_COUNT`/fallback.
+
+2. **JamView `.samples` branch renders `SamplePadGrid4x4` (16) or
+   `ModeGridView` (64)** off the toggle. Both grids already trigger through
+   the identical `coordinator.touchPadDown/Up` bus, so audio, loops,
+   quantize, hold, and the hardware-Launchpad LED mirror behave the same at
+   either size — the port-parity / same-semantics rule holds. The 4×4 is a
+   view of the 8×8's top-left quadrant, so 16↔64 is a pure zoom of the same
+   kit, exactly like web's 16↔64.
+
+3. **Place mode pins the 4×4.** When a Sounds pick is armed
+   (`pendingChop != nil`) the surface forces the 16-pad grid and disables
+   the toggle — the picker assigns onto pack pads, so the 8×8 never becomes
+   a place dead-end.
+
+4. **Perform keeps its 4×4 stage grid** (`SamplePadGrid4x4(stage: true)`),
+   NOT the 64 toggle: Perform is play-only staging (empty slots recede, no
+   edit radial), whereas `ModeGridView`'s long-press opens editor sheets.
+   The 8×8 is a build/edit affordance and belongs to the build surface
+   (Jam), matching web where the 16|64 toggle lives on the `kit.js` build
+   surface, not the performance mirror.
+
+**Alternatives:** a top-level "Launchpad" tab (rejected — D-022's 5-tab
+"no new tabs" shell; the kit lives inside Jam as a pad-mode); folding the
+full `InstrumentEditorView` 8×8 (sequencer/arrange/pack browser) into the
+inline 64 view (rejected — that editor is progressive-disclosure L3 via
+long-press and switches the engine to `.sample`; the inline 64 grid stays
+in `.jamInKey` and is for playing, not constructing).
+
+**Why:** product merge to a single named pad surface. The rename is
+label-only and raw-value-safe; the toggle reuses the existing 8×8
+`ModeGridView` verbatim, so no trigger/quantize/LED behavior changed.
+Verified: `xcodebuild ... -destination 'iPhone 17 Pro' build` →
+BUILD SUCCEEDED.

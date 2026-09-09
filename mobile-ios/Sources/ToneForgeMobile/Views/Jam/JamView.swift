@@ -331,22 +331,65 @@ struct JamView: View {
                 songChordSymbols: appState.currentBundle?.timeline.chords.map(\.symbol) ?? []
             )
         case .samples:
-            // The familiar Launchpad: the active pack (auto-built Auto Kit)
-            // as a 4×4 rack with the hold→radial menu (Add Sound / Chop /
-            // Loop / Effects / Sequence / Delete). Empty pads show "+" and
-            // fill from the radial, so this is where you ADD/SWAP pads —
-            // driven by the same contribution bus, so audio + loops work
-            // unchanged. Tiles color by the pad's category colorHint.
+            // The Launchpad: the active pack (auto-built Auto Kit) as a
+            // 4×4 (16) rack with the hold→radial menu (Add Sound / Chop /
+            // Loop / Effects / Sequence / Delete), OR the full 8×8 (64)
+            // grid — the padCount toggle mirrors the web kit's 16|64
+            // (kit.js). Both grids trigger through the identical
+            // coordinator.touchPadDown/Up bus, so audio, loops, quantize
+            // and the hardware-Launchpad LED mirror behave the same at
+            // either size. Empty pads show "+" and fill from the radial,
+            // so this is where you ADD/SWAP pads. Tiles color by the pad's
+            // category colorHint.
             VStack(spacing: 6) {
                 samplesStatusStrip
+                launchpadSizeRow
                 // Shared loop-cycle strip: makes the invisible 8 s lock grid
                 // VISIBLE — a sweep of the current cycle with a countdown to
                 // the next boundary, so a locked pad's wait reads as musical
                 // timing instead of a bug.
                 LoopCycleStrip()
-                SamplePadGrid4x4(coordinator: coordinator, pendingChop: $pendingChop)
+                // Place mode (a Sounds pick waiting) always targets the 4×4
+                // kit — the picker assigns onto pack pads, so the 8×8 grid
+                // never becomes a place dead-end.
+                if jamSettings.launchpadPadCount == 64, pendingChop == nil {
+                    ModeGridView(coordinator: coordinator)
+                } else {
+                    SamplePadGrid4x4(coordinator: coordinator, pendingChop: $pendingChop)
+                }
             }
         }
+    }
+
+    /// [16 | 64] pad-count toggle for the Launchpad surface — the mobile
+    /// mirror of the web kit's 16|64 segmented control (kit.js). 16 = the
+    /// native 4×4 kit; 64 = the full 8×8 grid. Disabled in place mode so a
+    /// picked sound always lands on the 4×4 kit rather than a bare 8×8 cell.
+    private var launchpadSizeRow: some View {
+        HStack(spacing: 8) {
+            Text("Pads")
+                .font(.caption2)
+                .foregroundStyle(TFTheme.textSecondary)
+            Spacer()
+            ForEach([16, 64], id: \.self) { count in
+                Button {
+                    guard jamSettings.launchpadPadCount != count else { return }
+                    Haptics.selectionChanged()
+                    jamSettings.launchpadPadCount = count
+                } label: {
+                    Text("\(count)")
+                        .tfChip(active: jamSettings.launchpadPadCount == count)
+                }
+                .buttonStyle(.plain)
+                .disabled(pendingChop != nil)
+                .accessibilityLabel("\(count) pads")
+                .accessibilityAddTraits(
+                    jamSettings.launchpadPadCount == count ? [.isSelected] : []
+                )
+            }
+        }
+        .padding(.horizontal, 12)
+        .opacity(pendingChop != nil ? 0.4 : 1.0)
     }
 
     // MARK: - Performance FX row (PERFORM_PARITY spec 1)

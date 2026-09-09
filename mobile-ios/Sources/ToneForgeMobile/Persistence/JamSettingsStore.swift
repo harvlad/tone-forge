@@ -72,7 +72,12 @@ public enum JamPadMode: String, CaseIterable, Codable, Sendable {
         switch self {
         case .pads:    return "Pads"
         case .chords:  return "Chords"
-        case .samples: return "Samples"
+        // "Launchpad", not "Samples" (product merge 2026-09-09): the
+        // song-chops kit IS the on-screen launchpad — one named surface,
+        // matching the web `kit.js` "Jam Pads" mirror and its 16|64
+        // toggle. The raw value stays "samples" so persisted padMode
+        // blobs and every `.samples` route keep resolving.
+        case .samples: return "Launchpad"
         }
     }
 }
@@ -162,6 +167,22 @@ public final class JamSettingsStore: ObservableObject {
     /// first available. Shared so on-screen + Launchpad agree. Not
     /// persisted (resets per song).
     @Published public var selectedSamplePackId: String? = nil
+
+    /// Launchpad pad-count layout: 16 (4×4 kit) or 64 (8×8 full grid) —
+    /// the on-screen mirror of the web kit's 16|64 toggle (kit.js
+    /// `resolvePadCount`). Only 16 and 64 are real layouts; any other
+    /// persisted value degrades to 16 rather than a broken grid. Kept in
+    /// its own UserDefaults key (like `sampleLatch`) so it needs no blob
+    /// migration surgery. Defaults to 16 (the native 4×4 kit scale).
+    @Published public var launchpadPadCount: Int =
+        ((UserDefaults.standard.object(forKey: "jam.launchpadPadCount") as? Int) == 64 ? 64 : 16) {
+        didSet {
+            // The toggle only ever writes 16 or 64; clamp on persist so a
+            // stray value can never survive a relaunch as a half-empty grid.
+            UserDefaults.standard.set(launchpadPadCount == 64 ? 64 : 16,
+                                      forKey: "jam.launchpadPadCount")
+        }
+    }
 
     /// Pads mode hold: keep touched pads down (suppress pad-up) until
     /// the chip is toggled off.
