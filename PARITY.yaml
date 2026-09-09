@@ -290,6 +290,28 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: session-key-bpm-target
+    name: "Optional Session key/BPM target — borrowed parts conform, song plays true (default off)"
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#sessionTargetParams"
+        note: "Launchpad Session toggle (OFF by default), key + BPM prefilled from the loaded song; when on, + Add from another song appends target_bpm/target_key so borrowed parts conform. Backend borrow.py#_transpose_steps transposes only the donor loops (length-preserving librosa pitch_shift); host never touched; no-param path byte-identical. Hint: 'your song plays true'."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Jam/BorrowPickerSheet.swift#SessionTargetControls"
+        note: "Session toggle on the Borrow surface; shared ToneForgeEngine RemixClients gained optional targetBpm/targetKey (default nil); SessionKey.swift = parseKey/formatKey port."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/SessionTarget.swift#SessionTargetModel"
+        note: "Session toggle on LaunchpadPanelView; SessionController borrow calls take optional target. Currently forks two jam-desktop-owned targeted HTTP helpers (worktree predated the shared RemixClient params); collapse-to-shared-client is a small follow-up cleanup."
+      plugin:
+        status: na
+        note: "No borrow/remix surface in the JUCE editor."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: pad-radial-menu
     name: Per-pad radial action menu (right-click / long-press ring)
     platforms:

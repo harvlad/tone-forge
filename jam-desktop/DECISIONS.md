@@ -364,3 +364,62 @@ untouched — the picker only adds assignments through the existing
 sub-section made it undiscoverable. The Launchpad is where pads live, so
 the "put another song's part on the pads" action belongs there, and web
 already set the four-part (incl. Melody) shape to match.
+
+## D-019: Optional "Session" key/BPM target on the Launchpad (Borrow conform)
+
+**Decision:** Add an OPTIONAL, OFF-by-default **Session** target to the
+Launchpad — a key + BPM the user can dial in so that ADDED (borrowed,
+D-018) parts conform to a shared session key/tempo instead of the host
+song. Songs stay TRUE by default: the target is off unless opted in,
+and even when on it ONLY changes borrowed donor loops. The loaded
+song's own audio is never repitched or retimed. Mirrors what shipped on
+web (`kit.js` `buildSessionControls` / `jamn.session.target`).
+
+**UI (`LaunchpadPanelView`):** a `SessionTargetControls` cluster sits
+directly under the "Add from song" row (it only affects added parts).
+A `Session: off/on` toggle; when on it reveals a Key picker (12
+chromatic roots × maj/min → the backend "G minor" form) and a BPM
+`TextField`, plus a one-line hint: "Added parts conform to this
+key/tempo. Your song plays true." Additive — 16/64, quantize, Play
+mode, loop lock, Augment, hardware LED mirror, Add-from-song are all
+untouched.
+
+**State (`SessionTarget.swift` → `SessionTargetModel`):** an
+`ObservableObject` persisted in `UserDefaults` (`jamn.session.*`),
+default off. On FIRST enable it prefills key + tempo from the loaded
+song's own `meta.detectedKey` / `meta.tempoBpm` — but fills blanks
+only, never clobbering a target the user already dialed in — so opting
+in changes nothing until the user retunes. `parse()` ports the web
+enharmonic fold (flats → sharp roots) and free-form key parsing
+("Gm", "Bb major" → root+quality); `targetKey`/`targetBpm` return nil
+when off so requests stay byte-identical to today.
+
+**Where the target hits the wire:** `SessionController.borrowCandidates`
+and `loadBorrowLoops` gained optional `targetBpm: Double? = nil,
+targetKey: String? = nil`. `BorrowPickerView` reads
+`session.sessionTarget.targetBpm/targetKey` and passes them into BOTH
+the candidate fetch (`load()`) and the donor load (`candidateRow`).
+When the target is nil (Session OFF), both methods take the SHARED
+`ToneForgeEngine.RemixClient` path unchanged. When set, they take a
+jam-desktop-owned target-aware fetch that appends `?target_bpm=&target_key=`
+to `GET /api/song/{id}/borrow-candidates` and `GET /api/song/{id}/borrow`
+(`fetchBorrowCandidatesTargeted` / `fetchBorrowPackTargeted`).
+
+**SHARED-CLIENT GAP (for the iOS agent):** the target-aware fetches are
+a jam-desktop-local fork that exists ONLY because
+`RemixClient.fetchBorrowCandidates` / `fetchBorrowPack` live in
+mobile-ios (`ToneForgeEngine`) and this change could not edit them. The
+clean fix is to add `targetBpm: Double? = nil, targetKey: String? = nil`
+to those two shared methods (appending the same two query items), after
+which the desktop OFF/ON branch and the two `*Targeted` helpers collapse
+back into a single shared call — and iOS gets the Session target for
+free. The forked helpers deliberately reuse the shared public DTOs
+(`BorrowCandidate`, `SamplePack`) and `AuthContext`, so ranking,
+download and pad-mount remain one path; only the two HTTP calls fork,
+and only when a target is set.
+
+**Why:** web already shipped the Session target; desktop parity means a
+user who sets "G minor / 90 BPM" on web and opens the same jam on
+desktop expects added parts to conform there too. Keeping it opt-in and
+scoped to borrowed parts preserves the project's core promise that a
+loaded song always plays true.

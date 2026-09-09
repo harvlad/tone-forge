@@ -128,7 +128,13 @@ struct BorrowPickerView: View {
     private func candidateRow(_ c: BorrowCandidate) -> some View {
         Button {
             Task {
-                await session.loadBorrowLoops(donorId: c.entryId, stem: part.stem)
+                // Session ON → conform the borrowed loops to the session
+                // key/tempo; OFF → both nil, so this is today's host-conform
+                // load unchanged.
+                let t = session.sessionTarget
+                await session.loadBorrowLoops(
+                    donorId: c.entryId, stem: part.stem,
+                    targetBpm: t.targetBpm, targetKey: t.targetKey)
                 // Success drops the loops on the pads behind this sheet;
                 // close so the Launchpad grid is immediately visible.
                 if session.remixError == nil { dismiss() }
@@ -160,7 +166,11 @@ struct BorrowPickerView: View {
     }
 
     private func load() async {
-        candidates = await session.borrowCandidates(stem: part.stem)
+        // Session ON → rank candidates against the session key/tempo; OFF →
+        // both nil, identical to today's host-ranked candidate fetch.
+        let t = session.sessionTarget
+        candidates = await session.borrowCandidates(
+            stem: part.stem, targetBpm: t.targetBpm, targetKey: t.targetKey)
         loaded = true
     }
 }

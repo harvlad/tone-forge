@@ -1221,24 +1221,61 @@ final class SessionController: ObservableObject {
 
     @Published private(set) var borrowBusyDonor: String?
 
-    func borrowCandidates(stem: String) async -> [BorrowCandidate] {
+    /// The optional Session key/BPM target — OFF by default. When ON, the
+    /// Borrow fetches conform ADDED donor loops to this key/tempo instead of
+    /// the host song; the loaded song itself is never repitched/retimed.
+    let sessionTarget = SessionTargetModel()
+
+    /// The loaded song's own detected key ("G minor" form when available), used
+    /// to prefill the Session target on first enable so opting in changes
+    /// nothing until the user retunes.
+    var currentSongDetectedKey: String? { attachedBundle?.meta.detectedKey }
+
+    /// Borrow donors for a stem. `targetBpm`/`targetKey` are the optional
+    /// Session target: nil (the default = Session OFF) makes the request
+    /// byte-identical to today (donors ranked/conformed to the host song); set,
+    /// they carry `?target_bpm=&target_key=` so the backend conforms donors to
+    /// the session instead.
+    func borrowCandidates(
+        stem: String, targetBpm: Double? = nil, targetKey: String? = nil
+    ) async -> [BorrowCandidate] {
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL
         else { return [] }
+        // Session ON → the jam-desktop-owned target-aware fetch (adds the query
+        // params). OFF → the shared RemixClient path, unchanged. See the
+        // SHARED-CLIENT GAP note on `fetchBorrowCandidatesTargeted`.
+        if targetBpm != nil || targetKey != nil {
+            return (try? await Self.fetchBorrowCandidatesTargeted(
+                base: base, analysisId: analysisId, stem: stem,
+                targetBpm: targetBpm, targetKey: targetKey)) ?? []
+        }
         return (try? await RemixClient().fetchBorrowCandidates(
             baseURL: base, analysisId: analysisId, stem: stem)) ?? []
     }
 
     /// Load a donor's borrowed loops as loopable file pads on the grid.
+    /// `targetBpm`/`targetKey` mirror `borrowCandidates`: nil = conform to host
+    /// (today's behavior); set = conform the donor loops to the Session target.
     @MainActor
-    func loadBorrowLoops(donorId: String, stem: String) async {
+    func loadBorrowLoops(
+        donorId: String, stem: String,
+        targetBpm: Double? = nil, targetKey: String? = nil
+    ) async {
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL,
               borrowBusyDonor == nil else { return }
         borrowBusyDonor = donorId
         remixError = nil
         defer { borrowBusyDonor = nil }
         do {
-            let pack = try await RemixClient().fetchBorrowPack(
-                baseURL: base, analysisId: analysisId, donor: donorId, stem: stem)
+            let pack: SamplePack
+            if targetBpm != nil || targetKey != nil {
+                pack = try await Self.fetchBorrowPackTargeted(
+                    base: base, analysisId: analysisId, donor: donorId,
+                    stem: stem, targetBpm: targetBpm, targetKey: targetKey)
+            } else {
+                pack = try await RemixClient().fetchBorrowPack(
+                    baseURL: base, analysisId: analysisId, donor: donorId, stem: stem)
+            }
             let files = await Self.downloadKitSamples(pack: pack, base: base)
             guard !files.isEmpty else {
                 remixError = "Borrowed loops didn't download."
@@ -1273,6 +1310,106 @@ final class SessionController: ObservableObject {
         } catch {
             remixError = error.localizedDescription
         }
+    }
+
+    // MARK: Session-target Borrow fetches
+    //
+    // SHARED-CLIENT GAP: these are jam-desktop-owned variants of
+    // ToneForgeEngine.RemixClient.fetchBorrowCandidates / fetchBorrowPack that
+    // carry the optional Session target (`?target_bpm=&target_key=`). They exist
+    // ONLY because the shared RemixClient methods don't yet accept those params
+    // — RemixClient lives in mobile-ios, which this agent may not edit. The
+    // clean fix is to add `targetBpm: Double? = nil, targetKey: String? = nil`
+    // to those two client methods (append them as query items exactly as here),
+    // after which these helpers and the OFF/ON branch in borrowCandidates /
+    // loadBorrowLoops collapse back to a single shared call. See DECISIONS
+    // D-019 and the iOS follow-up.
+    //
+    // They deliberately reuse the SAME public DTOs (BorrowCandidate, SamplePack)
+    // and the shared AuthContext, so ranking, download and pad-mount stay one
+    // path — only the two HTTP calls fork, and only when a target is set (OFF
+    // keeps using RemixClient, byte-identical to today).
+
+    private static func borrowURL(
+        _ base: URL, _ analysisId: String, _ leaf: String, query: [URLQueryItem]
+    ) -> URL? {
+        var c = URLComponents(
+            url: base.appendingPathComponent("api/song")
+                .appendingPathComponent(analysisId)
+                .appendingPathComponent(leaf),
+            resolvingAgainstBaseURL: false)
+        c?.queryItems = query
+        return c?.url
+    }
+
+    /// Append the optional Session target to a base query. `target_bpm` is a
+    /// float and `target_key` the "G minor" form the backend expects.
+    private static func withTarget(
+        _ base: [URLQueryItem], _ bpm: Double?, _ key: String?
+    ) -> [URLQueryItem] {
+        var q = base
+        if let bpm, bpm > 0 {
+            q.append(URLQueryItem(name: "target_bpm", value: String(bpm)))
+        }
+        if let key, !key.isEmpty {
+            q.append(URLQueryItem(name: "target_key", value: key))
+        }
+        return q
+    }
+
+    private static func authedRequest(_ url: URL) -> URLRequest {
+        var r = URLRequest(url: url)
+        r.cachePolicy = .reloadIgnoringLocalCacheData
+        AuthContext.shared.apply(to: &r)   // same auth the shared client applies
+        return r
+    }
+
+    private static func checkOK(_ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse else { return }
+        guard (200..<300).contains(http.statusCode) else {
+            throw RemixClientError.httpStatus(http.statusCode)
+        }
+    }
+
+    private static func fetchBorrowCandidatesTargeted(
+        base: URL, analysisId: String, stem: String,
+        targetBpm: Double?, targetKey: String?
+    ) async throws -> [BorrowCandidate] {
+        struct Wire: Codable { let candidates: [BorrowCandidate] }
+        let q = withTarget(
+            [URLQueryItem(name: "stem", value: stem)], targetBpm, targetKey)
+        guard let url = borrowURL(base, analysisId, "borrow-candidates", query: q)
+        else { throw RemixClientError.invalidURL }
+        let (data, response) = try await URLSession.shared.data(
+            for: authedRequest(url))
+        try checkOK(response)
+        return try JSONDecoder().decode(Wire.self, from: data).candidates
+    }
+
+    /// Long-haul session for the borrow render: the first call per (song, donor,
+    /// stem, target) renders server-side (WSOLA + optional transpose), which can
+    /// take seconds — the 60 s URLSession default request timeout can kill it.
+    private static let borrowLongHaul: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.timeoutIntervalForRequest = 120
+        c.timeoutIntervalForResource = 120
+        return URLSession(configuration: c)
+    }()
+
+    private static func fetchBorrowPackTargeted(
+        base: URL, analysisId: String, donor: String, stem: String,
+        targetBpm: Double?, targetKey: String?
+    ) async throws -> SamplePack {
+        let q = withTarget(
+            [URLQueryItem(name: "donor", value: donor),
+             URLQueryItem(name: "stem", value: stem)],
+            targetBpm, targetKey)
+        guard let url = borrowURL(base, analysisId, "borrow", query: q)
+        else { throw RemixClientError.invalidURL }
+        let (data, response) = try await borrowLongHaul.data(
+            for: authedRequest(url))
+        try checkOK(response)
+        return try JSONDecoder().decode(SamplePack.self, from: data)
     }
 
     @MainActor

@@ -57,6 +57,14 @@ struct LaunchpadPanelView: View {
             header
             controls
             controlsRow2
+            // Optional Session key/BPM target — OFF by default. Sits under the
+            // "Add from song" row because it only affects ADDED (borrowed)
+            // parts; the loaded song always plays true. Web parity (kit.js).
+            SessionTargetControls(
+                target: session.sessionTarget,
+                songKey: session.currentSongDetectedKey,
+                songBpm: session.currentSongTempoBpm
+            )
             // The visible musical clock (UX audit fix #1): sweep of the
             // shared loop cycle + countdown to the next lock boundary, so
             // "why is my pad waiting" reads as timing, not lag.
@@ -1497,6 +1505,80 @@ private class PadClickView: NSView {
     }
 
     override var isFlipped: Bool { true }
+}
+
+// MARK: - Session key/BPM target
+
+/// Optional "Session" target for the Launchpad — OFF by default. When on it
+/// reveals a Key (root + maj/min → "G minor") picker and a BPM field, and shows
+/// a one-line "plays true" hint. It ONLY conforms ADDED (borrowed) parts to the
+/// target; the loaded song's own audio is never repitched/retimed. State +
+/// prefill live in `SessionTargetModel` (persisted, first-enable prefill from
+/// the loaded song). Mirrors the web control (kit.js `buildSessionControls`).
+private struct SessionTargetControls: View {
+    @ObservedObject var target: SessionTargetModel
+    /// The loaded song's own key/tempo — the first-enable prefill source.
+    let songKey: String?
+    let songBpm: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Button {
+                    target.toggle(songKey: songKey, songBpm: songBpm)
+                } label: {
+                    Label(
+                        target.isOn ? "Session: on" : "Session: off",
+                        systemImage: "tuningfork"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(target.isOn ? JamTheme.accent : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Optional: conform ADDED (borrowed) parts to a session "
+                      + "key & tempo. Off = every song plays true — the loaded "
+                      + "song is never repitched or retimed.")
+
+                if target.isOn {
+                    HStack(spacing: 5) {
+                        Text("Key").font(.caption2).foregroundStyle(.secondary)
+                        Picker("Key root", selection: $target.root) {
+                            ForEach(SessionTargetModel.roots, id: \.self) {
+                                Text($0).tag($0)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        Picker("Key quality", selection: $target.isMinor) {
+                            Text("maj").tag(false)
+                            Text("min").tag(true)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                    }
+                    .help("Session key — added melodic parts are transposed here")
+
+                    HStack(spacing: 5) {
+                        Text("BPM").font(.caption2).foregroundStyle(.secondary)
+                        TextField("BPM", value: $target.bpm, format: .number)
+                            .frame(width: 52)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.center)
+                    }
+                    .help("Session tempo — added parts are time-stretched here")
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if target.isOn {
+                Text("Added parts conform to this key/tempo. Your song plays true.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
 }
 
 // MARK: - Ableton Link chip
