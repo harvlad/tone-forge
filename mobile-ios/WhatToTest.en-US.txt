@@ -1,47 +1,40 @@
 Jamn — TestFlight build notes
 
 WHAT'S NEW THIS BUILD
-• Borrow is now smarter and mixes BOTH songs on the pads:
-  – It finds songs that actually HARMONIZE with yours — not just ones with
-    the same key label. It compares the real chord content of both songs, so
-    a song "in a different key" that still sounds good together now shows up
-    (and same-key songs that don't actually fit are ranked down).
-  – Your pad grid now holds sections of BOTH songs at once: your current
-    song's sections (verse/chorus/…) on the top pads (blue), the borrowed
-    song's sections below (amber). Jump between sections of either song.
-  – Pads are named by section (Verse, Chorus, Bridge…) instead of "Loop 1-4".
-• This is a server-side upgrade — no need to reinstall; it's live for this
-  build the moment you open Borrow.
+• Borrow/Remix pads no longer sound "underwater." A default reverb was
+  washing every sample pad (kit, Re-Drum, Borrow) with a 2-second tail — the
+  same stems that play clean in the song sounded submerged the moment they
+  played as pads. Pad reverb is now DRY by default (add it deliberately in
+  Settings if you want it).
+• Borrow now colours pads by SOURCE: this song's sections are BLUE, the
+  borrowed song's are AMBER. Before, both were the same grey and you couldn't
+  tell which song a pad came from.
+• Borrow ranks donors by real harmony (shared chord content), not just the
+  key label — bass/chords candidates show "harmonizes" / "fits".
+• Under the hood: borrowed-loop tempo matching is cleaner (WSOLA stretch) and
+  a wrong-direction stretch bug is fixed.
 
-HOW TO USE THE NEW FEATURES
-• Borrow: open a song, tap Remix (sparkles, top of the Jam pads). In the
-  Borrow section pick Beat / Bass / Chords. The suggested songs are ranked by
-  how well they harmonize with your song (bass/chords show "harmonizes" or
-  "fits"); tap one. Loops download + render, then appear on the pads:
-  – Blue pads = sections of YOUR current song.
-  – Amber pads = sections of the borrowed song (tempo-locked to yours).
-  Tap any pad to start that section looping; tap again to stop. Mix and match
-  sections from both songs.
+HOW TO USE
+• Borrow: open a song, tap Remix (sparkles), Borrow. Pick Beat / Bass /
+  Chords, then a suggested song. 16 pads appear — BLUE = your song's sections
+  (top), AMBER = the borrowed song's (below), tempo-locked. Tap any to loop;
+  tap again to stop. Mix sections from both songs.
 
 WHAT TO TEST
-1. Load a song → Play → Remix (sparkles) → Borrow → "Chords" (or "Bass").
-   The donor list should be ordered by harmony, tagged "harmonizes"/"fits".
-   Tap the top one. After it renders (~a few seconds first time) 16 pads
-   appear: blue (your song) on top, amber (borrowed) below. Correct colors?
-2. Tap a BLUE pad and an AMBER pad together — a section of your song layered
-   with a section of the borrowed song. Do they lock to the same tempo and
-   sit in key together?
-3. Check the pad names read as sections (Verse, Chorus, Bridge…), not
-   "Loop 1-4", and repeats are numbered (Verse 2, Chorus 3).
-4. Try a donor that is NOT the same key label as your song but is offered as
-   "harmonizes" — does it actually sound good over your song? (This is the
-   whole point of the harmony upgrade.)
+1. UNDERWATER FIX (the important one): Borrow → Chords → a donor → tap a BLUE
+   pad and an AMBER pad. They should sound CLEAN and dry — like the song's own
+   stems — NOT washed/reverby/submerged. Try Bass and Beat too.
+2. COLOUR: the two rows should be clearly different colours — blue (this song)
+   vs amber (borrowed). Not one flat grey.
+3. HARMONY: on Bass/Chords the donor list should tag good matches
+   "harmonizes"/"fits"; a tagged donor should actually sit in key over your song.
+4. Confirm normal song playback (the mixer) still sounds the same as before —
+   the reverb change should only affect pads, not the song.
 
 KNOWN LIMITATIONS
-• If a song has few detected sections, some pads may repeat the same section
-  type (e.g. several Verses) or the grid may be partly empty.
-• First Borrow per (song, donor) renders on the server, then caches — the
-  first tap is slower.
+• Chords borrow uses the separated "other" stem; some songs separate cleaner
+  than others.
+• First Borrow per (song, donor) renders on the server, then caches.
 
-Please report: what you tapped, what you expected, what you heard, the two
-songs involved, and whether the harmony/section colors matched.
+Please report: which pads you tapped, the two songs, and whether the pads
+sounded clean (not underwater) and were colour-coded by source.
