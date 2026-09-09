@@ -449,7 +449,8 @@ const ToneArrangement = (function () {
     // Multi-track mode
     if (state.useMultiTrack && state.stemTracks.size > 0) {
       // Resume audio context if suspended (browser autoplay policy)
-      if (state.audioContext.state === 'suspended') {
+      window.JamnAudio.unlock();
+      if (state.audioContext.state !== 'running') {
         state.audioContext.resume();
       }
 
@@ -610,7 +611,7 @@ const ToneArrangement = (function () {
 
     // Initialize Web Audio API context
     if (!state.audioContext) {
-      state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      state.audioContext = window.JamnAudio.context();
     }
 
     // Create master gain node
@@ -1382,7 +1383,7 @@ const ToneArrangement = (function () {
       state.stemTracks.clear();
     }
     if (state.audioContext) {
-      state.audioContext.close().catch(() => {});
+      window.JamnAudio.release(state.audioContext);
     }
 
     state.container.innerHTML = '';

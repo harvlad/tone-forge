@@ -431,9 +431,9 @@
       renderTransport(s);
       return;
     }
-    if (s.ac.state === "suspended") {
-      try { s.ac.resume(); } catch (_) {}
-    }
+    // Not just 'suspended' — Safari parks an interrupted context in
+    // 'interrupted', which the old guard skipped (see audio-context.js).
+    window.JamnAudio.unlock();
     var now = s.ac.currentTime;
     // Quantized launch: when the engine's lock grid exists (a loop has
     // launched), align the pattern start to the next lock boundary so the

@@ -473,7 +473,9 @@
       if (can(s.engine, "stopAll")) s.engine.stopAll();
     } catch (_) {}
     try {
-      if (s.ctx && s.ctx.state !== "closed") s.ctx.close();
+      // Shared context — release() declines to close it so the song
+      // transport and the sequencer keep their audio when the kit unmounts.
+      if (s.ctx) window.JamnAudio.release(s.ctx);
     } catch (_) {}
     try {
       s.root.innerHTML = "";
@@ -574,12 +576,15 @@
 
   function load(s) {
     var entry = s.entry;
-    var AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return Promise.reject(new Error("Web Audio unsupported"));
-    s.ctx = new AC();
+    // Borrow the page context (see audio-context.js). Minting a private
+    // one here put an iOS page over WebKit's four-context cap once the
+    // song, the pads and the sequencer were all live — the pads then lit
+    // up and slid their playhead in total silence.
+    s.ctx = window.JamnAudio && window.JamnAudio.context();
+    if (!s.ctx) return Promise.reject(new Error("Web Audio unsupported"));
 
     var kitP = fetchKitJson(s, entry);
-    var engineP = import("./padengine.js?v=4");
+    var engineP = import("./padengine.js?v=5");
 
     return kitP.then(function (kit) {
       if (!s.alive) return;
@@ -852,7 +857,7 @@
     groove.title = "Instant Groove — start the best loop of each category, locked to the grid";
     groove.addEventListener("click", function () {
       try {
-        if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+        window.JamnAudio.unlock();
         instantGroove(s);
       } catch (_) {}
     });
@@ -1350,7 +1355,7 @@
       play.className = "kit-layer-play";
       play.addEventListener("click", function () {
         try {
-          if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+          window.JamnAudio.unlock();
           toggleLayer(s, cat);
         } catch (_) {}
       });
@@ -1365,7 +1370,7 @@
         chip.title = "Swap the " + cat + " layer to this loop";
         chip.addEventListener("click", function () {
           try {
-            if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+            window.JamnAudio.unlock();
             setLayer(s, cat, pd.padIdx);
           } catch (_) {}
         });
@@ -1591,7 +1596,7 @@
         // precedes contextmenu, and firing audio under the radial felt broken.
         if (typeof ev.button === "number" && ev.button !== 0) return;
         ev.preventDefault();
-        if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+        window.JamnAudio.unlock();
         if (ev.pointerId !== undefined && el.setPointerCapture) {
           try {
             el.setPointerCapture(ev.pointerId);
@@ -2118,7 +2123,7 @@
     if (!s || !s.ctx || !buffer) return;
     stopPickerPreview(s);
     try {
-      if (s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+      window.JamnAudio.unlock();
       var src = s.ctx.createBufferSource();
       src.buffer = buffer;
       var g = s.ctx.createGain();
@@ -3115,8 +3120,11 @@
     renderShell(current);
     var s = current;
     if (s.titleEl) s.titleEl.textContent = desc.name || "Pack";
-    var AC = window.AudioContext || window.webkitAudioContext;
-    s.ctx = new AC();
+    s.ctx = window.JamnAudio && window.JamnAudio.context();
+    if (!s.ctx) {
+      if (s.statusEl) s.statusEl.textContent = "Web Audio unsupported";
+      return;
+    }
     // desc.manifest = a manifest already in hand (Borrow loops); otherwise
     // fetch the curated pack. Same pad-loading path either way — sampleUrl
     // pads resolve as absolute URLs below.
@@ -3164,7 +3172,7 @@
           kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
           s.kit = { name: desc.name || manifest.name || "Pack", pads: kitPads };
           s.pads = kitPads;
-          return import("./padengine.js?v=4").then(function (mod) {
+          return import("./padengine.js?v=5").then(function (mod) {
             if (!s.alive) return;
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
             s.dsp = mod;

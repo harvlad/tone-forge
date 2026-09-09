@@ -178,7 +178,6 @@
       peaks: null,
       window: null,
       ctx: opts.audioContext || null,
-      ownsCtx: false,
       preview: null, // { src, gain }
       activeHandle: null, // "start" | "end" while dragging
       els: {},
@@ -187,11 +186,8 @@
     current = s;
 
     if (!s.ctx) {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      if (AC) {
-        s.ctx = new AC();
-        s.ownsCtx = true;
-      }
+      // Borrowed, never owned — see audio-context.js.
+      s.ctx = window.JamnAudio && window.JamnAudio.context();
     }
 
     buildDom(s);
@@ -210,11 +206,7 @@
     s.alive = false;
     stopPreview(s);
     if (s.onKeyDown) document.removeEventListener("keydown", s.onKeyDown, true);
-    if (s.ownsCtx && s.ctx && s.ctx.state !== "closed") {
-      try {
-        s.ctx.close();
-      } catch (_) {}
-    }
+    if (s.ctx) window.JamnAudio.release(s.ctx);
     if (s.els.backdrop && s.els.backdrop.parentNode) {
       s.els.backdrop.parentNode.removeChild(s.els.backdrop);
     }
@@ -287,7 +279,8 @@
   function startPreview(s) {
     if (!s.buffer || !s.ctx) return;
     stopPreview(s);
-    if (s.ctx.state === "suspended") {
+    window.JamnAudio.unlock();
+    if (s.ctx.state !== "running") {
       try {
         s.ctx.resume();
       } catch (_) {}

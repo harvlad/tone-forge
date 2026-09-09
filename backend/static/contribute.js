@@ -622,10 +622,7 @@
     if (!container) return;
     ctx = ctx || {};
     var actx = ctx.audioContext;
-    if (!actx) {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      if (AC) actx = new AC();
-    }
+    if (!actx) actx = window.JamnAudio && window.JamnAudio.context();
     if (!actx) {
       container.textContent = "";
       container.appendChild(el("div", "jc-banner jc-banner--error",
@@ -701,7 +698,7 @@
     // Autoplay policy: the context may arrive suspended; resume on the
     // first gesture inside the surface so play/click buttons work.
     var resumeOnce = function () {
-      if (actx.state === "suspended") actx.resume().catch(function () {});
+      window.JamnAudio.unlock();
     };
     container.addEventListener("pointerdown", resumeOnce);
     state.cleanup.push(function () {
@@ -717,7 +714,7 @@
     try { s.metronome.stop(); } catch (_) {}
     try { s.player.stop(); } catch (_) {}
     s.cleanup.forEach(function (fn) { try { fn(); } catch (_) {} });
-    if (s.ownActx) { try { s.actx.close(); } catch (_) {} }
+    if (s.ownActx) window.JamnAudio.release(s.actx);
     try {
       s.container.textContent = "";
       s.container.classList.remove("jc-root");
@@ -792,7 +789,7 @@
       state.player.stop();
       recordBtn.disabled = true;
       status.textContent = "Starting the microphone…";
-      if (state.actx.state === "suspended") state.actx.resume().catch(function () {});
+      window.JamnAudio.unlock();
 
       state.recorder.onLevels = function (levels, elapsed) {
         drawMeter(meter, levels);

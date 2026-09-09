@@ -5811,8 +5811,8 @@
         // (larger buffer for power), which adds ~20-40ms of monitor
         // round-trip on top of the OS layer. 'interactive' typically
         // halves baseLatency at the cost of more CPU.
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        state.ctx = new Ctx({ latencyHint: 'interactive' });
+        state.ctx = window.JamnAudio.context();
+        if (!state.ctx) throw new Error('Web Audio unsupported');
         state.masterGain = state.ctx.createGain();
         state.masterGain.gain.value = 1.0;
         // Route through the master FX chain (desktop MusicBus parity);
@@ -7485,7 +7485,7 @@
         console.warn('[listen] preferred-device acquire failed; using default:', e);
       }
       // Reuse the playback audio context if one exists.
-      const ctx = state.ctx || new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = state.ctx || window.JamnAudio.context();
       state.ctx = ctx;
       const sourceNode = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
@@ -9920,18 +9920,14 @@
 
   function _ensureLaunchpadSynth() {
     if (state.launchpad.synthGain) {
-      // Resume if the context was suspended (Safari tab-switch, etc.).
-      const c = state.launchpad.synthCtx;
-      if (c && c.state === 'suspended') { try { c.resume(); } catch (_) {} }
+      // Re-unlock on the way in: Safari parks the context in 'suspended'
+      // on a tab-switch and in 'interrupted' after a call/Siri/route change.
+      window.JamnAudio.unlock();
       return state.launchpad.synthBus || state.launchpad.synthGain;
     }
-    let ctx = state.ctx;
-    if (!ctx) {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return null;
-      ctx = new Ctx({ latencyHint: 'interactive' });
-    }
-    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+    let ctx = state.ctx || window.JamnAudio.context();
+    if (!ctx) return null;
+    window.JamnAudio.unlock();
 
     const s = state.settings;
 
@@ -11402,8 +11398,8 @@
       // path is the one that NEEDS interactive latency, so when the
       // user enables monitoring before pressing play we still get the
       // small-buffer behaviour.
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      state.ctx = new Ctx({ latencyHint: 'interactive' });
+      state.ctx = window.JamnAudio.context();
+      if (!state.ctx) throw new Error('Web Audio unsupported');
       state.masterGain = state.ctx.createGain();
       state.masterGain.gain.value = 1.0;
       // Same master-FX routing as prepareStemAudio so the song bus
@@ -11471,8 +11467,8 @@
     // Some browsers ship the context in 'suspended' state until a
     // user gesture; the toggle click itself is a gesture so this
     // resume() is allowed.
-    if (ctx.state === 'suspended') {
-      try { await ctx.resume(); } catch {}
+    if (ctx.state !== 'running') {
+      try { await window.JamnAudio.unlock(); } catch {}
     }
     try {
       const deviceId = state.monitor.deviceId || null;

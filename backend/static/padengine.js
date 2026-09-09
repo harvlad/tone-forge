@@ -871,7 +871,11 @@ export class PadEngine {
     // advances the voice never sounds at all (armed forever). So resume
     // FIRST and compute launch times only once the clock is live. The
     // token guards a release/retrigger racing the resume.
-    if (ctx && ctx.state === "suspended" && typeof ctx.resume === "function") {
+    // Any non-running state, not just "suspended": Safari parks an
+    // interrupted context (call, Siri, route change, background tab) in
+    // "interrupted", and the pad would otherwise schedule against a frozen
+    // clock and never sound.
+    if (ctx && ctx.state !== "running" && typeof ctx.resume === "function") {
       const token = {};
       this._pendingTriggers.set(padIdx, token);
       const fire = () => {
