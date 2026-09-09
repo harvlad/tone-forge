@@ -579,7 +579,7 @@
     s.ctx = new AC();
 
     var kitP = fetchKitJson(s, entry);
-    var engineP = import("./padengine.js?v=4");
+    var engineP = import("./padengine.js?v=5");
 
     return kitP.then(function (kit) {
       if (!s.alive) return;
@@ -1658,9 +1658,10 @@
     if (!p || !can(s.engine, "trigger")) return;
     var wantLoop = effectiveLoop(s, p);
     var q = s.quantize !== "off";
-    // grid is plumbed even though today's engine quantizes everything to
-    // its lock cycle (bar-ish; Beat==Bar until it can split) — a future
-    // engine reads it, current one ignores unknown opts.
+    // grid ("beat" | "bar") is the quantize unit the engine aligns to: Beat
+    // fires on the next quarter-note, Bar on the next downbeat, both locked
+    // to the SONG's bar grid while the transport rolls (free-run lock grid
+    // when it's stopped). See padengine quantizeUnitSec / quantizeWaitSec.
     var opts = { loop: wantLoop, quantized: q };
     if (q) opts.grid = s.quantize;
     if (!wantLoop) {
@@ -3164,7 +3165,7 @@
           kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
           s.kit = { name: desc.name || manifest.name || "Pack", pads: kitPads };
           s.pads = kitPads;
-          return import("./padengine.js?v=4").then(function (mod) {
+          return import("./padengine.js?v=5").then(function (mod) {
             if (!s.alive) return;
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
             s.dsp = mod;

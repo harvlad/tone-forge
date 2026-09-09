@@ -347,6 +347,46 @@ export function chooseCrossfadeMs(pad) {
 }
 
 // ---------------------------------------------------------------------------
+// Quantize boundary math (pure — the web twin of the desktop
+// LaunchpadController next-boundary computation). Kept pure/exported so node
+// can pin the exact boundary a quantized press lands on without WebAudio.
+// ---------------------------------------------------------------------------
+
+/**
+ * Quantize unit (seconds) for a grid choice at a given 4/4 bar length: a
+ * "beat" is a quarter-note (bar / 4); anything else ("bar", null, unknown)
+ * is a full bar. This is the ONLY place the UI's Beat/Bar choice becomes a
+ * duration — everything downstream quantizes to `unitSec`.
+ * @param {number} barSec one 4/4 bar in seconds
+ * @param {?string} grid "beat" | "bar" (default bar)
+ * @returns {number} the grid spacing in seconds
+ */
+export function quantizeUnitSec(barSec, grid) {
+  return grid === "beat" ? barSec / 4.0 : barSec;
+}
+
+/**
+ * Seconds to wait from `songNow` until the next quantize boundary on a grid
+ * of `unitSec` anchored at `anchorSec`. A position within `graceSec` PAST a
+ * boundary returns 0 (fire immediately — a press a hair late shouldn't cost
+ * a whole grid cycle). The phase is folded into [0, unitSec) with a
+ * double-mod so a negative (songNow < anchor) or huge position still lands
+ * on the grid. Pure: no clock, no context, no rate — the caller converts the
+ * returned song-domain wait to real ctx seconds via the practice rate.
+ * @param {number} songNow current song position (seconds, song domain)
+ * @param {number} unitSec grid spacing (seconds)
+ * @param {number} [anchorSec] song time of a known boundary (a downbeat)
+ * @param {number} [graceSec]
+ * @returns {number} wait in song seconds, always >= 0
+ */
+export function quantizeWaitSec(songNow, unitSec, anchorSec = 0, graceSec = LOOP_LOCK_GRACE_SEC) {
+  if (!(unitSec > 0) || !Number.isFinite(songNow)) return 0;
+  const phase = (((songNow - anchorSec) % unitSec) + unitSec) % unitSec;
+  if (phase <= graceSec) return 0;
+  return unitSec - phase;
+}
+
+// ---------------------------------------------------------------------------
 // PadEngine — the WebAudio wrapper
 // ---------------------------------------------------------------------------
 
@@ -811,15 +851,24 @@ export class PadEngine {
   }
 
   /**
-   * Next lock-grid launch time for `now`: boundaries at multiples of
-   * loopLengthSeconds from the anchor (set at the first loop launch); a
-   * press within the 0.08 s grace after a boundary fires immediately.
+   * Next lock-grid launch time for `now`: boundaries at multiples of the
+   * grid spacing from the anchor (set at the first loop launch); a press
+   * within the 0.08 s grace after a boundary fires immediately. The spacing
+   * is the full lock cycle for a "bar"/default grid; a "beat" grid
+   * subdivides it to a quarter-note when the tempo is known (so free-run —
+   * the stopped-transport fallback — still honors the Beat/Bar control).
+   * @param {number} now ctx time
+   * @param {?string} [grid] "beat" | "bar"
    */
-  _lockLaunchTime(now) {
+  _lockLaunchTime(now, grid) {
     if (this._lockAnchor == null) return now;
     // Practice-rate follow: grid spacing scales with rate (a 2x rate halves
     // the wait), same as the desktop dividing launch delays by tempoPct.
-    const L = this.loopLengthSeconds / this._rate;
+    let L = this.loopLengthSeconds / this._rate;
+    if (grid === "beat") {
+      const barSec = this._barSeconds;
+      if (barSec != null && barSec > 0) L = barSec / 4.0 / this._rate;
+    }
     if (!(L > 0)) return now;
     const elapsed = now - this._lockAnchor;
     const phase = elapsed % L;
@@ -828,32 +877,41 @@ export class PadEngine {
   }
 
   /**
-   * Transport-aligned launch time: the next SONG bar line, converted to
-   * audioContext time by sampling getSongTime() at call time —
-   * launchTime = now + (nextBarSongTime - songTimeNow) / rate. Null when the
-   * transport carries no usable grid (caller falls back to the free-run
-   * lock grid). A press within the boundary grace fires immediately.
+   * Transport-aligned launch time: the next SONG grid boundary (bar line for
+   * "bar", quarter-note for "beat"), converted to audioContext time by
+   * sampling getSongTime() at call time —
+   * launchTime = now + (nextBoundarySongTime - songTimeNow) / rate. Null when
+   * the transport carries no usable grid (caller falls back to the free-run
+   * lock grid). A press within the boundary grace fires immediately. The
+   * beat grid subdivides the SAME bar anchor, so beats stay phase-locked to
+   * the song's downbeats — a Beat-quantized press lands on the next beat, not
+   * up to a whole bar later.
+   * @param {number} now ctx time
+   * @param {?string} [grid] "beat" | "bar" (default bar)
    */
-  _transportLaunchTime(now) {
+  _transportLaunchTime(now, grid) {
     const t = this._transport;
     if (!t || typeof t.getSongTime !== "function" || !(t.tempoBpm > 0)) return null;
     const bar = (60.0 / t.tempoBpm) * 4.0;
+    const unit = quantizeUnitSec(bar, grid);
     const songNow = t.getSongTime();
     if (!Number.isFinite(songNow)) return null;
     const anchor = Number.isFinite(t.barAnchorSongTime) ? t.barAnchorSongTime : 0;
-    const phase = (((songNow - anchor) % bar) + bar) % bar;
-    if (phase <= LOOP_LOCK_GRACE_SEC) return now;
+    const wait = quantizeWaitSec(songNow, unit, anchor);
+    if (wait <= 0) return now;
     // Song-domain delta → real seconds at the practice rate.
-    return now + (bar - phase) / this._rate;
+    return now + wait / this._rate;
   }
 
   /**
    * Trigger a pad.
    * @param {number} padIdx
-   * @param {{loop?: boolean, quantized?: boolean}} [opts]
-   *   loop+quantized → schedule at the next lock boundary (+ the pad's
-   *   launch shift); otherwise immediate. Loop launches are always delayed
-   *   by the pad's onset shift so content downbeats line up (never negative).
+   * @param {{loop?: boolean, quantized?: boolean, grid?: string}} [opts]
+   *   loop+quantized → schedule at the next grid boundary (+ the pad's
+   *   launch shift); otherwise immediate. `grid` is "beat" (quarter-note) or
+   *   "bar" (default) — the quantize unit both the song-transport and
+   *   free-run paths align to. Loop launches are always delayed by the pad's
+   *   onset shift so content downbeats line up (never negative).
    * @returns {?{startTime: ?number, loop: boolean, deferred?: boolean}}
    *   `deferred: true` (startTime null) means the context was suspended:
    *   the voice starts asynchronously once ctx.resume() lands. The caller
@@ -920,8 +978,11 @@ export class PadEngine {
         // transportRolling branch.
         const t = this._transport;
         const rolling = !!(t && typeof t.isPlaying === "function" && t.isPlaying());
-        const aligned = rolling ? this._transportLaunchTime(now) : null;
-        target = aligned != null ? aligned : this._lockLaunchTime(now);
+        // The UI's Beat/Bar choice rides opts.grid; both the song-transport
+        // path and the free-run fallback honor it (default/unknown = bar).
+        const grid = opts.grid;
+        const aligned = rolling ? this._transportLaunchTime(now, grid) : null;
+        target = aligned != null ? aligned : this._lockLaunchTime(now, grid);
       }
       // Launch compensation for the onset-phase snap: delay the launch by
       // the amount the region was shifted so the content's downbeat still

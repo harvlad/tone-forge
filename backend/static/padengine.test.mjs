@@ -15,6 +15,9 @@ import {
   onsetAlignedShift,
   exactCrossfaded,
   chooseCrossfadeMs,
+  quantizeUnitSec,
+  quantizeWaitSec,
+  LOOP_LOCK_GRACE_SEC,
   armedWatchdogDelayMs,
   ARMED_WATCHDOG_GRACE_SEC,
   NEUTRAL_PAD_FX,
@@ -378,6 +381,106 @@ test("transport-aligned launch lands on the next song bar", () => {
   ctx.currentTime = 30;
   const r3 = engine.trigger(0, { loop: true, quantized: true });
   assert.ok(Math.abs(r3.startTime - 31.25) < 1e-9, `startTime ${r3.startTime}`);
+});
+
+// --- quantize boundary math (pure) -----------------------------------------
+
+test("quantizeUnitSec: beat = quarter-note, everything else = a bar", () => {
+  const bar = 2.0; // 120 bpm 4/4
+  assert.equal(quantizeUnitSec(bar, "beat"), 0.5);
+  assert.equal(quantizeUnitSec(bar, "bar"), 2.0);
+  assert.equal(quantizeUnitSec(bar, undefined), 2.0); // default = bar
+  assert.equal(quantizeUnitSec(bar, null), 2.0);
+  assert.equal(quantizeUnitSec(bar, "wat"), 2.0); // unknown grid = bar
+});
+
+test("quantizeWaitSec: next boundary, grace, anchor, negative fold", () => {
+  const bar = 2.0;
+  // Mid-bar press waits for the remainder of the bar.
+  assert.ok(Math.abs(quantizeWaitSec(3.25, bar, 0) - 0.75) < 1e-12); // next bar @4.0
+  // Beat grid off the SAME anchor: 3.25 → next quarter-note @3.5 = 0.25 out,
+  // NOT the 0.75 a bar grid would impose (the off-beat bug).
+  assert.ok(Math.abs(quantizeWaitSec(3.25, 0.5, 0) - 0.25) < 1e-12);
+  // Within grace PAST a boundary → fire now (0).
+  assert.equal(quantizeWaitSec(4.05, bar, 0), 0); // 0.05 past the bar line
+  assert.equal(quantizeWaitSec(4.0, bar, 0), 0); // exactly on it
+  // Non-zero anchor shifts the whole grid.
+  assert.ok(Math.abs(quantizeWaitSec(3.25, bar, 0.5) - 1.25) < 1e-12); // next @4.5
+  // Negative position (song before the anchor) still folds onto the grid.
+  assert.ok(Math.abs(quantizeWaitSec(-0.3, bar, 0) - 0.3) < 1e-12); // next @0.0
+  // A press a hair before a boundary schedules the tiny remainder, not 0.
+  assert.ok(Math.abs(quantizeWaitSec(3.99, bar, 0) - 0.01) < 1e-9);
+  // Degenerate inputs are safe no-ops (fire now).
+  assert.equal(quantizeWaitSec(3.25, 0, 0), 0);
+  assert.equal(quantizeWaitSec(NaN, bar, 0), 0);
+  // Custom grace threshold plumbs through.
+  assert.equal(quantizeWaitSec(4.2, bar, 0, 0.3), 0);
+});
+
+test("beat quantize lands on the next SONG beat, not the next bar", () => {
+  const { engine, ctx } = makeEngine();
+  // 120 bpm → 2 s bars, 0.5 s beats, anchored at song 0.
+  let songNow = 3.25; // 1.25 into a bar → next beat @3.5, next bar @4.0
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => songNow,
+    tempoBpm: 120,
+    barAnchorSongTime: 0,
+  });
+  ctx.currentTime = 10;
+  // Beat grid: 0.25 s to the next quarter-note → ctx 10.25.
+  const rBeat = engine.trigger(0, { loop: true, quantized: true, grid: "beat" });
+  assert.ok(Math.abs(rBeat.startTime - 10.25) < 1e-9, `beat startTime ${rBeat.startTime}`);
+
+  // Same position, Bar grid: waits the full 0.75 s to the downbeat → ctx 10.75.
+  ctx.currentTime = 20;
+  const rBar = engine.trigger(1, { loop: true, quantized: true, grid: "bar" });
+  assert.ok(Math.abs(rBar.startTime - 20.75) < 1e-9, `bar startTime ${rBar.startTime}`);
+
+  // Missing grid defaults to bar (backward-compatible with old callers).
+  ctx.currentTime = 30;
+  const rDef = engine.trigger(0, { loop: true, quantized: true });
+  assert.ok(Math.abs(rDef.startTime - 30.75) < 1e-9, `default startTime ${rDef.startTime}`);
+});
+
+test("beat quantize honors the bar anchor and the practice rate", () => {
+  const { engine, ctx } = makeEngine();
+  let songNow = 3.1;
+  // Anchor 0.5 → beats at 0.5, 1.0, 1.5, ... ; from 3.1 the next is 3.5.
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => songNow,
+    tempoBpm: 120,
+    barAnchorSongTime: 0.5,
+  });
+  ctx.currentTime = 0;
+  const r = engine.trigger(0, { loop: true, quantized: true, grid: "beat" });
+  assert.ok(Math.abs(r.startTime - 0.4) < 1e-9, `anchored beat ${r.startTime}`); // 3.5-3.1
+
+  // Practice rate halves the real wait for the same song-domain delta.
+  engine.setRate(2.0);
+  songNow = 3.1;
+  ctx.currentTime = 10;
+  const r2 = engine.trigger(1, { loop: true, quantized: true, grid: "beat" });
+  assert.ok(Math.abs(r2.startTime - 10.2) < 1e-9, `rate-scaled beat ${r2.startTime}`); // 0.4/2
+});
+
+test("free-run beat quantize subdivides the lock grid to a quarter-note", () => {
+  const { engine, ctx } = makeEngine(); // tempo 120 → 0.5 s beats
+  engine.setTransport({ isPlaying: () => false, getSongTime: () => 3.25, tempoBpm: 120 });
+  // First launch anchors the free-run grid at now.
+  ctx.currentTime = 5;
+  const r = engine.trigger(0, { loop: true, quantized: true, grid: "beat" });
+  assert.equal(r.startTime, 5);
+  // Second beat press queues to the next 0.5 s beat boundary off the anchor,
+  // NOT the full 8 s lock cycle a bar/default press would use.
+  ctx.currentTime = 5.1;
+  const r2 = engine.trigger(1, { loop: true, quantized: true, grid: "beat" });
+  assert.ok(Math.abs(r2.startTime - 5.5) < 1e-9, `free-run beat ${r2.startTime}`);
+  // A bar/default press on the same grid still uses the full lock cycle.
+  ctx.currentTime = 6;
+  const r3 = engine.trigger(0, { loop: true, quantized: true, grid: "bar" });
+  assert.equal(r3.startTime, 13); // anchor 5 + one 8 s cycle
 });
 
 test("stopped transport falls back to the free-run lock grid", () => {
