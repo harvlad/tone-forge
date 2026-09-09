@@ -2,6 +2,8 @@
 donor ranking (tempo for drums, tempo+key for melodic stems)."""
 from __future__ import annotations
 
+import pytest
+
 from tone_forge.performance import borrow
 
 
@@ -135,6 +137,56 @@ def test_section_spans_skip_intro_prefer_distinct():
     assert labels[:2] == ["verse", "chorus"]   # distinct types first
     for a, b, _ in spans:                  # bar-locked windows
         assert a == float(int(a)) and b == float(int(b)) and b > a
+
+
+# --- round-2 regressions: loops must lock to tempo, stretch right direction --
+
+def test_snap_window_length_is_tempo_locked():
+    # bar_sec 2.0s (120 BPM) × 4 bars = 8.0s, regardless of how many downbeats
+    # land in the section. The old code sized the window by the span between
+    # downbeat INDICES, so sparse downbeats gave 3/6-bar loops that never
+    # phase-locked ("twice as slow" / drift).
+    dense = [float(i) for i in range(20)]
+    win = borrow._snap_window(4.0, 8.0, dense, 4, 2.0, 40.0)
+    assert win and abs((win[1] - win[0]) - 8.0) < 1e-6
+
+
+def test_snap_window_same_length_regardless_of_downbeat_density():
+    sparse = [4.0, 9.0, 15.0, 22.0]              # irregular, few downbeats
+    dense = [float(i) for i in range(30)]
+    w1 = borrow._snap_window(4.0, 20.0, sparse, 4, 2.0, 60.0)
+    w2 = borrow._snap_window(4.0, 20.0, dense, 4, 2.0, 60.0)
+    assert w1 and w2
+    assert abs((w1[1] - w1[0]) - (w2[1] - w2[0])) < 1e-6   # identical length
+    assert abs((w1[1] - w1[0]) - 8.0) < 1e-6
+
+
+def test_section_spans_all_equal_length_after_tempo_lock():
+    spans = borrow._section_spans(_sectioned(), 8)
+    lens = [round(b - a, 3) for a, b, _ in spans]
+    assert len(set(lens)) == 1                   # every loop the same length
+    assert lens[0] == borrow._SECTION_BARS * (240.0 / 120.0)   # 4 bars @120
+
+
+def test_time_stretch_direction():
+    # tempo × mult ⇒ duration ÷ mult. Guards the inverted-rate + octave-fold
+    # bug that played donors twice as slow. Works whether _time_stretch uses
+    # ffmpeg atempo or the librosa fallback (both map mult→dur/mult).
+    np = pytest.importorskip("numpy")
+    sf = pytest.importorskip("soundfile")
+    librosa = pytest.importorskip("librosa")
+    sr = 22050
+    rng = np.random.RandomState(0)
+    seg = (rng.randn(sr, 2) * 0.1).astype("float32")   # 1.0 s of noise
+    for mult in (1.25, 0.8):
+        out = borrow._time_stretch(seg, sr, mult, np, sf, librosa)
+        assert abs(out.shape[0] / sr - 1.0 / mult) < 0.06
+
+
+def test_stem_label_prefixes_names():
+    spans = [(0.0, 8.0, "verse"), (8.0, 16.0, "chorus")]
+    names = borrow._label_names(spans)
+    assert [f"Bass {n}" for n in names] == ["Bass Verse", "Bass Chorus"]
 
 
 def test_section_spans_fallback_when_no_sections():
