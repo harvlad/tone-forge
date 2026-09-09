@@ -567,6 +567,29 @@
   pointer-events: none;
 }
 
+/* Source-song label (Borrow): which song a pad's loop came from. The tint
+ * (blue = this song, amber = borrowed) carries the same signal in colour;
+ * this line makes it readable. Sits under the name, above the waveform. */
+.kit-pad-source {
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: left;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 1.5px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  pointer-events: none;
+}
+
+.kit-grid.kit-grid-64 .kit-pad-source {
+  font-size: 8px;
+  line-height: 1.1;
+}
+
 .kit-pad-wave {
   /* Fill the tile body so the waveform reads mid-pad like the native
    * tiles (a 30px bottom strip read as a footer, not the pad's face). */

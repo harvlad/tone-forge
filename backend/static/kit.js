@@ -2494,6 +2494,15 @@
     name.className = "kit-pad-name";
     name.textContent = pad.name || "Pad " + (i + 1);
 
+    // Source-song label (Borrow): the blue/amber tint already encodes which
+    // song a pad came from; this small line makes it readable.
+    var source = null;
+    if (pad.sourceName) {
+      source = document.createElement("span");
+      source.className = "kit-pad-source";
+      source.textContent = pad.sourceName;
+    }
+
     // Sequence step dots (light version): which 16th-steps of the kit's
     // defaultSequence this pad fires on.
     var flags = stepFlags && stepFlags[i];
@@ -2527,6 +2536,7 @@
     fxBadge.textContent = "FX";
 
     el.appendChild(name);
+    if (source) el.appendChild(source);
     if (dots) el.appendChild(dots);
     el.appendChild(canvas);
     el.appendChild(sweep);
@@ -4059,6 +4069,51 @@
     } catch (_) {}
   }
 
+  /** Borrow layout (PURE). A borrow manifest carries BOTH songs' loop pads,
+   * each tagged by `source` ("initial" = the current song, "donor" = the
+   * borrowed song). Packed 0..N by the backend they read as one undivided
+   * block, so re-lay them on the 8-wide 64 grid: the current song's pads fill
+   * the TOP rows, a full BLANK row divides, then the donor's pads start on the
+   * next FULL row. Additive — every source pad is placed (none dropped) and the
+   * grid stays 64.
+   *
+   * Returns { placements: [{pad, padIdx, source}], dividerRow }. When both
+   * blocks plus a divider can't fit 64 (a rare full 4-stem borrow = 32 + 32),
+   * the divider is dropped (dividerRow -1) and the donor block is packed
+   * straight after the initial one so no pad is ever pushed off the grid. */
+  function arrangeBorrowLayout(pads, cols) {
+    cols = cols || 8;
+    var rows = 8;                       // 8×8 launchpad grid = 64 cells
+    var initial = [];
+    var donor = [];
+    (pads || []).forEach(function (p) {
+      if (!p) return;
+      if (p.source === "donor") donor.push(p);
+      else initial.push(p);            // "initial" or untagged → current song
+    });
+    // Keep the backend's within-block section order (Verse, Chorus, …).
+    var byIdx = function (a, b) { return (a.padIdx || 0) - (b.padIdx || 0); };
+    initial.sort(byIdx);
+    donor.sort(byIdx);
+    var initialRows = Math.ceil(initial.length / cols);
+    var donorRows = Math.ceil(donor.length / cols);
+    // Blank divider row between the two songs — only when the grid has room. A
+    // full 32 + 32 borrow fills all 64 cells, so drop the divider (and pack the
+    // donor block flush after the initial pads) rather than lose donor pads.
+    var wantDivider = initial.length > 0 && donor.length > 0 &&
+      (initialRows + 1 + donorRows) <= rows;
+    var dividerRow = wantDivider ? initialRows : -1;
+    var donorBase = wantDivider ? (initialRows + 1) * cols : initial.length;
+    var placements = [];
+    initial.forEach(function (p, i) {
+      placements.push({ pad: p, padIdx: i, source: "initial" });
+    });
+    donor.forEach(function (p, i) {
+      placements.push({ pad: p, padIdx: donorBase + i, source: "donor" });
+    });
+    return { placements: placements, dividerRow: dividerRow };
+  }
+
   /** Mount a curated sample pack (/api/sample-packs/{packId}) onto the pad
    * surface: each pad's audio file becomes its own single-pad "stem" with a
    * whole-buffer slice, so PadEngine plays them as one-shots with the same
@@ -4111,10 +4166,36 @@
         if (!s.alive) return;
         var pads = (manifest && manifest.pads) || [];
         if (!pads.length) throw new Error("pack has no pads");
+        // Borrow manifest? Its pads are source-tagged ("initial"/"donor") and
+        // hold BOTH songs. Re-lay them on the 8×8 grid (current song on top, a
+        // blank divider row, donor below) and — critically — keep the surface
+        // at 64 instead of reverting the user to a 16 grid that would REPLACE
+        // their pads. Non-borrow packs keep their native padIdx + 16 grid.
+        var isBorrow = pads.some(function (p) {
+          return p && (p.source === "donor" || p.source === "initial");
+        });
+        var borrowMap = null;
+        if (isBorrow) {
+          var lay = arrangeBorrowLayout(pads, 8);
+          borrowMap = new Map();
+          lay.placements.forEach(function (pl) {
+            borrowMap.set(pl.pad, {
+              padIdx: pl.padIdx,
+              // Per-pad source-song label: the current song's name for the
+              // initial (blue) pads, the donor's for the borrowed (amber) ones.
+              sourceName: pl.source === "donor"
+                ? (desc.borrowDonorName || "Borrowed")
+                : (desc.borrowHostName || "This song"),
+            });
+          });
+          s.padCount = 64;             // stay in 64 — never shrink to 16
+        }
         var stems = {};
         var kitPads = [];
         var loads = pads.map(function (p, i) {
-          var idx = typeof p.padIdx === "number" ? p.padIdx : i;
+          var place = borrowMap && borrowMap.get(p);
+          var idx = place ? place.padIdx
+            : (typeof p.padIdx === "number" ? p.padIdx : i);
           var fname = p.sampleFile || p.file || p.sampleUrl || p.filename;
           if (!fname) return null;
           var url = /^https?:|^\//.test(fname)
@@ -4131,6 +4212,7 @@
                 padIdx: idx,
                 name: p.name || ("Pad " + (idx + 1)),
                 colorHint: p.colorHint || desc.paletteHint || null,
+                sourceName: place ? place.sourceName : null,
                 stemSlice: { stemRole: role, startSec: 0, endSec: buf.duration },
                 loopable: !!p.loopable,
               });
@@ -4157,6 +4239,9 @@
               attachEngineState(s);
               renderPads(s);
               startRaf(s);
+              // Clear the skeleton status — packs (and Borrow loads) never
+              // ran the song path's setStatus("") so it hung on "Loading kit…".
+              if (s.statusEl) s.statusEl.textContent = "";
             });
           });
         });
@@ -4170,12 +4255,33 @@
    * decoded straight from their sampleUrls. */
   function mountManifest(manifest) {
     if (!manifest || !manifest.packId) return;
+    // Borrow manifests mix two songs. Capture the CURRENT song's display name
+    // now — mountPack unmounts `current` before it reads anything — and derive
+    // the donor's from the manifest so each pad can carry a source-song label.
+    var hostName = null;
+    if (current) {
+      hostName = (current.entry && current.entry.name) ||
+        (current.kit && current.kit.name) ||
+        (current.titleEl && current.titleEl.textContent) || null;
+    }
     mountPack({
       packId: manifest.packId,
       name: manifest.name,
       paletteHint: manifest.paletteHint,
       manifest: manifest,
+      borrowHostName: hostName,
+      borrowDonorName: borrowDonorName(manifest),
     });
+  }
+
+  /** Donor song name for a borrow manifest. The backend names the pack
+   * "<donor> · kit" (borrow route) so strip that suffix; fall back to an
+   * explicit donor field or a friendly default. */
+  function borrowDonorName(manifest) {
+    if (!manifest) return "Borrowed";
+    var n = String(manifest.donorName || manifest.name || "").trim();
+    n = n.replace(/\s*·\s*kit\s*$/i, "").trim();
+    return n || "Borrowed";
   }
 
   // ---------- optional Session key/BPM target (Borrow conform) ----------
@@ -4836,6 +4942,7 @@
       pickerPackList: pickerPackList,
       pickerSongPads: pickerSongPads,
       packPadRows: packPadRows,
+      arrangeBorrowLayout: arrangeBorrowLayout,
     },
   };
 })();

@@ -430,6 +430,85 @@ assert.equal(serializeArrangement({ 0: [] }), null); // empty list → nothing t
   assert.deepEqual(parseArrangement(serializeArrangement(map)), map); // round-trips
 }
 
+// Borrow layout (pure): a borrow manifest carries BOTH songs' loop pads,
+// tagged per pad by `source` ("initial" = current song, "donor" = borrowed).
+// arrangeBorrowLayout re-lays them on the 8×8 (64) grid: current song on top,
+// a BLANK divider row, donor below — additive (no pad dropped), never 16.
+const { arrangeBorrowLayout } = K._internals;
+{
+  // 8 initial + 8 donor: initial fills row 0, row 1 is the blank divider,
+  // donor fills row 2 (padIdx 16..23).
+  const initialPads = Array.from({ length: 8 }, (_, i) => ({ padIdx: i, source: "initial" }));
+  const donorPads = Array.from({ length: 8 }, (_, i) => ({ padIdx: 8 + i, source: "donor" }));
+  const src = initialPads.concat(donorPads);
+  const { placements, dividerRow } = arrangeBorrowLayout(src, 8);
+
+  // (a) Additive — every source pad is placed, none replaced.
+  assert.equal(placements.length, src.length, "all pads placed (additive)");
+  src.forEach((p) => assert.ok(placements.some((pl) => pl.pad === p), "pad kept"));
+
+  // The layout targets the 8-wide 64 grid, not a packed 16.
+  const maxIdx = Math.max(...placements.map((pl) => pl.padIdx));
+  assert.ok(maxIdx > 15, "borrow layout spills past a 16 grid (stays 64)");
+  assert.ok(maxIdx < 64, "borrow layout fits the 64 grid");
+
+  // Both songs present with their tags intact.
+  const initPlaced = placements.filter((pl) => pl.source === "initial");
+  const donorPlaced = placements.filter((pl) => pl.source === "donor");
+  assert.equal(initPlaced.length, 8, "initial pads present");
+  assert.equal(donorPlaced.length, 8, "donor pads present");
+
+  // Initial pads occupy the top row(s), donor pads start below the divider.
+  assert.deepEqual(initPlaced.map((pl) => pl.padIdx).sort((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(dividerRow, 1, "divider is the first full row after initial");
+
+  // (c) The divider row is EMPTY — no placement maps into it.
+  const rowOf = (idx) => Math.floor(idx / 8);
+  assert.ok(!placements.some((pl) => rowOf(pl.padIdx) === dividerRow), "divider row is empty");
+  // Donor starts on the first full row after the divider.
+  assert.equal(Math.min(...donorPlaced.map((pl) => pl.padIdx)), (dividerRow + 1) * 8);
+
+  // (d) Every placed pad resolves to a source-song label — the same mapping
+  // mountPack applies (initial → current song, donor → borrowed song).
+  const label = (pl) => (pl.source === "donor" ? "Donor Song" : "Host Song");
+  placements.forEach((pl) => {
+    const l = label(pl);
+    assert.ok(typeof l === "string" && l.length > 0, "pad has a source-song label");
+  });
+  assert.deepEqual(
+    Array.from(new Set(placements.map(label))).sort(),
+    ["Donor Song", "Host Song"],
+    "both song labels represented"
+  );
+}
+{
+  // Uneven initial block: a partial last initial row still leaves a full blank
+  // divider, and donor starts on the next full row (never overlapping).
+  const src = [];
+  for (let i = 0; i < 5; i++) src.push({ padIdx: i, source: "initial" }); // row 0 partial
+  for (let i = 0; i < 6; i++) src.push({ padIdx: 8 + i, source: "donor" });
+  const { placements, dividerRow } = arrangeBorrowLayout(src, 8);
+  assert.equal(placements.length, 11, "additive across an uneven split");
+  assert.equal(dividerRow, 1, "divider after the single (partial) initial row");
+  const rowOf = (idx) => Math.floor(idx / 8);
+  assert.ok(!placements.some((pl) => rowOf(pl.padIdx) === dividerRow), "uneven divider empty");
+  const donor = placements.filter((pl) => pl.source === "donor");
+  assert.equal(Math.min(...donor.map((pl) => pl.padIdx)), 16, "donor on the next full row");
+}
+{
+  // Full 4-stem borrow (32 + 32 = 64): no room for a divider, so it is dropped
+  // (dividerRow -1) and EVERY pad is still placed inside the 64 grid.
+  const src = [];
+  for (let i = 0; i < 32; i++) src.push({ padIdx: i, source: "initial" });
+  for (let i = 0; i < 32; i++) src.push({ padIdx: 100 + i, source: "donor" });
+  const { placements, dividerRow } = arrangeBorrowLayout(src, 8);
+  assert.equal(placements.length, 64, "all 64 pads placed");
+  assert.equal(dividerRow, -1, "no divider when the grid is full");
+  assert.ok(Math.max(...placements.map((pl) => pl.padIdx)) < 64, "nothing pushed off the grid");
+  // No two pads collide on the same cell.
+  assert.equal(new Set(placements.map((pl) => pl.padIdx)).size, 64, "no cell collisions");
+}
+
 // applyPadRegion with nothing mounted → false, never a throw.
 assert.equal(K.applyPadRegion(0, { startSec: 0, endSec: 1 }), false);
 
