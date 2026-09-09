@@ -402,6 +402,13 @@
     }
 
     S.timer = setInterval(ledTick, LED_TICK_MS);
+    // Blank the device when this tab goes away. WebMIDI does NOT reset a
+    // Launchpad's LEDs on tab close, so without this the grid we painted
+    // lingers on the hardware into the NEXT session ("those pads were already
+    // lit before I got to web"). pagehide fires on close/navigate/bfcache;
+    // the synchronous blank SysEx flushes before teardown. best-effort.
+    S.onPageHide = function () { try { blankAll(); } catch (_) {} };
+    try { window.addEventListener("pagehide", S.onPageHide); } catch (_) {}
     openLink();
     // Even with no device present now we stay armed: the driver's hot-plug
     // rebind + our ledTick connect edge light the grid the moment the
@@ -425,6 +432,9 @@
     try { blankAll(); } catch (_) {}
     S = null;
     if (s.timer) clearInterval(s.timer);
+    if (s.onPageHide) {
+      try { window.removeEventListener("pagehide", s.onPageHide); } catch (_) {}
+    }
     if (s.linkEs) { try { s.linkEs.close(); } catch (_) {} }
     if (s.input) { try { s.input.removeEventListener("midimessage", s.onMidi); } catch (_) {} }
     if (s.access && s.onStateChange) {
