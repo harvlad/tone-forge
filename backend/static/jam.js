@@ -15519,6 +15519,20 @@
       _remixMountedId = null;
     }
 
+    // Immediate "pads are loading" state for #kit-root, shown while the
+    // entry hydrates and stems bake. Only paints when the root is empty so
+    // it never stomps an already-mounted grid.
+    function _paintKitLoading() {
+      const root = document.getElementById('kit-root');
+      if (!root || root.childElementCount > 0) return;
+      root.innerHTML =
+        '<div class="kit-boot">'
+        + '<span class="kit-boot-spinner" aria-hidden="true"></span>'
+        + '<div class="kit-boot-text">Loading Jam Pads…</div>'
+        + '<div class="kit-boot-sub">Preparing pads from the song stems — a few seconds.</div>'
+        + '</div>';
+    }
+
     function _mountKitIfReady() {
       const id = state.analysisId;
       if (!id) return; // no song loaded — Jam pane stays empty
@@ -15537,7 +15551,12 @@
         return;
       }
       // Entry missing or stale — hydrate from the persisted row, then
-      // retry (the recursion hits the cached-entry branch above).
+      // retry (the recursion hits the cached-entry branch above). Paint an
+      // immediate placeholder so the Jam Pads surface isn't a black void
+      // during the history fetch + the multi-second stem bake that follows
+      // (field report: "black screen for 15-20s"). kit.js mount() replaces
+      // #kit-root wholesale, so this never lingers once pads are ready.
+      _paintKitLoading();
       fetch(`/api/history/${id}`)
         .then(r => (r.ok ? r.json() : null))
         .then(entry => {

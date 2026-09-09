@@ -2548,6 +2548,28 @@ main.lp-tab-active .perform-grid {
 /* ─── Mixer Levels|FX tab (desktop StemsMixerView segmented picker) ──
    Contribute popup (sidebar Voice/Beat/Sample). Centered modal hosting
    window.JamnContribute; house overlay convention. */
+/* Jam Pads boot placeholder (painted by jam.js before kit.js mounts, so
+   the surface shows progress instead of a black void during the stem bake). */
+.kit-boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 320px;
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--jamn-text2, #a1a1aa);
+}
+.kit-boot-spinner {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 3px solid var(--jamn-accent-dim, rgba(168,85,247,.3));
+  border-top-color: var(--jamn-accent, #a855f7);
+  animation: jamn-loading-spin .8s linear infinite;
+}
+.kit-boot-text { font-size: 1rem; font-weight: 600; color: var(--jamn-text, #f4f4f8); }
+.kit-boot-sub { font-size: .82rem; }
+
 .contribute-modal {
   position: fixed;
   inset: 0;
