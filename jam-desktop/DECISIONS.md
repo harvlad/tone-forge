@@ -323,3 +323,44 @@ its dedicated pad *grid* is gone.
 confusion, and the 16/64 toggle gives the compact 4×4 (matching the
 16-pad Auto Kit and the mobile 4×4 convention) without losing the full
 8×8 — both faithfully mirrored to hardware.
+
+## D-018: "Add from another song" (Borrow) promoted to the Launchpad + Melody part
+
+**Decision:** Promote the cross-song Borrow feature — real, tempo- and
+key-matched loops from your OTHER analyzed songs — to a first-class
+action ON the merged Launchpad surface (D-017), as an "Add from song"
+button in the panel's second control row, and add a **Melody** part
+(stem `vocals`). This mirrors what shipped on web (`kit.js`: a
+"+ Add from another song" picker with Beat / Bass / Chords / Melody,
+Melody = stem `vocals`).
+
+**Where:** a new `BorrowPickerView` (sheet) hosts the part selector
+(Beat=`drums` / Bass=`bass` / Chords=`other` / **Melody=`vocals`**) plus
+the ranked candidate-song list with key/tempo and the key-match hint
+("harmonizes" ≥0.90 · "fits" ≥0.75 from the server's `harmonic` score).
+`LaunchpadPanelView` gains a `showBorrowPicker` sheet + toolbar button.
+On selecting a donor the sheet calls the SAME
+`SessionController.loadBorrowLoops(donorId:stem:)` the Remix sheet
+already used — which fetches the borrow pack, downloads the loop WAVs,
+builds loopable file-backed `Chop`s (`assetId: "borrowfile:<pad>"`),
+sets `launchpad.playbackMode = .loop` and `adoptAssignments(pairs)` —
+so ranking, download and the pad-mount are one shared path, not a
+second implementation. The sheet dismisses on a successful load so the
+grid is immediately visible.
+
+**Melody = `vocals`:** no engine change — `RemixClient.fetchBorrowCandidates`
+/ `fetchBorrowPack` take `stem` as a free string, and the backend already
+serves `stem=vocals` (harmonic-matched toplines, verified live). The
+existing Remix-sheet Borrow picker also gained the `Melody`→`vocals` tag,
+so both entry points offer the full part list. Its melodic-hint logic
+keys on `borrowStem != "drums"`, which already covers `vocals`.
+
+**Additive:** all existing Launchpad behavior (16/64 toggle, quantize,
+triggering, hardware LED mirror, loop lock, layers, radial menus) is
+untouched — the picker only adds assignments through the existing
+`adoptAssignments` path. Borrow stays reachable from the Remix sheet too.
+
+**Why:** cross-song sampling is the DJ core loop; burying it in a Remix
+sub-section made it undiscoverable. The Launchpad is where pads live, so
+the "put another song's part on the pads" action belongs there, and web
+already set the four-part (incl. Melody) shape to match.

@@ -97,6 +97,7 @@ struct RemixSheetView: View {
                         Text("Beat").tag("drums")
                         Text("Bass").tag("bass")
                         Text("Chords").tag("other")
+                        Text("Melody").tag("vocals")
                     }
                     .pickerStyle(.segmented)
                     .onChange(of: borrowStem) { _ in

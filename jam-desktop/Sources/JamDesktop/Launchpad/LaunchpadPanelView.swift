@@ -34,6 +34,7 @@ struct LaunchpadPanelView: View {
     @State private var vocoderTarget: VocoderCaptureTarget?
     @State private var patternAssignTarget: Int?  // padIdx to assign pattern
     @State private var soundPickerTarget: Int?    // padIdx to add sound
+    @State private var showBorrowPicker = false   // "Add from another song"
     @State private var radialMenuState: PadRadialMenuState?
     @State private var showSequencerEditor = false
     @State private var moveMode = false
@@ -178,6 +179,10 @@ struct LaunchpadPanelView: View {
         .sheet(isPresented: $showSequencerEditor) {
             SequencerPanelView()
                 .environmentObject(model)
+                .environmentObject(session)
+        }
+        .sheet(isPresented: $showBorrowPicker) {
+            BorrowPickerView()
                 .environmentObject(session)
         }
     }
@@ -620,6 +625,19 @@ struct LaunchpadPanelView: View {
             if session.autoKitLoading {
                 ProgressView().controlSize(.small)
             }
+
+            // "Add from another song" (DJ cross-song sampling): real loops
+            // from your OTHER analyzed songs — Beat / Bass / Chords / Melody,
+            // tempo- and key-matched — onto these pads. Promoted here from the
+            // Remix sheet so it's a first-class Launchpad action (web parity).
+            Button {
+                showBorrowPicker = true
+            } label: {
+                Label("Add from song", systemImage: "square.stack.3d.up")
+                    .font(.caption)
+            }
+            .help("Add from another song — drop a Beat, Bass, Chords or Melody "
+                  + "loop from your other analyzed songs onto the pads")
 
             // Ableton Link: join the local Link session — loop launches
             // land on the shared bar grid and the sequencer follows the
