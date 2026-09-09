@@ -388,6 +388,12 @@
 
   var current = null;
 
+  // Last real song loaded via mount(entry) — the "current song" for the
+  // Borrow picker's candidate fetch. A Borrow load remounts the surface as
+  // an entry-less pack (mountPack), so we can't rely on s.entry.id after the
+  // first borrow; this keeps "+ Add from another song" working across loads.
+  var lastEntryId = null;
+
   function mount(entry, opts) {
     try {
       var root = document.getElementById("kit-root");
@@ -444,7 +450,14 @@
         chopSlice: "beat",
         chopBusy: false, // Load in flight — guards double-clicks
         chopEls: null, // { stemSel, sliceSel, loadBtn }
+        // "+ Add from another song": borrow real loops from the user's OTHER
+        // analyzed songs onto these pads (promoted from the Remix modal's
+        // Borrow block). Part→stem: Beat=drums, Bass=bass, Chords=other,
+        // Melody=vocals. See openBorrowPicker below.
+        borrow: freshBorrowState(),
+        borrowBtn: null,
       };
+      if (entry && entry.id) lastEntryId = entry.id;
       if (!entry || !entry.id || !entry.result) {
         showError(current, "No analysis loaded.");
         return;
@@ -488,6 +501,7 @@
     closeRadial(s);
     closeFxEditor(s);
     closeSoundPicker(s);
+    closeBorrowPicker(s);
     for (var k in s.deleted) {
       if (s.deleted[k] && s.deleted[k].timer) clearTimeout(s.deleted[k].timer);
     }
@@ -935,11 +949,30 @@
     // dropped when the old Launchpad (lpview) merged into this surface.
     var chopGroup = buildChopControls(s);
 
+    // "+ Add from another song" — first-class cross-song sampling on the
+    // Launchpad (was buried in the Remix modal). Opens a compact popover to
+    // pick a Part (Beat/Bass/Chords/Melody) and a donor song; the borrowed
+    // loops land on the pads tempo- and key-matched. See openBorrowPicker.
+    var addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "kit-borrow-btn";
+    addBtn.textContent = "+ Add from another song";
+    addBtn.title = "Borrow real loops from your other analyzed songs — "
+      + "beat, bass, chords, or melody — tempo- and key-matched onto these pads";
+    addBtn.addEventListener("click", function () {
+      try {
+        if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+      } catch (_) {}
+      toggleBorrowPicker(s, addBtn);
+    });
+    s.borrowBtn = addBtn;
+
     controls.appendChild(viewSeg);
     controls.appendChild(sizeSeg);
     controls.appendChild(quant);
     controls.appendChild(seg);
     controls.appendChild(chopGroup);
+    controls.appendChild(addBtn);
     controls.appendChild(latch);
     controls.appendChild(groove);
     controls.appendChild(stop);
@@ -3500,6 +3533,10 @@
       fxKey: "pack:" + desc.packId, // pack FX persist per pack, not per song
       fxPop: null, deleted: {},
       origSource: {}, pickerPop: null, pickerPreview: null,
+      // Borrow works from a mounted pack too (a borrowed loop pack is exactly
+      // this state); its candidate fetch falls back to lastEntryId since a
+      // pack carries no entry.id.
+      borrow: freshBorrowState(), borrowBtn: null,
     };
     renderShell(current);
     var s = current;
@@ -3586,6 +3623,339 @@
       paletteHint: manifest.paletteHint,
       manifest: manifest,
     });
+  }
+
+  // ---------- "+ Add from another song" (Borrow real loops) ----------
+  //
+  // Promotes the Remix modal's Borrow block (remix.js loadBorrowCandidates /
+  // applyBorrow) to a first-class Launchpad action, so DJ-style cross-song
+  // sampling — an R&B melody over a hip-hop beat — starts here, not two menus
+  // deep. Same backend, unchanged:
+  //   GET /api/song/{cur}/borrow-candidates?stem=<stem>   ranked donor songs
+  //   GET /api/song/{cur}/borrow?donor=<id>&stem=<stem>   a SamplePack manifest
+  // borrow.py tempo-matches (WSOLA) every stem and harmonically matches the
+  // pitched ones. Part→stem: Beat=drums, Bass=bass, Chords=other,
+  // Melody=vocals (Melody is NEW to this surface).
+
+  var BORROW_PARTS = [
+    ["drums", "Beat"],
+    ["bass", "Bass"],
+    ["other", "Chords"],
+    ["vocals", "Melody"],
+  ];
+
+  function freshBorrowState() {
+    return {
+      stem: "drums", // default Part, mirrors remix.js
+      loaded: false, // candidates fetched for the current stem
+      loading: false, // fetch in flight
+      candidates: [],
+      busyDonor: null, // donor id whose load is in flight
+      unavailable: false, // endpoint 404 → feature not built for this song
+      pop: null, // { el, onKey, onDown } when the picker is open
+      bodyEl: null, // the candidate-list container inside the popover
+      partBtns: null, // stem → segmented button, for the is-on highlight
+    };
+  }
+
+  /** Current-song id for the Borrow fetches. Prefer the live entry; fall back
+   * to the last real song (a borrowed pack has no entry.id — see lastEntryId).
+   * The host's loadBorrow hook independently uses jam.js's analysisId, which
+   * is that same song, so candidates and the load stay in agreement. */
+  function borrowSongId(s) {
+    return (s && s.entry && s.entry.id) || lastEntryId || null;
+  }
+
+  /** Empty-state copy, mirroring remix.js. Drums has no harmonic gate, so its
+   * "nothing yet" reason differs from the pitched stems'. */
+  function borrowEmptyCopy(stem) {
+    return stem === "drums"
+      ? "Analyze more songs to borrow beats."
+      : "No key-compatible songs yet.";
+  }
+
+  function closeBorrowPicker(s) {
+    var b = s && s.borrow;
+    if (!b || !b.pop) return;
+    var pop = b.pop;
+    b.pop = null;
+    b.bodyEl = null;
+    b.partBtns = null;
+    try {
+      document.removeEventListener("keydown", pop.onKey, true);
+      document.removeEventListener("pointerdown", pop.onDown, true);
+    } catch (_) {}
+    try {
+      if (pop.el && pop.el.parentNode) pop.el.parentNode.removeChild(pop.el);
+    } catch (_) {}
+    if (s.borrowBtn) s.borrowBtn.classList.remove("is-open");
+  }
+
+  function toggleBorrowPicker(s, anchor) {
+    if (s.borrow && s.borrow.pop) { closeBorrowPicker(s); return; }
+    openBorrowPicker(s, anchor);
+  }
+
+  /** Open the compact Borrow picker anchored under the toolbar button. House
+   * popover mechanics (pointerdown-outside + Escape dismiss), matching the
+   * per-pad FX editor rather than a full modal. */
+  function openBorrowPicker(s, anchor) {
+    closeBorrowPicker(s);
+    if (!borrowSongId(s)) { toast(s, "Load a song first."); return; }
+    var b = s.borrow;
+
+    var pop = document.createElement("div");
+    pop.className = "kit-borrow-pop";
+
+    var head = document.createElement("div");
+    head.className = "kit-borrow-head";
+    var title = document.createElement("span");
+    title.className = "kit-borrow-title";
+    title.textContent = "Add from another song";
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "kit-borrow-close";
+    close.textContent = "✕";
+    close.title = "Close";
+    close.addEventListener("click", function () { closeBorrowPicker(s); });
+    head.appendChild(title);
+    head.appendChild(close);
+    pop.appendChild(head);
+
+    // Part selector — Beat / Bass / Chords / Melody (segmented, like the
+    // remix.js stem picker).
+    var parts = document.createElement("div");
+    parts.className = "kit-borrow-parts";
+    parts.setAttribute("role", "group");
+    parts.title = "Which part to borrow";
+    b.partBtns = {};
+    BORROW_PARTS.forEach(function (pr) {
+      var pb = document.createElement("button");
+      pb.type = "button";
+      pb.className = "kit-borrow-part" + (pr[0] === b.stem ? " is-on" : "");
+      pb.textContent = pr[1];
+      pb.addEventListener("click", function () {
+        if (b.stem === pr[0] || b.busyDonor) return;
+        b.stem = pr[0];
+        b.loaded = false;
+        b.candidates = [];
+        b.unavailable = false;
+        for (var k in b.partBtns) {
+          b.partBtns[k].classList.toggle("is-on", k === b.stem);
+        }
+        loadBorrowCandidates(s);
+      });
+      b.partBtns[pr[0]] = pb;
+      parts.appendChild(pb);
+    });
+    pop.appendChild(parts);
+
+    var body = document.createElement("div");
+    body.className = "kit-borrow-body";
+    pop.appendChild(body);
+    b.bodyEl = body;
+
+    document.body.appendChild(pop);
+    // Anchor under the button, clamped on-viewport (position: fixed). Flip
+    // above the button when it would overflow the bottom edge.
+    try {
+      var rect = anchor.getBoundingClientRect();
+      var vw = window.innerWidth || 0;
+      var vh = window.innerHeight || 0;
+      var w = pop.offsetWidth || 300;
+      var h = pop.offsetHeight || 240;
+      var left = Math.max(8, Math.min(vw - w - 8, rect.left));
+      var top = rect.bottom + 8;
+      if (top + h > vh - 8) top = Math.max(8, rect.top - h - 8);
+      pop.style.left = left + "px";
+      pop.style.top = top + "px";
+    } catch (_) {}
+
+    var onKey = function (ev) {
+      if (ev.key === "Escape") { ev.stopPropagation(); closeBorrowPicker(s); }
+    };
+    var onDown = function (ev) {
+      if (pop.contains(ev.target)) return;
+      // Clicks on the toolbar button are the toggle's job — ignore here so
+      // the pointerdown doesn't close then the click reopen.
+      if (s.borrowBtn && s.borrowBtn.contains(ev.target)) return;
+      closeBorrowPicker(s);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onDown, true);
+    b.pop = { el: pop, onKey: onKey, onDown: onDown };
+    if (s.borrowBtn) s.borrowBtn.classList.add("is-open");
+
+    renderBorrowBody(s);
+    if (!b.loaded && !b.loading) loadBorrowCandidates(s);
+  }
+
+  /** Fetch ranked donor songs for the selected Part. 404 → the endpoint isn't
+   * available for this build/song (feature-check, not a hard error). */
+  function loadBorrowCandidates(s) {
+    var b = s.borrow;
+    var cur = borrowSongId(s);
+    if (!cur) return;
+    var stem = b.stem;
+    b.loading = true;
+    b.loaded = false;
+    b.unavailable = false;
+    renderBorrowBody(s);
+    var url = "/api/song/" + encodeURIComponent(cur) +
+      "/borrow-candidates?stem=" + encodeURIComponent(stem);
+    fetch(url)
+      .then(function (r) {
+        if (r.status === 404) { b.unavailable = true; return { candidates: [] }; }
+        return r.ok ? r.json() : { candidates: [] };
+      })
+      .catch(function () { return { candidates: [] }; })
+      .then(function (data) {
+        // Stale guard: the surface, its song, or the Part changed mid-flight.
+        if (!s.alive || !b.pop || borrowSongId(s) !== cur || b.stem !== stem) return;
+        b.candidates = ((data && data.candidates) || []).slice(0, 6);
+        b.loaded = true;
+        b.loading = false;
+        renderBorrowBody(s);
+      });
+  }
+
+  /** Repaint the candidate-list region: spinner while fetching, friendly
+   * empties, or one row per donor song. */
+  function renderBorrowBody(s) {
+    var b = s.borrow;
+    var body = b.bodyEl;
+    if (!body) return;
+    body.innerHTML = "";
+
+    if (b.unavailable) {
+      var na = document.createElement("div");
+      na.className = "kit-borrow-note";
+      na.textContent = "Borrowing isn't available for this song yet.";
+      body.appendChild(na);
+      return;
+    }
+    if (b.loading || !b.loaded) {
+      var load = document.createElement("div");
+      load.className = "kit-borrow-note";
+      var sp = document.createElement("span");
+      sp.className = "kit-borrow-spinner";
+      load.appendChild(sp);
+      var lt = document.createElement("span");
+      lt.textContent = "Finding compatible loops…";
+      load.appendChild(lt);
+      body.appendChild(load);
+      return;
+    }
+    if (!b.candidates.length) {
+      var empty = document.createElement("div");
+      empty.className = "kit-borrow-note";
+      empty.textContent = borrowEmptyCopy(b.stem);
+      body.appendChild(empty);
+      return;
+    }
+    b.candidates.forEach(function (c) { body.appendChild(borrowRow(s, c)); });
+  }
+
+  /** One donor row: name + key/tempo + a "key match" / "fits" hint on the
+   * pitched Parts (drums has no harmonic score). Disabled while any load is
+   * in flight; the active one shows "Loading…". */
+  function borrowRow(s, c) {
+    var b = s.borrow;
+    var isDrums = b.stem === "drums";
+    var busy = b.busyDonor === c.entryId;
+    var otherBusy = !!b.busyDonor && !busy;
+
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = "kit-borrow-cand" + (busy ? " is-busy" : "");
+    row.disabled = otherBusy;
+
+    var main = document.createElement("div");
+    main.className = "kit-borrow-cand-main";
+    var name = document.createElement("span");
+    name.className = "kit-borrow-cand-name";
+    name.textContent = c.name ||
+      (c.entryId ? String(c.entryId).slice(0, 8) : "Song");
+    main.appendChild(name);
+
+    var meta = document.createElement("span");
+    meta.className = "kit-borrow-cand-meta";
+    var tempo = c.tempo ? Math.round(c.tempo) + " bpm" : "";
+    var sub = isDrums ? tempo : ((c.key || "?") + (tempo ? " · " + tempo : ""));
+    // "key match" hint mirrors remix.js's harmonic bands (≥0.9 harmonizes,
+    // ≥0.75 fits) — only meaningful for the pitched stems.
+    if (!isDrums && typeof c.harmonic === "number") {
+      if (c.harmonic >= 0.9) sub += " · key match";
+      else if (c.harmonic >= 0.75) sub += " · fits";
+    }
+    meta.textContent = sub;
+    main.appendChild(meta);
+    row.appendChild(main);
+
+    var act = document.createElement("span");
+    act.className = "kit-borrow-cand-act";
+    act.textContent = busy ? "Loading…" : "Add";
+    row.appendChild(act);
+
+    row.addEventListener("click", function () {
+      if (b.busyDonor) return;
+      applyBorrow(s, c.entryId);
+    });
+    return row;
+  }
+
+  /** Load a donor's loops onto the pads. Reuse the SAME path Remix uses —
+   * the host's window.JamnKitHost.loadBorrow (fetches /borrow, calls
+   * mountManifest against jam.js's real audio layer) — falling back to a
+   * direct fetch + mountManifest when hostless. Either way the loops land via
+   * mountPack → renderPads, so waveforms, tints, and the physical Launchpad
+   * mirror all follow (16/64 grid respected by the manifest). */
+  function applyBorrow(s, donor) {
+    var b = s.borrow;
+    if (!donor || b.busyDonor) return;
+    b.busyDonor = donor;
+    renderBorrowBody(s);
+    var stem = b.stem;
+    Promise.resolve(doBorrowLoad(s, donor, stem))
+      .then(function () {
+        b.busyDonor = null;
+        // A successful load remounts the surface as the borrowed pack:
+        // mountManifest → mountPack → unmount(s), which already tore down this
+        // popover (closeBorrowPicker in unmount) and flipped s.alive false.
+        // So confirm on whatever surface is now live, and only reach back to
+        // the old popover if the remount somehow didn't happen.
+        if (s.alive) closeBorrowPicker(s);
+        var live = current || s;
+        var what = stem === "drums" ? "beat"
+          : stem === "vocals" ? "melody"
+          : stem === "bass" ? "bass" : "chords";
+        toast(live, "Added a borrowed " + what + " — matched to your tempo");
+      })
+      .catch(function (e) {
+        if (!s.alive) return;
+        b.busyDonor = null;
+        renderBorrowBody(s);
+        toast(s, "Borrow failed: " + ((e && e.message) || e));
+      });
+  }
+
+  function doBorrowLoad(s, donor, stem) {
+    var host = window.JamnKitHost;
+    if (host && typeof host.loadBorrow === "function") {
+      return Promise.resolve(host.loadBorrow(donor, stem));
+    }
+    // Hostless fallback (same path the host hook runs): fetch the manifest and
+    // mount it. Current-song id from the loaded entry / last real song.
+    var cur = borrowSongId(s);
+    if (!cur) return Promise.reject(new Error("no current song"));
+    var url = "/api/song/" + encodeURIComponent(cur) +
+      "/borrow?donor=" + encodeURIComponent(donor) +
+      "&stem=" + encodeURIComponent(stem);
+    return fetch(url).then(function (r) {
+      if (r.status === 404) throw new Error("borrowing not available");
+      if (!r.ok) throw new Error("borrow HTTP " + r.status);
+      return r.json();
+    }).then(function (manifest) { mountManifest(manifest); });
   }
 
   window.JamnKit = {

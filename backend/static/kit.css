@@ -1036,3 +1036,199 @@
   font-size: 12px;
   color: var(--jamn-text2, #A1A1AA);
 }
+
+/* ---------- "+ Add from another song" (Borrow) ---------- */
+
+/* Toolbar button: accent-outline, matching the chop "Load" chip so it reads
+ * as a first-class action in the controls row (not a raw browser widget). */
+.kit-borrow-btn {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--jamn-accent, #8B5CF6);
+  background: transparent;
+  color: var(--jamn-accent, #8B5CF6);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kit-borrow-btn:hover,
+.kit-borrow-btn.is-open {
+  background: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+}
+
+/* The popover — house style (mirror of .kit-fx-pop): fixed, accent top rule,
+ * clamped on-viewport by kit.js. */
+.kit-borrow-pop {
+  position: fixed;
+  z-index: 1002;
+  width: 288px;
+  max-width: calc(100vw - 16px);
+  padding: 10px 12px 10px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-top: 2px solid var(--jamn-accent, #8B5CF6);
+  border-radius: var(--jamn-radius-md, 12px);
+  background: var(--jamn-surface1, #14141A);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+
+.kit-borrow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.kit-borrow-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--jamn-text, #fff);
+}
+
+.kit-borrow-close {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.kit-borrow-close:hover {
+  color: var(--jamn-text, #fff);
+}
+
+/* Part selector — the segmented-group shell, so it matches the toolbar. */
+.kit-borrow-parts {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--jamn-surface1, #14141A);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.kit-borrow-part {
+  appearance: none;
+  flex: 1 1 0;
+  border: 0;
+  background: transparent;
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.kit-borrow-part.is-on {
+  background: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+}
+
+/* Candidate list. Scrolls if a user has many analyzed songs. */
+.kit-borrow-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.kit-borrow-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--jamn-text2, #A1A1AA);
+  padding: 6px 2px;
+}
+
+/* Small inline spinner for "Finding compatible loops…". */
+.kit-borrow-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--jamn-border, #2A2A36);
+  border-top-color: var(--jamn-accent, #8B5CF6);
+  animation: kit-borrow-spin 0.7s linear infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes kit-borrow-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* One donor row — full-width button; name + key/tempo on the left, the
+ * Add / Loading… affordance on the right. */
+.kit-borrow-cand {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+  font: inherit;
+  cursor: pointer;
+}
+
+.kit-borrow-cand:hover:not(:disabled) {
+  border-color: var(--jamn-accent, #8B5CF6);
+}
+
+.kit-borrow-cand:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.kit-borrow-cand.is-busy {
+  border-color: var(--jamn-accent, #8B5CF6);
+  opacity: 1;
+}
+
+.kit-borrow-cand-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kit-borrow-cand-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kit-borrow-cand-meta {
+  font-size: 11px;
+  color: var(--jamn-text2, #A1A1AA);
+  font-variant-numeric: tabular-nums;
+}
+
+.kit-borrow-cand-act {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--jamn-accent, #8B5CF6);
+}
+
+.kit-borrow-cand:disabled .kit-borrow-cand-act {
+  color: var(--jamn-text2, #A1A1AA);
+}
