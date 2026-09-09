@@ -11104,6 +11104,19 @@
     if (!pill || !pop) return;
     pill.addEventListener('click', (ev) => {
       ev.stopPropagation();
+      // Offline pill = PAIR, not just a monitor toggle. Previously clicking
+      // "Connect Offline" only opened the monitor popover, so there was no
+      // reachable way to launch/pair (the real #connect-btn is hidden).
+      // Forward the click to #connect-btn's handler (ensureConnectBridge +
+      // the toneforge:// deep link) — done inside this user gesture so the
+      // synthetic anchor.click() keeps its activation. Once paired, the pill
+      // reverts to toggling the monitor popover.
+      const cb = state.connectBridge;
+      const paired = cb && cb.status === 'open' && cb.peers > 0;
+      if (!paired) {
+        const cbtn = document.getElementById('connect-btn');
+        if (cbtn) { cbtn.click(); return; }
+      }
       const willOpen = !!pop.hidden;
       pop.hidden = !willOpen;
       pill.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
