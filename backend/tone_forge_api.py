@@ -6444,7 +6444,8 @@ async def get_borrow_candidates(
     target_bpm = _borrow._tempo_of(result)
     target_key = result.get("detected_key") or result.get("key")
     cands = _borrow.borrow_candidates(
-        history, entry_id, stem, target_bpm, target_key=target_key)
+        history, entry_id, stem, target_bpm, target_key=target_key,
+        target_result=result)
     return JSONResponse({"analysisId": entry_id, "stem": stem,
                          "targetTempo": target_bpm, "targetKey": target_key,
                          "candidates": cands[:12]})
@@ -6476,15 +6477,32 @@ async def get_borrow_loops(
     target_bpm = _borrow._tempo_of(result)
     if not target_bpm:
         raise HTTPException(status_code=422, detail="This song has no tempo")
-    # Resolve the donor's actual stem key (handles 'other' → guitar_* etc.)
-    donor_stem = next(
-        (a for a in _borrow._stem_aliases(stem)
-         if a in (donor_result.get("stems_paths") or {})), stem)
+    # Resolve each song's actual stem key (handles 'other' → guitar_* etc.).
+    def _resolve_stem(res: dict) -> str:
+        return next(
+            (a for a in _borrow._stem_aliases(stem)
+             if a in (res.get("stems_paths") or {})), stem)
+
+    init_stem = _resolve_stem(result)
+    donor_stem = _resolve_stem(donor_result)
+    _refresh_r2_stem_urls(result)
     _refresh_r2_stem_urls(donor_result)
-    pads = await asyncio.get_running_loop().run_in_executor(
-        _render_pool(), _borrow.borrow_job, donor, donor_result, stem,
-        target_bpm, donor_stem)
-    if not pads:
+    loop = asyncio.get_running_loop()
+    # Both songs render onto ONE grid: THIS song's own sections fill the first
+    # half (pads 0..7, already at target tempo so unstretched), the donor's the
+    # second (pads 8..15, time-stretched to lock). A player jumps between
+    # sections of either song on one surface.
+    half = _borrow._LOOPS_PER_SOURCE
+    init_pads, donor_pads = await asyncio.gather(
+        loop.run_in_executor(
+            _render_pool(), _borrow.borrow_job, entry_id, result, stem,
+            target_bpm, init_stem, 0, "initial"),
+        loop.run_in_executor(
+            _render_pool(), _borrow.borrow_job, donor, donor_result, stem,
+            target_bpm, donor_stem, half, "donor"),
+    )
+    pads = (init_pads or []) + (donor_pads or [])
+    if not donor_pads:
         raise HTTPException(
             status_code=422,
             detail="No borrowable loops (tempo too far, or stem/grid missing)")

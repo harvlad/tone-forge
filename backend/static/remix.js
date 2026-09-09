@@ -266,8 +266,10 @@
         if (!state) return;
         state.borrowBusyDonor = null;
         setApplied('borrow',
-          'Applied: Borrow — real ' + (stem === 'drums' ? 'beat' : stem)
-          + ' loops on the pads, locked to this song’s tempo.' + hearItNote());
+          'Applied: Borrow — this song’s sections on the top pads, the '
+          + (stem === 'drums' ? 'borrowed beat' : 'borrowed ' + stem)
+          + ' song’s sections below, all locked to this song’s tempo. '
+          + 'Jump between sections of either song on the grid.' + hearItNote());
       })
       .catch(function (e) {
         if (!state) return;
@@ -586,7 +588,7 @@
       borrow.appendChild(el('div', 'remix-note',
         state.borrowStem === 'drums'
           ? 'Analyze more songs to borrow beats.'
-          : 'No key-compatible songs yet.'));
+          : 'No harmonically compatible songs yet.'));
     }
     state.borrowCandidates.forEach(function (c) {
       var sub = state.borrowStem === 'drums'
@@ -595,8 +597,10 @@
       borrow.appendChild(row({
         name: c.name || c.entryId, icon: '🎚️',
         subtitle: sub + (state.borrowStem !== 'drums' && c.harmonic >= 0.9
-          ? ' · key match' : ''),
-        title: 'Real loops from this song, stretched to your tempo, on the pads',
+          ? ' · harmonizes' : (state.borrowStem !== 'drums' && c.harmonic >= 0.75
+            ? ' · fits' : '')),
+        title: 'Both songs’ sections on the pads (this song on top, '
+          + 'this one below), stretched to your tempo',
         busy: state.borrowBusyDonor === c.entryId,
         busyLabel: state.borrowBusyDonor === c.entryId ? 'Rendering…' : null,
         disabled: !!state.borrowBusyDonor && state.borrowBusyDonor !== c.entryId,

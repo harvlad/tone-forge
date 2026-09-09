@@ -227,20 +227,20 @@ features:
         note: "No sequencer."
 
   - id: borrow-loops
-    name: Borrow — real loops from other songs as tempo/key-matched pads
+    name: Borrow — real loops from other songs as harmonically-matched pads (both songs on one grid)
     platforms:
       web:
         status: done
         evidence: "backend/static/remix.js#applyBorrow"
-        note: "Borrow section in the Remix sheet: stem picker (Beat/Bass/Chords), donor list ranked by tempo (drums) or tempo+key (melodic), loads loopable file pads via JamnKit.mountManifest. Backend performance/borrow.py time-stretches the donor's 2-bar loops to this song's tempo; harmonic ranking is Camelot-style."
+        note: "Borrow section in the Remix sheet: stem picker (Beat/Bass/Chords), donor list ranked by tempo (drums) or tempo + CONTENT-based harmony (melodic), loads loopable file pads via JamnKit.mountManifest. Backend performance/borrow.py#harmonic_compat scores real shared pitch-class material from both songs' chord ribbons (duration-weighted 12-bin histogram, cosine) refined by circle-of-fifths/relative/parallel key relationship — not just the key label. Loops are cut at musical section boundaries (verse/chorus, downbeat-snapped): THIS song's own sections fill pads 0–7 (blue), the donor's 8–15 (amber, tempo-stretched), so a player jumps between sections of EITHER song on one grid. Pads carry source + sectionType."
       ios:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeMobile/ToneForgeApp.swift#loadBorrowLoops"
-        note: "Borrow section in RemixSheet; SampleBank.autoKit pads with downloaded loop files, bar-synced. Same backend."
+        note: "Borrow section in RemixSheet; SampleBank.autoKit pads with downloaded loop files, bar-synced. Same backend — 16-pad grid mixes this song's sections (0–7) and the donor's (8–15), colour-coded by source colorHint, named by section (Verse/Chorus)."
       desktop:
         status: done
         evidence: "jam-desktop/Sources/JamDesktop/SessionController.swift#loadBorrowLoops"
-        note: "Borrow section in RemixSheetView; borrowfile: sentinel routes to ChopPlayer.trigger(file:loop:), launchpad in loop mode. Same backend."
+        note: "Borrow section in RemixSheetView; borrowfile: sentinel routes to ChopPlayer.trigger(file:loop:), launchpad in loop mode. Same backend — both songs' section loops placed sequentially (this song then donor) across the 8×8, colour-coded by source, named by section."
       plugin:
         status: missing
         note: "Plugin has no Remix surface yet; would need a borrow browser + loop-pad playback in the JUCE editor."
