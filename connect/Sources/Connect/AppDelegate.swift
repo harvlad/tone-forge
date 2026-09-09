@@ -179,12 +179,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        // Relabeled from "Pair with browser…": the app can't pair a
-        // specific already-open tab (pairing binds to the browser tab's
-        // session), so this just opens the web app; the actual pairing is
-        // driven from the web Connect panel ("Launch Connect").
+        // Opens jamn.app in Chrome (the web bridge/WebMIDI path is
+        // Chrome-only). The app can't pair a specific already-open tab
+        // (pairing binds to the tab session), so this just opens the app;
+        // real pairing is driven from the web Connect panel ("Launch Connect").
         let pair = NSMenuItem(
-            title: "Open Jamn in browser…",
+            title: "Open Jamn in Chrome…",
             action: #selector(pairWithBrowser(_:)),
             keyEquivalent: "o"
         )
@@ -240,13 +240,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the web app and surface a waiting hint in the menu so the
         // user knows we're alive and watching for the handoff.
         setStatus("open — pair from the web Connect panel")
-        // Open the production web app (was http://127.0.0.1:8300 — a dev-only
-        // URL that opened a dead page for real users). Override with
-        // JAMN_WEB_URL for local dev against a running backend.
+        // Open jamn.app in Google Chrome specifically (user directive): the
+        // web Connect bridge / WebMIDI fast path is Chrome-only, and the
+        // default browser is often Safari. Fall back to the default browser
+        // if Chrome isn't installed. Override the URL with JAMN_WEB_URL for
+        // local dev. Pairing itself is still driven from the web panel.
         let webURL = ProcessInfo.processInfo.environment["JAMN_WEB_URL"]
             ?? "https://jamn.app/"
-        if let u = URL(string: webURL) {
-            NSWorkspace.shared.open(u)
+        guard let u = URL(string: webURL) else { return }
+        let ws = NSWorkspace.shared
+        if let chrome = ws.urlForApplication(withBundleIdentifier: "com.google.Chrome") {
+            let cfg = NSWorkspace.OpenConfiguration()
+            ws.open([u], withApplicationAt: chrome, configuration: cfg)
+        } else {
+            ws.open(u) // Chrome not installed — default browser
         }
     }
 
