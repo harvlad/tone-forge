@@ -19,6 +19,7 @@
 
 import Foundation
 import AppKit
+import AVFoundation
 import Combine
 import ToneForgeEngine
 import JamDesktopCore
@@ -1246,9 +1247,16 @@ final class SessionController: ObservableObject {
             guard attachedAnalysisId == analysisId else { return }
             drumKitSampleFiles = files
             let pairs: [(chop: Chop, stem: String)] = pack.pads.compactMap { pad in
-                guard files[pad.padIdx] != nil else { return nil }
+                guard let url = files[pad.padIdx] else { return nil }
+                // Real loop length so the pad's WAVEFORM draws the whole loop.
+                // The file path plays the whole file regardless of the chop
+                // window; endSec/durationSec only frame the thumbnail, and the
+                // old 0.5 s stub made every borrow pad render as a blip then a
+                // flat line. Header read, cheap.
+                let dur: Double = (try? AVAudioFile(forReading: url)).map {
+                    Double($0.length) / $0.processingFormat.sampleRate } ?? 0.5
                 let chop = Chop(
-                    idx: pad.padIdx, startSec: 0, endSec: 0.5, durationSec: 0.5,
+                    idx: pad.padIdx, startSec: 0, endSec: dur, durationSec: dur,
                     kind: "phrase", sectionLabel: pad.name,
                     colorHint: pad.colorHint, contentType: nil,
                     performanceScore: nil, difficulty: nil,
