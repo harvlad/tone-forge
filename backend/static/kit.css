@@ -191,6 +191,76 @@
   pointer-events: none;
 }
 
+/* ---------- optional Session key/BPM target (Borrow conform) ---------- */
+
+/* OFF by default; songs play TRUE. When on, only ADDED (borrowed) parts are
+ * conformed to this key/tempo — never the loaded song's own playback. The
+ * cluster stacks its toggle+fields row over a one-line "plays true" hint so
+ * the promise stays visible right at the control. */
+.kit-session {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kit-session-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Reuses the .kit-seg segmented shell; hidden until the session is on. */
+.kit-session-fields {
+  gap: 6px;
+}
+
+.kit-session-fields[hidden] {
+  display: none;
+}
+
+/* Plain number input dressed to match .kit-select-el (no spinner chrome). */
+.kit-num {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  width: 52px;
+  color: var(--jamn-text, #fff);
+  background: var(--jamn-surface2, #1C1C24);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+
+.kit-num::-webkit-outer-spin-button,
+.kit-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Firefox drops the number spinners without the browser default chrome. */
+.kit-num {
+  -moz-appearance: textfield;
+}
+
+.kit-num:focus {
+  outline: none;
+  border-color: var(--jamn-accent, #8B5CF6);
+}
+
+.kit-session-hint {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--jamn-text2, #A1A1AA);
+  max-width: 340px;
+  line-height: 1.3;
+}
+
+.kit-session-hint[hidden] {
+  display: none;
+}
+
 /* ---------- transport strip ---------- */
 
 .kit-transport {

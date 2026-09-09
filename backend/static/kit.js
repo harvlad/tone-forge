@@ -967,12 +967,18 @@
     });
     s.borrowBtn = addBtn;
 
+    // Optional Session key/BPM target — OFF by default. Sits next to "+ Add
+    // from another song" because it only governs what THAT picker borrows:
+    // added parts conform to the target; the loaded song still plays true.
+    var sessionGroup = buildSessionControls(s);
+
     controls.appendChild(viewSeg);
     controls.appendChild(sizeSeg);
     controls.appendChild(quant);
     controls.appendChild(seg);
     controls.appendChild(chopGroup);
     controls.appendChild(addBtn);
+    controls.appendChild(sessionGroup);
     controls.appendChild(latch);
     controls.appendChild(groove);
     controls.appendChild(stop);
@@ -3625,6 +3631,261 @@
     });
   }
 
+  // ---------- optional Session key/BPM target (Borrow conform) ----------
+  //
+  // Core principle: songs stay TRUE by default. This target is OFF unless the
+  // user opts in, and even when on it ONLY conforms ADDED (borrowed) parts —
+  // never the loaded song's own playback (we never repitch/retime the primary
+  // song). When on, the Borrow fetches carry &target_bpm / &target_key so the
+  // backend conforms donor loops to the session instead of the host song; when
+  // off, no target params are sent (identical to today = conform to host).
+  // Persisted globally in localStorage jamn.session.target so it survives
+  // reloads, default off.
+
+  var SESSION_STORE_KEY = "jamn.session.target";
+  var KEY_ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  // Enharmonic fold so a flat key from analysis maps onto a chromatic root.
+  var FLAT_TO_SHARP = {
+    Db: "C#", Eb: "D#", Gb: "F#", Ab: "G#", Bb: "A#", Cb: "B", Fb: "E", "E#": "F", "B#": "C",
+  };
+  var _session = null; // lazy-loaded {on, key, bpm}, shared across surfaces
+
+  function getSession() {
+    if (_session) return _session;
+    var def = { on: false, key: "", bpm: 0 };
+    try {
+      if (window.localStorage) {
+        var raw = window.localStorage.getItem(SESSION_STORE_KEY);
+        if (raw) {
+          var o = JSON.parse(raw);
+          if (o && typeof o === "object") {
+            def.on = !!o.on;
+            def.key = typeof o.key === "string" ? o.key : "";
+            var b = parseInt(o.bpm, 10);
+            def.bpm = isFinite(b) && b > 0 ? b : 0;
+          }
+        }
+      }
+    } catch (_) {}
+    _session = def;
+    return _session;
+  }
+
+  function saveSession() {
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(SESSION_STORE_KEY, JSON.stringify(getSession()));
+      }
+    } catch (_) {}
+  }
+
+  /** Split a free-form key string ("G minor", "Gm", "Bb major", "C") into a
+   * chromatic root + major/minor quality; safe defaults for anything odd. */
+  function parseKey(str) {
+    var raw = String(str || "").trim();
+    if (!raw) return { root: "C", quality: "major" };
+    var m = raw.match(/^([A-Ga-g])([#b♯♭]?)\s*(.*)$/);
+    if (!m) return { root: "C", quality: "major" };
+    var acc = m[2] === "b" || m[2] === "♭" ? "b"
+      : (m[2] === "#" || m[2] === "♯" ? "#" : "");
+    var root = m[1].toUpperCase() + acc;
+    if (FLAT_TO_SHARP[root]) root = FLAT_TO_SHARP[root];
+    if (KEY_ROOTS.indexOf(root) < 0) root = "C";
+    var rest = m[3].toLowerCase();
+    var quality = (rest.indexOf("min") >= 0 || rest === "m") ? "minor" : "major";
+    return { root: root, quality: quality };
+  }
+
+  // Backend target_key form is "<root> <quality>", e.g. "G minor".
+  function formatKey(root, quality) {
+    return root + " " + quality;
+  }
+
+  /** The loaded song's own key/tempo — the first-enable prefill so opting in
+   * doesn't immediately change anything (conforming to the host key/tempo is
+   * the same as today's true/host-conform behavior). */
+  function songKeyTempo(s) {
+    var r = s && s.entry && s.entry.result;
+    var key = (r && (r.detected_key || r.key ||
+      (r.descriptor && r.descriptor.detected_key))) || "";
+    var tempo = r && (r.tempo_bpm || r.tempo);
+    return {
+      key: String(key || ""),
+      bpm: typeof tempo === "number" && isFinite(tempo) && tempo > 0
+        ? Math.round(tempo) : 0,
+    };
+  }
+
+  // "&target_bpm=..&target_key=.." for the Borrow URLs — empty string when the
+  // session is off (so requests are byte-identical to today = host-conform).
+  function sessionTargetParams() {
+    var s = getSession();
+    if (!s.on) return "";
+    var q = "";
+    if (s.bpm > 0) q += "&target_bpm=" + encodeURIComponent(s.bpm);
+    if (s.key) q += "&target_key=" + encodeURIComponent(s.key);
+    return q;
+  }
+
+  // Same target as an options object for the host loadBorrow hook; null when
+  // off. Passed as a 3rd arg an older host simply ignores (graceful — the load
+  // then behaves as today, and the candidate list is already session-scoped).
+  function sessionTargetOpts() {
+    var s = getSession();
+    if (!s.on) return null;
+    var o = {};
+    if (s.bpm > 0) o.target_bpm = s.bpm;
+    if (s.key) o.target_key = s.key;
+    return o;
+  }
+
+  /** Reflect the persisted on/off into the toggle label + field visibility. */
+  function syncSessionUi(s) {
+    var e = s && s.sessionEls;
+    if (!e) return;
+    var on = getSession().on;
+    e.toggle.classList.toggle("is-on", on);
+    e.toggle.setAttribute("aria-pressed", String(on));
+    e.toggle.textContent = on ? "Session: on" : "Session: off";
+    e.fields.hidden = !on;
+    e.hint.hidden = !on;
+  }
+
+  /** Build the Session cluster: an opt-in toggle (OFF by default) that, when
+   * on, reveals a compact Key (root + maj/min) picker and a BPM number input,
+   * plus a one-line "plays true" hint. Styled with the house .kit-toggle /
+   * .kit-seg / .kit-select shells. */
+  function buildSessionControls(s) {
+    var sess = getSession();
+
+    var wrap = document.createElement("div");
+    wrap.className = "kit-session";
+
+    var row = document.createElement("div");
+    row.className = "kit-session-row";
+
+    var toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "kit-toggle kit-session-toggle";
+    toggle.title = "Optional: conform ADDED parts to a session key/tempo. "
+      + "Off = every song plays true.";
+
+    var fields = document.createElement("div");
+    fields.className = "kit-seg kit-session-fields";
+    fields.setAttribute("role", "group");
+    fields.title = "Added parts conform to this key and tempo";
+
+    // Key: chromatic root + major/minor, combining to the "G minor" form.
+    var keyWrap = document.createElement("div");
+    keyWrap.className = "kit-select";
+    var keyCap = document.createElement("span");
+    keyCap.className = "kit-select-cap";
+    keyCap.textContent = "Key";
+    var rootSel = document.createElement("select");
+    rootSel.className = "kit-select-el kit-session-root";
+    rootSel.setAttribute("aria-label", "Session key root");
+    KEY_ROOTS.forEach(function (r) {
+      var o = document.createElement("option");
+      o.value = r;
+      o.textContent = r;
+      rootSel.appendChild(o);
+    });
+    var qualSel = document.createElement("select");
+    qualSel.className = "kit-select-el kit-session-qual";
+    qualSel.setAttribute("aria-label", "Session key quality");
+    [["major", "maj"], ["minor", "min"]].forEach(function (q) {
+      var o = document.createElement("option");
+      o.value = q[0];
+      o.textContent = q[1];
+      qualSel.appendChild(o);
+    });
+    keyWrap.appendChild(keyCap);
+    keyWrap.appendChild(rootSel);
+    keyWrap.appendChild(qualSel);
+
+    // BPM: a plain number input dressed to sit in the segmented shell.
+    var bpmWrap = document.createElement("div");
+    bpmWrap.className = "kit-select";
+    var bpmCap = document.createElement("span");
+    bpmCap.className = "kit-select-cap";
+    bpmCap.textContent = "BPM";
+    var bpm = document.createElement("input");
+    bpm.type = "number";
+    bpm.className = "kit-num kit-session-bpm";
+    bpm.min = "40";
+    bpm.max = "240";
+    bpm.step = "1";
+    bpm.inputMode = "numeric";
+    bpm.setAttribute("aria-label", "Session tempo (BPM)");
+    bpmWrap.appendChild(bpmCap);
+    bpmWrap.appendChild(bpm);
+
+    fields.appendChild(keyWrap);
+    fields.appendChild(bpmWrap);
+
+    row.appendChild(toggle);
+    row.appendChild(fields);
+
+    var hint = document.createElement("div");
+    hint.className = "kit-session-hint";
+    hint.textContent = "Added parts conform to this key/tempo. Your song plays true.";
+
+    wrap.appendChild(row);
+    wrap.appendChild(hint);
+
+    s.sessionEls = {
+      toggle: toggle, fields: fields, hint: hint,
+      root: rootSel, qual: qualSel, bpm: bpm,
+    };
+
+    // Seed the widgets from the persisted target.
+    var parsed = parseKey(sess.key);
+    rootSel.value = parsed.root;
+    qualSel.value = parsed.quality;
+    if (sess.bpm) bpm.value = String(sess.bpm);
+
+    function commitKey() {
+      sess.key = formatKey(rootSel.value, qualSel.value);
+      saveSession();
+    }
+    function commitBpm() {
+      var v = parseInt(bpm.value, 10);
+      sess.bpm = isFinite(v) && v > 0 ? v : 0;
+      saveSession();
+    }
+    rootSel.addEventListener("change", commitKey);
+    qualSel.addEventListener("change", commitKey);
+    bpm.addEventListener("change", commitBpm);
+    bpm.addEventListener("input", commitBpm);
+
+    toggle.addEventListener("click", function () {
+      sess.on = !sess.on;
+      if (sess.on) {
+        // First-enable prefill from the loaded song so nothing conforms away
+        // from what's playing yet — only fill blanks, never clobber a target
+        // the user already dialed in.
+        var st = songKeyTempo(s);
+        if (!sess.key) {
+          if (st.key) {
+            var p = parseKey(st.key);
+            rootSel.value = p.root;
+            qualSel.value = p.quality;
+          }
+          sess.key = formatKey(rootSel.value, qualSel.value);
+        }
+        if (!sess.bpm && st.bpm) {
+          bpm.value = String(st.bpm);
+          sess.bpm = st.bpm;
+        }
+      }
+      saveSession();
+      syncSessionUi(s);
+    });
+
+    syncSessionUi(s);
+    return wrap;
+  }
+
   // ---------- "+ Add from another song" (Borrow real loops) ----------
   //
   // Promotes the Remix modal's Borrow block (remix.js loadBorrowCandidates /
@@ -3801,8 +4062,11 @@
     b.loaded = false;
     b.unavailable = false;
     renderBorrowBody(s);
+    // Session on → conform candidates to the target key/tempo; off → no
+    // target params (identical to today = ranked against the host song).
     var url = "/api/song/" + encodeURIComponent(cur) +
-      "/borrow-candidates?stem=" + encodeURIComponent(stem);
+      "/borrow-candidates?stem=" + encodeURIComponent(stem) +
+      sessionTargetParams();
     fetch(url)
       .then(function (r) {
         if (r.status === 404) { b.unavailable = true; return { candidates: [] }; }
@@ -3929,7 +4193,8 @@
         var what = stem === "drums" ? "beat"
           : stem === "vocals" ? "melody"
           : stem === "bass" ? "bass" : "chords";
-        toast(live, "Added a borrowed " + what + " — matched to your tempo");
+        var where = sessionTargetOpts() ? "your session key/tempo" : "your tempo";
+        toast(live, "Added a borrowed " + what + " — matched to " + where);
       })
       .catch(function (e) {
         if (!s.alive) return;
@@ -3942,15 +4207,20 @@
   function doBorrowLoad(s, donor, stem) {
     var host = window.JamnKitHost;
     if (host && typeof host.loadBorrow === "function") {
-      return Promise.resolve(host.loadBorrow(donor, stem));
+      // Hand the host the session target as a 3rd arg so it can conform the
+      // borrowed loops. An older host ignores it (graceful — the load then
+      // behaves as today; the candidate list is already session-scoped).
+      return Promise.resolve(host.loadBorrow(donor, stem, sessionTargetOpts()));
     }
     // Hostless fallback (same path the host hook runs): fetch the manifest and
     // mount it. Current-song id from the loaded entry / last real song.
     var cur = borrowSongId(s);
     if (!cur) return Promise.reject(new Error("no current song"));
+    // Session on → conform the borrowed loops to the target; off → no params.
     var url = "/api/song/" + encodeURIComponent(cur) +
       "/borrow?donor=" + encodeURIComponent(donor) +
-      "&stem=" + encodeURIComponent(stem);
+      "&stem=" + encodeURIComponent(stem) +
+      sessionTargetParams();
     return fetch(url).then(function (r) {
       if (r.status === 404) throw new Error("borrowing not available");
       if (!r.ok) throw new Error("borrow HTTP " + r.status);

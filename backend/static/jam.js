@@ -15708,11 +15708,19 @@
           },
           // Borrow: fetch a donor's loops (already a SamplePack manifest with
           // sampleUrl loop pads) and mount them on the Jam pads.
-          loadBorrow: async (donor, stem) => {
+          loadBorrow: async (donor, stem, opts) => {
             const cur = state.analysisId;
+            // Optional Session target (kit.js): conform the borrowed part
+            // to a target key/BPM. Omitted → default = conform to host
+            // (true). Never affects the primary song's own playback.
+            let target = '';
+            if (opts && (opts.target_bpm || opts.target_key)) {
+              if (opts.target_bpm) target += `&target_bpm=${encodeURIComponent(opts.target_bpm)}`;
+              if (opts.target_key) target += `&target_key=${encodeURIComponent(opts.target_key)}`;
+            }
             const r = await fetch(
               `/api/song/${cur}/borrow?donor=${encodeURIComponent(donor)}`
-              + `&stem=${encodeURIComponent(stem)}`);
+              + `&stem=${encodeURIComponent(stem)}` + target);
             if (!r.ok) throw new Error('borrow HTTP ' + r.status);
             const manifest = await r.json();
             window.JamnKit?.mountManifest?.(manifest);

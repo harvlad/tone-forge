@@ -6429,9 +6429,18 @@ async def get_song_groove(entry_id: str) -> JSONResponse:
 async def get_borrow_candidates(
     entry_id: str,
     stem: str = Query("drums", description="Stem to borrow: drums (Phase 1)"),
+    target_bpm: Optional[float] = Query(
+        None, description="Optional session BPM to rank/stretch against. "
+        "Absent → this song's tempo (default, unchanged)."),
+    target_key: Optional[str] = Query(
+        None, description="Optional session key (e.g. 'G minor') to rank "
+        "against. Absent → this song's key content (default, unchanged)."),
 ) -> JSONResponse:
     """Songs whose `stem` can be borrowed as tempo-matched loops for this
-    song (Borrow Beat). Ranked by tempo proximity (octave-folded)."""
+    song (Borrow Beat). Ranked by tempo proximity (octave-folded) and, for
+    melodic stems, harmonic fit. Optional `target_bpm`/`target_key` retarget
+    the ranking to a session goal instead of this song's own tempo/key —
+    absent, the song stays TRUE and behaviour is byte-for-byte today's."""
     from tone_forge.performance import borrow as _borrow
 
     entry = _get_history_item(entry_id)
@@ -6441,13 +6450,24 @@ async def get_borrow_candidates(
     if not isinstance(result, dict):
         raise HTTPException(status_code=422, detail="Song has no analysis result")
     history = await asyncio.to_thread(_load_history)
-    target_bpm = _borrow._tempo_of(result)
-    target_key = result.get("detected_key") or result.get("key")
-    cands = _borrow.borrow_candidates(
-        history, entry_id, stem, target_bpm, target_key=target_key,
-        target_result=result)
+    host_bpm = _borrow._tempo_of(result)
+    host_key = result.get("detected_key") or result.get("key")
+    eff_bpm = target_bpm if target_bpm else host_bpm
+    if target_key:
+        # Explicit session key: rank purely by key relationship to THAT key
+        # (label-based, target_result omitted) so donors are ordered by how
+        # well they'll sit once transposed to the target.
+        cands = _borrow.borrow_candidates(
+            history, entry_id, stem, eff_bpm, target_key=target_key)
+        resp_key = target_key
+    else:
+        # Default: content-based harmonic fit against this song (unchanged).
+        cands = _borrow.borrow_candidates(
+            history, entry_id, stem, eff_bpm, target_key=host_key,
+            target_result=result)
+        resp_key = host_key
     return JSONResponse({"analysisId": entry_id, "stem": stem,
-                         "targetTempo": target_bpm, "targetKey": target_key,
+                         "targetTempo": eff_bpm, "targetKey": resp_key,
                          "candidates": cands[:12]})
 
 
@@ -6456,10 +6476,24 @@ async def get_borrow_loops(
     entry_id: str,
     donor: str = Query(..., description="Donor song entry id"),
     stem: str = Query("drums", description="Stem to borrow"),
+    target_bpm: Optional[float] = Query(
+        None, description="Optional session BPM to stretch BORROWED loops to. "
+        "Absent → this song's tempo (default). Never changes the host's own "
+        "pads."),
+    target_key: Optional[str] = Query(
+        None, description="Optional session key (e.g. 'G minor') to transpose "
+        "BORROWED loops to. Absent → no transpose (default). Never touches the "
+        "host's own pads."),
 ) -> JSONResponse:
     """Render the donor's `stem` loops time-stretched to THIS song's tempo,
     returned as loopable pads (sampleUrl each). Real recorded loops — the
-    coherent alternative to synthesized Re-Drum."""
+    coherent alternative to synthesized Re-Drum.
+
+    Optional `target_bpm`/`target_key` conform the BORROWED (donor) loops to a
+    session goal: donors are stretched to `target_bpm` and pitch-shifted to
+    `target_key`. The host/primary song's own pads are NEVER retimed or
+    transposed — the play-along recording stays true; only added parts conform.
+    With neither param the render is byte-for-byte today's."""
     from tone_forge.performance import borrow as _borrow
 
     entry = _get_history_item(entry_id)
@@ -6474,9 +6508,13 @@ async def get_borrow_loops(
     donor_result = donor_entry.get("result")
     if not isinstance(donor_result, dict):
         raise HTTPException(status_code=422, detail="Donor has no analysis result")
-    target_bpm = _borrow._tempo_of(result)
-    if not target_bpm:
+    host_bpm = _borrow._tempo_of(result)
+    if not host_bpm:
         raise HTTPException(status_code=422, detail="This song has no tempo")
+    # The host's own pads ALWAYS render at the host tempo (ratio≈1, untouched);
+    # only borrowed donor loops conform to an explicit session BPM. Absent →
+    # donors lock to the host tempo, exactly as before.
+    donor_bpm = target_bpm if target_bpm else host_bpm
     _refresh_r2_stem_urls(result)
     _refresh_r2_stem_urls(donor_result)
     loop = asyncio.get_running_loop()
@@ -6510,13 +6548,15 @@ async def get_borrow_loops(
             break
         lbl = labels.get(s, s.title())
         if i_stem is not None:
+            # Host song's own pads: host tempo, no transpose (stays TRUE).
             jobs.append(loop.run_in_executor(
                 _render_pool(), _borrow.borrow_job, entry_id, result, s,
-                target_bpm, i_stem, base, "initial", lbl))
+                host_bpm, i_stem, base, "initial", lbl, None))
         if d_stem is not None:
+            # Borrowed pads: conform to the session BPM/key when supplied.
             jobs.append(loop.run_in_executor(
                 _render_pool(), _borrow.borrow_job, donor, donor_result, s,
-                target_bpm, d_stem, base + half, "donor", lbl))
+                donor_bpm, d_stem, base + half, "donor", lbl, target_key))
         block += 1
     rendered = await asyncio.gather(*jobs) if jobs else []
     pads = [p for grp in rendered for p in (grp or [])]

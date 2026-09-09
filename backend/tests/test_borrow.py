@@ -199,3 +199,222 @@ def test_section_spans_fallback_when_no_sections():
 def test_label_names_number_repeats():
     spans = [(0, 1, "verse"), (1, 2, "chorus"), (2, 3, "verse")]
     assert borrow._label_names(spans) == ["Verse", "Chorus", "Verse 2"]
+
+
+# --- optional session key/BPM target (Borrow retarget) ----------------------
+
+def test_transpose_steps_signed_shortest_octave_equivalent():
+    # Up a fifth C→G is +7 semitones, but the shorter path is -5 (down a fourth).
+    assert borrow._transpose_steps("C major", "G major") == -5
+    # Down C→A is -3 (up 9 folds to the shorter -3).
+    assert borrow._transpose_steps("C major", "A minor") == -3
+    # Same tonic, different mode → NO transpose (mode is colour, not pitch).
+    assert borrow._transpose_steps("G minor", "G major") == 0
+    assert borrow._transpose_steps("C major", "C major") == 0
+    # Tritone stays +6 (the +6/-6 boundary maps to +6).
+    assert borrow._transpose_steps("C major", "F# major") == 6
+    # Every result is within the [-6, +6] band.
+    keys = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    for kd in keys:
+        for kt in keys:
+            n = borrow._transpose_steps(f"{kd} major", f"{kt} major")
+            assert -6 <= n <= 6
+    # Unparseable either side → 0 (don't guess).
+    assert borrow._transpose_steps(None, "G minor") == 0
+    assert borrow._transpose_steps("C major", "garbage") == 0
+
+
+def test_cache_key_default_is_byte_identical():
+    # The whole point of "default = today": with no target_key the cache
+    # filename must be exactly what it was before the feature (target_key
+    # omitted from the hashed string entirely).
+    span = (4.0, 12.0)
+    base = borrow._cache_key("song1", "bass", 120.0, span)
+    same = borrow._cache_key("song1", "bass", 120.0, span, None)
+    # Reproduce the pre-feature hash string explicitly to pin the format.
+    import hashlib
+    legacy = (f"song1|bass|{round(120.0, 2)}|{round(span[0], 3)}|"
+              f"{round(span[1], 3)}|v{borrow.BORROW_VERSION}")
+    legacy_fn = f"borrow_{hashlib.sha1(legacy.encode()).hexdigest()[:20]}.wav"
+    assert base == same == legacy_fn
+
+
+def test_cache_key_targeted_caches_separately():
+    span = (4.0, 12.0)
+    base = borrow._cache_key("song1", "bass", 120.0, span)
+    keyed = borrow._cache_key("song1", "bass", 120.0, span, "G minor")
+    keyed2 = borrow._cache_key("song1", "bass", 120.0, span, "A minor")
+    retimed = borrow._cache_key("song1", "bass", 140.0, span)
+    # A transposed render, a differently-keyed render, and a retimed render all
+    # land in distinct cache slots; none collides with the untargeted default.
+    assert len({base, keyed, keyed2, retimed}) == 4
+
+
+def test_pitch_shift_no_op_at_zero_returns_same_object():
+    np = pytest.importorskip("numpy")
+    librosa = pytest.importorskip("librosa")
+    seg = (np.random.RandomState(0).randn(2048, 2) * 0.1).astype("float32")
+    # 0 steps must be a true no-op (identity object) — the default pays nothing.
+    assert borrow._pitch_shift(seg, 22050, 0, np, librosa) is seg
+
+
+def test_pitch_shift_preserves_length_and_changes_content():
+    np = pytest.importorskip("numpy")
+    librosa = pytest.importorskip("librosa")
+    sr = 22050
+    # A pure tone so the shift is audible/measurable, not just noise.
+    t = np.arange(sr) / sr
+    tone = np.sin(2 * np.pi * 220.0 * t).astype("float32")
+    seg = np.stack([tone, tone], axis=1)
+    out = borrow._pitch_shift(seg, sr, 5, np, librosa)
+    assert out.shape[1] == 2
+    # Phase vocoder is length-preserving (keeps bar-lock intact after stretch).
+    assert abs(out.shape[0] - seg.shape[0]) < 0.02 * sr
+    assert not np.allclose(out[: seg.shape[0]], seg[: out.shape[0]])
+
+
+def test_render_default_equals_host_path(tmp_path, monkeypatch):
+    """(a) No target params ⇒ identical render to the host-tempo path. We prove
+    it at the render layer: the untargeted render and an explicit
+    target_key=None render produce the same cache file, and a real transpose
+    produces a different one — the default is never silently altered."""
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("soundfile")
+    pytest.importorskip("librosa")
+    import soundfile as sf
+
+    monkeypatch.setenv("TONEFORGE_BORROW_CACHE", str(tmp_path))
+
+    sr = 22050
+    stem_wav = tmp_path / "bass.wav"
+    tone = np.sin(2 * np.pi * 110.0 * (np.arange(16 * sr) / sr)).astype("float32")
+    sf.write(str(stem_wav), np.stack([tone, tone], axis=1), sr)
+
+    result = {
+        "tempo_bpm": 120, "detected_key": "C major",
+        "downbeats_s": [float(i) for i in range(17)], "duration_sec": 17.0,
+        "sections": [
+            {"type": "verse", "start_time": 0.0, "end_time": 8.0},
+            {"type": "chorus", "start_time": 8.0, "end_time": 16.0},
+        ],
+        "stems_paths": {"bass": str(stem_wav)},
+    }
+
+    def _fake_materialize(res, td, roles=None):
+        return {"bass": stem_wav}
+
+    monkeypatch.setattr("tone_forge.stem_fetch.materialize_stems",
+                        _fake_materialize)
+
+    # Default (no key) vs explicit None: byte-identical set of cache files.
+    pads_default = borrow.render_section_loops(
+        "donorX", result, "bass", 120.0, donor_stem="bass",
+        source_tag="donor")
+    pads_none = borrow.render_section_loops(
+        "donorX", result, "bass", 120.0, donor_stem="bass",
+        source_tag="donor", target_key=None)
+    assert pads_default and pads_none
+    files_default = {p["sampleFile"] for p in pads_default}
+    files_none = {p["sampleFile"] for p in pads_none}
+    assert files_default == files_none
+
+    # (c) A donor transpose to G minor writes DIFFERENT cache files (separate
+    # slot) and does not disturb the default renders that already exist.
+    pads_keyed = borrow.render_section_loops(
+        "donorX", result, "bass", 120.0, donor_stem="bass",
+        source_tag="donor", target_key="G minor")
+    files_keyed = {p["sampleFile"] for p in pads_keyed}
+    assert files_keyed and files_keyed.isdisjoint(files_default)
+    # Every default file still present & untouched.
+    for f in files_default:
+        assert (tmp_path / f).exists()
+
+
+def test_host_initial_pads_never_transpose(tmp_path, monkeypatch):
+    """(c') source_tag='initial' (the host) is NEVER transposed even when a
+    target_key is passed — the play-along recording stays TRUE. So an initial
+    render with target_key='G minor' hits the SAME cache file as the default."""
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("soundfile")
+    pytest.importorskip("librosa")
+    import soundfile as sf
+
+    monkeypatch.setenv("TONEFORGE_BORROW_CACHE", str(tmp_path))
+    sr = 22050
+    stem_wav = tmp_path / "bass.wav"
+    tone = np.sin(2 * np.pi * 110.0 * (np.arange(16 * sr) / sr)).astype("float32")
+    sf.write(str(stem_wav), np.stack([tone, tone], axis=1), sr)
+    result = {
+        "tempo_bpm": 120, "detected_key": "C major",
+        "downbeats_s": [float(i) for i in range(17)], "duration_sec": 17.0,
+        "sections": [{"type": "verse", "start_time": 0.0, "end_time": 8.0},
+                     {"type": "chorus", "start_time": 8.0, "end_time": 16.0}],
+        "stems_paths": {"bass": str(stem_wav)},
+    }
+    monkeypatch.setattr("tone_forge.stem_fetch.materialize_stems",
+                        lambda res, td, roles=None: {"bass": stem_wav})
+
+    host_plain = {p["sampleFile"] for p in borrow.render_section_loops(
+        "hostX", result, "bass", 120.0, donor_stem="bass",
+        source_tag="initial")}
+    host_keyed = {p["sampleFile"] for p in borrow.render_section_loops(
+        "hostX", result, "bass", 120.0, donor_stem="bass",
+        source_tag="initial", target_key="G minor")}
+    assert host_plain and host_plain == host_keyed
+
+
+def test_target_bpm_overrides_stretch_tempo(tmp_path, monkeypatch):
+    """(b) target_bpm drives the stretch: rendering the same donor to 120 vs
+    140 must produce loops of different DURATION (the 140 render is faster/
+    shorter) and separate cache files."""
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("soundfile")
+    pytest.importorskip("librosa")
+    import soundfile as sf
+
+    monkeypatch.setenv("TONEFORGE_BORROW_CACHE", str(tmp_path))
+    sr = 22050
+    stem_wav = tmp_path / "bass.wav"
+    tone = np.sin(2 * np.pi * 110.0 * (np.arange(16 * sr) / sr)).astype("float32")
+    sf.write(str(stem_wav), np.stack([tone, tone], axis=1), sr)
+    # Donor at 100 BPM so a target of 120 vs 140 gives clearly different ratios.
+    result = {
+        "tempo_bpm": 100, "detected_key": "C major",
+        "downbeats_s": [float(i) for i in range(17)], "duration_sec": 17.0,
+        "sections": [{"type": "verse", "start_time": 0.0, "end_time": 8.0},
+                     {"type": "chorus", "start_time": 8.0, "end_time": 16.0}],
+        "stems_paths": {"bass": str(stem_wav)},
+    }
+    monkeypatch.setattr("tone_forge.stem_fetch.materialize_stems",
+                        lambda res, td, roles=None: {"bass": stem_wav})
+
+    p120 = borrow.render_section_loops(
+        "donorX", result, "bass", 120.0, donor_stem="bass", source_tag="donor")
+    p140 = borrow.render_section_loops(
+        "donorX", result, "bass", 140.0, donor_stem="bass", source_tag="donor")
+    assert p120 and p140
+    f120 = tmp_path / p120[0]["sampleFile"]
+    f140 = tmp_path / p140[0]["sampleFile"]
+    assert f120.name != f140.name          # separate cache slots per target BPM
+    d120, _ = sf.read(str(f120))
+    d140, _ = sf.read(str(f140))
+    # Higher target tempo ⇒ shorter loop (donor sped up more).
+    assert d140.shape[0] < d120.shape[0]
+
+
+def test_key_distance_ranking(tmp_path, monkeypatch):
+    """(d) With an explicit target_key, candidates rank by key relationship to
+    THAT key: a donor already in the target key beats a fifth-away donor, which
+    beats a semitone-away one; a tritone clash is dropped entirely."""
+    entries = [
+        _entry("exact", 120, "G minor", ["bass"]),      # == target
+        _entry("fifth", 120, "D minor", ["bass"]),      # fifth from G
+        _entry("semi", 120, "G# minor", ["bass"]),      # semitone nudge
+        _entry("clash", 120, "C# minor", ["bass"]),     # tritone from G → drop
+    ]
+    c = borrow.borrow_candidates(entries, "me", "bass", 120.0,
+                                 target_key="G minor")
+    ids = [x["entryId"] for x in c]
+    assert ids[0] == "exact"
+    assert "clash" not in ids
+    assert ids.index("fifth") < ids.index("semi")   # fifth outranks semitone

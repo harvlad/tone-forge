@@ -338,11 +338,54 @@ def _section_spans(result: Dict, n: int
 
 
 def _cache_key(source_id: str, stem: str, target_bpm: float,
-               span: Tuple[float, float]) -> str:
-    h = hashlib.sha1(
-        f"{source_id}|{stem}|{round(target_bpm, 2)}|{round(span[0], 3)}|"
-        f"{round(span[1], 3)}|v{BORROW_VERSION}".encode()).hexdigest()[:20]
+               span: Tuple[float, float],
+               target_key: Optional[str] = None) -> str:
+    # target_key is APPENDED only when present so the untargeted default render
+    # keeps the byte-identical filename it has always had — a transposed /
+    # retimed render lands in its own cache slot and never collides with (or
+    # overwrites) the true default. target_bpm is already part of the key, so a
+    # donor stretched to a user target BPM is likewise cached separately.
+    base = (f"{source_id}|{stem}|{round(target_bpm, 2)}|{round(span[0], 3)}|"
+            f"{round(span[1], 3)}|v{BORROW_VERSION}")
+    if target_key:
+        base += f"|k={target_key}"
+    h = hashlib.sha1(base.encode()).hexdigest()[:20]
     return f"borrow_{h}.wav"
+
+
+def _transpose_steps(donor_key: Optional[str],
+                     target_key: Optional[str]) -> int:
+    """Shortest SIGNED semitone move from the donor's tonic to the target's,
+    octave-equivalent so we never shift more than a tritone in either
+    direction (range [-5, +6]). 0 when either key is unparseable — we simply
+    don't transpose rather than guess. Only the pitch class matters here; mode
+    (major/minor) is a colour, not a transposition, so a G-minor donor asked
+    for 'G major' stays put (0 steps) and a C→G ask moves +7 → folds to -5."""
+    dk, tk = _parse_key(donor_key), _parse_key(target_key)
+    if dk is None or tk is None:
+        return 0
+    diff = (tk[0] - dk[0]) % 12          # 0..11 semitones up from donor
+    if diff > 6:
+        diff -= 12                       # take the shorter downward path
+    return diff
+
+
+def _pitch_shift(seg, sr: int, n_steps: int, np, librosa):
+    """Offline pitch-shift by `n_steps` semitones, per channel (phase vocoder).
+    A no-op at 0 steps so the true default never pays for it and never eats the
+    vocoder's quality cost. Falls back to the untouched segment on any error —
+    a wrong-pitch loop is worse than an un-transposed one, but a crash is worse
+    than both."""
+    if n_steps == 0:
+        return seg
+    try:
+        chans = [librosa.effects.pitch_shift(
+            np.ascontiguousarray(seg[:, c]), sr=sr, n_steps=float(n_steps))
+            for c in range(seg.shape[1])]
+        m = min(len(c) for c in chans)
+        return np.stack([c[:m] for c in chans], axis=1)
+    except Exception:
+        return seg
 
 
 def sample_path(fname: str) -> Optional[Path]:
@@ -419,13 +462,20 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
                          donor_stem: Optional[str] = None,
                          pad_base: int = 0,
                          source_tag: str = "donor",
-                         stem_label: Optional[str] = None) -> List[Dict]:
+                         stem_label: Optional[str] = None,
+                         target_key: Optional[str] = None) -> List[Dict]:
     """Render one song's section loops, time-stretched to `target_bpm`, as
     loopable pads. `stem` is the logical role (drums/bass/other); `donor_stem`
     the actual key in this song's stems_paths (e.g. 'guitar_center' for
     'other'). `pad_base` offsets padIdx so two songs share one grid;
     `source_tag` ('initial'|'donor') colours the pads. `stem_label` prefixes
-    the pad name ("Bass Verse") when a grid mixes several stems. Heavy."""
+    the pad name ("Bass Verse") when a grid mixes several stems. Heavy.
+
+    `target_key` (optional, e.g. 'G minor') pitch-shifts BORROWED loops to that
+    key. It applies ONLY when source_tag == 'donor': the host/primary song's
+    own pads (source_tag == 'initial') are NEVER transposed, so the play-along
+    recording always stays true and only the added parts conform. None (the
+    default) means no transpose — today's behaviour, bit-for-bit."""
     donor_stem = donor_stem or stem
     try:
         import librosa
@@ -451,6 +501,19 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
     if not (0.25 <= ratio <= 4.0):
         return []
 
+    # Transpose is a DONOR-only affordance: never touch the host's own audio.
+    # n_steps stays 0 (and the cache key stays untargeted) unless the caller
+    # asked for a key AND this is a borrowed source — so the true default and
+    # the host pads keep their existing, un-shifted, byte-identical renders.
+    donor_key = source_result.get("detected_key") or source_result.get("key")
+    n_steps = 0
+    if target_key and source_tag == "donor":
+        n_steps = _transpose_steps(donor_key, target_key)
+    # Only vary the cache slot when we actually diverge from the default render
+    # (a real transpose). n_steps == 0 → identical audio → reuse the untargeted
+    # cache entry rather than duplicate it.
+    cache_key = target_key if n_steps != 0 else None
+
     spans = _section_spans(source_result, _LOOPS_PER_SOURCE)
     if not spans:
         return []
@@ -475,7 +538,8 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
             return []
 
         for i, (a, b, label) in enumerate(spans):
-            fname = _cache_key(source_id, donor_stem, target_bpm, (a, b))
+            fname = _cache_key(source_id, donor_stem, target_bpm, (a, b),
+                               cache_key)
             dest = out_dir / fname
             if not (dest.exists() and dest.stat().st_size > 0):
                 i0, i1 = int(a * sr), min(int(b * sr), y.shape[0])
@@ -488,6 +552,11 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
                 # 1/ratio — inverted — so donors were stretched the WRONG way.)
                 # The current song renders at ratio≈1 (no stretch, stays clean).
                 stretched = _time_stretch(seg, sr, ratio, np, sf, librosa)
+                # Then conform the PITCH to the target key (donor-only, off the
+                # hot path at 0 steps). Order is stretch→shift: the vocoder
+                # shift is length-preserving, so it leaves the bar-locked
+                # duration from the stretch intact.
+                stretched = _pitch_shift(stretched, sr, n_steps, np, librosa)
                 peak = float(np.max(np.abs(stretched))) or 1.0
                 stretched = (stretched / peak * 0.89).astype(np.float32)
                 try:
@@ -602,9 +671,11 @@ def borrow_candidates(entries: List[Dict], entry_id: str, stem: str,
 def borrow_job(source_id: str, source_result: Dict, stem: str,
                target_bpm: float, donor_stem: Optional[str] = None,
                pad_base: int = 0, source_tag: str = "donor",
-               stem_label: Optional[str] = None):
-    """Process-pool entry point. Renders one song's section loops."""
+               stem_label: Optional[str] = None,
+               target_key: Optional[str] = None):
+    """Process-pool entry point. Renders one song's section loops. `target_key`
+    is forwarded for the donor-only transpose (None = today's behaviour)."""
     return render_section_loops(
         source_id, source_result, stem, target_bpm,
         donor_stem=donor_stem, pad_base=pad_base, source_tag=source_tag,
-        stem_label=stem_label)
+        stem_label=stem_label, target_key=target_key)
