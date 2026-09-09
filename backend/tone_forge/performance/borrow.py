@@ -39,7 +39,7 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-BORROW_VERSION = 2      # bumped: section-cut loops (was 2-bar spans)
+BORROW_VERSION = 3      # bumped: atempo (WSOLA) stretch, was phase-vocoder
 _LOOPS_PER_SOURCE = 8   # half of a 16-pad grid per song (initial | donor)
 _MAX_LOOPS = _LOOPS_PER_SOURCE   # back-compat alias
 _STRETCH_LIMIT = 0.5    # refuse to stretch beyond ±50% (artifacts)
@@ -350,6 +350,52 @@ def _label_names(spans: List[Tuple[float, float, str]]) -> List[str]:
     return names
 
 
+def _time_stretch(seg, sr: int, tempo_mult: float, np, sf, librosa):
+    """Change tempo by `tempo_mult` (output_duration = input / tempo_mult),
+    preserving pitch. ffmpeg's atempo (WSOLA, time-domain) is used first — the
+    librosa phase vocoder sounded phasey/"underwater" on melodic & harmonic
+    loops (fine on drums, bad on bass/chords), which is why borrowed melodic
+    pads sounded submerged. Falls back to the phase vocoder if ffmpeg is
+    missing. atempo takes 0.5..2.0 per stage; chain when outside (the caller's
+    octave-fold keeps us in range, but be safe)."""
+    if abs(tempo_mult - 1.0) <= 1e-3:
+        return seg
+    import shutil
+    import subprocess
+    import tempfile as _tf
+    if shutil.which("ffmpeg"):
+        try:
+            stages, t = [], tempo_mult
+            while t > 2.0:
+                stages.append(2.0); t /= 2.0
+            while t < 0.5:
+                stages.append(0.5); t *= 2.0
+            stages.append(t)
+            chain = ",".join(f"atempo={s:.6f}" for s in stages)
+            with _tf.TemporaryDirectory(prefix="tf_atempo_") as d:
+                src = Path(d) / "in.wav"
+                dst = Path(d) / "out.wav"
+                sf.write(str(src), seg, sr, subtype="FLOAT")
+                subprocess.run(
+                    ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+                     "-filter:a", chain, str(dst)],
+                    check=True, timeout=60)
+                out, _ = sf.read(str(dst), dtype="float32", always_2d=True)
+                if out.shape[0] > 0:
+                    return out
+        except Exception:
+            pass
+    # Fallback: phase vocoder per channel. rate > 1 = faster/shorter.
+    try:
+        chans = [librosa.effects.time_stretch(
+            np.ascontiguousarray(seg[:, c]), rate=tempo_mult)
+            for c in range(seg.shape[1])]
+        m = min(len(c) for c in chans)
+        return np.stack([c[:m] for c in chans], axis=1)
+    except Exception:
+        return seg
+
+
 def render_section_loops(source_id: str, source_result: Dict, stem: str,
                          target_bpm: float, *,
                          donor_stem: Optional[str] = None,
@@ -414,19 +460,12 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
                 if i1 - i0 < int(0.2 * sr):
                     continue
                 seg = y[i0:i1]
-                # Phase-vocoder stretch per channel to the target tempo.
-                # rate > 1 = faster/shorter (source slower than target).
-                if abs(ratio - 1.0) > 1e-3:
-                    try:
-                        chans = [librosa.effects.time_stretch(
-                            np.ascontiguousarray(seg[:, c]), rate=1.0 / ratio)
-                            for c in range(seg.shape[1])]
-                        m = min(len(c) for c in chans)
-                        stretched = np.stack([c[:m] for c in chans], axis=1)
-                    except Exception:
-                        stretched = seg
-                else:
-                    stretched = seg   # already at tempo (the current song)
+                # Speed the donor to the target tempo: a k-bar span at
+                # donor_bpm must become k bars at target_bpm, i.e. its duration
+                # scales by 1/ratio, i.e. tempo × ratio. (The old code passed
+                # 1/ratio — inverted — so donors were stretched the WRONG way.)
+                # The current song renders at ratio≈1 (no stretch, stays clean).
+                stretched = _time_stretch(seg, sr, ratio, np, sf, librosa)
                 peak = float(np.max(np.abs(stretched))) or 1.0
                 stretched = (stretched / peak * 0.89).astype(np.float32)
                 try:
