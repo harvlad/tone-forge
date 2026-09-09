@@ -468,6 +468,22 @@ struct LaunchpadPanelView: View {
             .pickerStyle(.segmented)
             .frame(width: 84)
 
+            // Pad count: 16 (compact 4×4 — the Auto Kit's footprint) ⇄ 64
+            // (full 8×8). The on-screen grid AND a connected hardware
+            // Launchpad both follow this. Hidden in Layers view (which is
+            // pad-count agnostic).
+            if !showLayers {
+                Picker("Pads", selection: padCountBinding) {
+                    Text("16").tag(16)
+                    Text("64").tag(64)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 84)
+                .help("Pad count — 16 (compact 4×4) or 64 (full 8×8). "
+                      + "A connected Launchpad mirrors this grid.")
+            }
+
             // Tap = momentary (sounds only while held); Loop = latched seamless
             // loop (tap on, tap off).
             Picker("Play", selection: playbackModeBinding) {
@@ -666,6 +682,13 @@ struct LaunchpadPanelView: View {
         )
     }
 
+    private var padCountBinding: Binding<Int> {
+        Binding(
+            get: { launchpad.padCount },
+            set: { launchpad.padCount = $0 }
+        )
+    }
+
     private var stemRoles: [String] {
         model.session?.bundle.stems.map(\.role) ?? []
     }
@@ -673,15 +696,24 @@ struct LaunchpadPanelView: View {
     // MARK: - Grid
 
     private var padGrid: some View {
-        GeometryReader { geo in
+        // 16-pad mode is a compact 4×4 showing the first 16 pads (idx 0–15,
+        // the Auto Kit's footprint); 64-pad mode is the full 8×8. Display
+        // cells map row-major onto the SAME LaunchpadPad indices the
+        // controller and hardware use — a cell's grid idx is `dRow*cols +
+        // dCol`, decoded back to LaunchpadPad on the 8-wide grid — so
+        // triggering, assignments, swaps and the LED mirror are identical
+        // in both views; only how many pads are shown changes.
+        let cols = launchpad.padCount == 16 ? 4 : 8
+        return GeometryReader { geo in
             let spacing: CGFloat = 8
-            let side = (min(geo.size.width, geo.size.height) - spacing * 7) / 8
+            let side = (min(geo.size.width, geo.size.height)
+                        - spacing * CGFloat(cols - 1)) / CGFloat(cols)
             VStack(spacing: spacing) {
-                ForEach(0..<8, id: \.self) { row in
+                ForEach(0..<cols, id: \.self) { row in
                     HStack(spacing: spacing) {
-                        ForEach(0..<8, id: \.self) { col in
-                            let pad = LaunchpadPad(row: row, col: col)
-                            let padIdx = row * 8 + col
+                        ForEach(0..<cols, id: \.self) { col in
+                            let padIdx = row * cols + col
+                            let pad = LaunchpadPad(row: padIdx / 8, col: padIdx % 8)
                             PadCell(
                                 pad: pad,
                                 launchpad: launchpad,

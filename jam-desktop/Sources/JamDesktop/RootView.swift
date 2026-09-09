@@ -19,7 +19,6 @@ struct RootView: View {
     @State private var showLaunchpad = false
     @State private var showSequencer = false
     @State private var showRecordings = false
-    @State private var showJamPads = false
     @State private var showPacks = false
     @State private var showBeatCapture = false
     @State private var showRemix = false
@@ -43,7 +42,6 @@ struct RootView: View {
                     onLaunchpadTap: { showLaunchpad = true },
                     onSequencerTap: { showSequencer = true },
                     onRecordingsTap: { showRecordings = true },
-                    onJamPadsTap: { showJamPads = true },
                     onPacksTap: { showPacks = true },
                     onViewAllSongs: { model.view = .bandRoom }
                 )
@@ -139,7 +137,7 @@ struct RootView: View {
                 } label: {
                     Label("Launchpad", systemImage: "square.grid.3x3.fill")
                 }
-                .help("Chop pads (Launchpad Pro MK3 mirror)")
+                .help("Launchpad — pad kit, 16/64 grid, and Launchpad Pro MK3 mirror")
             }
             ToolbarItem(placement: .automatic) {
                 Button {
@@ -215,14 +213,6 @@ struct RootView: View {
             }
             ToolbarItem(placement: .automatic) {
                 Button {
-                    showJamPads.toggle()
-                } label: {
-                    Label("Jam Pads", systemImage: "pianokeys")
-                }
-                .help("In-key performance pads (wavetable synth)")
-            }
-            ToolbarItem(placement: .automatic) {
-                Button {
                     showPacks.toggle()
                 } label: {
                     Label("Packs", systemImage: "square.grid.2x2")
@@ -258,11 +248,6 @@ struct RootView: View {
         }
         .sheet(isPresented: $showRecordings) {
             RecordingsListView()
-                .environmentObject(model)
-                .environmentObject(session)
-        }
-        .sheet(isPresented: $showJamPads) {
-            JamPadGridView()
                 .environmentObject(model)
                 .environmentObject(session)
         }

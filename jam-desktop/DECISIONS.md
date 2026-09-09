@@ -278,3 +278,48 @@ uses, keeping the two ports in lock-step. NB: the RootView toolbar
 builder is at SwiftUI's 10-element cap — Melody lives inside a
 `ToolbarItemGroup` with Beat; a new top-level `ToolbarItem` breaks the
 build with "extra argument in call".
+
+## D-017: One "Launchpad" pad surface with a 16/64 grid toggle
+
+**Date:** 2026-09-09
+**Decision:** collapse the two pad surfaces into a single "Launchpad".
+`LaunchpadPanelView` (the rich chop/kit surface: quantize, layers, FX,
+transport, Auto/Drum Kit, radial menus, and the physical Launchpad Pro
+MK3 LED mirror via `LaunchpadController`) is the base and gains a
+16 ⇄ 64 pad-count toggle. The separate "Jam Pads" surface
+(`JamPadGridView` + `KeyScalePickerView`, a 12-pad in-key wavetable
+grid) is removed: its toolbar item, sidebar entry, `showJamPads` state,
+sheet routing, and both view files are deleted.
+
+`LaunchpadController` gained a `padCount` property (16 or 64, default
+64). It is a DISPLAY + hardware-LED concern only — assignments for pads
+beyond the count are retained, so toggling back to 64 restores the whole
+grid untouched. On the merged grid, 16-pad mode is a compact 4×4 showing
+the first 16 pads (idx 0–15, the Auto Kit's footprint); display cells map
+row-major onto the SAME `LaunchpadPad` indices the controller and
+hardware already use (`padIdx = dRow*cols + dCol`, decoded to
+`LaunchpadPad(row: padIdx/8, col: padIdx%8)`), so triggering,
+assignments, swaps, and the LED mirror are identical in both views —
+only the visible pad count changes. `repaint()` darks every
+out-of-range pad so a connected Launchpad mirrors exactly what is on
+screen; `padDown` ignores out-of-range presses (a hardware hit on a dark
+pad is a no-op); and shrinking 64 → 16 silences any voice sounding in a
+now-hidden cell so a held loop can't ring on unstoppably.
+
+**Alternatives:** keep both surfaces (rejected: redundant pad grids,
+one of which — Jam Pads — was the weaker in-key-only variant with no
+hardware mirror and no kit UI); make Jam Pads the base and fold the
+Launchpad panel into it (rejected: the panel is the far richer surface —
+folding the other direction would have re-implemented kit UI, quantize,
+layers, FX, radial menus and the hardware LED mirror); re-layout the
+controller's `assignments` map for 16-pad mode (rejected: `padCount`
+as a pure display/LED window keeps one index space, so the hardware
+`repaint()` and every pad-idx call site stay unchanged and 64↔16 is
+non-destructive). Supersedes the two-surface split implied by D-016's
+"jam-pad" wording — `JamInKeyModel` (the wavetable synth) stays: it
+still backs the sequencer synthChord voice and the Melody guide; only
+its dedicated pad *grid* is gone.
+**Why:** one surface named "Launchpad" removes the "which pad grid?"
+confusion, and the 16/64 toggle gives the compact 4×4 (matching the
+16-pad Auto Kit and the mobile 4×4 convention) without losing the full
+8×8 — both faithfully mirrored to hardware.

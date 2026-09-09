@@ -229,6 +229,40 @@ public final class LaunchpadController {
     /// coherently. Off = start immediately (bar-quantized only).
     public var loopLockEnabled: Bool = true
 
+    /// How many pads the merged Launchpad surface currently shows and
+    /// mirrors to hardware: 16 (compact 4×4 — the first 16 pads, ideal
+    /// for the 16-pad Auto Kit) or 64 (full 8×8). This is a DISPLAY +
+    /// hardware-LED concern only: assignments for pads beyond the count
+    /// are retained (hidden/dark), so toggling back to 64 restores the
+    /// whole grid untouched. A physical press on an out-of-range pad is
+    /// ignored, and any voice sounding in a now-hidden cell is silenced
+    /// so a held loop can't ring on with no visible pad to stop it.
+    public var padCount: Int = 64 {
+        didSet {
+            guard padCount != oldValue else { return }
+            if padCount < oldValue { silenceOutOfRange() }
+            repaint()
+        }
+    }
+
+    /// Whether `pad` is within the current `padCount` window (idx < count),
+    /// i.e. visible on screen and lit on hardware. Pads are numbered
+    /// row-major on the 8-wide grid, so the first 16 (idx 0–15) span the
+    /// top two hardware rows and fill the compact 4×4 on screen.
+    public func isPadVisible(_ pad: LaunchpadPad) -> Bool {
+        pad.row * 8 + pad.col < padCount
+    }
+
+    /// Stop and clear any sounding pad that fell outside the pad-count
+    /// window after a shrink (64 → 16). Chop loops are released through
+    /// `onRelease`; one-shot pack/local samples play through harmlessly.
+    private func silenceOutOfRange() {
+        for pad in Array(activePads) where !isPadVisible(pad) {
+            if let a = assignments[pad] { onRelease?(pad, a) }
+            activePads.remove(pad)
+        }
+    }
+
     /// Target sample-loop length in seconds: the 8 s kit window snapped to a
     /// whole number of bars at the song tempo (so loops stay musical). The
     /// shared lock cycle uses this period. Falls back to 8 s with no tempo.
@@ -510,6 +544,10 @@ public final class LaunchpadController {
     // MARK: - Pads
 
     public func padDown(_ pad: LaunchpadPad) {
+        // Out-of-range in the current 16/64 window: a hardware press on a
+        // dark pad (or a stale on-screen tap during a shrink) is a no-op,
+        // so the compact view never triggers a hidden cell.
+        guard isPadVisible(pad) else { return }
         // Check for custom pad assignment first
         let padIdx = pad.row * 8 + pad.col
         if let store = padAssignmentStore, let ref = store.slot(padIdx: padIdx) {
@@ -699,6 +737,12 @@ public final class LaunchpadController {
         for row in 0..<8 {
             for col in 0..<8 {
                 let pad = LaunchpadPad(row: row, col: col)
+                // Dark every pad outside the current 16/64 window so the
+                // hardware LEDs mirror exactly what the on-screen grid shows.
+                if !isPadVisible(pad) {
+                    frame[pad] = .off
+                    continue
+                }
                 if let assignment = assignments[pad] {
                     let hint = colorHint(for: assignment)
                     frame[pad] = activePads.contains(pad)

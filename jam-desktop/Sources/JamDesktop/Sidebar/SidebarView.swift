@@ -49,7 +49,6 @@ struct SidebarView: View {
     var onLaunchpadTap: () -> Void = {}
     var onSequencerTap: () -> Void = {}
     var onRecordingsTap: () -> Void = {}
-    var onJamPadsTap: () -> Void = {}
     var onPacksTap: () -> Void = {}
     /// View all songs callback
     var onViewAllSongs: () -> Void = {}
@@ -104,7 +103,6 @@ struct SidebarView: View {
                 ToolButton(icon: "square.grid.3x3.fill", label: "Launchpad", action: onLaunchpadTap)
                 ToolButton(icon: "squares.below.rectangle", label: "Sequencer", action: onSequencerTap)
                 ToolButton(icon: "record.circle", label: "Recordings", action: onRecordingsTap)
-                ToolButton(icon: "pianokeys", label: "Jam Pads", action: onJamPadsTap)
                 ToolButton(icon: "square.grid.2x2", label: "Packs", action: onPacksTap)
             }
             .padding(.bottom, 24)
