@@ -359,7 +359,9 @@
       mode: "tap", // "tap" | "loop"
       lock: true, // Lock = latch / start-on-shared-cycle
       augment: false,
-      quantize: "bar",
+      // System-wide Quantize (shared with Jam Pads via JamnQuantize); falls
+      // back to the historical "bar" default if the module didn't load.
+      quantize: window.JamnQuantize ? window.JamnQuantize.get() : "bar",
       stem: "mix",
       sliceMode: "beat",
       kind: "auto",
@@ -399,6 +401,12 @@
     if (!s) return;
     s.alive = false;
     detachHardware(s); // release the physical device (hands LEDs back to the driver)
+    if (s.quantUnsub) {
+      try {
+        s.quantUnsub();
+      } catch (_) {}
+      s.quantUnsub = null;
+    }
     if (s.raf) cancelAnimationFrame(s.raf);
     if (s.onResize) {
       window.removeEventListener("resize", s.onResize);
@@ -604,12 +612,25 @@
     );
     row1.appendChild(s.els.augBtn);
 
-    // Quantize
-    row1.appendChild(
-      labeledSelect("Quantize", QUANTIZE, s.quantize, function (v) {
+    // Quantize — a view of the system-wide JamnQuantize setting, shared with
+    // the Jam Pads surface. Writing here updates everyone; an external change
+    // (from the Jam Pads) flows back through subscribe() below.
+    var quantWrap = labeledSelect("Quantize", QUANTIZE, s.quantize, function (v) {
+      s.quantize = v;
+      if (window.JamnQuantize) window.JamnQuantize.set(v);
+    });
+    s.els.quantSel = quantWrap.querySelector("select");
+    row1.appendChild(quantWrap);
+    if (window.JamnQuantize) {
+      s.quantUnsub = window.JamnQuantize.subscribe(function (v) {
+        if (!s.alive) return;
         s.quantize = v;
-      })
-    );
+        // A shared grid this control doesn't list (none today; kit.js only
+        // ever sets off/beat/bar which are all present) leaves the <select>
+        // on its prior value — the setting is still honored at trigger time.
+        if (s.els.quantSel) s.els.quantSel.value = v;
+      });
+    }
 
     root.appendChild(row1);
 

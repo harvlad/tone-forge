@@ -384,10 +384,12 @@
         pads: [], // server pad dicts, index = padIdx
         padEls: [], // { el, ring, sweep, canvas, badge, tint, ui, loop, loopOverride, lp, lpX, lpY }
         mode: "tap", // DEFAULT Tap
-        // Quantize grid for triggers. Default "bar" — the engine's lock
-        // cycle is bar-ish, and loops always quantized before this control
-        // existed; "off" would silently change how existing kits feel.
-        quantize: "bar",
+        // Quantize grid for triggers. Sourced from the system-wide
+        // JamnQuantize setting so this surface starts in sync with the
+        // Launchpad; falls back to "bar" (the historical default) if the
+        // shared module didn't load. "off" would silently change how
+        // existing kits feel, hence the conservative fallback.
+        quantize: window.JamnQuantize ? window.JamnQuantize.get() : "bar",
         latch: false,
         raf: 0,
         onResize: null,
@@ -469,6 +471,12 @@
       if (s.padEls[i] && s.padEls[i].lp) clearTimeout(s.padEls[i].lp);
     }
     if (s.onResize) window.removeEventListener("resize", s.onResize);
+    if (s.quantUnsub) {
+      try {
+        s.quantUnsub();
+      } catch (_) {}
+      s.quantUnsub = null;
+    }
     try {
       if (can(s.engine, "stopAll")) s.engine.stopAll();
     } catch (_) {}
@@ -829,6 +837,14 @@
     quant.setAttribute("role", "group");
     quant.title = "Quantize — when triggered pads start";
     s.quantBtns = {};
+    // Reflect a value onto the segmented control. A shared value this surface
+    // doesn't offer (e.g. lpview's "phrase") clears every highlight — the
+    // setting is still honored at trigger time, there's just no button for it.
+    function highlightQuantize(value) {
+      for (var k in s.quantBtns) {
+        s.quantBtns[k].classList.toggle("is-on", k === value);
+      }
+    }
     [["off", "Off"], ["beat", "Beat"], ["bar", "Bar"]].forEach(function (pair) {
       var b = document.createElement("button");
       b.type = "button";
@@ -836,12 +852,22 @@
       b.textContent = pair[1];
       b.addEventListener("click", function () {
         s.quantize = pair[0];
-        for (var k in s.quantBtns) s.quantBtns[k].classList.remove("is-on");
-        b.classList.add("is-on");
+        highlightQuantize(pair[0]);
+        // Push to the system-wide setting so the Launchpad (and any other
+        // surface) follows. set() is a no-op when unchanged.
+        if (window.JamnQuantize) window.JamnQuantize.set(pair[0]);
       });
       s.quantBtns[pair[0]] = b;
       quant.appendChild(b);
     });
+    // Live-follow external changes (e.g. the Launchpad's Quantize control).
+    if (window.JamnQuantize) {
+      s.quantUnsub = window.JamnQuantize.subscribe(function (value) {
+        if (!s.alive) return;
+        s.quantize = value;
+        highlightQuantize(value);
+      });
+    }
 
     // Instant Groove — one tap starts the single best loop per category,
     // all quantized to the shared cycle (desktop's "Groove" button).
@@ -3132,7 +3158,9 @@
     if (current) unmount();
     current = {
       root: root, entry: null, alive: true, ctx: null, engine: null,
-      pads: [], padEls: [], mode: "tap", quantize: "bar", latch: false,
+      pads: [], padEls: [], mode: "tap",
+      quantize: window.JamnQuantize ? window.JamnQuantize.get() : "bar",
+      latch: false,
       raf: 0, onResize: null, stems: null, dsp: null, radial: null,
       transportTimer: 0, engineTransport: null, engineTransportTimer: 0,
       // Packs keep the 16 grid (their manifests are 16-pad) and have no
