@@ -2702,13 +2702,14 @@
     }
 
     function _startJamming(card, btn) {
-      // SSE card: the result is already loaded in memory — just show it.
-      if (card.playNow) { showView('perform'); return; }
+      // Land on the PADS (Perform = pads now). The guitar fretboard is its
+      // own "Guitar" surface.
+      if (card.playNow) { showView('kit'); return; }
       if (!card.historyId) return;
       if (btn) btn.disabled = true;
       loadSessionById(card.historyId, null, card.title).then(ok => {
         if (btn) btn.disabled = false;
-        if (ok) showView('perform');
+        if (ok) showView('kit');
       });
     }
 
@@ -15309,7 +15310,7 @@
     }
     const startJam = document.getElementById('bandroom-start-jam');
     if (startJam) {
-      startJam.addEventListener('click', () => showView('perform'));
+      startJam.addEventListener('click', () => showView('kit'));
     }
     // Phase A: both "back to bandroom" and "skip to jam" first check
     // whether the session earned any beads. If yes, the summary card
@@ -15329,9 +15330,9 @@
     if (skipBtn) skipBtn.addEventListener('click', () => {
       if (_shouldShowSummary() && _showSessionSummary(
         _computeSessionSummary(),
-        () => showView('perform'),
+        () => showView('kit'),
       )) return;
-      showView('perform');
+      showView('kit');
     });
     // Phase A: summary-card CTAs.
     const summaryKeep = document.getElementById('session-summary-keep');
@@ -15460,9 +15461,11 @@
       intake: 'intake',
       bandroom: 'bandroom',
       rehearsal: 'rehearsal',
-      // Native parity: the Perform pill opens the fretboard STAGE
-      // (stage.js) like the desktop app.
-      perform: 'stage',
+      // Perform = the PADS (merged Launchpad, kit.js). The pads are the
+      // primary play surface; the guitar fretboard moved to its own
+      // "Guitar" sidebar item (view-stage) per product direction.
+      perform: 'kit',
+      guitar: 'stage',
       // "Launchpad" is the merged pad surface (kit.js, #view-kit): the
       // former "Jam Pads" kit and the retired 8×8 lpview chop grid are now
       // one surface. `launchpad` is the canonical hash; `jampads` is kept
@@ -15476,17 +15479,18 @@
       intake: 'intake',
       bandroom: 'bandroom',
       rehearsal: 'rehearsal',
-      perform: 'perform',
-      stage: 'perform',
-      kit: 'launchpad', // canonical hash for the merged Launchpad surface
+      // Pads light the Perform pill (Perform = pads now). The fretboard
+      // stage maps to the sidebar-only "guitar" surface (no pill).
+      kit: 'perform',
+      stage: 'guitar',
       mixer: 'mixer',
       library: 'library',
     };
     // Every sidebar item routes to a REAL pane (full-parity build) —
     // voice/beat/sample share the contribute pane, tab-selected below.
-    // The single "Launchpad" tools item opens the merged kit surface.
+    // "Launchpad" opens the merged pad surface; "Guitar" opens the fretboard.
     const SIDE_TO_VIEW = {
-      launchpad: 'kit', mixer: 'mixer',
+      launchpad: 'kit', guitar: 'stage', mixer: 'mixer',
       sequencer: 'sequencer', recordings: 'recordings', packs: 'packs',
       voice: 'contribute', beat: 'contribute', sample: 'contribute',
     };
