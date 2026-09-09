@@ -6477,32 +6477,50 @@ async def get_borrow_loops(
     target_bpm = _borrow._tempo_of(result)
     if not target_bpm:
         raise HTTPException(status_code=422, detail="This song has no tempo")
-    # Resolve each song's actual stem key (handles 'other' → guitar_* etc.).
-    def _resolve_stem(res: dict) -> str:
-        return next(
-            (a for a in _borrow._stem_aliases(stem)
-             if a in (res.get("stems_paths") or {})), stem)
-
-    init_stem = _resolve_stem(result)
-    donor_stem = _resolve_stem(donor_result)
     _refresh_r2_stem_urls(result)
     _refresh_r2_stem_urls(donor_result)
     loop = asyncio.get_running_loop()
-    # Both songs render onto ONE grid: THIS song's own sections fill the first
-    # half (pads 0..7, already at target tempo so unstretched), the donor's the
-    # second (pads 8..15, time-stretched to lock). A player jumps between
-    # sections of either song on one surface.
-    half = _borrow._LOOPS_PER_SOURCE
-    init_pads, donor_pads = await asyncio.gather(
-        loop.run_in_executor(
-            _render_pool(), _borrow.borrow_job, entry_id, result, stem,
-            target_bpm, init_stem, 0, "initial"),
-        loop.run_in_executor(
-            _render_pool(), _borrow.borrow_job, donor, donor_result, stem,
-            target_bpm, donor_stem, half, "donor"),
-    )
-    pads = (init_pads or []) + (donor_pads or [])
-    if not donor_pads:
+
+    # Fill the whole 8×8 with BOTH songs' full kits. The picked stem LEADS —
+    # it fills pads 0..15 (this song 0..7 blue, donor 8..15 amber) so a 16-pad
+    # grid still shows both songs on that stem. The remaining stems (drums,
+    # bass, chords, vocals) fill the rest of the 64 in 16-pad blocks, this
+    # song's own sections unstretched (ratio≈1), the donor's time-stretched to
+    # lock. A player jumps between any section of either song, any stem.
+    half = _borrow._LOOPS_PER_SOURCE            # 8 per song per stem
+    stem_order = ["drums", "bass", "other", "vocals"]
+    lead = stem if stem in stem_order else "drums"
+    stem_seq = [lead] + [s for s in stem_order if s != lead]
+    labels = {"drums": "Beat", "bass": "Bass", "other": "Chords",
+              "vocals": "Vocal"}
+
+    def _resolve(res: dict, s: str):
+        return next((a for a in _borrow._stem_aliases(s)
+                     if a in (res.get("stems_paths") or {})), None)
+
+    jobs = []
+    block = 0
+    for s in stem_seq:
+        i_stem = _resolve(result, s)
+        d_stem = _resolve(donor_result, s)
+        if i_stem is None and d_stem is None:
+            continue
+        base = block * (2 * half)               # 16 pads per stem block
+        if base >= 64:
+            break
+        lbl = labels.get(s, s.title())
+        if i_stem is not None:
+            jobs.append(loop.run_in_executor(
+                _render_pool(), _borrow.borrow_job, entry_id, result, s,
+                target_bpm, i_stem, base, "initial", lbl))
+        if d_stem is not None:
+            jobs.append(loop.run_in_executor(
+                _render_pool(), _borrow.borrow_job, donor, donor_result, s,
+                target_bpm, d_stem, base + half, "donor", lbl))
+        block += 1
+    rendered = await asyncio.gather(*jobs) if jobs else []
+    pads = [p for grp in rendered for p in (grp or [])]
+    if not pads:
         raise HTTPException(
             status_code=422,
             detail="No borrowable loops (tempo too far, or stem/grid missing)")
@@ -6513,8 +6531,8 @@ async def get_borrow_loops(
     return JSONResponse({
         "manifestVersion": 2,
         "packId": f"borrow-{donor}-{stem}",
-        "name": f"{(donor_entry.get('name') or 'Borrowed')[:24]} · {stem}",
-        "family": "percussion" if stem == "drums" else "mixed",
+        "name": f"{(donor_entry.get('name') or 'Borrowed')[:24]} · kit",
+        "family": "mixed",
         "paletteHint": "song",
         "pads": pads,
         "analysisId": entry_id,

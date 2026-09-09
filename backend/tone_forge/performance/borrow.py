@@ -400,12 +400,14 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
                          target_bpm: float, *,
                          donor_stem: Optional[str] = None,
                          pad_base: int = 0,
-                         source_tag: str = "donor") -> List[Dict]:
+                         source_tag: str = "donor",
+                         stem_label: Optional[str] = None) -> List[Dict]:
     """Render one song's section loops, time-stretched to `target_bpm`, as
     loopable pads. `stem` is the logical role (drums/bass/other); `donor_stem`
     the actual key in this song's stems_paths (e.g. 'guitar_center' for
     'other'). `pad_base` offsets padIdx so two songs share one grid;
-    `source_tag` ('initial'|'donor') colours and labels the pads. Heavy."""
+    `source_tag` ('initial'|'donor') colours the pads. `stem_label` prefixes
+    the pad name ("Bass Verse") when a grid mixes several stems. Heavy."""
     donor_stem = donor_stem or stem
     try:
         import librosa
@@ -435,6 +437,8 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
     if not spans:
         return []
     names = _label_names(spans)
+    if stem_label:
+        names = [f"{stem_label} {n}" for n in names]
     color = _COLOR_INITIAL if source_tag == "initial" else _COLOR_DONOR
 
     import tempfile
@@ -579,8 +583,10 @@ def borrow_candidates(entries: List[Dict], entry_id: str, stem: str,
 
 def borrow_job(source_id: str, source_result: Dict, stem: str,
                target_bpm: float, donor_stem: Optional[str] = None,
-               pad_base: int = 0, source_tag: str = "donor"):
+               pad_base: int = 0, source_tag: str = "donor",
+               stem_label: Optional[str] = None):
     """Process-pool entry point. Renders one song's section loops."""
     return render_section_loops(
         source_id, source_result, stem, target_bpm,
-        donor_stem=donor_stem, pad_base=pad_base, source_tag=source_tag)
+        donor_stem=donor_stem, pad_base=pad_base, source_tag=source_tag,
+        stem_label=stem_label)
