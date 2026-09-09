@@ -10,7 +10,9 @@
 #
 #   test: full pytest suite. Installing requirements.txt is heavy
 #         (torch/torchaudio/demucs), so pip's cache is keyed on the
-#         requirements files and the timeout is generous.
+#         requirements files and the timeout is generous. The suite also
+#         drives the web UI's node test suites via
+#         tests/test_static_js_suites.py, hence the node toolchain.
 #
 
 name: backend-tests
@@ -62,6 +64,14 @@ jobs:
           cache-dependency-path: |
             backend/requirements.txt
             backend/requirements-dev.txt
+
+      # tests/test_static_js_suites.py shells out to node for the
+      # backend/static/*.test.mjs suites. It SKIPS when node is missing, so
+      # pin the toolchain rather than trusting the runner image — a silent
+      # skip is how those suites went unrun in the first place.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Install dependencies
         run: |
