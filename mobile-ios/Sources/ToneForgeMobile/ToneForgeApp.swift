@@ -2410,14 +2410,75 @@ public final class AppState: ObservableObject {
         return true
     }
 
+    // MARK: - Session key/BPM target (optional Borrow conform)
+    //
+    // Core principle: songs stay TRUE by default. This target is OFF unless
+    // the user opts in, and even when on it ONLY conforms ADDED (borrowed)
+    // parts — never the loaded song's own playback (the primary song is never
+    // repitched/retimed). When on, the Borrow fetches carry target_bpm /
+    // target_key so the backend conforms donor loops to the session instead
+    // of the host; when off, no params are sent (identical to today =
+    // conform-to-host). Persisted in UserDefaults so it survives relaunch,
+    // default off. Port-parity with web kit.js getSession()/sessionTarget*.
+
+    private static let sessionOnKey = "jamn.session.on"
+    private static let sessionKeyKey = "jamn.session.key"
+    private static let sessionBpmKey = "jamn.session.bpm"
+
+    @Published public var sessionTargetOn: Bool =
+        UserDefaults.standard.bool(forKey: AppState.sessionOnKey) {
+        didSet { UserDefaults.standard.set(sessionTargetOn, forKey: Self.sessionOnKey) }
+    }
+    /// Canonical "<root> <quality>" (e.g. "G minor"), or "" when unset.
+    @Published public var sessionTargetKey: String =
+        UserDefaults.standard.string(forKey: AppState.sessionKeyKey) ?? "" {
+        didSet { UserDefaults.standard.set(sessionTargetKey, forKey: Self.sessionKeyKey) }
+    }
+    /// Target tempo in BPM, or 0 when unset.
+    @Published public var sessionTargetBpm: Int =
+        UserDefaults.standard.integer(forKey: AppState.sessionBpmKey) {
+        didSet { UserDefaults.standard.set(sessionTargetBpm, forKey: Self.sessionBpmKey) }
+    }
+
+    /// The effective Session BPM for a Borrow fetch — nil when the session is
+    /// off or unset, which keeps the request byte-identical to today (donor
+    /// conforms to the host). Never affects primary-song playback.
+    public var sessionBorrowBpm: Double? {
+        (sessionTargetOn && sessionTargetBpm > 0) ? Double(sessionTargetBpm) : nil
+    }
+    /// The effective Session key ("G minor") for a Borrow fetch — nil when off
+    /// or unset. The backend transposes the donor to this; host is untouched.
+    public var sessionBorrowKey: String? {
+        (sessionTargetOn && !sessionTargetKey.isEmpty) ? sessionTargetKey : nil
+    }
+
+    /// First-enable prefill: fill blank key/BPM from the loaded song so opting
+    /// in changes nothing until the user retunes (conforming borrowed parts to
+    /// the host key/tempo is exactly today's behavior). Only fills blanks —
+    /// never clobbers a target the user already dialed in. Mirrors the kit.js
+    /// toggle's first-enable branch.
+    public func prefillSessionTargetFromSong() {
+        if sessionTargetKey.isEmpty,
+           let k = currentBundle?.meta.detectedKey, !k.isEmpty {
+            sessionTargetKey = SessionKey.canonical(k)
+        }
+        if sessionTargetBpm == 0,
+           let bpm = currentBundle?.meta.tempoBpm, bpm > 0 {
+            sessionTargetBpm = Int(bpm.rounded())
+        }
+    }
+
     // MARK: - Borrow (real loops from other songs, tempo/key matched)
 
     @Published public private(set) var borrowBusyDonor: String?
 
     public func fetchBorrowCandidates(stem: String) async -> [BorrowCandidate] {
         guard let analysisId = currentBundle?.analysisId else { return [] }
+        // Session on → conform candidates to the target; off → nil params,
+        // ranked against the host song exactly as before.
         return (try? await RemixClient().fetchBorrowCandidates(
-            baseURL: backendBaseURL, analysisId: analysisId, stem: stem)) ?? []
+            baseURL: backendBaseURL, analysisId: analysisId, stem: stem,
+            targetBpm: sessionBorrowBpm, targetKey: sessionBorrowKey)) ?? []
     }
 
     /// Load a donor's borrowed loops onto the pads as loopable file pads
@@ -2429,13 +2490,18 @@ public final class AppState: ObservableObject {
         remixError = nil
         let base = backendBaseURL
         let stems = currentStemLocalURLs
+        // Snapshot the Session target now (nil/nil when off) so the render
+        // conforms the borrowed loops to the session instead of the host.
+        let targetBpm = sessionBorrowBpm
+        let targetKey = sessionBorrowKey
         Task { @MainActor in
             defer { self.borrowBusyDonor = nil }
             do {
                 let analysisId = self.currentBundle?.analysisId ?? ""
                 let pack = try await RemixClient().fetchBorrowPack(
                     baseURL: base, analysisId: analysisId,
-                    donor: donorId, stem: stem)
+                    donor: donorId, stem: stem,
+                    targetBpm: targetBpm, targetKey: targetKey)
                 let files = await Self.downloadKitSamples(pack: pack, base: base)
                 guard !files.isEmpty else {
                     self.remixError = "Borrowed loops didn't download."
@@ -2446,9 +2512,11 @@ public final class AppState: ObservableObject {
                 await self.sampleScheduler.preloadPackAsync(
                     resolved, stemFiles: stems)
                 self.activateSamplePack(resolved, stemFiles: stems)
-                self.remixApplied =
-                    "Applied: Borrow — \(pack.name) on the pads, "
-                    + "locked to this song's tempo."
+                self.remixApplied = (targetBpm != nil || targetKey != nil)
+                    ? "Applied: Borrow — \(pack.name) on the pads, "
+                        + "conformed to your session target."
+                    : "Applied: Borrow — \(pack.name) on the pads, "
+                        + "locked to this song's tempo."
                 Haptics.padTrigger()
             } catch {
                 self.remixError = error.localizedDescription

@@ -954,3 +954,66 @@ launched from `JamView.swift#borrowSongChip`.
 **Why:** promote a shipped-but-buried DJ feature to where users build kits,
 and reach web parity on the Melody/vocals part. Additive to the Launchpad —
 16/64 toggle, quantize and triggering all unchanged.
+
+## D-028: Optional Session key/BPM target for Borrow (songs stay TRUE by default)
+
+Extends D-027. Adds the web's "Session key/BPM target" (kit.js
+`buildSessionControls` / `sessionTargetParams`) to the iOS Launchpad Borrow
+surface. **Core principle: songs stay TRUE by default — only ADDED (borrowed)
+parts conform, and only when the user opts in. The primary song is never
+repitched or retimed.**
+
+1. **Shared client (ToneForgeEngine `RemixClient`)** — `fetchBorrowCandidates`
+   and `fetchBorrowPack` gained trailing OPTIONAL params
+   `targetBpm: Double? = nil, targetKey: String? = nil`. They append
+   `&target_bpm=` / `&target_key=` to the URL only when non-nil, so the
+   default (nil/nil) is byte-identical to today (donor conforms to the HOST
+   song). This is the signature **jam-desktop also depends on** — kept clean +
+   default-nil so both platforms compile against one method. Backend already
+   accepts these params (candidate ranking + donor transpose; host never
+   transposed).
+
+2. **Shared `SessionKey.swift` (ToneForgeEngine)** — a direct Swift port of
+   kit.js `parseKey`/`formatKey`: 12 sharp roots, flat→sharp enharmonic fold,
+   `"G minor"`/`"Gm"`/`"Bb major"` → (root, quality), and the canonical
+   `"<root> <quality>"` backend form. Shared so jam-desktop drives the same
+   Session UI off one implementation (port-parity rule).
+
+3. **AppState session state** — `sessionTargetOn` (Bool, default **off**),
+   `sessionTargetKey` (canonical "G minor" or ""), `sessionTargetBpm` (Int, 0 =
+   unset), each persisted to UserDefaults (`jamn.session.on/key/bpm`) via
+   `didSet` so it survives relaunch. `sessionBorrowBpm`/`sessionBorrowKey`
+   collapse to nil when off/unset — that nil is what makes the fetch identical
+   to today. `prefillSessionTargetFromSong()` fills BLANKS only from
+   `currentBundle.meta.detectedKey`/`tempoBpm` (never clobbers a dialed-in
+   target). Threaded into `fetchBorrowCandidates` and `loadBorrowLoops`, and a
+   snapshot is passed into the borrow render Task.
+
+4. **UI — `SessionTargetControls` in `BorrowPickerSheet`** (the .samples
+   Launchpad Borrow surface, parity with web placing the cluster next to
+   "+ Add from another song"). A "Session" toggle OFF by default; when ON it
+   reveals a Key picker (12 roots × maj/min → "G minor") + a numeric BPM field,
+   and on FIRST enable prefills both from the loaded song so opting in changes
+   nothing until the user retunes. One-line hint: "Added parts conform to this
+   key/tempo. Your song plays true." Toggling on/off and changing key re-scope
+   the candidate list; BPM keystrokes persist but don't re-fetch per digit
+   (chatty), matching web reading the target at fetch time.
+
+**Alternatives:** a new pad-mode tab or a top-of-Launchpad bar (rejected —
+D-022 shell / D-026 one-surface; the sheet IS the Borrow surface reached from
+.samples); storing the target in ToneForgeEngine (rejected — session state is
+an app concern; the ENGINE shares only the client params + `SessionKey`, so
+jam-desktop keeps its own persistence/UI).
+
+**Parity:** web `backend/static/kit.js` `buildSessionControls` /
+`sessionTargetParams` / `sessionTargetOpts`. iOS anchors:
+`ToneForgeEngine/SessionKey.swift#SessionKey`,
+`RemixClients.swift#fetchBorrowCandidates`/`#fetchBorrowPack`,
+`ToneForgeApp.swift#prefillSessionTargetFromSong`,
+`Views/Jam/BorrowPickerSheet.swift#SessionTargetControls`.
+
+**Why:** DJ cross-song sampling wants an optional shared key/tempo, but the
+product promise is that a loaded song plays true. Opt-in + host-conform
+default + prefill-from-song means turning Session on is a no-op until you
+retune, and the primary song is never touched. Additive — 16/64, quantize,
+triggering, the Add-from-song picker and the melody part are all unchanged.

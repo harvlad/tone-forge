@@ -37,6 +37,11 @@ struct BorrowPickerSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                // Optional Session key/BPM target — OFF by default. When on,
+                // the candidate list and the borrowed loops conform to the
+                // target instead of this song; the primary song is never
+                // retimed/repitched. Changing it re-scopes the candidates.
+                SessionTargetControls { reloadCandidates() }
                 partSection
                 candidateSection
                 if let err = appState.remixError {
@@ -152,5 +157,115 @@ struct BorrowPickerSheet: View {
     private func load() async {
         candidates = await appState.fetchBorrowCandidates(stem: stem)
         loaded = true
+    }
+
+    /// Re-fetch when the Session target changes: candidates are ranked against
+    /// the target (or the host when off), so the list must re-scope.
+    private func reloadCandidates() {
+        loaded = false
+        Task { await load() }
+    }
+}
+
+// MARK: - Session key/BPM target controls
+//
+// The opt-in Session cluster, promoted onto the Launchpad's Borrow surface
+// (parity with web kit.js buildSessionControls). OFF by default; when on it
+// reveals a Key picker (12 roots × maj/min → "G minor") and a BPM field, and
+// on FIRST enable prefills both from the loaded song so opting in changes
+// nothing until the user retunes. The target is persisted in AppState
+// (UserDefaults) and only ever conforms ADDED (borrowed) parts — the primary
+// song is never repitched/retimed. `onChange` re-scopes the candidate list.
+private struct SessionTargetControls: View {
+    @EnvironmentObject private var appState: AppState
+    /// Called after any commit that should re-rank the candidate list.
+    var onChange: () -> Void
+
+    @State private var root = "C"
+    @State private var quality: SessionKey.Quality = .major
+    @State private var bpmText = ""
+
+    var body: some View {
+        Section {
+            Toggle(isOn: sessionOnBinding) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Session").font(.subheadline.weight(.semibold))
+                    Text("Optional: conform ADDED parts to a key/tempo.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .tint(TFTheme.accent)
+
+            if appState.sessionTargetOn {
+                HStack {
+                    Text("Key").font(.footnote).foregroundStyle(.secondary)
+                        .frame(width: 40, alignment: .leading)
+                    Picker("Key root", selection: $root) {
+                        ForEach(SessionKey.roots, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    Picker("Key quality", selection: $quality) {
+                        Text("maj").tag(SessionKey.Quality.major)
+                        Text("min").tag(SessionKey.Quality.minor)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 130)
+                }
+                HStack {
+                    Text("BPM").font(.footnote).foregroundStyle(.secondary)
+                        .frame(width: 40, alignment: .leading)
+                    TextField("120", text: $bpmText)
+                        .keyboardType(.numberPad)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 90)
+                    Spacer()
+                }
+            }
+        } footer: {
+            Text(appState.sessionTargetOn
+                 ? "Added parts conform to this key/tempo. Your song plays true."
+                 : "Off — every song plays true. Turn on to conform added parts to a session key/tempo.")
+        }
+        .onChange(of: root) { _ in commitKey() }
+        .onChange(of: quality) { _ in commitKey() }
+        .onChange(of: bpmText) { _ in commitBpm() }
+        .onChange(of: appState.sessionTargetOn) { on in
+            // First enable: prefill blanks from the loaded song so nothing
+            // conforms away from what's playing yet, then mirror into widgets.
+            if on { appState.prefillSessionTargetFromSong() }
+            seedFromState()
+            onChange()
+        }
+        .onAppear { seedFromState() }
+    }
+
+    private var sessionOnBinding: Binding<Bool> {
+        Binding(get: { appState.sessionTargetOn },
+                set: { appState.sessionTargetOn = $0 })
+    }
+
+    /// Mirror the persisted target into the local widget state.
+    private func seedFromState() {
+        let p = SessionKey.parse(appState.sessionTargetKey)
+        root = p.root
+        quality = p.quality
+        bpmText = appState.sessionTargetBpm > 0
+            ? String(appState.sessionTargetBpm) : ""
+    }
+
+    private func commitKey() {
+        let newKey = SessionKey.format(root: root, quality: quality)
+        guard newKey != appState.sessionTargetKey else { return }
+        appState.sessionTargetKey = newKey
+        if appState.sessionTargetOn { onChange() }
+    }
+
+    private func commitBpm() {
+        // Persist per keystroke, but don't re-fetch candidates on every digit
+        // (chatty). The new BPM is picked up on the next open / on the actual
+        // borrow render — matching web, which reads the target at fetch time.
+        let v = Int(bpmText.filter(\.isNumber)) ?? 0
+        guard v != appState.sessionTargetBpm else { return }
+        appState.sessionTargetBpm = v
     }
 }

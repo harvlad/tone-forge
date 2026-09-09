@@ -84,26 +84,55 @@ public struct RemixClient: Sendable {
 
     /// Borrow donors for a stem: real loops from other songs, tempo-matched
     /// (and key-compatible for melodic stems). `stem` = drums|bass|other.
+    ///
+    /// `targetBpm`/`targetKey` are the OPTIONAL Session target (parity with
+    /// web kit.js's "Session key/BPM target"). Both nil — the default — makes
+    /// the request byte-identical to today: candidates are ranked against the
+    /// HOST song. Non-nil re-scopes the ranking to the session target so
+    /// ADDED parts conform to it instead of the host. The host song is never
+    /// retimed/repitched — only what you borrow onto it. Shared with
+    /// jam-desktop; the trailing optionals default nil so both platforms
+    /// compile against the same signature.
     public func fetchBorrowCandidates(
-        baseURL: URL, analysisId: String, stem: String
+        baseURL: URL, analysisId: String, stem: String,
+        targetBpm: Double? = nil, targetKey: String? = nil
     ) async throws -> [BorrowCandidate] {
         struct Wire: Codable { let candidates: [BorrowCandidate] }
+        var query = [URLQueryItem(name: "stem", value: stem)]
+        if let targetBpm {
+            query.append(URLQueryItem(name: "target_bpm", value: String(targetBpm)))
+        }
+        if let targetKey, !targetKey.isEmpty {
+            query.append(URLQueryItem(name: "target_key", value: targetKey))
+        }
         let (data, response) = try await session.data(
             for: request(try songURL(baseURL, analysisId, "borrow-candidates",
-                                     query: [URLQueryItem(name: "stem", value: stem)])))
+                                     query: query)))
         try Self.check(response)
         return try JSONDecoder().decode(Wire.self, from: data).candidates
     }
 
     /// Render + fetch a donor's borrowed loops as a SamplePack (loopable
     /// file pads). First call renders server-side — allow seconds.
+    ///
+    /// `targetBpm`/`targetKey` = the optional Session target. nil/nil (the
+    /// default) is identical to today: the donor conforms to the HOST song.
+    /// Non-nil conforms the borrowed loops to the session target instead —
+    /// the backend transposes the donor for `target_key`; the host is never
+    /// transposed. Shared with jam-desktop; trailing optionals default nil.
     public func fetchBorrowPack(
-        baseURL: URL, analysisId: String, donor: String, stem: String
+        baseURL: URL, analysisId: String, donor: String, stem: String,
+        targetBpm: Double? = nil, targetKey: String? = nil
     ) async throws -> SamplePack {
-        let url = try songURL(
-            baseURL, analysisId, "borrow",
-            query: [URLQueryItem(name: "donor", value: donor),
-                    URLQueryItem(name: "stem", value: stem)])
+        var query = [URLQueryItem(name: "donor", value: donor),
+                     URLQueryItem(name: "stem", value: stem)]
+        if let targetBpm {
+            query.append(URLQueryItem(name: "target_bpm", value: String(targetBpm)))
+        }
+        if let targetKey, !targetKey.isEmpty {
+            query.append(URLQueryItem(name: "target_key", value: targetKey))
+        }
+        let url = try songURL(baseURL, analysisId, "borrow", query: query)
         let (data, response) = try await Self.longHaul.data(for: request(url))
         try Self.check(response)
         return try JSONDecoder().decode(SamplePack.self, from: data)
