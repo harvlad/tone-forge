@@ -162,7 +162,7 @@ struct RemixSheet: View {
             } else if borrowCandidates.isEmpty {
                 Text(borrowStem == "drums"
                      ? "Analyze more songs to borrow beats."
-                     : "No key-compatible songs yet — analyze more.")
+                     : "No harmonically compatible songs yet — analyze more.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             ForEach(borrowCandidates.prefix(6)) { c in
@@ -185,8 +185,11 @@ struct RemixSheet: View {
                                     .foregroundStyle(.secondary)
                             }
                         } else if borrowStem != "drums", c.harmonic >= 0.9 {
-                            Text("key match").font(.caption2)
+                            Text("harmonizes").font(.caption2)
                                 .foregroundStyle(TFTheme.accent)
+                        } else if borrowStem != "drums", c.harmonic >= 0.75 {
+                            Text("fits").font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -195,7 +198,7 @@ struct RemixSheet: View {
         } header: {
             Text("Borrow")
         } footer: {
-            Text("Real loops from your other songs, time-stretched to this song's tempo — and key-matched for bass/chords. Layer them on the pads.")
+            Text("Real loops from songs that harmonize with this one (by chord content, not just key). This song's sections fill the top pads (blue), the borrowed song's the bottom (amber) — jump between sections of either.")
         }
     }
 

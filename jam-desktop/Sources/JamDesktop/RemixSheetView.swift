@@ -112,7 +112,7 @@ struct RemixSheetView: View {
                     } else if borrowCandidates.isEmpty {
                         Text(borrowStem == "drums"
                              ? "Analyze more songs to borrow beats."
-                             : "No key-compatible songs yet.")
+                             : "No harmonically compatible songs yet.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(borrowCandidates.prefix(6)) { c in
@@ -132,8 +132,11 @@ struct RemixSheetView: View {
                                 if session.borrowBusyDonor == c.entryId {
                                     ProgressView().controlSize(.small)
                                 } else if borrowStem != "drums", c.harmonic >= 0.9 {
-                                    Text("key match").font(.caption2)
+                                    Text("harmonizes").font(.caption2)
                                         .foregroundStyle(JamTheme.accent)
+                                } else if borrowStem != "drums", c.harmonic >= 0.75 {
+                                    Text("fits").font(.caption2)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                         }
