@@ -384,6 +384,165 @@
     };
   }
 
+  // ---------- live-capture arrangement (pure helpers) ----------
+  //
+  // The DJ move: hit Rec, jam the pads as the song rolls through its
+  // sections, and each pad that turns ON is captured into the SECTION it
+  // fired in. Replay watches the song clock against the section starts and
+  // arms/releases pads at each boundary so the arrangement plays itself.
+  // These builders are DOM-free so the capture + boundary math is unit-
+  // tested in kit.test.mjs; the UI (below) reads them.
+
+  /** First finite number among the args (skipping null/undefined/""), else
+   * null. `Number(null)` is 0, so a bare coalesce would turn a missing start
+   * into a real 0 — hence the explicit skip. */
+  function firstNum() {
+    for (var i = 0; i < arguments.length; i++) {
+      var a = arguments[i];
+      if (a === null || a === undefined || a === "") continue;
+      var v = Number(a);
+      if (isFinite(v)) return v;
+    }
+    return null;
+  }
+
+  /** Normalize result.sections into ascending {startSec, endSec, label}
+   * rows, dropping undated/degenerate entries. Tolerates every field shape
+   * the analyzer + bundle paths emit (start_time / start_s / start /
+   * start_sec / startSec and the matching end_*, plus type / name / label
+   * — see jam.js buildSectionBar). Pure. */
+  function normSections(result) {
+    var raw = result && result.sections;
+    if (!Array.isArray(raw)) return [];
+    var out = [];
+    for (var i = 0; i < raw.length; i++) {
+      var sec = raw[i];
+      if (!sec || typeof sec !== "object") continue;
+      var start = firstNum(sec.start_time, sec.start_s, sec.start, sec.start_sec, sec.startSec);
+      var end = firstNum(sec.end_time, sec.end_s, sec.end, sec.end_sec, sec.endSec);
+      if (start === null || end === null || !(end > start)) continue;
+      var label =
+        (typeof sec.type === "string" && sec.type) ||
+        (typeof sec.name === "string" && sec.name) ||
+        (typeof sec.label === "string" && sec.label) ||
+        "Section";
+      out.push({ startSec: start, endSec: end, label: String(label) });
+    }
+    out.sort(function (a, b) { return a.startSec - b.startSec; });
+    return out;
+  }
+
+  /** Index of the section time `t` falls in — the LAST section whose
+   * startSec ≤ t (so a gap between sections stays with the prior one, and a
+   * `t` past the final end holds on the final section). -1 before the first
+   * section start, or on non-finite `t`. Sections must be ascending
+   * (normSections guarantees it). The single boundary primitive both
+   * capture and replay use. Pure. */
+  function sectionIndexAtTime(sections, t) {
+    if (!Array.isArray(sections) || !sections.length) return -1;
+    if (typeof t !== "number" || !isFinite(t)) return -1;
+    var idx = -1;
+    for (var i = 0; i < sections.length; i++) {
+      var sec = sections[i];
+      if (!sec || typeof sec.startSec !== "number") continue;
+      if (t >= sec.startSec) idx = i;
+      else break;
+    }
+    return idx;
+  }
+
+  /** Ascending list of section indices that have at least one captured pad
+   * (the strip's filled-indicator set). Drops non-integer / negative keys
+   * and empty pad lists. Pure. */
+  function sectionsWithPads(arrangement) {
+    var out = [];
+    if (!arrangement || typeof arrangement !== "object") return out;
+    for (var k in arrangement) {
+      var idx = parseInt(k, 10);
+      if (!isFinite(idx) || idx < 0 || String(idx) !== String(k)) continue;
+      var pads = arrangement[k];
+      if (Array.isArray(pads) && pads.length) out.push(idx);
+    }
+    out.sort(function (a, b) { return a - b; });
+    return out;
+  }
+
+  /** The union of every pad that appears anywhere in the arrangement,
+   * ascending and de-duped — the set replay is allowed to arm/release at a
+   * boundary (so a manual pad jammed over the top survives). Pure. */
+  function arrangedPads(arrangement) {
+    var seen = {};
+    var out = [];
+    if (!arrangement || typeof arrangement !== "object") return out;
+    for (var k in arrangement) {
+      var pads = arrangement[k];
+      if (!Array.isArray(pads)) continue;
+      for (var i = 0; i < pads.length; i++) {
+        var idx = pads[i];
+        if (typeof idx === "number" && isFinite(idx) && !seen[idx]) {
+          seen[idx] = true;
+          out.push(idx);
+        }
+      }
+    }
+    out.sort(function (a, b) { return a - b; });
+    return out;
+  }
+
+  /** Parse the persisted arrangement (localStorage jamn.arrangement.<id>):
+   * JSON {sectionIndex: [padIdx,…]}. Mirrors parsePadFxStore's defensiveness
+   * — drops non-integer keys, non-array/empty values, and non-integer pad
+   * ids, de-dupes + sorts each list, and returns null when nothing usable
+   * survives so a corrupt blob degrades to "no arrangement", never a throw. */
+  function parseArrangement(json) {
+    var obj;
+    try {
+      obj = JSON.parse(json);
+    } catch (_) {
+      return null;
+    }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+    var out = {};
+    var any = false;
+    for (var k in obj) {
+      var idx = parseInt(k, 10);
+      if (!isFinite(idx) || idx < 0 || String(idx) !== String(k)) continue;
+      var pads = obj[k];
+      if (!Array.isArray(pads)) continue;
+      var seen = {};
+      var clean = [];
+      for (var i = 0; i < pads.length; i++) {
+        var p = pads[i];
+        if (typeof p === "number" && isFinite(p) && p >= 0 && p === (p | 0) && !seen[p]) {
+          seen[p] = true;
+          clean.push(p);
+        }
+      }
+      if (clean.length) {
+        clean.sort(function (a, b) { return a - b; });
+        out[idx] = clean;
+        any = true;
+      }
+    }
+    return any ? out : null;
+  }
+
+  /** Serialize the arrangement map for localStorage; null when there is
+   * nothing to store (caller removes the key instead of writing "{}"). */
+  function serializeArrangement(map) {
+    if (!map) return null;
+    var out = {};
+    var any = false;
+    for (var k in map) {
+      var pads = map[k];
+      if (Array.isArray(pads) && pads.length) {
+        out[k] = pads;
+        any = true;
+      }
+    }
+    return any ? JSON.stringify(out) : null;
+  }
+
   // ---------- mount state (one surface at a time) ----------
 
   var current = null;
@@ -456,6 +615,10 @@
         // Melody=vocals. See openBorrowPicker below.
         borrow: freshBorrowState(),
         borrowBtn: null,
+        // Live-capture arrangement: the song's detected sections (normalized
+        // once from entry.result) + the per-section pad capture/replay state.
+        sections: normSections(entry && entry.result),
+        arrange: freshArrangeState(entry),
       };
       if (entry && entry.id) lastEntryId = entry.id;
       if (!entry || !entry.id || !entry.result) {
@@ -468,6 +631,11 @@
           window.location && window.location.search, stored);
       } catch (_) {}
       renderShell(current);
+      // Reload any saved arrangement for this song and paint the strip's
+      // captured-section indicators before playback begins.
+      loadArrangement(current);
+      updateArrangeStrip(current);
+      syncArrangeButtons(current);
       // Feedback batches every 20 s (native parity); unmount flushes the
       // remainder via sendBeacon. Failures are silent — best-effort telemetry.
       (function (s) {
@@ -786,6 +954,14 @@
     // Layer rows mirror pad state (setUi only fires on transitions, so
     // this is a handful of class/text updates, not per-frame work).
     if (s.layerRows) refreshLayers(s);
+    // Arrangement capture: setUi is the single choke point every trigger
+    // path funnels through, so recording here catches manual taps, Groove,
+    // and layer swaps alike. Only a transition INTO armed/playing counts as
+    // "the pad turned on"; the guard inside noteArrangeCapture ignores this
+    // when we're not recording (e.g. during replay, which drives setUi too).
+    if ((ui === "armed" || ui === "playing") && s.arrange && s.arrange.recording) {
+      noteArrangeCapture(s, padIdx);
+    }
   }
 
   // ---------- rendering ----------
@@ -972,6 +1148,10 @@
     // added parts conform to the target; the loaded song still plays true.
     var sessionGroup = buildSessionControls(s);
 
+    // Live-capture arrangement cluster: ● Rec / ▶ Arrangement / Clear —
+    // record which pads play per section, then replay hands-free.
+    var arrangeGroup = buildArrangeControls(s);
+
     controls.appendChild(viewSeg);
     controls.appendChild(sizeSeg);
     controls.appendChild(quant);
@@ -979,6 +1159,7 @@
     controls.appendChild(chopGroup);
     controls.appendChild(addBtn);
     controls.appendChild(sessionGroup);
+    controls.appendChild(arrangeGroup);
     controls.appendChild(latch);
     controls.appendChild(groove);
     controls.appendChild(stop);
@@ -1048,8 +1229,14 @@
     layers.style.display = "none";
     s.layersEl = layers;
 
+    // Section strip: one segment per detected section, under the transport,
+    // with a live playhead. Hidden (replaced by a "no sections" note) when
+    // the song carries none — buildArrangeStrip decides from s.sections.
+    var arrangeStrip = buildArrangeStrip(s);
+
     s.root.appendChild(head);
     s.root.appendChild(transport);
+    s.root.appendChild(arrangeStrip);
     s.root.appendChild(grid);
     s.root.appendChild(layers);
     syncPadCountUi(s);
@@ -1194,6 +1381,10 @@
       } catch (_) {}
       if (s.timeEl.textContent !== text) s.timeEl.textContent = text;
     }
+    // One clock drives the section strip too: playhead + (when replaying)
+    // the section-boundary automation. Folding it here avoids a second timer
+    // and keeps the strip live from mount even before pads exist.
+    updateArrange(s);
   }
 
   /** Kill All: silence every engine voice, reset pad UI, and ask the host
@@ -1209,6 +1400,358 @@
       else if (can(host, "pauseSong")) host.pauseSong();
     } catch (_) {}
     updateTransport(s);
+  }
+
+  // ---------- live-capture arrangement (DJ section automation) ----------
+  //
+  // Record: while Rec is on and the song rolls, every pad that turns ON is
+  // captured into the SECTION it fired in (a set per section index). Replay:
+  // watch the song clock against the section starts and, at each boundary,
+  // auto-arm that section's captured pads (looped, honoring quantize) and
+  // release the arranged pads that aren't in it — the arrangement plays
+  // itself. Rec and Play are mutually exclusive; manual taps always work
+  // (captured under Rec, just live otherwise). Persisted per song under
+  // localStorage jamn.arrangement.<entryId>.
+
+  /** Fresh per-song arrangement state. `key` is null for pack mounts (no
+   * entry) so persistence + capture stay inert there. */
+  function freshArrangeState(entry) {
+    return {
+      recording: false,
+      playing: false,
+      map: {}, // sectionIndex → [padIdx,…]
+      key: entry && entry.id ? entry.id : null,
+      playSection: -1, // last section replay applied (-2 forces first apply)
+      // DOM refs, filled by buildArrangeControls / buildArrangeStrip:
+      recBtn: null, playBtn: null, clearBtn: null, groupEl: null,
+      stripEl: null, laneEl: null, playheadEl: null, noteEl: null,
+      segEls: [], span: null,
+    };
+  }
+
+  /** Arrange is only meaningful when the song has detected sections. */
+  function arrangeEnabled(s) {
+    return !!(s && s.arrange && s.sections && s.sections.length);
+  }
+
+  function loadArrangement(s) {
+    if (!s.arrange || !s.arrange.key) return;
+    try {
+      var map = window.localStorage
+        ? parseArrangement(window.localStorage.getItem("jamn.arrangement." + s.arrange.key))
+        : null;
+      s.arrange.map = map || {};
+    } catch (_) {
+      s.arrange.map = {};
+    }
+  }
+
+  function saveArrangement(s) {
+    if (!s.arrange || !s.arrange.key) return;
+    try {
+      if (!window.localStorage) return;
+      var json = serializeArrangement(s.arrange.map);
+      if (json) window.localStorage.setItem("jamn.arrangement." + s.arrange.key, json);
+      else window.localStorage.removeItem("jamn.arrangement." + s.arrange.key);
+    } catch (_) {}
+  }
+
+  /** The Rec / ▶ Arrangement / Clear cluster — styled like the other kit
+   * toggles (.kit-toggle inside a .kit-seg shell). Disabled wholesale when
+   * the song has no sections. */
+  function buildArrangeControls(s) {
+    var group = document.createElement("div");
+    group.className = "kit-seg kit-arrange";
+    group.setAttribute("role", "group");
+    group.title = "Live-capture arrangement — record which pads you play per "
+      + "section, then replay it hands-free";
+
+    var rec = document.createElement("button");
+    rec.type = "button";
+    rec.className = "kit-toggle kit-arrange-rec";
+    var dot = document.createElement("i");
+    dot.className = "kit-arrange-dot";
+    rec.appendChild(dot);
+    rec.appendChild(document.createTextNode("Rec"));
+    rec.setAttribute("aria-pressed", "false");
+    rec.title = "Record the arrangement while the song plays";
+    rec.addEventListener("click", function () {
+      if (!arrangeEnabled(s)) return;
+      setArrangeRecording(s, !s.arrange.recording);
+    });
+
+    var play = document.createElement("button");
+    play.type = "button";
+    play.className = "kit-toggle kit-arrange-play";
+    play.textContent = "▶ Arrangement";
+    play.setAttribute("aria-pressed", "false");
+    play.title = "Replay the captured arrangement — pads come in and out per section";
+    play.addEventListener("click", function () {
+      if (!arrangeEnabled(s)) return;
+      try {
+        if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+      } catch (_) {}
+      if (s.arrange.playing) stopArrangeReplay(s);
+      else startArrangeReplay(s);
+    });
+
+    var clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "kit-toggle kit-arrange-clear";
+    clear.textContent = "Clear";
+    clear.title = "Erase the captured arrangement";
+    clear.addEventListener("click", function () {
+      if (!arrangeEnabled(s)) return;
+      clearArrangement(s);
+    });
+
+    group.appendChild(rec);
+    group.appendChild(play);
+    group.appendChild(clear);
+    s.arrange.recBtn = rec;
+    s.arrange.playBtn = play;
+    s.arrange.clearBtn = clear;
+    s.arrange.groupEl = group;
+    syncArrangeButtons(s);
+    return group;
+  }
+
+  function syncArrangeButtons(s) {
+    var a = s && s.arrange;
+    if (!a) return;
+    var on = arrangeEnabled(s);
+    [a.recBtn, a.playBtn, a.clearBtn].forEach(function (b) {
+      if (!b) return;
+      b.disabled = !on;
+      b.classList.toggle("is-disabled", !on);
+    });
+    if (a.recBtn) {
+      a.recBtn.classList.toggle("is-on", !!a.recording);
+      a.recBtn.setAttribute("aria-pressed", String(!!a.recording));
+    }
+    if (a.playBtn) {
+      a.playBtn.classList.toggle("is-on", !!a.playing);
+      a.playBtn.setAttribute("aria-pressed", String(!!a.playing));
+    }
+  }
+
+  function setArrangeRecording(s, on) {
+    if (!s.arrange) return;
+    if (on && s.arrange.playing) stopArrangeReplay(s); // mutually exclusive
+    s.arrange.recording = !!on;
+    syncArrangeButtons(s);
+    if (on) {
+      var host = getHost();
+      var playing = false;
+      try { playing = !!(can(host, "isPlaying") && host.isPlaying()); } catch (_) {}
+      toast(s, playing
+        ? "Recording arrangement — jam the pads"
+        : "Recording — press Play to roll the song");
+    }
+  }
+
+  function clearArrangement(s) {
+    if (!s.arrange) return;
+    s.arrange.map = {};
+    saveArrangement(s);
+    updateArrangeStrip(s);
+    toast(s, "Arrangement cleared");
+  }
+
+  /** Capture a pad that just turned ON into the section under the playhead.
+   * Only while recording and the song is actually rolling (a pad armed with
+   * the transport stopped belongs to no section). De-dupes per section. */
+  function noteArrangeCapture(s, padIdx) {
+    var a = s.arrange;
+    if (!a || !a.recording || !arrangeEnabled(s)) return;
+    var host = getHost();
+    var playing = false;
+    try { playing = !!(can(host, "isPlaying") && host.isPlaying()); } catch (_) {}
+    if (!playing) return;
+    var t = NaN;
+    try { t = can(host, "getTime") ? Number(host.getTime()) : NaN; } catch (_) {}
+    var idx = sectionIndexAtTime(s.sections, t);
+    if (idx < 0) return;
+    var list = a.map[idx] || (a.map[idx] = []);
+    if (list.indexOf(padIdx) !== -1) return;
+    list.push(padIdx);
+    list.sort(function (x, y) { return x - y; });
+    saveArrangement(s);
+    updateArrangeStrip(s);
+  }
+
+  function startArrangeReplay(s) {
+    if (!arrangeEnabled(s)) return;
+    s.arrange.recording = false; // mutually exclusive with Rec
+    s.arrange.playing = true;
+    s.arrange.playSection = -2; // force a boundary apply on the first tick
+    syncArrangeButtons(s);
+    var host = getHost();
+    // Rewind to the top when the host can seek; otherwise replay runs from
+    // the current position (the host bridge has no seek today, so this is a
+    // forward-looking feature-detect, not a hard dependency).
+    var seek = null;
+    ["seek", "seekTo", "seekSong", "seekTime"].forEach(function (m) {
+      if (!seek && can(host, m)) seek = m;
+    });
+    try { if (seek) host[seek](0); } catch (_) {}
+    try {
+      if (can(host, "isPlaying") && !host.isPlaying() && can(host, "playSong")) host.playSong();
+    } catch (_) {}
+    updateTransport(s); // repaints play glyph + kicks the first arrange tick
+  }
+
+  function stopArrangeReplay(s) {
+    if (!s.arrange) return;
+    s.arrange.playing = false;
+    s.arrange.playSection = -1;
+    syncArrangeButtons(s);
+    // Pads are left exactly as they are (spec) — the user keeps whatever is
+    // currently sounding and can jam on from there.
+  }
+
+  /** Apply one section's captured pad set: arm the idle pads in the set,
+   * release the arranged pads that aren't. Only pads that appear somewhere
+   * in the arrangement are touched, so a manual pad jammed over the top
+   * survives the boundary. Honors the current quantize grid. */
+  function applyArrangeSection(s, secIdx) {
+    if (!can(s.engine, "trigger")) return;
+    var set = s.arrange.map[secIdx] || [];
+    var inSet = {};
+    set.forEach(function (i) { inSet[i] = true; });
+    var grid = s.quantize === "off" ? "bar" : s.quantize;
+    arrangedPads(s.arrange.map).forEach(function (idx) {
+      var pe = s.padEls[idx];
+      if (!pe) return;
+      if (inSet[idx]) {
+        if (pe.ui === "idle") {
+          pe.loop = true;
+          try {
+            s.engine.trigger(idx, { loop: true, quantized: true, grid: grid });
+            setUi(s, idx, "armed");
+          } catch (_) {}
+        }
+      } else if (pe.ui !== "idle") {
+        try { if (can(s.engine, "release")) s.engine.release(idx); } catch (_) {}
+        setUi(s, idx, "idle");
+      }
+    });
+  }
+
+  /** Playhead + replay-boundary clock, driven off the transport poll
+   * (updateTransport, ~4 Hz from mount). One clock keeps the strip and the
+   * automation in lockstep without a second timer. */
+  function updateArrange(s) {
+    var a = s.arrange;
+    if (!a || !a.stripEl) return;
+    var host = getHost();
+    var t = NaN;
+    try { t = can(host, "getTime") ? Number(host.getTime()) : NaN; } catch (_) {}
+    updateArrangePlayhead(s, t);
+    if (!a.playing) return;
+    var playing = false;
+    try { playing = !!(can(host, "isPlaying") && host.isPlaying()); } catch (_) {}
+    if (!playing) return; // paused → hold the arrangement where it is
+    var cur = sectionIndexAtTime(s.sections, t);
+    if (cur !== a.playSection) {
+      a.playSection = cur;
+      if (cur >= 0) applyArrangeSection(s, cur);
+    }
+  }
+
+  /** Build the section strip container + segments. Hidden with a note when
+   * the song has no sections; Arrange controls disable in lockstep. */
+  function buildArrangeStrip(s) {
+    var wrap = document.createElement("div");
+    wrap.className = "kit-arrange-strip";
+    s.arrange.stripEl = wrap;
+    renderArrangeStrip(s);
+    return wrap;
+  }
+
+  function renderArrangeStrip(s) {
+    var a = s.arrange;
+    if (!a || !a.stripEl) return;
+    a.stripEl.innerHTML = "";
+    a.segEls = [];
+    a.laneEl = null;
+    a.playheadEl = null;
+    a.noteEl = null;
+    a.span = null;
+    var secs = s.sections || [];
+    if (!secs.length) {
+      a.stripEl.classList.add("is-empty");
+      var note = document.createElement("div");
+      note.className = "kit-arrange-note";
+      note.textContent = "No sections detected for this song";
+      a.stripEl.appendChild(note);
+      a.noteEl = note;
+      return;
+    }
+    a.stripEl.classList.remove("is-empty");
+    var t0 = secs[0].startSec;
+    var t1 = secs[secs.length - 1].endSec;
+    a.span = { t0: t0, t1: t1 > t0 ? t1 : t0 + 1 };
+
+    var lane = document.createElement("div");
+    lane.className = "kit-arrange-lane";
+    secs.forEach(function (sec, i) {
+      var seg = document.createElement("div");
+      seg.className = "kit-arrange-seg";
+      // Flex-grow ∝ duration, so each segment's width tracks its length.
+      seg.style.flexGrow = String(Math.max(0.001, sec.endSec - sec.startSec));
+      seg.title = sec.label + " — " + fmtTime(sec.startSec) + "–" + fmtTime(sec.endSec);
+      var lbl = document.createElement("span");
+      lbl.className = "kit-arrange-seg-label";
+      lbl.textContent = sec.label;
+      var dotEl = document.createElement("i");
+      dotEl.className = "kit-arrange-seg-dot";
+      seg.appendChild(lbl);
+      seg.appendChild(dotEl);
+      lane.appendChild(seg);
+      a.segEls[i] = { seg: seg, dot: dotEl };
+    });
+    var head = document.createElement("div");
+    head.className = "kit-arrange-playhead";
+    head.style.display = "none";
+    lane.appendChild(head);
+    a.playheadEl = head;
+    a.laneEl = lane;
+    a.stripEl.appendChild(lane);
+    updateArrangeStrip(s);
+  }
+
+  /** Repaint the per-section "has captured pads" indicators. */
+  function updateArrangeStrip(s) {
+    var a = s && s.arrange;
+    if (!a || !a.segEls || !a.segEls.length) return;
+    var withPads = {};
+    sectionsWithPads(a.map).forEach(function (i) { withPads[i] = true; });
+    for (var i = 0; i < a.segEls.length; i++) {
+      var e = a.segEls[i];
+      if (!e) continue;
+      e.seg.classList.toggle("has-pads", !!withPads[i]);
+      var n = (a.map[i] && a.map[i].length) || 0;
+      e.dot.title = n ? n + " pad" + (n === 1 ? "" : "s") + " captured here" : "";
+    }
+  }
+
+  /** Move the playhead + highlight the current segment from song time `t`. */
+  function updateArrangePlayhead(s, t) {
+    var a = s && s.arrange;
+    if (!a || !a.playheadEl || !a.span) return;
+    if (typeof t === "number" && isFinite(t)) {
+      var frac = (t - a.span.t0) / (a.span.t1 - a.span.t0);
+      if (frac < 0) frac = 0; else if (frac > 1) frac = 1;
+      a.playheadEl.style.display = "";
+      a.playheadEl.style.left = (frac * 100).toFixed(2) + "%";
+    } else {
+      a.playheadEl.style.display = "none";
+    }
+    var cur = sectionIndexAtTime(s.sections, t);
+    for (var i = 0; i < a.segEls.length; i++) {
+      if (a.segEls[i]) a.segEls[i].seg.classList.toggle("is-current", i === cur);
+    }
   }
 
   // ---------- mode / quantize / instant groove ----------
@@ -3543,6 +4086,10 @@
       // this state); its candidate fetch falls back to lastEntryId since a
       // pack carries no entry.id.
       borrow: freshBorrowState(), borrowBtn: null,
+      // Packs carry no song sections, so the Arrange strip renders its "no
+      // sections" note and the cluster stays disabled — the state still
+      // exists so every arrange call is a safe no-op.
+      sections: [], arrange: freshArrangeState(null),
     };
     renderShell(current);
     var s = current;
@@ -4278,6 +4825,12 @@
       parsePadFxStore: parsePadFxStore,
       serializePadFxStore: serializePadFxStore,
       padOverrides: padOverrides,
+      normSections: normSections,
+      sectionIndexAtTime: sectionIndexAtTime,
+      sectionsWithPads: sectionsWithPads,
+      arrangedPads: arrangedPads,
+      parseArrangement: parseArrangement,
+      serializeArrangement: serializeArrangement,
       cutoffFromSlider: cutoffFromSlider,
       sliderFromCutoff: sliderFromCutoff,
       pickerPackList: pickerPackList,
