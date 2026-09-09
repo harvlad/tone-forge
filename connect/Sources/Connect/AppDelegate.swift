@@ -110,14 +110,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            // Plain text title until we ship an icon (.icns asset is
-            // assembled by build_release.sh). Single character keeps
-            // the bar uncluttered.
-            button.title = "TF"
-            button.toolTip = "ToneForge Connect"
+            // SF Symbol so the menu-bar presence is recognizable at a
+            // glance (the old plain "TF" text read as noise and users
+            // couldn't tell Connect was even running). Tinted green once
+            // paired; falls back to "TF" text if the symbol is missing.
+            if let img = NSImage(systemSymbolName: "waveform.circle",
+                                 accessibilityDescription: "Jamn Connect") {
+                img.isTemplate = true
+                button.image = img
+            } else {
+                button.title = "TF"
+            }
+            button.toolTip = "Jamn Connect — running (not paired)"
         }
         item.menu = buildMenu()
         statusItem = item
+    }
+
+    /// Reflect paired/unpaired in the menu-bar icon itself so "is Connect
+    /// running and linked?" is answerable without opening the menu.
+    private func setPairedAppearance(_ paired: Bool) {
+        guard let button = statusItem?.button else { return }
+        button.contentTintColor = paired ? NSColor.systemGreen : nil
+        if button.image != nil {
+            button.image = NSImage(
+                systemSymbolName: paired ? "waveform.circle.fill" : "waveform.circle",
+                accessibilityDescription: "Jamn Connect")
+            button.image?.isTemplate = !paired
+        }
+        button.toolTip = paired
+            ? "Jamn Connect — paired"
+            : "Jamn Connect — running (not paired)"
     }
 
     private func buildMenu() -> NSMenu {
@@ -177,6 +200,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// connection / audio state without opening Terminal.
     private func setStatus(_ text: String) {
         statusMenuItem?.title = "Connect — \(text)"
+        // Green menu-bar icon once we're paired (and drop it on any
+        // non-paired transition), so running-vs-linked is visible at a glance.
+        setPairedAppearance(text.hasPrefix("paired"))
     }
 
     // MARK: - Menu actions
@@ -188,7 +214,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the web app and surface a waiting hint in the menu so the
         // user knows we're alive and watching for the handoff.
         setStatus("waiting to pair…")
-        NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8300/")!)
+        // Open the production web app (was http://127.0.0.1:8300 — a dev-only
+        // URL that opened a dead page for real users). Override with
+        // JAMN_WEB_URL for local dev against a running backend.
+        let webURL = ProcessInfo.processInfo.environment["JAMN_WEB_URL"]
+            ?? "https://jamn.app/"
+        if let u = URL(string: webURL) {
+            NSWorkspace.shared.open(u)
+        }
     }
 
     @objc private func openMicrophoneSettings(_ sender: Any?) {
