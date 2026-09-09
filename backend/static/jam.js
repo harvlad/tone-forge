@@ -11082,6 +11082,16 @@
     const launching = !!cb.launching
       && performance.now() < cb.launchingUntilMs;
     const errored = cb.status === 'closed' && cb.reconnectMs >= 30000;
+    // On non-Mac there is no Connect companion to pair with, so the pill is
+    // purely the browser monitor entry — label it "Monitor", not the
+    // misleading "Connect Offline" (which implies a pairing that can't happen).
+    const isMac = (navigator.userAgentData?.platform === 'macOS')
+      || /Mac/.test(navigator.platform || '');
+    if (!isMac && !paired) {
+      pill.classList.add('offline');
+      pill.textContent = 'Monitor';
+      return;
+    }
     if (paired) {
       pill.classList.add('connected');
       // Mirror the inline status button's transport qualifier —
