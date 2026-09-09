@@ -75,7 +75,14 @@ public final class AudioEngine: ObservableObject {
         /// AVAudioUnitReverb factory preset (no continuous parameter).
         public var seconds: Double
 
-        public init(dryGain: Float = 0.9, wetGain: Float = 0.3, seconds: Double = 2.0) {
+        // Default DRY. This one reverb serves every contribution source,
+        // including Remix/Borrow sample pads that play back real, already-
+        // produced song stems. A 0.3 wet / 2 s tail on a sustained 4-bar
+        // bass/chord loop sounds "underwater" — the stem is clean on normal
+        // playback but washed the moment it plays as a pad. Reverb is a
+        // deliberate effect you dial in from Settings, not a default coat on
+        // full-band material. (dryGain 1.0 so dry is unattenuated.)
+        public init(dryGain: Float = 1.0, wetGain: Float = 0.0, seconds: Double = 2.0) {
             self.dryGain = dryGain
             self.wetGain = wetGain
             self.seconds = seconds
