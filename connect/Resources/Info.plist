@@ -1,125 +1,53 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!--
-  ToneForge Connect — application bundle metadata.
-
-  This file is consumed by build_release.sh when assembling the
-  Connect.app bundle from the SwiftPM-produced executable. See
-  connect/ONBOARDING_AUDIT.md §F1.2 for the rationale behind each
-  key. Changes to user-visible strings ship in the next release.
--->
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key>
-    <string>com.toneforge.connect</string>
-
-    <key>CFBundleName</key>
-    <string>Connect</string>
-
-    <key>CFBundleDisplayName</key>
-    <string>ToneForge Connect</string>
-
-    <key>CFBundleExecutable</key>
-    <string>Connect</string>
-
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-
-    <key>CFBundleVersion</key>
-    <string>1</string>
-
-    <key>CFBundleShortVersionString</key>
-    <string>0.2.1</string>
-
-    <key>LSMinimumSystemVersion</key>
-    <string>12.0</string>
-
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.music</string>
-
-    <!--
-      Menu-bar agent, not a Dock app (user directive). LSUIElement=true =
-      no Dock icon; the NSStatusItem (with a Quit item) is the whole UI and
-      shows reliably. runGUI() also sets .accessory at runtime to match.
-    -->
-    <key>LSUIElement</key>
-    <true/>
-
-    <key>NSHighResolutionCapable</key>
-    <true/>
-
-    <!--
-      Required for microphone access under the hardened runtime.
-      First-launch dialog text. Must read as a plain-language reason
-      to a non-technical guitarist.
-    -->
-    <key>NSMicrophoneUsageDescription</key>
-    <string>ToneForge Connect listens to your guitar so it can be mixed alongside the song you're jamming with.</string>
-
-    <!--
-      Deep-link pairing handler. The web app opens
-      toneforge://pair?token=…&amp;ws=… to hand a session off without
-      asking the user to copy a session id. See ONBOARDING_AUDIT §F2.2.
-    -->
-    <key>CFBundleURLTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleURLName</key>
-            <string>com.toneforge.connect.deeplink</string>
-            <key>CFBundleURLSchemes</key>
-            <array>
-                <string>toneforge</string>
-            </array>
-            <key>LSHandlerRank</key>
-            <string>Owner</string>
-        </dict>
-    </array>
-
-    <!--
-      Sparkle auto-update configuration. The appcast is published to
-      GitHub Pages from connect/docs/appcast.xml on each release; the
-      EdDSA public key here pairs with the private key held only as a
-      GitHub Actions secret (SPARKLE_ED_PRIVATE_KEY). See ONBOARDING_AUDIT
-      §F6 and connect/docs/RELEASING.md.
-
-      SUPublicEDKey is the base64-encoded Ed25519 public half. It is
-      embedded in every shipped build so Sparkle can verify the
-      signature on an incoming appcast entry before downloading. A
-      compromised appcast.xml without a matching private key cannot
-      push a malicious update — the binary just fails to install.
-
-      The placeholder value below is replaced by build_release.sh
-      when CONNECT_SPARKLE_PUBLIC_KEY is set in the environment.
-      Local dev builds without the key still launch fine; Sparkle
-      simply logs that no key was configured and disables checks.
-    -->
-    <key>SUFeedURL</key>
-    <string>https://mattharvey.github.io/tone-forge/connect/appcast.xml</string>
-
-    <key>SUPublicEDKey</key>
-    <string>__SPARKLE_PUBLIC_KEY__</string>
-
-    <!--
-      Cap how often Sparkle phones home. 86400 = once per day; the
-      user can still force a check from the menu. Avoids the
-      "annoying nag" failure mode reported in the audit.
-    -->
-    <key>SUScheduledCheckInterval</key>
-    <integer>86400</integer>
-
-    <!--
-      SUEnableAutomaticChecks deliberately not set here. Sparkle treats
-      the absence of this key as "enabled" by default, so factory
-      behaviour is unchanged. Removing the Info.plist override lets
-      UserDefaults take effect — see AppDelegate.setAutoUpdateEnabled,
-      which writes the user's browser-side toggle into UserDefaults so
-      they can opt out without recompiling. EXECUTION_PLAN §3C.
-    -->
+	<key>CFBundleDisplayName</key>
+	<string>ToneForge Connect</string>
+	<key>CFBundleExecutable</key>
+	<string>Connect</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.toneforge.connect</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Connect</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.2</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.toneforge.connect.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>toneforge</string>
+			</array>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>2</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.music</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ToneForge Connect listens to your guitar so it can be mixed alongside the song you're jamming with.</string>
+	<key>SUFeedURL</key>
+	<string>https://mattharvey.github.io/tone-forge/connect/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>__SPARKLE_PUBLIC_KEY__</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>
