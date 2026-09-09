@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>JamN — What are we playing?</title>
-<link rel="stylesheet" href="/static/jam.css?v=77" />
+<link rel="stylesheet" href="/static/jam.css?v=78" />
 <link rel="stylesheet" href="/static/kit.css?v=10">
 <link rel="stylesheet" href="/static/stage.css?v=2">
 <link rel="stylesheet" href="/static/sequencer.css?v=1">
@@ -1546,6 +1546,22 @@
   <section class="view" id="view-contribute"><div id="contribute-root"></div></section>
   <section class="view" id="view-launchpad"><div id="launchpad-root"></div></section>
 
+  <!-- Contribute popup: sidebar Voice/Beat/Sample open this centered modal
+       on the clicked tab; the tab strip inside contribute.js lets the user
+       switch Voice/Beat/Sample without leaving the popup. contribute.js owns
+       everything inside #contribute-modal-root via window.JamnContribute.mount();
+       the router mounts on open and calls unmount() on close so any in-progress
+       mic stream is released. The #view-contribute pane is a routing fallback. -->
+  <div id="contribute-modal" class="contribute-modal" hidden>
+    <div class="contribute-modal-card" role="dialog" aria-modal="true" aria-labelledby="contribute-modal-heading">
+      <div class="contribute-modal-header">
+        <div class="contribute-modal-heading" id="contribute-modal-heading">Contribute</div>
+        <button id="contribute-modal-close" class="ghost" type="button" aria-label="Close contribute">Close</button>
+      </div>
+      <div id="contribute-modal-root"></div>
+    </div>
+  </div>
+
   <!-- ============================== MIXER =============================== -->
   <!-- Stems mixer, promoted from the perform center column to its own
        surface (native 5-surface IA). Every id preserved verbatim —
@@ -1686,6 +1702,6 @@
 <script src="/static/lpview.js?v=2"></script>
 <script src="/static/chopedit.js?v=2"></script>
 <script src="/static/kit-hw.js?v=1"></script>
-<script src="/static/jam.js?v=144"></script>
+<script src="/static/jam.js?v=145"></script>
 </body>
 </html>

@@ -3252,10 +3252,17 @@
     // Push the analysis id into the URL so a reload restores the jam
     // via the /jam/:id deep-link path (see maybeDeepLink IIFE below).
     // replaceState — we don't want a back-button entry per analysis.
-    if (state.analysisId && !/^\/jam\/[^\/]+$/.test(window.location.pathname)) {
-      try {
-        window.history.replaceState(null, '', `/jam/${state.analysisId}`);
-      } catch {}
+    // Must run even when already on a /jam/:id path: switching songs from
+    // the library kept the OLD id in the URL (the old guard only wrote the
+    // URL when it wasn't already a /jam/ path), so a reload reopened the
+    // previous song and the address bar lied about what was loaded.
+    if (state.analysisId) {
+      const wantPath = `/jam/${state.analysisId}`;
+      if (window.location.pathname !== wantPath) {
+        try {
+          window.history.replaceState(null, '', wantPath + (window.location.hash || ''));
+        } catch {}
+      }
     }
 
     // Stem records — the provider-agnostic Stem[] from the session
@@ -5846,7 +5853,17 @@
       if (stemFetchUrl && /^https?:/i.test(stemFetchUrl)
           && stemFetchUrl.indexOf(window.location.origin) !== 0
           && state.analysisId) {
-        const role = stem.role || String(name).split('.').pop();
+        // The backend stem-audio proxy keys `stems_paths` by the ORIGINAL
+        // demucs name (drums/bass/vocals/guitar/piano/other). Legacy stems
+        // remap those to display roles (piano→keys, guitar/other→harmonic)
+        // in legacyStemsToRecords, so requesting by stem.role 404s
+        // (/stem-audio/keys, /stem-audio/harmonic don't exist). Recover the
+        // original name from the "legacy.<name>" id; non-legacy stems keep
+        // using their real role, which does match stems_paths.
+        const idStr = String(stem.id || name);
+        const role = idStr.startsWith('legacy.')
+          ? idStr.slice('legacy.'.length)
+          : (stem.role || idStr.split('.').pop());
         stemFetchUrl = `${window.location.origin}/api/history/` +
           `${encodeURIComponent(state.analysisId)}/stem-audio/${encodeURIComponent(role)}`;
       }
