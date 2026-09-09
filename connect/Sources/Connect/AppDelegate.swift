@@ -179,10 +179,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
+        // Relabeled from "Pair with browser…": the app can't pair a
+        // specific already-open tab (pairing binds to the browser tab's
+        // session), so this just opens the web app; the actual pairing is
+        // driven from the web Connect panel ("Launch Connect").
         let pair = NSMenuItem(
-            title: "Pair with browser…",
+            title: "Open Jamn in browser…",
             action: #selector(pairWithBrowser(_:)),
-            keyEquivalent: "p"
+            keyEquivalent: "o"
         )
         pair.target = self
         menu.addItem(pair)
@@ -235,7 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // handleURLEvent below. Until that link fires we just open
         // the web app and surface a waiting hint in the menu so the
         // user knows we're alive and watching for the handoff.
-        setStatus("waiting to pair…")
+        setStatus("open — pair from the web Connect panel")
         // Open the production web app (was http://127.0.0.1:8300 — a dev-only
         // URL that opened a dead page for real users). Override with
         // JAMN_WEB_URL for local dev against a running backend.
