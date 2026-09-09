@@ -39,7 +39,7 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-BORROW_VERSION = 3      # bumped: atempo (WSOLA) stretch, was phase-vocoder
+BORROW_VERSION = 4      # bumped: tempo-locked bar length + no octave-fold
 _LOOPS_PER_SOURCE = 8   # half of a 16-pad grid per song (initial | donor)
 _MAX_LOOPS = _LOOPS_PER_SOURCE   # back-compat alias
 _STRETCH_LIMIT = 0.5    # refuse to stretch beyond ±50% (artifacts)
@@ -252,15 +252,31 @@ def _sections_of(result: Dict) -> List[Tuple[float, float, str]]:
 
 
 def _snap_window(start: float, end: float, downs: List[float],
-                 bars: int) -> Optional[Tuple[float, float]]:
-    """A bar-locked window inside [start, end]: from the first downbeat at/after
-    `start`, spanning up to `bars` bars but never past `end`. None if fewer than
-    one full bar of downbeats fall in the section."""
+                 bars: int, bar_sec: float,
+                 max_t: Optional[float]) -> Optional[Tuple[float, float]]:
+    """A window anchored to the first downbeat at/after `start`, exactly
+    `bars` bars LONG by TEMPO (bars * bar_sec) — NOT by counting downbeats.
+
+    Counting downbeat indices made loop length depend on how many downbeats
+    the tracker found in the section: songs with sparse/irregular downbeats
+    produced 3- or 6-bar windows where others got 4, so loops from different
+    songs were different lengths and never locked to the grid. A tempo-derived
+    length is identical for every loop, so after tempo-stretch every loop is
+    exactly `bars` bars at the target tempo. Needs at least one downbeat in the
+    section and enough audio after it."""
     inside = [d for d in downs if start - 0.05 <= d <= end + 0.05]
-    if len(inside) < 2:
+    if not inside:
         return None
-    i1 = min(bars, len(inside) - 1)
-    return inside[0], inside[i1]
+    a = inside[0]
+    b = a + bars * bar_sec
+    if max_t is not None and b > max_t:
+        # Not enough song after the anchor — try the last downbeat that still
+        # leaves a full window, else give up on this section.
+        if a - (b - max_t) < start - 0.05:
+            return None
+        b = max_t
+        a = b - bars * bar_sec
+    return a, b
 
 
 _INTRO_OUTRO = ("intro", "outro", "ending", "count", "silence")
@@ -279,6 +295,8 @@ def _section_spans(result: Dict, n: int
     downs.sort()
     dur = result.get("duration_sec")
     max_t = float(dur) if isinstance(dur, (int, float)) and dur > 0 else None
+    bpm = _tempo_of(result) or 120.0
+    bar_sec = 240.0 / bpm            # 4 beats per bar (4/4)
 
     sections = _sections_of(result)
     if sections:
@@ -298,7 +316,7 @@ def _section_spans(result: Dict, n: int
         for a, b, label in ordered:
             if max_t is not None:
                 b = min(b, max_t)
-            win = _snap_window(a, b, downs, _SECTION_BARS)
+            win = _snap_window(a, b, downs, _SECTION_BARS, bar_sec, max_t)
             if win is None:
                 continue
             spans.append((win[0], win[1], label or "loop"))
@@ -422,16 +440,16 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
     src_bpm = _tempo_of(source_result)
     if not src_bpm or not target_bpm:
         return []
+    # Stretch the source straight to the target tempo (atempo = target/src),
+    # so the loop lands EXACTLY at the current song's tempo. The old code
+    # octave-FOLDED this ratio toward 1.0 — for a donor slower than the target
+    # (ratio ~2) that folded to ~1.0, i.e. NO stretch, so the donor played at
+    # its own half tempo ("twice as slow"). Candidates are already octave-
+    # filtered at selection; here we just hit the tempo. Chained atempo covers
+    # ratios beyond 0.5–2.0.
     ratio = target_bpm / src_bpm
-    if abs(ratio - 1.0) > _STRETCH_LIMIT:
-        # Too far to stretch cleanly — try the octave (half/double time) so a
-        # 180 BPM donor can still lend to a 95 BPM song.
-        for mult in (0.5, 2.0):
-            if abs(ratio * mult - 1.0) <= _STRETCH_LIMIT:
-                ratio *= mult
-                break
-        else:
-            return []
+    if not (0.25 <= ratio <= 4.0):
+        return []
 
     spans = _section_spans(source_result, _LOOPS_PER_SOURCE)
     if not spans:
