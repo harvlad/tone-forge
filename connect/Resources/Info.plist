@@ -44,13 +44,12 @@
     <string>public.app-category.music</string>
 
     <!--
-      Connect ships as a regular Dock app, not LSUIElement. The user
-      needs a Dock icon to right-click → Quit when something goes
-      wrong with the menu-bar item; without it, the only recovery is
-      Activity Monitor (which a non-technical user won't think to use).
+      Menu-bar agent, not a Dock app (user directive). LSUIElement=true =
+      no Dock icon; the NSStatusItem (with a Quit item) is the whole UI and
+      shows reliably. runGUI() also sets .accessory at runtime to match.
     -->
     <key>LSUIElement</key>
-    <false/>
+    <true/>
 
     <key>NSHighResolutionCapable</key>
     <true/>

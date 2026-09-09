@@ -69,8 +69,11 @@ struct Connect {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        app.setActivationPolicy(.regular)
-        app.activate(ignoringOtherApps: true)
+        // Menu-bar agent, not a Dock app (user directive). .accessory =
+        // no Dock icon, no app menu crowding the bar; the NSStatusItem is
+        // the whole UI and shows reliably. LSUIElement in Info.plist makes
+        // this the launch state (no Dock flash before this runs).
+        app.setActivationPolicy(.accessory)
         app.run()
     }
 
