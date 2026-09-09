@@ -1,41 +1,47 @@
 Jamn — TestFlight build notes
 
 WHAT'S NEW THIS BUILD
-• Fixed: the "Next: <chord>" countdown strip no longer shows in Samples
-  mode and no longer makes the pads jump as chords change.
-• Borrow (new): in the Remix sheet, borrow real drum/bass/chord loops from
-  your other analyzed songs. They're time-stretched to the current song's
-  tempo (and key-matched for bass/chords) and land on the pads as loops.
-• Re-Drum fixes: no longer a "crunchy soup" — the groove is filtered to the
-  musical backbone, quantized to the beat grid, and bass notes are no longer
-  mistaken for kicks. Re-Drum also no longer force-replaces your pads unless
-  you're already on the Drum Kit.
-• Drum Kit: cleaned one-shots are now true stereo (were dual-mono).
+• Borrow is now smarter and mixes BOTH songs on the pads:
+  – It finds songs that actually HARMONIZE with yours — not just ones with
+    the same key label. It compares the real chord content of both songs, so
+    a song "in a different key" that still sounds good together now shows up
+    (and same-key songs that don't actually fit are ranked down).
+  – Your pad grid now holds sections of BOTH songs at once: your current
+    song's sections (verse/chorus/…) on the top pads (blue), the borrowed
+    song's sections below (amber). Jump between sections of either song.
+  – Pads are named by section (Verse, Chorus, Bridge…) instead of "Loop 1-4".
+• This is a server-side upgrade — no need to reinstall; it's live for this
+  build the moment you open Borrow.
 
 HOW TO USE THE NEW FEATURES
 • Borrow: open a song, tap Remix (sparkles, top of the Jam pads). In the
-  Borrow section pick Beat / Bass / Chords, then tap a suggested song. Its
-  loops download + render, then appear on your pads — tap a pad to start the
-  loop; it's tempo-locked to your song and loops until you tap it again.
-• Re-Drum: Remix → Re-Drum → pick a donor kit (or "Tightened"). The drums in
-  the song MIX swap; "Original drums" reverts. Play the song first to hear it.
-• Keep timing: hold a pad → Chop → trim → toggle "Keep timing" → Apply.
+  Borrow section pick Beat / Bass / Chords. The suggested songs are ranked by
+  how well they harmonize with your song (bass/chords show "harmonizes" or
+  "fits"); tap one. Loops download + render, then appear on the pads:
+  – Blue pads = sections of YOUR current song.
+  – Amber pads = sections of the borrowed song (tempo-locked to yours).
+  Tap any pad to start that section looping; tap again to stop. Mix and match
+  sections from both songs.
 
 WHAT TO TEST
-1. Load a song → Play → open Remix (sparkles) → Borrow. Pick "Beat", tap a
-   donor. After it renders (~a few seconds the first time) the loops appear
-   on the pads — tap to layer them under the song. Do they lock to the tempo?
-2. Try Borrow → "Bass" or "Chords": only key-compatible songs should be
-   offered, tagged "key match". Does the borrowed part sit in key?
-3. Re-Drum a donor kit while a song plays: drums should swap in the MIX
-   without silencing playback, and sound like a coherent beat (not mud).
-4. Trim a sample in the chop editor with "Keep timing" ON vs OFF — ON keeps
-   the pad firing on the beat; OFF loops the trimmed slice (stutter).
+1. Load a song → Play → Remix (sparkles) → Borrow → "Chords" (or "Bass").
+   The donor list should be ordered by harmony, tagged "harmonizes"/"fits".
+   Tap the top one. After it renders (~a few seconds first time) 16 pads
+   appear: blue (your song) on top, amber (borrowed) below. Correct colors?
+2. Tap a BLUE pad and an AMBER pad together — a section of your song layered
+   with a section of the borrowed song. Do they lock to the same tempo and
+   sit in key together?
+3. Check the pad names read as sections (Verse, Chorus, Bridge…), not
+   "Loop 1-4", and repeats are numbered (Verse 2, Chorus 3).
+4. Try a donor that is NOT the same key label as your song but is offered as
+   "harmonizes" — does it actually sound good over your song? (This is the
+   whole point of the harmony upgrade.)
 
 KNOWN LIMITATIONS
-• Re-Drum on very bass-heavy songs can still be busy — Borrow is the cleaner
-  path for those.
-• First Borrow/Re-Drum per (song, donor) renders on the server, then caches.
+• If a song has few detected sections, some pads may repeat the same section
+  type (e.g. several Verses) or the grid may be partly empty.
+• First Borrow per (song, donor) renders on the server, then caches — the
+  first tap is slower.
 
-Please report: what you tapped, what you expected, what you heard, and the
-song(s) involved.
+Please report: what you tapped, what you expected, what you heard, the two
+songs involved, and whether the harmony/section colors matched.
