@@ -17,6 +17,7 @@ import {
   chooseCrossfadeMs,
   quantizeUnitSec,
   quantizeWaitSec,
+  nextGridTimeSec,
   LOOP_LOCK_GRACE_SEC,
   armedWatchdogDelayMs,
   ARMED_WATCHDOG_GRACE_SEC,
@@ -441,6 +442,129 @@ test("beat quantize lands on the next SONG beat, not the next bar", () => {
   ctx.currentTime = 30;
   const rDef = engine.trigger(0, { loop: true, quantized: true });
   assert.ok(Math.abs(rDef.startTime - 30.75) < 1e-9, `default startTime ${rDef.startTime}`);
+});
+
+// --- real per-song grid snap (nextGridTimeSec) -----------------------------
+
+test("nextGridTimeSec: before-first, mid, on-within-grace, after-last, empty", () => {
+  // An UNEVEN real grid — the whole point: not a constant-tempo lattice.
+  const grid = [0.5, 1.4, 2.1, 3.3, 4.0];
+  const grace = 0.08;
+  // Before the first grid time → the first grid time.
+  assert.equal(nextGridTimeSec(0.1, grid, grace), 0.5);
+  assert.equal(nextGridTimeSec(-5, grid, grace), 0.5);
+  // Mid-grid → the next entry at or after songNow.
+  assert.equal(nextGridTimeSec(1.5, grid, grace), 2.1);
+  assert.equal(nextGridTimeSec(2.1, grid, grace), 2.1); // exactly on a boundary
+  // Just PAST a boundary but within grace → that boundary still counts (so the
+  // caller's wait folds to ~0, a hair-late press fires now, not a cycle later).
+  assert.equal(nextGridTimeSec(2.15, grid, grace), 2.1); // 0.05 past 2.1
+  // Just past a boundary BEYOND grace → the following boundary.
+  assert.equal(nextGridTimeSec(2.25, grid, grace), 3.3); // 0.15 past 2.1
+  // After the last grid time → null (caller extrapolates synthetically).
+  assert.equal(nextGridTimeSec(4.5, grid, grace), null);
+  assert.equal(nextGridTimeSec(4.0, grid, 0.0), 4.0); // no grace, exactly on last
+  // Empty / non-array / non-finite → null.
+  assert.equal(nextGridTimeSec(1.0, [], grace), null);
+  assert.equal(nextGridTimeSec(1.0, null, grace), null);
+  assert.equal(nextGridTimeSec(NaN, grid, grace), null);
+  // Single-entry grid: before → it; after → null.
+  assert.equal(nextGridTimeSec(0.0, [2.0], grace), 2.0);
+  assert.equal(nextGridTimeSec(5.0, [2.0], grace), null);
+});
+
+test("Beat press snaps to the next REAL beat on an uneven grid", () => {
+  const { engine, ctx } = makeEngine();
+  // Real, wobbly grids — first downbeat is NOT at song 0 (intro), beats uneven.
+  const beats = [0.6, 1.05, 1.55, 2.0, 2.6, 3.1];
+  const downbeats = [0.6, 2.0, 3.6];
+  let songNow = 1.2; // between beats 1.05 and 1.55
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => songNow,
+    tempoBpm: 120, // present, but must be IGNORED while real arrays exist
+    barAnchorSongTime: 0,
+    beatTimesSec: beats,
+    downbeatTimesSec: downbeats,
+  });
+  ctx.currentTime = 10;
+  // Beat grid → next real beat @1.55 → 0.35 s away → ctx 10.35. A synthetic
+  // 120bpm/anchor-0 grid would have said 1.5 (0.30 away) — proves we used the
+  // real beats, not the tempo lattice.
+  const rBeat = engine.trigger(0, { loop: true, quantized: true, grid: "beat" });
+  assert.ok(Math.abs(rBeat.startTime - 10.35) < 1e-9, `beat startTime ${rBeat.startTime}`);
+
+  // Bar grid, same position → next real DOWNBEAT @2.0 → 0.8 s → ctx 20.8.
+  ctx.currentTime = 20;
+  const rBar = engine.trigger(1, { loop: true, quantized: true, grid: "bar" });
+  assert.ok(Math.abs(rBar.startTime - 20.8) < 1e-9, `bar startTime ${rBar.startTime}`);
+});
+
+test("real-grid press just past a beat within grace fires immediately", () => {
+  const { engine, ctx } = makeEngine();
+  const beats = [0.6, 1.05, 1.55, 2.0];
+  let songNow = 1.09; // 0.04 past beat @1.05, inside the 0.08 grace
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => songNow,
+    tempoBpm: 120,
+    beatTimesSec: beats,
+    downbeatTimesSec: [0.6, 2.0],
+  });
+  ctx.currentTime = 5;
+  const r = engine.trigger(0, { loop: true, quantized: true, grid: "beat" });
+  assert.equal(r.startTime, 5); // wait folded to 0 → fire now
+});
+
+test("real-grid press after the last boundary extrapolates at tempo", () => {
+  const { engine, ctx } = makeEngine();
+  // 120 bpm → 2 s bars, 0.5 s beats. Last downbeat @4.0; press well past it.
+  const downbeats = [0.0, 2.0, 4.0];
+  let songNow = 5.25; // 1.25 past the last downbeat → next extrapolated @6.0
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => songNow,
+    tempoBpm: 120,
+    downbeatTimesSec: downbeats,
+    beatTimesSec: [], // empty → bar path uses downbeats
+  });
+  ctx.currentTime = 10;
+  // Extrapolate a 2 s bar from the last downbeat @4.0: next @6.0 → 0.75 away.
+  const rBar = engine.trigger(0, { loop: true, quantized: true, grid: "bar" });
+  assert.ok(Math.abs(rBar.startTime - 10.75) < 1e-9, `extrapolated startTime ${rBar.startTime}`);
+});
+
+test("no real grid arrays → synthetic constant-tempo path is unchanged", () => {
+  const { engine, ctx } = makeEngine();
+  // Exactly the legacy transport shape: tempo + anchor, no grid arrays.
+  let songNow = 3.25;
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => songNow,
+    tempoBpm: 120,
+    barAnchorSongTime: 0,
+  });
+  ctx.currentTime = 10;
+  // Synthetic bar grid: next bar @4.0 → 0.75 → ctx 10.75 (unchanged behavior).
+  const r = engine.trigger(0, { loop: true, quantized: true });
+  assert.ok(Math.abs(r.startTime - 10.75) < 1e-9, `synthetic startTime ${r.startTime}`);
+});
+
+test("empty beat array falls back to synthetic beat grid (no regression)", () => {
+  const { engine, ctx } = makeEngine();
+  let songNow = 3.25;
+  engine.setTransport({
+    isPlaying: () => true,
+    getSongTime: () => songNow,
+    tempoBpm: 120,
+    barAnchorSongTime: 0,
+    beatTimesSec: [], // present but empty → treated as absent
+    downbeatTimesSec: [0.0, 2.0, 4.0],
+  });
+  ctx.currentTime = 10;
+  // Beat grid: no beat array → synthetic quarter-notes → next @3.5 = 0.25 → 10.25.
+  const r = engine.trigger(0, { loop: true, quantized: true, grid: "beat" });
+  assert.ok(Math.abs(r.startTime - 10.25) < 1e-9, `beat fallback startTime ${r.startTime}`);
 });
 
 test("beat quantize honors the bar anchor and the practice rate", () => {

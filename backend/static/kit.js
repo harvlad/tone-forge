@@ -579,7 +579,7 @@
     s.ctx = new AC();
 
     var kitP = fetchKitJson(s, entry);
-    var engineP = import("./padengine.js?v=5");
+    var engineP = import("./padengine.js?v=6");
 
     return kitP.then(function (kit) {
       if (!s.alive) return;
@@ -1001,10 +1001,30 @@
    * Everything is feature-checked; closures read the LIVE host each call so
    * a replaced JamnKitHost keeps working without re-wiring. Re-run on a
    * slow clock because the host can appear/disappear after mount. */
+  /** Coerce an analysis grid (tuple/array of times, possibly with junk) into
+   * an ascending array of finite numbers, or null when there's nothing usable.
+   * padengine's nextGridTimeSec binary-searches this, so ascending order is
+   * required — the analyzer emits it sorted, but we re-sort defensively rather
+   * than trust every code path that ever wrote the field. */
+  function normGrid(arr) {
+    if (!arr || typeof arr.length !== "number") return null;
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var v = Number(arr[i]);
+      if (isFinite(v)) out.push(v);
+    }
+    if (!out.length) return null;
+    out.sort(function (a, b) {
+      return a - b;
+    });
+    return out;
+  }
+
   function syncEngineTransport(s) {
     if (!can(s.engine, "setTransport")) return;
     var host = getHost();
-    var tempo = s.entry && s.entry.result && s.entry.result.tempo_bpm;
+    var result = s.entry && s.entry.result;
+    var tempo = result && result.tempo_bpm;
     var usable =
       host && can(host, "isPlaying") && can(host, "getTime") &&
       typeof tempo === "number" && isFinite(tempo) && tempo > 0;
@@ -1036,8 +1056,19 @@
         }
       },
       tempoBpm: tempo,
-      // The analyzer's loop regions are cut on real downbeats measured from
-      // song time 0, so 0 is the bar anchor the pads were baked against.
+      // REAL per-song grid, when the analysis carried it: every beat and every
+      // downbeat, in song seconds. padengine snaps quantized launches to these
+      // (Beat→beats, Bar→downbeats) so pads fire on the beats the user hears.
+      // This is the fix for the drift bug — the previous barAnchorSongTime: 0
+      // assumption ("first downbeat is at song time 0") is false for real
+      // songs (they have an intro/pickup) and ignores tempo wobble, so an
+      // anchor(0)+N*bar grid walked off the music. beats_s is the every-beat
+      // grid; beat_times (the click-track field) is the same idea, used as a
+      // fallback. downbeats_s is the bar-start grid.
+      beatTimesSec: normGrid(result && result.beats_s) || normGrid(result && result.beat_times),
+      downbeatTimesSec: normGrid(result && result.downbeats_s),
+      // Constant-tempo FALLBACK for songs with no grid arrays: assume the
+      // first downbeat sits at song time 0 (best guess without real data).
       barAnchorSongTime: 0,
     };
     try {
@@ -3165,7 +3196,7 @@
           kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
           s.kit = { name: desc.name || manifest.name || "Pack", pads: kitPads };
           s.pads = kitPads;
-          return import("./padengine.js?v=5").then(function (mod) {
+          return import("./padengine.js?v=6").then(function (mod) {
             if (!s.alive) return;
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
             s.dsp = mod;

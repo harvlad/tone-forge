@@ -386,6 +386,39 @@ export function quantizeWaitSec(songNow, unitSec, anchorSec = 0, graceSec = LOOP
   return unitSec - phase;
 }
 
+/**
+ * Next REAL grid time at or after `songNow` (minus a grace window). Unlike
+ * quantizeWaitSec — which extrapolates a constant-tempo grid from a single
+ * anchor and drifts off real music — this snaps to the analyzer's actual
+ * per-song grid (beats_s / downbeats_s), whose first entry is rarely at song
+ * time 0 and whose spacing wobbles with real tempo. Returns the first grid
+ * time `t` with `t >= songNow - graceSec`, so a boundary just passed within
+ * grace still counts as "now" (wait folds to 0 downstream). Ascending input
+ * assumed; binary search. Edge cases:
+ *   - empty / non-array / non-finite songNow  → null (caller falls back)
+ *   - songNow before the first grid time      → the first grid time
+ *   - songNow after the last grid time        → null (caller extrapolates)
+ * Pure: no clock, no context, no rate — the caller maps song-domain to ctx.
+ * @param {number} songNow current song position (seconds, song domain)
+ * @param {number[]} gridTimesSec ascending grid times (beats or downbeats)
+ * @param {number} [graceSec]
+ * @returns {?number} the snapped grid time, or null
+ */
+export function nextGridTimeSec(songNow, gridTimesSec, graceSec = LOOP_LOCK_GRACE_SEC) {
+  if (!Array.isArray(gridTimesSec) || gridTimesSec.length === 0) return null;
+  if (!Number.isFinite(songNow)) return null;
+  const threshold = songNow - graceSec;
+  // First entry >= threshold (grid times are ascending).
+  let lo = 0;
+  let hi = gridTimesSec.length; // half-open [lo, hi)
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (gridTimesSec[mid] >= threshold) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo < gridTimesSec.length ? gridTimesSec[lo] : null;
+}
+
 // ---------------------------------------------------------------------------
 // PadEngine — the WebAudio wrapper
 // ---------------------------------------------------------------------------
@@ -456,9 +489,17 @@ export class PadEngine {
    * @param {?{isPlaying: function(): boolean,
    *           getSongTime: function(): number,
    *           tempoBpm: number,
-   *           barAnchorSongTime?: number}} transport
-   *   getSongTime returns the song position in seconds (song domain);
-   *   barAnchorSongTime is the song time of a known bar line (default 0).
+   *           barAnchorSongTime?: number,
+   *           beatTimesSec?: number[],
+   *           downbeatTimesSec?: number[]}} transport
+   *   getSongTime returns the song position in seconds (song domain).
+   *   beatTimesSec / downbeatTimesSec are the analyzer's REAL per-song grid
+   *   (every beat / every bar-start); when present, quantized launches snap
+   *   to them (Beat→beatTimesSec, Bar→downbeatTimesSec) instead of the
+   *   synthetic constant-tempo grid — real songs' first downbeat is not at 0
+   *   and tempo wobbles, so anchor(0)+N*bar walks off the music. tempoBpm +
+   *   barAnchorSongTime remain the FALLBACK for songs with no grid arrays
+   *   (barAnchorSongTime is the song time of a known bar line, default 0).
    */
   setTransport(transport) {
     this._transport = transport || null;
@@ -877,25 +918,59 @@ export class PadEngine {
   }
 
   /**
-   * Transport-aligned launch time: the next SONG grid boundary (bar line for
-   * "bar", quarter-note for "beat"), converted to audioContext time by
-   * sampling getSongTime() at call time —
+   * Transport-aligned launch time: the next SONG grid boundary, converted to
+   * audioContext time by sampling getSongTime() at call time —
    * launchTime = now + (nextBoundarySongTime - songTimeNow) / rate. Null when
    * the transport carries no usable grid (caller falls back to the free-run
-   * lock grid). A press within the boundary grace fires immediately. The
-   * beat grid subdivides the SAME bar anchor, so beats stay phase-locked to
-   * the song's downbeats — a Beat-quantized press lands on the next beat, not
-   * up to a whole bar later.
+   * lock grid). A press within the boundary grace fires immediately.
+   *
+   * Grid source, in priority order:
+   *   1. REAL grid — the analyzer's per-song beat/downbeat times
+   *      (transport.beatTimesSec for "beat", downbeatTimesSec for "bar").
+   *      This is the fix for the constant-tempo drift bug: a synthetic
+   *      anchor(0)+N*bar grid walks off real music because the first
+   *      downbeat is not at song time 0 and tempo is never perfectly
+   *      constant, so pads armed but fired off the beat. Snapping to the
+   *      real times the user actually hears keeps launches locked. Past the
+   *      last real boundary we extrapolate the grid forward at the song
+   *      tempo from that last boundary (a late-song press still lands
+   *      on-grid rather than dropping to the unrelated free-run cycle).
+   *   2. SYNTHETIC grid — the old constant-tempo bar/beat grid anchored at
+   *      barAnchorSongTime, for songs whose analysis carried no grid arrays.
+   *      Unchanged legacy behavior, so nothing regresses.
    * @param {number} now ctx time
    * @param {?string} [grid] "beat" | "bar" (default bar)
    */
   _transportLaunchTime(now, grid) {
     const t = this._transport;
-    if (!t || typeof t.getSongTime !== "function" || !(t.tempoBpm > 0)) return null;
-    const bar = (60.0 / t.tempoBpm) * 4.0;
-    const unit = quantizeUnitSec(bar, grid);
+    if (!t || typeof t.getSongTime !== "function") return null;
     const songNow = t.getSongTime();
     if (!Number.isFinite(songNow)) return null;
+
+    // 1. Real per-song grid: Beat snaps to actual beats, Bar to downbeats.
+    const realGrid = grid === "beat" ? t.beatTimesSec : t.downbeatTimesSec;
+    if (Array.isArray(realGrid) && realGrid.length > 0) {
+      const nextT = nextGridTimeSec(songNow, realGrid, LOOP_LOCK_GRACE_SEC);
+      if (nextT != null) {
+        // wait folds to 0 when a boundary just passed within grace.
+        const wait = Math.max(0, nextT - songNow);
+        return now + wait / this._rate;
+      }
+      // Past the last real boundary → extrapolate at tempo from it.
+      if (t.tempoBpm > 0) {
+        const bar = (60.0 / t.tempoBpm) * 4.0;
+        const unit = quantizeUnitSec(bar, grid);
+        const lastBoundary = realGrid[realGrid.length - 1];
+        const wait = quantizeWaitSec(songNow, unit, lastBoundary);
+        return now + wait / this._rate;
+      }
+      return null; // no tempo to extrapolate → caller uses the lock grid
+    }
+
+    // 2. Synthetic constant-tempo grid (no real arrays available).
+    if (!(t.tempoBpm > 0)) return null;
+    const bar = (60.0 / t.tempoBpm) * 4.0;
+    const unit = quantizeUnitSec(bar, grid);
     const anchor = Number.isFinite(t.barAnchorSongTime) ? t.barAnchorSongTime : 0;
     const wait = quantizeWaitSec(songNow, unit, anchor);
     if (wait <= 0) return now;
