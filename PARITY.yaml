@@ -268,6 +268,28 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: borrow-on-launchpad
+    name: "\"Add from another song\" — Borrow promoted to a first-class Launchpad action + Melody/vocal part"
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#openBorrowPicker"
+        note: "\"+ Add from another song\" button on the Launchpad (kit) opens a picker: Beat/Bass/Chords/Melody parts (Melody=stem vocals, NEW), key/tempo-matched donor list, loads via JamnKitHost.loadBorrow -> mountManifest onto the pads. Same borrow-loops backend; vocals verified live (harmonic-matched toplines)."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Jam/BorrowPickerSheet.swift#BorrowPickerSheet"
+        note: "\"Add Song\" chip on the Jam .samples (Launchpad) controls row opens BorrowPickerSheet; Melody=vocals added. Reuses AppState.loadBorrowLoops."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Launchpad/BorrowPickerView.swift#BorrowPickerView"
+        note: "\"Add from song\" button on LaunchpadPanelView opens BorrowPickerView; Melody=vocals added. Reuses session.loadBorrowLoops / adoptAssignments."
+      plugin:
+        status: missing
+        note: "No borrow/remix surface in the JUCE editor yet (same gap as borrow-loops)."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: pad-radial-menu
     name: Per-pad radial action menu (right-click / long-press ring)
     platforms:

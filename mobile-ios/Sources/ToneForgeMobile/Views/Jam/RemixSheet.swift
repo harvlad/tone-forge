@@ -147,6 +147,10 @@ struct RemixSheet: View {
                 Text("Beat").tag("drums")
                 Text("Bass").tag("bass")
                 Text("Chords").tag("other")
+                // Melody = the vocals stem's harmonic-matched topline —
+                // parity with the web kit.js picker and the Launchpad
+                // Add-Song sheet.
+                Text("Melody").tag("vocals")
             }
             .pickerStyle(.segmented)
             .onChange(of: borrowStem) { _ in

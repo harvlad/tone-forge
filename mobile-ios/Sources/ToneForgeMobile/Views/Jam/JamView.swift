@@ -36,6 +36,9 @@ struct JamView: View {
     /// the next pad tap assigns it to that pad.
     @State private var showSoundsBrowser = false
     @State private var showRemixSheet = false
+    // "Add from another song" (Borrow) picker, promoted to a first-class
+    // Launchpad action — see borrowSongChip / BorrowPickerSheet.
+    @State private var showBorrowPicker = false
     @State private var pendingChop: ChopReference?
     /// Progressive disclosure L3: long-pressing a Samples pad opens the
     /// deeper instrument-construction workspace (the ex-Contribute
@@ -122,6 +125,16 @@ struct JamView: View {
             Color.clear
                 .sheet(isPresented: $showRemixSheet) {
                     RemixSheet()
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                }
+        }
+        // "Add from another song" (Borrow) picker: its own background node
+        // (same one-sheet-per-node workaround as above).
+        .background {
+            Color.clear
+                .sheet(isPresented: $showBorrowPicker) {
+                    BorrowPickerSheet()
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
                 }
@@ -484,6 +497,7 @@ struct JamView: View {
                         instantGrooveChip
                         styleBeatChip
                         soundsChip
+                        borrowSongChip
                         refreshKitChip
                         stopAllChip
                         loopLockChip
@@ -589,6 +603,28 @@ struct JamView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Browse all song samples and packs")
+    }
+
+    /// "Add from another song" — DJ cross-song sampling as a first-class
+    /// Launchpad action (parity with web kit.js's "+ Add from another
+    /// song"). Opens the Borrow picker: Part selector Beat/Bass/Chords/
+    /// Melody plus tempo/key-matched donor songs; picking one loads its
+    /// real loops onto these pads. The Remix sheet keeps its Borrow row
+    /// too — this just surfaces the same action without a detour.
+    private var borrowSongChip: some View {
+        Button {
+            Haptics.selectionChanged()
+            showBorrowPicker = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "square.stack.3d.up").font(.caption)
+                Text("Add Song").font(TFTheme.chipFont)
+            }
+            .tfChip(active: showBorrowPicker)
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add loops from another song")
     }
 
     /// Refresh the Auto Kit: server ranking folds in the pad usage the

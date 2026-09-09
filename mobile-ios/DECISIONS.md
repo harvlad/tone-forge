@@ -903,3 +903,54 @@ label-only and raw-value-safe; the toggle reuses the existing 8×8
 `ModeGridView` verbatim, so no trigger/quantize/LED behavior changed.
 Verified: `xcodebuild ... -destination 'iPhone 17 Pro' build` →
 BUILD SUCCEEDED.
+
+## D-027: "Add from another song" (Borrow) promoted to a first-class Launchpad action + Melody = vocals
+
+DJ cross-song sampling — real, tempo/key-matched loops from your OTHER
+analyzed songs — was already implemented (`RemixClient.fetchBorrowCandidates`
+/ `fetchBorrowPack`, `AppState.loadBorrowLoops`) but only reachable through
+the Remix sheet's "Borrow" section. Web (kit.js) surfaces it directly on the
+kit build surface as "+ Add from another song" with Beat/Bass/Chords/Melody
+parts. This closes that parity gap on iOS and adds the Melody part.
+
+**Architecture decisions:**
+
+1. **New `borrowSongChip` on the Launchpad controls row** (JamView,
+   `.samples` block, between `soundsChip` and `refreshKitChip`), labelled
+   "Add Song". It opens `BorrowPickerSheet` — the DJ sampling action now
+   lives ON the pad surface, not two taps deep behind Remix. The Remix
+   sheet KEEPS its Borrow row (D-026-era), so no reachability was removed;
+   the chip is purely additive.
+
+2. **New `BorrowPickerSheet.swift`** (Views/Jam): a Part segmented control
+   (Beat/Bass/Chords/**Melody**) + a candidate song list (name · key ·
+   tempo, with a "harmonizes"/"fits" hint for melodic stems). It is a thin
+   view over the SAME AppState API the Remix row uses — `fetchBorrowCandidates`
+   for the list, `loadBorrowLoops(donorId:stem:)` for the mount. No new
+   client method, no new mount path: the donor's loops render server-side
+   and activate as a `SamplePack` via `activateSamplePack`, exactly as
+   before. Pad/trigger/quantize/loop semantics are untouched — this only
+   sources a new pack onto the existing Launchpad, honoring the
+   ToneForgeEngine ↔ launchpad.js port-parity rule.
+
+3. **Melody = stem `"vocals"`** (NEW part). Backend already ranks and
+   renders harmonic-matched vocal toplines for `stem=vocals`; the client
+   just passes the string. It is melodic, so it takes the same code path as
+   Bass/Chords (shows key + harmonize/fits hint, `isRhythmic == false`).
+   Added to BOTH the new picker and the Remix sheet's Borrow picker so the
+   two entry points offer identical parts.
+
+**Alternatives:** a dedicated "Borrow" pad-mode tab (rejected — D-022's
+"no new tabs" shell; this is a chip, like Remix/Sounds); duplicating the
+render/mount logic into the sheet (rejected — reused `loadBorrowLoops`
+verbatim so there is one mount path and one busy-state source
+`borrowBusyDonor`).
+
+**Parity:** web `backend/static/kit.js` "+ Add from another song" (Beat/
+Bass/Chords/Melody). iOS anchor:
+`mobile-ios/.../Views/Jam/BorrowPickerSheet.swift#BorrowPickerSheet`,
+launched from `JamView.swift#borrowSongChip`.
+
+**Why:** promote a shipped-but-buried DJ feature to where users build kits,
+and reach web parity on the Melody/vocals part. Additive to the Launchpad —
+16/64 toggle, quantize and triggering all unchanged.
