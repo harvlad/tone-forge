@@ -68,7 +68,7 @@
     var link = document.createElement('link');
     link.id = 'remix-css';
     link.rel = 'stylesheet';
-    link.href = '/static/remix.css?v=1';
+    link.href = '/static/remix.css?v=2';
     (document.head || document.documentElement).appendChild(link);
   }
 

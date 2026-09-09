@@ -296,6 +296,12 @@
   background: var(--js-surface1);
   border: 1px solid var(--js-border);
   border-radius: var(--js-radius-lg);
+  /* Pin the transport to the bottom of the viewport while the Perform
+     stage scrolls, so play/scrub/loop are always reachable. */
+  position: sticky;
+  bottom: 12px;
+  z-index: 20;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 .jstage-play {
   width: 40px;

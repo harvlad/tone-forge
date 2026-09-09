@@ -249,3 +249,34 @@
   line-height: 1.35;
   color: var(--jamn-danger, #ef4444);
 }
+
+/* Borrow stem picker (Beat / Bass / Chords) — matched to the kit segmented
+   toggles so it stops rendering as raw white browser buttons. */
+.remix-stem-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+.remix-stem-btn {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: var(--jamn-radius-sm, 8px);
+  border: 1px solid var(--jamn-border, #2a2a36);
+  background: var(--jamn-surface1, #14141a);
+  color: var(--jamn-text2, #a1a1aa);
+  cursor: pointer;
+  transition: color .12s ease, border-color .12s ease, background .12s ease;
+}
+.remix-stem-btn:hover {
+  color: var(--jamn-text, #fff);
+  border-color: var(--jamn-accent, #8b5cf6);
+}
+.remix-stem-btn.is-on {
+  background: var(--jamn-accent, #8b5cf6);
+  border-color: var(--jamn-accent, #8b5cf6);
+  color: #fff;
+}
