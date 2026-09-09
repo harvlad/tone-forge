@@ -120,6 +120,77 @@
   filter: brightness(1.12);
 }
 
+/* ---------- manual chop-slicing (Stem / Slices / Load) ---------- */
+
+/* Reuses the segmented-group shell (.kit-seg) so the cluster reads as one
+ * control, matching the surrounding toolbar rather than raw browser selects. */
+.kit-chop {
+  gap: 6px;
+}
+
+.kit-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-inline: 4px;
+}
+
+.kit-select-cap {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--jamn-text2, #A1A1AA);
+}
+
+/* Styled to sit inside the segmented shell — no default browser chrome. */
+.kit-select-el {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--jamn-text, #fff);
+  background: var(--jamn-surface2, #1C1C24);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 6px;
+  padding: 3px 22px 3px 8px;
+  cursor: pointer;
+  /* Chevron drawn inline so the control needs no external asset. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--jamn-text2, #A1A1AA) 50%),
+    linear-gradient(135deg, var(--jamn-text2, #A1A1AA) 50%, transparent 50%);
+  background-position: right 9px center, right 5px center;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+
+.kit-select-el:focus {
+  outline: none;
+  border-color: var(--jamn-accent, #8B5CF6);
+}
+
+.kit-chop-load {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--jamn-accent, #8B5CF6);
+  background: transparent;
+  color: var(--jamn-accent, #8B5CF6);
+  cursor: pointer;
+}
+
+.kit-chop-load:hover {
+  background: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+}
+
+/* Disabled while a Load fetch is in flight. */
+.kit-chop-load:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 /* ---------- transport strip ---------- */
 
 .kit-transport {

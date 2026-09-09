@@ -289,7 +289,7 @@ extension ModeCoordinator {
     /// per SOURCE (this song = blue, the borrowed song = amber); without this
     /// both collapsed to family `.mixed` grey and you couldn't tell which song
     /// a pad came from (web/desktop already honour the hex).
-    static func hexColorHint(_ s: String?) -> UInt32? {
+    nonisolated static func hexColorHint(_ s: String?) -> UInt32? {
         guard var h = s?.trimmingCharacters(in: .whitespaces), !h.isEmpty
         else { return nil }
         if h.hasPrefix("#") { h.removeFirst() }

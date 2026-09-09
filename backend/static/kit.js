@@ -18,6 +18,24 @@
   var PAD_COUNT = 16;
   var ACCENT = { r: 139, g: 92, b: 246 }; // --jamn-accent fallback #8B5CF6
 
+  // ---- Manual chop-slicing (Stem / Slices / Load) — ported from the
+  // retired lpview.js (window.JamnLaunchpad). GET /api/song/{id}/chops
+  // ?stem=&sliceMode= returns chop regions + a stemUrl; we decode the stem
+  // once, slice each region, and setPadSource it onto a pad.
+
+  // Category → 0xRRGGBB accent, matching lpview's CATEGORY_HEX (which mirrors
+  // LaunchpadController.PadCategory). parseColor() accepts these ints, so a
+  // chop with no colorHint still gets a category-true tint.
+  var CHOP_CATEGORY_HEX = {
+    DRUMS: 0xef4444, BASS: 0x22c55e, CHORDS: 0xf59e0b, LEAD: 0xf97316,
+    VOCAL: 0xec4899, RHYTHM: 0x3b82f6, TEXTURE: 0x06b6d4, FX: 0xa855f7,
+    STAB: 0x8b5cf6, SAMPLE: 0x64748b,
+  };
+  // Slice modes lpview offered (its row-2 "Slices" select), verbatim.
+  var CHOP_SLICE_MODES = ["beat", "phrase", "onset", "chord", "section", "drum-bundle"];
+  // Fallback stem list when the entry carries no stems_paths (lpview STEMS).
+  var CHOP_STEMS_FALLBACK = ["mix", "vocals", "drums", "bass", "other"];
+
   // ---------- small pure helpers (exposed on _internals for smoke tests) ----------
 
   /** Stem URLs may be backend-relative (/api/...) or absolute R2 presigned. */
@@ -420,6 +438,12 @@
         origSource: {},
         pickerPop: null, // open sound-picker popover state, or null
         pickerPreview: null, // { source, gain, timer } for the hovered preview
+        // Manual chop-slicing controls (Stem / Slices / Load), ported from
+        // the retired lpview. chopStem defaults to the whole mix.
+        chopStem: "mix",
+        chopSlice: "beat",
+        chopBusy: false, // Load in flight — guards double-clicks
+        chopEls: null, // { stemSel, sliceSel, loadBtn }
       };
       if (!entry || !entry.id || !entry.result) {
         showError(current, "No analysis loaded.");
@@ -907,10 +931,15 @@
       for (var i = 0; i < s.padEls.length; i++) if (s.padEls[i]) setUi(s, i, "idle");
     });
 
+    // Manual chop-slicing: Stem picker + Slices picker + Load — the feature
+    // dropped when the old Launchpad (lpview) merged into this surface.
+    var chopGroup = buildChopControls(s);
+
     controls.appendChild(viewSeg);
     controls.appendChild(sizeSeg);
     controls.appendChild(quant);
     controls.appendChild(seg);
+    controls.appendChild(chopGroup);
     controls.appendChild(latch);
     controls.appendChild(groove);
     controls.appendChild(stop);
@@ -1290,6 +1319,306 @@
       .catch(function () {
         if (s.alive && s.statusEl) s.statusEl.textContent = "Kit rebuild failed.";
       });
+  }
+
+  // ---------- manual chop-slicing (Stem / Slices / Load) ----------
+  //
+  // Ported 1:1 from the retired lpview.js: a Stem picker, a Slices picker,
+  // and a Load button that fetches sliced chops for the chosen stem+mode
+  // (GET /api/song/{id}/chops?stem=&sliceMode=), decodes the stem once,
+  // slices each returned region, and setPadSource()s it onto a pad. Loading
+  // chops REPLACES the Auto Kit pads for that load — the same semantics as
+  // lpview's applyChops (which rebuilt its padMeta from scratch).
+
+  function capWord(x) {
+    x = String(x || "");
+    return x ? x.charAt(0).toUpperCase() + x.slice(1) : x;
+  }
+
+  /** Category for a chop from its stem + Riley contentType — a port of
+   * lpview categoryFor / LaunchpadController.category(stem:contentType:). */
+  function chopCategoryFor(stem, contentType) {
+    switch (stem) {
+      case "drums": return "DRUMS";
+      case "bass": return "BASS";
+      case "vocals": return "VOCAL";
+      default: break;
+    }
+    switch (contentType) {
+      case "rhythm_loop": return "RHYTHM";
+      case "lead_loop": return "LEAD";
+      case "chord_loop": return "CHORDS";
+      case "bass_groove": return "BASS";
+      case "texture":
+      case "drone":
+      case "ambient": return "TEXTURE";
+      case "impact":
+      case "transition":
+      case "pickup":
+      case "ending": return "FX";
+      case "one_shot": return "STAB";
+      default: return "SAMPLE";
+    }
+  }
+
+  /** Stem-picker options: "mix" first, then the song's actual stem roles
+   * (drums/bass/vocals/guitar/keys/other…) derived from the loaded entry's
+   * stems_paths — the same source load() fetches. Falls back to lpview's
+   * fixed STEMS when the entry carries no paths. Each entry is [value,label]. */
+  function chopStemOptions(s) {
+    var paths = s.entry && s.entry.result && s.entry.result.stems_paths;
+    var roles = paths && typeof paths === "object" ? Object.keys(paths) : [];
+    var vals = roles.length ? ["mix"].concat(roles) : CHOP_STEMS_FALLBACK.slice();
+    // De-dupe while preserving order (a stems_paths that itself lists "mix").
+    var seen = {};
+    var out = [];
+    vals.forEach(function (v) {
+      if (!v || seen[v]) return;
+      seen[v] = true;
+      out.push([v, capWord(v)]);
+    });
+    return out;
+  }
+
+  /** A compact labeled <select> matching the kit's segmented look
+   * (.kit-select). Options are [value,label] pairs. */
+  function chopSelect(caption, options, value, onChange) {
+    var wrap = document.createElement("label");
+    wrap.className = "kit-select";
+    var cap = document.createElement("span");
+    cap.className = "kit-select-cap";
+    cap.textContent = caption;
+    wrap.appendChild(cap);
+    var sel = document.createElement("select");
+    sel.className = "kit-select-el";
+    options.forEach(function (opt) {
+      var o = document.createElement("option");
+      o.value = opt[0];
+      o.textContent = opt[1];
+      if (opt[0] === value) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", function () { onChange(sel.value); });
+    wrap.appendChild(sel);
+    return { wrap: wrap, sel: sel };
+  }
+
+  /** Build the Stem + Slices + Load control cluster. Stored on s.chopEls so
+   * loadChops can disable the button while a fetch is in flight. */
+  function buildChopControls(s) {
+    var group = document.createElement("div");
+    group.className = "kit-seg kit-chop";
+    group.setAttribute("role", "group");
+    group.title = "Slice a stem into chops and bake them onto the pads";
+
+    var stemOpts = chopStemOptions(s);
+    // Keep chopStem valid against the derived option set.
+    if (!stemOpts.some(function (o) { return o[0] === s.chopStem; }) && stemOpts.length) {
+      s.chopStem = stemOpts[0][0];
+    }
+    var stem = chopSelect("Stem", stemOpts, s.chopStem, function (v) { s.chopStem = v; });
+    var slice = chopSelect(
+      "Slices",
+      CHOP_SLICE_MODES.map(function (m) { return [m, capWord(m)]; }),
+      s.chopSlice,
+      function (v) { s.chopSlice = v; }
+    );
+
+    var load = document.createElement("button");
+    load.type = "button";
+    load.className = "kit-chop-load";
+    load.textContent = "Load";
+    load.title = "Load chops from the chosen stem + slice mode onto the pads";
+    load.addEventListener("click", function () {
+      try {
+        if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+      } catch (_) {}
+      loadChops(s);
+    });
+
+    group.appendChild(stem.wrap);
+    group.appendChild(slice.wrap);
+    group.appendChild(load);
+    s.chopEls = { stemSel: stem.sel, sliceSel: slice.sel, loadBtn: load };
+    return group;
+  }
+
+  /** Slice [startSec, endSec) out of a decoded stem into a fresh AudioBuffer
+   * on the kit's context — port of lpview sliceRegion. Null on a degenerate
+   * region. */
+  function chopSliceRegion(ctx, stemBuf, startSec, endSec) {
+    if (!stemBuf) return null;
+    var sr = stemBuf.sampleRate;
+    var start = Math.max(0, Math.floor((startSec || 0) * sr));
+    var end = Math.min(stemBuf.length, Math.floor((endSec || 0) * sr));
+    var frames = end - start;
+    if (frames <= 0) return null;
+    var ch = stemBuf.numberOfChannels;
+    var out = ctx.createBuffer(ch, frames, sr);
+    for (var c = 0; c < ch; c++) {
+      var src = stemBuf.getChannelData(c).subarray(start, end);
+      if (out.copyToChannel) out.copyToChannel(src, c, 0);
+      else out.getChannelData(c).set(src);
+    }
+    return out;
+  }
+
+  /** Fetch + decode the chops' stem URL. Cross-origin R2 presigned URLs are
+   * unreachable from the browser (no CORS), so — exactly like kit's
+   * fetchStemBuffer — route those through the /stem-audio/ proxy keyed by
+   * the resolved role. `role` is the server's echoed data.stem. */
+  function decodeChopStem(s, stemUrl, role) {
+    var url = resolveStemUrl(stemUrl);
+    if (url && url.indexOf(window.location.origin) !== 0 && /^https?:/i.test(url) && role) {
+      url = window.location.origin + "/api/history/" +
+        encodeURIComponent(s.entry.id) + "/stem-audio/" + encodeURIComponent(role);
+    }
+    if (!url) return Promise.reject(new Error("no stem url"));
+    var proxied = url.indexOf("/stem-audio/") !== -1;
+    return fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error("stem HTTP " + r.status);
+        return r.arrayBuffer();
+      })
+      .then(function (ab) {
+        return s.ctx.decodeAudioData(ab).catch(function (err) {
+          // Safari FLAC decode failure → the proxy's WAV transcode fallback.
+          if (!proxied) throw err;
+          return fetch(url + "?format=wav")
+            .then(function (r2) {
+              if (!r2.ok) throw err;
+              return r2.arrayBuffer();
+            })
+            .then(function (b2) { return s.ctx.decodeAudioData(b2); });
+        });
+      });
+  }
+
+  function setChopStatus(s, msg) {
+    if (s.alive && s.statusEl) s.statusEl.textContent = msg || "";
+  }
+
+  /** Load handler (port of lpview loadChops): fetch chops for the chosen
+   * stem+mode, decode the stem, and bake each sliced region onto a pad. */
+  function loadChops(s) {
+    if (s.chopBusy) return;
+    if (!s.entry || !s.entry.id) {
+      setChopStatus(s, "Load a song first.");
+      return;
+    }
+    if (!can(s.engine, "setPadSource")) {
+      setChopStatus(s, "Pads not ready.");
+      return;
+    }
+    s.chopBusy = true;
+    if (s.chopEls && s.chopEls.loadBtn) s.chopEls.loadBtn.disabled = true;
+    setChopStatus(s, "Loading " + s.chopStem + " / " + s.chopSlice + " chops…");
+
+    var url = "/api/song/" + encodeURIComponent(s.entry.id) +
+      "/chops?stem=" + encodeURIComponent(s.chopStem) +
+      "&sliceMode=" + encodeURIComponent(s.chopSlice);
+
+    fetch(url)
+      .then(function (r) {
+        // 404 = the chops API isn't available for this song/build — degrade
+        // to a status line rather than a throw (feature-check).
+        if (r.status === 404) throw new Error("no chops for this song");
+        if (!r.ok) throw new Error("chops HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        if (!s.alive) return null;
+        var chops = (data && data.chops) || [];
+        if (!chops.length || !data.stemUrl) {
+          throw new Error("no chops for this stem/slice mode");
+        }
+        return decodeChopStem(s, data.stemUrl, data.stem || s.chopStem).then(function (stemBuf) {
+          applyChops(s, chops, stemBuf, data.stem || s.chopStem);
+        });
+      })
+      .catch(function (err) {
+        setChopStatus(s, "Chops failed: " + ((err && err.message) || err));
+      })
+      .then(function () {
+        s.chopBusy = false;
+        if (s.chopEls && s.chopEls.loadBtn) s.chopEls.loadBtn.disabled = false;
+      });
+  }
+
+  /** Bake sliced chop regions onto the pads through kit's own plumbing:
+   * build a fresh pad-dict list (so renderPads paints names/tints/waveforms
+   * and the lp-hw mirror, which reads the DOM, follows), and setPadSource
+   * each region onto its pad. Respects the current 16/64 pad count. */
+  function applyChops(s, chops, stemBuf, stem) {
+    if (!s.alive) return;
+    var count = Math.min(chops.length, s.padCount || PAD_COUNT);
+
+    // Stop any sounding pads — their buffers are about to be replaced.
+    try {
+      if (can(s.engine, "stopAll")) s.engine.stopAll();
+    } catch (_) {}
+    for (var si = 0; si < s.padEls.length; si++) if (s.padEls[si]) setUi(s, si, "idle");
+
+    // Radial/override snapshots are keyed by padIdx; the meaning of each
+    // index changes under a fresh bake, so clear them (matches reloadKit).
+    s.origRegions = {};
+    s.gated = {};
+    for (var dk in s.deleted) {
+      if (s.deleted[dk] && s.deleted[dk].timer) clearTimeout(s.deleted[dk].timer);
+    }
+    s.deleted = {};
+
+    var newPads = [];
+    var baked = 0;
+    for (var i = 0; i < count; i++) {
+      var chop = chops[i];
+      var region = chopSliceRegion(s.ctx, stemBuf, chop.startSec, chop.endSec);
+      if (!region) continue;
+      var cat = chopCategoryFor(stem, chop.contentType);
+      var name = chop.sectionLabel || chop.chordSymbol || chop.kind || capWord(cat.toLowerCase());
+      // Tint by CATEGORY (numeric hex parseColor accepts), matching lpview's
+      // padFill which took the category color ahead of the chop's colorHint —
+      // and the backend's colorHint is a CSS name ("red") kit can't parse.
+      var colorHint = CHOP_CATEGORY_HEX[cat] != null ? CHOP_CATEGORY_HEX[cat] : CHOP_CATEGORY_HEX.SAMPLE;
+      // The pad dict renderPads/buildPadTile reads. No stemSlice: these are
+      // pre-sliced buffers, so the chop editor's re-slice (applyPadRegion)
+      // simply no-ops on them — trigger/loop/FX all still work.
+      var pad = {
+        padIdx: i,
+        name: name,
+        colorHint: colorHint,
+        category: cat,
+        contentType: chop.contentType || null,
+        sectionLabel: chop.sectionLabel || null,
+        chordSymbol: chop.chordSymbol || null,
+        kind: chop.kind || null,
+        loopable: true,
+      };
+      var ok = false;
+      try {
+        ok = s.engine.setPadSource(i, region, {
+          loop: true, name: name, colorHint: colorHint,
+        });
+      } catch (_) { ok = false; }
+      if (!ok) continue;
+      newPads.push(pad);
+      baked++;
+    }
+
+    if (!baked) {
+      setChopStatus(s, "Chops failed: nothing could be sliced.");
+      return;
+    }
+
+    // Replace the Auto Kit pads with the chop pads and rebuild the grid —
+    // renderPads redraws waveforms/tints and renderLayers, and the lp-hw
+    // mirror repaints off the freshly-rendered DOM.
+    s.pads = newPads;
+    s.kit = s.kit || {};
+    s.fb.startedAt = {}; // padIdx keys changed meaning
+    applyStoredFx(s); // persisted per-pad FX rides the fresh bake, like reloadKit
+    renderPads(s);
+    setChopStatus(s, "");
   }
 
   // ---------- layers view (desktop LayerStackView port) ----------
