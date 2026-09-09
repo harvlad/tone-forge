@@ -454,8 +454,15 @@ final class SessionController: ObservableObject {
             }
         }
         // Per-pad playhead: the UI polls this to draw the loop progress ring.
+        // Borrow (and drumfile) pads play a downloaded FILE keyed by URL, not a
+        // stem chop — resolve those by their file so the playhead draws on them
+        // too, not just on bundle-chop loops.
         launchpad.loopProgressProvider = { [weak self] pad in
             guard let self, let a = self.launchpad.assignments[pad] else { return nil }
+            if let aid = a.chop.assetId, aid.hasPrefix("borrowfile:"),
+               let url = self.drumKitSampleFiles[a.chop.idx] {
+                return self.chopPlayer.loopProgress(fileURL: url)
+            }
             return self.chopPlayer.loopProgress(stem: a.stem, idx: a.chop.idx)
         }
         launchpad.onRelease = { [weak self] pad, assignment in

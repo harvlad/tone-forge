@@ -423,7 +423,18 @@ public final class ChopPlayer {
     /// node's sampleTime counts total frames rendered since play; modulo the
     /// loop length gives the position within the current loop.
     public func loopProgress(stem: String, idx: Int) -> Double? {
-        let target = VoiceKey.chop(stem: stem, idx: idx)
+        loopProgress(for: .chop(stem: stem, idx: idx))
+    }
+
+    /// Same, for a file-backed loop voice (borrow loops, sequencer customURL).
+    /// Borrow pads play through `trigger(file:loop:)` keyed by `.file(url)`,
+    /// not `.chop`, so the stem/idx lookup missed them and the on-pad playhead
+    /// never drew. Resolve by URL for those.
+    public func loopProgress(fileURL: URL) -> Double? {
+        loopProgress(for: .file(fileURL))
+    }
+
+    private func loopProgress(for target: VoiceKey) -> Double? {
         for v in voices where v.key == target {
             guard let frames = v.loopFrames, frames > 0, v.node.isPlaying,
                   let rt = v.node.lastRenderTime,
