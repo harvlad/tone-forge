@@ -2003,6 +2003,43 @@
       _sendLedSpecs([_offSpec(idx)]);
     },
 
+    // ---- Low-level device / note-map helpers (additive) ----
+    //
+    // Exposed so a secondary 8×8 mirror (lp-hw.js, driving the sidebar
+    // Launchpad surface) can reuse the driver's PROVEN programmer-mode
+    // note map + device detection instead of reinventing the per-model
+    // layout/SysEx (which is what differs across MK3 / X / Pro / classic).
+    // None of these mutate state — they only expose the existing pure
+    // mapping + matcher already used internally by the driver.
+
+    // Programmer-mode pad index for a 0-based (row, col), row 0 = BOTTOM,
+    // col 0 = left. Same numbering the driver paints with (11..88).
+    programmerPadIndex(row, col) { return _padIdx(row | 0, col | 0); },
+
+    // Inverse of programmerPadIndex: a pad index (11..88) → { row, col }
+    // with row 0 = bottom, or null when the index is a ring button / not
+    // an 8×8 grid pad.
+    rowColForProgrammerIndex(index) {
+      const idx = index | 0;
+      const tens = Math.floor(idx / 10), ones = idx % 10;
+      if (tens < 1 || tens > 8 || ones < 1 || ones > 8) return null;
+      return { row: tens - 1, col: ones - 1 };
+    },
+
+    // Best-matching Launchpad INPUT port on a caller-owned MIDIAccess,
+    // using the exact name hints + MIDI-over-DAW port preference the
+    // driver binds its own input with. Lets a listener-only mirror attach
+    // to the same physical port the driver drives, without duplicating
+    // DEVICE_NAME_HINTS / _matchesLaunchpad (model drift risk). Returns a
+    // MIDIInput or null.
+    findInputPort(access) {
+      if (!access || !access.inputs) return null;
+      const ins = [];
+      access.inputs.forEach(p => { if (_matchesLaunchpad(p)) ins.push(p); });
+      ins.sort((a, b) => _portPreferenceRank(a) - _portPreferenceRank(b));
+      return ins[0] || null;
+    },
+
     /// Force a full repaint of the current mode's grid. For callers that
     /// painted over the driver's LEDs out-of-band (the kit-hw 4×4 mirror)
     /// and need the mode's own colors restored — setMode() early-returns

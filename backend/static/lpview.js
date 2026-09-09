@@ -19,8 +19,12 @@
  *   - Groove (⚡) humanizes the sequencer (GET /api/song/{id}/groove →
  *     JamnSequencer.setGrooveOffsets) when it's mounted, else fires the
  *     best loop per category on the pads (native "instant groove").
- *   - Device status + Link reflect window.JamnKitHW.status() (status-only;
- *     hardware/Link are owned elsewhere).
+ *   - Physical Novation Launchpad: window.JamnLpHW (lp-hw.js) is attached
+ *     on mount / detached on unmount. It LED-paints all 64 hardware pads
+ *     to match this grid (padRgb == padFill) and routes hardware presses
+ *     back through onPadDown/onPadUp — the same path as an on-screen tap.
+ *     The header status pill reflects lp-hw's device name. Link status is
+ *     still status-only (owned elsewhere on web).
  *
  * Contract:  window.JamnLaunchpad = { mount(container, ctx), unmount() }
  *   ctx = { entry, engine?, pads?, onOpenContribute?, onClose? }
@@ -123,6 +127,44 @@
     if (byCat) return byCat;
     var byHint = colorFromHint(meta.colorHint);
     return byHint || hexToCss(DEFAULT_HEX);
+  }
+
+  function hexToRgb(n) {
+    var v = (n >>> 0) & 0xffffff;
+    return { r: (v >> 16) & 0xff, g: (v >> 8) & 0xff, b: v & 0xff };
+  }
+
+  /** RGB (0..255) for a colorHint — the numeric- / hex- / "r,g,b"-shaped
+   * forms padFill can resolve to a concrete triple. Returns null for a
+   * bare CSS color name (which the hardware can't parse), so callers fall
+   * back to the default tint just like padFill does. */
+  function rgbFromHint(hint) {
+    if (hint == null) return null;
+    if (typeof hint === "number" && isFinite(hint)) return hexToRgb(hint);
+    if (typeof hint === "string") {
+      var s = hint.trim();
+      if (!s) return null;
+      if (/^0x[0-9a-f]{6}$/i.test(s)) return hexToRgb(parseInt(s, 16));
+      if (/^#[0-9a-f]{6}$/i.test(s)) return hexToRgb(parseInt(s.slice(1), 16));
+      var m = s.match(/^(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})$/);
+      if (m) return { r: +m[1], g: +m[2], b: +m[3] };
+      return null; // CSS name — no concrete RGB for the hardware LED
+    }
+    return null;
+  }
+
+  /** The RGB (0..255) twin of padFill — same voice/sequence → category →
+   * colorHint → default precedence, but returns { r, g, b } so lp-hw can
+   * light the physical pad the SAME color as the on-screen tile. */
+  function padRgb(meta) {
+    if (!meta) return hexToRgb(DEFAULT_HEX);
+    if (meta.voice) return hexToRgb(VOICE_HEX);
+    if (meta.sequence) return hexToRgb(SEQUENCE_HEX);
+    var cat = meta.category;
+    var hex = cat ? CATEGORY_HEX[String(cat).toUpperCase()] : null;
+    if (hex != null) return hexToRgb(hex);
+    var byHint = rgbFromHint(meta.colorHint);
+    return byHint || hexToRgb(DEFAULT_HEX);
   }
 
   /** Content-first pad label (mobile/desktop parity): explicit name, then a
@@ -338,6 +380,10 @@
     buildShell(s);
     ensureEngine(s);
     startRaf(s);
+    // Connect the physical Launchpad (triggers Chrome's MIDI permission
+    // prompt). Independent of engine readiness — the grid fills via
+    // renderGrid once pads load; the status pill updates immediately.
+    attachHardware(s);
 
     // Re-fit the coarse waveforms when the tile size changes (canvas backing
     // store is dpr-scaled off clientWidth/Height, so a resize needs a repaint).
@@ -352,6 +398,7 @@
     current = null;
     if (!s) return;
     s.alive = false;
+    detachHardware(s); // release the physical device (hands LEDs back to the driver)
     if (s.raf) cancelAnimationFrame(s.raf);
     if (s.onResize) {
       window.removeEventListener("resize", s.onResize);
@@ -740,6 +787,11 @@
     requestAnimationFrame(function () {
       drawPadWaves(s);
     });
+    // Mirror the freshly-rendered grid onto the physical Launchpad LEDs.
+    // renderGrid is the single funnel for every repopulate (Load / Auto
+    // Kit / Drum Kit / Stem / Slices / move / voice-bake), so this one
+    // hook keeps hardware and screen in lockstep across all of them.
+    repaintHardware(s);
   }
 
   /** Paint each real pad's baked-buffer waveform via the shared kit renderer
@@ -1271,11 +1323,66 @@
   function refreshDeviceStatus(s) {
     var label = "No device";
     try {
-      if (can(window.JamnKitHW, "status")) {
-        label = deviceStatusLabel(window.JamnKitHW.status());
+      // Read our OWN hardware bridge (lp-hw.js), not JamnKitHW: KitHW
+      // mirrors the Jam Pads 4×4 and is detached on this surface, so it
+      // always reported "No device" here. lp-hw owns the physical device
+      // while the Launchpad view is mounted.
+      if (can(window.JamnLpHW, "status")) {
+        var st = window.JamnLpHW.status();
+        label = deviceStatusLabel(st ? { connected: st.connected, name: st.device } : null);
       }
     } catch (_) {}
     if (s.els.device) s.els.device.textContent = label;
+  }
+
+  // ------------------------------------------------- hardware bridge (lp-hw)
+
+  /** RGB (0..255) for the physical pad mirroring lpview idx, or null for
+   * an empty pad (LED off). Mirrors buildTile's content test so hardware
+   * and screen agree on what's lit and its color (padRgb == padFill). */
+  function hwPadColor(s, idx) {
+    var isVoice = idx === 0;
+    var meta = s.padMeta[idx] || null;
+    var seqFlags = s.stepFlags && s.stepFlags[idx];
+    var hasContent = !!meta || isVoice || !!seqFlags;
+    if (!hasContent) return null;
+    var tileMeta = meta;
+    if (isVoice && !meta) tileMeta = { voice: true };
+    if (seqFlags && !meta) tileMeta = { sequence: true };
+    return padRgb(tileMeta);
+  }
+
+  /** Connect the physical Launchpad on mount. lp-hw.attach() drives
+   * Launchpad.enable() (the permission prompt + Programmer Mode) and
+   * routes hardware pad presses back through onPadDown/onPadUp — the
+   * exact same trigger path as an on-screen tap. */
+  function attachHardware(s) {
+    if (!can(window.JamnLpHW, "attach")) return;
+    s.hw = true;
+    try {
+      var r = window.JamnLpHW.attach({
+        padColor: function (idx) { return hwPadColor(s, idx); },
+        onPress: function (idx) { if (s.alive) onPadDown(s, idx); },
+        onRelease: function (idx) { if (s.alive) onPadUp(s, idx); },
+        onStatusChange: function () { if (s.alive) refreshDeviceStatus(s); },
+      });
+      if (r && typeof r.then === "function") {
+        r.then(function () { if (s.alive) refreshDeviceStatus(s); });
+      }
+    } catch (_) {}
+  }
+
+  function detachHardware(s) {
+    if (!s.hw || !can(window.JamnLpHW, "detach")) return;
+    s.hw = false;
+    try { window.JamnLpHW.detach(); } catch (_) {}
+  }
+
+  /** Repaint every hardware LED from the current grid. Called from
+   * renderGrid (the single funnel for every repopulate). */
+  function repaintHardware(s) {
+    if (!s.hw || !can(window.JamnLpHW, "repaint")) return;
+    try { window.JamnLpHW.repaint(); } catch (_) {}
   }
 
   // ---------------------------------------------------------------- export
