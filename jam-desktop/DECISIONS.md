@@ -621,3 +621,26 @@ fields default, so other call sites and the preview compile unchanged.
 and matches the panel's other local sheets); a new SessionController "killAll"
 (rejected — `stopEverything()` already IS web's killAll semantics); deleting
 QuantizeMode's unused cases (rejected — they're model-level and read elsewhere).
+
+## D-024 — Launchpad controls moved to a left rail so the pad grid fills the space
+
+Restructured `LaunchpadPanelView` from a vertical stack (header + two wide
+control rows + Session + cycle/arrangement, then the square `aspectRatio(1,.fit)`
+grid) into an `HStack`: a fixed **300pt left rail** holds every control stacked
+into labeled groups (View, Size, Mode, Quantize, Chops, Kits, Remix, Session
+target, Jam), and the right column gives the pad grid all remaining width AND
+height — so the square grid now grows instead of shrinking between dead side
+margins. The two wide `controls`/`controlsRow2` HStacks were decomposed into
+per-control view-builders (`killAllButton`, `gridLayersToggle`, `padCountPicker`,
+`playbackModePicker`, `lockButton`, `augmentButton`, `quantizePicker`,
+`chopsGroup`, `kitsGroup`, `remixGroup`, `jamGroup`) assembled by a new `rail`
+via a `railSection(_:content:)` caption+group helper. Layout only — every
+action, binding, disabled-state and sheet is unchanged; Remix / "+ Add from
+another song" became full-width rail buttons (borrow keeps its accent border),
+and the Quantize / Off-Beat-Bar picker is now segmented in the rail. The rail
+scrolls if a short window can't show all groups; `.frame(maxWidth: embedded ?
+.infinity : 800)` is unchanged (300 rail + ~470 grid fits the 800 floating case).
+
+**Why:** the forced-square grid was tiny with huge empty side margins because the
+stacked control rows ate the height. A left rail frees the whole right column for
+the grid — the pads get much bigger — while keeping all controls one glance away.

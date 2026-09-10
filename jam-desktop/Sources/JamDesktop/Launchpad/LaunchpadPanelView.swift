@@ -57,45 +57,51 @@ struct LaunchpadPanelView: View {
     private var launchpad: LaunchpadController { session.launchpad }
 
     var body: some View {
-        VStack(spacing: 12) {
-            header
-            controls
-            controlsRow2
-            // Optional Session key/BPM target — OFF by default. Sits under the
-            // "Add from song" row because it only affects ADDED (borrowed)
-            // parts; the loaded song always plays true. Web parity (kit.js).
-            SessionTargetControls(
-                target: session.sessionTarget,
-                songKey: session.currentSongDetectedKey,
-                songBpm: session.currentSongTempoBpm
-            )
-            // The visible musical clock (UX audit fix #1): sweep of the
-            // shared loop cycle + countdown to the next lock boundary, so
-            // "why is my pad waiting" reads as timing, not lag.
-            cycleStrip
-            // Live-capture arrangement: Rec through the song to capture which
-            // pads play per section, Play to replay hands-free (kit.js parity).
-            arrangementRow
-            if showLayers {
-                LayerStackView().environmentObject(session)
-            } else {
-                padGrid
-                    .aspectRatio(1, contentMode: .fit)
+        HStack(alignment: .top, spacing: 16) {
+            // LEFT RAIL: every control, stacked into labeled groups so the
+            // whole surface fits a fixed 300pt column. Scrolls if a short
+            // window can't show all groups. Moved here (from stacked rows
+            // above the grid) so the pad grid can fill the rest — the square
+            // aspectRatio-fit grid used to shrink and leave big side margins.
+            ScrollView {
+                rail
+                    .padding(.trailing, 4)
             }
-            if let error = launchpad.fetchError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(JamTheme.error)
+            .frame(width: 300)
+
+            // RIGHT: the grid (plus its section strip + Rec/Play/Clear) fills
+            // all remaining width AND height, so the square grid grows to the
+            // shorter of {remaining width, freed height}.
+            VStack(spacing: 10) {
+                // The visible musical clock (UX audit fix #1): sweep of the
+                // shared loop cycle + countdown to the next lock boundary, so
+                // "why is my pad waiting" reads as timing, not lag.
+                cycleStrip
+                // Live-capture arrangement: Rec through the song to capture
+                // which pads play per section, Play to replay hands-free.
+                arrangementRow
+                if showLayers {
+                    LayerStackView().environmentObject(session)
+                } else {
+                    padGrid
+                        .aspectRatio(1, contentMode: .fit)
+                }
+                if let error = launchpad.fetchError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(JamTheme.error)
+                }
+                if session.usbLaunchpad?.underpowerSuspected == true {
+                    underpowerBanner
+                }
             }
-            if session.usbLaunchpad?.underpowerSuspected == true {
-                underpowerBanner
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(20)
-        // Fixed WIDTH (sized so the 8×8 grid fills it; controls wrap to
-        // two rows); height CAPS at 952 but yields to a shorter window —
-        // a hard 952 clipped the title and bottom rows on smaller
-        // displays. The grid sizes itself from whatever height remains.
+        // Left rail is a fixed 300pt column of stacked control groups; the
+        // grid fills the rest. Height CAPS at 952 but yields to a shorter
+        // window — a hard 952 clipped rows on smaller displays. The grid
+        // sizes itself from whatever height remains.
         // Embedded as PerformView's center: fill the column (PerformView owns
         // the header/transport/mixer around it). Floating overlay stays 800 so
         // the neck shows behind it.
@@ -568,120 +574,179 @@ struct LaunchpadPanelView: View {
         .accessibilityLabel("Arrangement sections")
     }
 
-    private var controls: some View {
-        HStack(spacing: 12) {
-            // Kill All — web parity (kit.js:1168 killAll): silence every
-            // pad/layer, the sequencer beat, AND the song transport in one
-            // press. The old button stopped pads + beat but left the song
-            // rolling (song-stop lived only on the TransportBar);
-            // session.stopEverything() is the unified path web's Kill All uses.
-            Button {
-                session.stopEverything()
-            } label: {
-                Image(systemName: "stop.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(killAllActive ? JamTheme.error : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Kill All — stop every pad, the beat, and the song")
-            .disabled(!killAllActive)
+    // MARK: - Rail (left control column)
 
-            // Grid ⇄ Layers view.
-            Picker("", selection: $showLayers) {
-                Image(systemName: "square.grid.3x3.fill").tag(false)
-                Image(systemName: "slider.horizontal.3").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 84)
+    /// Every control, stacked vertically into labeled groups sized for the
+    /// fixed 300pt left rail. Same view-builders / bindings / actions as
+    /// before — only the STACKING changed. The controls used to be two wide
+    /// HStacks above the grid, which forced the square aspectRatio-fit grid
+    /// to shrink between dead side margins.
+    private var rail: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
 
-            // Pad count: 16 (compact 4×4 — the Auto Kit's footprint) ⇄ 64
-            // (full 8×8). The on-screen grid AND a connected hardware
-            // Launchpad both follow this. Hidden in Layers view (which is
-            // pad-count agnostic).
+            railSection("View") {
+                HStack(spacing: 10) {
+                    killAllButton
+                    gridLayersToggle
+                }
+            }
+
+            // Pad count is meaningless in Layers view (pad-count agnostic).
             if !showLayers {
-                Picker("Pads", selection: padCountBinding) {
-                    Text("16").tag(16)
-                    Text("64").tag(64)
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 84)
-                .help("Pad count — 16 (compact 4×4) or 64 (full 8×8). "
-                      + "A connected Launchpad mirrors this grid.")
+                railSection("Size") { padCountPicker }
             }
 
-            // Tap = momentary (sounds only while held); Loop = latched seamless
-            // loop (tap on, tap off).
-            Picker("Play", selection: playbackModeBinding) {
-                ForEach(LaunchpadController.PadPlaybackMode.allCases, id: \.self) {
-                    Text($0.title).tag($0)
-                }
-            }
-            .labelsHidden()   // the "Play" title was wrapping to "P l a y"
-            .pickerStyle(.segmented)
-            .fixedSize()
-
-            // Loop lock: hold triggered loops until the shared cycle restarts
-            // so every pad phase-locks to one 8 s grid and stacks coherently.
-            // Text + icon (UX audit fix #3: icon-only was undecodable).
-            Button {
-                launchpad.loopLockEnabled.toggle()
-            } label: {
-                Label("Lock", systemImage: launchpad.loopLockEnabled ? "lock.fill" : "lock.open")
-                    .font(.caption)
-                    .foregroundStyle(launchpad.loopLockEnabled ? JamTheme.accent : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .help(launchpad.loopLockEnabled
-                  ? "Loop lock ON: loops start on the shared cycle (stack in sync)"
-                  : "Loop lock OFF: loops start immediately (bar-quantized)")
-
-            // Augment: triggering a sample ducks the song's own stem while it
-            // plays, then restores it — the sample "takes over" that part.
-            // Text + icon (the bare ⇄ read as "transpose", not "stem swap").
-            Button {
-                session.stemTakeoverEnabled.toggle()
-            } label: {
-                Label("Augment", systemImage: "arrow.left.arrow.right")
-                    .font(.caption)
-                    .foregroundStyle(session.stemTakeoverEnabled ? JamTheme.accent : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .help(session.stemTakeoverEnabled
-                  ? "Augment ON: samples replace the song's stem while playing (tap to layer instead)"
-                  : "Augment OFF: samples layer over the song (tap to replace the stem)")
-
-            // Each picker gets a small visible caption (UX audit fix #3),
-            // paired tightly so caption+control read as one labeled unit.
-            HStack(spacing: 5) {
-                pickerCaption("Quantize")
-                // Web parity (kit.js:1037): the surface offers exactly
-                // Off / Beat / Bar. Beat → the quarter-note grid, Bar → the
-                // one-bar grid of QuantizeMode (its other cases — 1/8, 1/2,
-                // phrase — stay in the model, just aren't offered here). A
-                // persisted value that lands off these three highlights
-                // nothing (SwiftUI shows no selection), mirroring web's
-                // highlightQuantize when the value has no button.
-                Picker("Quantize", selection: quantizeBinding) {
-                    ForEach(Self.quantizeOptions, id: \.mode) {
-                        Text($0.label).tag($0.mode)
+            railSection("Mode") {
+                VStack(alignment: .leading, spacing: 8) {
+                    playbackModePicker
+                    HStack(spacing: 14) {
+                        lockButton
+                        augmentButton
                     }
                 }
-                .labelsHidden()
-                .fixedSize()
             }
-            .help("Quantize")
 
-            Spacer(minLength: 0)
+            railSection("Quantize") { quantizePicker }
+
+            railSection("Chops") { chopsGroup }
+
+            railSection("Kits") { kitsGroup }
+
+            remixGroup
+
+            // Optional Session key/BPM target — OFF by default. Only affects
+            // ADDED (borrowed) parts; the loaded song always plays true.
+            // Web parity (kit.js).
+            SessionTargetControls(
+                target: session.sessionTarget,
+                songKey: session.currentSongDetectedKey,
+                songBpm: session.currentSongTempoBpm
+            )
+
+            railSection("Jam") { jamGroup }
         }
     }
 
-    /// Second control row: chop-source pickers + performance actions.
-    /// Split from `controls` so the panel can be GRID-WIDTH — one long
-    /// row forced a 1220pt panel and the square grid floated between
-    /// dead side margins ("grid isn't filling the box").
-    private var controlsRow2: some View {
-        HStack(spacing: 12) {
+    /// A labeled rail group: a small caption over its controls so the rail
+    /// reads as a stack of named sections, not loose buttons.
+    @ViewBuilder
+    private func railSection<Content: View>(
+        _ title: String, @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    // MARK: - Controls (unchanged actions/bindings; regrouped for the rail)
+
+    /// Kill All — web parity (kit.js:1168 killAll): silence every pad/layer,
+    /// the sequencer beat, AND the song transport in one press.
+    /// session.stopEverything() is the unified path web's Kill All uses.
+    private var killAllButton: some View {
+        Button {
+            session.stopEverything()
+        } label: {
+            Image(systemName: "stop.circle.fill")
+                .font(.title3)
+                .foregroundStyle(killAllActive ? JamTheme.error : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Kill All — stop every pad, the beat, and the song")
+        .disabled(!killAllActive)
+    }
+
+    /// Grid ⇄ Layers view.
+    private var gridLayersToggle: some View {
+        Picker("", selection: $showLayers) {
+            Image(systemName: "square.grid.3x3.fill").tag(false)
+            Image(systemName: "slider.horizontal.3").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 84)
+    }
+
+    /// Pad count: 16 (compact 4×4 — the Auto Kit's footprint) ⇄ 64 (full
+    /// 8×8). The on-screen grid AND a connected hardware Launchpad follow this.
+    private var padCountPicker: some View {
+        Picker("Pads", selection: padCountBinding) {
+            Text("16").tag(16)
+            Text("64").tag(64)
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 120)
+        .help("Pad count — 16 (compact 4×4) or 64 (full 8×8). "
+              + "A connected Launchpad mirrors this grid.")
+    }
+
+    /// Tap = momentary (sounds only while held); Loop = latched seamless loop.
+    private var playbackModePicker: some View {
+        Picker("Play", selection: playbackModeBinding) {
+            ForEach(LaunchpadController.PadPlaybackMode.allCases, id: \.self) {
+                Text($0.title).tag($0)
+            }
+        }
+        .labelsHidden()   // the "Play" title was wrapping to "P l a y"
+        .pickerStyle(.segmented)
+        .fixedSize()
+    }
+
+    /// Loop lock: hold triggered loops until the shared cycle restarts so
+    /// every pad phase-locks to one grid and stacks coherently.
+    private var lockButton: some View {
+        Button {
+            launchpad.loopLockEnabled.toggle()
+        } label: {
+            Label("Lock", systemImage: launchpad.loopLockEnabled ? "lock.fill" : "lock.open")
+                .font(.caption)
+                .foregroundStyle(launchpad.loopLockEnabled ? JamTheme.accent : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(launchpad.loopLockEnabled
+              ? "Loop lock ON: loops start on the shared cycle (stack in sync)"
+              : "Loop lock OFF: loops start immediately (bar-quantized)")
+    }
+
+    /// Augment: triggering a sample ducks the song's own stem while it plays,
+    /// then restores it — the sample "takes over" that part.
+    private var augmentButton: some View {
+        Button {
+            session.stemTakeoverEnabled.toggle()
+        } label: {
+            Label("Augment", systemImage: "arrow.left.arrow.right")
+                .font(.caption)
+                .foregroundStyle(session.stemTakeoverEnabled ? JamTheme.accent : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(session.stemTakeoverEnabled
+              ? "Augment ON: samples replace the song's stem while playing (tap to layer instead)"
+              : "Augment OFF: samples layer over the song (tap to replace the stem)")
+    }
+
+    /// Web parity (kit.js:1037): the surface offers exactly Off / Beat / Bar.
+    /// Beat → the quarter-note grid, Bar → the one-bar grid of QuantizeMode
+    /// (its other cases — 1/8, 1/2, phrase — stay in the model, just aren't
+    /// offered here). A persisted value off these three highlights nothing.
+    private var quantizePicker: some View {
+        Picker("Quantize", selection: quantizeBinding) {
+            ForEach(Self.quantizeOptions, id: \.mode) {
+                Text($0.label).tag($0.mode)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .help("Quantize")
+    }
+
+    /// Chop-source pickers + Load (unchanged actions/bindings), stacked for
+    /// the rail. Each picker keeps its small caption pair.
+    private var chopsGroup: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 5) {
                 pickerCaption("Stem")
                 Picker("Stem", selection: $selectedStem) {
@@ -706,138 +771,79 @@ struct LaunchpadPanelView: View {
             }
             .help("Slice mode")
 
-            Button("Load") {
-                let stem = selectedStem
-                let mode = selectedSliceMode
-                let backend = model.backendBaseURL
-                guard !stem.isEmpty, !mode.isEmpty else { return }
-                Task {
-                    await launchpad.loadChops(
-                        stem: stem, sliceMode: mode, backend: backend)
-                }
-            }
-            .disabled(
-                launchpad.isFetching
-                    || selectedStem.isEmpty || selectedSliceMode.isEmpty
-                    || (selectedStem == launchpad.stem
-                        && selectedSliceMode == launchpad.sliceMode)
-            )
-
-            if launchpad.isFetching {
-                ProgressView().controlSize(.small)
-            }
-
-            Spacer()
-
-            // Performance Intelligence: one tap loads the auto-built, seamlessly-
-            // loopable kit for this song (GET /api/song/{id}/kit).
-            Button {
-                Task { await session.loadAutoKit(kind: "auto") }
-            } label: {
-                Label("Auto Kit", systemImage: "wand.and.stars")
-                    .font(.caption)
-            }
-            .disabled(session.autoKitLoading)
-            .help("Auto Kit — load the auto-built Launchpad kit for this song")
-
-            // Drum Kit: the song's drum stem as classified one-shot hits
-            // (kick/snare/hats/…) + groove loops (kind=drums on the same route).
-            Button {
-                Task { await session.loadAutoKit(kind: "drums") }
-            } label: {
-                Label("Drum Kit", systemImage: "circle.grid.3x3.fill")
-                    .font(.caption)
-            }
-            .disabled(session.autoKitLoading)
-            .help("Drum Kit — the song's own kick, snare, hats and grooves on the pads")
-
-            // Flip: a new beat built from the song's own DNA — the web Remix
-            // bar's one-tap Flip (remix.js:18, kind=flip kit). Was reachable
-            // on desktop only via the Remix sheet; promoted here next to
-            // Auto/Drum Kit so it's a first-class pad action like on web.
-            // Uses the same loadAutoKit(kind:) path the sheet does — no second
-            // code path — which stages the flip kit onto the pads (SILENT
-            // until tapped; desktop doesn't auto-start the flip beat).
-            Button {
-                Task { await session.loadAutoKit(kind: "flip") }
-            } label: {
-                Label("Flip", systemImage: "shuffle")
-                    .font(.caption)
-            }
-            .disabled(session.autoKitLoading)
-            .help("Flip — a fresh beat from this song's own DNA on the pads")
-
-            if session.autoKitLoading {
-                ProgressView().controlSize(.small)
-            }
-
-            // Remix: the full one-tap transform sheet (kits / Flip / Humanize
-            // / Re-Drum) — web embeds this bar inline above the pads
-            // (remix.js:18-21). Desktop had RemixSheetView but no Launchpad
-            // entry; this ✦ opens the existing sheet (presented locally, the
-            // same idiom as showBorrowPicker below).
-            Button {
-                showRemix = true
-            } label: {
-                Label("Remix", systemImage: "sparkles")
-                    .font(.caption)
-            }
-            .help("Remix — one-tap transforms of this song and its samples")
-
-            // "Add from another song" (DJ cross-song sampling): real loops
-            // from your OTHER analyzed songs — Beat / Bass / Chords / Melody,
-            // tempo- and key-matched — onto these pads. Promoted here from the
-            // Remix sheet so it's a first-class Launchpad action (web parity).
-            Button {
-                showBorrowPicker = true
-            } label: {
-                Label("+ Add from another song", systemImage: "square.stack.3d.up")
-                    .font(.caption.weight(.semibold))
-                    .fixedSize()                       // never truncate to "A…"
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(JamTheme.accent.opacity(0.8)))
-                    .foregroundStyle(JamTheme.accent)
-            }
-            .buttonStyle(.plain)
-            .help("Add from another song — drop a Beat, Bass, Chords or Melody "
-                  + "loop from your other analyzed songs onto the pads")
-
-            // Ableton Link: join the local Link session — loop launches
-            // land on the shared bar grid and the sequencer follows the
-            // session tempo, so jamn stacks in phase with Live.
-            LinkChip(link: session.linkSync)
-
-            // Instant Groove: one tap fires the best loop in each category
-            // (drums/bass/chords/lead/…), all bar-synced — jam immediately.
-            Button {
-                session.launchpad.instantGroove()
-            } label: {
-                Label("Groove", systemImage: "bolt.fill")
-                    .font(.caption)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(session.launchpad.assignments.isEmpty)
-            .help("Instant Groove — start the best loop of each category, locked to the grid")
-
-            // Style Beats: a complete drum groove per style at song tempo,
-            // one tap (GarageBand-Drummer model; plays the BeatKit).
-            Menu {
-                ForEach(BeatStyle.allCases) { style in
-                    Button(style.displayName) {
-                        session.loadStyleBeat(style)
+            HStack(spacing: 8) {
+                Button("Load") {
+                    let stem = selectedStem
+                    let mode = selectedSliceMode
+                    let backend = model.backendBaseURL
+                    guard !stem.isEmpty, !mode.isEmpty else { return }
+                    Task {
+                        await launchpad.loadChops(
+                            stem: stem, sliceMode: mode, backend: backend)
                     }
                 }
-            } label: {
-                Label("Beat", systemImage: "metronome.fill")
-                    .font(.caption)
+                .disabled(
+                    launchpad.isFetching
+                        || selectedStem.isEmpty || selectedSliceMode.isEmpty
+                        || (selectedStem == launchpad.stem
+                            && selectedSliceMode == launchpad.sliceMode)
+                )
+
+                if launchpad.isFetching {
+                    ProgressView().controlSize(.small)
+                }
             }
-            .fixedSize()
-            .help("Drop in a full drum beat — House, Boom Bap, Trap, DnB, Rock — synced to the song")
         }
-        .overlay(alignment: .bottomTrailing) {
+    }
+
+    /// Auto Kit / Drum Kit / Flip — the auto-built kits (unchanged actions).
+    /// Wrapped to two rows to fit the rail; the load error sits below.
+    private var kitsGroup: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                // Performance Intelligence: one tap loads the auto-built,
+                // seamlessly-loopable kit for this song (GET /api/song/{id}/kit).
+                Button {
+                    Task { await session.loadAutoKit(kind: "auto") }
+                } label: {
+                    Label("Auto Kit", systemImage: "wand.and.stars")
+                        .font(.caption)
+                }
+                .disabled(session.autoKitLoading)
+                .help("Auto Kit — load the auto-built Launchpad kit for this song")
+
+                // Drum Kit: the song's drum stem as classified one-shot hits
+                // (kick/snare/hats/…) + groove loops (kind=drums, same route).
+                Button {
+                    Task { await session.loadAutoKit(kind: "drums") }
+                } label: {
+                    Label("Drum Kit", systemImage: "circle.grid.3x3.fill")
+                        .font(.caption)
+                }
+                .disabled(session.autoKitLoading)
+                .help("Drum Kit — the song's own kick, snare, hats and grooves on the pads")
+            }
+
+            HStack(spacing: 10) {
+                // Flip: a new beat built from the song's own DNA — the web
+                // Remix bar's one-tap Flip (remix.js:18, kind=flip kit). Uses
+                // the same loadAutoKit(kind:) path the sheet does — no second
+                // code path — staging the flip kit onto the pads (SILENT until
+                // tapped; desktop doesn't auto-start the flip beat).
+                Button {
+                    Task { await session.loadAutoKit(kind: "flip") }
+                } label: {
+                    Label("Flip", systemImage: "shuffle")
+                        .font(.caption)
+                }
+                .disabled(session.autoKitLoading)
+                .help("Flip — a fresh beat from this song's own DNA on the pads")
+
+                if session.autoKitLoading {
+                    ProgressView().controlSize(.small)
+                }
+            }
+
             if let err = session.autoKitError {
                 HStack(spacing: 6) {
                     Text(err).font(.caption2).foregroundStyle(JamTheme.error)
@@ -848,6 +854,83 @@ struct LaunchpadPanelView: View {
                     .buttonStyle(.link)
                     .disabled(session.autoKitLoading)
                 }
+            }
+        }
+    }
+
+    /// Remix sheet + cross-song borrow — full-width buttons in the rail.
+    private var remixGroup: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Remix: the full one-tap transform sheet (kits / Flip / Humanize
+            // / Re-Drum) — web embeds this bar inline above the pads
+            // (remix.js:18-21). This ✦ opens the existing sheet (presented
+            // locally, the same idiom as showBorrowPicker).
+            Button {
+                showRemix = true
+            } label: {
+                Label("Remix", systemImage: "sparkles")
+                    .font(.caption)
+                    .frame(maxWidth: .infinity)
+            }
+            .help("Remix — one-tap transforms of this song and its samples")
+
+            // "Add from another song" (DJ cross-song sampling): real loops
+            // from your OTHER analyzed songs — Beat / Bass / Chords / Melody,
+            // tempo- and key-matched — onto these pads (web parity).
+            Button {
+                showBorrowPicker = true
+            } label: {
+                Label("+ Add from another song", systemImage: "square.stack.3d.up")
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(JamTheme.accent.opacity(0.8)))
+                    .foregroundStyle(JamTheme.accent)
+            }
+            .buttonStyle(.plain)
+            .help("Add from another song — drop a Beat, Bass, Chords or Melody "
+                  + "loop from your other analyzed songs onto the pads")
+        }
+    }
+
+    /// Ableton Link / Instant Groove / Style Beats (unchanged actions).
+    private var jamGroup: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Ableton Link: join the local Link session — loop launches land
+            // on the shared bar grid and the sequencer follows the session
+            // tempo, so jamn stacks in phase with Live.
+            LinkChip(link: session.linkSync)
+
+            HStack(spacing: 10) {
+                // Instant Groove: one tap fires the best loop in each category
+                // (drums/bass/chords/lead/…), all bar-synced — jam immediately.
+                Button {
+                    session.launchpad.instantGroove()
+                } label: {
+                    Label("Groove", systemImage: "bolt.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(session.launchpad.assignments.isEmpty)
+                .help("Instant Groove — start the best loop of each category, locked to the grid")
+
+                // Style Beats: a complete drum groove per style at song tempo,
+                // one tap (GarageBand-Drummer model; plays the BeatKit).
+                Menu {
+                    ForEach(BeatStyle.allCases) { style in
+                        Button(style.displayName) {
+                            session.loadStyleBeat(style)
+                        }
+                    }
+                } label: {
+                    Label("Beat", systemImage: "metronome.fill")
+                        .font(.caption)
+                }
+                .fixedSize()
+                .help("Drop in a full drum beat — House, Boom Bap, Trap, DnB, Rock — synced to the song")
             }
         }
     }
