@@ -1031,7 +1031,11 @@
     s.transportEl = transport;
 
     var grid = document.createElement("div");
-    grid.className = "kit-grid";
+    // Set the 8-wide (64) class UP FRONT so the loading skeleton paints at the
+    // selected pad count from the first frame — on 64 it's 8×8 immediately,
+    // not a 4×4 flash that reflows to 8×8 once the kit loads.
+    grid.className = "kit-grid" + (s.padCount === 64 ? " kit-grid-64" : "");
+    if (s.padCount === 64) s.root.classList.add("kit-is-64");
     s.gridEl = grid;
 
     // Loading skeleton: one shimmer tile per pad while stems fetch + decode.
