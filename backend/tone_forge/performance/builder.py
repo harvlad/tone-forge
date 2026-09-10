@@ -265,7 +265,12 @@ def _graph_from_dict(d: Dict) -> MusicalGraph:
     phrases = tuple(
         Phrase(stem=p["stem"], pos=gp(p["pos"]), onset_density=p["onset_density"],
                pitched=p["pitched"], energy=p["energy"],
-               bar_energies=tuple(p.get("bar_energies") or ()), id=p["id"])
+               bar_energies=tuple(p.get("bar_energies") or ()),
+               # Default the composite-quality signals so graphs cached before
+               # these fields existed still rehydrate (no-penalty == clean).
+               peak_ratio=float(p.get("peak_ratio", 0.0) or 0.0),
+               flatness=float(p.get("flatness", 0.0) or 0.0),
+               id=p["id"])
         for p in d.get("phrases", [])
     )
     loops = tuple(

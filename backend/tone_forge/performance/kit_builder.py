@@ -27,6 +27,72 @@ _SAMPLE_LEN_SEC = 8.0
 # not the asset, so the builder resolves it via source_id (loop → phrase).
 _ENERGY_FLOOR = 0.01
 
+# --- Composite pad-quality thresholds + penalty curves -----------------------
+# CALIBRATION WARNING: every number in this block is a CONSERVATIVE STARTING
+# POINT, not a tuned value. They gate/rank pads on separation-quality proxies
+# (clipping, spectral flatness, level) and MUST get a real-audio blind-listen
+# calibration before being trusted — this repo's promotion doctrine is "never a
+# metric alone". They were chosen to avoid nuking good slices (gentle floors,
+# wide clean plateaus); do NOT retune them against a metric/SI-SDR-style number.
+#
+# Flatness (pitched-only): spectral flatness above this reads as bad-separation
+# hiss/wash. A clean tonal pitched slice sits well under it.
+_FLATNESS_NOISE = 0.35
+# Multiplier a fully noise-like pitched slice (flatness → 1.0) is scaled to.
+_FLATNESS_PENALTY_FLOOR = 0.4
+# Clipping: fraction of |samples| ≥ 0.98 above which a slice is "heavily
+# clipped" and vetoed by the usable gate.
+_CLIP_RATIO_MAX = 0.01
+# peak_ratio at which the clip penalty bottoms out (20% of samples clipping).
+_CLIP_HEAVY_RATIO = 0.20
+# Multiplier a heavily-clipped slice is scaled to.
+_CLIP_PENALTY_FLOOR = 0.3
+# Energy gain: phrase energy at/above which a slice counts as "full-bodied"
+# (gain 1.0). Between the audibility floor and here the gain ramps up from
+# _ENERGY_GAIN_FLOOR, so a thin-but-audible slice loses to a full one.
+_ENERGY_FULL = 0.15
+_ENERGY_GAIN_FLOOR = 0.7
+
+# Stem groupings for the stem-spread quota. Harmonic = pitched non-bass /
+# non-vocal material that carries chords/leads; melody = the sung line (or a
+# lead-line guitar as a fallback when there are no vocals).
+_HARMONIC_STEMS = {
+    "other", "guitar", "guitar_center", "guitar_sides",
+    "guitar_left", "guitar_right", "piano", "keys",
+}
+_MELODY_STEMS = {"vocals"}
+
+
+def _clip_penalty(peak_ratio: float) -> float:
+    """1.0 clean → _CLIP_PENALTY_FLOOR heavily clipped (linear in peak_ratio)."""
+    if peak_ratio <= 0.0:
+        return 1.0
+    frac = min(1.0, peak_ratio / _CLIP_HEAVY_RATIO)
+    return _CLIP_PENALTY_FLOOR + (1.0 - _CLIP_PENALTY_FLOOR) * (1.0 - frac)
+
+
+def _flatness_penalty(flatness: float, pitched: bool) -> float:
+    """1.0 tonal → _FLATNESS_PENALTY_FLOOR noise-like. PITCHED stems only —
+    drums are broadband by nature, so flatness there is not a defect."""
+    if not pitched or flatness <= _FLATNESS_NOISE:
+        return 1.0
+    frac = min(1.0, (flatness - _FLATNESS_NOISE) / (1.0 - _FLATNESS_NOISE))
+    return _FLATNESS_PENALTY_FLOOR + (1.0 - _FLATNESS_PENALTY_FLOOR) * (1.0 - frac)
+
+
+def _energy_gain(energy) -> float:
+    """_ENERGY_GAIN_FLOOR near the audibility floor → 1.0 full-bodied. Replaces
+    the flat clarity plateau's effect on RANKING (classifier still scores it).
+    Unknown energy (legacy/synthetic graphs) passes at 1.0."""
+    if energy is None:
+        return 1.0
+    if energy >= _ENERGY_FULL:
+        return 1.0
+    if energy <= _ENERGY_FLOOR:
+        return _ENERGY_GAIN_FLOOR
+    frac = (energy - _ENERGY_FLOOR) / (_ENERGY_FULL - _ENERGY_FLOOR)
+    return _ENERGY_GAIN_FLOOR + (1.0 - _ENERGY_GAIN_FLOOR) * frac
+
 _KIT_SLOTS = [
     ("Main riff", [ContentType.RHYTHM_LOOP, ContentType.LEAD_LOOP, ContentType.CHORD_LOOP]),
     ("Variation", [ContentType.LEAD_LOOP, ContentType.RHYTHM_LOOP, ContentType.CHORD_LOOP]),
@@ -137,14 +203,43 @@ class AutoKitBuilder:
     ) -> Dict:
         rule = _SKILL.get(skill, _SKILL["intermediate"])
 
-        # Usage feedback fold: what the user actually plays outranks
-        # what the analyzer guessed. Bounded nudges (tanh) so usage
-        # can bias ranking but never swamp audio quality: +0.15 max
-        # for repeated plays, -0.20 max for repeated instant-kills.
+        # Phrase resolution: assets carry no energy/quality signals, so look
+        # them up on the source phrase (asset.source_id is a loop id or a
+        # phrase id; a loop id resolves through loop_phrase to its phrase).
+        # Audibility per phrase = its loudest BAR, not the whole-phrase mean:
+        # a 4-bar phrase whose content lives in bar 4 must count as audible
+        # (the window picker in _to_sample_pack lands the pad on that bar).
+        phrases_by_id = {p.id: p for p in (getattr(graph, "phrases", ()) or ())}
+        phrase_energy = {p.id: (max(p.bar_energies) if getattr(p, "bar_energies", ()) else p.energy)
+                         for p in (getattr(graph, "phrases", ()) or ())}
+        loop_phrase = {lp.id: lp.phrase_id
+                       for lp in (getattr(graph, "loops", ()) or ())}
+
+        def _phrase_of(a):
+            return phrases_by_id.get(loop_phrase.get(a.source_id, a.source_id))
+
+        def _loudest_energy(a):
+            return phrase_energy.get(loop_phrase.get(a.source_id, a.source_id))
+
+        # Usage feedback fold: what the user actually plays outranks what the
+        # analyzer guessed. The base is a COMPOSITE quality score — the
+        # analyzer's performance_score modulated by multiplicative separation-
+        # quality gates (clipping, spectral-flatness hiss, level) so quality
+        # biases ranking at EVERY stage (anchor, buckets, slots, top-up) with
+        # no call-site churn. Missing signals default to 1.0 (no penalty), so
+        # legacy/synthetic graphs rank exactly as before. Usage is then a
+        # bounded additive nudge (tanh) so it can bias but never swamp quality:
+        # +0.15 max for repeated plays, -0.20 max for repeated instant-kills.
         import math
 
         def _score(a) -> float:
             s = a.performance_score
+            ph = _phrase_of(a)
+            if ph is not None:
+                s *= _clip_penalty(getattr(ph, "peak_ratio", 0.0))
+                s *= _flatness_penalty(getattr(ph, "flatness", 0.0),
+                                       getattr(ph, "pitched", False))
+                s *= _energy_gain(_loudest_energy(a))
             u = (usage or {}).get(a.id)
             if isinstance(u, dict):
                 s += 0.15 * math.tanh(float(u.get("play", 0)) / 5.0)
@@ -152,29 +247,34 @@ class AutoKitBuilder:
             return s
         self._score = _score
 
-        # Audibility: assets carry no energy, so look it up on the source
-        # phrase (asset.source_id is a loop id or a phrase id). Unknown energy
-        # passes — legacy/synthetic graphs without phrases must not be muted.
-        # Audibility per phrase = its loudest BAR, not the whole-phrase mean:
-        # a 4-bar phrase whose content lives in bar 4 must count as audible
-        # (the window picker in _to_sample_pack lands the pad on that bar).
-        phrase_energy = {p.id: (max(p.bar_energies) if getattr(p, "bar_energies", ()) else p.energy)
-                         for p in (getattr(graph, "phrases", ()) or ())}
-        loop_phrase = {lp.id: lp.phrase_id
-                       for lp in (getattr(graph, "loops", ()) or ())}
-
         def _audible(a) -> bool:
-            e = phrase_energy.get(loop_phrase.get(a.source_id, a.source_id))
+            e = _loudest_energy(a)
             return e is None or e >= _ENERGY_FLOOR
         self._audible = _audible
 
+        # Bad-separation veto: a heavily-clipped slice, or a PITCHED slice that
+        # is mostly broadband hiss, is unusable no matter how steadily it loops.
+        # Additive to the audibility floor (near-silence still handled there);
+        # missing phrase signals pass (legacy graphs must not be muted).
+        def _clean(a) -> bool:
+            ph = _phrase_of(a)
+            if ph is None:
+                return True
+            if getattr(ph, "peak_ratio", 0.0) > _CLIP_RATIO_MAX:
+                return False
+            if getattr(ph, "pitched", False) and getattr(ph, "flatness", 0.0) > _FLATNESS_NOISE:
+                return False
+            return True
+
         # A pad must be actually usable: loopable OR a decent-scoring one-shot
-        # — AND audible. loop_confidence/performance_score both reward steady
-        # material, so a whisper-quiet sustain cleared them; the energy floor
-        # is the only term that can veto on level alone.
+        # — AND audible AND clean. loop_confidence/performance_score both reward
+        # steady material, so a whisper-quiet sustain (or a clipped/noisy
+        # slice) cleared them; the energy floor + clean gate veto on level and
+        # separation quality respectively.
         usable = [
             a for a in graph.ranked_assets()
-            if _audible(a) and (a.loop_confidence > 0.2 or a.performance_score > 0.4)
+            if _audible(a) and _clean(a)
+            and (a.loop_confidence > 0.2 or a.performance_score > 0.4)
         ]
         pool = [
             a for a in usable
@@ -222,6 +322,43 @@ class AutoKitBuilder:
             anchor = max(drum_pool, key=_groove_key)
             chosen.append(anchor)
             self._mark(anchor, used_ids, used_patterns, stem_counts)
+
+        # --- Stem-spread quota: guarantee a pad per musical stem -------------
+        # Before this, only drums was guaranteed (the anchor). A guitar-
+        # dominated song came back e.g. 1 drums + 1 bass + 5 guitar + 0 vocals:
+        # bass is only a BASS_GROOVE when loopable (else a ONE_SHOT no slot
+        # wants → non-loopable bass = zero pads), and melody/vocals have no
+        # dedicated slot so they lose head-to-head to guitar. Reserve one pad
+        # each for bass, harmonic-chords and melody BEFORE the generic role
+        # scan, drawn from EVERY audible asset (bypassing the score gate,
+        # exactly like the drum anchor) and picking the highest composite-
+        # _score candidate — so a stem that exists always lands a pad, even one
+        # that wouldn't win a global slot. The bass bucket takes ANY bass
+        # content type (incl. ONE_SHOT), so a non-loopable bass still gets a
+        # pad. A stem with NO audible asset is skipped, never fabricated, and
+        # its pad returns to the score fill — a song that already spread well
+        # never regresses.
+        def _reserve(predicate) -> None:
+            if len(chosen) >= pads:
+                return
+            cands = [
+                a for a in graph.ranked_assets()
+                if a.id not in used_ids
+                and not (a.pattern_id and a.pattern_id in used_patterns)
+                and _audible(a) and predicate(a)
+            ]
+            if not cands:
+                return
+            best = max(cands, key=_score)
+            chosen.append(best)
+            self._mark(best, used_ids, used_patterns, stem_counts)
+
+        _reserve(lambda a: a.stem == "bass")
+        _reserve(lambda a: a.stem in _HARMONIC_STEMS
+                 and a.content_type == ContentType.CHORD_LOOP)
+        _reserve(lambda a: a.stem in _MELODY_STEMS
+                 or (a.stem in _HARMONIC_STEMS
+                     and a.content_type == ContentType.LEAD_LOOP))
 
         for _slot_name, prefs in _KIT_SLOTS[:pads]:
             if len(chosen) >= pads:
@@ -456,9 +593,11 @@ class AutoKitBuilder:
             # key, so bumping it invalidates stale cached kits.
             # kit=5: category-grouped pad layout (padIdx rows by category).
             # kit=6: bar-aligned pad windows, energy floor, honest loopable.
+            # kit=7: stem-spread quota (bass/chords/melody buckets) + composite
+            #        pad-quality score (clip/flatness/energy gates).
             "provenance": (
                 f"performance_intelligence graph={graph.graph_hash} "
-                f"module={graph.module_version} kit=6 use={use_digest} "
+                f"module={graph.module_version} kit=7 use={use_digest} "
                 f"skill={skill}"
             ),
         }

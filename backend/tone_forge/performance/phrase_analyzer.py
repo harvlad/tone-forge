@@ -29,6 +29,11 @@ _PITCHED_STEMS = {"other", "bass", "vocals", "guitar", "guitar_left", "guitar_ri
 # Preferred phrase lengths in bars, best first.
 _PHRASE_BARS = (4, 2, 8, 1)
 
+# A sample at/above this magnitude counts as clipped for the phrase peak_ratio
+# signal (kit_builder scales pad quality down on it). Just under full-scale so
+# legitimately loud-but-clean peaks don't read as clipping.
+_CLIP_SAMPLE_THRESH = 0.98
+
 
 def _rms_per_beat(y: np.ndarray, sr: int, beats_s: Sequence[float]) -> np.ndarray:
     out = []
@@ -139,7 +144,20 @@ class PhraseAnalyzer:
         n_on = int(np.sum((onsets >= pos.start_s) & (onsets < pos.end_s))) if onsets.size else 0
         beats = max(1.0, pos.length_beats)
         onset_density = n_on / beats
+        # Composite-quality signals (consumed by kit_builder._score).
+        # peak_ratio: clipping fraction — cheap, computed for every stem.
+        peak_ratio = float(np.mean(np.abs(seg) >= _CLIP_SAMPLE_THRESH)) if len(seg) else 0.0
+        # flatness: bad-separation "hiss/wash" tell, only meaningful on PITCHED
+        # stems (drums are noise-like by nature, so we skip them and leave 0).
+        # Same librosa call drum_kit.py uses for its per-hit flatness gate.
+        flatness = 0.0
+        if pitched and _HAVE_LIBROSA and len(seg):
+            try:
+                flatness = float(np.mean(librosa.feature.spectral_flatness(y=seg)))
+            except Exception:
+                flatness = 0.0
         return Phrase(
             stem=stem, pos=pos, onset_density=onset_density,
             pitched=pitched, energy=energy, bar_energies=bar_energies,
+            peak_ratio=peak_ratio, flatness=flatness,
         ).with_id()

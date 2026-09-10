@@ -234,7 +234,65 @@ def test_kit_pads_are_grouped_by_category():
     assert bass_ids == [bass_a.id, bass_b.id]
     # padIdx matches the grouped order and the layout bump busts kit caches.
     assert [p["padIdx"] for p in pads] == list(range(len(pads)))
-    assert "kit=6" in kit["provenance"]
+    assert "kit=7" in kit["provenance"]
+
+
+def test_stem_spread_quota_reserves_a_pad_per_stem():
+    """A guitar-dominated song still gets bass + chords + melody pads.
+
+    Before the stem-spread quota only drums was guaranteed (the anchor), so a
+    song whose loudest material is all guitar came back e.g. drums + 5 guitar +
+    0 bass + 0 vocals: bass that isn't loopable is a ONE_SHOT no role slot
+    wants, and vocals have no dedicated slot and lose head-to-head to guitar.
+    The quota reserves one pad each for bass, harmonic-chords and melody BEFORE
+    the generic scan. With only 4 pads the plain score scan would seat the drum
+    anchor + the three top-scoring guitars; the quota trades two of those for a
+    non-loopable bass and the vocal line.
+    """
+    drums = _asset("drums", ContentType.RHYTHM_LOOP, start=8.0, loop_conf=0.6, score=0.55)
+    # Non-loopable bass → a ONE_SHOT the "Bass groove" slot would never pick.
+    bass = _asset("bass", ContentType.ONE_SHOT, start=4.0, loop_conf=0.12, score=0.45)
+    guitars = [
+        _asset("other", ContentType.CHORD_LOOP, start=0.0, loop_conf=0.85, score=0.95),
+        _asset("other", ContentType.CHORD_LOOP, start=16.0, loop_conf=0.82, score=0.92),
+        _asset("other", ContentType.CHORD_LOOP, start=20.0, loop_conf=0.8, score=0.90),
+        _asset("other", ContentType.CHORD_LOOP, start=24.0, loop_conf=0.78, score=0.88),
+    ]
+    vocals = _asset("vocals", ContentType.LEAD_LOOP, start=12.0, loop_conf=0.5, score=0.5)
+    g = _synth_graph([drums, bass, vocals] + guitars)
+
+    kit = AutoKitBuilder().build(g, skill="intermediate", pads=4)
+    cats = {p["category"] for p in kit["pads"]}
+    ids = {p["assetId"] for p in kit["pads"]}
+    assert cats == {"DRUMS", "BASS", "CHORDS", "VOCAL"}, f"spread not balanced: {cats}"
+    assert bass.id in ids, "non-loopable bass earned no pad"
+    assert vocals.id in ids, "vocal/melody line crowded out by guitar"
+
+
+def test_composite_quality_vetoes_noisy_pitched_slice():
+    """A pitched slice that is mostly broadband hiss (bad separation) is kept
+    off the pads even though it loops steadily and scores well pre-quality.
+
+    High spectral flatness on a PITCHED stem is the strongest bad-separation
+    tell; the usable gate now vetoes it (additive to the energy floor) and the
+    composite _score demotes anything that slips through, so the clean twin
+    wins every bucket/slot. Drums are exempt — broadband by nature.
+    """
+    clean = _asset("other", ContentType.CHORD_LOOP, start=0.0, loop_conf=0.8, score=0.9)
+    noisy = _asset("other", ContentType.CHORD_LOOP, start=4.0, loop_conf=0.8, score=0.9)
+    bass = _asset("bass", ContentType.BASS_GROOVE, start=8.0, loop_conf=0.7, score=0.8)
+    clean_ph = Phrase(stem="other", pos=clean.pos, energy=0.2, pitched=True,
+                      flatness=0.10, id=clean.source_id)
+    noisy_ph = Phrase(stem="other", pos=noisy.pos, energy=0.2, pitched=True,
+                      flatness=0.60, id=noisy.source_id)  # > _FLATNESS_NOISE
+    bass_ph = Phrase(stem="bass", pos=bass.pos, energy=0.2, pitched=True,
+                     flatness=0.10, id=bass.source_id)
+    kit = AutoKitBuilder().build(
+        _synth_graph([clean, noisy, bass],
+                     phrases=[clean_ph, noisy_ph, bass_ph]), pads=4)
+    ids = {p["assetId"] for p in kit["pads"]}
+    assert noisy.id not in ids, "noisy pitched slice cleared the quality gate"
+    assert clean.id in ids and bass.id in ids
 
 
 def test_percussion_loop_confidence_ignores_harmonic_carryover():

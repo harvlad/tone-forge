@@ -120,6 +120,15 @@ class Phrase:
     # the profile lets the kit builder pick the loudest whole-bar subwindow.
     # Empty on graphs derived before the field existed.
     bar_energies: Tuple[float, ...] = ()
+    # Composite-quality signals for pad ranking (see kit_builder._score). Both
+    # default to 0.0 (== "clean / tonal") so graphs cached before these fields
+    # existed rehydrate to a no-penalty state — the kit still ranks on score.
+    #   peak_ratio: fraction of |samples| clipping (>0.98) — hot/bad-transfer.
+    #   flatness:   mean spectral flatness, PITCHED phrases only (0 on drums /
+    #               non-pitched, noise-like by nature). High on a pitched stem
+    #               is the strongest bad-separation "hiss/wash" signal.
+    peak_ratio: float = 0.0
+    flatness: float = 0.0
     id: str = ""             # content hash, filled by __post_init__ via with_id
 
     def with_id(self) -> "Phrase":
