@@ -423,3 +423,71 @@ user who sets "G minor / 90 BPM" on web and opens the same jam on
 desktop expects added parts to conform there too. Keeping it opt-in and
 scoped to borrowed parts preserves the project's core promise that a
 loaded song always plays true.
+
+---
+
+## D-020: Borrow lays out as current-on-top / divider / donor-below on the 64 grid (web parity)
+
+**Decision:** A Borrow load now re-lays BOTH songs' loops onto the full
+8×8 (64) grid the way web just shipped: the CURRENT song's loops fill
+the top rows, ONE blank divider row separates them, and the DONOR's
+loops start on the next full row. Every pad shows a small source-song
+label (the current song's name on `initial` pads, the donor's on
+`donor` pads) on top of the existing blue(#3B82F6)=current /
+amber(#F59E0B)=donor tint. Supersedes the D-018 mount, which packed
+both songs' loops row-major from pad 0 with no divider and no
+source-song label.
+
+**The pure arranger.** `arrangeBorrowLayout(_ pads:cols:)` in
+`JamDesktopCore/Launchpad/BorrowLayout.swift` is the bit-parallel twin
+of web's `kit.js arrangeBorrowLayout`: it partitions pads by `source`,
+sorts each block by backend `padIdx`, puts `initial` on the top rows, a
+blank divider row (`dividerRow`), then `donor` starting on the next full
+row (`donorBase = (initialRows + 1) * cols`). When a full 4-stem borrow
+(32 + 32) would need `initialRows + 1 + donorRows > 8`, the divider is
+dropped (`dividerRow = -1`) and the donor block packs flush after the
+initial one, so no donor pad is ever pushed off the grid. Pure +
+covered by `BorrowLayoutTests` (single-stem 8+8, additive/no-drop,
+32+32 divider-drop, uneven, padIdx order, only-initial).
+
+**Controller.** New `LaunchpadController.adoptBorrowAssignments(_:)`
+mounts at EXPLICIT grid slots (unlike `adoptAssignments`' row-major pack
+from 0) so the divider row stays empty, records a per-pad
+`borrowSourceLabels` map (exposed via `sourceLabel(for:)`), and forces
+`padCount = 64` so a borrow expands the surface and never leaves the
+user on a 16 grid that would hide donor pads. Any single-song grid swap
+(`layout()`, `adoptAssignments`) clears the borrow labels. Triggering,
+quantize, loop-lock, the 16/64 toggle and the hardware LED mirror are
+untouched — a borrow pad is still a file-backed loop keyed by its
+backend `padIdx` (`drumKitSampleFiles[chop.idx]`), only its grid *slot*
+and label changed.
+
+**Threading the source tag + names.** The backend borrow manifest tags
+each pad `source: "initial"|"donor"`, but the shared `SamplePack` DTO
+(mobile-ios, not editable from jam-desktop) has no such field, so
+`SessionController.fetchBorrowRaw` decodes the tag from the SAME
+response bytes into a sidecar `[padIdx: BorrowPadSource]`. This one raw
+fetch replaces both the old `fetchBorrowPackTargeted` and the
+RemixClient OFF branch (both dropped the tag); the OFF/ON difference is
+still only whether `?target_bpm=&target_key=` are appended (D-019). The
+donor's display name is threaded from the picker candidate
+(`loadBorrowLoops(donorName:)` ← `c.name`), falling back to the pack
+name with the backend's " · kit" suffix stripped (mirrors web
+`borrowDonorName`); the host name is `attachedBundle.meta.title`.
+
+**Source label UI.** `LaunchpadPanelView.PadCell` gained a
+`sourceLabelOverlay` (top-leading, capsule, 8pt) rendered only when
+`launchpad.sourceLabel(for:)` is non-nil — the web `.kit-pad-source`
+twin. The tint still does the primary encoding; the label makes it
+readable.
+
+**SHARED-CLIENT GAP (unchanged from D-019):** the clean fix is still to
+give `RemixClient.fetchBorrowPack` the target params AND surface the
+per-pad `source` on `SamplePack`/`SamplePad`, after which `fetchBorrowRaw`
+and the sidecar decode collapse into the shared client and iOS/plugin can
+adopt the same 64/divider/source-label layout from one place.
+
+**Why:** parity doctrine rule 4 — a borrow must *read* the same on every
+surface. Web now makes the "your song on top, borrowed song below" shape
+explicit and labels each pad's origin; desktop packing both blocks into
+one undivided run was a divergence even though both "worked".

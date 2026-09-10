@@ -1254,11 +1254,20 @@ final class SessionController: ObservableObject {
     }
 
     /// Load a donor's borrowed loops as loopable file pads on the grid.
-    /// `targetBpm`/`targetKey` mirror `borrowCandidates`: nil = conform to host
-    /// (today's behavior); set = conform the donor loops to the Session target.
+    /// `donorName` is the borrowed song's display name (from the picker's
+    /// candidate) used for the per-pad source-song label; nil falls back to
+    /// the pack name. `targetBpm`/`targetKey` mirror `borrowCandidates`:
+    /// nil = conform to host (today's behavior); set = conform the donor
+    /// loops to the Session target.
+    ///
+    /// Layout (web parity, kit.js `arrangeBorrowLayout`): the manifest holds
+    /// BOTH songs' loops, source-tagged `initial`/`donor`. They are re-laid on
+    /// the full 8×8 (64) grid — the CURRENT song's loops on the top rows, ONE
+    /// blank divider row, then the donor's below — and every pad carries a
+    /// small source-song label on top of the existing blue/amber tint.
     @MainActor
     func loadBorrowLoops(
-        donorId: String, stem: String,
+        donorId: String, stem: String, donorName: String? = nil,
         targetBpm: Double? = nil, targetKey: String? = nil
     ) async {
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL,
@@ -1267,15 +1276,12 @@ final class SessionController: ObservableObject {
         remixError = nil
         defer { borrowBusyDonor = nil }
         do {
-            let pack: SamplePack
-            if targetBpm != nil || targetKey != nil {
-                pack = try await Self.fetchBorrowPackTargeted(
-                    base: base, analysisId: analysisId, donor: donorId,
-                    stem: stem, targetBpm: targetBpm, targetKey: targetKey)
-            } else {
-                pack = try await RemixClient().fetchBorrowPack(
-                    baseURL: base, analysisId: analysisId, donor: donorId, stem: stem)
-            }
+            // One raw fetch (both OFF and ON paths) so the per-pad `source`
+            // tag survives — the shared SamplePack DTO drops it, so it is
+            // decoded from the same bytes into a sidecar map.
+            let (pack, sources) = try await Self.fetchBorrowRaw(
+                base: base, analysisId: analysisId, donor: donorId,
+                stem: stem, targetBpm: targetBpm, targetKey: targetKey)
             let files = await Self.downloadKitSamples(pack: pack, base: base)
             guard !files.isEmpty else {
                 remixError = "Borrowed loops didn't download."
@@ -1283,8 +1289,28 @@ final class SessionController: ObservableObject {
             }
             guard attachedAnalysisId == analysisId else { return }
             drumKitSampleFiles = files
-            let pairs: [(chop: Chop, stem: String)] = pack.pads.compactMap { pad in
-                guard let url = files[pad.padIdx] else { return nil }
+
+            // Only pads whose sample downloaded can mount. Keep their backend
+            // padIdx (drumKitSampleFiles is keyed on it) but re-lay them onto
+            // the 64 grid via the shared arranger.
+            let mountable = pack.pads.filter { files[$0.padIdx] != nil }
+            guard !mountable.isEmpty else { return }
+            let refs = mountable.map { pad in
+                BorrowPadRef(
+                    padIdx: pad.padIdx,
+                    source: sources[pad.padIdx] == .donor ? .donor : .initial)
+            }
+            let layout = arrangeBorrowLayout(refs, cols: 8)
+
+            // Source-song labels: the current song for `initial` (blue) pads,
+            // the donor for `donor` (amber) ones.
+            let hostName = attachedBundle?.meta.title ?? "This song"
+            let donorLabel = donorName ?? Self.strippedBorrowName(pack.name)
+
+            var mounts: [LaunchpadController.BorrowMount] = []
+            for pl in layout.placements {
+                let pad = mountable[pl.inputIndex]
+                guard let url = files[pad.padIdx] else { continue }
                 // Real loop length so the pad's WAVEFORM draws the whole loop.
                 // The file path plays the whole file regardless of the chop
                 // window; endSec/durationSec only frame the thumbnail, and the
@@ -1299,17 +1325,31 @@ final class SessionController: ObservableObject {
                     performanceScore: nil, difficulty: nil,
                     loopable: true, loopScore: 1.0, crossfadeMs: nil,
                     assetId: "borrowfile:\(pad.padIdx)")
-                return (chop, "drums")
+                mounts.append(.init(
+                    slot: pl.gridSlot, chop: chop, stem: "drums",
+                    sourceLabel: pl.source == .donor ? donorLabel : hostName))
             }
-            guard !pairs.isEmpty else { return }
+            guard !mounts.isEmpty else { return }
             launchpad.playbackMode = .loop      // borrow pads are loops
-            launchpad.adoptAssignments(pairs)
+            launchpad.adoptBorrowAssignments(mounts)
             remixApplied =
-                "Applied: Borrow — \(pack.name) on the pads, "
+                "Applied: Borrow — your song on top, \(donorLabel) below, "
                 + "looped to this song's tempo."
         } catch {
             remixError = error.localizedDescription
         }
+    }
+
+    /// Backend names a borrow pack "<donor> · kit"; strip the suffix for the
+    /// source-song label. Mirrors web `borrowDonorName`.
+    private static func strippedBorrowName(_ name: String) -> String {
+        var n = name
+        if let r = n.range(
+            of: " · kit", options: [.caseInsensitive, .backwards]) {
+            n.removeSubrange(r)
+        }
+        let t = n.trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? "Borrowed" : t
     }
 
     // MARK: Session-target Borrow fetches
@@ -1396,10 +1436,30 @@ final class SessionController: ObservableObject {
         return URLSession(configuration: c)
     }()
 
-    private static func fetchBorrowPackTargeted(
+    /// Per-pad `source` sidecar — the borrow manifest tags each pad
+    /// `initial`/`donor`, but the shared SamplePack DTO (mobile-ios, not
+    /// editable here) has no such field, so it is decoded separately from
+    /// the SAME response bytes. Additive/optional: a pad missing the tag
+    /// reads as `initial` (the current song).
+    private struct BorrowPadSourceWire: Decodable {
+        let padIdx: Int
+        let source: String?
+    }
+    private struct BorrowSourcesWire: Decodable {
+        let pads: [BorrowPadSourceWire]
+    }
+
+    /// Fetch a borrow pack AND its per-pad source tags in one request. Used
+    /// for both the OFF (host-conform) and ON (session-target) paths — the
+    /// only difference is whether `?target_bpm=&target_key=` are appended.
+    /// It supersedes the old `fetchBorrowPackTargeted` (and the RemixClient
+    /// OFF branch): both dropped the `source` tag the 64/divider layout needs.
+    /// The clean long-term fix — add the tag + target params to the shared
+    /// RemixClient — is unchanged from the SHARED-CLIENT GAP note above.
+    private static func fetchBorrowRaw(
         base: URL, analysisId: String, donor: String, stem: String,
         targetBpm: Double?, targetKey: String?
-    ) async throws -> SamplePack {
+    ) async throws -> (pack: SamplePack, sources: [Int: BorrowPadSource]) {
         let q = withTarget(
             [URLQueryItem(name: "donor", value: donor),
              URLQueryItem(name: "stem", value: stem)],
@@ -1409,7 +1469,14 @@ final class SessionController: ObservableObject {
         let (data, response) = try await borrowLongHaul.data(
             for: authedRequest(url))
         try checkOK(response)
-        return try JSONDecoder().decode(SamplePack.self, from: data)
+        let pack = try JSONDecoder().decode(SamplePack.self, from: data)
+        var sources: [Int: BorrowPadSource] = [:]
+        if let wire = try? JSONDecoder().decode(BorrowSourcesWire.self, from: data) {
+            for p in wire.pads {
+                sources[p.padIdx] = p.source == "donor" ? .donor : .initial
+            }
+        }
+        return (pack, sources)
     }
 
     @MainActor

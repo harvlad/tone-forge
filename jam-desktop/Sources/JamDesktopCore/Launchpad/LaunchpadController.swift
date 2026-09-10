@@ -500,6 +500,7 @@ public final class LaunchpadController {
             }
         }
         assignments = next
+        borrowSourceLabels = [:]   // a fresh single-song grid drops borrow labels
         repaint()
     }
 
@@ -519,6 +520,61 @@ public final class LaunchpadController {
             next[pad] = PadAssignment(chop: pair.chop, stem: pair.stem)
         }
         assignments = next
+        borrowSourceLabels = [:]
+        repaint()
+    }
+
+    /// One borrow pad ready to mount: the row-major grid `slot` (0..<64) it
+    /// takes on the 8×8 grid, its (chop, stem), and the source-song label
+    /// shown on the tile ("This song" / the donor's name).
+    public struct BorrowMount: Sendable {
+        public let slot: Int
+        public let chop: Chop
+        public let stem: String
+        public let sourceLabel: String
+        public init(slot: Int, chop: Chop, stem: String, sourceLabel: String) {
+            self.slot = slot
+            self.chop = chop
+            self.stem = stem
+            self.sourceLabel = sourceLabel
+        }
+    }
+
+    /// Per-pad source-song label for a borrow grid (set only by
+    /// `adoptBorrowAssignments`; cleared by any other grid swap). Drives the
+    /// small blue(this song)/amber(donor) source line — web parity with
+    /// kit.js `.kit-pad-source`.
+    public private(set) var borrowSourceLabels: [LaunchpadPad: String] = [:]
+
+    /// Source-song label for a pad, or nil (non-borrow grid).
+    public func sourceLabel(for pad: LaunchpadPad) -> String? {
+        borrowSourceLabels[pad]
+    }
+
+    /// Adopt a BORROW grid: two songs' loops laid out at explicit grid slots
+    /// (`arrangeBorrowLayout`) — current song on top, a blank divider row,
+    /// donor below — each pad carrying a source-song label. Unlike
+    /// `adoptAssignments` (row-major packing from slot 0), slots are honoured
+    /// verbatim so the divider row stays empty. Always the full 64 grid: a
+    /// borrow expands the surface and never shrinks the user back to 16.
+    public func adoptBorrowAssignments(_ mounts: [BorrowMount]) {
+        // Kill every sounding voice BEFORE the assignment map changes — a
+        // looping pad would otherwise ring on with no pad able to stop it.
+        onStopAllVoices?()
+        activePads.removeAll()
+        var next: [LaunchpadPad: PadAssignment] = [:]
+        var labels: [LaunchpadPad: String] = [:]
+        for mount in mounts where (0..<64).contains(mount.slot) {
+            let pad = LaunchpadPad(row: mount.slot / 8, col: mount.slot % 8)
+            next[pad] = PadAssignment(chop: mount.chop, stem: mount.stem)
+            labels[pad] = mount.sourceLabel
+        }
+        assignments = next
+        borrowSourceLabels = labels
+        // Borrow is a 64-grid feature (current + donor + divider); expand and
+        // never leave the user on a 16 grid that would hide donor pads. The
+        // didSet is a no-op when already 64.
+        padCount = 64
         repaint()
     }
 

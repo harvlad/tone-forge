@@ -290,6 +290,27 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: borrow-grid-layout
+    name: "Borrow reads clearly — current song on top, blank divider row, donor below on the 64 grid + per-pad source-song label"
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#arrangeBorrowLayout"
+        note: "Borrow manifest holds BOTH songs' loops (source-tagged initial/donor). mountManifest re-lays them on the 8×8: current song on the top rows, ONE blank divider row, donor on the next full row; stays at 64 (never shrinks to 16). Each pad shows a .kit-pad-source label (this song's name vs donor's, donor name derived from the '<donor> · kit' pack name) plus the blue(#3B82F6)/amber(#F59E0B) tint. 32+32 full-stem borrow drops the divider to fit."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/BorrowLayout.swift#arrangeBorrowLayout"
+        note: "Pure arrangeBorrowLayout twin of kit.js (initial-top / divider / donor-below, divider dropped on 32+32); LaunchpadController.adoptBorrowAssignments mounts at explicit slots (divider row stays empty), forces padCount=64, and records per-pad borrowSourceLabels surfaced by sourceLabel(for:). LaunchpadPanelView.PadCell.sourceLabelOverlay draws the small source-song label; blue/amber tint kept. SessionController.fetchBorrowRaw decodes the per-pad source tag from the raw manifest (shared SamplePack DTO drops it); donor name threaded from the picker candidate. Covered by BorrowLayoutTests."
+      ios:
+        status: missing
+        note: "Still packs both songs' loops row-major via adoptAssignments (no divider row, no source-song label). Blocked on the shared SamplePack/SamplePad DTO gaining the per-pad `source` field so the arranger can be ported; the desktop arranger + adoptBorrowAssignments are the reference. Follow-up queued."
+      plugin:
+        status: missing
+        note: "No borrow/remix surface in the JUCE editor yet (same gap as borrow-loops / borrow-on-launchpad)."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: session-key-bpm-target
     name: "Optional Session key/BPM target — borrowed parts conform, song plays true (default off)"
     platforms:

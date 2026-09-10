@@ -133,7 +133,7 @@ struct BorrowPickerView: View {
                 // load unchanged.
                 let t = session.sessionTarget
                 await session.loadBorrowLoops(
-                    donorId: c.entryId, stem: part.stem,
+                    donorId: c.entryId, stem: part.stem, donorName: c.name,
                     targetBpm: t.targetBpm, targetKey: t.targetKey)
                 // Success drops the loops on the pads behind this sheet;
                 // close so the Launchpad grid is immediately visible.

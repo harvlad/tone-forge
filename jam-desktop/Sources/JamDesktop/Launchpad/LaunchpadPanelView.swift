@@ -887,6 +887,7 @@ private struct PadCell: View {
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(borderColor, lineWidth: borderWidth))
             .shadow(color: hovered ? glowColor(assignment: assignment).opacity(0.5) : .clear, radius: 8)
             .overlay(alignment: .bottomLeading) { labelOverlay(assignment: assignment) }
+            .overlay(alignment: .topLeading) { sourceLabelOverlay }
             .overlay { sequenceOverlay }
             .overlay { moveModeOverlay }
             .overlay { playheadOverlay }
@@ -948,6 +949,24 @@ private struct PadCell: View {
         if active { return Color.white.opacity(0.9) }
         if hovered { return Color.white.opacity(0.25) }
         return Color.white.opacity(0.08)
+    }
+
+    /// Borrow source-song label (web parity, kit.js `.kit-pad-source`): the
+    /// blue(#3B82F6)/amber(#F59E0B) tint already encodes which song a pad came
+    /// from; this small line names it — the current song vs the donor. Only a
+    /// borrow grid populates it; every other grid returns nil.
+    @ViewBuilder
+    private var sourceLabelOverlay: some View {
+        if let src = launchpad.sourceLabel(for: pad) {
+            Text(src)
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.8))
+                .lineLimit(1)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1.5)
+                .background(.black.opacity(0.28), in: Capsule())
+                .padding(3)
+        }
     }
 
     @ViewBuilder
