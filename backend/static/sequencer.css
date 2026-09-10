@@ -11,7 +11,10 @@
   gap: 12px;
   color: var(--jamn-text, #fff);
   width: 100%;
-  max-width: 1080px; /* stay aligned with .kit-grid */
+  /* Widen the step grid to use the freed desktop width — more of the 16/32
+     steps fit at a comfortable cell size before the grid's own overflow-x
+     scroll kicks in. (Was a flat 1080px that left big side margins.) */
+  max-width: min(1400px, 100%);
   margin-inline: auto;
   box-sizing: border-box;
 }

@@ -384,6 +384,135 @@
     };
   }
 
+  // ---------- live-capture arrangement (pure helpers) ----------
+  //
+  // The analyzer emits MANY fine-grained sections (Doomsday has 23, several
+  // consecutive intro/verse/chorus runs). collapseSections merges adjacent
+  // same-`type` sections into a handful of readable BLOCKS so the strip shows
+  // ~5-9 full-label segments (Intro, Verse, Chorus, …) instead of 23 illegible
+  // one-char slivers. All of the arrangement math is pure and DOM-free so it
+  // can be exercised by kit.test.mjs; the runtime layer below is a passive
+  // OBSERVER that never touches the pad-trigger path.
+
+  function titleCaseLabel(str) {
+    var t = String(str == null ? "" : str).trim();
+    if (!t) return "";
+    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+  }
+
+  /** Merge consecutive same-`type` sections into blocks [firstStart, lastEnd].
+   * Accepts the analyzer shape ({type, start_time, end_time}) with start/end
+   * fallbacks. Undated or degenerate rows (missing type, non-finite or
+   * end<=start times) are DROPPED — a garbage row must not spawn a strip
+   * segment. Rows are sorted by start before merging so out-of-order analysis
+   * still collapses. Returns [] for empty/no-sections (caller hides the strip).
+   * Each block: {type, label (Title-case), start, end}. Pure. */
+  function collapseSections(raw) {
+    if (!raw || typeof raw.length !== "number") return [];
+    var norm = [];
+    for (var i = 0; i < raw.length; i++) {
+      var r = raw[i];
+      if (!r) continue;
+      var type = r.type != null ? String(r.type).trim() : "";
+      if (!type) continue; // undated / typeless row dropped
+      var start = Number(r.start_time != null ? r.start_time : r.start);
+      var end = Number(r.end_time != null ? r.end_time : r.end);
+      if (!isFinite(start) || !isFinite(end) || end <= start) continue;
+      norm.push({ type: type, start: start, end: end });
+    }
+    if (!norm.length) return [];
+    norm.sort(function (a, b) { return a.start - b.start; });
+    var blocks = [];
+    for (var j = 0; j < norm.length; j++) {
+      var n = norm[j];
+      var key = n.type.toLowerCase();
+      var last = blocks.length ? blocks[blocks.length - 1] : null;
+      if (last && last.key === key) {
+        if (n.end > last.end) last.end = n.end; // extend to lastEnd
+      } else {
+        blocks.push({ key: key, type: n.type, label: titleCaseLabel(n.type), start: n.start, end: n.end });
+      }
+    }
+    return blocks.map(function (b) {
+      return { type: b.type, label: b.label, start: b.start, end: b.end };
+    });
+  }
+
+  /** Index of the collapsed block whose [start, end) contains song time `t`
+   * (the final block also owns its own end so t at the very tail still maps).
+   * -1 for no blocks, non-finite t, or a t before the first / after the last /
+   * inside a gap — the replay loop reads -1 as "no block, release everything".
+   * Pure. */
+  function blockIndexAtTime(blocks, t) {
+    if (!blocks || !blocks.length) return -1;
+    t = Number(t);
+    if (!isFinite(t)) return -1;
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      var last = i === blocks.length - 1;
+      if (t >= b.start && (t < b.end || (last && t <= b.end))) return i;
+    }
+    return -1;
+  }
+
+  /** Replay set math: given the pads currently armed by the arrangement and the
+   * pads a block wants, which to newly arm and which to release. Pure — the
+   * runtime does the engine calls. */
+  function arrangementDiff(prev, next) {
+    var p = prev || [], n = next || [];
+    return {
+      toArm: n.filter(function (x) { return p.indexOf(x) === -1; }),
+      toRelease: p.filter(function (x) { return n.indexOf(x) === -1; }),
+    };
+  }
+
+  /** Parse the persisted arrangement (localStorage jamn.arrangement.<entryId>):
+   * JSON {blockIndex: [padIdx…]}. Non-integer / negative keys or pad indices,
+   * non-array values, and duplicates are dropped; an all-invalid or empty blob
+   * degrades to null (caller removes the key) so a bad store never throws. Pure. */
+  function parseArrangement(json) {
+    if (typeof json !== "string" || !json) return null;
+    var obj;
+    try { obj = JSON.parse(json); } catch (_) { return null; }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+    var out = {}, any = false;
+    for (var k in obj) {
+      if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+      var bi = Number(k);
+      if (!Number.isInteger(bi) || bi < 0) continue;
+      var arr = obj[k];
+      if (!Array.isArray(arr)) continue;
+      var pads = [];
+      for (var i = 0; i < arr.length; i++) {
+        var pi = Number(arr[i]);
+        if (Number.isInteger(pi) && pi >= 0 && pads.indexOf(pi) === -1) pads.push(pi);
+      }
+      if (pads.length) { pads.sort(function (a, b) { return a - b; }); out[bi] = pads; any = true; }
+    }
+    return any ? out : null;
+  }
+
+  /** Serialize the captured map for localStorage; null when there is nothing
+   * to store (so the caller removes the key). Mirrors parseArrangement's
+   * validation so a round-trip is loss-free. Pure. */
+  function serializeArrangement(map) {
+    if (!map || typeof map !== "object") return null;
+    var obj = {}, any = false;
+    Object.keys(map).forEach(function (k) {
+      var bi = Number(k);
+      if (!Number.isInteger(bi) || bi < 0) return;
+      var pads = map[k];
+      if (!Array.isArray(pads) || !pads.length) return;
+      var clean = [];
+      pads.forEach(function (pi) {
+        pi = Number(pi);
+        if (Number.isInteger(pi) && pi >= 0 && clean.indexOf(pi) === -1) clean.push(pi);
+      });
+      if (clean.length) { clean.sort(function (a, b) { return a - b; }); obj[bi] = clean; any = true; }
+    });
+    return any ? JSON.stringify(obj) : null;
+  }
+
   // ---------- mount state (one surface at a time) ----------
 
   var current = null;
@@ -456,6 +585,21 @@
         // Melody=vocals. See openBorrowPicker below.
         borrow: freshBorrowState(),
         borrowBtn: null,
+        // Live-capture arrangement: hit Rec, jam pads through the song's
+        // sections, replay hands-free. Purely a passive OBSERVER of pad UI
+        // state — never wraps padDown. `blocks` are collapsed sections;
+        // `captured` is {blockIndex → [padIdx…]} persisted per song.
+        arr: {
+          blocks: [], // collapsed section blocks (collapseSections)
+          captured: {}, // blockIndex → [padIdx…] recorded/persisted
+          recording: false, // Rec toggle
+          playing: false, // Play-arrangement toggle (mutually exclusive with Rec)
+          curBlock: -2, // last block index acted on (‑2 = force first replay diff)
+          armedSet: [], // pads currently held ON by replay
+          timer: 0, // 100 ms poll: playhead + record/replay
+          key: null, // localStorage jamn.arrangement.<entryId>
+          els: null, // { wrap, recBtn, playBtn, clearBtn, strip, note, playhead, segEls }
+        },
       };
       if (entry && entry.id) lastEntryId = entry.id;
       if (!entry || !entry.id || !entry.result) {
@@ -496,6 +640,7 @@
     if (s.raf) cancelAnimationFrame(s.raf);
     if (s.transportTimer) clearInterval(s.transportTimer);
     if (s.engineTransportTimer) clearInterval(s.engineTransportTimer);
+    if (s.arr && s.arr.timer) clearInterval(s.arr.timer);
     if (s.fb && s.fb.timer) clearInterval(s.fb.timer);
     flushPadFeedback(s, true); // last batch rides sendBeacon past teardown
     closeRadial(s);
@@ -1052,8 +1197,15 @@
     layers.style.display = "none";
     s.layersEl = layers;
 
+    // Live-capture arrangement row — its own row UNDER the transport so the
+    // Rec/Play/Clear controls + section strip never crowd the transport
+    // buttons off. Built from the collapsed sections; hides itself (with a
+    // small note) when the song has none.
+    var arrEl = buildArrangement(s);
+
     s.root.appendChild(head);
     s.root.appendChild(transport);
+    s.root.appendChild(arrEl);
     s.root.appendChild(grid);
     s.root.appendChild(layers);
     syncPadCountUi(s);
@@ -1064,6 +1216,16 @@
     s.transportTimer = setInterval(function () {
       if (s.alive) updateTransport(s);
     }, 250);
+
+    // Arrangement poll: playhead + capture/replay. Own fast clock (100 ms)
+    // so the playhead glides and block boundaries fire promptly. Only armed
+    // when the song actually has sections. Fully guarded — a capture fault
+    // can never reach the pad-trigger path (it lives on a separate timer).
+    if (s.arr.blocks.length) {
+      s.arr.timer = setInterval(function () {
+        if (s.alive) arrangementTick(s);
+      }, 100);
+    }
   }
 
   // ---------- transport (host bridge) ----------
@@ -1213,6 +1375,290 @@
       else if (can(host, "pauseSong")) host.pauseSong();
     } catch (_) {}
     updateTransport(s);
+  }
+
+  // ---------- live-capture arrangement (runtime) ----------
+
+  /** Build the arrangement row: Rec / Play-arrangement / Clear controls plus
+   * the collapsed-section strip. Reads sections at build time (they're in the
+   * analysis result from mount). No sections → the strip is hidden, controls
+   * disabled, and a "No sections detected" note shown — never an empty strip. */
+  function buildArrangement(s) {
+    var result = s.entry && s.entry.result;
+    s.arr.blocks = collapseSections(result && result.sections);
+    s.arr.key = s.entry && s.entry.id ? "jamn.arrangement." + s.entry.id : null;
+    s.arr.captured = {};
+    if (s.arr.key && s.arr.blocks.length) {
+      try {
+        var raw = window.localStorage ? window.localStorage.getItem(s.arr.key) : null;
+        var parsed = parseArrangement(raw);
+        if (parsed) {
+          // Drop any block index the collapse no longer has (a re-analysis can
+          // change the block count) so a stale store can't arm ghost blocks.
+          for (var bi in parsed) {
+            if (Number(bi) < s.arr.blocks.length) s.arr.captured[bi] = parsed[bi];
+          }
+        }
+      } catch (_) {}
+    }
+
+    var wrap = document.createElement("div");
+    wrap.className = "kit-arr";
+
+    var controls = document.createElement("div");
+    controls.className = "kit-arr-controls";
+
+    var label = document.createElement("span");
+    label.className = "kit-arr-label";
+    label.textContent = "Arrangement";
+
+    var hasBlocks = s.arr.blocks.length > 0;
+
+    var recBtn = document.createElement("button");
+    recBtn.type = "button";
+    recBtn.className = "kit-toggle kit-arr-rec";
+    recBtn.textContent = "● Rec";
+    recBtn.title = "Record which pads you jam through each section, live with the song";
+    recBtn.addEventListener("click", function () { toggleArrRecording(s); });
+
+    var playBtn = document.createElement("button");
+    playBtn.type = "button";
+    playBtn.className = "kit-toggle kit-arr-play";
+    playBtn.textContent = "▶ Play arrangement";
+    playBtn.title = "Replay the captured pads hands-free — pads come in and out per section";
+    playBtn.addEventListener("click", function () { toggleArrPlaying(s); });
+
+    var clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "kit-toggle kit-arr-clear";
+    clearBtn.textContent = "Clear";
+    clearBtn.title = "Forget the captured arrangement for this song";
+    clearBtn.addEventListener("click", function () { clearArrangement(s); });
+
+    controls.appendChild(label);
+    controls.appendChild(recBtn);
+    controls.appendChild(playBtn);
+    controls.appendChild(clearBtn);
+    wrap.appendChild(controls);
+
+    var strip = document.createElement("div");
+    strip.className = "kit-arr-strip";
+    var note = document.createElement("div");
+    note.className = "kit-arr-note";
+    note.textContent = "No sections detected";
+
+    var playhead = document.createElement("div");
+    playhead.className = "kit-arr-playhead";
+    playhead.style.display = "none";
+
+    var segEls = [];
+    if (hasBlocks) {
+      var span = s.arr.blocks[s.arr.blocks.length - 1].end - s.arr.blocks[0].start;
+      if (!(span > 0)) span = 1;
+      s.arr.blocks.forEach(function (b, i) {
+        var seg = document.createElement("div");
+        seg.className = "kit-arr-seg";
+        // Width ∝ block duration (flex-grow proportional to seconds).
+        seg.style.flexGrow = String(Math.max(0.001, (b.end - b.start) / span));
+        var t = document.createElement("span");
+        t.className = "kit-arr-seg-label";
+        t.textContent = b.label;
+        seg.appendChild(t);
+        seg.title = b.label + " · " + fmtTime(b.start) + "–" + fmtTime(b.end);
+        strip.appendChild(seg);
+        segEls.push(seg);
+      });
+      strip.appendChild(playhead);
+      note.style.display = "none";
+    } else {
+      strip.style.display = "none";
+    }
+
+    wrap.appendChild(strip);
+    wrap.appendChild(note);
+
+    s.arr.els = {
+      wrap: wrap, recBtn: recBtn, playBtn: playBtn, clearBtn: clearBtn,
+      strip: strip, note: note, playhead: playhead, segEls: segEls,
+    };
+    if (!hasBlocks) {
+      recBtn.classList.add("is-disabled");
+      playBtn.classList.add("is-disabled");
+      clearBtn.classList.add("is-disabled");
+    }
+    refreshArrangementFilled(s);
+    updateArrControls(s);
+    return wrap;
+  }
+
+  /** Paint the "has captured pads" indicator on each strip segment. */
+  function refreshArrangementFilled(s) {
+    if (!s.arr.els) return;
+    s.arr.els.segEls.forEach(function (seg, i) {
+      var pads = s.arr.captured[i];
+      seg.classList.toggle("has-pads", !!(pads && pads.length));
+    });
+  }
+
+  /** Sync the Rec/Play toggle button visuals to state. */
+  function updateArrControls(s) {
+    if (!s.arr.els) return;
+    s.arr.els.recBtn.classList.toggle("is-recording", s.arr.recording);
+    s.arr.els.recBtn.setAttribute("aria-pressed", String(s.arr.recording));
+    s.arr.els.playBtn.classList.toggle("is-on", s.arr.playing);
+    s.arr.els.playBtn.setAttribute("aria-pressed", String(s.arr.playing));
+  }
+
+  function persistArrangement(s) {
+    if (!s.arr.key) return;
+    try {
+      if (!window.localStorage) return;
+      var json = serializeArrangement(s.arr.captured);
+      if (json) window.localStorage.setItem(s.arr.key, json);
+      else window.localStorage.removeItem(s.arr.key);
+    } catch (_) {}
+  }
+
+  function toggleArrRecording(s) {
+    if (!s.arr.blocks.length) return;
+    if (s.arr.recording) {
+      s.arr.recording = false;
+    } else {
+      stopArrReplay(s); // mutually exclusive with Play-arrangement
+      s.arr.recording = true;
+    }
+    updateArrControls(s);
+  }
+
+  function toggleArrPlaying(s) {
+    if (!s.arr.blocks.length) return;
+    if (s.arr.playing) {
+      stopArrReplay(s);
+    } else {
+      s.arr.recording = false; // mutually exclusive with Rec
+      s.arr.playing = true;
+      s.arr.curBlock = -2; // force a diff on the next tick
+      s.arr.armedSet = [];
+    }
+    updateArrControls(s);
+  }
+
+  /** Stop hands-free replay and release every pad it was holding. */
+  function stopArrReplay(s) {
+    if (s.arr.armedSet && s.arr.armedSet.length) {
+      s.arr.armedSet.forEach(function (idx) { releasePadForReplay(s, idx); });
+    }
+    s.arr.armedSet = [];
+    s.arr.curBlock = -2;
+    s.arr.playing = false;
+    updateArrControls(s);
+  }
+
+  function clearArrangement(s) {
+    if (!s.arr.blocks.length) return;
+    s.arr.captured = {};
+    persistArrangement(s);
+    refreshArrangementFilled(s);
+    if (s.arr.playing) {
+      // Nothing captured now → release whatever replay held.
+      s.arr.armedSet.forEach(function (idx) { releasePadForReplay(s, idx); });
+      s.arr.armedSet = [];
+      s.arr.curBlock = -2;
+    }
+  }
+
+  /** Replay arm: start a pad's loop exactly like a manual loop press
+   * (engine.trigger looped + quantized, honoring the surface quantize). */
+  function armPadForReplay(s, idx) {
+    var p = s.padEls[idx];
+    if (!p || !can(s.engine, "trigger")) return;
+    if (p.ui === "armed" || p.ui === "playing") return; // already sounding
+    var grid = s.quantize === "off" ? "bar" : s.quantize;
+    var q = s.quantize !== "off";
+    p.loop = true;
+    var opts = { loop: true, quantized: q };
+    if (q) opts.grid = grid;
+    try {
+      s.engine.trigger(idx, opts);
+      noteTrigger(s, idx);
+      setUi(s, idx, "armed");
+    } catch (_) {}
+  }
+
+  function releasePadForReplay(s, idx) {
+    var p = s.padEls[idx];
+    if (!p) return;
+    try {
+      if (can(s.engine, "release")) s.engine.release(idx);
+    } catch (_) {}
+    setUi(s, idx, "idle");
+  }
+
+  /** 100 ms poll. Reads the host transport (same getTime the transport UI
+   * uses), moves the playhead, and — when armed — records the pads that are ON
+   * in the current block or replays the captured set at block boundaries.
+   * Wrapped whole in try/catch: a fault here degrades to a frozen strip, never
+   * a thrown pad trigger. */
+  function arrangementTick(s) {
+    try {
+      if (!s.arr.els || !s.arr.blocks.length) return;
+      var host = getHost();
+      var playing = false, t = NaN;
+      try { playing = can(host, "isPlaying") ? !!host.isPlaying() : false; } catch (_) {}
+      try { t = can(host, "getTime") ? Number(host.getTime()) : NaN; } catch (_) {}
+
+      // Playhead: ride the song time across the strip [firstStart, lastEnd].
+      var blocks = s.arr.blocks;
+      var span = blocks[blocks.length - 1].end - blocks[0].start;
+      if (!(span > 0)) span = 1;
+      var ph = s.arr.els.playhead;
+      if (isFinite(t)) {
+        var frac = (t - blocks[0].start) / span;
+        frac = Math.max(0, Math.min(1, frac));
+        ph.style.left = (frac * 100).toFixed(3) + "%";
+        ph.style.display = "";
+      } else {
+        ph.style.display = "none";
+      }
+
+      var bi = isFinite(t) ? blockIndexAtTime(blocks, t) : -1;
+
+      // Active-segment highlight.
+      s.arr.els.segEls.forEach(function (seg, i) {
+        seg.classList.toggle("is-active", i === bi);
+      });
+
+      // Record: accumulate the pads that are ON (armed/playing) into the block.
+      if (s.arr.recording && playing && bi >= 0) {
+        var cur = s.arr.captured[bi] || (s.arr.captured[bi] = []);
+        var changed = false;
+        for (var i = 0; i < s.padEls.length; i++) {
+          var pe = s.padEls[i];
+          if (pe && (pe.ui === "armed" || pe.ui === "playing") && cur.indexOf(i) === -1) {
+            cur.push(i);
+            changed = true;
+          }
+        }
+        if (changed) {
+          cur.sort(function (a, b) { return a - b; });
+          persistArrangement(s);
+          refreshArrangementFilled(s);
+        }
+      }
+
+      // Replay: at each block boundary, arm the captured set and release the
+      // rest. Only advance while the song rolls (a pause holds the pads).
+      if (s.arr.playing && playing && bi !== s.arr.curBlock) {
+        s.arr.curBlock = bi;
+        var want = bi >= 0 && s.arr.captured[bi] ? s.arr.captured[bi] : [];
+        var diff = arrangementDiff(s.arr.armedSet, want);
+        diff.toRelease.forEach(function (idx) { releasePadForReplay(s, idx); });
+        diff.toArm.forEach(function (idx) { armPadForReplay(s, idx); });
+        s.arr.armedSet = want.slice();
+      }
+    } catch (_) {
+      // Never let a capture/replay fault escape onto the pad path.
+    }
   }
 
   // ---------- mode / quantize / instant groove ----------
@@ -3602,6 +4048,13 @@
       // this state); its candidate fetch falls back to lastEntryId since a
       // pack carries no entry.id.
       borrow: freshBorrowState(), borrowBtn: null,
+      // Packs carry no entry → no sections, so the arrangement row builds
+      // empty (disabled controls + "No sections detected"). Present so
+      // renderShell/unmount can touch s.arr uniformly.
+      arr: {
+        blocks: [], captured: {}, recording: false, playing: false,
+        curBlock: -2, armedSet: [], timer: 0, key: null, els: null,
+      },
     };
     renderShell(current);
     var s = current;
@@ -4394,6 +4847,11 @@
       pickerSongPads: pickerSongPads,
       packPadRows: packPadRows,
       arrangeBorrowLayout: arrangeBorrowLayout,
+      collapseSections: collapseSections,
+      blockIndexAtTime: blockIndexAtTime,
+      arrangementDiff: arrangementDiff,
+      parseArrangement: parseArrangement,
+      serializeArrangement: serializeArrangement,
     },
   };
 })();

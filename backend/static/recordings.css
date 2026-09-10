@@ -8,7 +8,10 @@
   flex-direction: column;
   gap: 12px;
   width: 100%;
-  max-width: 1080px; /* stay aligned with .kit-grid */
+  /* Take rows are wide flex rows (name + meta + actions); let the list use
+     the freed desktop width instead of sitting in a narrow 1080px column.
+     Capped so the rows don't become an absurdly long single line. */
+  max-width: min(1200px, 100%);
   margin-inline: auto;
   box-sizing: border-box;
   color: var(--jamn-text, #fff);

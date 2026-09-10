@@ -416,6 +416,131 @@ const { arrangeBorrowLayout } = K._internals;
   assert.equal(new Set(placements.map((pl) => pl.padIdx)).size, 64, "no cell collisions");
 }
 
+// Live-capture arrangement (pure). collapseSections merges consecutive
+// same-`type` sections into readable BLOCKS: the analyzer's fine-grained
+// output (Doomsday = 23 sections, long intro/verse/chorus runs) becomes a
+// handful of full-label segments, not 23 one-char slivers.
+const { collapseSections, blockIndexAtTime, arrangementDiff, parseArrangement, serializeArrangement } =
+  K._internals;
+
+// The 23→N case: a realistic Doomsday-shaped section list (many consecutive
+// same-type rows) collapses to 7 readable blocks with Title-case labels.
+{
+  const seq = [
+    "intro", "intro", "intro",
+    "verse", "verse", "verse", "verse",
+    "chorus", "chorus",
+    "verse", "verse", "verse", "verse",
+    "chorus", "chorus",
+    "bridge", "bridge", "bridge",
+    "outro", "outro", "outro", "outro", "outro",
+  ]; // 23 raw sections
+  const raw = seq.map((type, i) => ({ type, start_time: i * 4, end_time: (i + 1) * 4 }));
+  const blocks = collapseSections(raw);
+  assert.equal(raw.length, 23);
+  assert.deepEqual(
+    blocks.map((b) => b.label),
+    ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Bridge", "Outro"]
+  );
+  assert.equal(blocks.length, 7); // 23 → 7 readable blocks
+  // Each block spans firstStart..lastEnd of its merged run.
+  assert.deepEqual(blocks[0], { type: "intro", label: "Intro", start: 0, end: 12 });
+  assert.deepEqual(blocks[6], { type: "outro", label: "Outro", start: 72, end: 92 });
+}
+
+// start/end fallbacks, out-of-order input sorts, case-insensitive type merge.
+assert.deepEqual(
+  collapseSections([
+    { type: "Chorus", start: 10, end: 20 },
+    { type: "intro", start: 0, end: 5 },
+    { type: "INTRO", start: 5, end: 10 }, // merges with intro (case-insensitive)
+  ]),
+  [
+    { type: "intro", label: "Intro", start: 0, end: 10 },
+    { type: "Chorus", label: "Chorus", start: 10, end: 20 },
+  ]
+);
+
+// Empty / no-sections / undated → [] (caller hides the strip).
+assert.deepEqual(collapseSections([]), []);
+assert.deepEqual(collapseSections(null), []);
+assert.deepEqual(collapseSections(undefined), []);
+assert.deepEqual(collapseSections("nope"), []);
+assert.deepEqual(
+  collapseSections([
+    { start_time: 0, end_time: 4 }, // no type → dropped
+    { type: "verse", start_time: 5, end_time: 5 }, // end<=start → dropped
+    { type: "verse", start_time: 9, end_time: "x" }, // non-finite → dropped
+    { type: "", start_time: 0, end_time: 4 }, // blank type → dropped
+  ]),
+  []
+);
+
+// blockIndexAtTime: [start,end) per block, last block owns its end; outside/
+// gap/non-finite → -1.
+{
+  const blocks = collapseSections([
+    { type: "intro", start_time: 0, end_time: 10 },
+    { type: "verse", start_time: 10, end_time: 30 },
+    { type: "chorus", start_time: 30, end_time: 40 },
+  ]);
+  assert.equal(blockIndexAtTime(blocks, 0), 0);
+  assert.equal(blockIndexAtTime(blocks, 9.9), 0);
+  assert.equal(blockIndexAtTime(blocks, 10), 1); // boundary → next block
+  assert.equal(blockIndexAtTime(blocks, 29.99), 1);
+  assert.equal(blockIndexAtTime(blocks, 30), 2);
+  assert.equal(blockIndexAtTime(blocks, 40), 2); // last block owns its end
+  assert.equal(blockIndexAtTime(blocks, 40.1), -1); // past the song
+  assert.equal(blockIndexAtTime(blocks, -1), -1); // before the first
+  assert.equal(blockIndexAtTime(blocks, NaN), -1);
+  assert.equal(blockIndexAtTime([], 5), -1);
+}
+
+// Replay set math: arm the newly-wanted pads, release the dropped ones.
+assert.deepEqual(arrangementDiff([], [1, 2]), { toArm: [1, 2], toRelease: [] });
+assert.deepEqual(arrangementDiff([1, 2, 3], [2, 3, 4]), { toArm: [4], toRelease: [1] });
+assert.deepEqual(arrangementDiff([1, 2], [1, 2]), { toArm: [], toRelease: [] });
+assert.deepEqual(arrangementDiff([1, 2], []), { toArm: [], toRelease: [1, 2] });
+assert.deepEqual(arrangementDiff(null, null), { toArm: [], toRelease: [] });
+
+// Persistence round-trip: {blockIndex → [padIdx…]}; garbage rows dropped;
+// empty/all-invalid → null so the caller removes the key.
+{
+  const map = { 0: [3, 0, 5], 2: [1] };
+  const json = serializeArrangement(map);
+  // Serialized pads are sorted + de-duped.
+  assert.deepEqual(parseArrangement(json), { 0: [0, 3, 5], 2: [1] });
+  assert.deepEqual(parseArrangement(serializeArrangement({ 1: [4, 4, 4] })), { 1: [4] });
+  assert.equal(serializeArrangement(null), null);
+  assert.equal(serializeArrangement({}), null);
+  assert.equal(serializeArrangement({ 0: [] }), null); // no pads anywhere
+  assert.equal(parseArrangement(null), null);
+  assert.equal(parseArrangement("not json"), null);
+  assert.equal(parseArrangement("[1,2]"), null); // array, not a map
+  assert.equal(parseArrangement("{}"), null);
+  assert.deepEqual(
+    parseArrangement(
+      JSON.stringify({
+        0: [1, 2],
+        "-1": [3], // negative block dropped
+        "1.5": [3], // non-integer block dropped
+        x: [3], // non-numeric block dropped
+        2: [1, -1, 2.5, "q", 3], // only valid pad indices survive
+        3: "loud", // non-array dropped
+        4: [], // empty dropped
+      })
+    ),
+    { 0: [1, 2], 2: [1, 3] }
+  );
+  // Full capture round-trip: record into a block, persist, reload.
+  const captured = {};
+  [2, 0, 2, 5].forEach((padIdx) => {
+    const cur = captured[1] || (captured[1] = []);
+    if (cur.indexOf(padIdx) === -1) cur.push(padIdx);
+  });
+  assert.deepEqual(parseArrangement(serializeArrangement(captured)), { 1: [0, 2, 5] });
+}
+
 // applyPadRegion with nothing mounted → false, never a throw.
 assert.equal(K.applyPadRegion(0, { startSec: 0, endSec: 1 }), false);
 

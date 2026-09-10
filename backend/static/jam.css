@@ -96,7 +96,13 @@ html, body {
 }
 
 /* ---------------------------------------------------------------- views */
-#jam-app { padding: 32px 28px 80px; max-width: 1100px; margin: 0 auto; }
+/* Global content cap. Was a flat 1100px, which boxed EVERY surface into a
+   narrow centered column with big empty margins on wide desktops. Widened to
+   a fluid cap so wide screens are actually used while normal/laptop widths
+   still fill nearly edge-to-edge; stays centered. Surfaces that want to stay
+   narrow (intake landing, band-room queue, kit grid) set their own smaller
+   cap and are unaffected. */
+#jam-app { padding: 32px 28px 80px; max-width: min(1600px, 94vw); margin: 0 auto; }
 .view { display: none; }
 .view.active { display: block; }
 
@@ -1077,7 +1083,10 @@ button[disabled] { opacity: 0.45; cursor: not-allowed; }
  * intake and band-room views keep their existing 1100px max-width.
  */
 body.perform-active #jam-app {
-  max-width: 1440px;
+  /* Perform is a three-column musician layout; let it use the same wide
+     fluid cap as the rest of the app (was a flat 1440 that left it
+     narrower than the mixer/packs once the global cap widened). */
+  max-width: min(1600px, 94vw);
   padding-bottom: 140px; /* room for the fixed playback bar */
 }
 
@@ -2925,7 +2934,10 @@ body.jamn-has-song .playback-bar { display: grid; }
  * for pass state, --bad for fail state) so the surface feels native
  * next to the perform view. */
 #view-rehearsal {
-  max-width: 1100px;
+  /* Two-column grid (260px section list + main pane). Widen the cap so the
+     main practice pane grows on desktop instead of leaving empty margins;
+     the list column stays fixed so the extra width lands on content. */
+  max-width: min(1400px, 94vw);
   margin: 0 auto;
 }
 .rehearsal-header {
@@ -5137,3 +5149,17 @@ body:has(#view-intake.active) #view-intake.active { width: 100%; }
 .br-empty-title { font-size: 1.1rem; font-weight: 600;
   color: var(--jamn-text, #fff); margin-bottom: 6px; }
 .br-empty-sub { font-size: .9rem; margin-bottom: 20px; }
+
+/* ============================================================
+   Library fallback pane (#view-library / .jamn-lib) — a plain list of
+   song rows. It carried no width cap of its own, so once the global
+   #jam-app cap widened it would stretch song rows to the full ~1600px.
+   A list of one-line song entries reads better in a readable column, so
+   keep it centered at a text-friendly width (the grid/rack surfaces are
+   what should fill the freed space, not this list).
+   ============================================================ */
+.jamn-lib {
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+}

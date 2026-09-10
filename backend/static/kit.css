@@ -327,6 +327,131 @@
   color: var(--jamn-text, #fff);
 }
 
+/* ---------- live-capture arrangement ---------- */
+
+/* Own row UNDER the transport: controls line + section strip. Aligned to
+ * the same 720px column so it never widens the surface or crowds the
+ * transport buttons above it. */
+.kit-arr {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 720px;
+  margin-inline: auto;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-md, 12px);
+  background: var(--jamn-surface1, #14141A);
+}
+
+.kit-arr-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.kit-arr-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--jamn-text2, #A1A1AA);
+  margin-right: 2px;
+}
+
+/* Rec: filled red while armed so "we're capturing" is unmistakable. */
+.kit-toggle.kit-arr-rec.is-recording {
+  border-color: var(--jamn-danger, #EF4444);
+  background: rgba(239, 68, 68, 0.16);
+  color: var(--jamn-danger, #EF4444);
+  animation: kit-arr-rec-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes kit-arr-rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* The section strip: one segment per COLLAPSED block, flex-grown by its
+ * duration. position:relative anchors the sweeping playhead. */
+.kit-arr-strip {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: 30px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--jamn-surface2, #1C1C24);
+  border: 1px solid var(--jamn-border, #2A2A36);
+}
+
+.kit-arr-seg {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border-right: 1px solid var(--jamn-border, #2A2A36);
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.kit-arr-seg:last-of-type {
+  border-right: 0;
+}
+
+.kit-arr-seg-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--jamn-text2, #A1A1AA);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* A block that carries captured pads — a soft accent fill + brighter label. */
+.kit-arr-seg.has-pads {
+  background: rgba(139, 92, 246, 0.16);
+}
+
+.kit-arr-seg.has-pads .kit-arr-seg-label {
+  color: var(--jamn-text, #fff);
+}
+
+/* The block the song is currently inside. */
+.kit-arr-seg.is-active {
+  background: rgba(139, 92, 246, 0.30);
+}
+
+.kit-arr-seg.is-active .kit-arr-seg-label {
+  color: var(--jamn-text, #fff);
+}
+
+/* Live playhead: a thin accent line swept by the arrangement poll. */
+.kit-arr-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--jamn-accent, #8B5CF6);
+  box-shadow: 0 0 6px rgba(139, 92, 246, 0.9);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.kit-arr-note {
+  font-size: 12px;
+  color: var(--jamn-text2, #A1A1AA);
+  opacity: 0.8;
+}
+
 /* ---------- grid ---------- */
 
 .kit-grid {
@@ -513,9 +638,11 @@
 
 /* ---------- 8×8 compact grid (header 64 toggle / ?pads=64) ---------- */
 
-/* Header + transport track the wider grid so the surface stays one column. */
+/* Header + transport + arrangement row track the wider grid so the surface
+ * stays one aligned column. */
 .kit-surface.kit-is-64 .kit-head,
-.kit-surface.kit-is-64 .kit-transport {
+.kit-surface.kit-is-64 .kit-transport,
+.kit-surface.kit-is-64 .kit-arr {
   max-width: 840px;
 }
 

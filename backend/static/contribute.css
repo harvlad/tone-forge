@@ -9,7 +9,10 @@
   gap: 12px;
   padding: 16px;
   color: var(--jamn-text, #fff);
-  max-width: 720px;
+  /* Modest widen from a flat 720px: gives the waveform review + take list
+     more room on desktop while keeping the form inputs at a readable line
+     length (a form gains little from spanning the full ~1600px). */
+  max-width: min(960px, 100%);
 }
 
 /* ---- tab strip ---- */
