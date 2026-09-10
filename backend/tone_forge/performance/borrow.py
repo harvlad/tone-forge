@@ -39,7 +39,7 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-BORROW_VERSION = 5      # bumped: render octave-folds ratio (match selection) — no more ~2x WSOLA shred
+BORROW_VERSION = 6      # bumped: default key-conform harmonic donors to host key + ffmpeg-resample pitch shift
 _LOOPS_PER_SOURCE = 8   # half of a 16-pad grid per song (initial | donor)
 _MAX_LOOPS = _LOOPS_PER_SOURCE   # back-compat alias
 _STRETCH_LIMIT = 0.5    # refuse to stretch beyond ±50% (artifacts)
@@ -371,13 +371,49 @@ def _transpose_steps(donor_key: Optional[str],
 
 
 def _pitch_shift(seg, sr: int, n_steps: int, np, librosa):
-    """Offline pitch-shift by `n_steps` semitones, per channel (phase vocoder).
-    A no-op at 0 steps so the true default never pays for it and never eats the
-    vocoder's quality cost. Falls back to the untouched segment on any error —
-    a wrong-pitch loop is worse than an un-transposed one, but a crash is worse
-    than both."""
+    """Offline pitch-shift by `n_steps` semitones, length-preserving. Uses
+    ffmpeg's resample path first — `asetrate` (raises pitch AND speed) →
+    `aresample` (restore the rate) → `atempo` (restore the duration) — the same
+    SoundTouch/WSOLA-grade engine `_time_stretch` already trusts for tempo.
+    The librosa phase vocoder it used to use sounded "underwater"/phasey on
+    bass and chords, which is exactly the material key-conform now moves by
+    default, so the vocoder is the FALLBACK, not the primary. A no-op at 0
+    steps; falls back to the untouched segment on any error (a wrong-pitch loop
+    beats a crash)."""
     if n_steps == 0:
         return seg
+    import shutil
+    import subprocess
+    import tempfile as _tf
+    factor = 2.0 ** (n_steps / 12.0)           # > 1 = shift up
+    if shutil.which("ffmpeg"):
+        try:
+            import soundfile as sf
+            # atempo restores duration; chain to stay in its 0.5..2.0 window
+            # (a ±6-semitone shift is 0.707..1.414, in range, but be safe).
+            inv, stages = 1.0 / factor, []
+            t = inv
+            while t > 2.0:
+                stages.append(2.0); t /= 2.0
+            while t < 0.5:
+                stages.append(0.5); t *= 2.0
+            stages.append(t)
+            atempo = ",".join(f"atempo={s:.6f}" for s in stages)
+            chain = f"asetrate={int(round(sr * factor))},aresample={sr},{atempo}"
+            with _tf.TemporaryDirectory(prefix="tf_pitch_") as d:
+                src = Path(d) / "in.wav"
+                dst = Path(d) / "out.wav"
+                sf.write(str(src), seg, sr, subtype="FLOAT")
+                subprocess.run(
+                    ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+                     "-filter:a", chain, str(dst)],
+                    check=True, timeout=60)
+                out, _ = sf.read(str(dst), dtype="float32", always_2d=True)
+                if out.shape[0] > 0:
+                    return out
+        except Exception:
+            pass
+    # Fallback: librosa phase vocoder per channel.
     try:
         chans = [librosa.effects.pitch_shift(
             np.ascontiguousarray(seg[:, c]), sr=sr, n_steps=float(n_steps))

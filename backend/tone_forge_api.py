@@ -6511,6 +6511,15 @@ async def get_borrow_loops(
     host_bpm = _borrow._tempo_of(result)
     if not host_bpm:
         raise HTTPException(status_code=422, detail="This song has no tempo")
+    # Default key-conform (musical coherence): borrowed HARMONIC/MELODIC stems
+    # conform to THIS song's key so they don't clash — the whole point of borrow
+    # is that any pad from either song sounds good together. Without this the
+    # donor's bass/chords/vocals play in the donor's own key over the host's key
+    # (the diagnosed "disjointed" bug). Drums are pitchless (never transposed),
+    # and the host's OWN pads are never transposed (borrow.py gates on the
+    # "donor" tag), so "the song stays true" is preserved. An explicit
+    # target_key (the Session-target UI) still overrides.
+    host_key = result.get("detected_key") or result.get("key")
     # The host's own pads ALWAYS render at the host tempo (ratio≈1, untouched);
     # only borrowed donor loops conform to an explicit session BPM. Absent →
     # donors lock to the host tempo, exactly as before.
@@ -6553,10 +6562,15 @@ async def get_borrow_loops(
                 _render_pool(), _borrow.borrow_job, entry_id, result, s,
                 host_bpm, i_stem, base, "initial", lbl, None))
         if d_stem is not None:
-            # Borrowed pads: conform to the session BPM/key when supplied.
+            # Borrowed pads: conform to THIS song's key by default (harmonic/
+            # melodic stems only — drums stay pitchless), or to an explicit
+            # session key when supplied.
+            donor_key = target_key
+            if donor_key is None and s not in _borrow._PITCHLESS:
+                donor_key = host_key
             jobs.append(loop.run_in_executor(
                 _render_pool(), _borrow.borrow_job, donor, donor_result, s,
-                donor_bpm, d_stem, base + half, "donor", lbl, target_key))
+                donor_bpm, d_stem, base + half, "donor", lbl, donor_key))
         block += 1
     rendered = await asyncio.gather(*jobs) if jobs else []
     pads = [p for grp in rendered for p in (grp or [])]
