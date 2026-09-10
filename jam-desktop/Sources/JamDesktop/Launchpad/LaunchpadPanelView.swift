@@ -86,8 +86,9 @@ struct LaunchpadPanelView: View {
                 if showLayers {
                     LayerStackView().environmentObject(session)
                 } else {
+                    // Fill the whole area edge-to-edge (pads rectangular) — the
+                    // square aspectRatio-fit left big side gaps.
                     padGrid
-                        .aspectRatio(1, contentMode: .fit)
                 }
                 if let error = launchpad.fetchError {
                     Text(error)
@@ -1002,8 +1003,11 @@ struct LaunchpadPanelView: View {
         let cols = launchpad.padCount == 16 ? 4 : 8
         return GeometryReader { geo in
             let spacing: CGFloat = 8
-            let side = (min(geo.size.width, geo.size.height)
-                        - spacing * CGFloat(cols - 1)) / CGFloat(cols)
+            // Fill the whole area (pads go rectangular, no side gaps) — cells
+            // size independently from width and height instead of a single
+            // square `side`. It's an N×N grid, so both use `cols`.
+            let cellW = (geo.size.width - spacing * CGFloat(cols - 1)) / CGFloat(cols)
+            let cellH = (geo.size.height - spacing * CGFloat(cols - 1)) / CGFloat(cols)
             VStack(spacing: spacing) {
                 ForEach(0..<cols, id: \.self) { row in
                     HStack(spacing: spacing) {
@@ -1032,7 +1036,7 @@ struct LaunchpadPanelView: View {
                                 },
                                 onDragEnd: { dragSourcePad = nil }
                             )
-                            .frame(width: side, height: side)
+                            .frame(width: cellW, height: cellH)
                         }
                     }
                 }
