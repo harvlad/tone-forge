@@ -33,7 +33,14 @@
     // bandroom and perform in the state machine. Always skippable;
     // entering it never blocks the perform path.
     rehearsal: $('view-rehearsal'),
-    perform: $('view-perform'),
+    // 'perform' retired: the legacy chord-Perform pane (#view-perform) is
+    // no longer a routable surface. Perform = the Launchpad pads (view-kit)
+    // and Guitar = the fretboard (view-stage). Removing it from the
+    // registry means showView() can never re-activate the dead pane. The
+    // #view-perform DOM is intentionally kept (unreachable, display:none)
+    // because shared onAnalysisComplete / tickClock / initSettingsUI wiring
+    // still writes into its np-* / tuner / tone-card / chord-ribbon ids;
+    // deleting them would need those hot paths guarded. See jam.html.
   };
   function showView(name) {
     Object.values(views).forEach(v => v && v.classList.remove('active'));
@@ -42,6 +49,12 @@
     // apply on the perform view. Intake / band-room / rehearsal keep
     // the legacy 1100px max-width to stay byte-identical.
     document.body.classList.toggle('perform-active', name === 'perform');
+    // Playback bar visibility. The transport bar was reparented out of the
+    // retired #view-perform section into #jam-app, so it's no longer scoped
+    // to a single view. Restore its prior "only with a loaded session"
+    // semantics: show it on any surface once a song is loaded, hide it on
+    // the intake landing (where an empty transport would just be noise).
+    document.body.classList.toggle('jamn-has-song', !!state.analysisId && name !== 'intake');
     // Repaint the transport waveform once perform is laid out again.
     // While the view was display:none the canvas rect was 0×0 and
     // drawWaveform() skipped painting (see the guard there), so the
@@ -11148,6 +11161,52 @@
     renderConnectPill();
   })();
 
+  // ---- 3i-b: standalone Session/Connect popover -----------------------
+  // The Connect pill + monitor popover + pair button were rehomed out of
+  // the retired #view-perform header into #session-pop, a fixed popover
+  // toggled straight from the Session toolbar icon (see act('session')).
+  // toggleSessionPop is a hoisted declaration so the toolbar handler can
+  // reference it regardless of source order.
+  function toggleSessionPop(force) {
+    const pop = document.getElementById('session-pop');
+    if (!pop) return;
+    const willOpen = typeof force === 'boolean' ? force : !!pop.hidden;
+    pop.hidden = !willOpen;
+    const icon = document.getElementById('jamn-tool-session');
+    if (icon) icon.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    if (willOpen) {
+      // Refresh pill + status text on open so the popover reflects the
+      // live bridge state even if it changed while closed.
+      try { renderConnectPill(); } catch (_) {}
+      try { renderConnectStatus(); } catch (_) {}
+    } else {
+      // Collapse the nested monitor-gain popover when the whole panel
+      // closes, so it isn't left open on the next reveal.
+      const mpop = document.getElementById('header-connect-monitor-pop');
+      if (mpop) mpop.hidden = true;
+      const pill = document.getElementById('header-connect-pill');
+      if (pill) pill.setAttribute('aria-expanded', 'false');
+    }
+  }
+  (function initSessionPop() {
+    const pop = document.getElementById('session-pop');
+    if (!pop) return;
+    const closeBtn = document.getElementById('session-pop-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => toggleSessionPop(false));
+    // Outside-click closes the panel. The Session toolbar icon is
+    // excluded so its own click (which toggles) isn't immediately undone.
+    document.addEventListener('click', (ev) => {
+      if (pop.hidden) return;
+      if (pop.contains(ev.target)) return;
+      const icon = document.getElementById('jamn-tool-session');
+      if (icon && (ev.target === icon || icon.contains(ev.target))) return;
+      toggleSessionPop(false);
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && !pop.hidden) toggleSessionPop(false);
+    });
+  })();
+
   // Phase 6: kick off the install probe once the DOM is alive. Fires
   // in the background — never blocks anything. Result lands on
   // state.connectBridge.{installed,installedPath,installedVersion}
@@ -16358,13 +16417,12 @@
           try { window.JamnRemix && window.JamnRemix.open && window.JamnRemix.open(); } catch (_) {}
           break;
         case 'session':
-          // Connect lives in the Perform header — surface it, then pop
-          // its monitor/status popover open.
-          showView('perform');
-          setTimeout(() => {
-            const p = document.getElementById('header-connect-pill');
-            if (p && p.getAttribute('aria-expanded') !== 'true') p.click();
-          }, 60);
+          // Connect now lives in the standalone #session-pop popover
+          // (rehomed out of the retired #view-perform surface). The
+          // Session toolbar icon toggles it directly — no view switch,
+          // no synthetic pill click. renderConnectPill/Status still drive
+          // the pill + status inside it.
+          if (typeof toggleSessionPop === 'function') toggleSessionPop();
           break;
         default: break;
       }

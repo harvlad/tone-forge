@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>JamN — What are we playing?</title>
-<link rel="stylesheet" href="/static/jam.css?v=79" />
+<link rel="stylesheet" href="/static/jam.css?v=80" />
 <link rel="stylesheet" href="/static/kit.css?v=15">
 <link rel="stylesheet" href="/static/stage.css?v=3">
 <link rel="stylesheet" href="/static/sequencer.css?v=1">
@@ -288,6 +288,38 @@
     <div id="account-chip" class="account-chip"></div>
   </div>
 </nav>
+
+<!-- ========================= SESSION / CONNECT ========================= -->
+<!--
+  Standalone Connect/Session popover. Rehomed out of the retired
+  #view-perform surface so Connect no longer depends on that view being
+  shown. Toggled directly by the Session toolbar icon (#jamn-tool-session).
+  All element ids are preserved verbatim (header-connect-pill,
+  header-connect-monitor-pop, connect-gain-wrap, connect-btn,
+  connect-status) so renderConnectPill / renderConnectStatus /
+  initHeaderConnectPill / launchConnect keep working unchanged — this is a
+  pure reparent, not a rewrite. Fixed-position, anchored under the
+  top-right toolbar.
+-->
+<div id="session-pop" class="session-pop" hidden role="dialog" aria-label="Connect / Session">
+  <div class="session-pop-head">
+    <span class="session-pop-title">Connect / Session</span>
+    <button type="button" id="session-pop-close" class="session-pop-close" aria-label="Close">✕</button>
+  </div>
+  <div class="session-pop-body">
+    <button id="header-connect-pill" class="connect-pill offline" type="button" aria-haspopup="true" aria-expanded="false">Connect: offline</button>
+    <div id="header-connect-monitor-pop" class="connect-monitor-pop" hidden>
+      <div class="connect-gain" id="connect-gain-wrap" hidden>
+        <label for="connect-gain">Monitor</label>
+        <input id="connect-gain" type="range" min="0" max="1" step="0.01" value="0" />
+        <span id="connect-gain-readout" class="connect-gain-readout">muted</span>
+        <div class="connect-gain-hint">Set above 0 only when wearing headphones — laptop speakers will feed back.</div>
+      </div>
+    </div>
+    <button id="connect-btn" class="primary" hidden>Connect to play</button>
+    <div id="connect-status" class="connect-status" hidden></div>
+  </div>
+</div>
 
 <!-- Global song-load pill: shown/updated by window.JamnLoading (jam.js)
      while a library / deep-link / featured song load is in flight.
@@ -837,16 +869,10 @@
         <a class="np-credit" id="np-credit" target="_blank" rel="noopener noreferrer" hidden></a>
       </div>
       <div class="ph-actions">
-        <button id="header-connect-pill" class="connect-pill offline" type="button" aria-haspopup="true" aria-expanded="false">Connect: offline</button>
-        <div id="header-connect-monitor-pop" class="connect-monitor-pop" hidden>
-          <!-- monitor-gain controls migrate here from the legacy user card -->
-          <div class="connect-gain" id="connect-gain-wrap" hidden>
-            <label for="connect-gain">Monitor</label>
-            <input id="connect-gain" type="range" min="0" max="1" step="0.01" value="0" />
-            <span id="connect-gain-readout" class="connect-gain-readout">muted</span>
-            <div class="connect-gain-hint">Set above 0 only when wearing headphones — laptop speakers will feed back.</div>
-          </div>
-        </div>
+        <!-- Connect pill + monitor-gain popover rehomed to the standalone
+             #session-pop (toggled by the Session toolbar icon). This
+             legacy Perform header is retired/unreachable; kept only so the
+             shared onAnalysisComplete np-* / settings wiring never null-derefs. -->
         <button id="perform-settings" class="ghost" title="Settings">⚙</button>
         <button id="perform-back" class="ghost">New jam</button>
       </div>
@@ -972,11 +998,7 @@
           </div>
           <button id="tone-send-connect" type="button">Send to Connect</button>
           <button id="user-mute-original" type="button">Mute original guitar</button>
-          <!-- Legacy controls kept in DOM (hidden) so existing wiring
-               in renderConnectStatus / connect-btn handler continues
-               to work without guards. -->
-          <button id="connect-btn" class="primary" hidden>Connect to play</button>
-          <div id="connect-status" class="connect-status" hidden></div>
+          <!-- #connect-btn / #connect-status rehomed to #session-pop. -->
         </div>
 
         <div id="audio-in-row" class="audio-in-row">
@@ -1267,241 +1289,6 @@
              5-surface IA). All ids preserved there so jam.js wiring
              into #stem-rack is untouched. -->
 
-        <!-- Dedicated Launchpad view. Wired up by _initLaunchpadPanel
-             in jam.js. The mirror grid is a live DOM copy of the 8×8
-             hardware pads (bottom-left = pad 11); clicking any pad
-             fires the same downstream synth path as a physical press,
-             so the panel is fully usable without hardware attached. -->
-        <div id="launchpad-panel" class="launchpad-panel" hidden>
-          <div class="lp-status-row">
-            <span id="lp-panel-status" class="lp-status-pill launchpad-status--idle">Searching for controller…</span>
-            <label class="lp-status-enable" hidden>
-              <input type="checkbox" id="lp-panel-enabled" />
-              Enable Launchpad
-            </label>
-          </div>
-
-          <div class="lp-split">
-            <div class="lp-legend-wrap">
-              <span class="lp-section-label">Legend</span>
-              <div id="lp-legend" class="lp-legend"></div>
-            </div>
-            <div class="lp-grid-wrap">
-              <span class="lp-section-label">Pads</span>
-              <div id="lp-countdown" class="lp-countdown" hidden>
-                <div class="lp-countdown-track">
-                  <div id="lp-countdown-fill" class="lp-countdown-fill"></div>
-                </div>
-                <div class="lp-countdown-label">
-                  <span id="lp-countdown-next" class="lp-countdown-next">—</span>
-                  <span id="lp-countdown-time" class="lp-countdown-time">0.0s</span>
-                </div>
-              </div>
-              <div id="lp-grid" class="lp-grid" role="grid" aria-label="Launchpad mirror"></div>
-            </div>
-            <div class="lp-settings-column">
-              <div id="lp-preset-row" class="lp-preset-row">
-                <span class="lp-section-label">Play style</span>
-                <label><input type="radio" name="lp-panel-preset" value="learn-song" /> Learn Song</label>
-                <label><input type="radio" name="lp-panel-preset" value="perform-song" /> Perform Song</label>
-                <label><input type="radio" name="lp-panel-preset" value="learn-harmony" /> Learn Harmony</label>
-                <label><input type="radio" name="lp-panel-preset" value="jam-in-key" /> Jam In Key</label>
-                <label><input type="radio" name="lp-panel-preset" value="melody-practice" /> Melody Practice</label>
-                <label><input type="radio" name="lp-panel-preset" value="play-bassline" /> Play Bassline</label>
-                <span class="lp-preset-group-label">Contribute (from this song)</span>
-                <label><input type="radio" name="lp-panel-preset" value="contribute-vocal" /> Vocal Chops</label>
-                <label><input type="radio" name="lp-panel-preset" value="contribute-drums" /> Drum Chops</label>
-                <label><input type="radio" name="lp-panel-preset" value="contribute-bass" /> Bass Chops</label>
-                <label><input type="radio" name="lp-panel-preset" value="contribute-harmonic" /> Harmonic Chops</label>
-                <label><input type="radio" name="lp-panel-preset" value="contribute-sections" /> Sections</label>
-                <p id="lp-preset-caption" class="lp-preset-caption">Follow the song with visual guidance and verification.</p>
-                <p id="lp-preset-hint" class="lp-preset-hint" hidden></p>
-              </div>
-
-              <details class="lp-advanced">
-                <summary class="lp-advanced-summary">Advanced controls</summary>
-                <div class="lp-advanced-body">
-                  <div class="lp-mode-row">
-                    <span class="lp-section-label">Mode</span>
-                    <label><input type="radio" name="lp-panel-mode" value="song-verify" /> Song — verify</label>
-                    <label><input type="radio" name="lp-panel-mode" value="song-display" /> Song — display only</label>
-                    <label><input type="radio" name="lp-panel-mode" value="theory" /> Theory</label>
-                    <label><input type="radio" name="lp-panel-mode" value="instrument-synth" /> Instrument</label>
-                    <label><input type="radio" name="lp-panel-mode" value="free-play" /> Free play</label>
-                    <label><input type="radio" name="lp-panel-mode" value="display" /> Display</label>
-                  </div>
-
-                  <div id="lp-layout-row" class="lp-mode-row" hidden>
-                    <span class="lp-section-label">Song layout</span>
-                    <label><input type="radio" name="lp-panel-layout" value="theory" /> Theory (circle of fifths)</label>
-                    <label><input type="radio" name="lp-panel-layout" value="song" /> Song (encounter order)</label>
-                    <label><input type="radio" name="lp-panel-layout" value="pitch" /> Pitch (piano-like)</label>
-                  </div>
-
-                  <div class="lp-mode-row">
-                    <span class="lp-section-label">Assist level</span>
-                    <label><input type="radio" name="lp-panel-assist" value="1" /> 1 · Training</label>
-                    <label><input type="radio" name="lp-panel-assist" value="2" /> 2 · Guided</label>
-                    <label><input type="radio" name="lp-panel-assist" value="3" /> 3 · Performance</label>
-                    <label><input type="radio" name="lp-panel-assist" value="4" /> 4 · Blind</label>
-                  </div>
-
-                  <div id="lp-instrument-row" class="lp-mode-row" hidden>
-                    <span class="lp-section-label">Instrument</span>
-                    <label><input type="radio" name="lp-panel-submode" value="synth" /> Synth</label>
-                    <label><input type="radio" name="lp-panel-submode" value="bass" /> Bass</label>
-                    <label><input type="radio" name="lp-panel-submode" value="melody" /> Melody</label>
-                    <label><input type="radio" name="lp-panel-submode" value="drum" /> Drum</label>
-                    <label><input type="radio" name="lp-panel-submode" value="free-play" /> Free play</label>
-                  </div>
-
-                  <div class="lp-mode-row">
-                    <span class="lp-section-label">Ableton Link</span>
-                    <label><input type="checkbox" id="lp-link-follow" /> Follow tempo</label>
-                    <span id="lp-link-status" class="lp-hint">no helper detected</span>
-                  </div>
-
-                  <div class="lp-mode-row">
-                    <span class="lp-section-label">MIDI pads</span>
-                    <button type="button" id="lp-midi-learn" class="tab-control-btn">Map MIDI pads</button>
-                    <span id="lp-midi-learn-status" class="lp-hint"></span>
-                  </div>
-
-                  <div class="lp-mode-row">
-                    <span class="lp-section-label">MIDI keyboard</span>
-                    <label>
-                      <input type="checkbox" id="lp-midi-keyboard-synth" />
-                      MIDI keyboard plays synth
-                    </label>
-                    <span class="lp-hint">Unmapped notes play the pad synth (pads mapped above still fire samples)</span>
-                  </div>
-
-                  <div class="lp-mode-row">
-                    <span class="lp-section-label">MIDI clock out</span>
-                    <label>
-                      <input type="checkbox" id="lp-midi-clock-out" />
-                      Send clock to connected gear
-                    </label>
-                    <span class="lp-hint">external gear follows play/stop + tempo</span>
-                  </div>
-
-                  <div class="lp-mode-row">
-                    <span class="lp-section-label">Anticipation</span>
-                    <label>
-                      <input type="range" id="lp-panel-anticipation" min="0" max="8" step="1" style="width:120px;vertical-align:middle" />
-                      <span id="lp-panel-anticipation-readout">2</span> beat(s) lead
-                    </label>
-                  </div>
-
-                  <div id="lp-contribute-row" class="lp-mode-row" hidden>
-                    <span class="lp-section-label">Contribute</span>
-                    <label>
-                      <input type="checkbox" id="lp-panel-contribute-loop" />
-                      Loop pads (tap to start, tap again to stop)
-                    </label>
-                  </div>
-
-                  <div id="lp-openjam-options" class="lp-openjam-options" hidden>
-                    <span class="lp-section-label">Open-jam options</span>
-                    <label>
-                      Out-of-key pads:
-                      <select id="lp-panel-oob">
-                        <option value="dim">Dim</option>
-                        <option value="off">Off</option>
-                      </select>
-                    </label>
-                    <label>
-                      Manual key:
-                      <select id="lp-panel-manual-root">
-                        <option value="0">C</option>
-                        <option value="1">C#/Db</option>
-                        <option value="2">D</option>
-                        <option value="3">D#/Eb</option>
-                        <option value="4">E</option>
-                        <option value="5">F</option>
-                        <option value="6">F#/Gb</option>
-                        <option value="7">G</option>
-                        <option value="8">G#/Ab</option>
-                        <option value="9">A</option>
-                        <option value="10">A#/Bb</option>
-                        <option value="11">B</option>
-                      </select>
-                      <select id="lp-panel-manual-scale">
-                        <option value="Major">Major</option>
-                        <option value="Minor">Minor</option>
-                      </select>
-                    </label>
-                  </div>
-                </div>
-              </details>
-
-            </div>
-          </div>
-
-          <details class="lp-voice">
-            <summary class="lp-voice-summary">Voice tweaks</summary>
-            <div class="lp-voice-body">
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Master</span>
-                <input type="range" id="lp-slider-master" min="0" max="1" step="0.01" />
-                <span class="lp-tweak-readout" id="lp-readout-master">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Live play</span>
-                <input type="range" id="lp-slider-voice" min="0" max="1" step="0.01" />
-                <span class="lp-tweak-readout" id="lp-readout-voice">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Sample hits</span>
-                <input type="range" id="lp-slider-chop" min="0" max="1" step="0.01" />
-                <span class="lp-tweak-readout" id="lp-readout-chop">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Reverb wet</span>
-                <input type="range" id="lp-slider-wet" min="0" max="1" step="0.01" />
-                <span class="lp-tweak-readout" id="lp-readout-wet">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Reverb dry</span>
-                <input type="range" id="lp-slider-dry" min="0" max="1" step="0.01" />
-                <span class="lp-tweak-readout" id="lp-readout-dry">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Reverb length (s)</span>
-                <input type="range" id="lp-slider-seconds" min="0.5" max="4" step="0.1" />
-                <span class="lp-tweak-readout" id="lp-readout-seconds">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Reverb decay</span>
-                <input type="range" id="lp-slider-decay" min="0.5" max="3.5" step="0.1" />
-                <span class="lp-tweak-readout" id="lp-readout-decay">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Brightness</span>
-                <input type="range" id="lp-slider-brightness" min="0.5" max="2" step="0.05" />
-                <span class="lp-tweak-readout" id="lp-readout-brightness">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Strum (ms)</span>
-                <input type="range" id="lp-slider-strum" min="0" max="60" step="1" />
-                <span class="lp-tweak-readout" id="lp-readout-strum">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Attack (ms)</span>
-                <input type="range" id="lp-slider-attack" min="1" max="40" step="1" />
-                <span class="lp-tweak-readout" id="lp-readout-attack">—</span>
-              </label>
-              <label class="lp-tweak-row">
-                <span class="lp-tweak-label">Release (s)</span>
-                <input type="range" id="lp-slider-release" min="0.6" max="4" step="0.1" />
-                <span class="lp-tweak-readout" id="lp-readout-release">—</span>
-              </label>
-              <div class="lp-voice-actions">
-                <button type="button" id="lp-voice-reset" class="ghost">Reset voice</button>
-              </div>
-            </div>
-          </details>
-        </div>
       </div>
     </div>
 
@@ -1509,19 +1296,23 @@
          #intonation-panel.hidden without null-derefing. The real
          tuner lives inside #tuner-compact now. -->
     <div id="intonation-panel" hidden></div>
-
-    <!-- BOTTOM — fixed playback bar -->
-    <div id="playback-bar" class="playback-bar">
-      <div class="pb-transport">
-        <button id="t-play" class="primary">Play</button>
-        <button id="t-stop" class="ghost">Stop</button>
-        <button id="t-loop" class="ghost" title="Clear loop">Loop: off</button>
-        <button id="t-click" class="ghost" title="Toggle click track">Click: off</button>
-      </div>
-      <canvas id="waveform-canvas" width="800" height="64"></canvas>
-      <div id="t-time" class="time">0:00 / 0:00</div>
-    </div>
   </section>
+
+  <!-- BOTTOM — fixed playback bar. Reparented OUT of the retired
+       #view-perform section so it survives that surface's retirement and
+       stays visible across surfaces (it's position:fixed; its child ids
+       t-play/t-stop/t-time/waveform-canvas are written by the shared
+       tickClock + drawWaveform, which run regardless of the active view). -->
+  <div id="playback-bar" class="playback-bar">
+    <div class="pb-transport">
+      <button id="t-play" class="primary">Play</button>
+      <button id="t-stop" class="ghost">Stop</button>
+      <button id="t-loop" class="ghost" title="Clear loop">Loop: off</button>
+      <button id="t-click" class="ghost" title="Toggle click track">Click: off</button>
+    </div>
+    <canvas id="waveform-canvas" width="800" height="64"></canvas>
+    <div id="t-time" class="time">0:00 / 0:00</div>
+  </div>
 
   <!-- ============================= JAM PADS ============================= -->
   <!-- Sample-kit surface (sidebar TOOLS → Jam Pads). kit.js owns
@@ -1701,6 +1492,6 @@
 <script src="/static/contribute.js?v=2"></script>
 <script src="/static/chopedit.js?v=2"></script>
 <script src="/static/lp-hw.js?v=2"></script>
-<script src="/static/jam.js?v=154"></script>
+<script src="/static/jam.js?v=155"></script>
 </body>
 </html>

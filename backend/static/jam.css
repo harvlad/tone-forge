@@ -1151,6 +1151,68 @@ body.perform-active #view-perform > .chord-ribbon { display: none; }
 }
 .connect-monitor-pop[hidden] { display: none; }
 
+/* Standalone Session/Connect popover (#session-pop). Rehomed out of the
+   retired #view-perform header; a fixed panel anchored under the top-right
+   toolbar and toggled by the Session icon. Holds the (id-preserved)
+   Connect pill, monitor-gain popover, pair button, and status line. */
+.session-pop {
+  position: fixed;
+  top: 56px;
+  right: 16px;
+  z-index: 1000;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+}
+.session-pop[hidden] { display: none; }
+.session-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.session-pop-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.session-pop-close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px;
+  border-radius: 6px;
+}
+.session-pop-close:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.session-pop-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+/* Inside the fixed panel the monitor-gain popover flows inline instead of
+   floating absolutely off the (now-gone) .ph-actions anchor. */
+.session-pop .connect-monitor-pop {
+  position: static;
+  width: 100%;
+  min-width: 0;
+  box-shadow: none;
+  padding: 10px 0 0;
+  border: none;
+  background: transparent;
+}
+.session-pop .connect-status { margin: 0; }
+.session-pop .connect-pill { align-self: flex-start; }
+
 /* grid */
 .perform-grid {
   display: grid;
@@ -2743,11 +2805,16 @@ main.lp-tab-active .perform-grid {
   background: var(--panel);
   border-top: 1px solid var(--border);
   padding: 12px 20px;
-  display: grid;
+  /* Hidden until a song is loaded. Reparented out of #view-perform, the
+     bar is now a direct child of #jam-app; jam.js toggles body.jamn-has-song
+     (see showView) to gate visibility so it never shows on the empty
+     intake landing. */
+  display: none;
   grid-template-columns: auto 1fr auto;
   gap: 18px;
   align-items: center;
 }
+body.jamn-has-song .playback-bar { display: grid; }
 .playback-bar .pb-transport {
   display: flex;
   gap: 8px;
