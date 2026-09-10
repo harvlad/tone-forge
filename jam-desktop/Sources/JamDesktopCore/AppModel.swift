@@ -18,7 +18,10 @@ public enum JamView: String, CaseIterable, Sendable {
     case intake
     case bandRoom
     case rehearsal
+    // perform = the Launchpad pads (web parity: SURFACE_TO_VIEW.perform='kit').
+    // guitar = the fretboard / tone surface, its own nav item (web: 'stage').
     case perform
+    case guitar
     case studio
 }
 

@@ -229,7 +229,10 @@ struct RootView: View {
         // covering modal sheet made impossible. Trailing-aligned so the neck
         // (leading) stays in view on wide windows.
         .overlay(alignment: .center) {
-            if showLaunchpad {
+            // Perform IS the inline Launchpad now, so the floating panel only
+            // pops over OTHER views (e.g. Guitar — jam pads while watching the
+            // neck, the original non-modal premise).
+            if showLaunchpad && model.view != .perform {
                 LaunchpadPanelView(onClose: { showLaunchpad = false })
                     .environmentObject(model)
                     .environmentObject(session)
@@ -309,6 +312,12 @@ struct RootView: View {
         case .rehearsal:
             RehearsalView()
         case .perform:
+            // Web parity: Perform IS the Launchpad pads (was the fretboard).
+            LaunchpadPanelView(embedded: true)
+                .environmentObject(model)
+                .environmentObject(session)
+        case .guitar:
+            // The fretboard / tone surface, now its own nav item.
             PerformView()
         case .studio:
             StudioView()
@@ -357,6 +366,7 @@ struct RootView: View {
                 Text("Band Room").tag(JamView.bandRoom)
                 Text("Rehearsal").tag(JamView.rehearsal)
                 Text("Perform").tag(JamView.perform)
+                Text("Guitar").tag(JamView.guitar)
                 Text("Studio").tag(JamView.studio)
             }
             .pickerStyle(.segmented)

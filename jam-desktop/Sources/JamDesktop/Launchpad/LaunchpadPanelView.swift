@@ -24,6 +24,9 @@ struct LaunchpadPanelView: View {
     /// Set when the panel is hosted as a non-modal overlay (UX audit fix #5)
     /// — the ✕ calls this instead of the sheet dismiss.
     var onClose: (() -> Void)? = nil
+    /// True when hosted as the main Perform content (web parity) rather than
+    /// the floating overlay: hide the ✕ (there's nothing to close to).
+    var embedded: Bool = false
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var session: SessionController
 
@@ -100,6 +103,12 @@ struct LaunchpadPanelView: View {
         // Tick only while something is actually animating (sounding pads or
         // a rolling transport) so an idle panel doesn't redraw at 30 Hz.
         .onReceive(animTimer) { _ in
+            // When embedded as the main Perform content, THIS is the display
+            // pump (PerformView, the former Perform view, no longer runs). It
+            // advances the transport off the audio clock and drives the
+            // sequencer / arrangement tick. Skipped when floating over another
+            // view (that view's own pump already ticks — no double-advance).
+            if embedded { session.tick() }
             if !launchpad.activePads.isEmpty || session.transport.isPlaying {
                 animTick &+= 1
             }
@@ -370,15 +379,17 @@ struct LaunchpadPanelView: View {
             Spacer()
             hardwareStatus
 
-            Button {
-                if let onClose { onClose() } else { dismiss() }
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
+            if !embedded {
+                Button {
+                    if let onClose { onClose() } else { dismiss() }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.escape, modifiers: [])
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.escape, modifiers: [])
         }
     }
 
