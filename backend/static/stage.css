@@ -157,21 +157,40 @@
   filter: brightness(1.15);
 }
 
-/* ---- fretboard stage ---- */
+/* ---- fretboard stage ----
+   flex:1 so the board grows to fill the column (jam.js sizes .jstage-main to
+   the viewport). A real neck is ~5.7:1 and can't fill a squarer panel without
+   skew, so the canvas math centers the neck and picks the fret count that
+   fills best; the leftover is styled as a lit stage backdrop (radial vignette)
+   rather than flat black, so it reads as design, not dead space. */
 .jstage-board-wrap {
   position: relative;
-  background: #131017;
+  background:
+    radial-gradient(120% 90% at 50% 42%,
+      #1B1622 0%, #151019 45%, #100C15 78%, #0B0810 100%);
   border: 1px solid var(--js-border);
   border-radius: var(--js-radius-lg);
   overflow: hidden;
-  min-height: 260px;
-  flex: 1;
+  /* Floor matches the jam stage JS clamp so the JS-set neck-fill height
+     (which can be smaller on a narrow panel) is never overridden upward. */
+  min-height: 140px;
+  flex: 1 1 auto;
+}
+/* Soft top light so the stage has a subtle depth cue behind the neck. */
+.jstage-board-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(80% 55% at 50% -10%,
+    color-mix(in srgb, var(--js-accent) 10%, transparent), transparent 70%);
 }
 .jstage-board {
+  position: relative;
   display: block;
   width: 100%;
   height: 100%;
-  min-height: 260px;
+  min-height: 140px;
 }
 .jstage-chord-overlay {
   position: absolute;
@@ -247,10 +266,15 @@
   box-shadow: 0 0 12px color-mix(in srgb, var(--js-accent) 55%, transparent);
 }
 
-/* ---- section strip ---- */
+/* ---- section strip ----
+   flex:1 so it soaks up the column height the (aspect-locked) neck can't use,
+   becoming a taller, easier-to-hit arrangement lane instead of leaving a black
+   gap. A surface-tinted panel reads as content; the neck stays capped to its
+   own fill height (sized in jam stage JS). */
 .jstage-sections {
   position: relative;
-  height: 40px;
+  flex: 1 1 auto;
+  min-height: 40px;
   background: var(--js-surface1);
   border: 1px solid var(--js-border);
   border-radius: var(--js-radius-sm);

@@ -685,8 +685,14 @@
     return fetch(urlFor(s.padCount)).then(function (r) {
       if (r.ok) return r.json();
       if (s.padCount > 16) {
-        s.padCount = 16;
-        syncPadCountUi(s);
+        // The server clamps pads at 16 (Query le=16), so a pads=64 ask 422s.
+        // Refetch the DATA at 16 but KEEP s.padCount at the user's selection:
+        // renderPads draws `s.padCount` cells and leaves the indices the kit
+        // didn't fill EMPTY (same additive layout the Borrow path uses). That
+        // way a 64 selection stays an 8×8 grid — 16 filled + 48 empty — and
+        // the loaded grid matches the 8×8 skeleton instead of collapsing to
+        // 4×4 after load. (syncPadCountUi is NOT called: the "64" toggle must
+        // stay lit because that's still the selected mode.)
         return fetch(urlFor(16)).then(function (r2) {
           if (!r2.ok) throw new Error("kit HTTP " + r2.status);
           return r2.json();
@@ -1081,7 +1087,7 @@
 
     var stop = document.createElement("button");
     stop.type = "button";
-    stop.className = "kit-stop";
+    stop.className = "kit-stop kit-transport-btn";
     stop.textContent = "Stop All";
     stop.addEventListener("click", function () {
       try {
@@ -1126,7 +1132,6 @@
     controls.appendChild(sessionGroup);
     controls.appendChild(latch);
     controls.appendChild(groove);
-    controls.appendChild(stop);
     head.appendChild(title);
     head.appendChild(status);
     head.appendChild(controls);
@@ -1170,6 +1175,7 @@
     });
 
     transport.appendChild(play);
+    transport.appendChild(stop);
     transport.appendChild(time);
     transport.appendChild(tSpacer);
     transport.appendChild(kill);

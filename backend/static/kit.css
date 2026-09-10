@@ -9,6 +9,20 @@
   flex-direction: column;
   gap: 12px;
   color: var(--jamn-text, #fff);
+  /* Single source of truth for the surface column width. The grid AND every
+   * row that "stays aligned with .kit-grid" (head, transport, arrangement,
+   * layers) read this one var, so widening the pads to fill the desktop can
+   * never desync the toolbar/transport above them. 16-mode (4-up) caps
+   * narrower than 64-mode so 4 pads don't balloon into hero tiles. */
+  --kit-w: min(980px, 94vw);
+}
+
+/* 64 (8×8) is eight pads wide, so it earns a wider column than the 4-up grid
+ * — ~146px pads at the cap, comfortable without the 4-up's ~240px giants.
+ * Only the padCount toggle (setPadCount → syncPadCountUi) sets .kit-is-64, so
+ * the whole column resizes in lockstep with the grid. */
+.kit-surface.kit-is-64 {
+  --kit-w: min(1200px, 94vw);
 }
 
 /* ---------- header ---------- */
@@ -20,7 +34,7 @@
   gap: 12px;
   flex-wrap: wrap;
   width: 100%;
-  max-width: 720px; /* stay aligned with .kit-grid */
+  max-width: var(--kit-w); /* stay aligned with .kit-grid */
   margin-inline: auto;
   box-sizing: border-box;
 }
@@ -43,6 +57,15 @@
      viewports (mobile web) — every control stays reachable. */
   flex-wrap: wrap;
   row-gap: 8px;
+  /* LOCK: the controls always take their OWN full-width row under the
+   * title/status line. Without this they are a flex sibling of the status
+   * text, so the status changing width ("Loading kit…" → "Loading stems
+   * 3/6 — 42 MB…" → "") would reflow where the controls sit. Forcing a
+   * 100% basis decouples them: the status can only ever reshuffle the title
+   * row above, never the control positions. Every control is built at mount
+   * (present-but-disabled, never added post-load), so with a stable row the
+   * toolbar is pixel-identical before, during, and after the kit loads. */
+  flex-basis: 100%;
 }
 
 .kit-seg {
@@ -268,7 +291,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  max-width: 720px; /* stay aligned with .kit-grid */
+  max-width: var(--kit-w); /* stay aligned with .kit-grid */
   margin-inline: auto;
   box-sizing: border-box;
   padding: 6px 8px;
@@ -294,6 +317,16 @@
 .kit-play.is-playing {
   border-color: var(--jamn-accent, #8B5CF6);
   color: var(--jamn-accent, #8B5CF6);
+}
+
+/* Stop All lives in the transport bar next to Play — same row as Play +
+ * Kill All so all three transport actions share one bar. Match Play's fill
+ * so it reads as a transport control, not a header toggle. */
+.kit-transport-btn {
+  padding: 5px 14px;
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+  white-space: nowrap;
 }
 
 .kit-time {
@@ -337,7 +370,7 @@
   flex-direction: column;
   gap: 8px;
   width: 100%;
-  max-width: 720px;
+  max-width: var(--kit-w);
   margin-inline: auto;
   box-sizing: border-box;
   padding: 8px;
@@ -461,9 +494,10 @@
   /* Never wider than the visible content area — a fixed 4-up grid was
    * clipping its right column off-screen next to the 260px sidebar. */
   width: 100%;
-  /* Launchpad scale: compact square pads like the native grid, not
-   * full-width hero tiles (~170px pads at 4-up). */
-  max-width: 720px;
+  /* Launchpad scale: square pads that fill the desktop column (~240px at
+   * 4-up, ~146px at 8-up) instead of small centred tiles marooned in empty
+   * margin. The cap rides --kit-w so head/transport/arrangement track it. */
+  max-width: var(--kit-w);
   margin-inline: auto;
   box-sizing: border-box;
 }
@@ -638,18 +672,12 @@
 
 /* ---------- 8×8 compact grid (header 64 toggle / ?pads=64) ---------- */
 
-/* Header + transport + arrangement row track the wider grid so the surface
- * stays one aligned column. */
-.kit-surface.kit-is-64 .kit-head,
-.kit-surface.kit-is-64 .kit-transport,
-.kit-surface.kit-is-64 .kit-arr {
-  max-width: 840px;
-}
-
+/* Header + transport + arrangement + grid all widen together in 64 mode via
+ * the --kit-w bump on .kit-surface.kit-is-64 (above) — no per-row max-width
+ * override needed here; the grid only changes its column count + gap. */
 .kit-grid.kit-grid-64 {
   grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 4px;
-  max-width: 840px; /* ~100px pads at 8-up */
 }
 
 .kit-grid.kit-grid-64 .kit-pad {
@@ -702,7 +730,7 @@
   flex-direction: column;
   gap: 8px;
   width: 100%;
-  max-width: 720px; /* stay aligned with .kit-grid */
+  max-width: var(--kit-w); /* stay aligned with .kit-grid */
   margin-inline: auto;
   box-sizing: border-box;
 }
@@ -1189,7 +1217,10 @@
   gap: 10px;
   flex-wrap: wrap;
   width: 100%;
-  max-width: 720px; /* align with .kit-head / .kit-grid */
+  /* remix-bar mounts in #remix-root (a sibling of .kit-surface, not a
+   * descendant), so --kit-w can't cascade here — pin the 16-mode default so
+   * it aligns with the grid's common state. */
+  max-width: min(980px, 94vw); /* align with .kit-head / .kit-grid */
   margin: 0 auto 10px;
   box-sizing: border-box;
 }

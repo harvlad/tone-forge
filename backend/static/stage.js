@@ -370,32 +370,73 @@
     return (hiU - loU) / (6 * stringGapUnits((loU + hiU) / 2));
   }
 
-  // Fretboard layout for a `W`×`H` (CSS px) canvas. The fix for the skewed
-  // neck: ONE px-per-unit factor drives BOTH axes (min of the width fit and
-  // the height fit), exactly like the desktop HandNeckView's single
-  // pxPerMM — so fret spacing and string spacing stay in true proportion,
-  // finger dots read as circles, and the board can't skew. Nut on the
-  // RIGHT; when the width fit binds `left` lands at padL, otherwise the
-  // board is narrower and right-aligned (height-limited), never distorted.
-  function computeBoardLayout(W, H, maxFret, opts) {
+  // Pure geometry of an `f`-fret window: the nut→f span and the
+  // representative string gap (taper sampled at the window midpoint), both
+  // in scale-length units. Isolated so computeBoardLayout can score several
+  // fret counts without duplicating the taper math.
+  function boardGeom(f) {
+    var loU = wirePos(0), hiU = wirePos(f);
+    return { loU: loU, hiU: hiU, span: hiU - loU, gapU: stringGapUnits((loU + hiU) / 2) };
+  }
+
+  // Fretboard layout for a `W`×`H` (CSS px) canvas.
+  //
+  // Two invariants carry over from the skewed-neck fix: ONE px-per-unit
+  // drives BOTH axes (finger dots stay circular, spacing stays true) and the
+  // nut sits on the RIGHT. What's new is that the board no longer just fills
+  // the width and leaves the rest of a tall panel black. A real neck is
+  // ~5.7:1 — far wider than a typical stage panel — so filling by width
+  // alone wastes most of the height. Instead we pick the number of visible
+  // frets (from `floorFret`, which MUST stay on screen to cover the
+  // fingerings, up to `maxFretCap`) that fills the panel BEST under a single
+  // px/unit:
+  //
+  //   * filling the height wants FEWER, larger frets;
+  //   * filling the width wants MORE frets;
+  //
+  // so we score every count by its worst-axis fill fraction and take the
+  // best (ties → more frets = more neck on screen). The chosen neck is then
+  // centered in whatever budget it can't fill, so residual slack is
+  // symmetric matting on the stage backdrop, never a void at one edge.
+  function computeBoardLayout(W, H, floorFret, opts) {
     opts = opts || {};
-    var top = opts.top != null ? opts.top : 28;
+    var top0 = opts.top != null ? opts.top : 28;
     var padR = opts.padR != null ? opts.padR : 40;
     var padL = opts.padL != null ? opts.padL : 14;
     var bottom = opts.bottom != null ? opts.bottom : 44; // fret-number labels + knuckle row
-    var loU = wirePos(0), hiU = wirePos(maxFret), span = hiU - loU;
-    var gapU = stringGapUnits((loU + hiU) / 2);
+    var maxFretCap = opts.maxFretCap != null ? opts.maxFretCap : 15;
     var availW = Math.max(1, W - padR - padL);
-    var vBudget = Math.max(1, H - top - bottom);
-    var pxPerUnit = Math.max(0.3, Math.min(availW / span, vBudget / (6 * gapU)));
-    var gap = gapU * pxPerUnit;
+    var vBudget = Math.max(1, H - top0 - bottom);
+
+    floorFret = Math.max(1, Math.min(maxFretCap, floorFret || 1));
+
+    var best = null;
+    for (var f = floorFret; f <= maxFretCap; f++) {
+      var gm = boardGeom(f);
+      var pxPerUnit = Math.max(0.3, Math.min(availW / gm.span, vBudget / (6 * gm.gapU)));
+      var bW = gm.span * pxPerUnit;
+      var bH = 6 * gm.gapU * pxPerUnit;
+      var fill = Math.min(bW / availW, bH / vBudget);
+      // Strictly better fill wins; on a tie take the wider window so more of
+      // the neck shows at the same size.
+      if (!best || fill > best.fill + 1e-9 ||
+          (Math.abs(fill - best.fill) <= 1e-9 && f > best.f)) {
+        best = { f: f, gm: gm, pxPerUnit: pxPerUnit, bW: bW, bH: bH, fill: fill };
+      }
+    }
+
+    var gap = best.gm.gapU * best.pxPerUnit;
     var boardH = 6 * gap;
-    var right = W - padR;
-    var left = right - span * pxPerUnit;
+    var boardW = best.bW;
+    // Center in the leftover so any unfilled slack is symmetric matting.
+    var top = top0 + Math.max(0, (vBudget - boardH) / 2);
+    var right = W - padR - Math.max(0, (availW - boardW) / 2);
+    var left = right - boardW;
     return {
       top: top, padR: padR, padL: padL, bottom: bottom,
-      loU: loU, hiU: hiU, span: span, gapU: gapU,
-      pxPerUnit: pxPerUnit, gap: gap, boardH: boardH,
+      maxFret: best.f,
+      loU: best.gm.loU, hiU: best.gm.hiU, span: best.gm.span, gapU: best.gm.gapU,
+      pxPerUnit: best.pxPerUnit, gap: gap, boardH: boardH, boardW: boardW,
       bot: top + boardH, right: right, left: left,
     };
   }
@@ -503,7 +544,13 @@
       sh.fingers.forEach(function (f) { maxUsed = Math.max(maxUsed, f.fret); });
       if (sh.barre) maxUsed = Math.max(maxUsed, sh.barre.fret);
     });
-    S.maxFret = Math.min(15, Math.max(9, maxUsed + 1));
+    // FLOOR only — the count of frets that MUST stay on screen to cover the
+    // fingerings. computeBoardLayout is free to show more (to fill a wide
+    // panel) but never fewer. The floor is intentionally lower than the old
+    // hard-9 so a low-chord song can render fewer, larger frets when that
+    // fills a tall stage better; the fill scorer still adds frets back on a
+    // wide desktop panel.
+    S.maxFret = Math.min(15, Math.max(6, maxUsed + 1));
   }
 
   function fetchRegistry() {
@@ -515,6 +562,9 @@
         // Merge over the embedded subset so curated voicings win.
         S.registry = { shapes: Object.assign({}, EMBEDDED_SHAPES, json.shapes) };
         buildShapes();
+        // Curated voicings can change the floor fret count, which drives the
+        // board-wrap height — re-pin it so the neck keeps filling the panel.
+        if (S.dom && S.dom.main) { sizeStage(); sizeCanvases(); }
       }
     }).catch(function () { /* embedded fallback is fine */ });
   }
@@ -579,6 +629,7 @@
     var root = el("div", "jstage");
     var main = el("div", "jstage-main");
     var d = S.dom;
+    d.main = main;
 
     main.appendChild(buildHeader());
     var tone = buildToneBanner();
@@ -627,11 +678,51 @@
       }
     });
 
-    // dpr-aware canvas sizing
+    // dpr-aware canvas sizing (RO fires as the board-wrap flexes).
     S.resizeObs = new ResizeObserver(function () { sizeCanvases(); });
     S.resizeObs.observe(wrap);
+    // Viewport changes also move the column's fill target and the sticky
+    // transport, so re-run the whole stage sizing on window resize.
+    on(window, "resize", function () { sizeStage(); sizeCanvases(); });
+    sizeStage();
     sizeCanvases();
     applyLayerVisibility();
+  }
+
+  // Two-part sizing so the whole column is used without ever stretching a
+  // ~5.7:1 neck into a black void:
+  //
+  //   1. The board-wrap is pinned to the height at which the neck fills it
+  //      EXACTLY at its floor fret count — availW / boardAspect(floor) plus
+  //      the fret-label chrome. Any wider window would only be shorter, so
+  //      this is the tallest the neck can be and still fill the width; the
+  //      canvas math lands ~100% on both axes. Width-driven, so it shrinks
+  //      correctly on a narrow/mobile panel with no viewport special-casing.
+  //   2. The column is stretched to the viewport bottom (min-height, so a
+  //      short viewport still overflows and scrolls). The section timeline
+  //      is flex:1 in CSS, so the space the neck can't use becomes a taller,
+  //      easier-to-hit arrangement lane — real content, not matting — and
+  //      the sticky transport rests at the bottom instead of over a gap.
+  function sizeStage() {
+    if (!S || S.dead || !S.dom.main) return;
+    var main = S.dom.main, wrap = S.dom.boardWrap;
+    var vh = window.innerHeight || 0;
+    var rect = main.getBoundingClientRect();
+    if (vh < 2 || rect.width < 2) return; // hidden / not laid out yet
+
+    if (wrap) {
+      var padR = 40, padL = 14, chrome = 28 + 44; // must track computeBoardLayout defaults
+      var availW = Math.max(1, wrap.clientWidth - padR - padL);
+      var neckH = availW / boardAspect(S.maxFret || 9) + chrome;
+      // Clamp: never so short the neck is unreadable, never so tall it
+      // dominates the whole viewport on a big screen.
+      neckH = Math.max(140, Math.min(neckH, Math.round(vh * 0.6)));
+      wrap.style.flex = "none";
+      wrap.style.height = Math.round(neckH) + "px";
+    }
+
+    var avail = vh - rect.top - 16; // 16px breathing room at the bottom
+    main.style.minHeight = Math.max(360, avail) + "px";
   }
 
   function sizeCanvases() {
@@ -1175,9 +1266,10 @@
     var W = cv.width / dpr, H = cv.height / dpr;
     g.clearRect(0, 0, W, H);
 
-    var maxFret = S.maxFret;
-    // Single px/unit for BOTH axes → aspect preserved (see computeBoardLayout).
-    var lay = computeBoardLayout(W, H, maxFret);
+    // S.maxFret is the content FLOOR; computeBoardLayout decides how many
+    // frets actually fill this canvas best (single px/unit, no skew).
+    var lay = computeBoardLayout(W, H, S.maxFret);
+    var maxFret = lay.maxFret;
     var top = lay.top, gap = lay.gap, boardH = lay.boardH, bot = lay.bot;
     var right = lay.right, left = lay.left, pxPerUnit = lay.pxPerUnit;
     var loMM = lay.loU;
@@ -1423,6 +1515,7 @@
       fingerPos: fingerPos,
       stringGapUnits: stringGapUnits,
       boardAspect: boardAspect,
+      boardGeom: boardGeom,
       computeBoardLayout: computeBoardLayout,
     },
   };

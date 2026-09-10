@@ -300,23 +300,70 @@ test("boardAspect is the physical neck ratio — wide, not stretched", () => {
   assert.ok(a15 > a9); // more frets visible → wider board
 });
 
-test("computeBoardLayout uses ONE px/unit for both axes (aspect preserved)", () => {
-  const lay = I.computeBoardLayout(1000, 320, 9);
-  const boardW = lay.span * lay.pxPerUnit;
-  // The whole point of the fix: rendered board ratio == the pure physical ratio.
-  assert.ok(Math.abs(boardW / lay.boardH - I.boardAspect(9)) < 1e-9);
-  // gap (vertical) and the horizontal scale share the single pxPerUnit.
-  assert.ok(Math.abs(lay.gap - lay.gapU * lay.pxPerUnit) < 1e-12);
-  // Wide container: the width fit binds, so the board fills to padL (=14).
-  assert.ok(Math.abs(lay.left - 14) < 1e-6);
-  assert.ok(Math.abs(boardW - 946.0) < 1.0, `boardW ${boardW}`);
+test("boardGeom exposes span and tapered gap for a fret window", () => {
+  const g9 = I.boardGeom(9);
+  assert.equal(g9.loU, 0);
+  assert.ok(Math.abs(g9.span - I.wirePos(9)) < 1e-12);
+  // span/(6*gapU) is exactly the physical aspect for that many frets.
+  assert.ok(Math.abs(g9.span / (6 * g9.gapU) - I.boardAspect(9)) < 1e-12);
 });
 
-test("computeBoardLayout keeps the aspect when the height fit binds", () => {
-  // Wide but short: the vertical budget binds, board is right-aligned.
-  const lay = I.computeBoardLayout(2000, 150, 9);
-  const boardW = lay.span * lay.pxPerUnit;
-  assert.ok(lay.left > 14, `left ${lay.left}`);               // narrower than full width
-  assert.ok(Math.abs(lay.right - (2000 - 40)) < 1e-9);        // nut still pinned right (padR)
-  assert.ok(Math.abs(boardW / lay.boardH - I.boardAspect(9)) < 1e-9); // still undistorted
+test("computeBoardLayout uses ONE px/unit for both axes (no skew)", () => {
+  // Width binds at the floor (9): board fills the width, small vertical slack.
+  const lay = I.computeBoardLayout(1000, 320, 9);
+  assert.equal(lay.maxFret, 9);                              // floor kept, width-bound
+  // Rendered ratio == the pure physical ratio for the chosen fret count.
+  assert.ok(Math.abs(lay.boardW / lay.boardH - I.boardAspect(lay.maxFret)) < 1e-9);
+  // gap (vertical) and the horizontal scale share the single pxPerUnit.
+  assert.ok(Math.abs(lay.gap - lay.gapU * lay.pxPerUnit) < 1e-12);
+  // Wide container: the board fills to padL (=14), centered horizontally.
+  assert.ok(Math.abs(lay.left - 14) < 1e-6);
+  assert.ok(Math.abs(lay.boardW - 946.0) < 1.0, `boardW ${lay.boardW}`);
+});
+
+test("computeBoardLayout never shows fewer frets than the floor", () => {
+  // Tall & narrow: even the floor's aspect is wider than the panel, so the
+  // width binds and the board can't fill the height — but it must still show
+  // all `floor` frets (fingerings stay on screen), never fewer.
+  const lay = I.computeBoardLayout(700, 500, 6);
+  assert.equal(lay.maxFret, 6);
+  assert.ok(lay.boardW <= 700 - 40 - 14 + 1e-6);            // fits the width
+  assert.ok(lay.boardH < 500 - 28 - 44);                    // leaves vertical slack
+  assert.ok(Math.abs(lay.boardW / lay.boardH - I.boardAspect(6)) < 1e-9); // undistorted
+});
+
+test("computeBoardLayout centers the neck in leftover vertical budget", () => {
+  const H = 500, top0 = 28, bottom = 44;
+  const lay = I.computeBoardLayout(700, H, 6);              // width-bound, slack
+  assert.ok(lay.top > top0, `top ${lay.top}`);             // pushed down to center
+  // Matting above the slab == matting below it (symmetric, not a bottom void).
+  const above = lay.top - top0;
+  const below = (H - bottom) - lay.bot;
+  assert.ok(Math.abs(above - below) < 1e-6, `above ${above} below ${below}`);
+});
+
+test("computeBoardLayout adds frets to fill a wide desktop panel", () => {
+  // 1000×260 stage panel with an open-chord floor of 6: filling the height
+  // pulls the visible window WIDER than the floor so the width fills too.
+  const lay = I.computeBoardLayout(1000, 260, 6);
+  assert.ok(lay.maxFret > 6, `maxFret ${lay.maxFret}`);
+  assert.equal(lay.maxFret, 8);                            // best worst-axis fill
+  assert.ok(Math.abs(lay.boardW / lay.boardH - I.boardAspect(8)) < 1e-9); // still true neck
+  // Near-full fill on both axes (no big black band).
+  const availW = 1000 - 40 - 14, vBudget = 260 - 28 - 44;
+  assert.ok(lay.boardW / availW > 0.95, `wFill ${lay.boardW / availW}`);
+  assert.ok(lay.boardH / vBudget > 0.9, `hFill ${lay.boardH / vBudget}`);
+});
+
+test("computeBoardLayout fills the height and centers a wide-short panel", () => {
+  // Very wide, short: the height binds, the window opens to the cap (15) to
+  // eat the width, and the board is centered (nut no longer pinned to padR).
+  const W = 2000, H = 150, padR = 40;
+  const lay = I.computeBoardLayout(W, H, 9);
+  const vBudget = H - 28 - 44;
+  assert.equal(lay.maxFret, 15);                            // widened to the cap
+  assert.ok(Math.abs(lay.boardH - vBudget) < 1e-6);         // height fully filled
+  assert.ok(lay.boardW <= W - padR - 14 + 1e-6);            // fits the width
+  assert.ok(lay.right < W - padR - 1);                      // centered, not pinned right
+  assert.ok(Math.abs(lay.boardW / lay.boardH - I.boardAspect(15)) < 1e-9); // undistorted
 });
