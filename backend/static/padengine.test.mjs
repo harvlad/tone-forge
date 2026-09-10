@@ -25,6 +25,7 @@ import {
   normalizePadFx,
   isNeutralPadFx,
   gateRegionInPlace,
+  tileChannels,
   PadEngine,
 } from "./padengine.js";
 
@@ -101,6 +102,20 @@ test("exactCrossfaded fallback without continuation: exact length, edge ramps", 
   assert.ok(Math.abs(d[0]) < 1e-5, "head fades in from 0");
   assert.ok(Math.abs(d[n - 1]) < 0.02, "tail fades out to ~0");
   assert.ok(Math.abs(d[n >> 1] - 1.0) < 1e-6, "body untouched");
+});
+
+test("tileChannels repeats a body to the shared cycle length", () => {
+  // Body of 4 frames tiled to 10 → [b, b, partial] with continuous body wraps.
+  const body = new Float32Array([1, 2, 3, 4]);
+  const out = tileChannels([body], 4, 10);
+  assert.equal(out[0].length, 10);
+  assert.deepEqual(Array.from(out[0]), [1, 2, 3, 4, 1, 2, 3, 4, 1, 2]);
+  // Exact multiple → clean tiling, every wrap on a body boundary.
+  const out2 = tileChannels([body], 4, 8);
+  assert.deepEqual(Array.from(out2[0]), [1, 2, 3, 4, 1, 2, 3, 4]);
+  // Degenerate args return the input untouched (no tiling shorter/equal).
+  assert.equal(tileChannels([body], 4, 4)[0], body);
+  assert.equal(tileChannels([body], 0, 8)[0], body);
 });
 
 test("transient head caps fade at 3 ms", () => {

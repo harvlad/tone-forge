@@ -235,6 +235,33 @@ export function exactCrossfaded(channels, sampleRate, loopFrames, crossfadeMs) {
 }
 
 /**
+ * Tile a seamless loop body (per-channel Float32Arrays of `srcFrames`) up to
+ * `targetFrames` by repeating it — the shared-cycle lock: a short loop repeats
+ * INSIDE the common cycle so every pad shares one period and stays in unison.
+ * The source is already seam-baked, so `i % srcFrames` is continuous at every
+ * body wrap; only the final cycle wrap (targetFrames → 0) can land off a body
+ * boundary when the body doesn't divide the cycle evenly — one seam per cycle,
+ * the accepted trade for guaranteed phase-lock. Returns the input unchanged for
+ * degenerate args. Pure.
+ * @param {Float32Array[]} channels seamless body, per channel
+ * @param {number} srcFrames body length
+ * @param {number} targetFrames desired cycle length (> srcFrames)
+ * @returns {Float32Array[]} channels of length targetFrames
+ */
+export function tileChannels(channels, srcFrames, targetFrames) {
+  if (!Array.isArray(channels) || !channels.length) return channels;
+  if (!(srcFrames > 0) || !(targetFrames > srcFrames)) return channels;
+  const out = [];
+  for (let c = 0; c < channels.length; c++) {
+    const src = channels[c];
+    const dst = new Float32Array(targetFrames);
+    for (let i = 0; i < targetFrames; i++) dst[i] = src[i % srcFrames];
+    out.push(dst);
+  }
+  return out;
+}
+
+/**
  * Silence everything OUTSIDE [startFrame, endFrame) in place, with linear
  * ramps INSIDE the gate edges so the gate doesn't click. The buffer length
  * is untouched — this is the "Keep timing" trim (mobile SampleTrimmerSheet
@@ -869,14 +896,39 @@ export class PadEngine {
     const oneShotBuffer = this._toAudioBuffer(channels, sr);
     let loopBuffer = null;
     let loopChannels = null;
+    let loopSec = bodyCount / sr;
     if (mayLoop) {
       loopChannels = exactCrossfaded(channels, sr, bodyCount, chooseCrossfadeMs(pad));
+      // Shared-cycle lock: pads with a REAL analyzer loop region (bar-aligned
+      // downbeats) loop over the SAME cycle (loopLengthSeconds = the longest
+      // such region) so stacked latched loops restart together on bar 1 and
+      // stay in unison — a short section repeats INSIDE the cycle instead of
+      // running on its own period and drifting off the others. The longest pad
+      // already fills the cycle (no tiling); shorter bodies tile the seamless
+      // body up, taking one wrap seam per cycle when the body doesn't divide it
+      // evenly — the accepted trade for guaranteed phase-lock. (User: "they
+      // should always play in unison".)
+      //
+      // Gated on a real region: region-less loop pads (borrow-pack loops, whole
+      // buffers) have no shared musical cycle — loopLengthSeconds would fall
+      // back to an arbitrary 8 s lattice, so they keep their own length.
+      const hasRegion = pad.loopStartSec != null && pad.loopEndSec != null;
+      if (hasRegion) {
+        const cycleFrames = Math.max(bodyCount, Math.round(this.loopLengthSeconds * sr));
+        if (cycleFrames > bodyCount) {
+          loopChannels = tileChannels(loopChannels, bodyCount, cycleFrames);
+          loopSec = cycleFrames / sr;
+        }
+      }
       loopBuffer = this._toAudioBuffer(loopChannels, sr);
     }
     return {
       pad,
       sampleRate: sr,
-      bodySec: bodyCount / sr,
+      // bodySec is the LOOP PERIOD (shared cycle for loop pads) — it drives
+      // source.loopEnd and the progress readout, so a shorter loop reports the
+      // full cycle it now repeats within.
+      bodySec: loopSec,
       shiftSec,
       oneShotBuffer,
       oneShotChannels: channels,

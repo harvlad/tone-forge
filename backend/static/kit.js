@@ -776,7 +776,7 @@
     s.ctx = new AC();
 
     var kitP = fetchKitJson(s, entry);
-    var engineP = import("./padengine.js?v=7");
+    var engineP = import("./padengine.js?v=8");
 
     return kitP.then(function (kit) {
       if (!s.alive) return;
@@ -4141,7 +4141,7 @@
           kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
           s.kit = { name: desc.name || manifest.name || "Pack", pads: kitPads };
           s.pads = kitPads;
-          return import("./padengine.js?v=7").then(function (mod) {
+          return import("./padengine.js?v=8").then(function (mod) {
             if (!s.alive) return;
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
             s.dsp = mod;
