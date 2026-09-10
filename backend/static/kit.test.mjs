@@ -415,6 +415,68 @@ const { arrangeBorrowLayout } = K._internals;
   // No two pads collide on the same cell.
   assert.equal(new Set(placements.map((pl) => pl.padIdx)).size, 64, "no cell collisions");
 }
+{
+  // COMPACT (16 = 4×4): the 16/64 toggle must RE-ARRANGE a borrow, not clip it.
+  // best-of-both — top 8 initial + top 8 donor by score, NOT the top 16 rows
+  // (which dropped the donor). 12 + 12 candidates → 8 + 8 selected.
+  const initialPads = Array.from({ length: 12 }, (_, i) => ({
+    padIdx: i, source: "initial", performanceScore: i / 100, // higher idx = better
+  }));
+  const donorPads = Array.from({ length: 12 }, (_, i) => ({
+    padIdx: 100 + i, source: "donor", loopScore: (11 - i) / 100, // lower idx = better
+  }));
+  const src = initialPads.concat(donorPads);
+  const { placements, dividerRow } = arrangeBorrowLayout(src, 4, 4);
+
+  assert.equal(placements.length, 16, "compact fills the 16 grid");
+  assert.equal(dividerRow, -1, "no divider at 16 (no room)");
+
+  const initPlaced = placements.filter((pl) => pl.source === "initial");
+  const donorPlaced = placements.filter((pl) => pl.source === "donor");
+  // BOTH songs survive the shrink — the donor is no longer dropped.
+  assert.equal(initPlaced.length, 8, "8 best initial kept");
+  assert.equal(donorPlaced.length, 8, "8 best donor kept");
+
+  // 8 initial land in idx 0..7, 8 donor in idx 8..15.
+  assert.deepEqual(
+    initPlaced.map((pl) => pl.padIdx).sort((a, b) => a - b),
+    [0, 1, 2, 3, 4, 5, 6, 7], "initial in the top half (idx 0..7)");
+  assert.deepEqual(
+    donorPlaced.map((pl) => pl.padIdx).sort((a, b) => a - b),
+    [8, 9, 10, 11, 12, 13, 14, 15], "donor in the bottom half (idx 8..15)");
+
+  // best-by-score selection: highest-scored 8 initial (source padIdx 4..11)
+  // and highest-scored 8 donor (source padIdx 100..107) survive.
+  assert.deepEqual(
+    initPlaced.map((pl) => pl.pad.padIdx).sort((a, b) => a - b),
+    [4, 5, 6, 7, 8, 9, 10, 11], "the 8 highest-score initial pads selected");
+  assert.deepEqual(
+    donorPlaced.map((pl) => pl.pad.padIdx).sort((a, b) => a - b),
+    [100, 101, 102, 103, 104, 105, 106, 107], "the 8 highest-score donor pads selected");
+
+  // within-block SECTION order preserved (grid idx ascends with source padIdx).
+  const initByGrid = initPlaced.slice().sort((a, b) => a.padIdx - b.padIdx);
+  assert.deepEqual(
+    initByGrid.map((pl) => pl.pad.padIdx),
+    [4, 5, 6, 7, 8, 9, 10, 11], "initial keep section order within the block");
+}
+{
+  // COMPACT underflow: one song short of its half → the other fills the rest by
+  // score, and both stay present (grid never left emptier than needed).
+  const src = [];
+  for (let i = 0; i < 3; i++) src.push({ padIdx: i, source: "initial", loopScore: 0.5 });
+  for (let i = 0; i < 20; i++) src.push({ padIdx: 100 + i, source: "donor", performanceScore: i / 100 });
+  const { placements } = arrangeBorrowLayout(src, 4, 4);
+  const initPlaced = placements.filter((pl) => pl.source === "initial");
+  const donorPlaced = placements.filter((pl) => pl.source === "donor");
+  assert.equal(placements.length, 16, "grid filled despite the short initial block");
+  assert.equal(initPlaced.length, 3, "all 3 initial kept");
+  assert.equal(donorPlaced.length, 13, "donor fills the 13 remaining slots");
+  assert.deepEqual(
+    initPlaced.map((pl) => pl.padIdx).sort((a, b) => a - b),
+    [0, 1, 2], "initial occupy idx 0..2");
+  assert.equal(Math.min(...donorPlaced.map((pl) => pl.padIdx)), 3, "donor starts right after initial");
+}
 
 // Live-capture arrangement (pure). collapseSections merges consecutive
 // same-`type` sections into readable BLOCKS: the analyzer's fine-grained

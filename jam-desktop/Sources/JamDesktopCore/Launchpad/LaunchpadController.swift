@@ -241,6 +241,10 @@ public final class LaunchpadController {
         didSet {
             guard padCount != oldValue else { return }
             if padCount < oldValue { silenceOutOfRange() }
+            // A mounted borrow RE-ARRANGES at the new capacity (16 =
+            // best-of-both, 64 = full) rather than clipping the 64 view and
+            // dropping the donor. Non-borrow grids just repaint.
+            if borrowMounts != nil { applyBorrowLayout(at: padCount) }
             repaint()
         }
     }
@@ -501,6 +505,7 @@ public final class LaunchpadController {
         }
         assignments = next
         borrowSourceLabels = [:]   // a fresh single-song grid drops borrow labels
+        borrowMounts = nil         // …and the toggle stops re-arranging a borrow
         repaint()
     }
 
@@ -521,23 +526,31 @@ public final class LaunchpadController {
         }
         assignments = next
         borrowSourceLabels = [:]
+        borrowMounts = nil
         repaint()
     }
 
-    /// One borrow pad ready to mount: the row-major grid `slot` (0..<64) it
-    /// takes on the 8×8 grid, its (chop, stem), and the source-song label
-    /// shown on the tile ("This song" / the donor's name).
+    /// One borrow pad ready to mount: its (chop, stem), the source-song label
+    /// shown on the tile ("This song" / the donor's name), and which song it
+    /// came from. The GRID SLOT is NOT pre-baked — the controller lays these out
+    /// capacity-aware (`arrangeBorrowLayout`) so the 16/64 toggle can
+    /// re-arrange (16 = best-of-both, 64 = full) instead of clipping.
     public struct BorrowMount: Sendable {
-        public let slot: Int
         public let chop: Chop
         public let stem: String
         public let sourceLabel: String
-        public init(slot: Int, chop: Chop, stem: String, sourceLabel: String) {
-            self.slot = slot
+        public let source: BorrowPadSource
+        public init(
+            chop: Chop, stem: String, sourceLabel: String, source: BorrowPadSource
+        ) {
             self.chop = chop
             self.stem = stem
             self.sourceLabel = sourceLabel
+            self.source = source
         }
+        /// Playable ranking used to pick the best pads for the compact (16)
+        /// grid: performanceScore ?? loopScore ?? 0. Ignored at 64.
+        var score: Double { chop.performanceScore ?? chop.loopScore ?? 0 }
     }
 
     /// Per-pad source-song label for a borrow grid (set only by
@@ -551,31 +564,57 @@ public final class LaunchpadController {
         borrowSourceLabels[pad]
     }
 
-    /// Adopt a BORROW grid: two songs' loops laid out at explicit grid slots
-    /// (`arrangeBorrowLayout`) — current song on top, a blank divider row,
-    /// donor below — each pad carrying a source-song label. Unlike
-    /// `adoptAssignments` (row-major packing from slot 0), slots are honoured
-    /// verbatim so the divider row stays empty. Always the full 64 grid: a
-    /// borrow expands the surface and never shrinks the user back to 16.
+    /// The full set of borrow pads currently mounted (both songs), retained so
+    /// the 16/64 toggle can RE-ARRANGE the grid (`applyBorrowLayout`) instead of
+    /// clipping. nil = no borrow active (cleared by any single-song grid swap).
+    private var borrowMounts: [BorrowMount]?
+
+    /// Adopt a BORROW grid: BOTH songs' loops, each carrying a source-song
+    /// label and source tag. The controller lays them out capacity-aware via
+    /// `arrangeBorrowLayout`, so the mount list is the FULL set (every pad) and
+    /// the grid slot is derived, not pre-baked. A borrow opens on the full 64
+    /// grid (current-on-top / divider / donor-below); the 16/64 toggle then
+    /// re-arranges (16 = best-of-both) rather than hiding the donor.
     public func adoptBorrowAssignments(_ mounts: [BorrowMount]) {
+        borrowMounts = mounts
+        // Borrow opens on the full grid. Setting padCount fires the didSet,
+        // which applies the layout; if already 64 the didSet is a no-op, so lay
+        // it out explicitly here.
+        if padCount == 64 {
+            applyBorrowLayout(at: 64)
+        } else {
+            padCount = 64            // didSet → applyBorrowLayout(at: 64)
+        }
+        repaint()
+    }
+
+    /// (Re)lay the retained borrow mounts onto the grid at `capacity` (16 or
+    /// 64) and repaint. Shared by `adoptBorrowAssignments` (first mount) and the
+    /// `padCount` toggle. 64 = full (initial top / blank divider / donor below);
+    /// 16 = best-of-both (top 8 of each song). Preserves each pad's source-song
+    /// label and source tint across the re-arrangement.
+    private func applyBorrowLayout(at capacity: Int) {
+        guard let mounts = borrowMounts else { return }
         // Kill every sounding voice BEFORE the assignment map changes — a
         // looping pad would otherwise ring on with no pad able to stop it.
         onStopAllVoices?()
         activePads.removeAll()
+        let cols = capacity == 16 ? 4 : 8
+        let rows = capacity == 16 ? 4 : 8
+        let refs = mounts.map {
+            BorrowPadRef(padIdx: $0.chop.idx, source: $0.source, score: $0.score)
+        }
+        let layout = arrangeBorrowLayout(refs, cols: cols, rows: rows)
         var next: [LaunchpadPad: PadAssignment] = [:]
         var labels: [LaunchpadPad: String] = [:]
-        for mount in mounts where (0..<64).contains(mount.slot) {
-            let pad = LaunchpadPad(row: mount.slot / 8, col: mount.slot % 8)
+        for pl in layout.placements where (0..<64).contains(pl.gridSlot) {
+            let mount = mounts[pl.inputIndex]
+            let pad = LaunchpadPad(row: pl.gridSlot / 8, col: pl.gridSlot % 8)
             next[pad] = PadAssignment(chop: mount.chop, stem: mount.stem)
             labels[pad] = mount.sourceLabel
         }
         assignments = next
         borrowSourceLabels = labels
-        // Borrow is a 64-grid feature (current + donor + divider); expand and
-        // never leave the user on a 16 grid that would hide donor pads. The
-        // didSet is a no-op when already 64.
-        padCount = 64
-        repaint()
     }
 
     /// Fetch and adopt a different (stem, sliceMode) chop set.

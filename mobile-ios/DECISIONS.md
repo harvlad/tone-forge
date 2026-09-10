@@ -1170,3 +1170,40 @@ the clean tree too), so verification is the iOS-simulator build:
 Simulator,name=iPhone 17 Pro'` → BUILD SUCCEEDED. Shared runtime stays pinned
 by ArrangementTests (18/18, D-030).
 
+
+## D-032 — Borrow pad toggle re-arranges (16 = best-of-both), never drops a song
+
+**Failure mode.** A borrow ("Add from another song") lays BOTH songs onto the
+64 grid (host top / blank divider / donor below). Toggling the Launchpad to 16
+pads swapped to the 4×4 quadrant showing only padIdx < 16 — the donor lived
+below the fold, so the borrowed song disappeared from the compact grid.
+
+**Fix.** `SampleBank.arrangeBorrowLayout` (ToneForgeEngine, the launchpad.js /
+kit.js twin) is now CAPACITY-aware via `cols`×`rows`. At ≥ 64 the full/divider
+path is unchanged. Below 64 (4×4 16) it does BEST-OF-BOTH: the top
+`capacity/2` = 8 pads of EACH song by score (performanceScore ?? loopScore ?? 0,
+padIdx tie-break), initial at padIdx 0..7, donor at 8..15, section order kept
+within each block, no divider; a short song lets the other fill the remainder.
+
+**Toggle re-arranges, not clips.** `AppState` retains the raw fetched borrow
+(`activeBorrowContext`); the JamView 16/64 chip calls `relayoutActiveBorrow(
+capacity:)`, which re-arranges at the new capacity and re-activates — reusing
+the disk-cached samples, no re-download. `activateSamplePack` clears the context
+for any non-borrow pack (the borrow's own re-laid pack keeps its `source` tags,
+so a re-lay doesn't clear itself). `ModeCoordinator+Layout` paints a compact
+(16) borrow in the 4×4 bottom-left quadrant (padIdx 0..15) instead of the full
+8×8 top-origin mapping; the amber/blue tint + per-pad source label survive.
+
+**Where:** `ToneForgeEngine/SampleBank.swift#arrangeBorrowLayout`,
+`ToneForgeMobile/ToneForgeApp.swift` (`activeBorrowContext`, `hasActiveBorrow`,
+`relayoutActiveBorrow`, `loadBorrowLoops`, `activateSamplePack` clear),
+`Views/Jam/JamView.swift` (size chip), `Contribution/ModeCoordinator+Layout.swift`
+(compact-borrow mapping). Pinned by
+`Tests/ToneForgeEngineTests/BorrowLayoutTests.swift` (compact best-of-both +
+underflow). Verified via the ToneForgeMobileApp scheme on the iPhone 17 Pro
+simulator (host `swift test` is pre-existingly broken by iOS-only views).
+Web/desktop twins land in the same change.
+
+**Alternatives:** clip to the best 16 by score regardless of source (rejected —
+a strong host erases the donor, the bug); re-fetch on toggle (rejected — cached
+samples re-lay with zero network).

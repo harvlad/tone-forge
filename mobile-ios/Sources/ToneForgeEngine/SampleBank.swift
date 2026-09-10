@@ -297,29 +297,68 @@ public final class SampleBank: @unchecked Sendable {
         let isBorrow = pack.pads.contains { $0.source == "donor" || $0.source == "initial" }
         guard isBorrow else { return pack }
 
-        // Keep the backend's within-block section order (Verse, Chorus, …).
-        initial.sort { $0.padIdx < $1.padIdx }
-        donor.sort { $0.padIdx < $1.padIdx }
-
-        let initialRows = Int((Double(initial.count) / Double(cols)).rounded(.up))
-        let donorRows = Int((Double(donor.count) / Double(cols)).rounded(.up))
-        // Blank divider row between the two songs — only when the grid has
-        // room. A full 32 + 32 borrow fills all 64 cells, so drop the divider
-        // (and pack the donor block flush) rather than lose donor pads.
-        let wantDivider = !initial.isEmpty && !donor.isEmpty
-            && (initialRows + 1 + donorRows) <= rows
-        let donorBase = wantDivider ? (initialRows + 1) * cols : initial.count
-
+        let capacity = max(1, cols) * max(1, rows)   // 64 (8×8) or 16 (4×4)
         let hostLabel = (hostName?.isEmpty == false) ? hostName! : "This song"
         let donorLabel = (donorName?.isEmpty == false) ? donorName! : "Borrowed"
+        func score(_ p: SamplePad) -> Double {
+            p.performanceScore ?? p.loopScore ?? 0
+        }
 
         var out: [SamplePad] = []
-        out.reserveCapacity(initial.count + donor.count)
-        for (i, pad) in initial.enumerated() {
-            out.append(pad.relocated(padIdx: i, sourceName: hostLabel))
-        }
-        for (i, pad) in donor.enumerated() {
-            out.append(pad.relocated(padIdx: donorBase + i, sourceName: donorLabel))
+        if capacity >= 64 {
+            // FULL layout — initial top, blank divider, donor below (unchanged).
+            // Keep the backend's within-block section order (Verse, Chorus, …).
+            initial.sort { $0.padIdx < $1.padIdx }
+            donor.sort { $0.padIdx < $1.padIdx }
+            let initialRows = Int((Double(initial.count) / Double(cols)).rounded(.up))
+            let donorRows = Int((Double(donor.count) / Double(cols)).rounded(.up))
+            // Blank divider row between the two songs — only when the grid has
+            // room. A full 32 + 32 borrow fills all 64 cells, so drop the
+            // divider (and pack the donor block flush) rather than lose pads.
+            let wantDivider = !initial.isEmpty && !donor.isEmpty
+                && (initialRows + 1 + donorRows) <= rows
+            let donorBase = wantDivider ? (initialRows + 1) * cols : initial.count
+            out.reserveCapacity(initial.count + donor.count)
+            for (i, pad) in initial.enumerated() {
+                out.append(pad.relocated(padIdx: i, sourceName: hostLabel))
+            }
+            for (i, pad) in donor.enumerated() {
+                out.append(pad.relocated(padIdx: donorBase + i, sourceName: donorLabel))
+            }
+        } else {
+            // COMPACT (16): best `capacity/2` of each song by score, initial
+            // block then donor — so BOTH songs survive the shrink instead of the
+            // donor (which lived below the fold) being dropped entirely.
+            let perSong = capacity / 2
+            // Rank by score desc, padIdx asc as a stable tie-break.
+            let byScore: (SamplePad, SamplePad) -> Bool = {
+                score($0) != score($1) ? score($0) > score($1) : $0.padIdx < $1.padIdx
+            }
+            let initByScore = initial.sorted(by: byScore)
+            let donByScore = donor.sorted(by: byScore)
+            var initialTake = min(initial.count, perSong)
+            var donorTake = min(donor.count, perSong)
+            // One song short of its half? Let the other fill the leftover by
+            // score, so the grid isn't left emptier than needed (initial first).
+            var leftover = capacity - initialTake - donorTake
+            if leftover > 0 {
+                let add = min(leftover, initial.count - initialTake)
+                initialTake += add; leftover -= add
+            }
+            if leftover > 0 {
+                let add = min(leftover, donor.count - donorTake)
+                donorTake += add; leftover -= add
+            }
+            // Take top-N by score, then restore section order within each block.
+            let initialSel = initByScore.prefix(initialTake).sorted { $0.padIdx < $1.padIdx }
+            let donorSel = donByScore.prefix(donorTake).sorted { $0.padIdx < $1.padIdx }
+            out.reserveCapacity(initialTake + donorTake)
+            for (i, pad) in initialSel.enumerated() {
+                out.append(pad.relocated(padIdx: i, sourceName: hostLabel))
+            }
+            for (i, pad) in donorSel.enumerated() {
+                out.append(pad.relocated(padIdx: initialTake + i, sourceName: donorLabel))
+            }
         }
         return SamplePack(
             manifestVersion: pack.manifestVersion, packId: pack.packId,

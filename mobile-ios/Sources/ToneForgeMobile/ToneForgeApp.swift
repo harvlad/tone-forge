@@ -1536,6 +1536,14 @@ public final class AppState: ObservableObject {
         // during the short decode window fall back to padNotFound
         // silence; revisits are already resident and trigger instantly.
         activeSamplePack = pack
+        // A non-borrow pack ends any active borrow, so the pad toggle stops
+        // re-arranging a stale borrow. A borrow's own re-arranged pack keeps its
+        // source tags, so relayoutActiveBorrow doesn't clear its own context.
+        if !pack.pack.pads.contains(where: {
+            $0.source == "donor" || $0.source == "initial"
+        }) {
+            activeBorrowContext = nil
+        }
         sampleSettings.currentPackId = pack.pack.packId
         // Remember packs chosen while song-less ("sketching", D-016)
         // separately so sketch-layer metadata can name them.
@@ -2501,6 +2509,41 @@ public final class AppState: ObservableObject {
 
     @Published public private(set) var borrowBusyDonor: String?
 
+    /// Retained borrow context (the raw fetched pack + song names + stem files)
+    /// so the 16/64 pad toggle can RE-ARRANGE a borrow (16 = best-of-both, 64 =
+    /// full) instead of the 4×4 clipping to the top rows and dropping the donor.
+    /// nil = no borrow active; cleared when a non-borrow pack is activated.
+    private var activeBorrowContext: BorrowContext?
+    private struct BorrowContext {
+        let fetched: SamplePack
+        let base: URL
+        let stems: [String: URL]
+        let hostName: String?
+        let donorName: String
+    }
+    /// True while a borrow is mounted — drives the JamView size toggle to
+    /// re-arrange rather than clip.
+    public var hasActiveBorrow: Bool { activeBorrowContext != nil }
+
+    /// Re-arrange the active borrow for a new pad-grid capacity (16 or 64) and
+    /// re-activate. 16 = best-of-both (top 8 of each song by score); 64 = full
+    /// (current-on-top / divider / donor-below). Reuses the already-downloaded,
+    /// disk-cached samples — no re-fetch of audio.
+    @MainActor
+    public func relayoutActiveBorrow(capacity: Int) async {
+        guard let ctx = activeBorrowContext else { return }
+        let cols = capacity == 16 ? 4 : 8
+        let rows = capacity == 16 ? 4 : 8
+        let pack = SampleBank.arrangeBorrowLayout(
+            ctx.fetched, hostName: ctx.hostName, donorName: ctx.donorName,
+            cols: cols, rows: rows)
+        let files = await Self.downloadKitSamples(pack: pack, base: ctx.base)
+        guard !files.isEmpty else { return }
+        let resolved = SampleBank.autoKit(pack, padFileURLs: files)
+        await sampleScheduler.preloadPackAsync(resolved, stemFiles: ctx.stems)
+        activateSamplePack(resolved, stemFiles: ctx.stems)
+    }
+
     public func fetchBorrowCandidates(stem: String) async -> [BorrowCandidate] {
         guard let analysisId = currentBundle?.analysisId else { return [] }
         // Session on → conform candidates to the target; off → nil params,
@@ -2540,18 +2583,28 @@ public final class AppState: ObservableObject {
                 // this is safe unconditionally. Re-lay BEFORE downloading so
                 // the file map keys off the final padIdx. Stamp the donor's
                 // display name (backend names the pack "<donor> · kit").
+                let donorLabel = Self.borrowDonorName(fetched.name)
+                // Open on the full 8×8 so the divider + donor rows are visible.
                 let pack = SampleBank.arrangeBorrowLayout(
-                    fetched, hostName: hostName,
-                    donorName: Self.borrowDonorName(fetched.name))
+                    fetched, hostName: hostName, donorName: donorLabel,
+                    cols: 8, rows: 8)
                 let files = await Self.downloadKitSamples(pack: pack, base: base)
                 guard !files.isEmpty else {
                     self.remixError = "Borrowed loops didn't download."
                     return
                 }
                 guard self.currentBundle?.analysisId == analysisId else { return }
-                // Keep the surface on the full 8×8 so the divider + donor rows
-                // are visible (mirrors web's "stay in 64 — never shrink to
-                // 16"). The 16|64 toggle still works; this only nudges it up.
+                // Retain the raw borrow so the 16/64 toggle can RE-ARRANGE (16 =
+                // best-of-both) instead of the 4×4 clipping to the top rows and
+                // dropping the donor. Set BEFORE activateSamplePack, which keeps
+                // the context for a borrow pack (source-tagged) and clears it for
+                // any other pack.
+                self.activeBorrowContext = BorrowContext(
+                    fetched: fetched, base: base, stems: stems,
+                    hostName: hostName, donorName: donorLabel)
+                // Keep the surface on the full 8×8 (mirrors web's "stay in 64 —
+                // never shrink to 16"). The 16|64 toggle still works and now
+                // re-arranges the borrow; this only nudges it up on load.
                 if self.jamSettings.launchpadPadCount != 64 {
                     self.jamSettings.launchpadPadCount = 64
                 }

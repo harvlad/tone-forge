@@ -1753,6 +1753,9 @@
       if (window.localStorage) window.localStorage.setItem("jamn.kit.pads", String(n));
     } catch (_) {}
     syncPadCountUi(s);
+    // A mounted borrow re-ARRANGES at the new capacity (16 = best-of-both, 64 =
+    // full) rather than reloading a song kit — reuses decoded buffers.
+    if (s.borrowSrc) { layoutBorrowPads(s); return; }
     reloadKit(s);
   }
 
@@ -3982,21 +3985,33 @@
     } catch (_) {}
   }
 
-  /** Borrow layout (PURE). A borrow manifest carries BOTH songs' loop pads,
-   * each tagged by `source` ("initial" = the current song, "donor" = the
-   * borrowed song). Packed 0..N by the backend they read as one undivided
-   * block, so re-lay them on the 8-wide 64 grid: the current song's pads fill
-   * the TOP rows, a full BLANK row divides, then the donor's pads start on the
-   * next FULL row. Additive — every source pad is placed (none dropped) and the
-   * grid stays 64.
+  /** Borrow layout (PURE), CAPACITY-AWARE. A borrow manifest carries BOTH
+   * songs' loop pads, each tagged by `source` ("initial" = the current song,
+   * "donor" = the borrowed song). `cols`×`rows` is the TARGET grid capacity:
+   * 8×8 (64) for the full grid, 4×4 (16) for the compact one.
    *
-   * Returns { placements: [{pad, padIdx, source}], dividerRow }. When both
-   * blocks plus a divider can't fit 64 (a rare full 4-stem borrow = 32 + 32),
-   * the divider is dropped (dividerRow -1) and the donor block is packed
-   * straight after the initial one so no pad is ever pushed off the grid. */
-  function arrangeBorrowLayout(pads, cols) {
+   *   • FULL (capacity ≥ 64): unchanged — the current song's pads fill the TOP
+   *     rows, a full BLANK divider row, then the donor's pads start on the next
+   *     FULL row. Additive (no pad dropped). When both blocks plus a divider
+   *     can't fit 64 (a full 32 + 32 borrow) the divider is dropped
+   *     (dividerRow -1) and the donor block is packed flush after the initial.
+   *
+   *   • COMPACT (capacity < 64, i.e. 16): BEST-OF-BOTH. No room to show
+   *     everything, so take the best `capacity/2` initial pads AND the best
+   *     `capacity/2` donor pads by score (padScore: performanceScore ??
+   *     loopScore ?? 0), lay the initial block from idx 0 and the donor block
+   *     right after it — so BOTH songs stay on the grid. The bug this fixes was
+   *     16-mode showing only the top rows (idx < 16) and dropping the donor,
+   *     which lived below the fold, entirely. If one song has fewer than
+   *     `capacity/2`, the other fills the remainder by score (grid never left
+   *     emptier than needed). Within each block, pads keep section order
+   *     (padIdx) so labels read Verse, Chorus, … No divider at 16 (no room).
+   *
+   * Returns { placements: [{pad, padIdx, source}], dividerRow }. */
+  function arrangeBorrowLayout(pads, cols, rows) {
     cols = cols || 8;
-    var rows = 8;                       // 8×8 launchpad grid = 64 cells
+    rows = rows || 8;
+    var capacity = cols * rows;         // 64 (8×8) or 16 (4×4)
     var initial = [];
     var donor = [];
     (pads || []).forEach(function (p) {
@@ -4006,25 +4021,116 @@
     });
     // Keep the backend's within-block section order (Verse, Chorus, …).
     var byIdx = function (a, b) { return (a.padIdx || 0) - (b.padIdx || 0); };
-    initial.sort(byIdx);
-    donor.sort(byIdx);
-    var initialRows = Math.ceil(initial.length / cols);
-    var donorRows = Math.ceil(donor.length / cols);
-    // Blank divider row between the two songs — only when the grid has room. A
-    // full 32 + 32 borrow fills all 64 cells, so drop the divider (and pack the
-    // donor block flush after the initial pads) rather than lose donor pads.
-    var wantDivider = initial.length > 0 && donor.length > 0 &&
-      (initialRows + 1 + donorRows) <= rows;
-    var dividerRow = wantDivider ? initialRows : -1;
-    var donorBase = wantDivider ? (initialRows + 1) * cols : initial.length;
-    var placements = [];
-    initial.forEach(function (p, i) {
-      placements.push({ pad: p, padIdx: i, source: "initial" });
+    // Best-first ranking (native `??` chain), padIdx as a stable tie-break.
+    var byScore = function (a, b) {
+      var d = padScore(b) - padScore(a);
+      return d !== 0 ? d : (a.padIdx || 0) - (b.padIdx || 0);
+    };
+
+    if (capacity >= 64) {
+      // FULL layout — initial top, blank divider, donor below (unchanged).
+      initial.sort(byIdx);
+      donor.sort(byIdx);
+      var initialRows = Math.ceil(initial.length / cols);
+      var donorRows = Math.ceil(donor.length / cols);
+      var wantDivider = initial.length > 0 && donor.length > 0 &&
+        (initialRows + 1 + donorRows) <= rows;
+      var dividerRow = wantDivider ? initialRows : -1;
+      var donorBase = wantDivider ? (initialRows + 1) * cols : initial.length;
+      var placements = [];
+      initial.forEach(function (p, i) {
+        placements.push({ pad: p, padIdx: i, source: "initial" });
+      });
+      donor.forEach(function (p, i) {
+        placements.push({ pad: p, padIdx: donorBase + i, source: "donor" });
+      });
+      return { placements: placements, dividerRow: dividerRow };
+    }
+
+    // COMPACT (16): best `capacity/2` of each song, initial block then donor.
+    var perSong = Math.floor(capacity / 2);
+    var initByScore = initial.slice().sort(byScore);
+    var donByScore = donor.slice().sort(byScore);
+    var initialTake = Math.min(initial.length, perSong);
+    var donorTake = Math.min(donor.length, perSong);
+    // One song short of its half? Let the other fill the leftover by score, so
+    // the grid isn't left emptier than it needs to be (initial fills first).
+    var leftover = capacity - initialTake - donorTake;
+    if (leftover > 0) {
+      var addI = Math.min(leftover, initial.length - initialTake);
+      initialTake += addI; leftover -= addI;
+    }
+    if (leftover > 0) {
+      var addD = Math.min(leftover, donor.length - donorTake);
+      donorTake += addD; leftover -= addD;
+    }
+    // Take the top-N by score, then restore section order within each block.
+    var initialSel = initByScore.slice(0, initialTake).sort(byIdx);
+    var donorSel = donByScore.slice(0, donorTake).sort(byIdx);
+    var compact = [];
+    initialSel.forEach(function (p, i) {
+      compact.push({ pad: p, padIdx: i, source: "initial" });
     });
-    donor.forEach(function (p, i) {
-      placements.push({ pad: p, padIdx: donorBase + i, source: "donor" });
+    donorSel.forEach(function (p, i) {
+      compact.push({ pad: p, padIdx: initialTake + i, source: "donor" });
     });
-    return { placements: placements, dividerRow: dividerRow };
+    return { placements: compact, dividerRow: -1 };
+  }
+
+  /** (Re)lay the mounted BORROW pads at the current s.padCount (16 or 64) and
+   * repaint — shared by mountPack (first paint) and setPadCount (the 16/64
+   * toggle) so switching size RE-ARRANGES a borrow (16 = best-of-both, 64 =
+   * full) instead of clipping the 64 view and dropping the donor. Reuses the
+   * already-decoded buffers in s.borrowSrc.items — no re-fetch. */
+  function layoutBorrowPads(s, opts) {
+    opts = opts || {};
+    var src = s.borrowSrc;
+    if (!src || !s.engine) return;
+    if (!opts.first) {
+      try { if (can(s.engine, "stopAll")) s.engine.stopAll(); } catch (_) {}
+      s.fb.startedAt = {};             // padIdx keys change meaning on re-lay
+    }
+    var n = s.padCount === 64 ? 64 : 16;
+    var cols = n === 64 ? 8 : 4;
+    var rows = n === 64 ? 8 : 4;
+    // Arranger input carries the source tag + score so the compact (16) view
+    // can pick the best of EACH song; _bm links back to the decoded buffer.
+    var refPads = src.items.map(function (bm) {
+      return {
+        _bm: bm,
+        source: bm.pad.source,
+        padIdx: typeof bm.pad.padIdx === "number" ? bm.pad.padIdx : 0,
+        performanceScore: bm.pad.performanceScore,
+        loopScore: bm.pad.loopScore,
+      };
+    });
+    var lay = arrangeBorrowLayout(refPads, cols, rows);
+    var kitPads = lay.placements.map(function (pl) {
+      var bm = pl.pad._bm;
+      var p = bm.meta;
+      return {
+        padIdx: pl.padIdx,
+        name: p.name || ("Pad " + (pl.padIdx + 1)),
+        colorHint: p.colorHint || src.paletteHint || null,
+        // Per-pad source-song label (blue = current song, amber = donor).
+        sourceName: pl.source === "donor" ? src.donorName : src.hostName,
+        stemSlice: { stemRole: bm.role, startSec: 0, endSec: bm.buf.duration },
+        loopable: !!p.loopable,
+      };
+    });
+    kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
+    s.kit = { name: src.name, pads: kitPads };
+    s.pads = kitPads;
+    var tempo = opts.tempoBpm != null ? opts.tempoBpm : (src.tempoBpm || 0);
+    s.engine.setKit(s.kit, { tempoBpm: tempo });
+    return Promise.resolve(s.engine.prepare()).then(function () {
+      if (!s.alive) return;
+      applyStoredFx(s);
+      attachEngineState(s);
+      renderPads(s);
+      startRaf(s);
+      if (s.statusEl) s.statusEl.textContent = "";
+    });
   }
 
   /** Mount a curated sample pack (/api/sample-packs/{packId}) onto the pad
@@ -4083,35 +4189,23 @@
         var pads = (manifest && manifest.pads) || [];
         if (!pads.length) throw new Error("pack has no pads");
         // Borrow manifest? Its pads are source-tagged ("initial"/"donor") and
-        // hold BOTH songs. Re-lay them on the 8×8 grid (current song on top, a
-        // blank divider row, donor below) and — critically — keep the surface
-        // at 64 instead of reverting the user to a 16 grid that would REPLACE
-        // their pads. Non-borrow packs keep their native padIdx + 16 grid.
+        // hold BOTH songs. Decode each source pad into a STABLE stem role
+        // ("src"+manifestIndex) and defer grid placement to layoutBorrowPads so
+        // the 16/64 toggle RE-ARRANGES the borrow (16 = best-of-both, 64 = full
+        // current-on-top / divider / donor-below) WITHOUT re-decoding audio.
+        // The old code laid the borrow at 64 only, so 16-mode clipped to the top
+        // rows and dropped the donor. Non-borrow packs keep native padIdx + 16.
         var isBorrow = pads.some(function (p) {
           return p && (p.source === "donor" || p.source === "initial");
         });
-        var borrowMap = null;
-        if (isBorrow) {
-          var lay = arrangeBorrowLayout(pads, 8);
-          borrowMap = new Map();
-          lay.placements.forEach(function (pl) {
-            borrowMap.set(pl.pad, {
-              padIdx: pl.padIdx,
-              // Per-pad source-song label: the current song's name for the
-              // initial (blue) pads, the donor's for the borrowed (amber) ones.
-              sourceName: pl.source === "donor"
-                ? (desc.borrowDonorName || "Borrowed")
-                : (desc.borrowHostName || "This song"),
-            });
-          });
-          s.padCount = 64;             // stay in 64 — never shrink to 16
-        }
+        if (isBorrow) s.padCount = 64;   // borrow opens on the full grid
         var stems = {};
         var kitPads = [];
+        var borrowMeta = isBorrow ? [] : null;
         var loads = pads.map(function (p, i) {
-          var place = borrowMap && borrowMap.get(p);
-          var idx = place ? place.padIdx
+          var idx = isBorrow ? i
             : (typeof p.padIdx === "number" ? p.padIdx : i);
+          var role = isBorrow ? ("src" + i) : ("pad" + idx);
           var fname = p.sampleFile || p.file || p.sampleUrl || p.filename;
           if (!fname) return null;
           var url = /^https?:|^\//.test(fname)
@@ -4122,25 +4216,26 @@
             .then(function (r) { return r.ok ? r.arrayBuffer() : Promise.reject(new Error("pad HTTP " + r.status)); })
             .then(function (b) { return s.ctx.decodeAudioData(b); })
             .then(function (buf) {
-              var role = "pad" + idx;
               stems[role] = buf;
-              kitPads.push({
-                padIdx: idx,
-                name: p.name || ("Pad " + (idx + 1)),
-                colorHint: p.colorHint || desc.paletteHint || null,
-                sourceName: place ? place.sourceName : null,
-                stemSlice: { stemRole: role, startSec: 0, endSec: buf.duration },
-                loopable: !!p.loopable,
-              });
+              if (isBorrow) {
+                // Keep the raw source pad (source tag + score) linked to its
+                // decoded buffer so layoutBorrowPads can re-place it on toggle.
+                borrowMeta.push({ pad: p, meta: p, role: role, buf: buf });
+              } else {
+                kitPads.push({
+                  padIdx: idx,
+                  name: p.name || ("Pad " + (idx + 1)),
+                  colorHint: p.colorHint || desc.paletteHint || null,
+                  sourceName: null,
+                  stemSlice: { stemRole: role, startSec: 0, endSec: buf.duration },
+                  loopable: !!p.loopable,
+                });
+              }
             })
             .catch(function () { return null; });
         });
         return Promise.all(loads).then(function () {
           if (!s.alive) return;
-          if (!kitPads.length) throw new Error("no pack pads decoded");
-          kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
-          s.kit = { name: desc.name || manifest.name || "Pack", pads: kitPads };
-          s.pads = kitPads;
           return import("./padengine.js?v=8").then(function (mod) {
             if (!s.alive) return;
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
@@ -4148,6 +4243,23 @@
             s.stems = stems;
             s.engine = new PadEngine(s.ctx, s.ctx.destination);
             s.engine.setStems(stems);
+            if (isBorrow) {
+              if (!borrowMeta.length) throw new Error("no borrow pads decoded");
+              s.borrowSrc = {
+                items: borrowMeta,
+                name: desc.name || manifest.name || "Pack",
+                hostName: desc.borrowHostName || "This song",
+                donorName: desc.borrowDonorName || "Borrowed",
+                paletteHint: desc.paletteHint || null,
+                tempoBpm: manifest.tempoBpm || 0,
+              };
+              // First paint at the current pad count (64 on open).
+              return layoutBorrowPads(s, { first: true });
+            }
+            if (!kitPads.length) throw new Error("no pack pads decoded");
+            kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
+            s.kit = { name: desc.name || manifest.name || "Pack", pads: kitPads };
+            s.pads = kitPads;
             s.engine.setKit(s.kit, { tempoBpm: manifest.tempoBpm || 0 });
             return Promise.resolve(s.engine.prepare()).then(function () {
               if (!s.alive) return;

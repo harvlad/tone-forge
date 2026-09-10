@@ -394,6 +394,12 @@ struct JamView: View {
                     guard jamSettings.launchpadPadCount != count else { return }
                     Haptics.selectionChanged()
                     jamSettings.launchpadPadCount = count
+                    // A mounted borrow RE-ARRANGES at the new capacity (16 =
+                    // best-of-both, 64 = full) so switching size never drops a
+                    // song — web/desktop parity (kit.js layoutBorrowPads).
+                    if appState.hasActiveBorrow {
+                        Task { await appState.relayoutActiveBorrow(capacity: count) }
+                    }
                 } label: {
                     Text("\(count)")
                         .tfChip(active: jamSettings.launchpadPadCount == count)

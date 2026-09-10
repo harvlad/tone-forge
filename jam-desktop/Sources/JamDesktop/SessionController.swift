@@ -1317,16 +1317,11 @@ final class SessionController: ObservableObject {
             drumKitSampleFiles = files
 
             // Only pads whose sample downloaded can mount. Keep their backend
-            // padIdx (drumKitSampleFiles is keyed on it) but re-lay them onto
-            // the 64 grid via the shared arranger.
+            // padIdx (drumKitSampleFiles is keyed on it) and their source tag +
+            // score; the controller lays them out capacity-aware so the 16/64
+            // toggle re-arranges (16 = best-of-both) instead of dropping a song.
             let mountable = pack.pads.filter { files[$0.padIdx] != nil }
             guard !mountable.isEmpty else { return }
-            let refs = mountable.map { pad in
-                BorrowPadRef(
-                    padIdx: pad.padIdx,
-                    source: sources[pad.padIdx] == .donor ? .donor : .initial)
-            }
-            let layout = arrangeBorrowLayout(refs, cols: 8)
 
             // Source-song labels: the current song for `initial` (blue) pads,
             // the donor for `donor` (amber) ones.
@@ -1334,9 +1329,10 @@ final class SessionController: ObservableObject {
             let donorLabel = donorName ?? Self.strippedBorrowName(pack.name)
 
             var mounts: [LaunchpadController.BorrowMount] = []
-            for pl in layout.placements {
-                let pad = mountable[pl.inputIndex]
+            for pad in mountable {
                 guard let url = files[pad.padIdx] else { continue }
+                let source: BorrowPadSource =
+                    sources[pad.padIdx] == .donor ? .donor : .initial
                 // Real loop length so the pad's WAVEFORM draws the whole loop.
                 // The file path plays the whole file regardless of the chop
                 // window; endSec/durationSec only frame the thumbnail, and the
@@ -1344,16 +1340,20 @@ final class SessionController: ObservableObject {
                 // flat line. Header read, cheap.
                 let dur: Double = (try? AVAudioFile(forReading: url)).map {
                     Double($0.length) / $0.processingFormat.sampleRate } ?? 0.5
+                // performanceScore (when the backend supplies it) ranks pads for
+                // the compact grid; loopScore stays 1.0 so the seam crossfade is
+                // unchanged from before.
                 let chop = Chop(
                     idx: pad.padIdx, startSec: 0, endSec: dur, durationSec: dur,
                     kind: "phrase", sectionLabel: pad.name,
                     colorHint: pad.colorHint, contentType: nil,
-                    performanceScore: nil, difficulty: nil,
+                    performanceScore: pad.performanceScore, difficulty: nil,
                     loopable: true, loopScore: 1.0, crossfadeMs: nil,
                     assetId: "borrowfile:\(pad.padIdx)")
                 mounts.append(.init(
-                    slot: pl.gridSlot, chop: chop, stem: "drums",
-                    sourceLabel: pl.source == .donor ? donorLabel : hostName))
+                    chop: chop, stem: "drums",
+                    sourceLabel: source == .donor ? donorLabel : hostName,
+                    source: source))
             }
             guard !mounts.isEmpty else { return }
             launchpad.playbackMode = .loop      // borrow pads are loops

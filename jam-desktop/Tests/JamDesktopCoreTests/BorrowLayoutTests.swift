@@ -107,7 +107,67 @@ final class BorrowLayoutTests: XCTestCase {
         XCTAssertEqual(layout.placements.map(\.gridSlot).sorted(), Array(0..<4))
     }
 
-    // MARK: - Controller: mount at slots, labels, forced 64 grid.
+    // MARK: - Compact (16 = 4×4): best-of-both, never drop a song.
+
+    /// Score-carrying refs: initial padIdx `i` scores `i` (higher idx = better),
+    /// donor padIdx `100+i` scores `11-i` (lower idx = better).
+    private func scoredRefs(initial: Int, donor: Int) -> [BorrowPadRef] {
+        var out: [BorrowPadRef] = []
+        for i in 0..<initial {
+            out.append(.init(padIdx: i, source: .initial, score: Double(i)))
+        }
+        for i in 0..<donor {
+            out.append(.init(padIdx: 100 + i, source: .donor, score: Double(11 - i)))
+        }
+        return out
+    }
+
+    func testCompactBestOfBoth() {
+        // 12 + 12 candidates, 4×4 = 16 slots → keep the best 8 of EACH song.
+        let layout = arrangeBorrowLayout(scoredRefs(initial: 12, donor: 12),
+                                         cols: 4, rows: 4)
+        XCTAssertEqual(layout.dividerRow, -1, "no divider at 16")
+        XCTAssertEqual(layout.placements.count, 16)
+
+        let initial = layout.placements.filter { $0.source == .initial }
+        let donor = layout.placements.filter { $0.source == .donor }
+        // BOTH songs survive the shrink — the donor is no longer dropped.
+        XCTAssertEqual(initial.count, 8)
+        XCTAssertEqual(donor.count, 8)
+        // 8 initial in idx 0..7, 8 donor in idx 8..15.
+        XCTAssertEqual(initial.map(\.gridSlot).sorted(), Array(0..<8))
+        XCTAssertEqual(donor.map(\.gridSlot).sorted(), Array(8..<16))
+
+        // best-by-score selection: highest-scored 8 initial = source padIdx
+        // 4..11; highest-scored 8 donor = source padIdx 100..107.
+        let input = scoredRefs(initial: 12, donor: 12)
+        XCTAssertEqual(initial.map { input[$0.inputIndex].padIdx }.sorted(),
+                       Array(4..<12))
+        XCTAssertEqual(donor.map { input[$0.inputIndex].padIdx }.sorted(),
+                       Array(100..<108))
+        // within-block section order preserved (grid slot ascends with padIdx).
+        let initBySlot = initial.sorted { $0.gridSlot < $1.gridSlot }
+        XCTAssertEqual(initBySlot.map { input[$0.inputIndex].padIdx },
+                       Array(4..<12))
+    }
+
+    func testCompactUnderflowOtherSongFills() {
+        // 3 initial + 20 donor at 16: initial keeps all 3, donor fills the 13
+        // remaining slots — grid never left emptier than needed, both present.
+        var input: [BorrowPadRef] = []
+        for i in 0..<3 { input.append(.init(padIdx: i, source: .initial, score: 1)) }
+        for i in 0..<20 { input.append(.init(padIdx: 100 + i, source: .donor, score: Double(i))) }
+        let layout = arrangeBorrowLayout(input, cols: 4, rows: 4)
+        let initial = layout.placements.filter { $0.source == .initial }
+        let donor = layout.placements.filter { $0.source == .donor }
+        XCTAssertEqual(layout.placements.count, 16, "grid filled")
+        XCTAssertEqual(initial.count, 3)
+        XCTAssertEqual(donor.count, 13)
+        XCTAssertEqual(initial.map(\.gridSlot).sorted(), Array(0..<3))
+        XCTAssertEqual(donor.map(\.gridSlot).min(), 3, "donor starts after initial")
+    }
+
+    // MARK: - Controller: mount, labels, force 64, re-arrange on toggle.
 
     @MainActor
     func testAdoptBorrowAssignmentsPlacesLabelsAndForces64() {
@@ -116,8 +176,8 @@ final class BorrowLayoutTests: XCTestCase {
         let chop = Chop(idx: 0, startSec: 0, endSec: 1, durationSec: 1,
                         kind: "phrase")
         lp.adoptBorrowAssignments([
-            .init(slot: 0, chop: chop, stem: "drums", sourceLabel: "My Song"),
-            .init(slot: 16, chop: chop, stem: "drums", sourceLabel: "Donor Song"),
+            .init(chop: chop, stem: "drums", sourceLabel: "My Song", source: .initial),
+            .init(chop: chop, stem: "drums", sourceLabel: "Donor Song", source: .donor),
         ])
         XCTAssertEqual(lp.padCount, 64, "borrow expands to the full grid")
         XCTAssertNotNil(lp.assignments[LaunchpadPad(row: 0, col: 0)])
@@ -129,5 +189,43 @@ final class BorrowLayoutTests: XCTestCase {
         // A subsequent single-song grid load clears the borrow labels.
         lp.setChops([chop], stem: "drums", sliceMode: "chord")
         XCTAssertNil(lp.sourceLabel(for: LaunchpadPad(row: 0, col: 0)))
+    }
+
+    @MainActor
+    func testBorrowToggleTo16RearrangesBestOfBoth() {
+        let lp = LaunchpadController(nowProvider: { 0 })
+        func mount(idx: Int, source: BorrowPadSource, score: Double)
+            -> LaunchpadController.BorrowMount {
+            let chop = Chop(idx: idx, startSec: 0, endSec: 1, durationSec: 1,
+                            kind: "phrase", performanceScore: score)
+            return .init(chop: chop, stem: "drums",
+                         sourceLabel: source == .donor ? "Donor" : "Host",
+                         source: source)
+        }
+        var mounts: [LaunchpadController.BorrowMount] = []
+        for i in 0..<12 { mounts.append(mount(idx: i, source: .initial, score: Double(i))) }
+        for i in 0..<12 { mounts.append(mount(idx: 100 + i, source: .donor, score: Double(11 - i))) }
+        lp.adoptBorrowAssignments(mounts)
+        XCTAssertEqual(lp.padCount, 64)
+        XCTAssertEqual(lp.assignments.count, 24, "all 24 borrow pads at 64")
+
+        // Toggle to 16: best-of-both, both songs present, none of the donor lost.
+        lp.padCount = 16
+        XCTAssertEqual(lp.assignments.count, 16, "16 pads at 4×4")
+        for slot in 0..<8 {
+            XCTAssertEqual(
+                lp.sourceLabel(for: LaunchpadPad(row: slot / 8, col: slot % 8)),
+                "Host", "initial fills the top half at 16")
+        }
+        for slot in 8..<16 {
+            XCTAssertEqual(
+                lp.sourceLabel(for: LaunchpadPad(row: slot / 8, col: slot % 8)),
+                "Donor", "donor fills the bottom half at 16")
+        }
+
+        // Toggle back to 64 restores the FULL set (re-arranged from the retained
+        // mounts, not the clipped 16 view).
+        lp.padCount = 64
+        XCTAssertEqual(lp.assignments.count, 24, "64 restores all pads")
     }
 }

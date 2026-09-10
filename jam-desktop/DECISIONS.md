@@ -644,3 +644,41 @@ scrolls if a short window can't show all groups; `.frame(maxWidth: embedded ?
 **Why:** the forced-square grid was tiny with huge empty side margins because the
 stacked control rows ate the height. A left rail frees the whole right column for
 the grid — the pads get much bigger — while keeping all controls one glance away.
+## D-025 — Borrow pad toggle re-arranges (16 = best-of-both), never drops a song
+
+**Failure mode.** A borrow ("Add from another song") lays BOTH songs onto the
+64 grid: host on the top rows, a blank divider, donor below. Switching the
+Launchpad to 16 pads only clipped the visible window to idx < 16 — the donor
+lived below the fold, so the whole borrowed song vanished from the compact grid.
+
+**Fix.** `arrangeBorrowLayout` (`Launchpad/BorrowLayout.swift`) is now
+CAPACITY-aware — it takes `cols`×`rows`. At capacity ≥ 64 the full/divider path
+is unchanged. Below 64 (the 4×4 16) it does BEST-OF-BOTH: the top
+`capacity/2` = 8 pads of EACH song by score (performanceScore ?? loopScore ?? 0,
+padIdx tie-break), initial block at slots 0..7, donor at 8..15, section order
+(padIdx) restored within each block, no divider. One song short of its half →
+the other fills the remainder by score. `BorrowPadRef` gained a `score` field.
+
+**Toggle re-arranges, not clips.** `LaunchpadController` now RETAINS the full
+borrow mount set (`borrowMounts`) and re-lays it whenever `padCount` changes
+(`applyBorrowLayout(at:)` in the `didSet`), so 16 is a best-of-both re-arrange
+and 64 restores the full layout from the retained set — not the clipped 16.
+`BorrowMount` dropped its pre-baked `slot` and gained `source` + a `score`
+(from the chop); the controller derives slots itself. `adoptBorrowAssignments`
+opens on 64 and stores the mounts; `setChops`/`adoptAssignments` clear them.
+`SessionController.loadBorrowLoops` builds the full mount list (source + score)
+and hands it over — no pre-layout. Source-song labels + blue/amber tint survive
+both directions.
+
+**Where:** `Launchpad/BorrowLayout.swift` (`arrangeBorrowLayout` +
+`BorrowPadRef.score`), `Launchpad/LaunchpadController.swift`
+(`BorrowMount`, `borrowMounts`, `applyBorrowLayout(at:)`, `padCount.didSet`,
+`adoptBorrowAssignments`), `SessionController.swift#loadBorrowLoops`. Pinned by
+`Tests/JamDesktopCoreTests/BorrowLayoutTests.swift` (compact best-of-both +
+underflow + toggle-to-16-then-back re-arrange). Web/iOS twins land in the same
+change (`kit.js#arrangeBorrowLayout`/`layoutBorrowPads`,
+`SampleBank#arrangeBorrowLayout` + `AppState.relayoutActiveBorrow`).
+
+**Alternatives:** clipping to the best 16 by score regardless of source
+(rejected — a strong host could erase the donor, the exact bug); re-fetching on
+every toggle (rejected — the retained mount set re-lays with zero I/O).

@@ -139,19 +139,26 @@ extension ModeCoordinator {
             let isBorrow = active.pack.pads.contains {
                 $0.source == "donor" || $0.source == "initial"
             }
-            let padRange = isBorrow ? 0..<64 : 0..<16
+            // At 16 a borrow is RE-ARRANGED to a best-of-both 4×4 (padIdx
+            // 0..15) — AppState.relayoutActiveBorrow does the re-lay — so paint
+            // it in the compact 4×4 quadrant, NOT the full 8×8. At 64 a borrow
+            // spans the whole grid (initial top / divider / donor below).
+            let compactBorrow = isBorrow && app.jamSettings.launchpadPadCount == 16
+            let padRange = (isBorrow && !compactBorrow) ? 0..<64 : 0..<16
             for pad in active.pack.pads where padRange.contains(pad.padIdx) {
                 // Skip hidden pads
                 if app.sampleSettings.isPadHidden(packId: packId, padIdx: pad.padIdx) {
                     continue
                 }
-                let grid: PadIndex = isBorrow
+                let grid: PadIndex = (isBorrow && !compactBorrow)
                     // Web-parity: padIdx 0 = top-left, rows fill downward,
                     // 8 wide. PadIndex rows run BOTTOM-up, so row = 8 - p/8.
                     ? PadIndex.at(row: 8 - pad.padIdx / 8, col: pad.padIdx % 8 + 1)
                     : PadIndex.at(
                         // Hardware-launchpad orientation (matches the jamn
                         // Kit plugin): pad 0 lands BOTTOM-left, rows climb.
+                        // A compact borrow reuses this 4×4 mapping so its 16
+                        // best-of-both pads all fit the visible quadrant.
                         row: 5 + pad.padIdx / 4,
                         col: pad.padIdx % 4 + 1
                     )

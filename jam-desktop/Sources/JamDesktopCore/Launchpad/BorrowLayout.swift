@@ -32,9 +32,14 @@ public enum BorrowPadSource: String, Sendable, Equatable {
 public struct BorrowPadRef: Sendable, Equatable {
     public let padIdx: Int
     public let source: BorrowPadSource
-    public init(padIdx: Int, source: BorrowPadSource) {
+    /// Playable ranking (performanceScore ?? loopScore ?? 0). Used ONLY when
+    /// the target grid can't hold both songs in full (compact 16) — the best
+    /// `capacity/2` of each song are kept. Ignored at 64 (everyone fits).
+    public let score: Double
+    public init(padIdx: Int, source: BorrowPadSource, score: Double = 0) {
         self.padIdx = padIdx
         self.source = source
+        self.score = score
     }
 }
 
@@ -65,14 +70,25 @@ public struct BorrowGridLayout: Sendable, Equatable {
     }
 }
 
-/// Re-lay a borrow manifest's pads onto the 8×8 (64) grid: current-song
-/// loops on the top rows, a blank divider row, donor loops on the next
-/// full row. Pure — mirrors web `arrangeBorrowLayout(pads, cols)`.
+/// Re-lay a borrow manifest's pads onto the target grid. `cols`×`rows` is the
+/// grid CAPACITY: 8×8 (64) for the full grid, 4×4 (16) for the compact one.
+///
+///   • FULL (capacity ≥ 64): unchanged — current-song loops on the top rows, a
+///     blank divider row, donor loops on the next full row. Additive.
+///   • COMPACT (capacity < 64, i.e. 16): BEST-OF-BOTH — no room for both songs
+///     in full, so keep the best `capacity/2` initial pads AND the best
+///     `capacity/2` donor pads by score, initial block from slot 0 and donor
+///     block right after, so BOTH songs survive the shrink (the bug: 16-mode
+///     used to show only the top rows and drop the donor). One song short of
+///     its half → the other fills the remainder by score. No divider at 16.
+///
+/// Pure — the exact twin of web `arrangeBorrowLayout(pads, cols, rows)`.
 public func arrangeBorrowLayout(
-    _ pads: [BorrowPadRef], cols: Int = 8
+    _ pads: [BorrowPadRef], cols: Int = 8, rows: Int = 8
 ) -> BorrowGridLayout {
     let cols = max(1, cols)
-    let rows = 8                         // 8×8 launchpad grid = 64 cells
+    let rows = max(1, rows)
+    let capacity = cols * rows
 
     // Partition by source, keeping the original input index so callers can
     // recover the concrete pad. "initial" or anything non-donor → current.
@@ -82,29 +98,75 @@ public func arrangeBorrowLayout(
         if p.source == .donor { donor.append((i, p)) }
         else { initial.append((i, p)) }
     }
-    // Keep the backend's within-block section order (Verse, Chorus, …).
-    initial.sort { $0.ref.padIdx < $1.ref.padIdx }
-    donor.sort { $0.ref.padIdx < $1.ref.padIdx }
 
-    let initialRows = (initial.count + cols - 1) / cols
-    let donorRows = (donor.count + cols - 1) / cols
-    // Blank divider row only when the grid has room. A full 32 + 32 borrow
-    // fills all 64 cells, so drop the divider and pack the donor block flush
-    // after the initial pads rather than lose donor pads.
-    let wantDivider = !initial.isEmpty && !donor.isEmpty
-        && (initialRows + 1 + donorRows) <= rows
-    let dividerRow = wantDivider ? initialRows : -1
-    let donorBase = wantDivider ? (initialRows + 1) * cols : initial.count
+    if capacity >= 64 {
+        // FULL layout — initial top, blank divider, donor below (unchanged).
+        // Keep the backend's within-block section order (Verse, Chorus, …).
+        initial.sort { $0.ref.padIdx < $1.ref.padIdx }
+        donor.sort { $0.ref.padIdx < $1.ref.padIdx }
+        let initialRows = (initial.count + cols - 1) / cols
+        let donorRows = (donor.count + cols - 1) / cols
+        // Blank divider row only when the grid has room. A full 32 + 32 borrow
+        // fills all 64 cells, so drop the divider and pack the donor block flush
+        // after the initial pads rather than lose donor pads.
+        let wantDivider = !initial.isEmpty && !donor.isEmpty
+            && (initialRows + 1 + donorRows) <= rows
+        let dividerRow = wantDivider ? initialRows : -1
+        let donorBase = wantDivider ? (initialRows + 1) * cols : initial.count
+
+        var placements: [BorrowPlacement] = []
+        placements.reserveCapacity(initial.count + donor.count)
+        for (slot, item) in initial.enumerated() {
+            placements.append(.init(
+                inputIndex: item.index, gridSlot: slot, source: .initial))
+        }
+        for (slot, item) in donor.enumerated() {
+            placements.append(.init(
+                inputIndex: item.index, gridSlot: donorBase + slot, source: .donor))
+        }
+        return BorrowGridLayout(placements: placements, dividerRow: dividerRow)
+    }
+
+    // COMPACT (16): best `capacity/2` of each song, initial block then donor.
+    let perSong = capacity / 2
+    // Rank by score desc, padIdx asc as a stable tie-break.
+    let byScore: (
+        (index: Int, ref: BorrowPadRef), (index: Int, ref: BorrowPadRef)
+    ) -> Bool = {
+        $0.ref.score != $1.ref.score
+            ? $0.ref.score > $1.ref.score
+            : $0.ref.padIdx < $1.ref.padIdx
+    }
+    let initByScore = initial.sorted(by: byScore)
+    let donByScore = donor.sorted(by: byScore)
+    var initialTake = min(initial.count, perSong)
+    var donorTake = min(donor.count, perSong)
+    // One song short of its half? Let the other fill the leftover by score, so
+    // the grid isn't left emptier than it needs to be (initial fills first).
+    var leftover = capacity - initialTake - donorTake
+    if leftover > 0 {
+        let addI = min(leftover, initial.count - initialTake)
+        initialTake += addI; leftover -= addI
+    }
+    if leftover > 0 {
+        let addD = min(leftover, donor.count - donorTake)
+        donorTake += addD; leftover -= addD
+    }
+    // Take top-N by score, then restore section order (padIdx) within each block.
+    let initialSel = initByScore.prefix(initialTake)
+        .sorted { $0.ref.padIdx < $1.ref.padIdx }
+    let donorSel = donByScore.prefix(donorTake)
+        .sorted { $0.ref.padIdx < $1.ref.padIdx }
 
     var placements: [BorrowPlacement] = []
-    placements.reserveCapacity(initial.count + donor.count)
-    for (slot, item) in initial.enumerated() {
+    placements.reserveCapacity(initialTake + donorTake)
+    for (slot, item) in initialSel.enumerated() {
         placements.append(.init(
             inputIndex: item.index, gridSlot: slot, source: .initial))
     }
-    for (slot, item) in donor.enumerated() {
+    for (slot, item) in donorSel.enumerated() {
         placements.append(.init(
-            inputIndex: item.index, gridSlot: donorBase + slot, source: .donor))
+            inputIndex: item.index, gridSlot: initialTake + slot, source: .donor))
     }
-    return BorrowGridLayout(placements: placements, dividerRow: dividerRow)
+    return BorrowGridLayout(placements: placements, dividerRow: -1)
 }
