@@ -44,6 +44,9 @@ struct LaunchpadPanelView: View {
     @State private var moveMode = false
     @State private var dragSourcePad: Int?
     @State private var showLayers = false
+    /// Arrangement section strip is collapsed by default so it doesn't eat grid
+    /// height; the Rec/Play/Clear line stays. Auto-expands while Rec/Play is on.
+    @State private var showArrangementStrip = false
 
     /// ONE 30 Hz driver for every animated readout in the panel (per-pad
     /// loop playheads + the cycle strip). The per-cell
@@ -67,7 +70,7 @@ struct LaunchpadPanelView: View {
                 rail
                     .padding(.trailing, 4)
             }
-            .frame(width: 300)
+            .frame(width: 250)
 
             // RIGHT: the grid (plus its section strip + Rec/Play/Clear) fills
             // all remaining width AND height, so the square grid grows to the
@@ -97,7 +100,7 @@ struct LaunchpadPanelView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(20)
+        .padding(12)
         // Left rail is a fixed 300pt column of stacked control groups; the
         // grid fills the rest. Height CAPS at 952 but yields to a shorter
         // window — a hard 952 clipped rows on smaller displays. The grid
@@ -505,8 +508,16 @@ struct LaunchpadPanelView: View {
         if !arr.blocks.isEmpty {
             VStack(spacing: 6) {
                 HStack(spacing: 10) {
-                    Text("Arrangement")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Button { showArrangementStrip.toggle() } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: showArrangementStrip ? "chevron.down" : "chevron.right")
+                                .font(.caption2)
+                            Text("Arrangement").font(.caption)
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show/hide the section strip")
                     Spacer(minLength: 8)
                     Button { arr.toggleRecording() } label: {
                         Label("Rec", systemImage: "record.circle")
@@ -531,7 +542,9 @@ struct LaunchpadPanelView: View {
                     .disabled(arr.filledBlocks.isEmpty)
                     .help("Forget this song's captured arrangement")
                 }
-                arrangementStrip(arr)
+                if showArrangementStrip || arr.recording || arr.playing {
+                    arrangementStrip(arr)
+                }
             }
         }
     }
@@ -860,29 +873,26 @@ struct LaunchpadPanelView: View {
 
     /// Remix sheet + cross-song borrow — full-width buttons in the rail.
     private var remixGroup: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // Compact, natural-width buttons (was two full-rail-width rows that
+        // read as wasted bulk). Remix is a small ✦ chip; "Add song" sits beside
+        // it, accent-outlined so the cross-song action still stands out.
+        HStack(spacing: 8) {
             // Remix: the full one-tap transform sheet (kits / Flip / Humanize
-            // / Re-Drum) — web embeds this bar inline above the pads
-            // (remix.js:18-21). This ✦ opens the existing sheet (presented
-            // locally, the same idiom as showBorrowPicker).
+            // / Re-Drum) — web embeds this inline above the pads (remix.js:18-21).
             Button {
                 showRemix = true
             } label: {
-                Label("Remix", systemImage: "sparkles")
-                    .font(.caption)
-                    .frame(maxWidth: .infinity)
+                Label("Remix", systemImage: "sparkles").font(.caption)
             }
             .help("Remix — one-tap transforms of this song and its samples")
 
-            // "Add from another song" (DJ cross-song sampling): real loops
-            // from your OTHER analyzed songs — Beat / Bass / Chords / Melody,
-            // tempo- and key-matched — onto these pads (web parity).
+            // "Add from another song" (DJ cross-song sampling): tempo/key-matched
+            // loops from your other analyzed songs onto the pads (web parity).
             Button {
                 showBorrowPicker = true
             } label: {
-                Label("+ Add from another song", systemImage: "square.stack.3d.up")
+                Label("Add song", systemImage: "square.stack.3d.up")
                     .font(.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(

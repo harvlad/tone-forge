@@ -107,21 +107,14 @@ struct PerformView: View {
                 if model.view == .perform {
                     // Perform = the Launchpad pads (web parity). Same shell —
                     // header above, TransportBar + stem mixer below — so the
-                    // pads get the transport and mixer the fretboard had.
+                    // pads get the transport and mixer the fretboard had. No
+                    // section strip here: the Launchpad's own arrangement row
+                    // already shows the sections (with Rec/Play/Clear), so a
+                    // second strip was redundant chrome eating grid height.
                     LaunchpadPanelView(embedded: true)
                         .environmentObject(model)
                         .environmentObject(session)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    if let ribbon = session.ribbon {
-                        SectionStripView(
-                            sections: ribbon.sections,
-                            durationSeconds: session.transport.durationSeconds,
-                            positionSeconds: session.transport.positionSeconds,
-                            onSeek: { session.transport.seek(to: $0) }
-                        )
-                        .frame(height: 44)
-                    }
                 } else {
                     // Guitar = fretboard + tone card.
                     if let tone = model.sidecar?.tone, !toneCardDismissed {
