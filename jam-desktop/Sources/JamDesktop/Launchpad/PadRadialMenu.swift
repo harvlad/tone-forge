@@ -31,21 +31,28 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
     case edit
     case addSound
     case voiceRecord
+    // Web-only transport actions the native ring was missing (kit.js:3559
+    // "Stop pad", :3572 "Solo"). Gated like the web ring: Stop pad is live
+    // only while THIS pad sounds, Solo only while ANOTHER pad sounds — when
+    // inapplicable they render dimmed (never a dead click).
+    case stopPad
+    case solo
 
     /// Actions shown on a pad that already holds a sound. `.addSound`
     /// doubles as SWAP: a full 16-pad Auto Kit leaves no empty cells, so
-    /// this is the only way to change a sound (mobile parity).
+    /// this is the only way to change a sound (mobile parity). `.stopPad` /
+    /// `.solo` close the web-ring transport gap (kit.js:3559/3572).
     public static let assigned: [PadRadialAction] =
-        [.delete, .chop, .addSound, .addToSequence, .effects, .loop, .sequence]
+        [.delete, .chop, .addSound, .addToSequence, .effects, .loop, .stopPad, .solo, .sequence]
 
     /// Actions shown on an empty pad.
     public static let empty: [PadRadialAction] = [.addSound, .voiceRecord, .sequence]
 
     /// Actions shown on a sequence pad.
-    public static let sequencePad: [PadRadialAction] = [.edit, .delete, .effects, .sequence]
+    public static let sequencePad: [PadRadialAction] = [.edit, .delete, .effects, .stopPad, .solo, .sequence]
 
     /// Actions shown on a pack pad (sample from curated pack).
-    public static let packPad: [PadRadialAction] = [.delete, .addToSequence, .effects, .sequence]
+    public static let packPad: [PadRadialAction] = [.delete, .addToSequence, .effects, .stopPad, .solo, .sequence]
 
     var label: String {
         switch self {
@@ -59,6 +66,8 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
         case .edit:          return "Edit"
         case .addSound:      return "Add Sound"
         case .voiceRecord:   return "Voice"
+        case .stopPad:       return "Stop pad"
+        case .solo:          return "Solo"
         }
     }
 
@@ -74,6 +83,8 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
         case .edit:          return "pencil"
         case .addSound:      return "plus.circle.fill"
         case .voiceRecord:   return "mic.fill"
+        case .stopPad:       return "stop.fill"
+        case .solo:          return "headphones"
         }
     }
 
@@ -116,6 +127,11 @@ public struct PadRadialMenuState: Equatable {
     public let isPackPad: Bool
     /// Whether the pad currently has the loop transform.
     public let hasLoop: Bool
+    /// Whether THIS pad is currently sounding (gates `.stopPad`, kit.js:3559).
+    public let isSounding: Bool
+    /// Whether ANOTHER pad is currently sounding (gates `.solo`, kit.js:3572 —
+    /// "Solo only means something while ANOTHER pad sounds").
+    public let anyOtherActive: Bool
     /// Ordered ring actions for this pad.
     public var actions: [PadRadialAction] {
         if hasAssignment {
@@ -129,6 +145,17 @@ public struct PadRadialMenuState: Equatable {
         }
     }
 
+    /// Whether `action` is live in this ring. Mirrors the web ring's
+    /// per-action gating (kit.js `disabled:` flags on Stop pad / Solo) so a
+    /// dimmed wedge is a no-op, not a dead click.
+    public func isEnabled(_ action: PadRadialAction) -> Bool {
+        switch action {
+        case .stopPad: return isSounding
+        case .solo:    return anyOtherActive
+        default:       return true
+        }
+    }
+
     public init(
         gridRow: Int,
         gridCol: Int,
@@ -136,7 +163,9 @@ public struct PadRadialMenuState: Equatable {
         hasAssignment: Bool,
         isSequencePad: Bool,
         isPackPad: Bool = false,
-        hasLoop: Bool = false
+        hasLoop: Bool = false,
+        isSounding: Bool = false,
+        anyOtherActive: Bool = false
     ) {
         self.gridRow = gridRow
         self.gridCol = gridCol
@@ -146,6 +175,8 @@ public struct PadRadialMenuState: Equatable {
         self.isSequencePad = isSequencePad
         self.isPackPad = isPackPad
         self.hasLoop = hasLoop
+        self.isSounding = isSounding
+        self.anyOtherActive = anyOtherActive
     }
 }
 
@@ -215,10 +246,13 @@ struct PadRadialMenu: View {
 
     @ViewBuilder
     private func segment(for action: PadRadialAction, index: Int, count: Int) -> some View {
-        let isHighlighted = highlighted == action
+        // Inapplicable web-transport wedges render dimmed and never highlight
+        // (kit.js gates Stop pad / Solo the same way).
+        let enabled = state.isEnabled(action)
+        let isHighlighted = enabled && highlighted == action
         let angles = PadRadialAction.angles(index: index, count: count)
 
-        SegmentShape(
+        return SegmentShape(
             startAngle: .degrees(angles.start),
             endAngle: .degrees(angles.end),
             innerRadius: innerRadius,
@@ -238,6 +272,7 @@ struct PadRadialMenu: View {
             segmentLabel(action, highlighted: isHighlighted)
                 .position(labelPosition(index: index, count: count))
         )
+        .opacity(enabled ? 1 : 0.35)
     }
 
     private func segmentHighlightColor(_ action: PadRadialAction) -> Color {
@@ -254,6 +289,8 @@ struct PadRadialMenu: View {
         case .edit:     return .yellow.opacity(0.6)
         case .addSound: return .green.opacity(0.6)
         case .voiceRecord: return .pink.opacity(0.6)
+        case .stopPad: return .red.opacity(0.6)
+        case .solo:    return .teal.opacity(0.6)
         }
     }
 
@@ -292,7 +329,9 @@ struct PadRadialMenu: View {
             highlighted = nil
         } else {
             let angle = atan2(dy, dx) * 180 / .pi
-            highlighted = PadRadialAction.action(atAngle: angle, in: state.actions)
+            let action = PadRadialAction.action(atAngle: angle, in: state.actions)
+            // Dimmed (disabled) wedges never light up — matches web.
+            highlighted = action.flatMap { state.isEnabled($0) ? $0 : nil }
         }
     }
 
@@ -305,7 +344,9 @@ struct PadRadialMenu: View {
             onDismiss()
         } else {
             let angle = atan2(dy, dx) * 180 / .pi
-            if let action = PadRadialAction.action(atAngle: angle, in: state.actions) {
+            // Disabled wedges (dimmed Stop pad / Solo) dismiss rather than fire.
+            if let action = PadRadialAction.action(atAngle: angle, in: state.actions),
+               state.isEnabled(action) {
                 onAction(action)
             } else {
                 onDismiss()

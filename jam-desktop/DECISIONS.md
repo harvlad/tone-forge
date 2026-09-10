@@ -563,3 +563,61 @@ from the controller's quantize grid, which already uses `loopLengthSeconds` for
 `nextLoopBoundary`); tiling region-less pads to the same cycle (rejected — for
 them `loopLengthSeconds` falls back to an arbitrary 8 s lattice, not their
 period, matching the web gate).
+
+## D-023 — Four desktop-Perform Launchpad parity closes vs web kit.js/remix.js
+
+**Gap:** the native Launchpad had drifted from the web kit Launchpad on four
+user-facing points. Each is now closed against its web anchor; all reuse the
+existing SessionController/LaunchpadController methods (no transform or audio
+reimplemented).
+
+**1 — Flip + Remix reachable from the Launchpad** (web embeds the Remix bar
+inline above the pads, `remix.js:18-21`). Added a **Flip** button next to
+Auto/Drum Kit that calls `session.loadAutoKit(kind: "flip")` — the same path
+`RemixSheetView`'s Flip row uses, staging the kind=flip kit onto the pads
+(silent until tapped; desktop deliberately doesn't auto-start the flip beat,
+see the flip branch in `SessionController.loadAutoKit`). Added a **✦ Remix**
+button that opens the existing
+`RemixSheetView` via a local `@State showRemix` + `.sheet` — the same idiom as
+`showBorrowPicker`, so it's not a second presentation path.
+
+**2 — Per-pad radial "Stop pad" + "Solo"** (`kit.js:3559` / `:3572`). Added
+`.stopPad` / `.solo` to `PadRadialAction` and to the assigned/pack/sequence
+rings. Stop pad → `LaunchpadController.replayRelease(padIdx)` (the single-pad
+release: drops it from `activePads`, restores its light, fires `onRelease`).
+Solo → `replayRelease` on every OTHER active pad (snapshot first — it mutates
+`activePads`); like web it's not a latched state, a re-solo just has nothing
+left to stop. Both are GATED exactly as the web ring gates them: Stop pad is
+live only while THIS pad sounds, Solo only while ANOTHER pad sounds —
+`PadRadialMenuState` gained `isSounding`/`anyOtherActive` and an `isEnabled()`
+that dims the wedge and makes a disabled click a no-op (kit.js `disabled:`
+flags).
+
+**3 — Unified "Kill All"** (`kit.js:1168` killAll). The Launchpad's global
+stop stopped pads + sequencer but left the SONG rolling (song-stop lived only
+on `TransportBar`). Rewired the button to `session.stopEverything()` — which
+already pauses the transport, stops the sequencer, and kills every pad/voice
+(restoring taken-over stems) — and relabelled it **Kill All**. Its live-state
+is now `killAllActive` (any pad, the beat, OR the transport playing), matching
+web's always-actionable Kill All. `TransportBar`'s own stop is untouched.
+
+**4 — Quantize Off / Beat / Bar** (`kit.js:1037`). The picker offered
+QuantizeMode's full raw ladder (off · 1/8 · 1/4 · 1/2 · 1 bar · phrase); it now
+offers only **Off / Beat / Bar**, with Beat → `.quarter` and Bar → `.bar`, via
+a static `quantizeOptions` list. QuantizeMode keeps all its cases (used
+elsewhere) — only what the Launchpad OFFERS changed. A persisted value that
+lands off the three (1/8, 1/2, phrase) highlights nothing, mirroring web's
+`highlightQuantize` when the value has no button.
+
+**Where:** `Launchpad/PadRadialMenu.swift` (enum cases + label/image/color +
+`isSounding`/`anyOtherActive`/`isEnabled` gating + dimmed render/click),
+`Launchpad/LaunchpadPanelView.swift` (Flip/Remix buttons, `showRemix` sheet,
+Kill All rewire + `killAllActive`, `quantizeOptions`, radial state gating +
+`.stopPad`/`.solo` handlers). No engine change — `PadRadialMenuState`'s new
+fields default, so other call sites and the preview compile unchanged.
+
+**Alternatives:** threading a `showRemix` callback down from RootView/PerformView
+(rejected — RemixSheetView only needs the session, so a local sheet is simpler
+and matches the panel's other local sheets); a new SessionController "killAll"
+(rejected — `stopEverything()` already IS web's killAll semantics); deleting
+QuantizeMode's unused cases (rejected — they're model-level and read elsewhere).

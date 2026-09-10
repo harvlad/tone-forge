@@ -38,6 +38,7 @@ struct LaunchpadPanelView: View {
     @State private var patternAssignTarget: Int?  // padIdx to assign pattern
     @State private var soundPickerTarget: Int?    // padIdx to add sound
     @State private var showBorrowPicker = false   // "Add from another song"
+    @State private var showRemix = false          // ✦ Remix transform sheet
     @State private var radialMenuState: PadRadialMenuState?
     @State private var showSequencerEditor = false
     @State private var moveMode = false
@@ -180,7 +181,9 @@ struct LaunchpadPanelView: View {
                         hasAssignment: state.hasAssignment,
                         isSequencePad: state.isSequencePad,
                         isPackPad: state.isPackPad,
-                        hasLoop: state.hasLoop
+                        hasLoop: state.hasLoop,
+                        isSounding: state.isSounding,
+                        anyOtherActive: state.anyOtherActive
                     )
                     PadRadialMenu(
                         state: centered,
@@ -202,6 +205,13 @@ struct LaunchpadPanelView: View {
         }
         .sheet(isPresented: $showBorrowPicker) {
             BorrowPickerView()
+                .environmentObject(session)
+        }
+        .sheet(isPresented: $showRemix) {
+            // The same sheet RootView presents from its toolbar; opened here
+            // so the transforms are reachable from the Launchpad (web parity,
+            // remix.js:18-21). RemixSheetView only needs the session.
+            RemixSheetView()
                 .environmentObject(session)
         }
     }
@@ -266,6 +276,21 @@ struct LaunchpadPanelView: View {
 
         case .voiceRecord:
             vocoderTarget = VocoderCaptureTarget(padIndex: padIdx)
+
+        case .stopPad:
+            // Web "Stop pad" (kit.js:3559): release just THIS pad's voice.
+            // replayRelease is the single-pad release (removes from
+            // activePads, restores its light, fires onRelease → stop voice).
+            launchpad.replayRelease(padIdx)
+
+        case .solo:
+            // Web "Solo" (kit.js:3572): sound only this pad by releasing
+            // every OTHER sounding pad. Not a latched state — like web, a
+            // re-solo simply has nothing left to stop (the wedge dims).
+            // Snapshot activePads first: replayRelease mutates the set.
+            for other in Array(launchpad.activePads) where other != pad {
+                launchpad.replayRelease(other.row * 8 + other.col)
+            }
         }
     }
 
@@ -545,23 +570,21 @@ struct LaunchpadPanelView: View {
 
     private var controls: some View {
         HStack(spacing: 12) {
-            // Global stop — every sounding pad/layer AND the running
-            // sequencer beat (Style Beats live on the sequencer; the old
-            // pads-only stop couldn't kill a beat, and the button disabled
-            // itself when only the beat was playing).
+            // Kill All — web parity (kit.js:1168 killAll): silence every
+            // pad/layer, the sequencer beat, AND the song transport in one
+            // press. The old button stopped pads + beat but left the song
+            // rolling (song-stop lived only on the TransportBar);
+            // session.stopEverything() is the unified path web's Kill All uses.
             Button {
-                launchpad.stopAllPads()
-                if session.sequencer.isPlaying { session.sequencer.stop() }
+                session.stopEverything()
             } label: {
                 Image(systemName: "stop.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(
-                        (launchpad.activePads.isEmpty && !session.sequencer.isPlaying)
-                            ? Color.secondary : JamTheme.error)
+                    .foregroundStyle(killAllActive ? JamTheme.error : Color.secondary)
             }
             .buttonStyle(.plain)
-            .help("Stop all pads and the beat")
-            .disabled(launchpad.activePads.isEmpty && !session.sequencer.isPlaying)
+            .help("Kill All — stop every pad, the beat, and the song")
+            .disabled(!killAllActive)
 
             // Grid ⇄ Layers view.
             Picker("", selection: $showLayers) {
@@ -632,9 +655,16 @@ struct LaunchpadPanelView: View {
             // paired tightly so caption+control read as one labeled unit.
             HStack(spacing: 5) {
                 pickerCaption("Quantize")
+                // Web parity (kit.js:1037): the surface offers exactly
+                // Off / Beat / Bar. Beat → the quarter-note grid, Bar → the
+                // one-bar grid of QuantizeMode (its other cases — 1/8, 1/2,
+                // phrase — stay in the model, just aren't offered here). A
+                // persisted value that lands off these three highlights
+                // nothing (SwiftUI shows no selection), mirroring web's
+                // highlightQuantize when the value has no button.
                 Picker("Quantize", selection: quantizeBinding) {
-                    ForEach(QuantizeMode.allCases, id: \.self) {
-                        Text($0.rawValue).tag($0)
+                    ForEach(Self.quantizeOptions, id: \.mode) {
+                        Text($0.label).tag($0.mode)
                     }
                 }
                 .labelsHidden()
@@ -720,9 +750,39 @@ struct LaunchpadPanelView: View {
             }
             .disabled(session.autoKitLoading)
             .help("Drum Kit — the song's own kick, snare, hats and grooves on the pads")
+
+            // Flip: a new beat built from the song's own DNA — the web Remix
+            // bar's one-tap Flip (remix.js:18, kind=flip kit). Was reachable
+            // on desktop only via the Remix sheet; promoted here next to
+            // Auto/Drum Kit so it's a first-class pad action like on web.
+            // Uses the same loadAutoKit(kind:) path the sheet does — no second
+            // code path — which stages the flip kit onto the pads (SILENT
+            // until tapped; desktop doesn't auto-start the flip beat).
+            Button {
+                Task { await session.loadAutoKit(kind: "flip") }
+            } label: {
+                Label("Flip", systemImage: "shuffle")
+                    .font(.caption)
+            }
+            .disabled(session.autoKitLoading)
+            .help("Flip — a fresh beat from this song's own DNA on the pads")
+
             if session.autoKitLoading {
                 ProgressView().controlSize(.small)
             }
+
+            // Remix: the full one-tap transform sheet (kits / Flip / Humanize
+            // / Re-Drum) — web embeds this bar inline above the pads
+            // (remix.js:18-21). Desktop had RemixSheetView but no Launchpad
+            // entry; this ✦ opens the existing sheet (presented locally, the
+            // same idiom as showBorrowPicker below).
+            Button {
+                showRemix = true
+            } label: {
+                Label("Remix", systemImage: "sparkles")
+                    .font(.caption)
+            }
+            .help("Remix — one-tap transforms of this song and its samples")
 
             // "Add from another song" (DJ cross-song sampling): real loops
             // from your OTHER analyzed songs — Beat / Bass / Chords / Melody,
@@ -790,6 +850,25 @@ struct LaunchpadPanelView: View {
                 }
             }
         }
+    }
+
+    /// The three quantize choices the Launchpad offers, matching web's
+    /// Off / Beat / Bar segment (kit.js:1037). Beat and Bar map onto
+    /// QuantizeMode's quarter-note and one-bar grids so a choice here means
+    /// the same thing web means.
+    private static let quantizeOptions: [(mode: QuantizeMode, label: String)] = [
+        (.off, "Off"),
+        (.quarter, "Beat"),
+        (.bar, "Bar"),
+    ]
+
+    /// Kill All is live whenever ANYTHING sounds — a pad/layer, the
+    /// sequencer beat, or the song transport (web's Kill All is always
+    /// actionable while playback is up; kit.js:1168).
+    private var killAllActive: Bool {
+        !launchpad.activePads.isEmpty
+            || session.sequencer.isPlaying
+            || session.transport.isPlaying
     }
 
     private var quantizeBinding: Binding<QuantizeMode> {
@@ -1234,7 +1313,11 @@ private struct PadCell: View {
             hasAssignment: assignment != nil,
             isSequencePad: isSequencePad,
             isPackPad: isPackPad,
-            hasLoop: hasLoop
+            hasLoop: hasLoop,
+            // Gate the web-ring transport wedges: Stop pad lives only while
+            // THIS pad sounds, Solo only while ANOTHER pad does (kit.js:3559/3572).
+            isSounding: launchpad.activePads.contains(pad),
+            anyOtherActive: launchpad.activePads.contains { $0 != pad }
         ))
     }
 
