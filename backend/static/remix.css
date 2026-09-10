@@ -18,6 +18,10 @@
 
 /* ---------- Trigger (mounts where #remix-root used to hold the bar) ---- */
 
+/* Floating trigger retired — Remix opens from the top-toolbar ✦ icon
+   (JamnRemix.open). Hidden, but mount() still runs to give open() its ctx. */
+.remix-trigger { display: none !important; }
+
 .remix-trigger {
   appearance: none;
   display: inline-flex;
