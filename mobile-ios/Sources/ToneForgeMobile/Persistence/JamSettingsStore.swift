@@ -72,12 +72,13 @@ public enum JamPadMode: String, CaseIterable, Codable, Sendable {
         switch self {
         case .pads:    return "Pads"
         case .chords:  return "Chords"
-        // "Launchpad", not "Samples" (product merge 2026-09-09): the
-        // song-chops kit IS the on-screen launchpad — one named surface,
-        // matching the web `kit.js` "Jam Pads" mirror and its 16|64
-        // toggle. The raw value stays "samples" so persisted padMode
-        // blobs and every `.samples` route keep resolving.
-        case .samples: return "Launchpad"
+        // "Samples" (was "Launchpad", product merge 2026-09-09): on the
+        // narrow phone pad-mode row the longer "Launchpad" pushed the
+        // three-chip toggle past the screen edge, so the surface reads
+        // "Samples" here. The web center-tab keeps "Launchpad" (it has the
+        // width). The raw value stays "samples" so persisted padMode blobs
+        // and every `.samples` route keep resolving.
+        case .samples: return "Samples"
         }
     }
 }
