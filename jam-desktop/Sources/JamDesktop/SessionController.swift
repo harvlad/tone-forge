@@ -76,6 +76,12 @@ final class SessionController: ObservableObject {
     /// Chop boundary edits (per analysisId + presetKey); changes
     /// re-resolve the Launchpad grid and sequencer adapter.
     let chopEditStore = ChopEditStore()
+    /// Live-capture arrangement: per-song capture blob + its runtime, which
+    /// records/replays pads against the song's section blocks.
+    let arrangementStore = ArrangementStore()
+    private(set) lazy var arrangement = ArrangementController(
+        launchpad: launchpad, store: arrangementStore
+    )
     /// Layer recording: capture/replay state + JSON library (P4).
     let recording: RecordingModel
     /// Jam in Key pad surface state (P5) — pure logic; notes route
@@ -699,6 +705,10 @@ final class SessionController: ObservableObject {
         }
         // No-op when the sequencer is standalone (own driver) or stopped.
         sequencer.tick(songSeconds: transport.positionSeconds)
+        // Live-capture arrangement: record the pads ON per section block, or
+        // replay the captured set hands-free at block boundaries. Passive when
+        // neither Rec nor Play is armed.
+        arrangement.tick(time: transport.positionSeconds, isPlaying: transport.isPlaying)
         // Melody follow-along: emit noteOn/noteOff edges on the synth as
         // the playhead crosses note boundaries. Paused ticks silence any
         // held note (stop() is a no-op once silent).
@@ -797,6 +807,14 @@ final class SessionController: ObservableObject {
         linkSync.seedTempoIfAlone(session.bundle.meta.tempoBpm ?? 120)
         attachedBundle = session.bundle
         attachedStemURLs = session.stemURLs
+        // Live-capture arrangement: collapse this song's sections into blocks
+        // and restore any saved capture (kit.js parity).
+        arrangement.loadSong(
+            analysisId: session.bundle.analysisId,
+            sections: session.bundle.timeline.sections.map {
+                ArrangementSectionInput(type: $0.label ?? "", start: $0.start, end: $0.end)
+            }
+        )
         // MIDI clock out follows this song's beat grid (analysis beats
         // absorb tempo drift; meta tempo is the fixed-grid fallback).
         midiClockBeatClock = BeatClock(

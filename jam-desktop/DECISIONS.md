@@ -491,3 +491,34 @@ adopt the same 64/divider/source-label layout from one place.
 surface. Web now makes the "your song on top, borrowed song below" shape
 explicit and labels each pad's origin; desktop packing both blocks into
 one undivided run was a divergence even though both "worked".
+
+## D-021 — Live-capture arrangement (Rec pads-per-section, Play replays hands-free)
+
+Ported the web Launchpad's live-capture arrangement (kit.js) to the native
+desktop. Rec through a song captures which pads are ON in each section block;
+Play replays that set hands-free at block boundaries; Clear forgets it.
+Per-song state persists in `ArrangementStore` (a `jamdesktop.arrangements`
+UserDefaults blob keyed by analysisId, holding the web-compatible serialized
+map so a capture round-trips across surfaces).
+
+The capture/replay math is NOT desktop-original: it lives in the shared
+`ToneForgeEngine.ArrangementRuntime` (collapseSections / blockIndexAtTime /
+diff / parse+serialize + the tick state machine), the same file iOS will use.
+`ArrangementController` (JamDesktopCore) only wires that engine to
+`LaunchpadController.activePads` (read), `TransportController` (time/isPlaying),
+and pad arm/release. Replay arms via new `LaunchpadController.replayArm/
+replayRelease` — a phase-locked loop launch that ignores the user's Tap/Loop
+mode (the web twin is kit.js `armPadForReplay`), so a hands-free replay always
+latches loops regardless of the current pad mode. Driven off the existing
+`SessionController.tick()` 30 Hz pump; passive when neither Rec nor Play armed.
+
+**Why:** parity doctrine rule 3/4 — a feature that shipped web-only is a
+divergence. The shared engine (with 18 XCTest assertions mirroring
+kit.test.mjs) is the forcing function that keeps desktop, iOS and web capture
+semantics bit-identical instead of three drifting reimplementations.
+
+**Alternatives:** a desktop-original tick loop (rejected — would re-derive the
+same record/replay logic the web already has and could drift); temporarily
+flipping `LaunchpadController.playbackMode` during replay (rejected — mutates
+observable UI state and blips the mode toggle; a dedicated replayArm path is
+deterministic).

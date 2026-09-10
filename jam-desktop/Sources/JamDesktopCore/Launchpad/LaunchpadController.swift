@@ -707,6 +707,37 @@ public final class LaunchpadController {
         onTrigger?(pad, assignment, fireAt)
     }
 
+    // MARK: - Arrangement replay (hands-free)
+
+    /// Arm a pad as a phase-locked loop for arrangement replay, regardless of
+    /// the user's tap/loop mode — the web twin is kit.js `armPadForReplay`
+    /// (engine.trigger looped + quantized). Mirrors padDown's loop-arm branch
+    /// but skips the free-run re-anchor / usage bookkeeping so replay is
+    /// deterministic. No-op if the pad is out of the current window, unmounted,
+    /// or already sounding.
+    public func replayArm(_ index: Int) {
+        let pad = LaunchpadPad(row: index / 8, col: index % 8)
+        guard isPadVisible(pad), let assignment = assignments[pad],
+              !activePads.contains(pad) else { return }
+        let now = nowProvider()
+        let transportRolling = isTransportPlaying?() ?? false
+        // Phase-lock to the shared loop grid while the song rolls; fire now when
+        // stopped so a hands-free replay still sounds on a static transport.
+        let fireAt = (transportRolling && loopLockEnabled) ? nextLoopBoundary(after: now) : now
+        activePads.insert(pad)
+        transport?.setLight(.pulse(colorHint: colorHint(for: assignment)), at: pad)
+        onTrigger?(pad, assignment, fireAt)
+    }
+
+    /// Release an arrangement-replay pad (kit.js `releasePadForReplay`).
+    public func replayRelease(_ index: Int) {
+        let pad = LaunchpadPad(row: index / 8, col: index % 8)
+        guard let assignment = assignments[pad], activePads.contains(pad) else { return }
+        activePads.remove(pad)
+        transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
+        onRelease?(pad, assignment)
+    }
+
     public func padUp(_ pad: LaunchpadPad) {
         // Check for custom pad assignment first
         let padIdx = pad.row * 8 + pad.col

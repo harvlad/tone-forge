@@ -1086,3 +1086,27 @@ a Swift port keeps placement semantics bit-equal per the launchpad.js
 port-parity rule). A new PadContent label field vs reusing `label` (chose a
 dedicated `sourceLabel` so the source line and the loop name coexist, matching
 web's separate `kit-pad-name` / `kit-pad-source` spans).
+
+## D-030 — Shared arrangement engine (ToneForgeEngine.Arrangement + ArrangementRuntime)
+
+Added the pure live-capture-arrangement engine to ToneForgeEngine so iOS,
+desktop and web share one implementation (launchpad.js port-parity rule):
+`collapseSections` / `blockIndexAtTime` / `diff` / `parse` + `serialize`
+(web-compatible `{blockIndex:[padIdx]}` JSON, the localStorage
+`jamn.arrangement.<id>` shape), plus `ArrangementRuntime` — the capture/replay
+state machine that mirrors kit.js `arrangementTick` (record the pads ON per
+block, replay the captured set at block boundaries, mutually-exclusive Rec/
+Play). Pinned by ArrangementTests (18 assertions, run on the iOS simulator via
+the ToneForgeMobileApp scheme since the host SPM `swift test` is blocked by
+iOS-only app views).
+
+Desktop consumes this now (jam-desktop D-021). The iOS JamView UI (Rec/Play/
+Clear control row + section strip, wired to ModeCoordinator.touchPadDown/Up and
+SampleVoicePool.ringing/pendingPadKeys) is the remaining follow-up — the shared
+engine landing first keeps that wiring thin.
+
+**Why:** parity doctrine — arrangement shipped web-only; a Swift twin of the
+tick math is the only way the three surfaces stay bit-identical. Naming: the
+engine section-input type is `ArrangementSectionInput` (not `ArrangementSection`)
+to avoid colliding with jam-desktop's Studio `ArrangementSection` DTO in the
+desktop namespace.

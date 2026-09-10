@@ -69,6 +69,9 @@ struct LaunchpadPanelView: View {
             // shared loop cycle + countdown to the next lock boundary, so
             // "why is my pad waiting" reads as timing, not lag.
             cycleStrip
+            // Live-capture arrangement: Rec through the song to capture which
+            // pads play per section, Play to replay hands-free (kit.js parity).
+            arrangementRow
             if showLayers {
                 LayerStackView().environmentObject(session)
             } else {
@@ -451,6 +454,83 @@ struct LaunchpadPanelView: View {
             .frame(height: 12)
             .accessibilityLabel("Shared loop cycle position")
         }
+    }
+
+    // MARK: - Live-capture arrangement
+
+    @ViewBuilder
+    private var arrangementRow: some View {
+        let arr = session.arrangement
+        if !arr.blocks.isEmpty {
+            VStack(spacing: 6) {
+                HStack(spacing: 10) {
+                    Text("Arrangement")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button { arr.toggleRecording() } label: {
+                        Label("Rec", systemImage: "record.circle")
+                            .font(.caption)
+                            .foregroundStyle(arr.recording ? JamTheme.error : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Record which pads you play in each section")
+                    Button { arr.togglePlaying() } label: {
+                        Label("Play", systemImage: "play.circle")
+                            .font(.caption)
+                            .foregroundStyle(arr.playing ? JamTheme.accent : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(arr.filledBlocks.isEmpty)
+                    .help("Replay the captured arrangement hands-free")
+                    Button { arr.clear() } label: {
+                        Label("Clear", systemImage: "trash")
+                            .font(.caption).foregroundStyle(Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(arr.filledBlocks.isEmpty)
+                    .help("Forget this song's captured arrangement")
+                }
+                arrangementStrip(arr)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func arrangementStrip(_ arr: ArrangementController) -> some View {
+        let _ = animTick   // share the 30 Hz driver for playhead + highlight
+        let blocks = arr.blocks
+        let span = max((blocks.last?.end ?? 1) - (blocks.first?.start ?? 0), 0.001)
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                HStack(spacing: 2) {
+                    ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
+                        let frac = (b.end - b.start) / span
+                        let filled = arr.filledBlocks.contains(i)
+                        let active = arr.activeBlock == i
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(filled
+                                  ? JamTheme.accent.opacity(active ? 0.9 : 0.5)
+                                  : Color.white.opacity(active ? 0.25 : 0.10))
+                            .overlay(alignment: .leading) {
+                                Text(b.label)
+                                    .font(.caption2)
+                                    .lineLimit(1)
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .padding(.horizontal, 5)
+                            }
+                            .frame(width: max(2, geo.size.width * frac - 2))
+                    }
+                }
+                if let f = arr.playheadFrac {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.9))
+                        .frame(width: 2)
+                        .offset(x: geo.size.width * f)
+                }
+            }
+        }
+        .frame(height: 22)
+        .accessibilityLabel("Arrangement sections")
     }
 
     private var controls: some View {

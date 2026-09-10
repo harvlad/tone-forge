@@ -312,6 +312,28 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: live-arrangement
+    name: "Live-capture arrangement — Rec through a song to capture pads-per-section, Play replays hands-free"
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/kit.js#arrangementTick"
+        note: "Arrangement row under the Launchpad transport: collapseSections merges the analyzer's sections into readable blocks; Rec captures which pads are ON per block (passive 100ms observer, pad-trigger path untouched), Play replays the captured set at block boundaries (armPadForReplay/releasePadForReplay), Clear forgets it. Persisted to localStorage jamn.arrangement.<id>. Pure helpers pinned by kit.test.mjs."
+      ios:
+        status: partial
+        evidence: "mobile-ios/Sources/ToneForgeEngine/Arrangement.swift#ArrangementRuntime"
+        note: "Shared pure engine landed in ToneForgeEngine (collapseSections/blockIndexAtTime/diff/parse+serialize + ArrangementRuntime capture/replay state machine, ArrangementTests 18/18). JamView Rec/Play/Clear control row + section strip wiring to ModeCoordinator/SampleVoicePool is the follow-up."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/ArrangementController.swift#ArrangementController"
+        note: "ArrangementController drives the shared ArrangementRuntime from SessionController.tick(): reads launchpad.activePads + transport time, records per block, replays via LaunchpadController.replayArm/replayRelease (phase-locked loops, mode-independent). Per-song ArrangementStore (jamdesktop.arrangements blob, web-compatible serialize/parse). LaunchpadPanelView.arrangementRow = Rec/Play/Clear + proportional section strip with playhead."
+      plugin:
+        status: na
+        note: "No song-section transport or pad-arrangement surface in the JUCE sampler."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: session-key-bpm-target
     name: "Optional Session key/BPM target — borrowed parts conform, song plays true (default off)"
     platforms:
