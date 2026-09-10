@@ -104,53 +104,74 @@ struct PerformView: View {
             VStack(spacing: 16) {
                 NowPlayingHeaderView(meta: loaded.bundle.meta)
 
-                if let tone = model.sidecar?.tone, !toneCardDismissed {
-                    ToneCardView(
-                        tone: tone,
-                        activeChainId: session.monitor.activeChainId,
-                        onApply: { session.applyToneChain(chainId: $0) },
-                        onDismiss: { dismissToneCard(tone, for: loaded) }
-                    )
-                }
+                if model.view == .perform {
+                    // Perform = the Launchpad pads (web parity). Same shell —
+                    // header above, TransportBar + stem mixer below — so the
+                    // pads get the transport and mixer the fretboard had.
+                    LaunchpadPanelView(embedded: true)
+                        .environmentObject(model)
+                        .environmentObject(session)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                if let ribbon = session.ribbon {
-                    // Performance toolbar (independent layer toggles)
-                    performanceToolbar
-
-                    // Neck / fretboard — the hero, most vertical space
-                    Group {
-                        if handMesh, let url = handSceneURL {
-                            // Realistic: the 3D neck + rigid rooted hand (fingers on dots).
-                            HandSceneView(sceneURL: url, poseModel: handScene, showDots: showDots)
-                        } else {
-                            // Abstract: the flat neck + Motion/Dots overlays.
-                            HandNeckView(chords: ribbon.chords,
-                                         positionSeconds: session.transport.positionSeconds,
-                                         showDots: showDots,
-                                         showMotion: showMotion,
-                                         showHand: showHand,
-                                         useMesh: false)
-                        }
+                    if let ribbon = session.ribbon {
+                        SectionStripView(
+                            sections: ribbon.sections,
+                            durationSeconds: session.transport.durationSeconds,
+                            positionSeconds: session.transport.positionSeconds,
+                            onSeek: { session.transport.seek(to: $0) }
+                        )
+                        .frame(height: 44)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 240, maxHeight: .infinity)
+                } else {
+                    // Guitar = fretboard + tone card.
+                    if let tone = model.sidecar?.tone, !toneCardDismissed {
+                        ToneCardView(
+                            tone: tone,
+                            activeChainId: session.monitor.activeChainId,
+                            onApply: { session.applyToneChain(chainId: $0) },
+                            onDismiss: { dismissToneCard(tone, for: loaded) }
+                        )
+                    }
 
-                    // Supporting reference cards beneath the neck — Chord / TAB only.
-                    lowerPanel(ribbon: ribbon)
+                    if let ribbon = session.ribbon {
+                        // Performance toolbar (independent layer toggles)
+                        performanceToolbar
 
-                    // Secondary: ribbon strip + section strip
-                    ChordRibbonStripView(
-                        ribbon: ribbon,
-                        positionSeconds: session.transport.positionSeconds
-                    )
-                    .frame(height: 56)
+                        // Neck / fretboard — the hero, most vertical space
+                        Group {
+                            if handMesh, let url = handSceneURL {
+                                // Realistic: the 3D neck + rigid rooted hand (fingers on dots).
+                                HandSceneView(sceneURL: url, poseModel: handScene, showDots: showDots)
+                            } else {
+                                // Abstract: the flat neck + Motion/Dots overlays.
+                                HandNeckView(chords: ribbon.chords,
+                                             positionSeconds: session.transport.positionSeconds,
+                                             showDots: showDots,
+                                             showMotion: showMotion,
+                                             showHand: showHand,
+                                             useMesh: false)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 240, maxHeight: .infinity)
 
-                    SectionStripView(
-                        sections: ribbon.sections,
-                        durationSeconds: session.transport.durationSeconds,
-                        positionSeconds: session.transport.positionSeconds,
-                        onSeek: { session.transport.seek(to: $0) }
-                    )
-                    .frame(height: 44)
+                        // Supporting reference cards beneath the neck — Chord / TAB only.
+                        lowerPanel(ribbon: ribbon)
+
+                        // Secondary: ribbon strip + section strip
+                        ChordRibbonStripView(
+                            ribbon: ribbon,
+                            positionSeconds: session.transport.positionSeconds
+                        )
+                        .frame(height: 56)
+
+                        SectionStripView(
+                            sections: ribbon.sections,
+                            durationSeconds: session.transport.durationSeconds,
+                            positionSeconds: session.transport.positionSeconds,
+                            onSeek: { session.transport.seek(to: $0) }
+                        )
+                        .frame(height: 44)
+                    }
                 }
 
                 TransportBar()

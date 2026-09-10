@@ -95,23 +95,19 @@ struct LaunchpadPanelView: View {
         // two rows); height CAPS at 952 but yields to a shorter window —
         // a hard 952 clipped the title and bottom rows on smaller
         // displays. The grid sizes itself from whatever height remains.
-        // Wider when embedded as the main Perform content (fills the window,
-        // controls row fits without truncating); the floating overlay stays
-        // 800 so the neck shows behind it.
-        .frame(width: embedded ? 1160 : 800)
-        .frame(maxHeight: 952)
+        // Embedded as PerformView's center: fill the column (PerformView owns
+        // the header/transport/mixer around it). Floating overlay stays 800 so
+        // the neck shows behind it.
+        .frame(maxWidth: embedded ? .infinity : 800)
+        .frame(maxHeight: embedded ? .infinity : 952)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
         // Tick only while something is actually animating (sounding pads or
         // a rolling transport) so an idle panel doesn't redraw at 30 Hz.
         .onReceive(animTimer) { _ in
-            // When embedded as the main Perform content, THIS is the display
-            // pump (PerformView, the former Perform view, no longer runs). It
-            // advances the transport off the audio clock and drives the
-            // sequencer / arrangement tick. Skipped when floating over another
-            // view (that view's own pump already ticks — no double-advance).
-            if embedded { session.tick() }
+            // PerformView (the host in BOTH embedded and floating cases) drives
+            // session.tick(); this timer only bumps the local animation frame.
             if !launchpad.activePads.isEmpty || session.transport.isPlaying {
                 animTick &+= 1
             }

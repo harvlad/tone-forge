@@ -311,13 +311,11 @@ struct RootView: View {
             BandRoomView()
         case .rehearsal:
             RehearsalView()
-        case .perform:
-            // Web parity: Perform IS the Launchpad pads (was the fretboard).
-            LaunchpadPanelView(embedded: true)
-                .environmentObject(model)
-                .environmentObject(session)
-        case .guitar:
-            // The fretboard / tone surface, now its own nav item.
+        case .perform, .guitar:
+            // Same performance shell (song header + transport + stem mixer);
+            // PerformView swaps its CENTER by model.view — Launchpad pads on
+            // .perform (web parity), the fretboard/tone surface on .guitar. The
+            // chrome that used to live only around the fretboard now wraps both.
             PerformView()
         case .studio:
             StudioView()
