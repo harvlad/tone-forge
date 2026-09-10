@@ -95,7 +95,10 @@ struct LaunchpadPanelView: View {
         // two rows); height CAPS at 952 but yields to a shorter window —
         // a hard 952 clipped the title and bottom rows on smaller
         // displays. The grid sizes itself from whatever height remains.
-        .frame(width: 800)
+        // Wider when embedded as the main Perform content (fills the window,
+        // controls row fits without truncating); the floating overlay stays
+        // 800 so the neck shows behind it.
+        .frame(width: embedded ? 1160 : 800)
         .frame(maxHeight: 952)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
@@ -732,9 +735,17 @@ struct LaunchpadPanelView: View {
             Button {
                 showBorrowPicker = true
             } label: {
-                Label("Add from song", systemImage: "square.stack.3d.up")
-                    .font(.caption)
+                Label("+ Add from another song", systemImage: "square.stack.3d.up")
+                    .font(.caption.weight(.semibold))
+                    .fixedSize()                       // never truncate to "A…"
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(JamTheme.accent.opacity(0.8)))
+                    .foregroundStyle(JamTheme.accent)
             }
+            .buttonStyle(.plain)
             .help("Add from another song — drop a Beat, Bass, Chords or Melody "
                   + "loop from your other analyzed songs onto the pads")
 
