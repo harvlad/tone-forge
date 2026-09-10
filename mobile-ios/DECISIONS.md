@@ -1110,3 +1110,63 @@ tick math is the only way the three surfaces stay bit-identical. Naming: the
 engine section-input type is `ArrangementSectionInput` (not `ArrangementSection`)
 to avoid colliding with jam-desktop's Studio `ArrangementSection` DTO in the
 desktop namespace.
+
+## D-031 — Live-capture arrangement wired into the iOS Launchpad (ArrangementModel)
+
+Completes the follow-up flagged by D-030: the shared arrangement engine now
+has an iOS consumer, so the feature reaches parity with web (kit.js) and
+desktop (jam-desktop D-021). `ArrangementModel` (@MainActor ObservableObject,
+`Sources/ToneForgeMobile/ArrangementModel.swift`) is the mobile twin of
+jam-desktop's `ArrangementController`: it holds an `ArrangementRuntime`,
+exposes `loadSong` / `toggleRecording` / `togglePlaying` / `clear` / `tick`,
+and does nothing but wire the tested runtime to three mobile side effects.
+
+**Active-pad read (passive Rec observer).** The runtime records "which grid
+pads are ON in the current block". Mobile has no `activePads` list, so the
+model inverts `ModeCoordinator.padBindings` (grid index → (packId, padIdx))
+against `SampleVoicePool.ringingPadKeys ∪ pendingPadKeys`: a grid index is
+active iff its bound pad is ringing or pending. This is a pure read — Rec never
+calls a trigger, so the pad-trigger path is untouched (matches web's 100 ms
+observer and desktop's `launchpad.activePads` read).
+
+**Grid index = padBindings key.** The recorded/persisted pad index is the
+`PadIndex.rawValue` (row*10+col, 11..88) that keys `padBindings`, not the
+web/desktop row*8+col. The value is opaque to the runtime and is always mapped
+back through `padBindings` on the same device, so capture/replay is
+self-consistent; the persisted JSON *shape* (`{blockIndex:[padIdx]}` via
+`Arrangement.serialize`) still round-trips with web/desktop even though the pad
+encoding differs (literal cross-surface pad identity was never a requirement —
+each surface owns its own grid addressing).
+
+**Replay arm/release.** At each block boundary the model resolves the captured
+grid indices through `padBindings` and arms via
+`ModeCoordinator.triggerJamSample(padIdx:packId:latch:true)` (latch so a held
+loop sustains) / releases via `releaseJamSample`. Unbound grid indices are
+skipped. Rec and Play stay mutually exclusive (runtime-enforced); Clear
+releases held pads and forgets the capture.
+
+**Ownership + drive.** `AppState.arrangement` owns the model; `activate(bundle:)`
+calls `loadSong(analysisId:sections:)` (mapping `timeline.sections` →
+`ArrangementSectionInput`, releasing any prior replay), and `AppState.tick()`
+(30 Hz) calls `arrangement.tick(time: songSeconds, isPlaying:)`. The tick is a
+no-op until the user hits Rec/Play, so always-ticking is safe.
+
+**Persistence.** `ArrangementStore` writes one web-compatible serialized blob
+per song under `jamn.arrangement.<analysisId>` (matches web localStorage and
+AppState's `jamn.session.*` keys), NOT desktop's single `jamdesktop.arrangements`
+dictionary — the per-song-key layout is closer to the web original and to the
+app's existing session keys.
+
+**UI.** `Views/Jam/ArrangementBar.swift` = a Rec/Play/Clear `.tfChip` row +
+proportional section strip (filled blocks tinted `TFTheme.accent`, active block
+brightened, playhead sweep), an `@ObservedObject` on the model so it repaints
+live. Mounted in `JamView` inside the `.samples` pad-mode branch only (hidden
+when the song has no sections). Play/Clear disable when nothing is captured.
+
+**Build/verify:** the host SPM build (`swift build --target ToneForgeMobile`)
+is pre-existingly broken by iOS-only view APIs (`keyboardType`, etc. — fails on
+the clean tree too), so verification is the iOS-simulator build:
+`xcodebuild build -scheme ToneForgeMobileApp -destination 'platform=iOS
+Simulator,name=iPhone 17 Pro'` → BUILD SUCCEEDED. Shared runtime stays pinned
+by ArrangementTests (18/18, D-030).
+

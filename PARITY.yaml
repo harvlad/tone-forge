@@ -320,9 +320,9 @@ features:
         evidence: "backend/static/kit.js#arrangementTick"
         note: "Arrangement row under the Launchpad transport: collapseSections merges the analyzer's sections into readable blocks; Rec captures which pads are ON per block (passive 100ms observer, pad-trigger path untouched), Play replays the captured set at block boundaries (armPadForReplay/releasePadForReplay), Clear forgets it. Persisted to localStorage jamn.arrangement.<id>. Pure helpers pinned by kit.test.mjs."
       ios:
-        status: partial
-        evidence: "mobile-ios/Sources/ToneForgeEngine/Arrangement.swift#ArrangementRuntime"
-        note: "Shared pure engine landed in ToneForgeEngine (collapseSections/blockIndexAtTime/diff/parse+serialize + ArrangementRuntime capture/replay state machine, ArrangementTests 18/18). JamView Rec/Play/Clear control row + section strip wiring to ModeCoordinator/SampleVoicePool is the follow-up."
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/ArrangementModel.swift#ArrangementModel"
+        note: "ArrangementModel drives the shared ArrangementRuntime from AppState.tick(): reads active grid indices passively from SampleVoicePool.ringing/pendingPadKeys inverted through ModeCoordinator.padBindings (Rec never perturbs the pad-trigger path), replays via ModeCoordinator.triggerJamSample(latch:true)/releaseJamSample at block boundaries, Rec/Play mutually exclusive, Clear releases + forgets. Per-song persistence under jamn.arrangement.<analysisId> (web-compatible Arrangement.serialize/parse). JamView ArrangementBar = Rec/Play/Clear chip row + proportional section strip with fill/active-block highlight/playhead, gated to Samples mode. Re-seated per song in activate(bundle:). Shared engine pinned by ArrangementTests 18/18 (D-030/D-031)."
       desktop:
         status: done
         evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/ArrangementController.swift#ArrangementController"

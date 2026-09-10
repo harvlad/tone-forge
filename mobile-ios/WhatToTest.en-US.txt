@@ -1,39 +1,49 @@
 Jamn — TestFlight build notes
 
 WHAT'S NEW THIS BUILD
-• Borrow now fills the whole grid with BOTH songs' FULL kits. Instead of one
-  stem, you get drums, bass, chords (and vocals) from your song AND the
-  borrowed song — this song's sections in BLUE, the borrowed song's in AMBER.
-  The stem you pick (Beat/Bass/Chords) leads the first 16 pads; switch the pad
-  grid to 64 to see the full kit.
-• Borrowed loops now lock to your song's tempo. Two bugs are fixed: donors no
-  longer play "twice as slow," and every loop is exactly the same length (4
-  bars at your tempo) so they stack in time instead of drifting.
-• Carries the earlier fixes too: Remix/Borrow pads are DRY (no more
-  "underwater" reverb wash), and pads are colour-coded by source (blue = this
-  song, amber = borrowed).
+• NEW: Live-capture Arrangement on the Samples pads. Hit Rec and play the
+  song through — Jamn remembers which pads you play in each section (Intro,
+  Verse, Chorus…). Hit Play arrangement and it replays your pad performance
+  hands-free, section by section, in time with the song. Clear forgets it.
+  Your arrangement is saved per song, so it's still there next time.
+• Borrowed pads sound clean again. A tempo-matching bug was shredding
+  borrowed loops (a half- or double-tempo song got stretched ~2x, which tore
+  up bass and chords). Borrowed loops now fold to the nearest octave so the
+  stretch stays gentle and musical — no more "horrible" artifacts.
+• The pad-mode row now reads Pads / Chords / Samples (was "Launchpad") so all
+  three fit on the phone screen. Same surface, shorter name.
 
 HOW TO USE
-• Song → Remix (sparkles) → Borrow → pick Beat / Bass / Chords → a suggested
-  song (ranked by harmony: "harmonizes"/"fits"). Pads fill in: blue = your
-  song, amber = the borrowed song, named "<Stem> <Section>" (e.g. "Bass
-  Verse"). Tap to loop; tap again to stop. Switch the grid to 64 for the full
-  both-kits layout.
+• ARRANGEMENT: Load a song → Perform → Samples pads. Above the grid you'll see
+  an "Arrangement" row (Rec · Play arrangement · Clear) and a strip of the
+  song's sections. Press Play (song transport) to start the song, tap Rec,
+  then play pads as the song moves through its sections. Tap Rec again to stop.
+  Now tap "Play arrangement": the song plays and your pads fire automatically
+  at each section. Clear wipes the capture for that song.
+• BORROW (regression check): Song → Remix → Borrow → pick Beat/Bass/Chords →
+  a suggested song. Pads fill blue (your song) / amber (borrowed). Tap to loop.
 
 WHAT TO TEST
-1. TEMPO LOCK (important): Borrow a song, tap a blue pad and an amber pad
-   together while your song plays. They should lock to the same tempo — NOT
-   one playing half-speed or drifting out of time.
-2. FULL KIT: switch the pad grid to 64. You should see both songs' drums,
-   bass, chords (+ vocals) fill the grid, blue (yours) and amber (borrowed).
-3. CLEAN AUDIO: pads should sound dry/clean like the song's own stems — not
-   washed/underwater.
-4. COLOUR: blue vs amber clearly distinguishes the two songs.
+1. ARRANGEMENT CAPTURE: Play a song, tap Rec, tap a few pads during the Verse,
+   different ones during the Chorus, stop Rec. The section strip should mark
+   the sections where you played (filled/tinted).
+2. ARRANGEMENT REPLAY: Tap "Play arrangement" and restart the song. Your pads
+   should arm/fire on their own at the right sections — hands-free — and stop
+   when you hit Clear or Play arrangement again.
+3. BORROW AUDIO QUALITY (important): Borrow a song whose tempo is roughly half
+   or double yours. Tap the amber pads. They should sound clean and musical,
+   NOT stretched/warbly/underwater.
+4. NAMING: the pad-mode row reads "Samples" and the three chips (Pads / Chords
+   / Samples) all fit without running off the screen edge.
 
 KNOWN LIMITATIONS
-• Chords borrow uses the separated "other" stem; some songs separate cleaner.
-• First Borrow per (song, donor) renders on the server, then caches — first
-  tap is slower (now it renders a full kit, so give it a moment).
+• Mobile is still catching up to the web/desktop Launchpad — some controls
+  (e.g. the wide 64 borrow layout, per-pad FX) are thinner here.
+• Arrangement replay follows the song transport; if you scrub far ahead it
+  re-arms at the new section rather than interpolating.
+• First Borrow per (song, donor) renders on the server then caches — first tap
+  is slower.
 
-Please report: the two songs, which pads you tapped, whether they locked to
-tempo, sounded clean, and were colour-coded by source.
+Please report: for Arrangement — did Rec capture the right sections and did
+Play arrangement replay your pads hands-free? For Borrow — the two songs (and
+their rough tempos), and whether the borrowed pads sounded clean.

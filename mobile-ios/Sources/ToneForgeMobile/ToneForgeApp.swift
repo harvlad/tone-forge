@@ -380,6 +380,13 @@ public final class AppState: ObservableObject {
         WavetableSynthNode(engine: audioEngine)
     public lazy var modeCoordinator: ModeCoordinator = ModeCoordinator(app: self)
 
+    /// Live-capture arrangement (Samples surface): Rec captures which
+    /// pads play per section block, Play replays them hands-free at block
+    /// boundaries. Reads active pads passively from the voice pool and
+    /// arms/releases through the coordinator; persists per song. Ticked
+    /// from `tick()` and re-seated per song in `activate(bundle:)`.
+    lazy var arrangement: ArrangementModel = ArrangementModel(app: self)
+
     /// Launchpad Pro MK3 hardware transport (P2). Created in
     /// `bootAudio` (see `wireLaunchpad`) so headless AppStates —
     /// snapshot tests construct one without booting — never open a
@@ -1876,6 +1883,15 @@ public final class AppState: ObservableObject {
         // rebuild the grid (hybrid mode keys off the song's key).
         modeCoordinator.applyGridContext()
         modeCoordinator.refreshLayout()
+        // Live-capture arrangement: collapse this song's sections into
+        // blocks and restore any saved capture (releases a prior replay).
+        arrangement.loadSong(
+            analysisId: bundle.analysisId,
+            sections: bundle.timeline.sections.map {
+                ArrangementSectionInput(
+                    type: $0.label ?? "", start: $0.start, end: $0.end)
+            }
+        )
         // Song context: no click (bundle activation can land while
         // the sketch transport is running — activate never pauses).
         syncMetronome()
@@ -3245,6 +3261,10 @@ public final class AppState: ObservableObject {
             }
         }
         refreshChordFrame()
+        // Live-capture arrangement: record the pads ON in the current
+        // section or replay the captured set at block boundaries. Idempotent
+        // within a block; a no-op until the user hits Rec/Play.
+        arrangement.tick(time: songSeconds, isPlaying: isPlaying)
     }
 
     /// Invoked after each A/B loop wrap. Learn mode hooks this to

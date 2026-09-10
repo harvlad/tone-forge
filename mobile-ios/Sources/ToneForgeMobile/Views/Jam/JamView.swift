@@ -362,6 +362,11 @@ struct JamView: View {
                 // the next boundary, so a locked pad's wait reads as musical
                 // timing instead of a bug.
                 LoopCycleStrip()
+                // Live-capture arrangement: Rec through the song to capture
+                // which pads play per section, Play to replay hands-free
+                // (kit.js / jam-desktop parity). Hidden until the song has
+                // sections; own ObservedObject so the strip repaints live.
+                ArrangementBar(arrangement: appState.arrangement)
                 // Place mode (a Sounds pick waiting) always targets the 4×4
                 // kit — the picker assigns onto pack pads, so the 8×8 grid
                 // never becomes a place dead-end.
