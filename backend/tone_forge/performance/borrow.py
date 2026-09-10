@@ -39,7 +39,7 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-BORROW_VERSION = 4      # bumped: tempo-locked bar length + no octave-fold
+BORROW_VERSION = 5      # bumped: render octave-folds ratio (match selection) — no more ~2x WSOLA shred
 _LOOPS_PER_SOURCE = 8   # half of a 16-pad grid per song (initial | donor)
 _MAX_LOOPS = _LOOPS_PER_SOURCE   # back-compat alias
 _STRETCH_LIMIT = 0.5    # refuse to stretch beyond ±50% (artifacts)
@@ -490,16 +490,22 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
     src_bpm = _tempo_of(source_result)
     if not src_bpm or not target_bpm:
         return []
-    # Stretch the source straight to the target tempo (atempo = target/src),
-    # so the loop lands EXACTLY at the current song's tempo. The old code
-    # octave-FOLDED this ratio toward 1.0 — for a donor slower than the target
-    # (ratio ~2) that folded to ~1.0, i.e. NO stretch, so the donor played at
-    # its own half tempo ("twice as slow"). Candidates are already octave-
-    # filtered at selection; here we just hit the tempo. Chained atempo covers
-    # ratios beyond 0.5–2.0.
-    ratio = target_bpm / src_bpm
-    if not (0.25 <= ratio <= 4.0):
+    # Stretch the donor toward the target tempo, but OCTAVE-FOLD the ratio the
+    # same way selection does (borrow_candidates below). Selection admits a
+    # donor on its folded distance — a 70 BPM donor into a 140 host scores 0 via
+    # m=0.5 ("play it half-time") — so rendering must honor that fold. A brief
+    # attempt (796501d7) applied the RAW ratio here instead, which meant those
+    # half/double-tempo donors got WSOLA-stretched by the full ~2×, shredding
+    # bass/chord material ("horrible"). Folding keeps the actual stretch inside
+    # WSOLA's clean ±50% range while the loop stays integer-bar and grid-locked
+    # (a half-time donor's 4-bar loop = 8 host bars, still on the downbeat grid).
+    raw_ratio = target_bpm / src_bpm
+    if not (0.25 <= raw_ratio <= 4.0):
         return []
+    # Pick m in {0.5, 1, 2} that brings raw_ratio*m closest to 1.0 — the exact
+    # metric borrow_candidates folds with, so selection and render agree.
+    _, _fold_m = min((abs(raw_ratio * m - 1.0), m) for m in (0.5, 1.0, 2.0))
+    ratio = raw_ratio * _fold_m
 
     # Transpose is a DONOR-only affordance: never touch the host's own audio.
     # n_steps stays 0 (and the cache key stays untargeted) unless the caller

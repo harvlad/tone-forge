@@ -364,9 +364,13 @@ def test_host_initial_pads_never_transpose(tmp_path, monkeypatch):
 
 
 def test_target_bpm_overrides_stretch_tempo(tmp_path, monkeypatch):
-    """(b) target_bpm drives the stretch: rendering the same donor to 120 vs
-    140 must produce loops of different DURATION (the 140 render is faster/
-    shorter) and separate cache files."""
+    """(b) target_bpm drives the stretch, OCTAVE-FOLDED (BORROW_VERSION 5):
+    rendering the same 100 BPM donor to 120 vs 140 produces loops of different
+    DURATION and separate cache files. 120 folds to ratio 1.2 (m=1); 140 folds
+    to 0.7 (m=0.5, half-time) so the WSOLA stretch stays inside its clean band
+    instead of a 1.4x shred — so the 140 loop is LONGER (half-time), not
+    shorter. The point: target_bpm changes the render, folded to the nearest
+    octave so the stretch never blows up."""
     np = pytest.importorskip("numpy")
     pytest.importorskip("soundfile")
     pytest.importorskip("librosa")
@@ -398,8 +402,11 @@ def test_target_bpm_overrides_stretch_tempo(tmp_path, monkeypatch):
     assert f120.name != f140.name          # separate cache slots per target BPM
     d120, _ = sf.read(str(f120))
     d140, _ = sf.read(str(f140))
-    # Higher target tempo ⇒ shorter loop (donor sped up more).
-    assert d140.shape[0] < d120.shape[0]
+    # Octave-folded: 100→120 stretches (ratio 1.2, shorter); 100→140 folds to
+    # half-time (ratio 0.7, LONGER) so the stretch stays clean. Target BPM still
+    # changes the render — just folded to the nearest octave.
+    assert d120.shape[0] != d140.shape[0]
+    assert d140.shape[0] > d120.shape[0]
 
 
 def test_key_distance_ranking(tmp_path, monkeypatch):
