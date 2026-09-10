@@ -255,8 +255,8 @@ features:
         note: "Borrow section in the Remix sheet: stem picker (Beat/Bass/Chords), donor list ranked by tempo (drums) or tempo + CONTENT-based harmony (melodic), loads loopable file pads via JamnKit.mountManifest. Backend performance/borrow.py#harmonic_compat scores real shared pitch-class material from both songs' chord ribbons (duration-weighted 12-bin histogram, cosine) refined by circle-of-fifths/relative/parallel key relationship — not just the key label. Loops are cut at musical section boundaries (verse/chorus, downbeat-snapped): the picked stem leads (this song's sections 0–7 blue, donor 8–15 amber) so a 16-pad grid shows both songs; the remaining stems (drums/bass/chords/vocals) fill the rest of the 8×8 as both songs' FULL kits (32 blue + 32 donor), this song unstretched, donor tempo-stretched. Pads carry source + sectionType and are named '<Stem> <Section>'. Underwater fix: pad reverb is dry by default (was 0.3 wet on iOS)."
       ios:
         status: done
-        evidence: "mobile-ios/Sources/ToneForgeMobile/ToneForgeApp.swift#loadBorrowLoops"
-        note: "Borrow section in RemixSheet; SampleBank.autoKit pads with downloaded loop files, bar-synced. Same backend — 16-pad grid mixes this song's sections (0–7) and the donor's (8–15), colour-coded by source colorHint, named by section (Verse/Chorus)."
+        evidence: "mobile-ios/Sources/ToneForgeEngine/SampleBank.swift#arrangeBorrowLayout"
+        note: "Borrow section in RemixSheet / BorrowPickerSheet; SampleBank.autoKit pads with downloaded loop files, bar-synced. Now web-parity layout (D-029): loadBorrowLoops runs the manifest through SampleBank.arrangeBorrowLayout (Swift twin of kit.js#arrangeBorrowLayout) — current song's loops on the TOP rows, a BLANK divider row, donor's loops below (row-major, 8 wide); a full 4-stem borrow (32+32) drops the divider to fit; grid stays 64. Each pad shows a small SOURCE-SONG label (current song title vs donor name via borrowDonorName) plus the blue(#3B82F6)/amber(#F59E0B) tint. SamplePad gains source+sourceName; PadVisual/PadContent gain sourceLabel; ModeCoordinator+Layout paints borrow packs full 8×8 top-origin; ModeGridView draws the source line top-left. Pinned by BorrowLayoutTests."
       desktop:
         status: done
         evidence: "jam-desktop/Sources/JamDesktop/SessionController.swift#loadBorrowLoops"
@@ -302,8 +302,9 @@ features:
         evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/BorrowLayout.swift#arrangeBorrowLayout"
         note: "Pure arrangeBorrowLayout twin of kit.js (initial-top / divider / donor-below, divider dropped on 32+32); LaunchpadController.adoptBorrowAssignments mounts at explicit slots (divider row stays empty), forces padCount=64, and records per-pad borrowSourceLabels surfaced by sourceLabel(for:). LaunchpadPanelView.PadCell.sourceLabelOverlay draws the small source-song label; blue/amber tint kept. SessionController.fetchBorrowRaw decodes the per-pad source tag from the raw manifest (shared SamplePack DTO drops it); donor name threaded from the picker candidate. Covered by BorrowLayoutTests."
       ios:
-        status: missing
-        note: "Still packs both songs' loops row-major via adoptAssignments (no divider row, no source-song label). Blocked on the shared SamplePack/SamplePad DTO gaining the per-pad `source` field so the arranger can be ported; the desktop arranger + adoptBorrowAssignments are the reference. Follow-up queued."
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeEngine/SampleBank.swift#arrangeBorrowLayout"
+        note: "SampleBank.arrangeBorrowLayout (shared ToneForgeEngine, default-off on non-borrow packs) = Swift twin of kit.js: initial-top / blank-divider-row / donor-below on the 8-wide 64 grid, divider dropped on 32+32. SamplePad gained source + sourceName; sampleQuadrantContent paints the borrow pack across the full 8×8 top-origin; ModeGridView draws the small source-song label. loadBorrowLoops arranges before download + nudges to 64. Covered by BorrowLayoutTests."
       plugin:
         status: missing
         note: "No borrow/remix surface in the JUCE editor yet (same gap as borrow-loops / borrow-on-launchpad)."

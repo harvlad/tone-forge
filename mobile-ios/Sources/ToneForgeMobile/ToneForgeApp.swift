@@ -2142,6 +2142,19 @@ public final class AppState: ObservableObject {
     /// bump re-downloads instead of serving stale audio. Returns
     /// padIdx → local file URL for whatever succeeded; misses fall back to
     /// the pad's stemSlice.
+    /// Donor song name for a borrow manifest. The backend names the pack
+    /// "<donor> · kit" (the borrow route), so strip that suffix; fall back to
+    /// a friendly default. Swift twin of web kit.js `borrowDonorName`.
+    static func borrowDonorName(_ packName: String) -> String {
+        var n = packName.trimmingCharacters(in: .whitespaces)
+        // Strip a trailing " · kit" (with or without surrounding spaces).
+        if let r = n.range(of: #"\s*·\s*kit\s*$"#, options: .regularExpression) {
+            n.removeSubrange(r)
+        }
+        n = n.trimmingCharacters(in: .whitespaces)
+        return n.isEmpty ? "Borrowed" : n
+    }
+
     private static func downloadKitSamples(
         pack: SamplePack, base: URL
     ) async -> [Int: URL] {
@@ -2494,20 +2507,38 @@ public final class AppState: ObservableObject {
         // conforms the borrowed loops to the session instead of the host.
         let targetBpm = sessionBorrowBpm
         let targetKey = sessionBorrowKey
+        // The current song's display name for the borrow's per-pad source
+        // label (arrangeBorrowLayout stamps it onto the "initial" pads).
+        let hostName = currentBundle?.meta.title
         Task { @MainActor in
             defer { self.borrowBusyDonor = nil }
             do {
                 let analysisId = self.currentBundle?.analysisId ?? ""
-                let pack = try await RemixClient().fetchBorrowPack(
+                let fetched = try await RemixClient().fetchBorrowPack(
                     baseURL: base, analysisId: analysisId,
                     donor: donorId, stem: stem,
                     targetBpm: targetBpm, targetKey: targetKey)
+                // Web-parity 8×8 arrangement: current song's loops on the top
+                // rows, a blank divider row, donor's below (SampleBank —
+                // shared with jam-desktop). No-op on any non-borrow pack, so
+                // this is safe unconditionally. Re-lay BEFORE downloading so
+                // the file map keys off the final padIdx. Stamp the donor's
+                // display name (backend names the pack "<donor> · kit").
+                let pack = SampleBank.arrangeBorrowLayout(
+                    fetched, hostName: hostName,
+                    donorName: Self.borrowDonorName(fetched.name))
                 let files = await Self.downloadKitSamples(pack: pack, base: base)
                 guard !files.isEmpty else {
                     self.remixError = "Borrowed loops didn't download."
                     return
                 }
                 guard self.currentBundle?.analysisId == analysisId else { return }
+                // Keep the surface on the full 8×8 so the divider + donor rows
+                // are visible (mirrors web's "stay in 64 — never shrink to
+                // 16"). The 16|64 toggle still works; this only nudges it up.
+                if self.jamSettings.launchpadPadCount != 64 {
+                    self.jamSettings.launchpadPadCount = 64
+                }
                 let resolved = SampleBank.autoKit(pack, padFileURLs: files)
                 await self.sampleScheduler.preloadPackAsync(
                     resolved, stemFiles: stems)

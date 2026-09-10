@@ -311,6 +311,34 @@ private struct GridCanvas: View {
             )
         }
 
+        if let src = visual.sourceLabel, !src.isEmpty {
+            // Borrow: small source-song line, TOP-left (the main label sits
+            // bottom-left, the badge top-right). Measure-and-trim like the
+            // main label so Canvas doesn't wrap it mid-word. Leaves room for
+            // the top-right badge by trimming to the cell width minus a badge
+            // gutter.
+            let inset = rect.insetBy(dx: 3, dy: 3)
+            let styled: (String) -> Text = { s in
+                Text(s)
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            let maxW = inset.width - (visual.badge != nil ? 13 : 0)
+            let unconstrained = CGSize(width: 1000, height: 100)
+            var display = src
+            var resolved = context.resolve(styled(display))
+            while resolved.measure(in: unconstrained).width > maxW,
+                  display.count > 1 {
+                display = String(display.dropLast())
+                resolved = context.resolve(styled(display + "…"))
+            }
+            context.draw(
+                resolved,
+                at: CGPoint(x: inset.minX, y: inset.minY),
+                anchor: .topLeading
+            )
+        }
+
         if let badge = visual.badge {
             let symbol = Text(Image(systemName: Self.symbolName(badge)))
                 .font(.system(size: 8, weight: .semibold))

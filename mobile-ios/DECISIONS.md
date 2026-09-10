@@ -1017,3 +1017,72 @@ product promise is that a loaded song plays true. Opt-in + host-conform
 default + prefill-from-song means turning Session on is a no-op until you
 retune, and the primary song is never touched. Additive — 16/64, quantize,
 triggering, the Add-from-song picker and the melody part are all unchanged.
+
+## D-029: Borrow pad layout brought to web parity (initial-top / divider / donor-below, 64 grid, per-pad source label)
+
+**Supersedes the layout half of D-027/D-028.** The Borrow render path and the
+Session target are unchanged; this is purely how the two songs' loops LAND on
+the pads.
+
+**Before:** the borrow manifest's pads were mounted with the backend's raw
+`padIdx` and the on-screen grid clamped pack pads to `0..<16` in the bottom-left
+4×4 quadrant (`ModeCoordinator+Layout.sampleQuadrantContent`). The backend
+packs a borrow in per-stem blocks (this song 0..7, donor 8..15, next stem
+16..31, …), so on iOS you saw only the lead stem's 16 pads, the two songs
+interleaved bottom-to-top, no divider, and no readable "which song" label — the
+blue/amber tint was the only cue (and hidden entirely below pad 16). The
+BorrowPickerSheet footer already PROMISED "this song's sections on top, the
+borrowed song's below" — the layout didn't deliver it.
+
+**After (matches web `kit.js#arrangeBorrowLayout`):**
+
+1. **Shared-engine placement helper** — `SampleBank.arrangeBorrowLayout(pack,
+   hostName:, donorName:)` (ToneForgeEngine), the Swift twin of the web
+   function. Splits pads by the `source` tag ("initial"/"donor"), sorts each
+   block by padIdx (keeps the backend's Verse/Chorus order), then re-lays on
+   the 8-wide 64 grid: current song's loops fill the TOP rows, one BLANK
+   divider row, donor's loops below. A full 4-stem borrow (32+32) fills all 64
+   cells so the divider is dropped and the donor block packs flush — no pad is
+   ever pushed off the grid. Each pad's `sourceName` is stamped (host title /
+   donor name). **Default-off:** a pack with no source-tagged pads is returned
+   unchanged, so it's safe to call on any pack, and jam-desktop (which shares
+   this engine) can reuse it verbatim. Pinned by `BorrowLayoutTests`.
+
+2. **Wire fields** — `SamplePad` gains `source` (decoded from the manifest's
+   `source`) and `sourceName` (stamped, not a wire field). `PadContent` /
+   `PadVisual` gain `sourceLabel`. All additive/optional; the manifest schema
+   version is untouched.
+
+3. **Grid** — `sampleQuadrantContent` paints a borrow pack across the FULL 8×8
+   with a TOP-origin mapping (padIdx 0 = top-left, `row: 8 - p/8`) so the
+   on-screen grid matches web; non-borrow packs keep the bottom-left 4×4
+   quadrant + hardware bottom-origin orientation. `ModeGridView` draws the
+   source-song line small, top-left (main label bottom-left, badge top-right),
+   measure-and-trimmed like the main label.
+
+4. **Mount** — `AppState.loadBorrowLoops` runs the fetched pack through
+   `arrangeBorrowLayout` BEFORE downloading (so the sample-file map keys off the
+   final padIdx), derives the donor name from the pack title via
+   `borrowDonorName` (strips the backend's " · kit" suffix, web-parity), and
+   nudges `launchpadPadCount` to 64 so the divider + donor rows are visible
+   (mirrors web's "stay in 64 — never shrink to 16").
+
+**Parity anchors:** web `backend/static/kit.js#arrangeBorrowLayout` /
+`#borrowDonorName` / `buildPadTile` (`kit-pad-source`). iOS:
+`ToneForgeEngine/SampleBank.swift#arrangeBorrowLayout`,
+`ToneForgeEngine/SamplePack.swift#SamplePad` (`source`/`sourceName`),
+`Contribution/GridLayouts.swift#PadVisual` (`sourceLabel`),
+`Contribution/ModeCoordinator+Layout.swift#sampleQuadrantContent`,
+`Views/ModeGridView.swift`, `ToneForgeApp.swift#loadBorrowLoops`/`#borrowDonorName`.
+
+**Additive / non-regressing:** triggering, quantize, the 16|64 toggle, the
+Session target (D-028) and the candidate picker are all unchanged; the borrow
+render request is byte-identical. Only the client-side arrangement + labels
+changed. The 16 view still shows the bottom-left quadrant as before.
+
+**Alternatives:** re-laying on the backend (rejected — the backend's per-stem
+block packing is shared by every surface and web already re-lays client-side;
+a Swift port keeps placement semantics bit-equal per the launchpad.js
+port-parity rule). A new PadContent label field vs reusing `label` (chose a
+dedicated `sourceLabel` so the source line and the loop name coexist, matching
+web's separate `kit-pad-name` / `kit-pad-source` spans).

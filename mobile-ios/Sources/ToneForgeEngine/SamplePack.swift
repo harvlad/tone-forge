@@ -188,6 +188,18 @@ public struct SamplePad: Codable, Sendable, Equatable {
     /// (padFileURLs wins over stemSlice in the scheduler); everyone else
     /// falls back to the raw `stemSlice` window. Additive/optional.
     public let sampleUrl: String?
+    /// Borrow only: which song this loop came from — "initial" (the current
+    /// song) or "donor" (the borrowed song). Set by the backend borrow route
+    /// (`performance/borrow.py`, the `source` field); nil on every other pack.
+    /// Drives the web-parity 64-grid arrangement (initial-top / divider /
+    /// donor-below) in `SampleBank.arrangeBorrowLayout`. Decoded from JSON.
+    public let source: String?
+    /// Borrow only: the human display name of `source`'s song (the current
+    /// song's title for "initial" pads, the donor's for "donor" pads). NOT a
+    /// wire field — it's stamped programmatically by `arrangeBorrowLayout`
+    /// once the host/donor names are known, so the grid can show a small
+    /// per-pad source-song label. Decoded-if-present only for round-trips.
+    public let sourceName: String?
 
     public init(
         padIdx: Int,
@@ -211,7 +223,9 @@ public struct SamplePad: Codable, Sendable, Equatable {
         category: String? = nil,
         crossfadeMs: Double? = nil,
         assetId: String? = nil,
-        sampleUrl: String? = nil
+        sampleUrl: String? = nil,
+        source: String? = nil,
+        sourceName: String? = nil
     ) {
         self.padIdx = padIdx
         self.name = name
@@ -235,6 +249,8 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.crossfadeMs = crossfadeMs
         self.assetId = assetId
         self.sampleUrl = sampleUrl
+        self.source = source
+        self.sourceName = sourceName
     }
 
     // Custom decoding to default `gainDb` when the key is absent.
@@ -246,7 +262,7 @@ public struct SamplePad: Codable, Sendable, Equatable {
              loopPointSec, gainDb, defaultQuantize, stemSlice, effects,
              loopStartSec, loopEndSec, loopScore, loopable, contentType,
              performanceScore, difficulty, category, crossfadeMs, assetId,
-             sampleUrl
+             sampleUrl, source, sourceName
     }
 
     public init(from decoder: Decoder) throws {
@@ -273,6 +289,25 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.crossfadeMs = try c.decodeIfPresent(Double.self, forKey: .crossfadeMs)
         self.assetId = try c.decodeIfPresent(String.self, forKey: .assetId)
         self.sampleUrl = try c.decodeIfPresent(String.self, forKey: .sampleUrl)
+        self.source = try c.decodeIfPresent(String.self, forKey: .source)
+        self.sourceName = try c.decodeIfPresent(String.self, forKey: .sourceName)
+    }
+
+    /// A copy of this pad with a new grid position and (optionally) a
+    /// stamped `sourceName`. Used by `SampleBank.arrangeBorrowLayout` to
+    /// re-lay a borrow manifest onto the 8×8 grid without re-deriving every
+    /// field. Immutable-struct convenience — no wire/schema impact.
+    public func relocated(padIdx: Int, sourceName: String? = nil) -> SamplePad {
+        SamplePad(
+            padIdx: padIdx, name: name, family: family, colorHint: colorHint,
+            filename: filename, chokeGroup: chokeGroup, loopPointSec: loopPointSec,
+            gainDb: gainDb, defaultQuantize: defaultQuantize, stemSlice: stemSlice,
+            effects: effects, loopStartSec: loopStartSec, loopEndSec: loopEndSec,
+            loopScore: loopScore, loopable: loopable, contentType: contentType,
+            performanceScore: performanceScore, difficulty: difficulty,
+            category: category, crossfadeMs: crossfadeMs, assetId: assetId,
+            sampleUrl: sampleUrl, source: source,
+            sourceName: sourceName ?? self.sourceName)
     }
 }
 

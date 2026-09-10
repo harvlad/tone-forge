@@ -128,17 +128,33 @@ extension ModeCoordinator {
         var content: [Int: PadContent] = [:]
         if let active = app.activeSamplePack {
             let packId = active.pack.packId
-            for pad in active.pack.pads where (0..<16).contains(pad.padIdx) {
+            // Borrow manifests carry BOTH songs' loops tagged `source`
+            // ("initial"/"donor"). AppState.loadBorrowLoops runs them through
+            // SampleBank.arrangeBorrowLayout, so their padIdx is already the
+            // web-parity 64-grid arrangement (current song top rows, a blank
+            // divider row, donor below — row-major, 8 wide). Paint the FULL
+            // 8×8 with a TOP-origin mapping so the on-screen grid matches web
+            // (pad 0 = top-left); non-borrow packs keep the 4×4 bottom-left
+            // quadrant with the hardware-launchpad bottom-origin orientation.
+            let isBorrow = active.pack.pads.contains {
+                $0.source == "donor" || $0.source == "initial"
+            }
+            let padRange = isBorrow ? 0..<64 : 0..<16
+            for pad in active.pack.pads where padRange.contains(pad.padIdx) {
                 // Skip hidden pads
                 if app.sampleSettings.isPadHidden(packId: packId, padIdx: pad.padIdx) {
                     continue
                 }
-                let grid = PadIndex.at(
-                    // Hardware-launchpad orientation (matches the jamn
-                    // Kit plugin): pad 0 lands BOTTOM-left, rows climb.
-                    row: 5 + pad.padIdx / 4,
-                    col: pad.padIdx % 4 + 1
-                )
+                let grid: PadIndex = isBorrow
+                    // Web-parity: padIdx 0 = top-left, rows fill downward,
+                    // 8 wide. PadIndex rows run BOTTOM-up, so row = 8 - p/8.
+                    ? PadIndex.at(row: 8 - pad.padIdx / 8, col: pad.padIdx % 8 + 1)
+                    : PadIndex.at(
+                        // Hardware-launchpad orientation (matches the jamn
+                        // Kit plugin): pad 0 lands BOTTOM-left, rows climb.
+                        row: 5 + pad.padIdx / 4,
+                        col: pad.padIdx % 4 + 1
+                    )
                 padBindings[grid.rawValue] = (packId: packId, padIdx: pad.padIdx)
                 // Show edited badge if user has modified effects from baseline
                 let hasEffectsOverride = app.sampleSettings
@@ -153,7 +169,10 @@ extension ModeCoordinator {
                     colorHint: Self.hexColorHint(pad.colorHint)
                         ?? Self.familyColor(pad.family),
                     badge: hasEffectsOverride ? .edited : nil,
-                    loops: loops
+                    loops: loops,
+                    // Borrow: the small source-song line under the tint
+                    // (arrangeBorrowLayout stamped it; nil on other packs).
+                    sourceLabel: isBorrow ? pad.sourceName : nil
                 )
             }
         }

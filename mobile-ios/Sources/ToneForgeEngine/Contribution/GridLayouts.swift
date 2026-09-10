@@ -38,12 +38,18 @@ public struct PadVisual: Sendable, Equatable {
     /// Bright vs dimmed rendering (chord tones bright in hybrid).
     public var isBright: Bool
     public var badge: PadBadge?
+    /// Borrow only: a small secondary line naming the SOURCE SONG this pad
+    /// came from (the current song's title vs the borrowed song's). Drawn
+    /// top-left, above the main label, so the blue/amber tint becomes
+    /// readable. nil on every non-borrow pad.
+    public var sourceLabel: String?
 
-    public init(colorHint: UInt32, label: String? = nil, isBright: Bool = false, badge: PadBadge? = nil) {
+    public init(colorHint: UInt32, label: String? = nil, isBright: Bool = false, badge: PadBadge? = nil, sourceLabel: String? = nil) {
         self.colorHint = colorHint
         self.label = label
         self.isBright = isBright
         self.badge = badge
+        self.sourceLabel = sourceLabel
     }
 
     public static let off = PadVisual(colorHint: 0x000000)
@@ -58,12 +64,15 @@ public struct PadContent: Sendable, Equatable {
     public var colorHint: UInt32
     public var badge: PadBadge?
     public var loops: Bool
+    /// Borrow only: the source-song label (see `PadVisual.sourceLabel`).
+    public var sourceLabel: String?
 
-    public init(label: String? = nil, colorHint: UInt32, badge: PadBadge? = nil, loops: Bool = false) {
+    public init(label: String? = nil, colorHint: UInt32, badge: PadBadge? = nil, loops: Bool = false, sourceLabel: String? = nil) {
         self.label = label
         self.colorHint = colorHint
         self.badge = badge
         self.loops = loops
+        self.sourceLabel = sourceLabel
     }
 }
 
@@ -103,7 +112,7 @@ public struct SampleModeLayout: GridLayoutProviding {
         guard pad.isValid, let c = content[pad.rawValue] else { return .off }
         var badge = c.badge
         if badge == nil && c.loops { badge = .loop }
-        return PadVisual(colorHint: c.colorHint, label: c.label, isBright: true, badge: badge)
+        return PadVisual(colorHint: c.colorHint, label: c.label, isBright: true, badge: badge, sourceLabel: c.sourceLabel)
     }
 }
 
@@ -167,7 +176,7 @@ public struct HybridModeLayout: GridLayoutProviding {
         guard let c = sampleContent[pad.rawValue] else { return .off }
         var badge = c.badge
         if badge == nil && c.loops { badge = .loop }
-        return PadVisual(colorHint: c.colorHint, label: c.label, isBright: true, badge: badge)
+        return PadVisual(colorHint: c.colorHint, label: c.label, isBright: true, badge: badge, sourceLabel: c.sourceLabel)
     }
 
     /// PadColor (8-bit RGB) → 0xRRGGBB hint.

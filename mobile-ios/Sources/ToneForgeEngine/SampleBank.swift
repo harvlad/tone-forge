@@ -256,6 +256,78 @@ public final class SampleBank: @unchecked Sendable {
         ResolvedSamplePack(pack: pack, padFileURLs: padFileURLs)
     }
 
+    // MARK: - Borrow layout (web port-parity)
+
+    /// Re-lay a Borrow manifest onto the 8×8 (64) grid, matching web
+    /// `kit.js#arrangeBorrowLayout` exactly. A borrow manifest carries BOTH
+    /// songs' loop pads, each tagged `source` ("initial" = the current song,
+    /// "donor" = the borrowed one) and packed 0..N by the backend in per-stem
+    /// blocks. We re-lay them so the current song's pads fill the TOP rows, a
+    /// full BLANK row divides, then the donor's pads start on the next FULL
+    /// row — row-major, 8 wide. Additive: every source pad is placed (none
+    /// dropped) and the grid stays 64. When both blocks plus a divider can't
+    /// fit 64 (a rare full 4-stem borrow = 32 + 32), the divider is dropped
+    /// and the donor block is packed flush after the initial one so no pad is
+    /// ever pushed off the grid.
+    ///
+    /// Each pad also gets its `sourceName` stamped — `hostName` for the
+    /// current song's pads, `donorName` for the borrowed ones — so the grid
+    /// can show a small per-pad source-song label under the blue/amber tint.
+    ///
+    /// DEFAULT-OFF by construction: a pack with NO source-tagged pads (every
+    /// non-borrow pack) is returned unchanged, so this is safe to call on any
+    /// pack. Shared with jam-desktop (ToneForgeEngine path dependency) — the
+    /// Swift twin of the web arrangement so placement semantics stay bit-equal
+    /// across surfaces.
+    public static func arrangeBorrowLayout(
+        _ pack: SamplePack,
+        hostName: String? = nil,
+        donorName: String? = nil,
+        cols: Int = 8,
+        rows: Int = 8
+    ) -> SamplePack {
+        var initial: [SamplePad] = []
+        var donor: [SamplePad] = []
+        for pad in pack.pads {
+            // "donor" → borrowed song; "initial" or untagged → current song.
+            if pad.source == "donor" { donor.append(pad) } else { initial.append(pad) }
+        }
+        // Not a borrow manifest (no donor pads AND no explicit initial tags) —
+        // leave it exactly as-is. This is the default-off guard.
+        let isBorrow = pack.pads.contains { $0.source == "donor" || $0.source == "initial" }
+        guard isBorrow else { return pack }
+
+        // Keep the backend's within-block section order (Verse, Chorus, …).
+        initial.sort { $0.padIdx < $1.padIdx }
+        donor.sort { $0.padIdx < $1.padIdx }
+
+        let initialRows = Int((Double(initial.count) / Double(cols)).rounded(.up))
+        let donorRows = Int((Double(donor.count) / Double(cols)).rounded(.up))
+        // Blank divider row between the two songs — only when the grid has
+        // room. A full 32 + 32 borrow fills all 64 cells, so drop the divider
+        // (and pack the donor block flush) rather than lose donor pads.
+        let wantDivider = !initial.isEmpty && !donor.isEmpty
+            && (initialRows + 1 + donorRows) <= rows
+        let donorBase = wantDivider ? (initialRows + 1) * cols : initial.count
+
+        let hostLabel = (hostName?.isEmpty == false) ? hostName! : "This song"
+        let donorLabel = (donorName?.isEmpty == false) ? donorName! : "Borrowed"
+
+        var out: [SamplePad] = []
+        out.reserveCapacity(initial.count + donor.count)
+        for (i, pad) in initial.enumerated() {
+            out.append(pad.relocated(padIdx: i, sourceName: hostLabel))
+        }
+        for (i, pad) in donor.enumerated() {
+            out.append(pad.relocated(padIdx: donorBase + i, sourceName: donorLabel))
+        }
+        return SamplePack(
+            manifestVersion: pack.manifestVersion, packId: pack.packId,
+            name: pack.name, family: pack.family, paletteHint: pack.paletteHint,
+            pads: out, defaultSequence: pack.defaultSequence,
+            license: pack.license, provenance: pack.provenance)
+    }
+
     // MARK: - Private
 
     private func loadFromDirectory(_ dir: URL, packId: String) throws -> ResolvedSamplePack {
