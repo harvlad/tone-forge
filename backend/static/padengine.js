@@ -1056,6 +1056,16 @@ export class PadEngine {
         // The UI's Beat/Bar choice rides opts.grid; both the song-transport
         // path and the free-run fallback honor it (default/unknown = bar).
         const grid = opts.grid;
+        // Free-run re-anchor (desktop LaunchpadController parity): when the
+        // song is stopped and NOTHING is currently sounding, abandon the stale
+        // lock grid so a fresh loop fires immediately instead of waiting up to
+        // a full cycle for the previous anchor's next boundary. The self-choke
+        // above already dropped this pad's own prior voice, so an empty
+        // `_voices` means the whole surface is silent — a new jam shouldn't
+        // wait on a grid nobody can hear. (Bug: a loop tapped after everything
+        // was released sat armed-silent for up to one 8 s cycle, reading as
+        // "loops don't play".)
+        if (!rolling && this._voices.size === 0) this._lockAnchor = null;
         const aligned = rolling ? this._transportLaunchTime(now, grid) : null;
         target = aligned != null ? aligned : this._lockLaunchTime(now, grid);
       }
