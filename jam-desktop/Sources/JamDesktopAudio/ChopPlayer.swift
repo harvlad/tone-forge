@@ -235,12 +235,22 @@ public final class ChopPlayer {
         pan: Float = 0,
         loop: Bool = false,
         crossfadeMs: Double = 0,
-        loopBarSeconds: Double = 0
+        loopBarSeconds: Double = 0,
+        cycleSeconds: Double = 0
     ) {
         guard let file = files[assignment.stem] else { return }
         let chop = assignment.chop
         let endSec = Self.loopRegionEndSec(
             chop: chop, loop: loop, loopBarSeconds: loopBarSeconds)
+        // Shared-cycle lock (web c726ba58 parity): only pads with a REAL
+        // analyzer loop region (loopScore present — the same set
+        // LaunchpadController.loopLengthSeconds is derived from) tile their
+        // seam-baked body up to the shared cycle so stacked latched loops
+        // restart together and stay in unison. Region-less pads (constant-
+        // tempo bar-snap, borrow whole-buffer loops) keep their own length —
+        // the shared cycle isn't their musical period. Gate is nonzero only
+        // when looping AND the chop carries an analyzer region.
+        let tileToCycleSec = (loop && chop.loopScore != nil) ? cycleSeconds : 0
         schedule(
             file: file,
             startSec: chop.startSec,
@@ -251,7 +261,8 @@ public final class ChopPlayer {
             pan: pan,
             afterSeconds: delaySeconds,
             loop: loop,
-            crossfadeMs: crossfadeMs
+            crossfadeMs: crossfadeMs,
+            tileToCycleSec: tileToCycleSec
         )
     }
 
@@ -319,7 +330,8 @@ public final class ChopPlayer {
         pan: Float,
         afterSeconds delaySeconds: Double,
         loop: Bool = false,
-        crossfadeMs: Double = 0
+        crossfadeMs: Double = 0,
+        tileToCycleSec: Double = 0
     ) {
         guard avEngine.isRunning else {
             print("[ChopPlayer] dropped trigger: engine not running")
@@ -361,7 +373,8 @@ public final class ChopPlayer {
         var effectiveDelay = delaySeconds
         if loop, let baked = loopBuffer(file: file, startFrame: startFrame,
                                         frameCount: AVAudioFrameCount(frameCount),
-                                        crossfadeMs: crossfadeMs) {
+                                        crossfadeMs: crossfadeMs,
+                                        tileToCycleSec: tileToCycleSec) {
             // Seamless looping: the [start,end] region is read into a buffer,
             // crossfaded (SeamlessLoop) and hard-looped so a held pad never clicks.
             voice.node.scheduleBuffer(baked.buffer, at: nil, options: [.loops], completionHandler: nil)
@@ -527,9 +540,19 @@ public final class ChopPlayer {
     /// of CONTINUATION audio past the region end and blend it into the head;
     /// when the region ends at the file's end the bake falls back to
     /// exact-length edge ramps instead of trimming.
+    ///
+    /// SHARED-CYCLE LOCK: when `tileToCycleSec > 0` (an analyzer-region loop
+    /// pad, gated by the caller) the seam-baked body is TILED up to the shared
+    /// cycle (`LaunchpadController.loopLengthSeconds` = the longest such region)
+    /// so every latched loop shares one period and restarts in unison — a
+    /// shorter section repeats inside the cycle instead of running on its own
+    /// length and drifting. The longest pad already fills the cycle (no tiling).
+    /// `voice.loopFrames` then reads the tiled length, so the playhead ring
+    /// tracks the shared period. Web parity: padengine.js `_bakePad` (c726ba58).
     private func loopBuffer(
         file: AVAudioFile, startFrame: AVAudioFramePosition,
-        frameCount: AVAudioFrameCount, crossfadeMs: Double
+        frameCount: AVAudioFrameCount, crossfadeMs: Double,
+        tileToCycleSec: Double = 0
     ) -> (buffer: AVAudioPCMBuffer, shiftSec: Double)? {
         let xfadeMs = crossfadeMs > 0 ? crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
         let srcRate = file.processingFormat.sampleRate
@@ -577,8 +600,19 @@ public final class ChopPlayer {
         let body = min(Int(buf.frameLength),
                        Int((Double(frameCount) * ratio).rounded()))
         let shiftSec = srcRate > 0 ? Double(start - startFrame) / srcRate : 0
-        return (SeamlessLoop.exactCrossfaded(buf, loopFrames: body, crossfadeMs: xfadeMs),
-                shiftSec)
+        var looped = SeamlessLoop.exactCrossfaded(buf, loopFrames: body, crossfadeMs: xfadeMs)
+        // Shared-cycle lock: tile the seam-baked body up to the shared cycle
+        // (canonical-rate frames — `looped` is already at canonicalFormat).
+        // No-op when the body already fills (or exceeds) the cycle — the
+        // longest region pad. tileToLength returns the input unchanged for
+        // target <= body, so this is safe even if rounding lands equal.
+        if tileToCycleSec > 0 {
+            let cycleFrames = Int((tileToCycleSec * Self.canonicalFormat.sampleRate).rounded())
+            if cycleFrames > Int(looped.frameLength) {
+                looped = SeamlessLoop.tileToLength(looped, targetFrames: cycleFrames)
+            }
+        }
+        return (looped, shiftSec)
     }
 
     private func cachedFile(for url: URL) -> AVAudioFile? {

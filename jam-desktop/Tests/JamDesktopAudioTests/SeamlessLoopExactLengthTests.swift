@@ -63,4 +63,47 @@ final class SeamlessLoopExactLengthTests: XCTestCase {
         let out = SeamlessLoop.exactCrossfaded(src, loopFrames: n, crossfadeMs: 15)
         XCTAssertEqual(Int(out.frameLength), n)
     }
+
+    // MARK: - Shared-cycle tiling (unison lock, web c726ba58)
+
+    func testTileToLengthExactMultipleIsCleanRepeat() {
+        // Body divides the cycle evenly (2×): every frame equals the body
+        // sample at `i % srcFrames`, so both halves are bit-identical and the
+        // wrap at the body boundary is continuous (no extra seam).
+        let body = 12_000
+        let src = sineBuffer(frames: body, period: 100)
+        let out = SeamlessLoop.tileToLength(src, targetFrames: body * 2)
+        XCTAssertEqual(Int(out.frameLength), body * 2)
+        let s = src.floatChannelData![0]
+        let d = out.floatChannelData![0]
+        for i in [0, 1, body - 1, body, body + 1, body * 2 - 1] {
+            XCTAssertEqual(d[i], s[i % body], accuracy: 1e-6)
+        }
+    }
+
+    func testTileToLengthNonMultipleGivesRightLength() {
+        // Body does NOT divide the cycle: length is still exactly the target
+        // (guaranteed phase-lock) and content is the modulo-tiled body — the
+        // one accepted wrap seam lands at the final cycle boundary.
+        let body = 10_000
+        let target = 25_123   // not a whole multiple of body
+        let src = sineBuffer(frames: body, period: 128)
+        let out = SeamlessLoop.tileToLength(src, targetFrames: target)
+        XCTAssertEqual(Int(out.frameLength), target)
+        let s = src.floatChannelData![0]
+        let d = out.floatChannelData![0]
+        for i in [body - 1, body, 2 * body - 1, 2 * body, target - 1] {
+            XCTAssertEqual(d[i], s[i % body], accuracy: 1e-6)
+        }
+    }
+
+    func testTileToLengthDegenerateArgsReturnUnchanged() {
+        // Target <= body (longest pad already fills the cycle) is a no-op:
+        // the same buffer comes back untouched, so it keeps its own period.
+        let body = 8_000
+        let src = sineBuffer(frames: body, period: 64)
+        XCTAssertEqual(Int(SeamlessLoop.tileToLength(src, targetFrames: body).frameLength), body)
+        XCTAssertEqual(Int(SeamlessLoop.tileToLength(src, targetFrames: body - 1).frameLength), body)
+        XCTAssertEqual(Int(SeamlessLoop.tileToLength(src, targetFrames: 0).frameLength), body)
+    }
 }

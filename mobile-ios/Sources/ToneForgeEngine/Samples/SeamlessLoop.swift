@@ -237,5 +237,37 @@ public enum SeamlessLoop {
         }
         return out
     }
+
+    /// Tile an already-seam-baked loop body up to `targetFrames` by repeating
+    /// it — the shared-cycle lock: a short loop repeats INSIDE the common cycle
+    /// so every latched pad shares ONE period and stays in unison instead of
+    /// running on its own section length and drifting off the others. `src` is
+    /// the output of `exactCrossfaded`, so `i % srcFrames` is continuous at
+    /// every body wrap; only the final cycle wrap (targetFrames → 0) can land
+    /// off a body boundary when the body doesn't divide the cycle evenly — one
+    /// seam per cycle, the accepted trade for guaranteed phase-lock. The
+    /// longest pad already fills the cycle (targetFrames == body → no tiling).
+    /// Returns `src` unchanged for degenerate args (target <= body / no data).
+    /// Swift twin of padengine.js `tileChannels()` (web commit c726ba58).
+    public static func tileToLength(
+        _ src: AVAudioPCMBuffer, targetFrames: Int
+    ) -> AVAudioPCMBuffer {
+        let srcFrames = Int(src.frameLength)
+        guard srcFrames > 0, targetFrames > srcFrames,
+              let srcData = src.floatChannelData,
+              let out = AVAudioPCMBuffer(
+                  pcmFormat: src.format,
+                  frameCapacity: AVAudioFrameCount(targetFrames)),
+              let dst = out.floatChannelData
+        else { return src }
+        out.frameLength = AVAudioFrameCount(targetFrames)
+        let channels = Int(src.format.channelCount)
+        for c in 0..<channels {
+            let s = srcData[c]
+            let d = dst[c]
+            for i in 0..<targetFrames { d[i] = s[i % srcFrames] }
+        }
+        return out
+    }
 }
 #endif

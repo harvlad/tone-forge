@@ -443,10 +443,18 @@ final class SessionController: ObservableObject {
             let bpm = linked ? self.linkSync.tempo
                              : (self.attachedBundle?.meta.tempoBpm ?? 0)
             let barSeconds = (loopable && bpm > 0) ? (60.0 / bpm) * 4.0 : 0
+            // Shared loop cycle for the unison lock: the longest analyzer loop
+            // region on the grid (LaunchpadController.loopLengthSeconds).
+            // ChopPlayer tiles each analyzer-region loop's body up to this so
+            // stacked latched loops share one period and restart together
+            // instead of each running its own section length and drifting
+            // (web parity, padengine c726ba58). Region-less pads ignore it.
+            let cycleSeconds = loopable ? self.launchpad.loopLengthSeconds : 0
             self.chopPlayer.trigger(
                 assignment, afterSeconds: delay,
                 loop: loopable, crossfadeMs: crossfadeMs,
-                loopBarSeconds: barSeconds
+                loopBarSeconds: barSeconds,
+                cycleSeconds: cycleSeconds
             )
             // Publish for the session recorder. Timestamp = the
             // quantized fire-at moment (what actually SOUNDED), so

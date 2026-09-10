@@ -522,3 +522,44 @@ same record/replay logic the web already has and could drift); temporarily
 flipping `LaunchpadController.playbackMode` during replay (rejected — mutates
 observable UI state and blips the mode toggle; a dedicated replayArm path is
 deterministic).
+
+## D-022 — Latched loops lock to one shared cycle (unison; web c726ba58 port)
+
+**Bug:** with loops latched on the Launchpad, each pad looped at its OWN
+section length — a 2-bar loop against a 3-bar loop ran on its own period and
+the playheads drifted apart, visibly and musically out of phase.
+
+**Fix (port of web commit `c726ba58`, `backend/static/padengine.js`):** every
+loop pad with a REAL analyzer loop region now bakes its loop buffer to the
+SHARED cycle — `LaunchpadController.loopLengthSeconds`, already defined as the
+longest analyzer region on the grid. A shorter section repeats INSIDE that
+cycle so all region pads share one period and restart together. The longest
+pad already fills the cycle (no tiling); a body that doesn't divide the cycle
+takes one wrap seam per cycle — the accepted trade for guaranteed phase-lock.
+
+**Where:**
+- `ToneForgeEngine.SeamlessLoop.tileToLength(_:targetFrames:)` — new pure
+  helper, the Swift twin of padengine's `tileChannels()`: repeats an
+  already-seam-baked body via `i % srcFrames` (continuous at every body wrap),
+  returns the input unchanged for `target <= body`.
+- `ChopPlayer.loopBuffer` — after `exactCrossfaded`, tiles the seam-baked body
+  up to `round(cycleSec * 48k)` when a cycle is supplied and exceeds the body.
+  `voice.loopFrames` reads the tiled length, so the on-pad playhead ring tracks
+  the shared period (requirement 4).
+- `ChopPlayer.trigger(_:…)` gains `cycleSeconds`; it tiles ONLY when the chop
+  carries an analyzer region (`chop.loopScore != nil` — the exact set
+  `loopLengthSeconds` is derived from). Threaded from
+  `SessionController.onTrigger` as `launchpad.loopLengthSeconds`.
+
+**Gated on a real region (web parity):** region-less loop pads — constant-tempo
+bar-snapped chops (`loopScore == nil`) and borrow whole-buffer loops
+(`trigger(file:…)`) — have no shared musical cycle, so they keep their own
+length. `cycleSeconds` defaults to 0 (no tiling) on every path, so nothing
+else changes. Tests: `SeamlessLoopExactLengthTests` +3 (exact multiple → clean
+repeat; non-multiple → right length, one wrap seam; degenerate → unchanged).
+
+**Alternatives:** recomputing a cycle inside ChopPlayer (rejected — would drift
+from the controller's quantize grid, which already uses `loopLengthSeconds` for
+`nextLoopBoundary`); tiling region-less pads to the same cycle (rejected — for
+them `loopLengthSeconds` falls back to an arbitrary 8 s lattice, not their
+period, matching the web gate).
