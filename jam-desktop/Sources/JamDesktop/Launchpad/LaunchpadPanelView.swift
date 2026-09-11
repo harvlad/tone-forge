@@ -68,9 +68,15 @@ struct LaunchpadPanelView: View {
             // aspectRatio-fit grid used to shrink and leave big side margins.
             ScrollView {
                 rail
-                    .padding(.trailing, 4)
+                    .padding(12)
             }
             .frame(width: 250)
+            // Semi-transparent panel so the rail reads as a distinct control
+            // surface, not loose text on the black background.
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.white.opacity(0.05))
+            )
 
             // RIGHT: the grid (plus its section strip + Rec/Play/Clear) fills
             // all remaining width AND height, so the square grid grows to the
@@ -386,44 +392,49 @@ struct LaunchpadPanelView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
-            Text("Launchpad")
-                .font(.title3.bold())
+        // Title + move/reset in one line, then the hardware status as a small
+        // caption underneath — it used to float to the right via a Spacer,
+        // which read as stray "No device" text in the empty top band.
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                Text("Launchpad")
+                    .font(.title3.bold())
 
-            Button {
-                moveMode.toggle()
-            } label: {
-                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
-                    .font(.body)
-                    .foregroundStyle(moveMode ? JamTheme.accent : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help(moveMode ? "Exit move mode" : "Move mode: drag pads to swap positions")
-
-            Button {
-                resetAllAssignments()
-            } label: {
-                Image(systemName: "arrow.counterclockwise")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Clear all pad assignments")
-
-            Spacer()
-            hardwareStatus
-
-            if !embedded {
                 Button {
-                    if let onClose { onClose() } else { dismiss() }
+                    moveMode.toggle()
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
+                    Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                        .font(.body)
+                        .foregroundStyle(moveMode ? JamTheme.accent : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(moveMode ? "Exit move mode" : "Move mode: drag pads to swap positions")
+
+                Button {
+                    resetAllAssignments()
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.body)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .keyboardShortcut(.escape, modifiers: [])
+                .help("Clear all pad assignments")
+
+                if !embedded {
+                    Spacer()
+                    Button {
+                        if let onClose { onClose() } else { dismiss() }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.escape, modifiers: [])
+                }
             }
+            hardwareStatus
+                .font(.caption2)
         }
     }
 
@@ -1003,11 +1014,11 @@ struct LaunchpadPanelView: View {
         let cols = launchpad.padCount == 16 ? 4 : 8
         return GeometryReader { geo in
             let spacing: CGFloat = 8
-            // Fill the whole area (pads go rectangular, no side gaps) — cells
-            // size independently from width and height instead of a single
-            // square `side`. It's an N×N grid, so both use `cols`.
-            let cellW = (geo.size.width - spacing * CGFloat(cols - 1)) / CGFloat(cols)
-            let cellH = (geo.size.height - spacing * CGFloat(cols - 1)) / CGFloat(cols)
+            // SQUARE pads (like a real launchpad): one cell side from the
+            // shorter axis. The grid centers in the filled area — the reclaimed
+            // vertical chrome already makes it big; square is the deliberate look.
+            let side = (min(geo.size.width, geo.size.height)
+                        - spacing * CGFloat(cols - 1)) / CGFloat(cols)
             VStack(spacing: spacing) {
                 ForEach(0..<cols, id: \.self) { row in
                     HStack(spacing: spacing) {
@@ -1036,7 +1047,7 @@ struct LaunchpadPanelView: View {
                                 },
                                 onDragEnd: { dragSourcePad = nil }
                             )
-                            .frame(width: cellW, height: cellH)
+                            .frame(width: side, height: side)
                         }
                     }
                 }
