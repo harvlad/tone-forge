@@ -42,6 +42,14 @@ struct SamplePadGrid4x4: View {
     /// tap-to-add), the hold-radial is off, filled tiles run hotter and
     /// glow while ringing. Jam keeps the workbench (stage = false).
     var stage: Bool = false
+    /// Grid dimensions. Default 4×4 = the top-left sample quadrant (the
+    /// original Contribute/Perform/Jam-16 rack). Jam's 64 Launchpad passes
+    /// 8×8 so the FULL grid renders with these same rich tiles — hold→radial
+    /// menu, per-pad waveform, borrow source-song labels — instead of the
+    /// feature-poor Canvas grid (ModeGridView) it used before. Both map
+    /// through coordinator.padVisuals/padBindings so audio + LEDs align.
+    var rows: Int = 4
+    var cols: Int = 4
     /// PLACE mode (Jam's Sounds browser): when the binding holds a
     /// picked chop, the next pad tap ASSIGNS it there (replacing the
     /// pad) instead of triggering, then clears. Nil hosts (Contribute,
@@ -62,10 +70,10 @@ struct SamplePadGrid4x4: View {
             GeometryReader { geo in
                 ZStack {
                     PadTouchOverlay(
-                        rows: 4,
-                        cols: 4,
+                        rows: rows,
+                        cols: cols,
                         onPadDown: { row, col in
-                            let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
+                            let (gridRow, gridCol) = gridIndex(row: row, col: col)
                             // Place mode: a picked chop is waiting — this tap
                             // assigns it to the pad instead of triggering.
                             if let pending = pendingChop, let ref = pending.wrappedValue {
@@ -90,13 +98,13 @@ struct SamplePadGrid4x4: View {
                             coordinator.touchPadDown(row: gridRow, col: gridCol)
                         },
                         onPadUp: { row, col in
-                            let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
+                            let (gridRow, gridCol) = gridIndex(row: row, col: col)
                             coordinator.touchPadUp(row: gridRow, col: gridCol)
                         },
                         onLongPress: { row, col in
                             // Stage mode is play-only — no edit radial.
                             guard !stage else { return }
-                            let (gridRow, gridCol) = Self.gridIndex(row: row, col: col)
+                            let (gridRow, gridCol) = gridIndex(row: row, col: col)
                             // Anchor the wheel on the pressed pad; clamp
                             // keeps the full wheel on-screen near edges so
                             // it never clips under the pads or controls.
@@ -244,17 +252,16 @@ struct SamplePadGrid4x4: View {
 
     /// Calculate the center of a tile in local coordinates, accounting for spacing.
     private func padCenter(localRow: Int, localCol: Int, size: CGSize) -> CGPoint {
-        // With spacing, total space for 4 tiles + 3 gaps
-        let totalGapWidth = tileSpacing * 3
-        let totalGapHeight = tileSpacing * 3
-        let cellWidth = (size.width - totalGapWidth) / 4
-        let cellHeight = (size.height - totalGapHeight) / 4
+        // With spacing, total space for `cols` tiles + (cols−1) gaps.
+        let totalGapWidth = tileSpacing * CGFloat(cols - 1)
+        let totalGapHeight = tileSpacing * CGFloat(rows - 1)
+        let cellWidth = (size.width - totalGapWidth) / CGFloat(cols)
+        let cellHeight = (size.height - totalGapHeight) / CGFloat(rows)
 
-        // localCol is 1-based (1–4), localRow is 1-based (1=bottom, 4=top)
-        // screenCol 0-based: 0=left
-        // screenRow 0-based: 0=top
-        let screenCol = localCol - 1  // 0–3
-        let screenRow = 4 - localRow  // 0–3 (0=top)
+        // localCol/localRow are 1-based (localRow 1 = bottom).
+        // screenCol/screenRow are 0-based from the top-left.
+        let screenCol = localCol - 1
+        let screenRow = rows - localRow
 
         // x = leading edge of cell + half cell width
         let x = CGFloat(screenCol) * (cellWidth + tileSpacing) + cellWidth / 2
@@ -348,10 +355,11 @@ struct SamplePadGrid4x4: View {
 
     // MARK: - Quadrant mapping
 
-    /// Local 4×4 (row 1 = bottom) → 8×8 PadIndex coordinates of the
-    /// sample quadrant (grid rows 5–8, cols 1–4).
-    static func gridIndex(row: Int, col: Int) -> (row: Int, col: Int) {
-        (row + 4, col)
+    /// Local (row 1 = bottom) → 8×8 PadIndex coordinates. A 4×4 grid is
+    /// the TOP-left sample quadrant (grid rows 5–8, cols 1–4), so local
+    /// rows shift up by 8 − rows; an 8×8 grid is the identity.
+    private func gridIndex(row: Int, col: Int) -> (row: Int, col: Int) {
+        (row + (8 - rows), col)
     }
 
     private func visual(gridRow: Int, gridCol: Int) -> PadVisual {
@@ -372,12 +380,14 @@ struct SamplePadGrid4x4: View {
         // of "broken silence" (UX audit fix #1).
         let armed = coordinator.ringingGridPads(
             from: appState.sampleVoicePool.pendingPadKeys)
-        // Screen top row = grid row 8 (pack padIdx 12–15); pad 0 sits
-        // bottom-left — hardware-launchpad orientation, plugin parity.
+        // Screen top row = grid row 8; pad 0 sits bottom-left — the
+        // hardware-launchpad orientation (plugin parity). A 4×4 kit reads
+        // the top-left quadrant (rows 8…5); an 8×8 Launchpad reads all rows.
         return VStack(spacing: 6) {
-            ForEach([8, 7, 6, 5], id: \.self) { gridRow in
+            ForEach(Array(stride(from: 8, through: 9 - rows, by: -1)),
+                    id: \.self) { gridRow in
                 HStack(spacing: 6) {
-                    ForEach(1...4, id: \.self) { gridCol in
+                    ForEach(1...cols, id: \.self) { gridCol in
                         tile(
                             visual: visual(gridRow: gridRow, gridCol: gridCol),
                             pressed: coordinator.pressedPads.contains(
@@ -397,14 +407,16 @@ struct SamplePadGrid4x4: View {
         }
     }
 
-    /// The active pack's SamplePadKey for a sample-quadrant grid cell
-    /// (rows 5–8, cols 1–4). Pack padIdx = (row-5)*4 + (col-1) — the
-    /// hardware-launchpad orientation (pad 0 bottom-left, rows climb),
-    /// matching the jamn Kit plugin. Nil when no pack is active.
+    /// The SamplePadKey bound to a grid cell — read straight from the
+    /// coordinator's binding map (the painter's own source of truth)
+    /// rather than a quadrant formula. That keeps the on-pad waveform
+    /// correct for every layout the same painter produces: the 4×4
+    /// quadrant, an 8×8 Launchpad, a top-origin borrow spread, a local
+    /// recording, or a pinned pad from a different pack. Nil for empty cells.
     private func padKey(gridRow: Int, gridCol: Int) -> SamplePadKey? {
-        guard let packId = appState.activeSamplePack?.pack.packId else { return nil }
-        let padIdx = (gridRow - 5) * 4 + (gridCol - 1)
-        return SamplePadKey(packId: packId, padIdx: padIdx)
+        guard let b = coordinator.padBinding(row: gridRow, col: gridCol)
+        else { return nil }
+        return SamplePadKey(packId: b.packId, padIdx: b.padIdx)
     }
 
     /// Static step flags for a sequence pad (union of all tracks'
@@ -442,6 +454,11 @@ struct SamplePadGrid4x4: View {
         return wf.peaks
     }
 
+    /// Small cells (an 8×8 Launchpad) can't afford the 4×4 rack's padding,
+    /// two-line names and tall waveform — this tightens the tile body so
+    /// 64 pads stay legible instead of clipping.
+    private var compact: Bool { rows > 4 || cols > 4 }
+
     @ViewBuilder
     private func tile(
         visual: PadVisual,
@@ -476,7 +493,25 @@ struct SamplePadGrid4x4: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
+                let darkText = Self.labelWantsDarkText(
+                    hex: visual.colorHint, stage: stage,
+                    bright: visual.isBright || ringing)
                 VStack(alignment: .leading, spacing: 0) {
+                    // Borrow: the SOURCE-SONG line (host vs donor), so you can
+                    // tell which song a pad came from — the tint (blue/amber)
+                    // says host/donor, this names it. Sits ABOVE the chop/
+                    // section name, which is the pad's own label. Only present
+                    // on borrow pads (sampleQuadrantContent stamps sourceLabel).
+                    if let src = visual.sourceLabel, !src.isEmpty {
+                        Text(src)
+                            .font(.system(size: compact ? 7 : 9,
+                                          weight: .semibold))
+                            .foregroundStyle(
+                                (darkText ? Color.black : Color.white)
+                                    .opacity(0.7))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                     // A filled pad ALWAYS gets a name — unlabeled chops were
                     // rendering as anonymous dead squares.
                     Text({ () -> String in
@@ -484,26 +519,22 @@ struct SamplePadGrid4x4: View {
                         if let padKey { return "Pad \(padKey.padIdx + 1)" }
                         return "Pad"
                     }())
-                        // Stage: bigger type, readable at arm's length.
-                        .font(stage ? .subheadline.weight(.bold)
-                                    : .caption.weight(.semibold))
+                        // Stage: bigger type, readable at arm's length. Compact
+                        // (8×8): one tight line so 64 names don't overflow.
+                        .font(compact ? .system(size: 9, weight: .semibold)
+                                      : (stage ? .subheadline.weight(.bold)
+                                               : .caption.weight(.semibold)))
                         // Contrast fix: bright tints (amber/teal) flip
                         // the label to dark ink; darker tints keep the
                         // light label with a subtle scrim shadow so it
                         // stays readable mid-flash.
                         .foregroundStyle(
-                            Self.labelWantsDarkText(
-                                hex: visual.colorHint, stage: stage,
-                                bright: visual.isBright || ringing)
-                                ? Color.black.opacity(0.85)
-                                : TFTheme.textPrimary)
+                            darkText ? Color.black.opacity(0.85)
+                                     : TFTheme.textPrimary)
                         .shadow(
-                            color: Self.labelWantsDarkText(
-                                hex: visual.colorHint, stage: stage,
-                                bright: visual.isBright || ringing)
-                                ? .clear : .black.opacity(0.45),
+                            color: darkText ? .clear : .black.opacity(0.45),
                             radius: 1.5, y: 1)
-                        .lineLimit(2)
+                        .lineLimit(compact ? 1 : 2)
                         .multilineTextAlignment(.leading)
                     Spacer(minLength: 2)
                     // Plugin-style pad body: sequence pads show their
@@ -515,10 +546,10 @@ struct SamplePadGrid4x4: View {
                         PadStepGrid(
                             steps: steps, tint: tint,
                             currentStep: pulse?.step)
-                            .frame(height: 24)
+                            .frame(height: compact ? 14 : 24)
                     } else if let padKey, let peaks = padPeaks(padKey: padKey) {
                         PadWaveformBars(peaks: peaks, tint: tint)
-                            .frame(height: 30)
+                            .frame(height: compact ? 16 : 30)
                     } else {
                         // Fallback accent underline (no buffer resident).
                         RoundedRectangle(cornerRadius: 2)
@@ -526,7 +557,7 @@ struct SamplePadGrid4x4: View {
                             .frame(width: 26, height: 3)
                     }
                 }
-                .padding(8)
+                .padding(compact ? 4 : 8)
             }
 
             if let badge = visual.badge {

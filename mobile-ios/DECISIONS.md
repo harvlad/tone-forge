@@ -1207,3 +1207,51 @@ Web/desktop twins land in the same change.
 **Alternatives:** clip to the best 16 by score regardless of source (rejected —
 a strong host erases the donor, the bug); re-fetch on toggle (rejected — cached
 samples re-lay with zero network).
+
+## D-033 — Jam's 64 Launchpad uses the rich pad tiles, not the flat Canvas grid
+
+**Failure mode (three device-reported regressions).** The Launchpad 16/64
+toggle (D-026) and the borrow-nudge-to-64 (D-029, `loadBorrowLoops` forces
+`launchpadPadCount = 64`) route users onto `ModeGridView` for the 64 grid — a
+lightweight SwiftUI `Canvas` shared with Contribute's arrange workbench. That
+Canvas never had the sample-pad affordances the 4×4 `SamplePadGrid4x4` carries,
+so at 64 (and after any borrow, which auto-switches to 64) users lost:
+(1) the **hold→radial menu** (long-press on the Canvas opened the effects/source
+*sheet*, not the Add Sound / Chop / Loop / … wheel); (2) the **per-pad
+waveform** (the Canvas paints flat colored cells). Separately, the 4×4 tile
+rendered `visual.label` (the chop/section name) but never `visual.sourceLabel`,
+so on a **compact (16) borrow** the pad showed a chord/section name with no way
+to tell which SONG it came from — only the blue/amber tint hinted at host/donor.
+
+**Fix — one rich tile, both sizes (reuse over reimplement).** `SamplePadGrid4x4`
+is now dimension-parameterized (`rows`/`cols`, default 4×4 so every existing
+caller — Contribute, Perform stage, Jam-16 — is byte-for-byte unchanged).
+JamView's 64 branch renders `SamplePadGrid4x4(rows: 8, cols: 8)` instead of
+`ModeGridView`, so the full 8×8 gets the SAME radial menu, waveform, and tile
+code — nothing about the wheel or the waveform is duplicated or re-authored.
+`gridIndex` generalizes (`row + (8 − rows)`, identity at 8×8), as do `padCenter`
+and the tile `ForEach` (rows `8…9−rows`, cols `1…cols`). A `compact` flag
+(rows/cols > 4) tightens padding/label/waveform heights so 64 pads stay legible.
+The source-song line now renders ABOVE the pad name (present only when
+`sourceLabel != nil`, i.e. borrow), distinct from the chord/section label, with
+host/donor tint intact. `ModeGridView` (the Canvas) stays exactly as-is for
+Contribute's advanced arrange grid — it was never the problem there.
+
+**Bonus fix.** `padKey` (the on-pad waveform's identity) now reads
+`coordinator.padBinding(row:col:)` instead of the quadrant formula
+`(gridRow−5)*4 + (gridCol−1)`. Identical for the 4×4 quadrant (the formula was
+the binding-map inverse), but CORRECT for the 8×8 top-origin borrow spread, for
+local recordings (which the formula keyed under the wrong pack), and for pinned
+cross-pack pads — so waveforms resolve for every layout the painter produces.
+
+**Where:** `Views/SamplePadGrid4x4.swift` (`rows`/`cols`/`compact`, `gridIndex`,
+`padCenter`, `tiles`, `padKey`, source-song label in `tile`),
+`Views/Jam/JamView.swift` (64 branch → `SamplePadGrid4x4(rows:8, cols:8)`).
+Verified with the ToneForgeMobileApp scheme on the iPhone 17 Pro simulator —
+BUILD SUCCEEDED (host `swift test` is pre-existingly broken by iOS-only views).
+
+**Alternatives:** teach `ModeGridView`'s Canvas to draw waveforms + host a
+radial (rejected — duplicates `handleRadialAction` + the chop/sequence sheets
+already living in `SamplePadGrid4x4`, two copies to keep in sync); leave 64 flat
+and only fix the borrow label there (rejected — the radial + waveform loss is
+the loudest half of the report).

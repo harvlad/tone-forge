@@ -369,9 +369,16 @@ struct JamView: View {
                 ArrangementBar(arrangement: appState.arrangement)
                 // Place mode (a Sounds pick waiting) always targets the 4×4
                 // kit — the picker assigns onto pack pads, so the 8×8 grid
-                // never becomes a place dead-end.
+                // never becomes a place dead-end. Both sizes use the SAME rich
+                // SamplePadGrid4x4 tiles (hold→radial menu, per-pad waveform,
+                // borrow source-song labels); 64 just renders the full 8×8.
+                // The old 64 path (ModeGridView, a flat Canvas) dropped the
+                // radial and the waveforms — that grid stays for Contribute's
+                // arrange workbench, not the Launchpad.
                 if jamSettings.launchpadPadCount == 64, pendingChop == nil {
-                    ModeGridView(coordinator: coordinator)
+                    SamplePadGrid4x4(
+                        coordinator: coordinator, rows: 8, cols: 8,
+                        pendingChop: $pendingChop)
                 } else {
                     SamplePadGrid4x4(coordinator: coordinator, pendingChop: $pendingChop)
                 }

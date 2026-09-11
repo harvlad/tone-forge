@@ -1,49 +1,60 @@
 Jamn — TestFlight build notes
 
 WHAT'S NEW THIS BUILD
-• NEW: Live-capture Arrangement on the Samples pads. Hit Rec and play the
-  song through — Jamn remembers which pads you play in each section (Intro,
-  Verse, Chorus…). Hit Play arrangement and it replays your pad performance
-  hands-free, section by section, in time with the song. Clear forgets it.
-  Your arrangement is saved per song, so it's still there next time.
-• Borrowed pads sound clean again. A tempo-matching bug was shredding
-  borrowed loops (a half- or double-tempo song got stretched ~2x, which tore
-  up bass and chords). Borrowed loops now fold to the nearest octave so the
-  stretch stays gentle and musical — no more "horrible" artifacts.
-• The pad-mode row now reads Pads / Chords / Samples (was "Launchpad") so all
-  three fit on the phone screen. Same surface, shorter name.
+Three Launchpad regressions fixed on the Samples pad grid:
+• HOLD MENU IS BACK. Long-pressing a pad again opens the radial wheel
+  (Add Sound / Chop / Loop / Effects / Sequence / Delete on a filled pad;
+  Add Sound / Voice / Beat Capture / Sequence on an empty one). It had gone
+  missing on the 64-pad grid — the big grid now uses the same rich pads as
+  the 16-pad grid, so hold-to-edit works at either size.
+• WAVEFORMS ARE BACK. Each sample pad again draws its little audio waveform
+  (the actual sound that plays, trimmed). Previously the 64-pad grid showed
+  flat colored squares with no waveform.
+• BORROWED PADS NOW NAME THEIR SONG. A borrowed pad shows the SOURCE-SONG
+  name (your song vs the borrowed song) as a small line above the pad's
+  chord/section label — so you can tell which pad came from which song, not
+  just guess from the blue/amber color. This was missing on the 16-pad
+  best-of-both borrow view.
 
 HOW TO USE
-• ARRANGEMENT: Load a song → Perform → Samples pads. Above the grid you'll see
-  an "Arrangement" row (Rec · Play arrangement · Clear) and a strip of the
-  song's sections. Press Play (song transport) to start the song, tap Rec,
-  then play pads as the song moves through its sections. Tap Rec again to stop.
-  Now tap "Play arrangement": the song plays and your pads fire automatically
-  at each section. Clear wipes the capture for that song.
-• BORROW (regression check): Song → Remix → Borrow → pick Beat/Bass/Chords →
-  a suggested song. Pads fill blue (your song) / amber (borrowed). Tap to loop.
+• HOLD MENU: Learn or Perform → Samples pads. Press and HOLD a pad (~0.5 s)
+  until the wheel appears, then slide toward an action and release. Works on
+  both the 16 and 64 pad sizes (the "Pads 16 | 64" toggle above the grid).
+• WAVEFORMS: just open the Samples pads with a song loaded — filled pads draw
+  their waveform automatically. Toggle to 64 to confirm the big grid shows
+  them too.
+• BORROW SONG LABELS: Song → Remix → Borrow (or the "Add Song" chip) → pick
+  Beat/Bass/Chords/Melody → a suggested song. Pads fill blue (your song) /
+  amber (borrowed song). Each borrowed pad now shows the song name in small
+  text above the chord/section name. Try both the 16 and 64 sizes.
 
 WHAT TO TEST
-1. ARRANGEMENT CAPTURE: Play a song, tap Rec, tap a few pads during the Verse,
-   different ones during the Chorus, stop Rec. The section strip should mark
-   the sections where you played (filled/tinted).
-2. ARRANGEMENT REPLAY: Tap "Play arrangement" and restart the song. Your pads
-   should arm/fire on their own at the right sections — hands-free — and stop
-   when you hit Clear or Play arrangement again.
-3. BORROW AUDIO QUALITY (important): Borrow a song whose tempo is roughly half
-   or double yours. Tap the amber pads. They should sound clean and musical,
-   NOT stretched/warbly/underwater.
-4. NAMING: the pad-mode row reads "Samples" and the three chips (Pads / Chords
-   / Samples) all fit without running off the screen edge.
+1. HOLD MENU @ 64: Set the size toggle to 64. Long-press a filled pad — the
+   radial wheel should open (NOT a full-screen sheet). Pick "Loop" or "Chop"
+   and confirm it acts on that pad. Repeat at 16.
+2. HOLD MENU on empty pad: Long-press an empty "+" cell — the create wheel
+   (Add Sound / Voice / Beat Capture / Sequence) should open.
+3. WAVEFORMS @ 64: Toggle to 64. Filled pads should each show a small
+   waveform, not a plain colored square. Tap a pad; the waveform is the audio
+   that plays.
+4. BORROW SONG LABEL @ 16: Borrow a song, set size to 16 (best-of-both).
+   Every pad should show its source-song name above the chord/section label;
+   your song's pads blue, the borrowed song's pads amber.
+5. BORROW SONG LABEL @ 64: Same borrow, toggle to 64 — song labels still
+   present across the full grid, tints intact.
+6. NO REGRESSIONS: Contribute/Build 8×8 arrange grid still swaps pads by
+   drag; Perform stage pads still play; adding a sound to an empty pad still
+   works.
 
 KNOWN LIMITATIONS
-• Mobile is still catching up to the web/desktop Launchpad — some controls
-  (e.g. the wide 64 borrow layout, per-pad FX) are thinner here.
-• Arrangement replay follows the song transport; if you scrub far ahead it
-  re-arms at the new section rather than interpolating.
-• First Borrow per (song, donor) renders on the server then caches — first tap
-  is slower.
+• On the 64 grid the pads are small, so names are one line and the waveform
+  is shorter than on the 16 grid — by design, to keep 64 pads legible.
+• A non-borrow kit at 64 shows its 16 kit pads plus empty "+" cells (same as
+  before) — 64 is most useful with a borrow loaded.
+• First Borrow per (song, donor) renders on the server then caches — first
+  tap is slower.
 
-Please report: for Arrangement — did Rec capture the right sections and did
-Play arrangement replay your pads hands-free? For Borrow — the two songs (and
-their rough tempos), and whether the borrowed pads sounded clean.
+Please report: did the HOLD wheel open on both 16 and 64? Did every filled
+pad show a waveform on 64? On a borrow, could you read which song each pad
+came from (name, not just color) at both sizes? Note the two songs and their
+rough tempos for any borrow test.
