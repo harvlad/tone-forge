@@ -1465,6 +1465,25 @@ private struct PadCell: View {
         guard let assignment else {
             return Color.white.opacity(0.06)
         }
+        // Borrow pads carry no Riley contentType (the manifest stamps a flat
+        // blue/amber SOURCE hint), which made a whole borrow read as one color
+        // block. Color them by STEM category instead — like the direct auto-kit
+        // — so drums/bass/chords/vocals are distinguishable; the source song is
+        // shown by the tile's border tint + its source-song label.
+        if launchpad.sourceLabel(for: pad) != nil {
+            let cat: LaunchpadController.PadCategory
+            switch assignment.stem {
+            case "drums":  cat = .drums
+            case "bass":   cat = .bass
+            case "vocals": cat = .vocal
+            default:       cat = .chords   // "other" = chords/harmonic in kit terms
+            }
+            let base = Color(
+                red: Double((cat.colorHex >> 16) & 0xFF) / 255.0,
+                green: Double((cat.colorHex >> 8) & 0xFF) / 255.0,
+                blue: Double(cat.colorHex & 0xFF) / 255.0)
+            return active ? base : base.opacity(0.55)
+        }
         // Color by musical CATEGORY (grouped rack) when the pad carries Riley
         // metadata; fall back to the raw color hint for legacy chops.
         let hint: Int
