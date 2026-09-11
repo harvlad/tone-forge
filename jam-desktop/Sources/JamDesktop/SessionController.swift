@@ -484,7 +484,16 @@ final class SessionController: ObservableObject {
             guard let self else { return }
             // onRelease now fires only on a Loop-mode toggle-OFF (re-tap) — the
             // controller no longer calls it on padUp. So always stop the voice.
-            self.chopPlayer.release(assignment)
+            // Borrow/drumfile pads play a FILE voice (keyed .file(url)); the
+            // chop-keyed release can't find them, so stop by URL — otherwise a
+            // re-tap left the loop playing forever.
+            if let aid = assignment.chop.assetId,
+               aid.hasPrefix("borrowfile:") || aid.hasPrefix("drumfile:"),
+               let url = self.drumKitSampleFiles[assignment.chop.idx] {
+                self.chopPlayer.release(fileURL: url)
+            } else {
+                self.chopPlayer.release(assignment)
+            }
             if let coords = PadEventMapping.eventCoordinates(for: pad) {
                 self.eventBus.publish(ContributionEvent(
                     source: .launchpad,

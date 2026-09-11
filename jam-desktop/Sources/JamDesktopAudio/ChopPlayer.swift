@@ -74,6 +74,11 @@ public final class ChopPlayer {
     private let avEngine: AVAudioEngine
     private var voices: [Voice] = []
     private var nextVoice = 0
+
+    /// Voices currently claimed by a pad (key != nil) — a stop nils the key.
+    /// Exposed for regression tests: a re-tap must drop the count back to 0,
+    /// including borrow/drumfile pads that play through `.file(url)` voices.
+    public var soundingVoiceCount: Int { voices.filter { $0.key != nil }.count }
     private var files: [String: AVAudioFile] = [:]
     /// Readers for sequencer customURL sources, cached per URL.
     private var fileCache: [URL: AVAudioFile] = [:]
@@ -630,6 +635,18 @@ public final class ChopPlayer {
     /// Stop the voice sounding `assignment`'s chop (pad released).
     public func release(_ assignment: PadAssignment) {
         let key = VoiceKey.chop(stem: assignment.stem, idx: assignment.chop.idx)
+        for index in voices.indices where voices[index].key == key {
+            endTakeover(index)
+            voices[index].node.stop()
+            voices[index].key = nil
+        }
+    }
+
+    /// Stop the voice sounding a downloaded FILE (borrow / drumfile pads play
+    /// through `trigger(file:)`, keyed `.file(url)` — `release(assignment)`
+    /// keys `.chop` and would never find them, so a re-tap left them looping).
+    public func release(fileURL url: URL) {
+        let key = VoiceKey.file(url)
         for index in voices.indices where voices[index].key == key {
             endTakeover(index)
             voices[index].node.stop()
