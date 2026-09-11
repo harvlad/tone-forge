@@ -1305,7 +1305,7 @@ final class SessionController: ObservableObject {
             // One raw fetch (both OFF and ON paths) so the per-pad `source`
             // tag survives — the shared SamplePack DTO drops it, so it is
             // decoded from the same bytes into a sidecar map.
-            let (pack, sources) = try await Self.fetchBorrowRaw(
+            let (pack, sources, stems) = try await Self.fetchBorrowRaw(
                 base: base, analysisId: analysisId, donor: donorId,
                 stem: stem, targetBpm: targetBpm, targetKey: targetKey)
             let files = await Self.downloadKitSamples(pack: pack, base: base)
@@ -1351,7 +1351,7 @@ final class SessionController: ObservableObject {
                     loopable: true, loopScore: 1.0, crossfadeMs: nil,
                     assetId: "borrowfile:\(pad.padIdx)")
                 mounts.append(.init(
-                    chop: chop, stem: "drums",
+                    chop: chop, stem: stems[pad.padIdx] ?? "other",
                     sourceLabel: source == .donor ? donorLabel : hostName,
                     source: source))
             }
@@ -1470,6 +1470,11 @@ final class SessionController: ObservableObject {
     private struct BorrowPadSourceWire: Decodable {
         let padIdx: Int
         let source: String?
+        // Logical stem (drums/bass/other/vocals) — the shared SamplePack DTO
+        // drops it, so it's read from the same bytes to color pads by stem
+        // category (a whole borrow used to render one color because the mount
+        // hard-coded stem "drums").
+        let stem: String?
     }
     private struct BorrowSourcesWire: Decodable {
         let pads: [BorrowPadSourceWire]
@@ -1485,7 +1490,8 @@ final class SessionController: ObservableObject {
     private static func fetchBorrowRaw(
         base: URL, analysisId: String, donor: String, stem: String,
         targetBpm: Double?, targetKey: String?
-    ) async throws -> (pack: SamplePack, sources: [Int: BorrowPadSource]) {
+    ) async throws -> (pack: SamplePack, sources: [Int: BorrowPadSource],
+                       stems: [Int: String]) {
         let q = withTarget(
             [URLQueryItem(name: "donor", value: donor),
              URLQueryItem(name: "stem", value: stem)],
@@ -1497,12 +1503,14 @@ final class SessionController: ObservableObject {
         try checkOK(response)
         let pack = try JSONDecoder().decode(SamplePack.self, from: data)
         var sources: [Int: BorrowPadSource] = [:]
+        var stems: [Int: String] = [:]
         if let wire = try? JSONDecoder().decode(BorrowSourcesWire.self, from: data) {
             for p in wire.pads {
                 sources[p.padIdx] = p.source == "donor" ? .donor : .initial
+                if let s = p.stem { stems[p.padIdx] = s }
             }
         }
-        return (pack, sources)
+        return (pack, sources, stems)
     }
 
     @MainActor
