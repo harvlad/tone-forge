@@ -39,8 +39,12 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-BORROW_VERSION = 6      # bumped: default key-conform harmonic donors to host key + ffmpeg-resample pitch shift
+BORROW_VERSION = 7      # bumped: borrow now serves each song's CURATED AUTO-KIT (render_kit_loops), not N section-loops per stem
 _LOOPS_PER_SOURCE = 8   # half of a 16-pad grid per song (initial | donor)
+# Curated-kit borrow: how many pads AutoKitBuilder is asked for per song. The
+# donor/host kits mirror what loading the song DIRECTLY gives (~12 stem-spread,
+# quality-gated pads) instead of the old 8-loops-per-stem-per-song flood (≤64).
+_KIT_PADS_PER_SOURCE = 12
 _MAX_LOOPS = _LOOPS_PER_SOURCE   # back-compat alias
 _STRETCH_LIMIT = 0.5    # refuse to stretch beyond ±50% (artifacts)
 _SECTION_BARS = 4       # loop length cut from each section start (downbeats)
@@ -493,6 +497,50 @@ def _time_stretch(seg, sr: int, tempo_mult: float, np, sf, librosa):
         return seg
 
 
+def _fold_ratio(src_bpm: float, target_bpm: float) -> Optional[float]:
+    """Octave-folded tempo ratio the render applies to bring a donor loop to
+    ``target_bpm``. Picks m in {0.5, 1, 2} that brings ``target/src`` closest to
+    1.0 — the exact metric borrow_candidates folds with, so selection and render
+    agree — keeping the actual WSOLA stretch inside its clean ±50% band (a
+    half-time donor's 4-bar loop = 8 host bars, still on the downbeat grid).
+    None when the raw ratio is so far off (< 0.25× or > 4×) that even folding
+    can't rescue it."""
+    raw_ratio = target_bpm / src_bpm
+    if not (0.25 <= raw_ratio <= 4.0):
+        return None
+    _, m = min((abs(raw_ratio * mm - 1.0), mm) for mm in (0.5, 1.0, 2.0))
+    return raw_ratio * m
+
+
+def _render_segment(y, sr: int, a: float, b: float, ratio: float,
+                    n_steps: int, dest, np, sf, librosa) -> bool:
+    """Cut [a, b] from the loaded stem, time-stretch by ``ratio`` (tempo lock),
+    pitch-shift ``n_steps`` semitones (key conform), peak-normalize, and write
+    ``dest`` atomically. Returns True when ``dest`` is a usable file (already
+    cached OR freshly written), False to skip this pad. The single DSP path both
+    section-loop and curated-kit borrow share — same stretch→shift→seam bake."""
+    if dest.exists() and dest.stat().st_size > 0:
+        return True
+    i0, i1 = int(a * sr), min(int(b * sr), y.shape[0])
+    if i1 - i0 < int(0.2 * sr):
+        return False
+    seg = y[i0:i1]
+    # Speed the donor to the target tempo (stretch), THEN conform the PITCH to
+    # the target key (off the hot path at 0 steps). Order is stretch→shift: the
+    # shift is length-preserving, so it leaves the bar-locked duration intact.
+    stretched = _time_stretch(seg, sr, ratio, np, sf, librosa)
+    stretched = _pitch_shift(stretched, sr, n_steps, np, librosa)
+    peak = float(np.max(np.abs(stretched))) or 1.0
+    stretched = (stretched / peak * 0.89).astype(np.float32)
+    try:
+        tmp = dest.with_name(dest.name + ".part.wav")
+        sf.write(str(tmp), stretched, sr, subtype="PCM_16")
+        tmp.rename(dest)
+    except Exception:
+        return False
+    return True
+
+
 def render_section_loops(source_id: str, source_result: Dict, stem: str,
                          target_bpm: float, *,
                          donor_stem: Optional[str] = None,
@@ -535,13 +583,9 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
     # bass/chord material ("horrible"). Folding keeps the actual stretch inside
     # WSOLA's clean ±50% range while the loop stays integer-bar and grid-locked
     # (a half-time donor's 4-bar loop = 8 host bars, still on the downbeat grid).
-    raw_ratio = target_bpm / src_bpm
-    if not (0.25 <= raw_ratio <= 4.0):
+    ratio = _fold_ratio(src_bpm, target_bpm)
+    if ratio is None:
         return []
-    # Pick m in {0.5, 1, 2} that brings raw_ratio*m closest to 1.0 — the exact
-    # metric borrow_candidates folds with, so selection and render agree.
-    _, _fold_m = min((abs(raw_ratio * m - 1.0), m) for m in (0.5, 1.0, 2.0))
-    ratio = raw_ratio * _fold_m
 
     # Transpose is a DONOR-only affordance: never touch the host's own audio.
     # n_steps stays 0 (and the cache key stays untargeted) unless the caller
@@ -583,30 +627,12 @@ def render_section_loops(source_id: str, source_result: Dict, stem: str,
             fname = _cache_key(source_id, donor_stem, target_bpm, (a, b),
                                cache_key)
             dest = out_dir / fname
-            if not (dest.exists() and dest.stat().st_size > 0):
-                i0, i1 = int(a * sr), min(int(b * sr), y.shape[0])
-                if i1 - i0 < int(0.2 * sr):
-                    continue
-                seg = y[i0:i1]
-                # Speed the donor to the target tempo: a k-bar span at
-                # donor_bpm must become k bars at target_bpm, i.e. its duration
-                # scales by 1/ratio, i.e. tempo × ratio. (The old code passed
-                # 1/ratio — inverted — so donors were stretched the WRONG way.)
-                # The current song renders at ratio≈1 (no stretch, stays clean).
-                stretched = _time_stretch(seg, sr, ratio, np, sf, librosa)
-                # Then conform the PITCH to the target key (donor-only, off the
-                # hot path at 0 steps). Order is stretch→shift: the vocoder
-                # shift is length-preserving, so it leaves the bar-locked
-                # duration from the stretch intact.
-                stretched = _pitch_shift(stretched, sr, n_steps, np, librosa)
-                peak = float(np.max(np.abs(stretched))) or 1.0
-                stretched = (stretched / peak * 0.89).astype(np.float32)
-                try:
-                    tmp = dest.with_name(dest.name + ".part.wav")
-                    sf.write(str(tmp), stretched, sr, subtype="PCM_16")
-                    tmp.rename(dest)
-                except Exception:
-                    continue
+            # Speed the donor to the target tempo (tempo × ratio → k bars at
+            # target_bpm), then conform pitch (donor-only, 0 steps = no-op). The
+            # host renders at ratio≈1 (no stretch, stays clean). Shared DSP path.
+            if not _render_segment(y, sr, a, b, ratio, n_steps, dest,
+                                   np, sf, librosa):
+                continue
             pads.append({
                 "padIdx": pad_base + i,
                 "name": names[i],
@@ -721,3 +747,181 @@ def borrow_job(source_id: str, source_result: Dict, stem: str,
         source_id, source_result, stem, target_bpm,
         donor_stem=donor_stem, pad_base=pad_base, source_tag=source_tag,
         stem_label=stem_label, target_key=target_key)
+
+
+# ---------------------------------------------------------------------------
+# Curated-kit borrow — the song's AutoKit pads, conformed to the host
+# ---------------------------------------------------------------------------
+
+def _kit_pad_stem(pad: Dict) -> str:
+    """The stem role a curated kit pad plays (stemSlice.stemRole — the actual
+    key in stems_paths, e.g. 'drums', 'bass', 'guitar_center', 'vocals')."""
+    ss = pad.get("stemSlice") or {}
+    role = ss.get("stemRole")
+    return role if isinstance(role, str) else ""
+
+
+def _logical_stem(role: str) -> str:
+    """Collapse a concrete stem role to its logical family so clients colour by
+    category and the pitchless (drums) gate is unambiguous. 'guitar_center' →
+    'other', 'drums' → 'drums', bass/vocals unchanged."""
+    r = (role or "").lower()
+    if "drum" in r:
+        return "drums"
+    if r == "bass":
+        return "bass"
+    if r in ("vocals", "vocal"):
+        return "vocals"
+    return "other"
+
+
+def render_kit_loops(source_id: str, source_result: Dict, target_bpm: float, *,
+                     source_tag: str = "donor",
+                     target_key: Optional[str] = None,
+                     source_name: Optional[str] = None,
+                     skill: str = "intermediate",
+                     pads: int = _KIT_PADS_PER_SOURCE,
+                     pad_base: int = 0) -> List[Dict]:
+    """Render ONE song's CURATED AUTO-KIT as borrow pads.
+
+    This is the honest fix for the borrow "flood": instead of emitting
+    ``_LOOPS_PER_SOURCE`` section loops per stem per song (up to 64 lower-
+    curation pads), we serve exactly the ~12 pads the song gives when loaded
+    DIRECTLY — the same AutoKitBuilder selection (stem-spread + quality-gated),
+    each pad's loop region conformed to the host via the SAME borrow DSP
+    (octave-folded tempo stretch + key-conform pitch shift + seam bake + cache).
+
+    Reuse, not reimplementation:
+      * SELECTION  — ``serve.kit_payload`` → AutoKitBuilder (identical to the
+        GET /api/song/{id}/kit path). Each kit pad carries its stemRole, its
+        loop region [loopStartSec, loopEndSec], score, name and category.
+      * CONFORM    — ``_fold_ratio`` + ``_render_segment`` (the exact stretch/
+        shift/normalize path ``render_section_loops`` uses).
+
+    ``target_key`` conforms BORROWED (source_tag == 'donor') HARMONIC/MELODIC
+    pads to that key; DRUMS pads are pitchless (never transposed) and the host's
+    own pads (source_tag == 'initial') are never transposed — same doctrine as
+    render_section_loops, applied PER PAD because one kit mixes several stems.
+    ``pad_base`` offsets padIdx so host + donor share one grid; ``source_name``
+    is stamped on every pad so clients label by song. Heavy (stem download +
+    DSP) — call off the event loop."""
+    try:
+        import librosa
+        import numpy as np
+        import soundfile as sf
+    except ImportError:
+        return []
+    out_dir = _cache_dir()
+    if out_dir is None:
+        return []
+    src_bpm = _tempo_of(source_result)
+    if not src_bpm or not target_bpm:
+        return []
+    ratio = _fold_ratio(src_bpm, target_bpm)
+    if ratio is None:
+        return []
+
+    # SELECTION: the same curated kit a direct load produces. serve.kit_payload
+    # prefers the worker-derived graph (no stems needed) and folds usage
+    # feedback — byte-for-byte the /api/song/{id}/kit pad set.
+    from tone_forge.performance import serve as _serve
+    try:
+        kit = _serve.kit_payload(source_id, source_result, skill=skill,
+                                 pads=pads)
+    except Exception:
+        return []
+    kit_pads = [p for p in (kit.get("pads") or []) if isinstance(p, dict)]
+    if not kit_pads:
+        return []
+
+    donor_key = source_result.get("detected_key") or source_result.get("key")
+    roles = sorted({_kit_pad_stem(p) for p in kit_pads if _kit_pad_stem(p)})
+    if not roles:
+        return []
+
+    import tempfile
+
+    from tone_forge.stem_fetch import materialize_stems
+
+    color = _COLOR_INITIAL if source_tag == "initial" else _COLOR_DONOR
+    out_pads: List[Dict] = []
+    loaded: Dict[str, object] = {}   # role → (y, sr) | None (decode failed)
+    with tempfile.TemporaryDirectory(prefix="toneforge_borrowkit_") as td:
+        stems = materialize_stems(source_result, Path(td), roles=roles)
+        for pad in kit_pads:
+            role = _kit_pad_stem(pad)
+            a = pad.get("loopStartSec")
+            b = pad.get("loopEndSec")
+            if (role not in stems
+                    or not isinstance(a, (int, float))
+                    or not isinstance(b, (int, float)) or b <= a):
+                continue
+            if role not in loaded:
+                wav = stems.get(role)
+                try:
+                    y, sr = sf.read(str(wav), dtype="float32", always_2d=True)
+                    loaded[role] = (y, sr)
+                except Exception:
+                    loaded[role] = None
+            entry = loaded.get(role)
+            if entry is None:
+                continue
+            y, sr = entry
+
+            logical = _logical_stem(role)
+            # Per-pad transpose: donor-only, harmonic/melodic only (drums
+            # pitchless). One kit mixes stems, so the gate lives here, not at
+            # the call site as it did for section loops.
+            n_steps = 0
+            if target_key and source_tag == "donor" and logical not in _PITCHLESS:
+                n_steps = _transpose_steps(donor_key, target_key)
+            cache_key = target_key if n_steps != 0 else None
+
+            fname = _cache_key(source_id, role, target_bpm,
+                               (float(a), float(b)), cache_key)
+            dest = out_dir / fname
+            if not _render_segment(y, sr, float(a), float(b), ratio, n_steps,
+                                   dest, np, sf, librosa):
+                continue
+            out_pads.append({
+                "padIdx": pad_base + len(out_pads),
+                "name": pad.get("name") or f"Loop {len(out_pads) + 1}",
+                "category": pad.get("category") or logical.upper(),
+                "family": pad.get("family") or "mixed",
+                # colorHint stays blue/amber BY SOURCE so the initial/donor
+                # split reads at a glance (unchanged client contract); `stem`/
+                # `category` let a client colour by instrument category instead.
+                "colorHint": color,
+                "source": source_tag,
+                "sourceName": source_name or "",
+                "stem": logical,
+                "stemRole": role,
+                "sectionType": "",
+                "loopable": bool(pad.get("loopable", True)),
+                # File-backed loop: whole file is an integer number of bars at
+                # the target tempo, bar-quantized so layers phase-lock.
+                "loopPointSec": 0,
+                # Real quality signals from the curated kit — the compact (16)
+                # best-of-both layout ranks pads by these (was a flat 1.0).
+                "loopScore": pad.get("loopScore", 1.0),
+                **({"performanceScore": pad["performanceScore"]}
+                   if isinstance(pad.get("performanceScore"), (int, float))
+                   else {}),
+                "defaultQuantize": "1 bar",
+                "sampleFile": fname,
+            })
+    return out_pads
+
+
+def kit_borrow_job(source_id: str, source_result: Dict, target_bpm: float,
+                   source_tag: str = "donor",
+                   target_key: Optional[str] = None,
+                   source_name: Optional[str] = None,
+                   pad_base: int = 0, pads: int = _KIT_PADS_PER_SOURCE):
+    """Process-pool entry point for curated-kit borrow (one song's AutoKit
+    conformed to the host). Module-level + picklable args so it runs in the
+    render ProcessPool."""
+    return render_kit_loops(
+        source_id, source_result, target_bpm, source_tag=source_tag,
+        target_key=target_key, source_name=source_name, pad_base=pad_base,
+        pads=pads)

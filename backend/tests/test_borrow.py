@@ -409,6 +409,146 @@ def test_target_bpm_overrides_stretch_tempo(tmp_path, monkeypatch):
     assert d140.shape[0] > d120.shape[0]
 
 
+# --- curated-kit borrow (render_kit_loops) ----------------------------------
+# Borrow now serves each song's AutoKit (~12 stem-spread, quality-gated pads),
+# NOT _LOOPS_PER_SOURCE section loops per stem per song. These pin that new
+# contract: kit selection is REUSED (serve.kit_payload) and the loop regions run
+# through the SAME conform DSP (fold ratio + stretch + pitch-shift + cache).
+
+def _kit_borrow_fixture(tmp_path, monkeypatch, kit_pads, *, host_key="C major"):
+    """Wire render_kit_loops for a test: a 16 s tone as every stem, a fake
+    curated kit (serve.kit_payload), and a materialize_stems that hands the
+    tone back for each requested role. Returns the source `result`."""
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("soundfile")
+    pytest.importorskip("librosa")
+    import soundfile as sf
+
+    monkeypatch.setenv("TONEFORGE_BORROW_CACHE", str(tmp_path))
+    sr = 22050
+    stem_wav = tmp_path / "stem.wav"
+    tone = np.sin(2 * np.pi * 110.0 * (np.arange(16 * sr) / sr)).astype("float32")
+    sf.write(str(stem_wav), np.stack([tone, tone], axis=1), sr)
+
+    roles = sorted({p["stemSlice"]["stemRole"] for p in kit_pads})
+    result = {
+        "tempo_bpm": 120, "detected_key": host_key,
+        "downbeats_s": [float(i) for i in range(17)], "duration_sec": 17.0,
+        "stems_paths": {r: str(stem_wav) for r in roles},
+    }
+
+    monkeypatch.setattr(
+        "tone_forge.performance.serve.kit_payload",
+        lambda sid, res, skill="intermediate", pads=12: {"pads": kit_pads})
+    monkeypatch.setattr(
+        "tone_forge.stem_fetch.materialize_stems",
+        lambda res, td, roles=None: {r: stem_wav for r in (roles or [])})
+    return result
+
+
+def _curated_kit():
+    # A stem-spread kit: drums + bass + harmonic + vocal — what a direct load
+    # gives. Deliberately SMALL (4 pads), the whole point vs the 8×4=32 flood.
+    return [
+        {"name": "Drums beat", "category": "DRUMS", "loopable": True,
+         "loopScore": 0.82, "performanceScore": 0.71,
+         "stemSlice": {"stemRole": "drums"},
+         "loopStartSec": 0.0, "loopEndSec": 4.0},
+        {"name": "Bass groove Verse", "category": "BASS", "loopable": True,
+         "loopScore": 0.64, "performanceScore": 0.55,
+         "stemSlice": {"stemRole": "bass"},
+         "loopStartSec": 0.0, "loopEndSec": 4.0},
+        {"name": "Guitar riff Chorus", "category": "CHORDS", "loopable": True,
+         "loopScore": 0.70,
+         "stemSlice": {"stemRole": "guitar_center"},
+         "loopStartSec": 4.0, "loopEndSec": 8.0},
+        {"name": "Vocal", "category": "VOCAL", "loopable": True,
+         "loopScore": 0.51,
+         "stemSlice": {"stemRole": "vocals"},
+         "loopStartSec": 8.0, "loopEndSec": 12.0},
+    ]
+
+
+def test_kit_borrow_returns_curated_kit_not_section_flood(tmp_path, monkeypatch):
+    """The core new contract: a borrow yields the DONOR's curated auto-kit —
+    small, stem-spread, source-tagged, each pad conformed — instead of
+    _LOOPS_PER_SOURCE loops per stem. One pad per kit entry (4), not 32."""
+    kit = _curated_kit()
+    result = _kit_borrow_fixture(tmp_path, monkeypatch, kit)
+
+    pads = borrow.render_kit_loops(
+        "donorX", result, 120.0, source_tag="donor",
+        target_key="C major", source_name="Donor Song")
+
+    # Curated, not flooded: one pad per kit entry, far under 8-per-stem.
+    assert len(pads) == len(kit) == 4
+    assert len(pads) < borrow._LOOPS_PER_SOURCE * 4
+    # Stem-spread carried through so clients colour by category.
+    assert {p["stem"] for p in pads} == {"drums", "bass", "other", "vocals"}
+    # Every pad is donor-tagged, song-labelled, score- and file-backed.
+    for p in pads:
+        assert p["source"] == "donor"
+        assert p["sourceName"] == "Donor Song"
+        assert p["sampleFile"].startswith("borrow_") and p["sampleFile"].endswith(".wav")
+        assert (tmp_path / p["sampleFile"]).exists()
+        assert isinstance(p["loopScore"], (int, float))
+    # Kit scores (loopScore/performanceScore) flow through for the compact
+    # (16) best-of-both ranking — was a flat 1.0 in the old section path.
+    by_name = {p["name"]: p for p in pads}
+    assert by_name["Drums beat"]["loopScore"] == 0.82
+    assert by_name["Drums beat"]["performanceScore"] == 0.71
+
+
+def test_kit_borrow_pitchless_drums_conform_harmonic(tmp_path, monkeypatch):
+    """Per-pad key conform: with a donor target_key, harmonic/melodic pads
+    transpose (keyed cache slot) while DRUMS stay pitchless (untargeted slot) —
+    the gate lives PER PAD because one kit mixes stems. C major → G minor is a
+    real ±5-semitone move, so the two paths must produce distinct cache files."""
+    kit = _curated_kit()
+    result = _kit_borrow_fixture(tmp_path, monkeypatch, kit, host_key="C major")
+
+    pads = borrow.render_kit_loops(
+        "donorX", result, 120.0, source_tag="donor",
+        target_key="G minor", source_name="Donor")
+    by_name = {p["name"]: p for p in pads}
+
+    # Drums: pitchless → the untargeted (default) cache filename.
+    drums_fn = by_name["Drums beat"]["sampleFile"]
+    assert drums_fn == borrow._cache_key("donorX", "drums", 120.0, (0.0, 4.0))
+    # Bass: harmonic donor pad → transposed → the KEYED cache slot (distinct).
+    bass_fn = by_name["Bass groove Verse"]["sampleFile"]
+    assert bass_fn == borrow._cache_key(
+        "donorX", "bass", 120.0, (0.0, 4.0), "G minor")
+    assert bass_fn != borrow._cache_key("donorX", "bass", 120.0, (0.0, 4.0))
+
+
+def test_kit_borrow_host_initial_never_transposes(tmp_path, monkeypatch):
+    """The host's own kit (source_tag='initial') is NEVER transposed even if a
+    target_key is passed — the play-along recording stays TRUE. So its harmonic
+    pads land in the untargeted cache slot, identical to no-key."""
+    kit = _curated_kit()
+    result = _kit_borrow_fixture(tmp_path, monkeypatch, kit, host_key="C major")
+
+    host = borrow.render_kit_loops(
+        "hostX", result, 120.0, source_tag="initial",
+        target_key="G minor", source_name="This song")
+    bass = next(p for p in host if p["stem"] == "bass")
+    # Untargeted filename — no transpose despite the target_key.
+    assert bass["sampleFile"] == borrow._cache_key(
+        "hostX", "bass", 120.0, (0.0, 4.0))
+    assert all(p["colorHint"] == borrow._COLOR_INITIAL for p in host)
+
+
+def test_kit_borrow_empty_kit_yields_no_pads(tmp_path, monkeypatch):
+    """A song whose kit builder returns nothing borrows nothing (the handler
+    then 422s) — never a crash."""
+    result = _kit_borrow_fixture(tmp_path, monkeypatch, _curated_kit())
+    monkeypatch.setattr(
+        "tone_forge.performance.serve.kit_payload",
+        lambda sid, res, skill="intermediate", pads=12: {"pads": []})
+    assert borrow.render_kit_loops("d", result, 120.0, source_tag="donor") == []
+
+
 def test_key_distance_ranking(tmp_path, monkeypatch):
     """(d) With an explicit target_key, candidates rank by key relationship to
     THAT key: a donor already in the target key beats a fifth-away donor, which

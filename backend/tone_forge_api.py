@@ -6528,52 +6528,39 @@ async def get_borrow_loops(
     _refresh_r2_stem_urls(donor_result)
     loop = asyncio.get_running_loop()
 
-    # Fill the whole 8×8 with BOTH songs' full kits. The picked stem LEADS —
-    # it fills pads 0..15 (this song 0..7 blue, donor 8..15 amber) so a 16-pad
-    # grid still shows both songs on that stem. The remaining stems (drums,
-    # bass, chords, vocals) fill the rest of the 64 in 16-pad blocks, this
-    # song's own sections unstretched (ratio≈1), the donor's time-stretched to
-    # lock. A player jumps between any section of either song, any stem.
-    half = _borrow._LOOPS_PER_SOURCE            # 8 per song per stem
-    stem_order = ["drums", "bass", "other", "vocals"]
-    lead = stem if stem in stem_order else "drums"
-    stem_seq = [lead] + [s for s in stem_order if s != lead]
-    labels = {"drums": "Beat", "bass": "Bass", "other": "Chords",
-              "vocals": "Vocal"}
-
-    def _resolve(res: dict, s: str):
-        return next((a for a in _borrow._stem_aliases(s)
-                     if a in (res.get("stems_paths") or {})), None)
-
-    jobs = []
-    block = 0
-    for s in stem_seq:
-        i_stem = _resolve(result, s)
-        d_stem = _resolve(donor_result, s)
-        if i_stem is None and d_stem is None:
-            continue
-        base = block * (2 * half)               # 16 pads per stem block
-        if base >= 64:
-            break
-        lbl = labels.get(s, s.title())
-        if i_stem is not None:
-            # Host song's own pads: host tempo, no transpose (stays TRUE).
-            jobs.append(loop.run_in_executor(
-                _render_pool(), _borrow.borrow_job, entry_id, result, s,
-                host_bpm, i_stem, base, "initial", lbl, None))
-        if d_stem is not None:
-            # Borrowed pads: conform to THIS song's key by default (harmonic/
-            # melodic stems only — drums stay pitchless), or to an explicit
-            # session key when supplied.
-            donor_key = target_key
-            if donor_key is None and s not in _borrow._PITCHLESS:
-                donor_key = host_key
-            jobs.append(loop.run_in_executor(
-                _render_pool(), _borrow.borrow_job, donor, donor_result, s,
-                donor_bpm, d_stem, base + half, "donor", lbl, donor_key))
-        block += 1
-    rendered = await asyncio.gather(*jobs) if jobs else []
-    pads = [p for grp in rendered for p in (grp or [])]
+    # Borrow now serves each song's CURATED AUTO-KIT — exactly what loading the
+    # song DIRECTLY gives: ~12 stem-spread, quality-gated pads (AutoKitBuilder),
+    # NOT the old flood of _LOOPS_PER_SOURCE section loops per stem per song
+    # (≤64 lower-curation pads). The host kit renders at host tempo (ratio≈1, no
+    # transpose — stays TRUE); the donor kit is octave-fold tempo-matched and,
+    # for harmonic/melodic stems, key-conformed to this song (drums pitchless).
+    # arrangeBorrowLayout (web/desktop/iOS) lays the two curated sets out
+    # (64 = host top / divider / donor below; 16 = best-of-both by score).
+    host_name = str(entry.get("name") or "This song")[:24]
+    donor_name = str(donor_entry.get("name") or "Borrowed")[:24]
+    # Donor key-conform: explicit session key wins; else conform to THIS song's
+    # key so borrowed harmonic material doesn't clash. Drums are gated pitchless
+    # PER PAD inside render_kit_loops (one kit mixes stems).
+    donor_key = target_key if target_key else host_key
+    host_job = loop.run_in_executor(
+        _render_pool(), _borrow.kit_borrow_job, entry_id, result,
+        host_bpm, "initial", None, host_name)
+    donor_job = loop.run_in_executor(
+        _render_pool(), _borrow.kit_borrow_job, donor, donor_result,
+        donor_bpm, "donor", donor_key, donor_name)
+    host_pads, donor_pads = await asyncio.gather(host_job, donor_job)
+    host_pads = host_pads or []
+    donor_pads = donor_pads or []
+    # padIdx must be GLOBALLY unique across the response — desktop/iOS key the
+    # downloaded sample file AND the initial/donor source map by padIdx. Two
+    # kits render from 0 independently, so renumber donor after host. The client
+    # arranger re-lays anyway; this only guarantees a collision-free mapping and
+    # a stable within-source (kit) order.
+    for i, p in enumerate(host_pads):
+        p["padIdx"] = i
+    for j, p in enumerate(donor_pads):
+        p["padIdx"] = len(host_pads) + j
+    pads = host_pads + donor_pads
     if not pads:
         raise HTTPException(
             status_code=422,
