@@ -1135,7 +1135,13 @@ export class PadEngine {
         // wait on a grid nobody can hear. (Bug: a loop tapped after everything
         // was released sat armed-silent for up to one 8 s cycle, reading as
         // "loops don't play".)
-        if (!rolling && this._voices.size === 0) this._lockAnchor = null;
+        if (!rolling && this._voices.size === 0) {
+          if (this._lockAnchor != null) {
+            // eslint-disable-next-line no-console
+            try { console.log("[phaselock] ANCHOR RESET (surface silent)"); } catch (_) {}
+          }
+          this._lockAnchor = null;
+        }
         const aligned = rolling ? this._transportLaunchTime(now, grid) : null;
         target = aligned != null ? aligned : this._lockLaunchTime(now, grid);
       }
@@ -1241,8 +1247,32 @@ export class PadEngine {
       const body = entry.bodySec;
       const phase = (((startTime - this._lockAnchor) % body) + body) % body;
       source.start(startTime, phase);
+      // TEMP instrumentation (remove after the phase-lock bug is closed):
+      // logs the REAL per-launch values — earlier debugging simulated the
+      // math instead of observing it, which repeatedly "verified" fixes the
+      // live app didn't run. Unconditional on purpose.
+      try {
+        // eslint-disable-next-line no-console
+        console.log("[phaselock]", JSON.stringify({
+          padIdx, startTime: +startTime.toFixed(3), now: +now.toFixed(3),
+          anchor: this._lockAnchor == null ? null : +this._lockAnchor.toFixed(3),
+          bodySec: +body.toFixed(3), phase: +phase.toFixed(3),
+          quantized, rolling: !!(this._transport && this._transport.isPlaying && this._transport.isPlaying()),
+          voices: this._voices.size,
+          loopStartSec: entry.pad.loopStartSec, loopEndSec: entry.pad.loopEndSec,
+          cycle: +this.loopLengthSeconds.toFixed(3),
+        }));
+      } catch (_) {}
     } else {
       source.start(startTime);
+      try {
+        // eslint-disable-next-line no-console
+        console.log("[phaselock]", JSON.stringify({
+          padIdx, unphased: true, willLoop, bodySec: entry.bodySec,
+          anchorNull: this._lockAnchor == null,
+          startTime: +startTime.toFixed(3),
+        }));
+      } catch (_) {}
     }
     // Armed watchdog: a quantized launch must be sounding by its own wait
     // plus a grace second (≤ cycle + 1 s). If the context clock never
