@@ -158,7 +158,21 @@ def _build_stem_records(
     wire-compatible fallback.
 
     Identity: stem ids are ``"demucs.<original>"`` for base stems and
-    ``"demucs.other.<suffix>"`` for pan-split children.
+    ``"demucs.other.<suffix>"`` for guitar pan-split children.
+
+    Two 6s-specific routings on top of the 4-stem behaviour:
+        - The pan-split (Step 2b) runs on the real ``guitar`` stem, so
+          its parts belong to the guitar slot; emitting them under
+          ``other`` -- as the code did before -- both mislabelled the
+          guitar and shadowed the residual. Under the 4-stem fallback
+          there is no ``guitar`` stem, so ``other`` *is* the guitar
+          bucket and its parts stay under ``demucs.other.*``.
+        - The residual ``other`` (guitar + piano already pulled out) is a
+          good synth/strings/pad proxy on electronic material, so it is
+          surfaced as its own ``synth`` role instead of the misleading
+          ``harmonic``/"Guitar". A mid/side split of it was tried and
+          rejected (it only mono-collapses centred synth); the raw
+          residual is what ships.
     """
     from tone_forge.stem_model import (
         Stem, StemRole, default_display_name,
@@ -167,13 +181,35 @@ def _build_stem_records(
     records: list = []
     base_url = "http://127.0.0.1:7777/api/serve-file?path="
     has_split = len(guitar_parts) > 1
+    # A real guitar/piano stem means htdemucs_6s ran, so `other` is the
+    # synth residual, not the 4-stem guitar bucket.
+    is_6s = ("guitar" in stems) or ("piano" in stems)
+
+    def _emit_guitar_parts() -> None:
+        for part_key, part_path in guitar_parts.items():
+            role_str = _PAN_SPLIT_ROLE_MAP.get(part_key, "harmonic")
+            try:
+                role = StemRole(role_str)
+            except ValueError:
+                role = StemRole.HARMONIC
+            records.append(Stem(
+                id=f"demucs.other.{part_key.replace('guitar_', '')}",
+                role=role,
+                display_name=default_display_name(role),
+                audio_url=f"{base_url}{str(part_path)}",
+                parent_id="demucs.other",
+                provider="demucs+pansplit",
+                confidence=0.7,
+            ).to_dict())
 
     role_for_base = {
         "drums": StemRole.DRUMS,
         "bass": StemRole.BASS,
         "vocals": StemRole.VOCALS,
+        # 4-stem `other` is the guitar bucket -> HARMONIC. Under 6s it is
+        # the synth residual and gets StemRole.SYNTH below.
         "other": StemRole.HARMONIC,
-        # htdemucs_6s extras. Without these two the 6-stem model's own
+        # htdemucs_6s extras. Without these the 6-stem model's own
         # guitar/piano stems fell through to StemRole.UNKNOWN, which the
         # session engine cannot route to any slot -- the stems existed and
         # were unreachable.
@@ -189,30 +225,23 @@ def _build_stem_records(
     }
 
     for name, path in stems.items():
-        if name == "other" and has_split:
-            for part_key, part_path in guitar_parts.items():
-                role_str = _PAN_SPLIT_ROLE_MAP.get(part_key, "harmonic")
-                try:
-                    role = StemRole(role_str)
-                except ValueError:
-                    role = StemRole.HARMONIC
-                records.append(Stem(
-                    id=f"demucs.other.{part_key.replace('guitar_', '')}",
-                    role=role,
-                    display_name=default_display_name(role),
-                    audio_url=f"{base_url}{str(part_path)}",
-                    parent_id="demucs.other",
-                    provider="demucs+pansplit",
-                    # Pan-split has already filtered low-confidence
-                    # cases via L/R correlation; role_classifier picked
-                    # the label.
-                    confidence=0.7,
-                ).to_dict())
+        # 6s: the pan-split ran on the real `guitar` stem. Emit its parts
+        # (keeping the legacy demucs.other.* ids so frontend state
+        # survives) in place of the undifferentiated guitar base.
+        if name == "guitar" and has_split:
+            _emit_guitar_parts()
             continue
 
-        # All other base stems (drums/bass/vocals, plus unsplit "other"
-        # regardless of detected_type) map straight from role_for_base.
+        # 4-stem fallback: no real `guitar` stem, so `other` is the guitar
+        # bucket and Step 2b split it. Legacy behaviour, unchanged.
+        if name == "other" and has_split and not is_6s:
+            _emit_guitar_parts()
+            continue
+
         role = role_for_base.get(name, StemRole.UNKNOWN)
+        # 6s: the `other` residual is the synth proxy, not a guitar bucket.
+        if name == "other" and is_6s:
+            role = StemRole.SYNTH
         records.append(Stem(
             id=f"demucs.{name}",
             role=role,
@@ -224,25 +253,30 @@ def _build_stem_records(
     return records
 
 
-def _build_stems_dict(stems: dict, detected_type: str, guitar_parts: dict) -> dict:
+def _build_stems_dict(stems: dict, detected_type: str,
+                      guitar_parts: dict) -> dict:
     """Build the API-shape stems dict, substituting pan-split guitar parts.
 
-    Behaviour for the "other" stem (Demucs' catch-all bucket):
-        - If the pan-split actually fired (``guitar_parts`` has >1 entry),
-          surface every part. This runs *regardless* of ``detected_type``
-          because the type classifier votes on the full mix and often
-          mis-fires on multi-instrument songs (e.g. picks "drums" when
-          drums dominate). We already proved the stereo signal is two
-          independent sources via L/R correlation, so the parts are real.
-        - If only one part exists and the type is guitar, rename to
-          "guitar" for the legacy single-slot UI path.
-        - Otherwise emit as "other" unchanged.
+    Behaviour mirrors ``_build_stem_records``'s guitar routing:
+        - 6s: guitar parts replace the ``guitar`` slot (keys
+          ``guitar_center``/``guitar_sides``); the residual ``other`` stays
+          keyed ``other`` (the role-keyed records carry its ``synth``
+          role -- this legacy dict is name-keyed and consumed only as a
+          fallback).
+        - 4-stem: ``other`` is the guitar bucket, so its parts stay under
+          the ``guitar_*`` keys; a mono guitar-typed ``other`` is renamed
+          to ``guitar`` for the legacy single-slot UI path.
     """
     out: dict = {}
     base = "http://127.0.0.1:7777/api/serve-file?path="
     has_split = len(guitar_parts) > 1
+    is_6s = ("guitar" in stems) or ("piano" in stems)
     for name, path in stems.items():
-        if name == "other" and has_split:
+        if name == "guitar" and has_split:
+            for part_key, part_path in guitar_parts.items():
+                out[part_key] = f"{base}{str(part_path)}"
+        elif name == "other" and has_split and not is_6s:
+            # 4-stem: `other` is the guitar bucket; surface its parts.
             for part_key, part_path in guitar_parts.items():
                 out[part_key] = f"{base}{str(part_path)}"
         elif (name == "other" and detected_type == "guitar"

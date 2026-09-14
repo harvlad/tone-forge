@@ -107,6 +107,7 @@ public final class LaunchpadController {
         case "drums":  return .drums
         case "bass":   return .bass
         case "vocals": return .vocal
+        case "synth":  return .texture   // 6s `other` residual = synth proxy
         default:       return .chords   // "other"/unknown = chords/harmonic
         }
     }
@@ -116,6 +117,7 @@ public final class LaunchpadController {
         case "drums": return .drums
         case "bass": return .bass
         case "vocals": return .vocal
+        case "synth": return .texture   // 6s `other` residual = synth proxy
         default: break
         }
         switch contentType {

@@ -420,6 +420,7 @@ struct MixerBody: View {
         case "bass":   return "waveform.path"
         case "vocals": return "music.mic"
         case "other":  return "guitars.fill"
+        case "synth":  return "dial.medium.fill"
         default:        return "waveform"
         }
     }
@@ -431,6 +432,7 @@ struct MixerBody: View {
         case "bass":   return .blue
         case "vocals": return .purple
         case "other":  return .green
+        case "synth":  return .teal
         default:        return .gray
         }
     }

@@ -355,7 +355,8 @@ public final class StudioModel: ObservableObject {
 
     /// MIDI stems in a stable display order (matches stem mixer).
     public var midiStemRows: [MidiStemRow] {
-        let order = ["drums", "bass", "guitar", "piano", "other", "vocals"]
+        let order = ["drums", "bass", "guitar", "piano",
+                     "synth", "other", "vocals"]
         guard let stems = detail?.result?.midiStems else { return [] }
         return stems
             .map { MidiStemRow(stem: $0.key, info: $0.value) }

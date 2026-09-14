@@ -66,3 +66,53 @@ def test_legacy_rename_still_applies_under_the_four_stem_model():
     out = _build_stems_dict(FOUR, "guitar", {})
     assert "other.wav" in out["guitar"]
     assert "other" not in out
+
+
+# --- Synth stem (6s `other` residual) ----------------------------------------
+#
+# Under 6s the `other` stem is the synth/strings/pad residual (guitar + piano
+# already pulled out) and ear-checks well as a synth proxy. It is surfaced as
+# its own `synth` role instead of being dropped or mislabelled "Guitar". A
+# mid/side split of it was tried and rejected (it only mono-collapses centred
+# synth, degrading quality without separating anything).
+
+GUITAR_SPLIT = {"guitar_center": "/t/g_c.wav", "guitar_sides": "/t/g_s.wav"}
+
+
+def test_6s_other_residual_is_the_synth_role():
+    """The 6s `other` residual surfaces as role=synth, not harmonic/Guitar."""
+    recs = _build_stem_records(SIX, "unknown", {}, {})
+    roles = _roles(recs)
+    assert roles["demucs.other"] == "synth"
+    # Display name reads "Synth", and guitar/piano keep their own roles.
+    other = next(r for r in recs if r["id"] == "demucs.other")
+    assert other["display_name"] == "Synth"
+    assert roles["demucs.guitar"] == "harmonic"
+    assert roles["demucs.piano"] == "keys"
+
+
+def test_four_stem_other_stays_harmonic():
+    """4-stem `other` IS the guitar bucket -- it must NOT become synth."""
+    roles = _roles(_build_stem_records(FOUR, "guitar", {}, {}))
+    assert roles["demucs.other"] == "harmonic"
+
+
+def test_guitar_split_and_synth_coexist_under_6s():
+    """Guitar's pan-split parts route to demucs.other.* (guitar family); the
+    residual `other` is a separate synth stem. Neither the old guitar-doubling
+    nor the dropped synth survives.
+    """
+    roles = _roles(_build_stem_records(SIX, "unknown", GUITAR_SPLIT, {}))
+    assert roles["demucs.other.center"] == "harmonic"   # guitar part
+    assert roles["demucs.other.sides"] == "harmonic"    # guitar part
+    assert roles["demucs.other"] == "synth"             # residual, distinct id
+    assert "demucs.guitar" not in roles                 # base guitar replaced
+
+
+def test_synth_residual_stays_in_wire_dict_under_6s():
+    """The name-keyed legacy dict keeps `other` (its role is carried by the
+    records); guitar parts replace the guitar slot, not `other`."""
+    out = _build_stems_dict(SIX, "unknown", GUITAR_SPLIT)
+    assert "g_c.wav" in out["guitar_center"]
+    assert "other.wav" in out["other"]   # residual survives
+    assert "guitar" not in out           # guitar replaced by its split

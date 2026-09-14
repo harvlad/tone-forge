@@ -539,3 +539,22 @@ features:
       connect:
         status: na
         note: "No pad surface."
+
+  - id: synth-stem
+    name: Synth stem (the htdemucs_6s `other` residual surfaced as its own role, not dropped/mislabelled "Guitar")
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/jam.js#synth"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeEngine/SampleBank.swift#synth"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/LaunchpadController.swift#synth"
+      plugin:
+        status: na
+        note: "Plugin ingests a re-derived kit-slice `category` taxonomy, not demucs stem roles; a synth pad loads + renders via the free-string category (grey swatch), but there is no stem-role surface to add a first-class synth stem to."
+      connect:
+        status: na
+        note: "Connect mixes per-song stems by opaque id with no stem-role concept (its DSP is live guitar-input tone processing); a synth stem is just another {id,url} it plays, nothing role-specific to render."

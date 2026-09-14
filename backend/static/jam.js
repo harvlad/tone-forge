@@ -3159,6 +3159,7 @@
   const ROLE_ICON = {
     drums: '🥁', bass: '🎸', vocals: '🎤', keys: '🎹',
     lead: '🎸', rhythm: '🎸', texture: '🎸', harmonic: '🎸',
+    synth: '🎛️',
     unknown: '🎶',
   };
 
@@ -5961,6 +5962,7 @@
   // Stable display order; unknown roles fall to the end.
   const ROLE_ORDER = [
     'drums', 'bass', 'keys',
+    'synth',
     'harmonic', 'lead', 'rhythm', 'texture',
     'unknown', 'vocals',
   ];

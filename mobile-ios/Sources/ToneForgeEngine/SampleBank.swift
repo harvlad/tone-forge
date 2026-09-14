@@ -406,6 +406,8 @@ public final class SampleBank: @unchecked Sendable {
         case "drums":             return .percussion
         case "bass":              return .bass
         case "other", "guitar":   return .stabs
+        // htdemucs_6s `other` residual, surfaced as the synth proxy.
+        case "synth":             return .pads
         default:                  return .mixed
         }
     }

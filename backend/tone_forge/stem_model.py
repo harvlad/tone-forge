@@ -52,6 +52,15 @@ class StemRole(str, Enum):
     TEXTURE = "texture"
     # Keys/piano when surfaced explicitly by a richer separator.
     KEYS = "keys"
+    # The htdemucs_6s residual `other` stem, surfaced as its own role.
+    # After guitar and piano are pulled out, `other` is a good
+    # synth/strings/pad proxy on electronic material -- previously it was
+    # dropped or mislabelled "Guitar". Not a true model isolate (no open
+    # separator targets synth as a source); it's the raw residual, which
+    # ear-checks well. A mid/side split of it was tried and rejected --
+    # it only mono-collapses centred synth, degrading quality without
+    # separating anything (see EXECUTION_PLAN / commit history).
+    SYNTH = "synth"
     UNKNOWN = "unknown"
 
 
@@ -111,6 +120,7 @@ _DEFAULT_DISPLAY_NAMES: dict = {
     StemRole.RHYTHM: "Guitar — rhythm",
     StemRole.TEXTURE: "Guitar — texture",
     StemRole.KEYS: "Keys",
+    StemRole.SYNTH: "Synth",
     StemRole.UNKNOWN: "Other",
 }
 
@@ -125,6 +135,7 @@ _ROLE_DISPLAY_ORDER: List[StemRole] = [
     StemRole.DRUMS,
     StemRole.BASS,
     StemRole.KEYS,
+    StemRole.SYNTH,
     StemRole.HARMONIC,
     StemRole.LEAD,
     StemRole.RHYTHM,

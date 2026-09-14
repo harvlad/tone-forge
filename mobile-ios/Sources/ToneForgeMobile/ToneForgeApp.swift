@@ -67,6 +67,7 @@ public struct SongDnaPack: Identifiable, Sendable {
     /// picker and any future analytics).
     public static let stemSortPriority: [String: Int] = [
         "vocals": 0, "drums": 1, "bass": 2, "other": 3, "guitar": 4,
+        "synth": 5,
     ]
 
     /// Build a `[SongDnaPack]` from a `SongBundle`. Deterministic
