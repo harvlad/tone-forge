@@ -226,6 +226,12 @@ class MusicalGraph:
     loops: Tuple[Loop, ...] = ()
     assets: Tuple[PerformanceAsset, ...] = ()
     graph_hash: str = ""
+    # True when htdemucs_6s ran (a real guitar/piano stem was separated),
+    # which means the residual `other` stem is a synth/strings/pad proxy
+    # rather than the 4-stem guitar bucket. Consumed by the kit builder to
+    # label those pads "Synth" instead of "Guitar". Not part of graph_hash:
+    # it is a pure function of the (content-hashed) stem set.
+    residual_is_synth: bool = False
 
     def with_hash(self) -> "MusicalGraph":
         return _replace(

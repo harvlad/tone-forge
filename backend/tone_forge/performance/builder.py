@@ -179,6 +179,9 @@ class PerformanceBuilder:
             variations=tuple(all_variations),
             loops=tuple(all_loops),
             assets=tuple(all_assets),
+            # 6s ran iff it produced a real guitar/piano stem; then `other`
+            # is the synth residual, not the guitar bucket.
+            residual_is_synth=("guitar" in stem_paths or "piano" in stem_paths),
         ).with_hash()
 
         if use_cache:
@@ -297,4 +300,5 @@ def _graph_from_dict(d: Dict) -> MusicalGraph:
         grid_tempo_bpm=d["grid_tempo_bpm"], time_signature=tuple(d["time_signature"]),
         phrases=phrases, patterns=patterns, variations=variations,
         loops=loops, assets=assets, graph_hash=d["graph_hash"],
+        residual_is_synth=bool(d.get("residual_is_synth", False)),
     )

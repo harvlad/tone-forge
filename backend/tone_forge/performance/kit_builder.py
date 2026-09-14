@@ -127,7 +127,7 @@ _STEM_CATEGORY = {"drums": "DRUMS", "bass": "BASS", "vocals": "VOCAL"}
 _CATEGORY_HEX = {
     "DRUMS": "#EF4444", "BASS": "#22C55E", "CHORDS": "#F59E0B", "LEAD": "#F97316",
     "VOCAL": "#EC4899", "RHYTHM": "#3B82F6", "TEXTURE": "#06B6D4", "FX": "#A855F7",
-    "STAB": "#8B5CF6", "SAMPLE": "#64748B",
+    "STAB": "#8B5CF6", "SAMPLE": "#64748B", "SYNTH": "#14B8A6",
 }
 # Grid layout row order: pads are GROUPED by category in the final padIdx
 # assignment (drums together, then bass, then harmonic material, then
@@ -135,8 +135,8 @@ _CATEGORY_HEX = {
 # scattering categories across the grid. Backend-side so every surface —
 # mobile 4x4, desktop 8x8, plugin — inherits the same grouped rack.
 _CATEGORY_GROUP_ORDER = {
-    "DRUMS": 0, "BASS": 1, "CHORDS": 2, "RHYTHM": 3, "LEAD": 4, "VOCAL": 5,
-    "TEXTURE": 6, "STAB": 7, "FX": 8, "SAMPLE": 9,
+    "DRUMS": 0, "BASS": 1, "CHORDS": 2, "SYNTH": 3, "RHYTHM": 4, "LEAD": 5,
+    "VOCAL": 6, "TEXTURE": 7, "STAB": 8, "FX": 9, "SAMPLE": 10,
 }
 _INSTRUMENT = {
     "drums": "Drums", "bass": "Bass", "vocals": "Vocal",
@@ -154,7 +154,13 @@ _ROLE_WORD = {
 }
 
 
-def _category_for(asset) -> str:
+def _category_for(asset, residual_is_synth: bool = False) -> str:
+    # Under htdemucs_6s the residual `other` stem is a synth/strings/pad
+    # proxy (guitar + piano already separated), not the guitar bucket, so it
+    # gets its own SYNTH category instead of falling through to LEAD/CHORDS
+    # (which read as "Guitar").
+    if residual_is_synth and asset.stem == "other":
+        return "SYNTH"
     cat = _STEM_CATEGORY.get(asset.stem)
     if cat:
         return cat
@@ -170,13 +176,16 @@ def _section_at(sections, t: float) -> str:
     return ""
 
 
-def _descriptive_label(asset, sections) -> str:
+def _descriptive_label(asset, sections, residual_is_synth: bool = False) -> str:
     """A human 'what is this' name, INSTRUMENT-first so it stays readable
     when the grid tile truncates: '{Instrument} {role} {Section}' —
     e.g. 'Guitar riff Chorus', 'Bass groove Verse', 'Drums beat'. Section
     trails so two pads of the same instrument/role still differ on the
     second line without hiding the instrument up front."""
-    inst = _INSTRUMENT.get(asset.stem, asset.stem.replace("_", " ").title())
+    if residual_is_synth and asset.stem == "other":
+        inst = "Synth"  # 6s residual: 'Synth lead' / 'Synth pad', not 'Guitar'
+    else:
+        inst = _INSTRUMENT.get(asset.stem, asset.stem.replace("_", " ").title())
     role = "beat" if asset.stem == "drums" else _ROLE_WORD.get(asset.content_type, "loop")
     sec = _section_at(sections, asset.pos.start_s)
     sec_txt = (" " + sec.title()) if sec and sec.lower() not in ("section", "") else ""
@@ -202,6 +211,9 @@ class AutoKitBuilder:
         usage: Optional[Dict] = None,
     ) -> Dict:
         rule = _SKILL.get(skill, _SKILL["intermediate"])
+        # 6s residual `other` = synth (not the guitar bucket); drives the
+        # SYNTH category + "Synth" labels on those pads.
+        _syn = getattr(graph, "residual_is_synth", False)
 
         # Phrase resolution: assets carry no energy/quality signals, so look
         # them up on the source phrase (asset.source_id is a loop id or a
@@ -400,7 +412,7 @@ class AutoKitBuilder:
         # is preserved, and the drum-groove anchor keeps pad 0 — it was chosen
         # first and DRUMS is row 0. Selection/ranking above is untouched.
         chosen.sort(key=lambda a: _CATEGORY_GROUP_ORDER.get(
-            _category_for(a), len(_CATEGORY_GROUP_ORDER)))
+            _category_for(a, _syn), len(_CATEGORY_GROUP_ORDER)))
 
         from tone_forge import pad_usage as _pu
         return self._to_sample_pack(
@@ -451,6 +463,8 @@ class AutoKitBuilder:
         """Emit the frozen SamplePack manifest shape (SamplePack.swift):
         packId/name/family/pads[] with per-pad loop region + loopScore so the
         app can honor real seamless loops."""
+        # 6s residual `other` = synth (SYNTH category + "Synth" pad labels).
+        _syn = getattr(graph, "residual_is_synth", False)
         # Loop lookup so a pad can carry the OPTIMIZED loop seam (LoopAnalyzer's
         # crossfaded [optimized_start_s, optimized_end_s]) instead of the raw
         # phrase bounds — the app loops that tighter sub-region for a clean seam.
@@ -552,12 +566,12 @@ class AutoKitBuilder:
                     "assetId": a.id,
                     # Descriptive 'what is this' name (section+instrument+role),
                     # not a generic slot — so the user knows each pad instantly.
-                    "name": _descriptive_label(a, sections),
-                    "category": _category_for(a),
+                    "name": _descriptive_label(a, sections, _syn),
+                    "category": _category_for(a, _syn),
                     "family": _family_for(a.content_type),
                     # Category color so every client shows a grouped, color-coded
                     # rack straight from colorHint (no per-client color logic).
-                    "colorHint": _CATEGORY_HEX.get(_category_for(a), a.color_hint),
+                    "colorHint": _CATEGORY_HEX.get(_category_for(a, _syn), a.color_hint),
                     "stemSlice": {"stemRole": a.stem, "startSec": round(q_start, 4), "endSec": round(q_end, 4)},
                     # performance-intelligence additive fields (app reads if present):
                     "loopStartSec": round(loop_start, 4),
