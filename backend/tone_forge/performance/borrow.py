@@ -888,10 +888,13 @@ def render_kit_loops(source_id: str, source_result: Dict, target_bpm: float, *,
                 "name": pad.get("name") or f"Loop {len(out_pads) + 1}",
                 "category": pad.get("category") or logical.upper(),
                 "family": pad.get("family") or "mixed",
-                # colorHint stays blue/amber BY SOURCE so the initial/donor
-                # split reads at a glance (unchanged client contract); `stem`/
-                # `category` let a client colour by instrument category instead.
-                "colorHint": color,
+                # Color by INSTRUMENT CATEGORY (the kit pad's own colorHint),
+                # matching a direct load — the pads are descriptively labelled
+                # now, so the old blue/amber source-coding was redundant. The
+                # `source` field still carries initial/donor for any client
+                # that wants to surface the split. Falls back to the source
+                # color only if the kit pad carried no category color.
+                "colorHint": pad.get("colorHint") or color,
                 "source": source_tag,
                 "sourceName": source_name or "",
                 "stem": logical,

@@ -536,7 +536,9 @@ def test_kit_borrow_host_initial_never_transposes(tmp_path, monkeypatch):
     # Untargeted filename — no transpose despite the target_key.
     assert bass["sampleFile"] == borrow._cache_key(
         "hostX", "bass", 120.0, (0.0, 4.0))
-    assert all(p["colorHint"] == borrow._COLOR_INITIAL for p in host)
+    # Initial vs donor now reads from the `source` field (pads are colored by
+    # instrument category, not by source, since they're descriptively labelled).
+    assert all(p["source"] == "initial" for p in host)
 
 
 def test_kit_borrow_empty_kit_yields_no_pads(tmp_path, monkeypatch):
