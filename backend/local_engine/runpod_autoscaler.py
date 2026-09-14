@@ -251,6 +251,22 @@ def _min_warm() -> int:
         return 0
 
 
+def _park_enabled() -> bool:
+    """Whether idle scale-down PARKS (stops) one pod for a fast resume
+    instead of terminating it.
+
+    Parking trades a ~cold boot on the next session for standing storage
+    cost -- but a *stopped* RunPod pod still bills for its full
+    container+volume disk (40+60 GB here) 24/7. With nothing running that
+    was ~$4.76/day, draining the account in days "regardless of analysis".
+    Set RUNPOD_PARK=0 for pure pay-per-analysis: full scale-to-zero, $0
+    while idle, at the cost of a fresh image pull on the next analysis.
+
+    Default 1 preserves the fast-resume behaviour for anyone who wants it
+    and accepts the standing cost."""
+    return os.environ.get("RUNPOD_PARK", "1") == "1"
+
+
 def _max_live_pods() -> int:
     """Concurrency cap: RUNPOD_MAX_WORKERS live pods (default 2 — two
     songs analyze in parallel; each extra pod is another ~$0.05-0.44/hr
@@ -605,7 +621,8 @@ def scale_down_if_idle(has_pending_or_running: bool) -> None:
                 pid = p.get("id")
                 if not pid:
                     continue
-                if i == 0 and not already_parked and _park_pod(pid):
+                if (i == 0 and not already_parked and _park_enabled()
+                        and _park_pod(pid)):
                     continue
                 try:
                     requests.delete(f"{_REST}/pods/{pid}",
