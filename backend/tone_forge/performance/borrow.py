@@ -671,10 +671,14 @@ def render_borrow_loops(donor_id: str, donor_result: Dict, stem: str,
 # ---------------------------------------------------------------------------
 
 def _stem_aliases(stem: str) -> Tuple[str, ...]:
-    # "other" (harmonic/guitar/keys) is stored under a mix of names.
+    # "other" (harmonic/guitar/keys) is stored under a mix of names. Raw
+    # parents come BEFORE the pan-split children: guitar_center/guitar_sides
+    # are mid/side derivatives that can be the same part at reduced quality
+    # (mono-collapse), so when a donor holds both, the least-processed
+    # rendition is served — matching the chops route's preference order.
     if stem == "other":
-        return ("other", "guitar_center", "guitar_sides", "guitar",
-                "keys", "piano", "synth")
+        return ("other", "guitar", "keys", "piano", "synth",
+                "guitar_center", "guitar_sides")
     return (stem,)
 
 
@@ -721,7 +725,18 @@ def borrow_candidates(entries: List[Dict], entry_id: str, stem: str,
             if harm < 0.2:
                 continue  # harmonically clashes — never offer
         # score: harmony dominates for melodic; tempo closeness refines.
-        score = harm - 0.3 * folded[0]
+        # Graded processing-cost bias: every semitone the donor must be
+        # pitch-shifted to conform eats render artifacts, so between
+        # harmonically-comparable donors the less-processed one ranks
+        # higher. Metadata-only (no audio cost); the ±50% stretch cliff and
+        # the harmonic floor above still hard-gate.
+        semis = 0
+        if not pitchless and (target_key or donor_key):
+            try:
+                semis = abs(_transpose_steps(donor_key, target_key))
+            except Exception:  # noqa: BLE001
+                semis = 0
+        score = (harm - 0.3 * folded[0]) * (2.0 ** (-semis / 6.0))
         out.append({
             "entryId": eid,
             "name": str(e.get("name") or eid),

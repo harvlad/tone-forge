@@ -193,11 +193,19 @@ def kit_payload(entry_id: str, result: Dict, skill: str = "intermediate", pads: 
     from tone_forge import pad_usage
 
     g = graph_from_result(entry_id, result)
+    # Variant-duel servability guard: a raw-parent pad carries stemRole
+    # "guitar", which clients resolve from stems_paths — only let the parent
+    # win the duel when that key is actually servable for this entry.
+    _avail = None
+    sp = result.get("stems_paths") or result.get("stems")
+    if isinstance(sp, dict) and sp:
+        _avail = set(sp.keys())
     kit = AutoKitBuilder().build(
         g, skill=skill, pads=pads, sections=_sections_of(result),
         # Feedback loop: fold recorded play/skip counts into ranking so
         # kits learn what this user actually reaches for.
-        usage=pad_usage.load(entry_id))
+        usage=pad_usage.load(entry_id),
+        available_stems=_avail)
     kit["analysisId"] = entry_id
     return kit
 

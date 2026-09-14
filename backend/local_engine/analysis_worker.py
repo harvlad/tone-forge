@@ -2069,6 +2069,19 @@ def run_file_analysis(audio_path: str, queue: Queue, source_url: Optional[str] =
                     _local[_k] = _v.split("path=", 1)[1]
                 elif isinstance(_v, str) and _v and not _v.startswith("http"):
                     _local[_k] = _v
+            # Best-version guarantee: when the guitar pan-split fired, the
+            # wire stems replaced the raw parent with center/sides children —
+            # but mid/side of imperfectly-correlated stereo can be the SAME
+            # part at worse quality, and the graph could only ever see the
+            # children. Re-add the raw parent for the GRAPH ONLY (stems_local
+            # is popped before persist, so wire dicts / records / uploads are
+            # untouched): the builder measures children against it
+            # (parent_overlap) and kit selection ships whichever rendition
+            # survives the vetoes.
+            if len(guitar_parts) > 1:
+                _parent = stems.get("guitar") or stems.get("other")
+                if _parent:
+                    _local.setdefault("guitar", str(_parent))
             if _local:
                 result["stems_local"] = _local
             attached = _perf_serve.derive_and_attach(

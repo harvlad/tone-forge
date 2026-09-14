@@ -23,6 +23,7 @@ librosa on the backend.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace as _dc_replace
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -47,7 +48,10 @@ try:
 except Exception:  # pragma: no cover
     from .graph import config_hash  # type: ignore
 
-# stem_loader(path) -> (mono_float_array, sample_rate)
+# stem_loader(path) -> (mono_float_array, sample_rate) or
+# (mono_float_array, sample_rate, meta) — meta is an optional dict of
+# file-level quality signals (currently {"collapse_ratio": float}). The
+# 2-tuple form stays supported so injected test loaders keep working.
 StemLoader = Callable[[str], Tuple[np.ndarray, int]]
 
 _CONFIG = {
@@ -55,10 +59,26 @@ _CONFIG = {
     "loop_same_thresh": 0.92,
     "loop_min_confidence": 0.55,
     "version": MODULE_VERSION,
+    # v2: stereo-aware loader (phase-cancellation detect) + collapse_ratio /
+    # parent_overlap quality signals. Bumped so NEW analyses re-derive; cached
+    # graphs rehydrate with clean defaults and are untouched.
+    "loader": 2,
 }
 
 
-def _default_stem_loader(path: str) -> Tuple[np.ndarray, int]:  # pragma: no cover
+def _default_stem_loader(path: str):  # pragma: no cover
+    """Load a stem as mono + a file-level quality meta dict.
+
+    The mono fold is where a whole defect class was born: the pan-split
+    ``sides`` stem is written ``[side, -side]`` (so stereo playback sums
+    back to the original), and ``mean(axis=1)`` folds that to EXACT digital
+    silence — the builder then saw zero phrases for the stem and its
+    content silently vanished from every kit. Detect the cancellation
+    (mono RMS collapsing far below the per-channel RMS) and analyze the
+    left channel instead, which for ``[x, -x]`` files IS the content.
+    The collapse ratio also ships in meta: phrases from a heavily
+    phase-cancelling stem carry it so kit selection can veto the class.
+    """
     try:
         import soundfile as sf
 
@@ -68,9 +88,71 @@ def _default_stem_loader(path: str) -> Tuple[np.ndarray, int]:  # pragma: no cov
 
         y, sr = librosa.load(path, sr=None, mono=True)
     y = np.asarray(y, dtype=np.float64)
-    if y.ndim > 1:
+    collapse = 1.0
+    if y.ndim > 1 and y.shape[1] >= 2:
+        mono = y.mean(axis=1)
+        ch_rms = 0.5 * (
+            float(np.sqrt(np.mean(y[:, 0] ** 2)))
+            + float(np.sqrt(np.mean(y[:, 1] ** 2)))
+        )
+        mono_rms = float(np.sqrt(np.mean(mono**2)))
+        if ch_rms > 1e-6:
+            collapse = mono_rms / ch_rms
+        # 0.10 threshold: an [x, -x] file folds to exactly 0; real stereo
+        # folds to >= ~0.7. Enormous clean plateau — this is a physical
+        # cancellation detector, never a perceptual ranker.
+        if ch_rms > 1e-6 and collapse < 0.10:
+            logger.warning(
+                "[graph] stem %r mono-fold cancels (ratio=%.3f) — "
+                "analyzing L channel", path, collapse,
+            )
+            y = np.ascontiguousarray(y[:, 0])
+        else:
+            y = mono
+    elif y.ndim > 1:
         y = y.mean(axis=1)
-    return y, int(sr)
+    return y, int(sr), {"collapse_ratio": collapse}
+
+
+def _window_spectrum(y: np.ndarray, sr: int, start_s: float, end_s: float,
+                     nfft: int = 8192):
+    """Mean log-magnitude spectrum of a time window (parent_overlap input).
+
+    Deliberately coarse: hann frames, half-overlap, capped at 64 frames.
+    This feeds a CORRELATION between two renditions of the same bars — a
+    duplicate-content detector, not a fidelity metric — so robustness beats
+    resolution. Returns None when the window is too short (fail-open).
+    """
+    a = int(max(0.0, start_s) * sr)
+    b = int(min(len(y) / max(1, sr), max(start_s, end_s)) * sr)
+    seg = y[a:b]
+    if len(seg) < nfft // 2:
+        return None
+    n = min(nfft, len(seg))
+    w = np.hanning(n)
+    acc = None
+    cnt = 0
+    for h in range(0, max(1, len(seg) - n + 1), max(1, n // 2)):
+        mag = np.abs(np.fft.rfft(seg[h:h + n] * w))
+        acc = mag if acc is None else acc + mag
+        cnt += 1
+        if cnt >= 64:
+            break
+    if not cnt:
+        return None
+    return np.log1p(acc / cnt)
+
+
+def _spec_corr(a, b) -> Optional[float]:
+    """Pearson correlation of two spectra; None on any mismatch (fail-open)."""
+    if a is None or b is None or len(a) != len(b):
+        return None
+    sa = a - a.mean()
+    sb = b - b.mean()
+    denom = float(np.sqrt((sa**2).sum() * (sb**2).sum()))
+    if denom <= 0:
+        return None
+    return float((sa * sb).sum() / denom)
 
 
 class PerformanceBuilder:
@@ -114,9 +196,16 @@ class PerformanceBuilder:
         all_variations = []
         all_assets = []
 
+        # Per-stem audio kept ONLY for the pan-split variant family, so the
+        # post-loop pass can measure each child phrase against the raw parent
+        # over the same bars (parent_overlap). Everything else is dropped as
+        # before — this is three stems of mono audio at most.
+        _VARIANT_FAMILY = ("guitar", "guitar_center", "guitar_sides")
+        fam_audio: Dict[str, Tuple[np.ndarray, int, List[Phrase]]] = {}
+
         for stem, path in stem_paths.items():
             try:
-                y, sr = self.load_stem(path)
+                loaded = self.load_stem(path)
             except Exception as exc:  # noqa: BLE001
                 # Was a bare `continue`: a stem that failed to decode dropped
                 # out of the graph with no trace, and the only symptom was a
@@ -127,6 +216,10 @@ class PerformanceBuilder:
                     "[graph] stem %r failed to load (%s): %s", stem, path, exc
                 )
                 continue
+            # Loader contract: (y, sr) legacy or (y, sr, meta) with file-level
+            # quality signals. Injected test loaders keep the 2-tuple.
+            y, sr = loaded[0], loaded[1]
+            meta = loaded[2] if len(loaded) > 2 and isinstance(loaded[2], dict) else {}
             if y is None or len(y) == 0:
                 logger.warning("[graph] stem %r decoded empty: %s", stem, path)
                 continue
@@ -139,6 +232,13 @@ class PerformanceBuilder:
                     "short?)", stem
                 )
                 continue
+            # Stamp the file-level collapse ratio on every phrase of the stem
+            # (id is stem+window only, so replace() keeps ids stable).
+            _collapse = float(meta.get("collapse_ratio", 1.0))
+            if _collapse != 1.0:
+                phrases = [_dc_replace(p, collapse_ratio=_collapse) for p in phrases]
+            if stem in _VARIANT_FAMILY:
+                fam_audio[stem] = (y, sr, phrases)
             # loop score per phrase (phrase window = loop candidate)
             loops_by_phrase: Dict[str, Loop] = {}
             for ph in phrases:
@@ -166,6 +266,47 @@ class PerformanceBuilder:
             all_phrases.extend(phrases)
             all_patterns.extend(pats)
             all_variations.extend(vars_)
+
+        # Post-pass: parent_overlap for pan-split children. When the raw
+        # parent guitar stem is visible alongside its center/sides children
+        # (analysis_worker re-adds it to stems_local for exactly this), each
+        # child phrase gets the spectral correlation against the parent over
+        # the same bars. High overlap == the split separated nothing (mid/side
+        # of correlated stereo — both children are the SAME part at worse
+        # quality); kit selection then ships the raw parent instead.
+        if "guitar" in fam_audio and any(
+            k in fam_audio for k in ("guitar_center", "guitar_sides")
+        ):
+            try:
+                py, psr, pphr = fam_audio["guitar"]
+                parent_specs = {
+                    (round(p.pos.start_s, 2), round(p.pos.end_s, 2)):
+                        _window_spectrum(py, psr, p.pos.start_s, p.pos.end_s)
+                    for p in pphr
+                }
+                overlap_by_id: Dict[str, float] = {}
+                for child in ("guitar_center", "guitar_sides"):
+                    if child not in fam_audio:
+                        continue
+                    cy, csr, cphr = fam_audio[child]
+                    for p in cphr:
+                        pv = parent_specs.get(
+                            (round(p.pos.start_s, 2), round(p.pos.end_s, 2)))
+                        if pv is None:
+                            continue
+                        cv = _window_spectrum(cy, csr, p.pos.start_s, p.pos.end_s)
+                        ov = _spec_corr(pv, cv)
+                        if ov is not None:
+                            overlap_by_id[p.id] = ov
+                if overlap_by_id:
+                    all_phrases = [
+                        _dc_replace(p, parent_overlap=overlap_by_id[p.id])
+                        if p.id in overlap_by_id else p
+                        for p in all_phrases
+                    ]
+            except Exception:  # noqa: BLE001 — signal is optional, never fatal
+                logger.exception("[graph] parent_overlap pass failed; "
+                                 "children keep fail-open defaults")
 
         graph = MusicalGraph(
             song_id=song_id,
@@ -273,6 +414,9 @@ def _graph_from_dict(d: Dict) -> MusicalGraph:
                # these fields existed still rehydrate (no-penalty == clean).
                peak_ratio=float(p.get("peak_ratio", 0.0) or 0.0),
                flatness=float(p.get("flatness", 0.0) or 0.0),
+               # Variant-quality signals: clean defaults on legacy graphs.
+               collapse_ratio=float(p.get("collapse_ratio", 1.0) if p.get("collapse_ratio") is not None else 1.0),
+               parent_overlap=float(p.get("parent_overlap", 0.0) or 0.0),
                id=p["id"])
         for p in d.get("phrases", [])
     )

@@ -129,6 +129,18 @@ class Phrase:
     #               is the strongest bad-separation "hiss/wash" signal.
     peak_ratio: float = 0.0
     flatness: float = 0.0
+    # Variant-quality signals (see kit_builder._dedupe_variants). Defaults are
+    # the CLEAN state so legacy graphs rehydrate with no veto:
+    #   collapse_ratio: file-level rms(mono fold)/mean-channel-rms of the
+    #       source stem. ~0 marks a phase-cancelling construction ([x, -x]
+    #       pan-split sides); real stereo sits >= ~0.7. 1.0 = clean/unknown.
+    #   parent_overlap: for pan-split children (guitar_center/guitar_sides),
+    #       spectral correlation against the raw parent stem over the same
+    #       bars. > 0.90 means the child duplicates the parent (the split
+    #       separated nothing — mid/side of correlated stereo), so the raw
+    #       parent should ship instead. 0.0 = distinct/unknown (fail-open).
+    collapse_ratio: float = 1.0
+    parent_overlap: float = 0.0
     id: str = ""             # content hash, filled by __post_init__ via with_id
 
     def with_id(self) -> "Phrase":

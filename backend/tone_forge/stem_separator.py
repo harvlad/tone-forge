@@ -446,6 +446,60 @@ def separate_drums(
         raise RuntimeError(f"Drums stem separation failed: {e}") from e
 
 
+def _max_lag_corr(L: np.ndarray, R: np.ndarray, sr: int,
+                  max_lag_s: float = 0.05, target_sr: int = 8000) -> float:
+    """Max normalized L/R cross-correlation over ±max_lag_s.
+
+    Catches delay-based stereo width (Haas/ADT/chorus): one part whose
+    zero-lag correlation is low but which correlates near unity at the
+    delay lag. Stride-decimated to ~target_sr — this is a bound for a
+    skip-gate, not a measurement.
+    """
+    step = max(1, int(sr // target_sr))
+    a = np.asarray(L[::step], dtype=np.float64)
+    b = np.asarray(R[::step], dtype=np.float64)
+    n = min(len(a), len(b))
+    if n < 32:
+        return 0.0
+    a = a[:n] - a[:n].mean()
+    b = b[:n] - b[:n].mean()
+    ea = float(np.sqrt((a**2).sum()))
+    eb = float(np.sqrt((b**2).sum()))
+    if ea <= 0 or eb <= 0:
+        return 0.0
+    max_lag = max(1, int(max_lag_s * sr / step))
+    m = 1
+    while m < 2 * n:
+        m <<= 1
+    fa = np.fft.rfft(a, m)
+    fb = np.fft.rfft(b, m)
+    cc = np.fft.irfft(fa * np.conj(fb), m)
+    seg = np.concatenate([cc[: max_lag + 1], cc[m - max_lag:]])
+    return float(np.max(np.abs(seg)) / (ea * eb))
+
+
+def _mean_mag_spectrum(x: np.ndarray, sr: int, nfft: int = 4096):
+    """Mean log-magnitude spectrum (hann frames, half overlap, ≤64 frames).
+    Feeds the post-split mid-vs-side duplicate-content check. None when the
+    signal is too short (caller skips the check)."""
+    x = np.asarray(x, dtype=np.float64)
+    if len(x) < nfft // 2:
+        return None
+    n = min(nfft, len(x))
+    w = np.hanning(n)
+    acc = None
+    cnt = 0
+    for h in range(0, max(1, len(x) - n + 1), max(1, n // 2)):
+        mag = np.abs(np.fft.rfft(x[h:h + n] * w))
+        acc = mag if acc is None else acc + mag
+        cnt += 1
+        if cnt >= 64:
+            break
+    if not cnt:
+        return None
+    return np.log1p(acc / cnt)
+
+
 def split_stem_by_pan(
     stem_path: str | Path,
     output_dir: str | Path | None = None,
@@ -534,16 +588,29 @@ def split_stem_by_pan(
     # double-tracked sources" (low correlation). Side energy alone fires
     # on any stereo guitar recording — including a single source widened
     # with a Haas/chorus effect — which we don't want to split.
+    #
+    # The correlation is the MAX over ±50 ms lags, not zero-lag only:
+    # delay-based width (Haas doubling, ADT, chorus, short reverb on a mono
+    # source) decorrelates the zero-lag coefficient far below any threshold
+    # while the content is ONE part — the split then fired and mid=(L+R)/2
+    # comb-filtered the take into a mono collapse (both children the same
+    # notes at worse quality; caught by ear on real material). At the delay
+    # lag the channels correlate near unity, so the lag scan catches exactly
+    # the case the zero-lag gate was structurally blind to. Genuine
+    # double-tracks stay low at every lag.
     L_std = float(np.std(L))
     R_std = float(np.std(R))
     if L_std < 1e-6 or R_std < 1e-6:
         correlation = 1.0  # one channel silent => effectively mono
+        zero_lag = 1.0
     else:
-        correlation = float(np.corrcoef(L, R)[0, 1])
+        zero_lag = float(np.corrcoef(L, R)[0, 1])
+        correlation = max(abs(zero_lag), _max_lag_corr(L, R, sr))
 
     logger.info(
         f"Pan analysis for {stem_path.name}: "
-        f"side_ratio={side_ratio:.3f}, LR_corr={correlation:.3f}"
+        f"side_ratio={side_ratio:.3f}, LR_corr={correlation:.3f} "
+        f"(zero_lag={zero_lag:.3f})"
     )
 
     if side_ratio < side_threshold:
@@ -563,6 +630,33 @@ def split_stem_by_pan(
             "skipping pan-split."
         )
         return {"center": stem_path}
+
+    # Post-split sanity: are there actually TWO parts here? Compare the mean
+    # magnitude spectra of L and R. One part with time-based width (chorus,
+    # varying delay, reverb wash — cases a fixed-lag scan can dilute) has
+    # near-identical L/R spectra (delays preserve magnitude), while genuine
+    # double-tracked parts differ spectrally. NOTE deliberately L/R, NOT
+    # mid/side: mid and side of ANY hard-panned pair share magnitude spectra
+    # (|A±B| ≈ sqrt(|A|²+|B|²) for uncorrelated A,B), so a mid/side check
+    # would revert exactly the legitimate splits. Conservative: revert =
+    # the least-processed raw parent ships.
+    try:
+        _l_spec = _mean_mag_spectrum(L, sr)
+        _r_spec = _mean_mag_spectrum(R, sr)
+        if _l_spec is not None and _r_spec is not None:
+            sl = _l_spec - _l_spec.mean()
+            sr_ = _r_spec - _r_spec.mean()
+            _den = float(np.sqrt((sl**2).sum() * (sr_**2).sum()))
+            _spec_corr = float((sl * sr_).sum() / _den) if _den > 0 else 0.0
+            if _spec_corr > 0.85:
+                logger.info(
+                    f"Post-split sanity: L/R spectra correlate "
+                    f"{_spec_corr:.3f} (> 0.85) — one widened part, not two; "
+                    "reverting split."
+                )
+                return {"center": stem_path}
+    except Exception:  # noqa: BLE001 — sanity check is best-effort
+        pass
 
     # Write as proper stereo so center + sides reconstructs original L/R.
     center_path = output_dir / f"{stem_path.stem}_center.wav"

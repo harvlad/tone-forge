@@ -234,7 +234,9 @@ def test_kit_pads_are_grouped_by_category():
     assert bass_ids == [bass_a.id, bass_b.id]
     # padIdx matches the grouped order and the layout bump busts kit caches.
     assert [p["padIdx"] for p in pads] == list(range(len(pads)))
-    assert "kit=7" in kit["provenance"]
+    # kit=8: variant duel (best-rendition-per-window) joined the layout in the
+    # provenance string — bumped so cached kit payloads re-derive.
+    assert "kit=8" in kit["provenance"]
 
 
 def test_stem_spread_quota_reserves_a_pad_per_stem():

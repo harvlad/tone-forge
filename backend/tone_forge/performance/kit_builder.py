@@ -209,6 +209,7 @@ class AutoKitBuilder:
         pack_name: Optional[str] = None,
         sections: Optional[List] = None,
         usage: Optional[Dict] = None,
+        available_stems: Optional[set] = None,
     ) -> Dict:
         rule = _SKILL.get(skill, _SKILL["intermediate"])
         # 6s residual `other` = synth (not the guitar bucket); drives the
@@ -278,13 +279,95 @@ class AutoKitBuilder:
                 return False
             return True
 
+        # --- Variant duel: best rendition per window (fixed rule + vetoes) ---
+        # The pan-split family {guitar, guitar_center, guitar_sides} can hold
+        # the SAME bars as up to three renditions. Doctrine (lab history:
+        # objective metrics are a false-positive machine) forbids score-ranking
+        # between viable variants, so the duel is a fixed conservative rule
+        # with vetoes only on physically-defined defects:
+        #   - veto: inaudible, clipped/hissy (_clean), or collapse_ratio <
+        #     _COLLAPSE_MIN (a phase-cancelling construction).
+        #   - a child whose parent_overlap > _OVERLAP_DUP duplicates the
+        #     parent (the split separated nothing) -> the RAW parent wins.
+        #   - genuinely distinct children win the window and the parent is
+        #     dropped there (it is the sum of both — keeping it doubles
+        #     content).
+        #   - missing signals / missing parent = fail-open to today's
+        #     behavior; a fully-vetoed window keeps its best-scored member
+        #     (a quiet kit beats an empty one).
+        # CALIBRATION WARNING: 0.10 / 0.90 are conservative physical bounds
+        # with wide clean plateaus ([x,-x] folds to ~0, real stereo >= ~0.7;
+        # true duplicates correlate ~1.0). Never retune them against a metric
+        # — run a blind ear pack first (see EXECUTION_PLAN promotion rules).
+        _COLLAPSE_MIN = 0.10
+        _OVERLAP_DUP = 0.90
+        _CHILD_STEMS = ("guitar_center", "guitar_sides")
+
+        def _defect(a) -> bool:
+            if not _audible(a) or not _clean(a):
+                return True
+            ph = _phrase_of(a)
+            if ph is not None and getattr(ph, "collapse_ratio", 1.0) < _COLLAPSE_MIN:
+                return True
+            return False
+
+        def _dedupe_variants(assets):
+            fam = [a for a in assets
+                   if a.stem == "guitar" or a.stem in _CHILD_STEMS]
+            if not fam:
+                return assets
+            parent_servable = available_stems is None or "guitar" in available_stems
+            by_win: Dict = {}
+            for a in fam:
+                by_win.setdefault(
+                    (round(a.pos.start_s, 2), round(a.pos.end_s, 2)), []
+                ).append(a)
+            drop = set()
+            for _win, group in by_win.items():
+                parents = [a for a in group if a.stem == "guitar"]
+                children = [a for a in group if a.stem in _CHILD_STEMS]
+                bad_children = [c for c in children if _defect(c)]
+                distinct, dup = [], []
+                for c in children:
+                    if c in bad_children:
+                        continue
+                    ph = _phrase_of(c)
+                    ov = getattr(ph, "parent_overlap", 0.0) if ph is not None else 0.0
+                    (dup if ov > _OVERLAP_DUP else distinct).append(c)
+                parent_ok = bool(parents) and parent_servable and not _defect(parents[0])
+                if parent_ok and not distinct:
+                    # No child demonstrably adds separation -> raw parent
+                    # (least-processed) wins; every child in the window goes.
+                    drop.update(id(c) for c in children)
+                elif parent_ok and distinct:
+                    # Real separation -> children carry the parts; the parent
+                    # is their sum, keeping it would double the content.
+                    drop.update(id(p) for p in parents)
+                    drop.update(id(c) for c in dup)
+                    drop.update(id(c) for c in bad_children)
+                else:
+                    # Parent absent/unservable/defective: fail-open to the
+                    # children (today's behavior), still shedding defective
+                    # ones unless that empties the window.
+                    if parents:
+                        drop.update(id(p) for p in parents)
+                    if 0 < len(bad_children) < len(children):
+                        drop.update(id(c) for c in bad_children)
+                kept = [a for a in group if id(a) not in drop]
+                if group and not kept:
+                    best = max(group, key=_score)
+                    drop.discard(id(best))
+            return [a for a in assets if id(a) not in drop]
+
+        ranked = _dedupe_variants(list(graph.ranked_assets()))
+
         # A pad must be actually usable: loopable OR a decent-scoring one-shot
         # — AND audible AND clean. loop_confidence/performance_score both reward
         # steady material, so a whisper-quiet sustain (or a clipped/noisy
         # slice) cleared them; the energy floor + clean gate veto on level and
         # separation quality respectively.
         usable = [
-            a for a in graph.ranked_assets()
+            a for a in ranked
             if _audible(a) and _clean(a)
             and (a.loop_confidence > 0.2 or a.performance_score > 0.4)
         ]
@@ -293,7 +376,7 @@ class AutoKitBuilder:
             if a.difficulty <= rule["max_difficulty"] and (a.loopable or not rule["require_loop"])
         ]
         if len(pool) < pads:  # skill filter starved the kit → widen
-            pool = usable or graph.ranked_assets()
+            pool = usable or ranked
 
         # De-dupe near-identical material: keep the best asset per pattern so a
         # riff that repeats 15× doesn't take 8 pads.
@@ -322,7 +405,7 @@ class AutoKitBuilder:
         # floor — a near-silent drums stem anchoring pad 0 is the exact defect
         # the floor exists for.
         drum_pool = self._one_per_pattern(
-            [a for a in graph.ranked_assets() if a.stem == "drums" and _audible(a)]
+            [a for a in ranked if a.stem == "drums" and _audible(a)]
         )
         if drum_pool:
             def _groove_key(a) -> float:
@@ -354,7 +437,7 @@ class AutoKitBuilder:
             if len(chosen) >= pads:
                 return
             cands = [
-                a for a in graph.ranked_assets()
+                a for a in ranked
                 if a.id not in used_ids
                 and not (a.pattern_id and a.pattern_id in used_patterns)
                 and _audible(a) and predicate(a)
@@ -611,7 +694,7 @@ class AutoKitBuilder:
             #        pad-quality score (clip/flatness/energy gates).
             "provenance": (
                 f"performance_intelligence graph={graph.graph_hash} "
-                f"module={graph.module_version} kit=7 use={use_digest} "
+                f"module={graph.module_version} kit=8 use={use_digest} "
                 f"skill={skill}"
             ),
         }

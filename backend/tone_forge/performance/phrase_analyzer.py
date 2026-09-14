@@ -25,7 +25,13 @@ try:  # richer onsets on the backend; degrade gracefully otherwise
 except Exception:  # pragma: no cover
     _HAVE_LIBROSA = False
 
-_PITCHED_STEMS = {"other", "bass", "vocals", "guitar", "guitar_left", "guitar_right", "piano"}
+# guitar_center/guitar_sides: the pan-split children are the MOST
+# artifact-prone stems on the surface (mid/side of imperfectly-correlated
+# stereo), yet their absence here exempted them from the flatness
+# hiss/wash veto in kit ranking — the artifact gate skipped exactly the
+# stems most likely to carry artifacts.
+_PITCHED_STEMS = {"other", "bass", "vocals", "guitar", "guitar_left",
+                  "guitar_right", "guitar_center", "guitar_sides", "piano"}
 # Preferred phrase lengths in bars, best first.
 _PHRASE_BARS = (4, 2, 8, 1)
 
