@@ -957,10 +957,19 @@ export class PadEngine {
     if (this._lockAnchor == null) return now;
     // Practice-rate follow: grid spacing scales with rate (a 2x rate halves
     // the wait), same as the desktop dividing launch delays by tempoPct.
+    // Snap interval by grid. Default is the full loop cycle
+    // (loopLengthSeconds) so nothing-selected still locks loops that share a
+    // cycle — but a MULTI-bar cycle means a pad tapped mid-cycle waits up to
+    // that whole cycle (~4 bars / ~6s here) before it fires, which reads as
+    // "the pad doesn't play" (verified in a headless sim). Both explicit
+    // grids snap to a musically responsive unit anchored on the shared
+    // _lockAnchor: a single bar for "bar", a single beat for "beat". Loops
+    // then start within ≤1 bar and land on the same bar grid as each other.
     let L = this.loopLengthSeconds / this._rate;
-    if (grid === "beat") {
-      const barSec = this._barSeconds;
-      if (barSec != null && barSec > 0) L = barSec / 4.0 / this._rate;
+    const barSec = this._barSeconds;
+    if (barSec != null && barSec > 0) {
+      if (grid === "beat") L = barSec / 4.0 / this._rate;
+      else if (grid === "bar") L = barSec / this._rate;
     }
     if (!(L > 0)) return now;
     const elapsed = now - this._lockAnchor;
@@ -1129,29 +1138,6 @@ export class PadEngine {
         if (!rolling && this._voices.size === 0) this._lockAnchor = null;
         const aligned = rolling ? this._transportLaunchTime(now, grid) : null;
         target = aligned != null ? aligned : this._lockLaunchTime(now, grid);
-        // Diagnostic (opt-in: run `window.__PADSYNC = true` in the console).
-        // Pinpoints why a queued pad lands off-grid: is the song transport
-        // wired + rolling, did we snap to the SONG grid or the free-run lock
-        // grid, and how long is the computed wait.
-        try {
-          if (typeof window !== "undefined" && window.__PADSYNC) {
-            // eslint-disable-next-line no-console
-            const _bar = this._barSeconds;
-            const _loopBuf = entry.loopBuffer ? entry.loopBuffer.duration : null;
-            console.log("[padsync]", JSON.stringify({
-              grid: grid || "bar",
-              rolling,
-              usedSongGrid: aligned != null,
-              waitSec: Number((target - now).toFixed(3)),
-              shiftSec: Number((entry.shiftSec || 0).toFixed(3)),
-              barSec: _bar ? Number(_bar.toFixed(3)) : null,
-              beatSec: _bar ? Number((_bar / 4).toFixed(3)) : null,
-              loopBufSec: _loopBuf != null ? Number(_loopBuf.toFixed(3)) : null,
-              loopBars: _loopBuf != null && _bar ? Number((_loopBuf / _bar).toFixed(3)) : null,
-              loopBeats: _loopBuf != null && _bar ? Number((_loopBuf / (_bar / 4)).toFixed(3)) : null,
-            }));
-          }
-        } catch (_) {}
       }
       // Launch compensation for the onset-phase snap: delay the launch by
       // the amount the region was shifted so the content's downbeat still
