@@ -1229,7 +1229,21 @@ export class PadEngine {
         this._emitState(padIdx, { playing: false, armedUntil: null });
       }
     };
-    source.start(startTime);
+    // Phase-locked launch: a loop tapped mid-jam must join at the SAME cycle
+    // position as the loops already playing, so every pad's playhead moves
+    // together (not just bar-aligned starts). Start the loop `phase` seconds
+    // into its body, where `phase = (startTime - _lockAnchor) mod bodySec`.
+    // Then at any wall time T the playhead is `(T - _lockAnchor) mod bodySec`
+    // for EVERY same-length loop — identical, so they're phase-locked, while
+    // the start still lands on the quantized bar boundary. The first loop
+    // (startTime == _lockAnchor) begins at phase 0. One-shots start at 0.
+    if (willLoop && entry.bodySec > 0 && this._lockAnchor != null) {
+      const body = entry.bodySec;
+      const phase = (((startTime - this._lockAnchor) % body) + body) % body;
+      source.start(startTime, phase);
+    } else {
+      source.start(startTime);
+    }
     // Armed watchdog: a quantized launch must be sounding by its own wait
     // plus a grace second (≤ cycle + 1 s). If the context clock never
     // reached startTime by then — real time passed but audio time didn't
