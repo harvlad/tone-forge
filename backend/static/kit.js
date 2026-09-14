@@ -1000,21 +1000,28 @@
       sizeSeg.appendChild(b);
     });
 
-    // Tap / Loop segmented toggle (DEFAULT Tap). Buttons kept on state so
-    // Instant Groove can flip the mode programmatically (setMode).
+    // Tap / Loop / Latch segmented toggle (DEFAULT Tap). One 3-way control:
+    // Tap = one-shots, Loop = hold-to-play loops, Latch = loops that keep
+    // playing after release (mode "loop" + s.latch). Latch used to be a
+    // separate toggle stranded at the far end of the header; folding it in
+    // makes the three playback behaviors one mutually-exclusive choice.
+    // Buttons kept on state so Instant Groove can flip the mode
+    // programmatically (setMode derives the highlight from mode+latch).
     var seg = document.createElement("div");
     seg.className = "kit-seg";
     seg.setAttribute("role", "group");
     s.modeBtns = {};
-    ["tap", "loop"].forEach(function (mode) {
+    [["tap", "Tap"], ["loop", "Loop"], ["latch", "Latch"]].forEach(function (pair) {
+      var key = pair[0];
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "kit-seg-btn" + (mode === s.mode ? " is-on" : "");
-      b.textContent = mode === "tap" ? "Tap" : "Loop";
+      b.className = "kit-seg-btn" + (key === s.mode ? " is-on" : "");
+      b.textContent = pair[1];
       b.addEventListener("click", function () {
-        setMode(s, mode);
+        s.latch = key === "latch";
+        setMode(s, key === "tap" ? "tap" : "loop");
       });
-      s.modeBtns[mode] = b;
+      s.modeBtns[key] = b;
       seg.appendChild(b);
     });
 
@@ -1072,19 +1079,6 @@
       } catch (_) {}
     });
 
-    // Latch toggle (default OFF; only meaningful in Loop mode).
-    var latch = document.createElement("button");
-    latch.type = "button";
-    latch.className = "kit-toggle is-disabled"; // Tap is the default mode
-    latch.textContent = "Latch";
-    latch.setAttribute("aria-pressed", "false");
-    latch.addEventListener("click", function () {
-      s.latch = !s.latch;
-      latch.classList.toggle("is-on", s.latch);
-      latch.setAttribute("aria-pressed", String(s.latch));
-    });
-    s.latchEl = latch;
-
     var stop = document.createElement("button");
     stop.type = "button";
     stop.className = "kit-stop kit-transport-btn";
@@ -1130,7 +1124,6 @@
     controls.appendChild(chopGroup);
     controls.appendChild(addBtn);
     controls.appendChild(sessionGroup);
-    controls.appendChild(latch);
     controls.appendChild(groove);
     head.appendChild(title);
     head.appendChild(status);
@@ -1672,9 +1665,13 @@
   function setMode(s, mode) {
     s.mode = mode;
     if (s.modeBtns) {
-      for (var k in s.modeBtns) s.modeBtns[k].classList.toggle("is-on", k === mode);
+      // Highlight derives from mode + latch: the Tap|Loop|Latch segment is
+      // one 3-way choice where Latch == loop mode with s.latch set. A
+      // programmatic setMode(s, "loop") (Instant Groove) keeps whatever
+      // latch state the user chose.
+      var key = mode === "loop" ? (s.latch ? "latch" : "loop") : "tap";
+      for (var k in s.modeBtns) s.modeBtns[k].classList.toggle("is-on", k === key);
     }
-    if (s.latchEl) s.latchEl.classList.toggle("is-disabled", mode !== "loop");
   }
 
   /** Effective loop behavior for a pad press: the per-pad radial override
