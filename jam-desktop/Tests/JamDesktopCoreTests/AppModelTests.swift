@@ -9,9 +9,12 @@ import XCTest
 final class AppModelTests: XCTestCase {
 
     func testViewInventoryMatchesWebApp() {
+        // .guitar is its own nav item (web parity): Perform = the Launchpad
+        // pads, Guitar = the fretboard/tone surface (SURFACE_TO_VIEW
+        // perform='kit', guitar='stage').
         XCTAssertEqual(
             JamView.allCases,
-            [.intake, .bandRoom, .rehearsal, .perform, .studio]
+            [.intake, .bandRoom, .rehearsal, .perform, .guitar, .studio]
         )
     }
 

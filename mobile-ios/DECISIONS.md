@@ -1255,3 +1255,37 @@ radial (rejected — duplicates `handleRadialAction` + the chop/sequence sheets
 already living in `SamplePadGrid4x4`, two copies to keep in sync); leave 64 flat
 and only fix the borrow label there (rejected — the radial + waveform loss is
 the loudest half of the report).
+
+## D-034: Launchpad sample-grid index math extracted to pure, pinned SamplePadGridGeometry
+
+**Date:** 2026-09-14
+**Decision:** The 4×4→8×8 quadrant routing and the radial-menu hit geometry
+lived as `private` methods on the `SamplePadGrid4x4` SwiftUI view — untestable,
+and the exact code the 64-grid routing / hold-radial regressions kept landing in.
+Extract the pure math into `SamplePadGridGeometry` (ToneForgeEngine): `gridIndex(
+row:col:rows:)` (4×4 shifts into the top-left quadrant, 8×8 is identity) and
+`padCenter(localRow:localCol:rows:cols:tileSpacing:size:)` (row-flip + spacing).
+The view's `gridIndex`/`padCenter` are now thin wrappers, call sites unchanged.
+
+**Where:** `Sources/ToneForgeEngine/SamplePadGridGeometry.swift`,
+`Sources/ToneForgeMobile/Views/SamplePadGrid4x4.swift` (both methods delegate).
+Pinned by `Tests/ToneForgeEngineTests/SamplePadGridGeometryTests.swift` (quadrant
++ identity + center geometry). Also revived the previously non-compiling
+`Tests/ToneForgeMobileTests/SamplePadGrid4x4Tests.swift` (it called a `private`
+instance method as if static, so it never built — the "host swift-test broken"
+symptom) by pointing it at `SamplePadGridGeometry`. `PadKeyBindingTests`
+(ToneForgeMobileTests) pins the D-033 rule that a pad's identity resolves via
+`coordinator.padBinding`, not a quadrant formula (blank/duplicated waveforms).
+
+**How it runs:** ToneForgeEngineTests + ToneForgeMobileTests via the
+XcodeGen `ToneForgeMobileApp` scheme on a simulator (host `swift test` can't
+build the iOS-only views). CI gate added in
+`.github/workflows/native-tests.yml` (mobile-ios job runs
+`-only-testing:ToneForgeEngineTests`, which carries the shared Launchpad pins).
+
+**Alternatives:** duplicating the math into a test helper (rejected — drift from
+the real view is exactly what let these bugs recur); leaving it private and
+relying on the desktop twin's coverage (rejected — the iOS quadrant shift is
+iOS-specific and was its own regression). Extraction keeps one source of truth
+the view actually uses. Supersedes the D-033 "bonus fix" note by making the math
+it referenced independently testable.

@@ -1471,24 +1471,6 @@ final class SessionController: ObservableObject {
         return URLSession(configuration: c)
     }()
 
-    /// Per-pad `source` sidecar — the borrow manifest tags each pad
-    /// `initial`/`donor`, but the shared SamplePack DTO (mobile-ios, not
-    /// editable here) has no such field, so it is decoded separately from
-    /// the SAME response bytes. Additive/optional: a pad missing the tag
-    /// reads as `initial` (the current song).
-    private struct BorrowPadSourceWire: Decodable {
-        let padIdx: Int
-        let source: String?
-        // Logical stem (drums/bass/other/vocals) — the shared SamplePack DTO
-        // drops it, so it's read from the same bytes to color pads by stem
-        // category (a whole borrow used to render one color because the mount
-        // hard-coded stem "drums").
-        let stem: String?
-    }
-    private struct BorrowSourcesWire: Decodable {
-        let pads: [BorrowPadSourceWire]
-    }
-
     /// Fetch a borrow pack AND its per-pad source tags in one request. Used
     /// for both the OFF (host-conform) and ON (session-target) paths — the
     /// only difference is whether `?target_bpm=&target_key=` are appended.
@@ -1511,14 +1493,9 @@ final class SessionController: ObservableObject {
             for: authedRequest(url))
         try checkOK(response)
         let pack = try JSONDecoder().decode(SamplePack.self, from: data)
-        var sources: [Int: BorrowPadSource] = [:]
-        var stems: [Int: String] = [:]
-        if let wire = try? JSONDecoder().decode(BorrowSourcesWire.self, from: data) {
-            for p in wire.pads {
-                sources[p.padIdx] = p.source == "donor" ? .donor : .initial
-                if let s = p.stem { stems[p.padIdx] = s }
-            }
-        }
+        // Pure, unit-pinned (BorrowSourcesDecodeTests): the sidecar decode that
+        // once hard-coded stem "drums" (all pads red) and dropped the source tag.
+        let (sources, stems) = decodeBorrowSources(from: data)
         return (pack, sources, stems)
     }
 

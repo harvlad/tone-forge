@@ -603,4 +603,30 @@ final class LaunchpadControllerTests: XCTestCase {
         XCTAssertNil(LaunchpadController.parseColorHint("#XYZ123"))
         XCTAssertNil(LaunchpadController.parseColorHint("#FFF"))
     }
+
+    // MARK: - Borrow pad color-by-stem (guards the "all pads red" regression)
+
+    // A borrow carries only a logical stem (no Riley contentType). The mount
+    // once hard-coded stem "drums", so EVERY borrow pad read as drums-red.
+    // fillColor now routes through this pure map; pin every branch so a
+    // one-color borrow fails CI, not the user's eyes.
+    func testBorrowCategoryByStem() {
+        XCTAssertEqual(LaunchpadController.borrowCategory(forStem: "drums"), .drums)
+        XCTAssertEqual(LaunchpadController.borrowCategory(forStem: "bass"), .bass)
+        XCTAssertEqual(LaunchpadController.borrowCategory(forStem: "vocals"), .vocal)
+        // "other" and anything unknown/nil fall to chords (harmonic in kit terms).
+        XCTAssertEqual(LaunchpadController.borrowCategory(forStem: "other"), .chords)
+        XCTAssertEqual(LaunchpadController.borrowCategory(forStem: "guitar"), .chords)
+        XCTAssertEqual(LaunchpadController.borrowCategory(forStem: nil), .chords)
+    }
+
+    // The distinct-color guarantee itself: a mixed-stem borrow must NOT collapse
+    // to a single category (the visible symptom of the bug).
+    func testBorrowStemsProduceDistinctColors() {
+        let cats: [LaunchpadController.PadCategory] =
+            ["drums", "bass", "vocals", "other"]
+                .map { LaunchpadController.borrowCategory(forStem: $0) }
+        XCTAssertEqual(Set(cats.map(\.colorHex)).count, 4,
+                       "four stems must yield four distinct pad colors")
+    }
 }

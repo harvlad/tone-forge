@@ -96,6 +96,21 @@ public final class LaunchpadController {
         }
     }
 
+    /// Category for a BORROW pad, which carries only a logical stem (no Riley
+    /// contentType). Kept separate from `category(stem:contentType:)` because a
+    /// borrow's "other" stem means chords/harmonic in kit terms, and because a
+    /// hard-coded stem once made every borrow pad render one color (the "all
+    /// pads red" bug — mount hard-coded stem "drums"). Pure + testable so that
+    /// regression fails CI, not the user's eyes.
+    public static func borrowCategory(forStem stem: String?) -> PadCategory {
+        switch stem {
+        case "drums":  return .drums
+        case "bass":   return .bass
+        case "vocals": return .vocal
+        default:       return .chords   // "other"/unknown = chords/harmonic
+        }
+    }
+
     public static func category(stem: String, contentType: String?) -> PadCategory {
         switch stem {
         case "drums": return .drums

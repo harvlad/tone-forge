@@ -7,8 +7,14 @@
 // audio, LEDs, recording, and the Launchpad mirror stay coherent.
 
 import XCTest
+import ToneForgeEngine
 @testable import ToneForgeMobile
 
+// The 4×4 → 8×8 quadrant math now lives in the pure, engine-side
+// SamplePadGridGeometry (SamplePadGrid4x4.gridIndex is a thin wrapper). This
+// file previously called a private instance method as if it were static, so
+// it never compiled — reviving it against the extracted function both fixes
+// that and keeps the pack-pad-order relationship pinned on the Mobile side.
 final class SamplePadGrid4x4Tests: XCTestCase {
 
     /// Local 4×4 coordinates (row 1 = bottom) land in grid rows 5–8,
@@ -16,8 +22,8 @@ final class SamplePadGrid4x4Tests: XCTestCase {
     func testGridIndexCoversSampleQuadrant() {
         for row in 1...4 {
             for col in 1...4 {
-                let (gridRow, gridCol) = SamplePadGrid4x4.gridIndex(
-                    row: row, col: col)
+                let (gridRow, gridCol) = SamplePadGridGeometry.gridIndex(
+                    row: row, col: col, rows: 4)
                 XCTAssertEqual(gridRow, row + 4)
                 XCTAssertEqual(gridCol, col)
                 XCTAssertTrue((5...8).contains(gridRow))
@@ -37,8 +43,8 @@ final class SamplePadGrid4x4Tests: XCTestCase {
             // overlay row (1 = bottom) for screen row r is 4 - r.
             let localRow = 4 - padIdx / 4
             let localCol = padIdx % 4 + 1
-            let (gridRow, gridCol) = SamplePadGrid4x4.gridIndex(
-                row: localRow, col: localCol)
+            let (gridRow, gridCol) = SamplePadGridGeometry.gridIndex(
+                row: localRow, col: localCol, rows: 4)
             XCTAssertEqual(gridRow, expectedGridRow, "padIdx \(padIdx)")
             XCTAssertEqual(gridCol, expectedGridCol, "padIdx \(padIdx)")
         }

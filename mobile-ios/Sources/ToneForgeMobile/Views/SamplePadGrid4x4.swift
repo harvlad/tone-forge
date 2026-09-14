@@ -252,23 +252,11 @@ struct SamplePadGrid4x4: View {
 
     /// Calculate the center of a tile in local coordinates, accounting for spacing.
     private func padCenter(localRow: Int, localCol: Int, size: CGSize) -> CGPoint {
-        // With spacing, total space for `cols` tiles + (cols−1) gaps.
-        let totalGapWidth = tileSpacing * CGFloat(cols - 1)
-        let totalGapHeight = tileSpacing * CGFloat(rows - 1)
-        let cellWidth = (size.width - totalGapWidth) / CGFloat(cols)
-        let cellHeight = (size.height - totalGapHeight) / CGFloat(rows)
-
-        // localCol/localRow are 1-based (localRow 1 = bottom).
-        // screenCol/screenRow are 0-based from the top-left.
-        let screenCol = localCol - 1
-        let screenRow = rows - localRow
-
-        // x = leading edge of cell + half cell width
-        let x = CGFloat(screenCol) * (cellWidth + tileSpacing) + cellWidth / 2
-        // y = top edge of cell + half cell height
-        let y = CGFloat(screenRow) * (cellHeight + tileSpacing) + cellHeight / 2
-
-        return CGPoint(x: x, y: y)
+        // Pure, unit-pinned (SamplePadGridGeometryTests) so the radial-menu
+        // anchor geometry can't silently drift onto the wrong pad.
+        SamplePadGridGeometry.padCenter(
+            localRow: localRow, localCol: localCol,
+            rows: rows, cols: cols, tileSpacing: tileSpacing, size: size)
     }
 
     private func makeRadialMenuState(
@@ -359,7 +347,10 @@ struct SamplePadGrid4x4: View {
     /// the TOP-left sample quadrant (grid rows 5–8, cols 1–4), so local
     /// rows shift up by 8 − rows; an 8×8 grid is the identity.
     private func gridIndex(row: Int, col: Int) -> (row: Int, col: Int) {
-        (row + (8 - rows), col)
+        // Pure, unit-pinned (SamplePadGridGeometryTests): the quadrant-shift
+        // that routes a local tap/waveform to its 8×8 pad. A wrong shift here
+        // is the 64-grid routing regression.
+        SamplePadGridGeometry.gridIndex(row: row, col: col, rows: rows)
     }
 
     private func visual(gridRow: Int, gridCol: Int) -> PadVisual {

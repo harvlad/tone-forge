@@ -211,6 +211,9 @@ struct LaunchpadPanelView: View {
                             radialMenuState = nil
                         }
                     )
+                    // A UI test asserts this appears after a right-click / hold
+                    // on a filled pad (the hold-radial regression).
+                    .accessibilityIdentifier("pad-radial-menu")
                 }
             }
         }
@@ -1048,11 +1051,18 @@ struct LaunchpadPanelView: View {
                                 onDragEnd: { dragSourcePad = nil }
                             )
                             .frame(width: side, height: side)
+                            // Stable a11y id per pad so a UI test can find a
+                            // specific cell + assert its active state. Kept on
+                            // the 8-wide padIdx (row*8+col) the controller uses,
+                            // not the display index, so 16/64 views agree.
+                            .accessibilityIdentifier("pad-\(pad.row * 8 + pad.col)")
                         }
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Grid container id — a UI test asserts the Perform pad grid renders.
+            .accessibilityIdentifier("launchpad-grid")
         }
     }
 
@@ -1471,13 +1481,9 @@ private struct PadCell: View {
         // — so drums/bass/chords/vocals are distinguishable; the source song is
         // shown by the tile's border tint + its source-song label.
         if launchpad.sourceLabel(for: pad) != nil {
-            let cat: LaunchpadController.PadCategory
-            switch assignment.stem {
-            case "drums":  cat = .drums
-            case "bass":   cat = .bass
-            case "vocals": cat = .vocal
-            default:       cat = .chords   // "other" = chords/harmonic in kit terms
-            }
+            // Pure, unit-pinned (LaunchpadControllerTests) so the "all pads one
+            // color" borrow regression fails CI rather than shipping.
+            let cat = LaunchpadController.borrowCategory(forStem: assignment.stem)
             let base = Color(
                 red: Double((cat.colorHex >> 16) & 0xFF) / 255.0,
                 green: Double((cat.colorHex >> 8) & 0xFF) / 255.0,

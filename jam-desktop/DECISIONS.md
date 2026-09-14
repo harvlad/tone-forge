@@ -682,3 +682,60 @@ change (`kit.js#arrangeBorrowLayout`/`layoutBorrowPads`,
 **Alternatives:** clipping to the best 16 by score regardless of source
 (rejected — a strong host could erase the donor, the exact bug); re-fetching on
 every toggle (rejected — the retained mount set re-lays with zero I/O).
+
+## D-026: Launchpad regression suite — extract inline decisions into pure, pinned functions
+
+**Date:** 2026-09-14
+**Decision:** The recurring Launchpad bugs (all-pads-one-color borrow, borrow
+decode dropping stem/source, pad-won't-stop, blank/mis-routed pads) all lived in
+inline SwiftUI/closure code no test could reach. Extract each decision into a
+pure function on the testable side and pin it, so the class of bug fails CI
+instead of the user's eyes.
+
+- **Borrow color-by-stem** → `LaunchpadController.borrowCategory(forStem:)`
+  (JamDesktopCore). `LaunchpadPanelView.fillColor` calls it instead of an inline
+  `switch`. Guards "all pads red" (a hard-coded stem once painted every borrow
+  pad drums-red).
+- **Borrow source/stem decode** → `decodeBorrowSources(from:Data)`
+  (`Launchpad/BorrowSourcesDecode.swift`, JamDesktopCore). Moved out of the
+  non-testable `SessionController.fetchBorrowRaw` (JamDesktop executable target);
+  the wire structs moved with it. Guards the hard-coded `stem="drums"` and the
+  dropped `source` tag.
+- **Integration smoke** → `LaunchpadBorrowSmokeTests` runs the real controller
+  through a borrow adoption headlessly: grid fills, pads carry distinct
+  stem-colors + source labels, tap toggles active, re-tap stops, Stop clears all
+  and fires the hard voice-stop.
+
+**Where:** `Sources/JamDesktopCore/Launchpad/LaunchpadController.swift`
+(`borrowCategory`), `Sources/JamDesktopCore/Launchpad/BorrowSourcesDecode.swift`,
+`Sources/JamDesktop/Launchpad/LaunchpadPanelView.swift` (fillColor call site +
+`accessibilityIdentifier`s: `launchpad-grid`, `pad-<idx>`, `pad-radial-menu`),
+`Sources/JamDesktop/Perform/TransportBar.swift` (`transport-play`),
+`Sources/JamDesktop/SessionController.swift` (calls `decodeBorrowSources`).
+Pinned by `Tests/JamDesktopCoreTests/{LaunchpadControllerTests (borrow-category),
+BorrowSourcesDecodeTests, LaunchpadBorrowSmokeTests}`. Runs via
+`swift test`; CI gate added in `.github/workflows/native-tests.yml`
+(jam-desktop job), which skips the PRE-EXISTING unrelated failure
+`AppModelTests.testViewInventoryMatchesWebApp` (stale web-parity view inventory,
+tracked separately).
+
+**Alternatives:** a desktop XCUITest for the end-to-end path (rejected for now —
+jam-desktop is a pure SwiftPM package with no `.xcodeproj`/app target, so
+XCUITest can't launch it and can't run headless on CI; the accessibility ids are
+added so a future Xcode app+UITest target can adopt it). The headless
+controller-level smoke test reaches the same integration glue CI-safely.
+
+## D-027: No XCUITest for jam-desktop yet — SwiftPM package has no app/UI-test target
+
+**Date:** 2026-09-14
+**Decision:** Do not stand up an XCUITest target for the desktop Launchpad now.
+`jam-desktop` builds an executable via SwiftPM and hand-assembles `Jamn.app` in
+`build_app.sh`; there is no `.xcodeproj`. XCUITest requires an Xcode app target
+plus a UI-test bundle and a GUI/accessibility session, none of which a SwiftPM
+package provides, and macOS CI runners can't drive app UI automation headlessly.
+Standing that up means a whole XcodeGen project that would fork the working
+`swift build`/`build_app.sh` flow.
+**Instead:** key views carry stable `accessibilityIdentifier`s (`launchpad-grid`,
+`pad-<idx>`, `pad-radial-menu`, `transport-play`) so the surface is UI-test-ready,
+and the end-to-end behavior is covered headlessly by `LaunchpadBorrowSmokeTests`
+(D-026). Revisit if/when a jam-desktop Xcode project is introduced.

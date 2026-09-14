@@ -1,0 +1,107 @@
+# native-tests — jam-desktop + mobile-ios unit-test gates.
+#
+# These are the surfaces the Launchpad regression suite lives on. Before
+# this workflow existed, NO CI job ran `swift test` for jam-desktop or the
+# ToneForgeEngine tests for mobile-ios, so the pure-logic pins that guard the
+# recurring Launchpad bugs (borrow color-by-stem, borrow decode, 64-grid
+# routing, borrow layout, pad toggle/stop) only ran on a developer's Mac.
+#
+# Scoped narrow like connect-tests.yml: macos-14 is a pricier runner pool, so
+# each job only fires when its own platform (or this file) changes.
+#
+# XCTest ships only with full Xcode (not the Command Line Tools), so both jobs
+# select /Applications/Xcode.app first.
+
+name: native-tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "jam-desktop/**"
+      - "mobile-ios/**"
+      - "connect/**"                      # jam-desktop path-depends on ConnectCore
+      - ".github/workflows/native-tests.yml"
+  pull_request:
+    paths:
+      - "jam-desktop/**"
+      - "mobile-ios/**"
+      - "connect/**"
+      - ".github/workflows/native-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  # jam-desktop: pure-logic + audio tests via SwiftPM `swift test`. This is the
+  # only gate for the desktop Launchpad pins (JamDesktopCoreTests:
+  # LaunchpadControllerTests borrow-category, BorrowSourcesDecodeTests,
+  # LaunchpadBorrowSmokeTests, BorrowLayoutTests, StudioArrangementTests, and
+  # the JamDesktopAudio seamless-loop / chop-player tests).
+  jam-desktop:
+    runs-on: macos-14
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: jam-desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Print toolchain versions
+        run: |
+          xcode-select -p
+          swift --version
+
+      - name: Resolve SwiftPM dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build
+
+      - name: Run tests
+        run: swift test
+
+  # mobile-ios: ToneForgeEngine pure-logic tests on a simulator. The host
+  # `swift test` can't build the iOS-only ToneForgeMobile views, so tests run
+  # through the XcodeGen app scheme (matching CLAUDE.md's documented command).
+  # ToneForgeEngineTests carries the shared Launchpad pins: SamplePadGridGeometry
+  # (64-grid routing), BorrowLayout, Arrangement, seamless-loop, chop math.
+  mobile-ios:
+    runs-on: macos-14
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile-ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # Pick a concrete iPhone simulator that actually exists on the runner —
+      # the device roster differs by Xcode version, so pinning a name (e.g.
+      # "iPhone 17 Pro") would break whenever the image updates. Grab the first
+      # available iPhone and pass it to xcodebuild.
+      - name: Pick a simulator
+        id: sim
+        run: |
+          NAME=$(xcrun simctl list devices available \
+            | grep -oE 'iPhone [0-9]+[^(]*' | head -1 | sed 's/ *$//')
+          echo "Using simulator: $NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Run ToneForgeEngine tests
+        run: |
+          xcrun xcodebuild test \
+            -scheme ToneForgeMobileApp \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -only-testing:ToneForgeEngineTests

@@ -73,6 +73,8 @@ struct TransportBar: View {
             }
             .keyboardShortcut(.space, modifiers: [])
             .help(transport.isPlaying ? "Pause" : "Play")
+            // Stable a11y id so a UI test can find + drive transport play/pause.
+            .accessibilityIdentifier("transport-play")
 
             Divider().frame(height: 20)
 
