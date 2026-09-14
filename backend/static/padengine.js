@@ -1120,6 +1120,26 @@ export class PadEngine {
         if (!rolling && this._voices.size === 0) this._lockAnchor = null;
         const aligned = rolling ? this._transportLaunchTime(now, grid) : null;
         target = aligned != null ? aligned : this._lockLaunchTime(now, grid);
+        // Diagnostic (opt-in: run `window.__PADSYNC = true` in the console).
+        // Pinpoints why a queued pad lands off-grid: is the song transport
+        // wired + rolling, did we snap to the SONG grid or the free-run lock
+        // grid, and how long is the computed wait.
+        try {
+          if (typeof window !== "undefined" && window.__PADSYNC) {
+            // eslint-disable-next-line no-console
+            console.log("[padsync]", JSON.stringify({
+              grid: grid || "bar",
+              rolling,
+              hasTransport: !!t,
+              songNow: t && typeof t.getSongTime === "function" ? t.getSongTime() : null,
+              hasDownbeats: !!(t && t.downbeatTimesSec && t.downbeatTimesSec.length),
+              usedSongGrid: aligned != null,
+              waitSec: Number((target - now).toFixed(3)),
+              lockAnchor: this._lockAnchor,
+              loopLenSec: Number(this.loopLengthSeconds.toFixed(3)),
+            }));
+          }
+        } catch (_) {}
       }
       // Launch compensation for the onset-phase snap: delay the launch by
       // the amount the region was shifted so the content's downbeat still
