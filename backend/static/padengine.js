@@ -1105,9 +1105,18 @@ export class PadEngine {
         // transportRolling branch.
         const t = this._transport;
         const rolling = !!(t && typeof t.isPlaying === "function" && t.isPlaying());
-        // The UI's Beat/Bar choice rides opts.grid; both the song-transport
-        // path and the free-run fallback honor it (default/unknown = bar).
-        const grid = opts.grid;
+        // LOOPS lock to the BAR grid, never individual beats. A multi-bar
+        // loop (the common case — these are ~4-bar song sections) quantized to
+        // the beat starts on whatever beat you tapped near, so its bar 1 lands
+        // mid-bar: it plays out of phase with the song's bars AND with every
+        // other loop, even though each is individually "on a beat" (the
+        // reported "queued pads start at random times / not in time" bug —
+        // confirmed via [padsync]: loopBars≈4, grid=beat, sub-beat waits).
+        // Beat-granularity only makes musical sense for one-shots, which never
+        // reach this loop-only block. Snapping to the bar aligns every loop to
+        // the song downbeats (transport path) or the shared loop cycle
+        // (free-run path), so they lock to each other and to the song.
+        const grid = "bar";
         // Free-run re-anchor (desktop LaunchpadController parity): when the
         // song is stopped and NOTHING is currently sounding, abandon the stale
         // lock grid so a fresh loop fires immediately instead of waiting up to
