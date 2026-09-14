@@ -776,7 +776,7 @@
     s.ctx = new AC();
 
     var kitP = fetchKitJson(s, entry);
-    var engineP = import("./padengine.js?v=8");
+    var engineP = import("./padengine.js?v=9");
 
     return kitP.then(function (kit) {
       if (!s.alive) return;
@@ -4236,7 +4236,7 @@
         });
         return Promise.all(loads).then(function () {
           if (!s.alive) return;
-          return import("./padengine.js?v=8").then(function (mod) {
+          return import("./padengine.js?v=9").then(function (mod) {
             if (!s.alive) return;
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
             s.dsp = mod;
