@@ -9900,6 +9900,16 @@
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return null;
       ctx = new Ctx({ latencyHint: 'interactive' });
+      // Adopt this as THE shared audio clock — do NOT fork a private one.
+      // Quantized pad launch computes `when` against playClockAnchor (which
+      // is anchored on state.ctx), then schedules the buffer on synthCtx. If
+      // synthCtx is a DIFFERENT AudioContext, its currentTime origin differs
+      // from state.ctx's, so the cross-context offset is added to every
+      // queued start — the pad fires at a seemingly random offset from the
+      // bar while the master clock + free-running loops stay in time. Every
+      // other state.ctx creator is `!state.ctx`-guarded, so adopting here is
+      // safe and keeps a single clock domain for the whole session.
+      state.ctx = ctx;
     }
     if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
 
