@@ -429,18 +429,38 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
     _auth_id = os.environ.get("RUNPOD_REGISTRY_AUTH_ID")
     if _auth_id:
         body["containerRegistryAuthId"] = _auth_id
-    try:
-        r = requests.post(f"{_REST}/pods", headers=_headers(), json=body, timeout=40)
+    def _post(pod_body: dict) -> Optional[str]:
+        r = requests.post(f"{_REST}/pods", headers=_headers(), json=pod_body,
+                          timeout=40)
         if r.status_code in (200, 201):
-            pod_id = (r.json() or {}).get("id")
+            return (r.json() or {}).get("id")
+        # THE overnight-strand failure mode: a create that fails here used
+        # to vanish without a trace. Log status + body, always.
+        logger.error("autoscale: pod create FAILED HTTP %s: %s",
+                     r.status_code, r.text[:400])
+        return None
+
+    try:
+        pod_id = _post(body)
+        # A region-locked network volume pins the pod to one datacenter; if
+        # that DC is out of every acceptable GPU, every create fails and jobs
+        # strand (EU-RO-1 had no A40 the day this shipped). Fall back once to
+        # an ephemeral, any-datacenter pod: slower cold boot (re-downloads
+        # models to a throwaway disk), but the analysis still completes. The
+        # fast-boot volume is an optimisation, never a hard dependency.
+        if pod_id is None and body.get("networkVolumeId"):
+            fb = dict(body)
+            fb.pop("networkVolumeId", None)
+            fb.pop("dataCenterIds", None)
+            fb["volumeInGb"] = 60
+            logger.warning("autoscale: volume-pinned create failed; retrying "
+                           "without the network volume (any datacenter)")
+            pod_id = _post(fb)
+        if pod_id is not None:
             logger.warning("autoscale: created worker pod %s (live=%d queued~%d)",
                            pod_id, len(live), queue_depth)
             _last_create_ok = True
             return pod_id
-        # THE overnight-strand failure mode: a create that fails here
-        # used to vanish without a trace. Log status + body, always.
-        logger.error("autoscale: pod create FAILED HTTP %s: %s",
-                     r.status_code, r.text[:400])
     except Exception:
         logger.exception("autoscale: pod create raised")
     return None
