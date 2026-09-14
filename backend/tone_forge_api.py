@@ -656,9 +656,17 @@ async def _retention_loop() -> None:
 _AUTOSCALE_TICK_SEC = 60
 # How long total engine silence (no claim, no heartbeat) with work
 # queued means the worker situation is broken rather than merely cold.
-# A RunPod cold boot is ~30-60s on the prebuilt image and 2-3min on the
-# base image, so 5 minutes clears an honest boot with room to spare.
-_WORKER_STALL_GRACE_SEC = 300.0
+#
+# The remote_worker only contacts the backend AFTER its whole bootstrap
+# (image pull + git pull + pip install + model download + GPU self-test),
+# so this grace must cover the WORST honest cold boot or the reaper kills
+# a legitimately-booting pod and the job deadlocks in a reap-replace loop.
+# Reality check (2026-09-14): a pod WITHOUT the seeded network volume
+# re-downloads ~4GB of models + torch wheels and takes >5min — the old
+# 300s reaped every such pod mid-boot. 15min clears it; a seeded-volume
+# boot still claims in ~1-2min, well under. Env-tunable for ops.
+_WORKER_STALL_GRACE_SEC = float(
+    os.environ.get("RUNPOD_STALL_GRACE_SEC", "900"))
 
 
 def _engine_silent_sec() -> float:
