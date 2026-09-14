@@ -60,18 +60,23 @@ git fetch --quiet origin || true
 git checkout "${JAMN_DEPLOY_REF:-main}" || true
 git pull --quiet || true
 
-# Persistent network volume (/workspace) caches the SLOW-to-fetch bits — the
-# ~250 MB model weights and the pip WHEEL cache — but NOT the installed packages
-# themselves: a venv on a network volume is thousands of small files and makes
-# both install and every runtime import painfully slow. So deps install to the
-# base image's LOCAL python (fast imports), and pip pulls wheels from the volume
-# cache so it never re-downloads. Net: model download + wheel download happen
-# ONCE (seeded on the volume); subsequent pods just unpack cached wheels locally.
-export XDG_CACHE_HOME=/workspace/.cache
-export HF_HOME=/workspace/.cache/huggingface
-export TORCH_HOME=/workspace/.cache/torch
-export PIP_CACHE_DIR=/workspace/.cache/pip
-mkdir -p "$XDG_CACHE_HOME" "$PIP_CACHE_DIR"
+# Model caches: use the image's BAKED caches under /root/.cache — the
+# prebuilt image's `download_models` warmed Demucs + Beat-This + All-In-One
+# there at BUILD time (Dockerfile.worker), so download_models below returns
+# in seconds with nothing to fetch.
+#
+# CRITICAL: do NOT redirect HF_HOME/TORCH_HOME to /workspace. That path is
+# ALWAYS a fresh mount (the ephemeral pod-local volume, or a network volume),
+# so pointing the caches at it HIDES the baked models and forces a ~4GB
+# re-download of models + torch wheels on EVERY cold boot. That download
+# outlasts the stalled-worker reaper grace, which kills the booting pod and
+# deadlocks the job in a reap->replace loop (root-caused 2026-09-14, after a
+# network-volume experiment overrode these paths). Leaving the defaults
+# (HOME=/root) is what makes the cold boot fast.
+#
+# A network volume for cross-pod caching is intentionally NOT used: it
+# region-locks pods to one datacenter (frequent GPU-capacity failures) for a
+# speedup the baked image already provides for free in any datacenter.
 
 # 2. Deps -> base image's local python. torch/torchaudio already ship in the
 #    base; only install if missing. pip reuses the volume wheel cache, so on a
