@@ -848,8 +848,17 @@ export class PadEngine {
     const contSec = mayLoop ? LOOP_CONTINUATION_SEC : 0;
 
     let startFrame = Math.trunc(Math.max(0, region.startSec) * sr);
-    const endFrame = Math.trunc(Math.max(region.startSec, region.endSec) * sr);
-    const requested = Math.max(0, endFrame - startFrame);
+    // Body length from the region LENGTH with round — NOT trunc-per-edge
+    // (trunc(end*sr) - trunc(start*sr)), which lands on N or N+1 frames
+    // depending on each edge's fractional phase. The shared-cycle lock below
+    // compares against Math.round(loopLengthSeconds * sr); a cycle-defining
+    // pad that trunc'd to N+1 frames skipped the tile (cycleFrames > body is
+    // false) and looped 1 frame longer than every pad tiled to N — a
+    // ~23 µs/cycle relative slip that walks phase-locked loops apart over
+    // minutes. Rounding the length keeps every pad's frame count consistent
+    // with the cycle computation.
+    const requested = Math.max(
+      0, Math.round(Math.max(0, region.endSec - region.startSec) * sr));
     const bodyCount = Math.min(requested, Math.max(0, stemLen - startFrame));
     if (!(bodyCount > 0) || startFrame >= stemLen) return null;
 
@@ -1105,6 +1114,13 @@ export class PadEngine {
 
     const now = this.ctx.currentTime;
     let startTime = now;
+    // The quantized lattice boundary this launch snapped to, BEFORE the
+    // per-pad shiftSec launch compensation. The phase-lock join below must
+    // measure from this boundary, not from startTime: startTime includes
+    // shiftSec, and measuring the shift back in as buffer offset would
+    // cancel the compensation — pads would flam by (shift_B - shift_A),
+    // up to the ±60 ms onset-search window each way.
+    let boundary = now;
     if (willLoop) {
       let target = now;
       if (quantized) {
@@ -1135,21 +1151,19 @@ export class PadEngine {
         // wait on a grid nobody can hear. (Bug: a loop tapped after everything
         // was released sat armed-silent for up to one 8 s cycle, reading as
         // "loops don't play".)
-        if (!rolling && this._voices.size === 0) {
-          if (this._lockAnchor != null) {
-            // eslint-disable-next-line no-console
-            try { console.log("[phaselock] ANCHOR RESET (surface silent)"); } catch (_) {}
-          }
-          this._lockAnchor = null;
-        }
+        if (!rolling && this._voices.size === 0) this._lockAnchor = null;
         const aligned = rolling ? this._transportLaunchTime(now, grid) : null;
         target = aligned != null ? aligned : this._lockLaunchTime(now, grid);
       }
+      boundary = target;
       // Launch compensation for the onset-phase snap: delay the launch by
       // the amount the region was shifted so the content's downbeat still
       // lands ON the grid; never negative.
       startTime = Math.max(now, target + Math.max(0, entry.shiftSec));
-      if (this._lockAnchor == null) this._lockAnchor = startTime;
+      // Anchor the shared phase lattice at the PRE-shift boundary: anchoring
+      // at startTime would bake the first pad's own shiftSec into the grid
+      // and skew every later join by it.
+      if (this._lockAnchor == null) this._lockAnchor = boundary;
     }
 
     const source = this.ctx.createBufferSource();
@@ -1214,6 +1228,11 @@ export class PadEngine {
       startTime,
       loop: willLoop,
       bodySec: entry.bodySec,
+      // Buffer offset the source will START at (phase-locked launch below).
+      // padProgress must add this, or the drawn playhead reports the
+      // position the voice WOULD have had starting from 0 — visually
+      // desynced pads even though the audio is phase-locked.
+      phaseSec: 0,
       released: false,
       takeoverRole: stemRole,
       watchdog: null,
@@ -1238,41 +1257,22 @@ export class PadEngine {
     // Phase-locked launch: a loop tapped mid-jam must join at the SAME cycle
     // position as the loops already playing, so every pad's playhead moves
     // together (not just bar-aligned starts). Start the loop `phase` seconds
-    // into its body, where `phase = (startTime - _lockAnchor) mod bodySec`.
-    // Then at any wall time T the playhead is `(T - _lockAnchor) mod bodySec`
-    // for EVERY same-length loop — identical, so they're phase-locked, while
-    // the start still lands on the quantized bar boundary. The first loop
-    // (startTime == _lockAnchor) begins at phase 0. One-shots start at 0.
+    // into its body, where `phase = (boundary - _lockAnchor) mod bodySec` —
+    // measured from the pre-shift lattice BOUNDARY, not startTime, so the
+    // per-pad shiftSec launch compensation is preserved instead of being
+    // measured back in as buffer offset (which made pads flam by their
+    // shift difference). At any wall time T every same-length loop then
+    // sits at the same musical position — phase-locked — while its attack
+    // still lands on the quantized bar. The first loop (boundary == anchor)
+    // begins at phase 0. One-shots start at 0. voice.phaseSec feeds
+    // padProgress so the DRAWN playhead reports the true buffer position.
     if (willLoop && entry.bodySec > 0 && this._lockAnchor != null) {
       const body = entry.bodySec;
-      const phase = (((startTime - this._lockAnchor) % body) + body) % body;
+      const phase = (((boundary - this._lockAnchor) % body) + body) % body;
+      voice.phaseSec = phase;
       source.start(startTime, phase);
-      // TEMP instrumentation (remove after the phase-lock bug is closed):
-      // logs the REAL per-launch values — earlier debugging simulated the
-      // math instead of observing it, which repeatedly "verified" fixes the
-      // live app didn't run. Unconditional on purpose.
-      try {
-        // eslint-disable-next-line no-console
-        console.log("[phaselock]", JSON.stringify({
-          padIdx, startTime: +startTime.toFixed(3), now: +now.toFixed(3),
-          anchor: this._lockAnchor == null ? null : +this._lockAnchor.toFixed(3),
-          bodySec: +body.toFixed(3), phase: +phase.toFixed(3),
-          quantized, rolling: !!(this._transport && this._transport.isPlaying && this._transport.isPlaying()),
-          voices: this._voices.size,
-          loopStartSec: entry.pad.loopStartSec, loopEndSec: entry.pad.loopEndSec,
-          cycle: +this.loopLengthSeconds.toFixed(3),
-        }));
-      } catch (_) {}
     } else {
       source.start(startTime);
-      try {
-        // eslint-disable-next-line no-console
-        console.log("[phaselock]", JSON.stringify({
-          padIdx, unphased: true, willLoop, bodySec: entry.bodySec,
-          anchorNull: this._lockAnchor == null,
-          startTime: +startTime.toFixed(3),
-        }));
-      } catch (_) {}
     }
     // Armed watchdog: a quantized launch must be sounding by its own wait
     // plus a grace second (≤ cycle + 1 s). If the context clock never
@@ -1388,7 +1388,12 @@ export class PadEngine {
     if (!voice || !voice.loop || !(voice.bodySec > 0)) return null;
     const t = this.ctx.currentTime - voice.startTime;
     if (t < 0) return 0; // scheduled but not yet fired
-    return (t % voice.bodySec) / voice.bodySec;
+    // Include the phase-lock start offset: the source began phaseSec INTO
+    // the buffer, so the true position is (elapsed + phaseSec) mod body.
+    // Without it the drawn playhead reported the position the voice would
+    // have had starting from 0 — visually desynced pads whose AUDIO was
+    // phase-locked (the "playheads at different positions" bug).
+    return ((t + (voice.phaseSec || 0)) % voice.bodySec) / voice.bodySec;
   }
 
   /**
