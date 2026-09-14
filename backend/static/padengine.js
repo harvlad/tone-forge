@@ -1127,16 +1127,19 @@ export class PadEngine {
         try {
           if (typeof window !== "undefined" && window.__PADSYNC) {
             // eslint-disable-next-line no-console
+            const _bar = this._barSeconds;
+            const _loopBuf = entry.loopBuffer ? entry.loopBuffer.duration : null;
             console.log("[padsync]", JSON.stringify({
               grid: grid || "bar",
               rolling,
-              hasTransport: !!t,
-              songNow: t && typeof t.getSongTime === "function" ? t.getSongTime() : null,
-              hasDownbeats: !!(t && t.downbeatTimesSec && t.downbeatTimesSec.length),
               usedSongGrid: aligned != null,
               waitSec: Number((target - now).toFixed(3)),
-              lockAnchor: this._lockAnchor,
-              loopLenSec: Number(this.loopLengthSeconds.toFixed(3)),
+              shiftSec: Number((entry.shiftSec || 0).toFixed(3)),
+              barSec: _bar ? Number(_bar.toFixed(3)) : null,
+              beatSec: _bar ? Number((_bar / 4).toFixed(3)) : null,
+              loopBufSec: _loopBuf != null ? Number(_loopBuf.toFixed(3)) : null,
+              loopBars: _loopBuf != null && _bar ? Number((_loopBuf / _bar).toFixed(3)) : null,
+              loopBeats: _loopBuf != null && _bar ? Number((_loopBuf / (_bar / 4)).toFixed(3)) : null,
             }));
           }
         } catch (_) {}
