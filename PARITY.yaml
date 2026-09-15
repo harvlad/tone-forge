@@ -540,6 +540,25 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: beat-capture-to-sequencer
+    name: Beat capture converts to a sequencer pattern (beatbox → classified kick/snare/hat → step grid)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/contribute.js#classifyHits"
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeEngine/BeatCapture/BeatPatternBuilder.swift#build"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/SessionController+BeatCapture.swift#openBeatPatternInSequencer"
+      plugin:
+        status: na
+        note: "Sampler plugin has no capture/sequencer surface."
+      connect:
+        status: na
+        note: "Monitoring companion; no capture or sequencer UI."
+
   - id: control-info-tips
     name: Hover info tips — brief description of every control (Ableton Info View style)
     platforms:

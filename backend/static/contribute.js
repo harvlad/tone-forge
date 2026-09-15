@@ -245,6 +245,93 @@
   }
 
   // ------------------------------------------------------------------
+  // Beat → sequencer conversion (web port of the native flow:
+  // BeatOnsetExtractor → BeatClassifier → BeatPatternBuilder →
+  // openBeatPatternInSequencer). No CoreML on web, so classification is
+  // a deterministic time-domain heuristic: kick = low-band dominant,
+  // hat = high zero-crossing noise, snare = the broadband rest.
+  // ------------------------------------------------------------------
+
+  /**
+   * Classify detected onsets into kick / snare / hat.
+   * Features per ~90 ms onset window:
+   *   lowRatio — energy of a one-pole 150 Hz low-pass vs total ("boom").
+   *   zcr      — zero crossings per sample ("tss" noise sits ~0.2-0.4).
+   * CALIBRATION WARNING: thresholds are conservative starting points for
+   * beatboxed input, not tuned values — adjust only against real takes,
+   * never a metric (repo promotion doctrine).
+   */
+  function classifyHits(mono, sampleRate, onsets) {
+    var k = Math.exp((-2 * Math.PI * 150) / sampleRate);
+    return onsets.map(function (o) {
+      var start = Math.max(0, Math.round((o.timeSec - 0.005) * sampleRate));
+      var n = Math.max(0, Math.min(Math.round(0.09 * sampleRate), mono.length - start));
+      var lp = 0, lowE = 0, totE = 0, zc = 0, prev = 0;
+      for (var i = 0; i < n; i++) {
+        var s = mono[start + i];
+        lp = (1 - k) * s + k * lp;
+        lowE += lp * lp;
+        totE += s * s;
+        if (i && (s >= 0) !== (prev >= 0)) zc++;
+        prev = s;
+      }
+      var lowRatio = totE > 1e-9 ? lowE / totE : 0;
+      var zcr = n ? zc / n : 0;
+      var role;
+      if (lowRatio > 0.45) role = "kick";
+      else if (zcr > 0.18 && lowRatio < 0.12) role = "hat";
+      else role = "snare";
+      return { timeSec: o.timeSec, strength: o.strength, role: role };
+    });
+  }
+
+  /**
+   * Build the native-wire SequencerPattern shape from classified hits
+   * (BeatPatternBuilder twin): 16th-note grid at `bpm`, stepCount 16 or
+   * 32 (hits past 2 bars are dropped — the web grid caps at 32 steps),
+   * one track per drum-kit pad, velocities merged max on collisions.
+   * `padFor` maps role → drum-kit padIdx (null roles are skipped).
+   * Returns null when nothing mappable landed.
+   */
+  function buildBeatSequence(hits, bpm, padFor) {
+    var stepDur = 60 / (bpm > 0 ? bpm : 120) / 4;
+    var maxStep = 0;
+    hits.forEach(function (h) {
+      maxStep = Math.max(maxStep, Math.round(h.timeSec / stepDur));
+    });
+    var stepCount = maxStep < 16 ? 16 : 32;
+    var rows = {}; // padIdx -> velocities
+    hits.forEach(function (h) {
+      var padIdx = padFor[h.role];
+      if (typeof padIdx !== "number") return;
+      var idx = Math.round(h.timeSec / stepDur);
+      if (idx < 0 || idx >= stepCount) return;
+      var arr = rows[padIdx] || (rows[padIdx] = new Array(stepCount).fill(0));
+      arr[idx] = Math.max(arr[idx], Math.max(0.1, Math.min(1, h.strength)));
+    });
+    var tracks = Object.keys(rows).map(function (padIdx) {
+      return {
+        chopRef: { type: "packPad", padIdx: parseInt(padIdx, 10) },
+        steps: rows[padIdx].map(function (v) { return { velocity: v }; }),
+      };
+    });
+    return tracks.length ? { stepCount: stepCount, swing: 0, tracks: tracks } : null;
+  }
+
+  /** First drum-kit pad whose name matches any of `names` (in order). */
+  function findDrumPad(pads, names) {
+    for (var i = 0; i < names.length; i++) {
+      for (var j = 0; j < pads.length; j++) {
+        var nm = String(pads[j].name || "");
+        if (nm.toLowerCase().indexOf(names[i].toLowerCase()) !== -1) {
+          return pads[j].padIdx;
+        }
+      }
+    }
+    return null;
+  }
+
+  // ------------------------------------------------------------------
   // Waveform drawing
   // ------------------------------------------------------------------
 
@@ -1030,6 +1117,59 @@
           state.player.stop();
           clearReview();
         }));
+        // The native flow's whole point: the beat becomes a PATTERN, not
+        // just a stored take. Classify the hits, map them onto the song's
+        // drum-kit pads, stage the pattern, mount the drum kit (the
+        // sequencer drives the loaded kit's pads), and jump to the
+        // Sequencer surface.
+        var seqBtn = button("jc-btn jc-btn--primary", "Send to Sequencer", function () {
+          var entry = state.ctx && state.ctx.entry;
+          if (!entry || !entry.id) {
+            seqBtn.textContent = "Load a song first";
+            setTimeout(function () { seqBtn.textContent = "Send to Sequencer"; }, 1800);
+            return;
+          }
+          if (!onsets.length) {
+            seqBtn.textContent = "No hits detected";
+            setTimeout(function () { seqBtn.textContent = "Send to Sequencer"; }, 1800);
+            return;
+          }
+          seqBtn.disabled = true;
+          seqBtn.textContent = "Building…";
+          fetch("/api/song/" + encodeURIComponent(entry.id) + "/kit?pads=16&kind=drums")
+            .then(function (r) {
+              if (!r.ok) throw new Error("drum kit unavailable (" + r.status + ")");
+              return r.json();
+            })
+            .then(function (kit) {
+              var pads = (kit && kit.pads) || [];
+              // Role → pad by the drum kit's classified one-shot names,
+              // with musical fallbacks so a kit missing a class still maps.
+              var padFor = {
+                kick: findDrumPad(pads, ["Kick", "Tom", "Perc"]),
+                snare: findDrumPad(pads, ["Snare", "Perc", "Tom"]),
+                hat: findDrumPad(pads, ["Hat Closed", "Hat Open", "Cymbal"]),
+              };
+              var hits = classifyHits(mono, sampleRate, onsets);
+              var seq = buildBeatSequence(hits, state.metronome.bpm, padFor);
+              if (!seq) throw new Error("no mappable hits");
+              if (!window.JamnSequencer ||
+                  typeof window.JamnSequencer.stageDefaultSequence !== "function") {
+                throw new Error("sequencer unavailable");
+              }
+              window.JamnSequencer.stageDefaultSequence(entry.id, seq);
+              // Mount the drum kit so the staged padIdx rows resolve to
+              // the kick/snare/hat one-shots the pattern was built for.
+              try { window.JamnKit && window.JamnKit.mount(entry, { kind: "drums" }); } catch (_) {}
+              state.player.stop();
+              location.hash = "#sequencer";
+            })
+            .catch(function (err) {
+              seqBtn.disabled = false;
+              seqBtn.textContent = String(err && err.message || "Failed") + " — retry";
+            });
+        });
+        row.appendChild(seqBtn);
         host.appendChild(row);
         return function () { state.player.stop(); };
       },
