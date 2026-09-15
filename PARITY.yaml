@@ -540,6 +540,25 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: control-info-tips
+    name: Hover info tips — brief description of every control (Ableton Info View style)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/infotip.js#REGISTRY"
+      ios:
+        status: na
+        note: "Touch surface — no pointer hover; discoverability rides labels + the pad radial menu."
+      desktop:
+        status: missing
+        note: "SwiftUI .help() sweep across controls not done yet; this row is the follow-up."
+      plugin:
+        status: missing
+        note: "JUCE TooltipWindow + per-control setTooltip sweep not done yet."
+      connect:
+        status: na
+        note: "Menu-bar companion with a handful of standard AppKit controls; native tooltips suffice."
+
   - id: synth-stem
     name: Synth stem (the htdemucs_6s `other` residual surfaced as its own role, not dropped/mislabelled "Guitar")
     platforms:
