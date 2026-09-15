@@ -63,9 +63,11 @@ public final class SampleScheduler: ObservableObject {
 
     /// Live user settings mirrored from SampleSettingsStore.
     @Published public var quantize: QuantizeMode = .off
-    /// Loop lock: when on, a looping pad starts on the next SHARED loop-cycle
-    /// boundary so every loop phase-locks to one 8 s grid and layers
-    /// coherently. Off = normal quantize (instant when quantize is .off).
+    /// Loop lock: when on, a looping pad starts on the next BAR boundary
+    /// and joins `phase` seconds into its body, so every loop phase-locks
+    /// to the shared cycle and layers coherently while waiting ≤ 1 bar
+    /// (not the whole multi-bar cycle) to sound. Off = normal quantize
+    /// (instant when quantize is .off), no phase join.
     @Published public var loopLock: Bool = true
     @Published public var holdMode: HoldMode = .hold
     /// Session-view latch: force the next trigger(s) to loop their
@@ -265,19 +267,104 @@ public final class SampleScheduler: ObservableObject {
         return bars * barSec
     }
 
-    /// Next shared loop-cycle boundary at/after `now` (multiples of
-    /// `loopLengthSeconds` from song origin) with a small grace.
-    private func nextLoopBoundary(after now: Double) -> Double {
-        let L = loopLengthSeconds
-        guard L > 0 else { return now }
-        let k = ((now + 0.08) / L).rounded(.down) + 1
-        return k * L
+    /// Next loop-launch boundary at/after `now` (song seconds): the BAR
+    /// grid — never the full loop cycle, never individual beats.
+    ///
+    /// The old lattice was multiples of `loopLengthSeconds` from song
+    /// origin, so a pad tapped mid-cycle waited up to the whole multi-bar
+    /// cycle (~6–8 s) before sounding — which read as "the pad doesn't
+    /// play". Real downbeats first (the grid the user actually hears; a
+    /// synthetic origin+N·bar grid walks off real music), constant-tempo
+    /// bar fallback — web twin: padengine.js `_transportLaunchTime("bar")`.
+    /// The phase-locked join in `trigger` starts late joiners mid-body,
+    /// so a bar-boundary launch still lands every loop at the same
+    /// musical position as the ones already ringing.
+    func nextLoopBoundary(after now: Double) -> Double {
+        if !downbeats.isEmpty || (tempoBpm ?? 0) > 0 {
+            return Quantizer.nextQuantized(
+                songSeconds: now, mode: .bar, beats: beats,
+                downbeats: downbeats, sections: sections, tempoBpm: tempoBpm)
+        }
+        // No bar data at all: the shared full-cycle lattice (web
+        // `_lockLaunchTime` without barSec) so locked loops still align
+        // with each other.
+        return Self.lockGridBoundary(after: now, spacing: loopLengthSeconds)
     }
 
-    /// Seconds until the shared loop-cycle boundary that looping pads
-    /// launch on, or nil when launches are instant (transport stopped
-    /// or loop-lock off). Sequence pads use this so a tapped beat
-    /// lands phase-locked with the sample loops already running.
+    /// Next boundary on a self-anchored uniform lattice: multiples of
+    /// `spacing` from `anchor`; a press within the grace window after a
+    /// boundary fires immediately (a tap 40 ms "late" reads as on-beat,
+    /// not as a full-period wait). Web twin: padengine.js `_lockLaunchTime`.
+    static func lockGridBoundary(
+        after now: Double, spacing: Double, anchor: Double = 0,
+        graceSec: Double = 0.08
+    ) -> Double {
+        guard spacing > 0 else { return now }
+        let elapsed = now - anchor
+        // Swift's remainder keeps the dividend's sign; a pre-anchor `now`
+        // folds negative and lands in the immediate-fire branch, same as
+        // the web engine.
+        let phase = elapsed.truncatingRemainder(dividingBy: spacing)
+        if phase <= graceSec { return now }
+        return anchor + ((elapsed / spacing).rounded(.down) + 1) * spacing
+    }
+
+    /// Free-run (transport stopped) lock-grid spacing: a SINGLE BAR at
+    /// the song tempo, not the full loop cycle — a loop tapped mid-jam
+    /// waits ≤ 1 bar instead of up to the whole ~8 s cycle (which read
+    /// as "the pad doesn't play"). Full-cycle fallback when tempo is
+    /// unknown; scaled by the practice rate like every other launch
+    /// delay. Web twin: `_lockLaunchTime`'s barSec "bar" grid.
+    var freeRunLockSpacingSec: Double {
+        let rate = engine?.clock.rate ?? 1.0
+        return (currentBarSeconds ?? loopLengthSeconds) / max(rate, 0.0001)
+    }
+
+    /// Shared phase-lattice anchor in HOST seconds (mach clock) — the web
+    /// engine's `_lockAnchor` (AudioContext-time domain). Set at the FIRST
+    /// loop launch's PRE-shift boundary; every later loop joins
+    /// `(boundary − anchor) mod bodySec` seconds into its body so all
+    /// same-length loops sit at the same musical position at any wall
+    /// time. Host time, not song time, because the free-run lattice must
+    /// keep advancing while the transport clock is frozen.
+    private var loopLockAnchorHostSec: Double? = nil
+
+    /// Buffer offset (seconds into the loop body) a phase-locked launch
+    /// starts at. Measured from the PRE-shift lattice `boundary`, never
+    /// the shifted start time: the per-pad onset shift is launch
+    /// compensation, and measuring it back in as buffer offset cancels
+    /// it — pads flam by their shift difference (up to ±60 ms each way).
+    /// Negative deltas (boundary before anchor) fold into [0, body).
+    static func phaseJoinSeconds(
+        boundary: Double, anchor: Double, bodySec: Double
+    ) -> Double {
+        guard bodySec > 0 else { return 0 }
+        let raw = (boundary - anchor).truncatingRemainder(dividingBy: bodySec)
+        return raw < 0 ? raw + bodySec : raw
+    }
+
+    /// Bar-floor for loop launches: sub-bar quantize (1/8, 1/4, 1/2) is
+    /// promoted to `.bar` when the trigger will loop. A multi-bar loop
+    /// beat-quantized starts on whatever beat the tap landed near, so
+    /// its bar 1 sits mid-bar — out of phase with the song AND with
+    /// every other loop even though each is individually "on a beat"
+    /// (the "queued pads start at random times" bug). Beat granularity
+    /// keeps making sense for one-shots; `.phrase` (section) is coarser
+    /// than a bar and already bar-aligned, so it passes through.
+    static func loopQuantize(
+        _ mode: QuantizeMode, willLoop: Bool
+    ) -> QuantizeMode {
+        guard willLoop else { return mode }
+        switch mode {
+        case .eighth, .quarter, .half: return .bar
+        case .off, .bar, .phrase: return mode
+        }
+    }
+
+    /// Seconds until the bar boundary that looping pads launch on, or
+    /// nil when launches are instant (transport stopped or loop-lock
+    /// off). Sequence pads use this so a tapped beat lands phase-locked
+    /// with the sample loops already running.
     public func secondsToNextLoopLaunch() -> Double? {
         guard loopLock, engine?.clock.state == .playing else { return nil }
         let now = nowSongSeconds()
@@ -907,13 +994,19 @@ public final class SampleScheduler: ObservableObject {
             || (pad.loopable ?? false) || (loopResolver?(pid, padIdx) ?? false)
         // Per-pad radial override wins over manifest/transform behavior.
         let willLoop = padLoopOverrides[padKey] ?? naturalLoop
-        // Loop lock: a looping pad starts on the shared loop-cycle boundary so
-        // all loops phase-lock and stack coherently; otherwise normal quantize.
-        let targetSong: Double = (loopLock && willLoop && transportRunning)
+        // Loop lock: a looping pad starts on the next BAR boundary so all
+        // loops phase-lock and stack coherently (the phase-locked join
+        // below puts a late joiner mid-body, so a ≤1-bar wait is enough
+        // to stay in unison — loops no longer wait out the full cycle);
+        // otherwise normal quantize, with sub-bar grids promoted to the
+        // bar for looping pads (loopQuantize) so a loop can never start
+        // mid-bar.
+        let willLoopLock = loopLock && willLoop
+        let targetSong: Double = (willLoopLock && transportRunning)
             ? nextLoopBoundary(after: nowSong)
             : Quantizer.nextQuantized(
                 songSeconds: nowSong,
-                mode: effectiveQuantize,
+                mode: Self.loopQuantize(effectiveQuantize, willLoop: willLoop),
                 beats: beats,
                 downbeats: downbeats,
                 sections: sections,
@@ -947,6 +1040,63 @@ public final class SampleScheduler: ObservableObject {
         // fall back to the edge-ramp seam (still exact length).
         let loopBodyFrames = (buffer === baseBuffer)
             ? (entry.loopBodyFrames[padIdx] ?? 0) : 0
+
+        let rate = engine?.clock.rate ?? 1.0
+        let nowHost = Self.nowHostSeconds()
+
+        // Free-run re-anchor: song stopped and nothing (other than this
+        // pad's own about-to-be-choked voice) sounding or armed →
+        // abandon the stale lattice, so a fresh jam's first loop fires
+        // immediately at phase 0 instead of waiting up to a bar for a
+        // grid nobody can hear. (One-shot slots are excluded on purpose:
+        // they read active forever — see SampleVoicePool.ringingPadKeys.)
+        if willLoopLock, !transportRunning,
+           pool.ringingPadKeys.subtracting([padKey]).isEmpty,
+           pool.pendingPadKeys.subtracting([padKey]).isEmpty {
+            loopLockAnchorHostSec = nil
+        }
+
+        // The PRE-shift lattice boundary this launch snapped to, in host
+        // seconds. The phase-lock join below must measure from THIS, not
+        // from the shifted start time — see phaseJoinSeconds.
+        var boundaryHost = nowHost + max(0, TransportTimeMath.scaledDelaySeconds(
+            targetSong: targetSong, nowSong: nowSong, rate: rate))
+        var freeRunWaitSec = 0.0
+        if willLoopLock, !transportRunning {
+            // Free-run: the transport clock is frozen, so the lattice
+            // lives on the host clock — spacing a single bar (was: the
+            // full loop cycle, an up-to-~8 s wait that read as "pad
+            // doesn't play"). No anchor yet ⇒ fire now, anchor below.
+            boundaryHost = Self.lockGridBoundary(
+                after: nowHost, spacing: freeRunLockSpacingSec,
+                anchor: loopLockAnchorHostSec ?? nowHost)
+            freeRunWaitSec = max(0, boundaryHost - nowHost)
+        }
+
+        // Anchor the shared phase lattice at the PRE-shift boundary of
+        // the FIRST locked loop launch: anchoring at the shifted start
+        // time would bake that pad's own onset shift into the grid and
+        // skew every later join by it.
+        if willLoopLock, loopLockAnchorHostSec == nil {
+            loopLockAnchorHostSec = boundaryHost
+        }
+
+        // Phase-locked join: a loop tapped mid-jam starts `phase`
+        // seconds INTO its body — at any wall time every same-length
+        // loop then sits at the same musical position, while its attack
+        // still lands on the quantized bar. The first loop (boundary ==
+        // anchor) begins at phase 0; one-shots always start at 0.
+        var phaseSec = 0.0
+        if willLoopLock, let anchor = loopLockAnchorHostSec,
+           buffer.format.sampleRate > 0 {
+            let bodyFrames = loopBodyFrames > 0
+                ? min(loopBodyFrames, Int(buffer.frameLength))
+                : Int(buffer.frameLength)
+            phaseSec = Self.phaseJoinSeconds(
+                boundary: boundaryHost, anchor: anchor,
+                bodySec: Double(bodyFrames) / buffer.format.sampleRate)
+        }
+
         let req = SampleTrigger(
             padKey: padKey,
             // A Riley auto-kit pad is "seamlessly loopable" via loopable+loopScore
@@ -957,7 +1107,8 @@ public final class SampleScheduler: ObservableObject {
             gainDb: pad.gainDb,
             effects: effects,
             crossfadeMs: crossfadeMs,
-            loopBodyFrames: loopBodyFrames
+            loopBodyFrames: loopBodyFrames,
+            phaseSec: phaseSec
         )
         // Launch compensation for the onset-phase snap: the decode moved
         // the region so its cut sits just before the attack — delay the
@@ -966,8 +1117,20 @@ public final class SampleScheduler: ObservableObject {
         // this they armed to the same boundary but sounded offset).
         let launchShift = (willLoop && buffer === baseBuffer)
             ? (entry.loopShiftSec[padIdx] ?? 0) : 0
-        let audioTime = audioTime(forSongSeconds: targetSong + max(0, launchShift),
-                                  nowSong: nowSong)
+        let audioTime: AVAudioTime?
+        if willLoopLock, !transportRunning {
+            // Host-clock wait (song time is frozen; the song-domain
+            // conversion below would collapse it to "now").
+            let waitSec = freeRunWaitSec + max(0, launchShift)
+            audioTime = waitSec > 0.001
+                ? AVAudioTime(hostTime: mach_absolute_time()
+                    &+ UInt64(waitSec * TransportClock.ticksPerSecond()))
+                : nil
+        } else {
+            audioTime = self.audioTime(
+                forSongSeconds: targetSong + max(0, launchShift),
+                nowSong: nowSong)
+        }
         pool.trigger(req, buffer: buffer, at: audioTime)
         #endif
 
@@ -1311,6 +1474,13 @@ public final class SampleScheduler: ObservableObject {
     ///
     /// Delay is scaled by the transport rate (D-022 practice speed):
     /// at 0.5x a 1-beat song-time delta spans twice the wall-clock.
+    /// Mach host clock in seconds — the phase-lattice time base (the
+    /// web engine's `ctx.currentTime` analogue). Monotonic across
+    /// transport stop/seek, which song time is not.
+    private static func nowHostSeconds() -> Double {
+        Double(mach_absolute_time()) / TransportClock.ticksPerSecond()
+    }
+
     private func audioTime(forSongSeconds target: Double, nowSong: Double) -> AVAudioTime? {
         let rate = engine?.clock.rate ?? 1.0
         guard let delayTicks = TransportTimeMath.hostDelayTicks(
@@ -1427,8 +1597,16 @@ public final class SampleScheduler: ObservableObject {
             var shiftSec: Double = 0
             if let slice = slice {
                 startFrame = AVAudioFramePosition(max(0, slice.startSec) * sampleRate)
-                let endFrame = AVAudioFramePosition(max(slice.startSec, slice.endSec) * sampleRate)
-                let requested = max(0, endFrame - startFrame)
+                // Body length from the region LENGTH with round — NOT
+                // trunc-per-edge (trunc(end·sr) − trunc(start·sr)), which
+                // lands on N or N+1 frames depending on each edge's
+                // fractional phase. Loop periods are compared/tiled against
+                // round(length·sr) elsewhere (SRC bodyOut below, cycle
+                // bar-snap); a pad whose body trunc'd one frame long loops
+                // ~23 µs/cycle behind every pad at N — phase-locked loops
+                // audibly walk apart over minutes.
+                let lengthSec = max(0, slice.endSec - slice.startSec)
+                let requested = AVAudioFramePosition((lengthSec * sampleRate).rounded())
                 let clipped = min(requested, max(0, file.length - startFrame))
                 bodyCount = AVAudioFrameCount(clipped)
                 if continuationSec > 0, sampleRate > 0 {

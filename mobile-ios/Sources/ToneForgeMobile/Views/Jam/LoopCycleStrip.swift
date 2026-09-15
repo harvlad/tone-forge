@@ -22,7 +22,12 @@ struct LoopCycleStrip: View {
             SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
                 let t = appState.songSeconds
                 let phase = (t.truncatingRemainder(dividingBy: length)) / length
-                let remaining = length - (t.truncatingRemainder(dividingBy: length))
+                // Countdown to the BAR boundary a locked pad actually
+                // launches on — loops no longer wait out the full cycle
+                // (SampleScheduler.nextLoopBoundary), so counting down
+                // the cycle overstated the wait by up to ~6 s.
+                let remaining = appState.sampleScheduler
+                    .secondsToNextLoopLaunch() ?? 0
                 HStack(spacing: 8) {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
