@@ -915,7 +915,17 @@ def render_kit_loops(source_id: str, source_result: Dict, target_bpm: float, *,
                 "stem": logical,
                 "stemRole": role,
                 "sectionType": "",
-                "loopable": bool(pad.get("loopable", True)),
+                # ALWAYS loopable, deliberately ignoring the kit pad's flag:
+                # that flag is loop_confidence >= 0.2 measured on the ORIGINAL
+                # stem's seam — but this pad is a fresh whole-bar render cut at
+                # real downbeats and tempo-matched, whose seam every client
+                # crossfade-bakes on load. Forwarding the original-seam verdict
+                # left chord/melody borrow pads one-shot on all surfaces
+                # (quota-admitted CHORD pads sit under 0.2 the most — the
+                # "borrowed song full of non-loopable chords" report). Borrow
+                # exists to hand out LOOPS; the render is loopable by
+                # construction.
+                "loopable": True,
                 # File-backed loop: whole file is an integer number of bars at
                 # the target tempo, bar-quantized so layers phase-lock.
                 "loopPointSec": 0,

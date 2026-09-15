@@ -522,6 +522,24 @@ def test_kit_borrow_pitchless_drums_conform_harmonic(tmp_path, monkeypatch):
     assert bass_fn != borrow._cache_key("donorX", "bass", 120.0, (0.0, 4.0))
 
 
+def test_kit_borrow_pads_are_always_loopable(tmp_path, monkeypatch):
+    """A borrow render is a bar-exact, tempo-locked file whose seam every
+    client crossfade-bakes — loopable by construction. Forwarding the kit
+    pad's original-seam verdict (loop_confidence >= 0.2) shipped
+    quota-admitted CHORDS pads as loopable:false on every surface (the
+    "borrowed song full of non-loopable chords" report). The legacy
+    section-loop path always hard-coded loopable:True; this pins that
+    contract for the curated-kit path too."""
+    kit = _curated_kit()
+    for p in kit:
+        p["loopable"] = False  # worst case: every source pad under 0.2
+    result = _kit_borrow_fixture(tmp_path, monkeypatch, kit)
+    pads = borrow.render_kit_loops(
+        "hostX", result, 120.0, source_tag="initial", source_name="This song")
+    assert pads, "fixture rendered no pads"
+    assert all(p["loopable"] is True for p in pads)
+
+
 def test_kit_borrow_host_initial_never_transposes(tmp_path, monkeypatch):
     """The host's own kit (source_tag='initial') is NEVER transposed even if a
     target_key is passed — the play-along recording stays TRUE. So its harmonic

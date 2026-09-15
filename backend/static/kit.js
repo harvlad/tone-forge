@@ -4113,6 +4113,10 @@
         sourceName: pl.source === "donor" ? src.donorName : src.hostName,
         stemSlice: { stemRole: bm.role, startSec: 0, endSec: bm.buf.duration },
         loopable: !!p.loopable,
+        // Robustness: forward the manifest's whole-file loop marker so loop
+        // capability doesn't rest on the loopable flag alone (padengine's
+        // mayLoop also accepts loopPointSec != null; 0 = loop whole file).
+        loopPointSec: p.loopPointSec != null ? p.loopPointSec : null,
       };
     });
     kitPads.sort(function (a, b) { return a.padIdx - b.padIdx; });
