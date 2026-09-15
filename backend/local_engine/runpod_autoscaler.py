@@ -607,7 +607,15 @@ def prewarm_async() -> None:
 
 
 # --- idle tracking: terminate after RUNPOD_IDLE_MINUTES with no queued/running jobs ---
-_last_active_ts = time.time()
+# Epoch, NOT time.time(): initializing to "now" made every backend restart
+# grant a live pod a fresh idle window, so on deploy-heavy days pods never
+# hit the idle timeout and billed for hours with zero jobs (observed
+# 2026-09-15: ~90 min of $0.74/hr across repeated deploys). A fresh process
+# with no pending/running jobs should treat any live pod as already idle —
+# worst case is one cold boot, never a stranded job (the scale-down gate
+# only fires when nothing is queued or running, and note_activity() stamps
+# real activity as soon as any job exists).
+_last_active_ts = 0.0
 
 
 def note_activity() -> None:
