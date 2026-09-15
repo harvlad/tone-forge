@@ -50,6 +50,13 @@ public final class ChopPlayer {
         /// Loop length in frames when this voice is hard-looping (nil = one-shot).
         /// Drives the per-pad playhead (loopProgress).
         var loopFrames: AVAudioFrameCount?
+        /// Buffer offset the loop STARTED at (phase-locked join): the first
+        /// pass began this many frames into the body. loopProgress must add
+        /// it, or the drawn playhead reports the position the voice would
+        /// have had starting from frame 0 — visually desynced pads over
+        /// audio that IS phase-locked (the web "playheads at different
+        /// positions" bug). 0 for one-shots and unlocked loops.
+        var phaseFrames: AVAudioFrameCount = 0
         /// The song stem this voice is currently "taking over" (ducking),
         /// or nil. Cleared when the voice stops/completes/is stolen.
         var takeoverStem: String?
@@ -216,9 +223,12 @@ public final class ChopPlayer {
             guard let file = files[item.stem] else { continue }
             let sampleRate = file.fileFormat.sampleRate
             let startFrame = AVAudioFramePosition(max(0, item.chop.startSec) * sampleRate)
-            let endFrame = min(
-                AVAudioFramePosition(item.chop.endSec * sampleRate), file.length)
-            let frameCount = endFrame - startFrame
+            // Same frame math as schedule() — the region cache is keyed on
+            // (startFrame, frameCount), so a prewarm that computed the
+            // count differently would warm a key the real trigger misses.
+            let frameCount = Self.regionFrameCount(
+                startSec: item.chop.startSec, endSec: item.chop.endSec,
+                sampleRate: sampleRate, fileLength: file.length)
             guard frameCount > 0, startFrame < file.length else { continue }
             _ = regionBuffer(file: file, startFrame: startFrame,
                              frameCount: AVAudioFrameCount(frameCount))
@@ -241,7 +251,8 @@ public final class ChopPlayer {
         loop: Bool = false,
         crossfadeMs: Double = 0,
         loopBarSeconds: Double = 0,
-        cycleSeconds: Double = 0
+        cycleSeconds: Double = 0,
+        phaseOffsetSeconds: Double = 0
     ) {
         guard let file = files[assignment.stem] else { return }
         let chop = assignment.chop
@@ -267,8 +278,30 @@ public final class ChopPlayer {
             afterSeconds: delaySeconds,
             loop: loop,
             crossfadeMs: crossfadeMs,
-            tileToCycleSec: tileToCycleSec
+            tileToCycleSec: tileToCycleSec,
+            phaseOffsetSeconds: phaseOffsetSeconds
         )
+    }
+
+    /// Frame count for a [startSec, endSec] region: ROUND the region
+    /// LENGTH, never trunc each edge (trunc(end·sr) − trunc(start·sr)
+    /// lands on N or N+1 frames depending on each edge's fractional
+    /// phase). The shared-cycle lock compares against round(cycleSec·sr);
+    /// a cycle-defining pad that trunc'd long skipped the tile and looped
+    /// 1 frame longer than every pad tiled to N — a ~21 µs/cycle relative
+    /// slip that walks phase-locked loops apart over minutes. Rounding
+    /// the length keeps every pad consistent with the cycle computation
+    /// (web padengine._bakePad parity). Clamped to the file's remainder;
+    /// pure so both schedule() and prewarm() derive identical cache keys.
+    nonisolated static func regionFrameCount(
+        startSec: Double, endSec: Double,
+        sampleRate: Double, fileLength: AVAudioFramePosition
+    ) -> AVAudioFramePosition {
+        guard sampleRate > 0 else { return 0 }
+        let startFrame = AVAudioFramePosition(max(0, startSec) * sampleRate)
+        let requested = AVAudioFramePosition(
+            (max(0, endSec - startSec) * sampleRate).rounded())
+        return min(requested, max(0, fileLength - startFrame))
     }
 
     /// The loop region's end after the phase-lock snap decision — pure
@@ -305,7 +338,8 @@ public final class ChopPlayer {
         velocity: Float = 1,
         pan: Float = 0,
         afterSeconds delaySeconds: Double = 0,
-        loop: Bool = false
+        loop: Bool = false,
+        phaseOffsetSeconds: Double = 0
     ) {
         guard let file = cachedFile(for: url) else { return }
         let duration = Double(file.length) / file.fileFormat.sampleRate
@@ -321,7 +355,8 @@ public final class ChopPlayer {
             pan: pan,
             afterSeconds: delaySeconds,
             loop: loop,
-            crossfadeMs: loop ? 12 : 0
+            crossfadeMs: loop ? 12 : 0,
+            phaseOffsetSeconds: phaseOffsetSeconds
         )
     }
 
@@ -336,7 +371,8 @@ public final class ChopPlayer {
         afterSeconds delaySeconds: Double,
         loop: Bool = false,
         crossfadeMs: Double = 0,
-        tileToCycleSec: Double = 0
+        tileToCycleSec: Double = 0,
+        phaseOffsetSeconds: Double = 0
     ) {
         guard avEngine.isRunning else {
             print("[ChopPlayer] dropped trigger: engine not running")
@@ -344,9 +380,9 @@ public final class ChopPlayer {
         }
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(max(0, startSec) * sampleRate)
-        let endFrame = min(
-            AVAudioFramePosition(endSec * sampleRate), file.length)
-        let frameCount = endFrame - startFrame
+        let frameCount = Self.regionFrameCount(
+            startSec: startSec, endSec: endSec,
+            sampleRate: sampleRate, fileLength: file.length)
         guard frameCount > 0, startFrame < file.length else { return }
 
         let index = claimVoice(for: key)
@@ -380,10 +416,32 @@ public final class ChopPlayer {
                                         frameCount: AVAudioFrameCount(frameCount),
                                         crossfadeMs: crossfadeMs,
                                         tileToCycleSec: tileToCycleSec) {
+            // Phase-locked join: a loop tapped mid-jam must join at the SAME
+            // cycle position as the loops already playing, so every pad's
+            // playhead moves together (not just bar-aligned starts). Start
+            // the first pass `phase` frames INTO the baked body — the
+            // lattice offset (pre-shift boundary − lock anchor, supplied by
+            // the controller) folded mod the body. It must NOT be measured
+            // from the shifted launch: reading the per-pad onset shift back
+            // in as buffer offset cancels the compensation below and pads
+            // flam by their shift deltas. AVAudioPlayerNode can't start a
+            // looping buffer mid-body, so queue the tail once, then the
+            // whole body with .loops (web source.start(when, phase) twin).
+            let phase = Self.phaseLockFrames(
+                offsetSeconds: phaseOffsetSeconds,
+                bodyFrames: Int64(baked.buffer.frameLength),
+                sampleRate: Self.canonicalFormat.sampleRate)
+            var phaseFrames: AVAudioFrameCount = 0
+            if phase > 0, let head = Self.tailSegment(
+                of: baked.buffer, from: AVAudioFrameCount(phase)) {
+                phaseFrames = AVAudioFrameCount(phase)
+                voice.node.scheduleBuffer(head, at: nil, options: [], completionHandler: nil)
+            }
             // Seamless looping: the [start,end] region is read into a buffer,
             // crossfaded (SeamlessLoop) and hard-looped so a held pad never clicks.
             voice.node.scheduleBuffer(baked.buffer, at: nil, options: [.loops], completionHandler: nil)
             voice.loopFrames = baked.buffer.frameLength
+            voice.phaseFrames = phaseFrames
             // Launch compensation for the onset-phase snap: the region was
             // shifted so its cut sits just before the attack, which moves
             // the content's downbeat off the region start by `shiftSec`.
@@ -401,6 +459,7 @@ public final class ChopPlayer {
             voice.node.scheduleBuffer(buffer, at: nil, options: [],
                                       completionHandler: oneShotCompletion(index, gen: capturedGen))
             voice.loopFrames = nil
+            voice.phaseFrames = 0
         } else {
             // Buffer read/convert failed — skip the trigger. (No raw
             // scheduleSegment fallback: the file's native format may not
@@ -459,9 +518,58 @@ public final class ChopPlayer {
                   let pt = v.node.playerTime(forNodeTime: rt) else { return nil }
             let s = pt.sampleTime
             guard s >= 0 else { return 0 }  // scheduled but not yet fired
-            return Double(s % Int64(frames)) / Double(frames)
+            return Self.loopProgressValue(
+                renderedFrames: s, phaseFrames: Int64(v.phaseFrames),
+                bodyFrames: Int64(frames))
         }
         return nil
+    }
+
+    /// Normalized loop position for a voice that started `phaseFrames` into
+    /// its body (phase-locked join). Rendered frames count from the LAUNCH,
+    /// so the true buffer position is (rendered + phase) mod body — the
+    /// phase must be added or the drawn playhead reports where the voice
+    /// would be had it started at frame 0, visually desynced from audio
+    /// that IS locked (web padProgress parity). Pure for the test suite.
+    nonisolated static func loopProgressValue(
+        renderedFrames: Int64, phaseFrames: Int64, bodyFrames: Int64
+    ) -> Double {
+        guard bodyFrames > 0 else { return 0 }
+        return Double((renderedFrames + phaseFrames) % bodyFrames) / Double(bodyFrames)
+    }
+
+    /// Fold a lock-lattice offset (seconds since the lock-era anchor, wall
+    /// domain) into a start offset within a `bodyFrames`-long loop. Double-
+    /// mod so a negative offset (transport seeked behind the anchor) still
+    /// lands in [0, body). Pure for the test suite — the web twin is
+    /// `phase = ((boundary − anchor) % body + body) % body`.
+    nonisolated static func phaseLockFrames(
+        offsetSeconds: Double, bodyFrames: Int64, sampleRate: Double
+    ) -> Int64 {
+        guard bodyFrames > 0, sampleRate > 0, offsetSeconds.isFinite,
+              offsetSeconds != 0 else { return 0 }
+        let raw = Int64((offsetSeconds * sampleRate).rounded())
+        return ((raw % bodyFrames) + bodyFrames) % bodyFrames
+    }
+
+    /// Copy of `src` from `startFrame` to its end — the first (partial)
+    /// pass of a phase-locked join. Nil when the slice is empty/degenerate
+    /// (caller falls back to a phase-0 start).
+    private static func tailSegment(
+        of src: AVAudioPCMBuffer, from startFrame: AVAudioFrameCount
+    ) -> AVAudioPCMBuffer? {
+        let total = src.frameLength
+        guard startFrame > 0, startFrame < total,
+              let srcData = src.floatChannelData,
+              let dst = AVAudioPCMBuffer(
+                  pcmFormat: src.format, frameCapacity: total - startFrame),
+              let dstData = dst.floatChannelData else { return nil }
+        let count = Int(total - startFrame)
+        for c in 0..<Int(src.format.channelCount) {
+            dstData[c].update(from: srcData[c] + Int(startFrame), count: count)
+        }
+        dst.frameLength = total - startFrame
+        return dst
     }
 
     /// Read a [startFrame, frameCount] region into an edge-faded PCM buffer.

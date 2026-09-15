@@ -145,7 +145,7 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.isTransportPlaying = { true }
 
         var fired: [(PadAssignment, Double)] = []
-        controller.onTrigger = { fired.append(($1, $2)) }
+        controller.onTrigger = { _, a, t, _ in fired.append((a, t)) }
 
         now = 0.7  // between beats, past the 80 ms grace of 0.5
         controller.padDown(LaunchpadPad(row: 0, col: 0))
@@ -166,7 +166,7 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.quantize = .quarter
 
         var fireAt: Double?
-        controller.onTrigger = { fireAt = $2 }
+        controller.onTrigger = { _, _, t, _ in fireAt = t }
 
         now = 0.55  // 50 ms past the 0.5 beat — inside the grace window
         controller.padDown(LaunchpadPad(row: 0, col: 0))
@@ -178,7 +178,7 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.setChops([chop(0)], stem: "other", sliceMode: "chord")
 
         var fireAt: Double?
-        controller.onTrigger = { fireAt = $2 }
+        controller.onTrigger = { _, _, t, _ in fireAt = t }
         controller.padDown(LaunchpadPad(row: 0, col: 0))
         XCTAssertEqual(fireAt, 3.21)
     }
@@ -188,7 +188,7 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.setChops([chop(0)], stem: "other", sliceMode: "chord")
 
         var fired = 0
-        controller.onTrigger = { _, _, _ in fired += 1 }
+        controller.onTrigger = { _, _, _, _ in fired += 1 }
         controller.padDown(LaunchpadPad(row: 5, col: 5))
         XCTAssertEqual(fired, 0)
         XCTAssertTrue(controller.activePads.isEmpty)
@@ -240,7 +240,7 @@ final class LaunchpadControllerTests: XCTestCase {
         XCTAssertEqual(controller.playbackMode, .tap)
 
         var fireAt: Double?
-        controller.onTrigger = { fireAt = $2 }
+        controller.onTrigger = { _, _, t, _ in fireAt = t }
 
         // Stopped transport: tap is instant.
         controller.padDown(LaunchpadPad(row: 0, col: 0))
@@ -252,10 +252,11 @@ final class LaunchpadControllerTests: XCTestCase {
         XCTAssertEqual(fireAt, 4.56)
     }
 
-    func testLoopLockRollingQuantizesToLoopCycleBoundary() {
-        // 100 BPM → bar 2.4 s → 3 bars fit 8 s → L = 7.2 s. Using a
-        // non-8 L proves the grid is multiples of loopLengthSeconds,
-        // not a hardcoded 8 s.
+    func testLoopLockRollingQuantizesToSingleBarBoundary() {
+        // 100 BPM → bar 2.4 s. Lock launches snap to the NEXT BAR, never
+        // the full loop cycle (7.2 s here): a mid-cycle tap used to sit
+        // armed for seconds and read as "the pad doesn't play". The
+        // phase-locked join carries the intra-cycle position instead.
         var now = 3.0
         let controller = loopController(tempoBpm: 100, now: { now })
         controller.playbackMode = .loop
@@ -263,66 +264,100 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.isTransportPlaying = { true }
 
         var fireAt: Double?
-        controller.onTrigger = { fireAt = $2 }
+        controller.onTrigger = { _, _, t, _ in fireAt = t }
 
         controller.padDown(LaunchpadPad(row: 0, col: 0))
-        XCTAssertEqual(fireAt ?? -1, 7.2, accuracy: 1e-9)
+        XCTAssertEqual(fireAt ?? -1, 4.8, accuracy: 1e-9)
 
-        // 50 ms past the 7.2 boundary — inside the 0.12 s grace, fires
-        // NOW instead of waiting a whole cycle.
-        now = 7.25
+        // 50 ms past the 4.8 boundary — inside the 0.12 s grace, fires
+        // NOW instead of waiting a whole bar.
+        now = 4.85
         controller.padDown(LaunchpadPad(row: 0, col: 1))
-        XCTAssertEqual(fireAt ?? -1, 7.25, accuracy: 1e-9)
+        XCTAssertEqual(fireAt ?? -1, 4.85, accuracy: 1e-9)
     }
 
-    func testLoopLockStoppedTransportFreeRunsOnAnchoredCycle() {
+    func testLoopLockRollingPhaseIsBoundaryMinusAnchor() {
+        // The join phase measures lattice BOUNDARIES from the era anchor
+        // (the first loop's boundary) — never the onset-shifted start,
+        // which would cancel the launch compensation and flam the pads.
+        var now = 3.0
+        let controller = loopController(tempoBpm: 100, now: { now })  // bar 2.4
+        controller.playbackMode = .loop
+        controller.isTransportPlaying = { true }
+
+        var fireAt: Double?
+        var phase: Double?
+        controller.onTrigger = { _, _, t, p in fireAt = t; phase = p }
+
+        // First loop anchors the era: boundary 4.8, phase 0.
+        controller.padDown(LaunchpadPad(row: 0, col: 0))
+        XCTAssertEqual(fireAt ?? -1, 4.8, accuracy: 1e-9)
+        XCTAssertEqual(phase ?? -1, 0, accuracy: 1e-9)
+
+        // Two bars later: boundary 9.6, phase = 9.6 − 4.8 = 4.8 (the audio
+        // layer folds this mod the baked body).
+        now = 8.0
+        controller.padDown(LaunchpadPad(row: 0, col: 1))
+        XCTAssertEqual(fireAt ?? -1, 9.6, accuracy: 1e-9)
+        XCTAssertEqual(phase ?? -1, 4.8, accuracy: 1e-9)
+    }
+
+    func testLoopLockStoppedTransportFreeRunsOnAnchoredBarGrid() {
         // Transport STOPPED (song clock frozen): loops must not quantize
         // against the dead song grid. First press fires immediately and
-        // anchors a wall-clock cycle; later presses queue to that anchor.
+        // anchors a wall-clock BAR grid (2 s at 120 BPM — a tap waits
+        // ≤ 1 bar, never the full 8 s cycle); later presses queue to it.
         var now = 5.0
         var hostNow = 1000.0
-        let controller = loopController(tempoBpm: 120, now: { now })  // L = 8 s
+        let controller = loopController(tempoBpm: 120, now: { now })  // bar 2 s
         controller.playbackMode = .loop
         controller.isTransportPlaying = { false }
         controller.hostNowSeconds = { hostNow }
 
         var fireAt: Double?
-        controller.onTrigger = { fireAt = $2 }
+        var phase: Double?
+        controller.onTrigger = { _, _, t, p in fireAt = t; phase = p }
         let padA = LaunchpadPad(row: 0, col: 0)
         let padB = LaunchpadPad(row: 0, col: 1)
         let padC = LaunchpadPad(row: 0, col: 2)
 
-        // First loop: instant, anchors the cycle at hostNow = 1000.
+        // First loop: instant, anchors the grid at hostNow = 1000, phase 0.
         controller.padDown(padA)
         XCTAssertEqual(fireAt ?? -1, 5.0, accuracy: 1e-9)
+        XCTAssertEqual(phase ?? -1, 0, accuracy: 1e-9)
 
-        // 3 s into the 8 s cycle: queues to the anchor cycle,
-        // delay = L - intoCycle = 5 s.
+        // 3 s after the anchor = 1 s into bar 2: waits to the NEXT bar
+        // (1 s away), not the cycle wrap 5 s away. The join phase is the
+        // boundary's wall offset from the anchor: 2 bars = 4 s.
         hostNow = 1003.0
         now = 5.5
         controller.padDown(padB)
-        XCTAssertEqual(fireAt ?? -1, 5.5 + 5.0, accuracy: 1e-9)
+        XCTAssertEqual(fireAt ?? -1, 5.5 + 1.0, accuracy: 1e-9)
+        XCTAssertEqual(phase ?? -1, 4.0, accuracy: 1e-9)
 
-        // 50 ms after the cycle wraps — inside the 0.08 s grace: NOW.
+        // 50 ms after a bar boundary — inside the 0.08 s grace: NOW, on
+        // the boundary 4 bars (8 s) after the anchor.
         hostNow = 1008.05
         now = 6.0
         controller.padDown(padC)
         XCTAssertEqual(fireAt ?? -1, 6.0, accuracy: 1e-9)
+        XCTAssertEqual(phase ?? -1, 8.0, accuracy: 1e-9)
     }
 
     func testFreeRunReanchorsAfterAllPadsReleased() {
         // Releasing ALL pads abandons the free-run grid; the next loop
-        // press fires immediately on a FRESH cycle — BY DESIGN (a new
+        // press fires immediately on a FRESH grid — BY DESIGN (a new
         // jam shouldn't wait on a grid nobody can hear).
         var now = 5.0
         var hostNow = 1000.0
-        let controller = loopController(tempoBpm: 120, now: { now })  // L = 8 s
+        let controller = loopController(tempoBpm: 120, now: { now })  // bar 2 s
         controller.playbackMode = .loop
         controller.isTransportPlaying = { false }
         controller.hostNowSeconds = { hostNow }
 
         var fireAt: Double?
-        controller.onTrigger = { fireAt = $2 }
+        var phase: Double?
+        controller.onTrigger = { _, _, t, p in fireAt = t; phase = p }
         let padA = LaunchpadPad(row: 0, col: 0)
         let padB = LaunchpadPad(row: 0, col: 1)
 
@@ -330,20 +365,44 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.padDown(padA)               // loop re-tap toggles it OFF
         XCTAssertTrue(controller.activePads.isEmpty)
 
-        // Mid-old-cycle press: would owe a 4.3 s wait on the stale grid;
-        // instead it re-anchors and fires immediately.
+        // Mid-old-bar press: would owe a wait on the stale grid; instead
+        // it re-anchors, fires immediately, and the join phase resets to 0
+        // (a stale era's phase would start the fresh jam mid-body).
         hostNow = 1003.7
         now = 6.0
         fireAt = nil
         controller.padDown(padA)
         XCTAssertEqual(fireAt ?? -1, 6.0, accuracy: 1e-9)
+        XCTAssertEqual(phase ?? -1, 0, accuracy: 1e-9)
 
-        // And the NEW anchor governs: 2 s into the fresh cycle → 6 s wait
-        // (the stale 1000-anchor would have owed 8 - 5.7 = 2.3 s).
-        hostNow = 1005.7
+        // And the NEW anchor governs: 1 s into the fresh grid → 1 s wait
+        // to its first bar, phase = 1 bar (the stale 1000-anchor would
+        // have owed 2 − 0.7 = 1.3 s).
+        hostNow = 1004.7
         now = 6.3
         controller.padDown(padB)
-        XCTAssertEqual(fireAt ?? -1, 6.3 + 6.0, accuracy: 1e-9)
+        XCTAssertEqual(fireAt ?? -1, 6.3 + 1.0, accuracy: 1e-9)
+        XCTAssertEqual(phase ?? -1, 2.0, accuracy: 1e-9)
+    }
+
+    func testLoopLockNoTempoFallsBackToCycleGrid() {
+        // No tempo → no bar length; the lock grid falls back to the full
+        // loop cycle (8 s kit window) instead of never quantizing.
+        var now = 5.0
+        var hostNow = 1000.0
+        let controller = loopController(tempoBpm: nil, now: { now })
+        controller.playbackMode = .loop
+        controller.isTransportPlaying = { false }
+        controller.hostNowSeconds = { hostNow }
+
+        var fireAt: Double?
+        controller.onTrigger = { _, _, t, _ in fireAt = t }
+        controller.padDown(LaunchpadPad(row: 0, col: 0))   // anchors at 1000
+
+        hostNow = 1003.0
+        now = 5.5
+        controller.padDown(LaunchpadPad(row: 0, col: 1))
+        XCTAssertEqual(fireAt ?? -1, 5.5 + 5.0, accuracy: 1e-9)  // 8 − 3
     }
 
     func testLoopLockOffFallsBackToBarQuantize() {
@@ -357,7 +416,7 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.quantize = .off
 
         var fireAt: Double?
-        controller.onTrigger = { fireAt = $2 }
+        controller.onTrigger = { _, _, t, _ in fireAt = t }
 
         // Downbeats [0, 2, 4]: 0.7 (past the 0.08 s grace of 0) → 2.0,
         // NOT the 7.2 s loop-cycle boundary.
@@ -369,6 +428,46 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.quantize = .phrase
         controller.padDown(LaunchpadPad(row: 0, col: 1))
         XCTAssertEqual(fireAt ?? -1, 2.7, accuracy: 1e-9)  // no sections → t
+    }
+
+    func testLoopNeverQuantizesToSubBarGrid() {
+        // LOOPS lock to the BAR grid, never individual beats (web parity):
+        // a multi-bar loop snapped to a beat starts mid-bar — out of phase
+        // with the song AND every other loop, though each is "on a beat"
+        // (the "queued pads start at random times" bug). A sub-bar
+        // Quantize control is upgraded to .bar for loop launches; the
+        // beats grid stays available to one-shots.
+        var now = 0.7
+        let controller = LaunchpadController(
+            nowProvider: { now }, fetcher: FakeFetcher())
+        controller.configure(bundle: bundle(
+            beats: [0, 0.6, 1.2, 1.8, 2.4],
+            downbeats: [0, 2.4],
+            tempoBpm: 100,
+            presets: ["harmonic": BundlePreset(
+                stem: "other", sliceMode: "chord",
+                chops: [chop(0), chop(1)])]
+        ))
+        controller.playbackMode = .loop
+        controller.loopLockEnabled = false
+        controller.isTransportPlaying = { true }
+        controller.quantize = .quarter
+
+        var fireAt: Double?
+        var phase: Double?
+        controller.onTrigger = { _, _, t, p in fireAt = t; phase = p }
+
+        // Beat grid would owe 1.2; the loop must wait for the 2.4 downbeat.
+        controller.padDown(LaunchpadPad(row: 0, col: 0))
+        XCTAssertEqual(fireAt ?? -1, 2.4, accuracy: 1e-9)
+        // Lock off = no phase join: the loop starts at its body head.
+        XCTAssertEqual(phase ?? -1, 0, accuracy: 1e-9)
+
+        // One-shots keep the user's beat grid untouched.
+        controller.playbackMode = .tap
+        now = 0.7
+        controller.padDown(LaunchpadPad(row: 0, col: 1))
+        XCTAssertEqual(fireAt ?? -1, 1.2, accuracy: 1e-9)
     }
 
     func testLoopLengthSecondsSnapsKitWindowToWholeBars() {
@@ -586,7 +685,7 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.attach(transport: transport)
 
         var fired = 0
-        controller.onTrigger = { _, _, _ in fired += 1 }
+        controller.onTrigger = { _, _, _, _ in fired += 1 }
         transport.onPadDown?(LaunchpadPad(row: 0, col: 0))
         XCTAssertEqual(fired, 1)
     }
