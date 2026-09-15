@@ -15616,8 +15616,21 @@
     let _currentEntry = null;   // full history entry for the loaded song
     let _mountedEntryId = null; // last entry id handed to JamnKit.mount
 
+    // Loaded-song label on the fixed playback bar — the transport buttons
+    // otherwise carry no context about WHAT they play. Full name in the
+    // title attr because the label ellipsizes at 220px.
+    function _labelSong(entry) {
+      const el = document.getElementById('t-song');
+      if (!el) return;
+      const name = (entry && (entry.name || entry.result?.name
+        || entry.result?.source_name || entry.filename)) || '';
+      el.textContent = name;
+      el.title = name;
+    }
+
     function _setCurrentEntry(entry) {
       _currentEntry = entry || null;
+      _labelSong(entry);
       _mountedEntryId = null; // force a remount for the new song
       // Remix state is strictly per-song (native resetRemixState): drop
       // the saved original-drums buffer and clear the Humanize template
@@ -15671,6 +15684,7 @@
         .then(entry => {
           if (!entry || state.analysisId !== id) return;
           _currentEntry = entry;
+          _labelSong(entry);
           _mountKitIfReady();
           _mountRemix(); // entry just arrived — the pane dispatch missed it
         })
@@ -15875,6 +15889,7 @@
       Promise.all([entryP, bundleP]).then(([entry, bundle]) => {
         if (!entry || state.analysisId !== id) return;
         _currentEntry = entry;
+        _labelSong(entry);
         mountIt(entry, bundle);
       });
     }
@@ -15947,6 +15962,7 @@
               .then(entry => {
                 if (!entry) return;
                 _currentEntry = entry;
+                _labelSong(entry);
                 window.JamnKit?.mount(entry, { kind: desc.kind });
                 _mountedEntryId = entry.id;
                 showView('kit');

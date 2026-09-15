@@ -2833,6 +2833,17 @@ body.jamn-has-song .playback-bar { display: grid; }
   padding: 8px 14px;
   font-size: 13px;
 }
+/* Loaded-song label beside the transport buttons. :empty keeps the flex
+   gap from rendering a phantom slot before any song is loaded. */
+.playback-bar .pb-song {
+  font-size: 13px;
+  color: var(--muted, #9ca3af);
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.playback-bar .pb-song:empty { display: none; }
 .playback-bar #waveform-canvas {
   display: block;
   width: 100%;

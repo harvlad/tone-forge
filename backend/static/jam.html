@@ -1309,6 +1309,9 @@
       <button id="t-stop" class="ghost">Stop</button>
       <button id="t-loop" class="ghost" title="Clear loop">Loop: off</button>
       <button id="t-click" class="ghost" title="Toggle click track">Click: off</button>
+      <!-- Loaded-song label: the transport had no context about WHAT it
+           plays. Written by jam.js whenever the current entry changes. -->
+      <div id="t-song" class="pb-song" title=""></div>
     </div>
     <canvas id="waveform-canvas" width="800" height="64"></canvas>
     <div id="t-time" class="time">0:00 / 0:00</div>
