@@ -1,60 +1,56 @@
 Jamn — TestFlight build notes
 
 WHAT'S NEW THIS BUILD
-Three Launchpad regressions fixed on the Samples pad grid:
-• HOLD MENU IS BACK. Long-pressing a pad again opens the radial wheel
-  (Add Sound / Chop / Loop / Effects / Sequence / Delete on a filled pad;
-  Add Sound / Voice / Beat Capture / Sequence on an empty one). It had gone
-  missing on the 64-pad grid — the big grid now uses the same rich pads as
-  the 16-pad grid, so hold-to-edit works at either size.
-• WAVEFORMS ARE BACK. Each sample pad again draws its little audio waveform
-  (the actual sound that plays, trimmed). Previously the 64-pad grid showed
-  flat colored squares with no waveform.
-• BORROWED PADS NOW NAME THEIR SONG. A borrowed pad shows the SOURCE-SONG
-  name (your song vs the borrowed song) as a small line above the pad's
-  chord/section label — so you can tell which pad came from which song, not
-  just guess from the blue/amber color. This was missing on the 16-pad
-  best-of-both borrow view.
+• LOOPS PLAY IN TIME NOW. The pad timing engine was rebuilt to match the
+  new web engine: a queued loop launches on the next BAR (never mid-bar on
+  a beat), and it joins the loops already playing at the SAME position in
+  the phrase — everything moves together instead of each loop starting from
+  its own beginning. This also fixes queued pads that used to sit silent
+  for up to ~6 seconds before firing when the song was stopped: the wait is
+  now at most one bar.
+• LOOP COUNTDOWN IS HONEST. The countdown strip above the pads now shows
+  the real wait to the next bar launch (it used to overstate by up to ~6 s).
+• SYNTH IS ITS OWN STEM. On songs analyzed after this update, synth content
+  shows up as a teal "Synth" channel in the Mixer and as teal "Synth" pads
+  in the Auto Kit — it used to be mislabeled "Guitar" or missing entirely.
+• BETTER PAD AUDIO (server-side). Pads now always slice from the
+  best-quality version of a part — degraded stereo-split copies are
+  detected and vetoed on the server, for every song analyzed or re-analyzed
+  from now on. Existing songs were upgraded server-side too.
 
 HOW TO USE
-• HOLD MENU: Learn or Perform → Samples pads. Press and HOLD a pad (~0.5 s)
-  until the wheel appears, then slide toward an action and release. Works on
-  both the 16 and 64 pad sizes (the "Pads 16 | 64" toggle above the grid).
-• WAVEFORMS: just open the Samples pads with a song loaded — filled pads draw
-  their waveform automatically. Toggle to 64 to confirm the big grid shows
-  them too.
-• BORROW SONG LABELS: Song → Remix → Borrow (or the "Add Song" chip) → pick
-  Beat/Bass/Chords/Melody → a suggested song. Pads fill blue (your song) /
-  amber (borrowed song). Each borrowed pad now shows the song name in small
-  text above the chord/section name. Try both the 16 and 64 sizes.
+• PHASE-LOCKED LOOPS: load a song → Perform → Samples pads → set the mode
+  to Loop (or Latch). Tap several loop pads a few bars apart while the song
+  plays — each one comes in on the bar, already lined up with the others.
+  Stop the song and tap loop pads: they start within one bar of your tap
+  and lock to each other.
+• SYNTH STEM: analyze a synth-heavy song (electronic/pop). Mixer shows a
+  teal "Synth" channel; the Auto Kit shows teal "Synth lead"/"Synth pad"
+  pads. Older songs keep their old labels until re-analyzed.
 
 WHAT TO TEST
-1. HOLD MENU @ 64: Set the size toggle to 64. Long-press a filled pad — the
-   radial wheel should open (NOT a full-screen sheet). Pick "Loop" or "Chop"
-   and confirm it acts on that pad. Repeat at 16.
-2. HOLD MENU on empty pad: Long-press an empty "+" cell — the create wheel
-   (Add Sound / Voice / Beat Capture / Sequence) should open.
-3. WAVEFORMS @ 64: Toggle to 64. Filled pads should each show a small
-   waveform, not a plain colored square. Tap a pad; the waveform is the audio
-   that plays.
-4. BORROW SONG LABEL @ 16: Borrow a song, set size to 16 (best-of-both).
-   Every pad should show its source-song name above the chord/section label;
-   your song's pads blue, the borrowed song's pads amber.
-5. BORROW SONG LABEL @ 64: Same borrow, toggle to 64 — song labels still
-   present across the full grid, tints intact.
-6. NO REGRESSIONS: Contribute/Build 8×8 arrange grid still swaps pads by
-   drag; Perform stage pads still play; adding a sound to an empty pad still
-   works.
+1. Song playing → Loop mode → tap 3–4 loop pads on different bars.
+   EXPECTED: each starts on a bar boundary, in time with the song and each
+   other; no flamming or off-grid entries. ACTUAL if broken: a pad enters
+   mid-bar or audibly out of phase.
+2. Song stopped → Loop mode → tap a loop pad, then another a moment later.
+   EXPECTED: first fires immediately, the next within one bar, locked
+   together. ACTUAL if broken: a pad sits silent for several seconds.
+3. Watch the loop countdown strip while a pad is queued.
+   EXPECTED: countdown matches when the pad actually enters.
+4. Analyze a new synth-heavy song. EXPECTED: teal Synth channel in Mixer,
+   teal Synth pads in the Auto Kit, labeled "Synth lead"/"Synth pad".
+5. Regression sweep: hold-menu on pads, pad waveforms, borrow
+   (Add from another song), Re-Drum/Flip, recording — all should behave as
+   in the previous build.
 
 KNOWN LIMITATIONS
-• On the 64 grid the pads are small, so names are one line and the waveform
-  is shorter than on the 16 grid — by design, to keep 64 pads legible.
-• A non-borrow kit at 64 shows its 16 kit pads plus empty "+" cells (same as
-  before) — 64 is most useful with a borrow loaded.
-• First Borrow per (song, donor) renders on the server then caches — first
-  tap is slower.
+• Synth stem appears only on songs analyzed after the backend update;
+  re-analyze an old song to get it.
+• First analysis after ~15 idle minutes takes a few extra minutes while a
+  cloud worker cold-starts — later songs are fast.
 
-Please report: did the HOLD wheel open on both 16 and 64? Did every filled
-pad show a waveform on 64? On a borrow, could you read which song each pad
-came from (name, not just color) at both sizes? Note the two songs and their
-rough tempos for any borrow test.
+WHAT TO REPORT
+• Any loop entering off-grid or out of phase (say song + which pads).
+• Countdown disagreeing with the actual launch.
+• Synth content still labeled Guitar on a NEWLY analyzed song.
