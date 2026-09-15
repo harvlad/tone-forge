@@ -739,3 +739,50 @@ Standing that up means a whole XcodeGen project that would fork the working
 `pad-<idx>`, `pad-radial-menu`, `transport-play`) so the surface is UI-test-ready,
 and the end-to-end behavior is covered headlessly by `LaunchpadBorrowSmokeTests`
 (D-026). Revisit if/when a jam-desktop Xcode project is introduced.
+
+## D-028: Pad phase-lock port from web — bar-grid launches, phase-locked joins, two-anchor divergence
+
+**Date:** 2026-09-15
+**Decision:** Port the web pad-timing fixes (padengine.js) to the desktop
+engine, mirroring semantics exactly:
+
+- **Loops quantize to the BAR grid, never sub-bar.** A multi-bar loop snapped
+  to a beat starts mid-bar — out of phase with the song and every other loop
+  even though each is "on a beat". `padDown` upgrades a sub-bar Quantize
+  (off/1-8/1-4/1-2) to `.bar` for loop launches; one-shots keep the user's grid.
+- **Lock launches wait ≤ 1 bar.** `nextLoopBoundary` and the free-run grid snap
+  to `lockGridUnitSeconds` (one bar; full cycle only without tempo) instead of
+  whole multiples of the ~6–8 s loop cycle, which read as "the pad doesn't play".
+- **Phase-locked join.** A loop tapped mid-jam starts `phase` seconds INTO its
+  baked body, `phase = (boundary − anchor) mod bodySec`, measured from the
+  PRE-shift quantize boundary — measuring the per-pad onset shift back in as a
+  buffer offset cancels the launch compensation and pads flam by their shift
+  deltas. Threaded as `onTrigger`'s `lockPhaseSeconds`; ChopPlayer folds it and
+  schedules the body tail once, then the whole body with `.loops`
+  (AVAudioPlayerNode can't start a looping buffer mid-body).
+- **Phase-aware playhead.** `loopProgress` adds the join phase — without it the
+  drawn playheads desync over audio that IS locked (the exact readout bug that
+  misled the web debugging).
+- **Round-the-length frame counts.** Region frames = `round((end−start)·sr)`
+  (`ChopPlayer.regionFrameCount`, shared by schedule + prewarm), never
+  trunc-per-edge, whose ±1-frame mismatch against the tiled cycle walked
+  phase-locked loops apart over minutes.
+
+**Intentional divergence from web:** web keeps ONE `_lockAnchor` because its
+AudioContext clock always runs; desktop song time freezes when the transport
+stops, so there is no clock shared between rolling and free-run. Desktop keeps
+two era anchors (`lockAnchorSongSeconds` for rolling, `freerunAnchorHostSeconds`
+for stopped) and a free-run re-anchor clears both — cross-mode joins start a
+fresh era instead of phase-locking to a lattice from a different clock domain.
+Also `loopLockEnabled == false` skips the phase join entirely (web has no lock
+toggle; the desktop toggle is documented as the phase-lock switch).
+
+**Where:** `Sources/JamDesktopCore/Launchpad/LaunchpadController.swift`
+(`lockGridUnitSeconds`, `nextLoopBoundary`, `padDown`, `replayArm`,
+`onTrigger` signature), `Sources/JamDesktop/SessionController.swift` (rate
+conversion of the lattice offset; Link launches zero it — Link owns that grid),
+`Sources/JamDesktopAudio/ChopPlayer.swift` (`phaseLockFrames`,
+`loopProgressValue`, `regionFrameCount`, `tailSegment`, phase-join scheduling).
+Pinned by `LaunchpadControllerTests` (bar-grid quantize, single-bar free-run
+wait, boundary-anchored phase, re-anchor resets, sub-bar upgrade) and
+`ChopPlayerPhaseLockTests` (fold, phase-aware progress, frame rounding).

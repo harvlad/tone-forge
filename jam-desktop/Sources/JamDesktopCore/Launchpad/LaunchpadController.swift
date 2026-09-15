@@ -241,9 +241,11 @@ public final class LaunchpadController {
     public var onPadUsage: ((String, String) -> Void)?
     private var padUsageStart: [LaunchpadPad: Date] = [:]
     public var playbackMode: PadPlaybackMode = .tap
-    /// Loop lock: when on, a triggered loop waits until the shared loop
-    /// cycle restarts, so every pad is phase-locked to one grid and stacks
-    /// coherently. Off = start immediately (bar-quantized only).
+    /// Loop lock: when on, a triggered loop snaps to the next BAR of the
+    /// shared lock lattice and JOINS the running cycle at that boundary's
+    /// phase (lockPhaseSeconds), so every pad moves together and the wait
+    /// stays ≤ 1 bar. Off = bar-quantized start at the body head, no
+    /// phase join.
     public var loopLockEnabled: Bool = true
 
     /// How many pads the merged Launchpad surface currently shows and
@@ -303,13 +305,25 @@ public final class LaunchpadController {
         return bars * barSec
     }
 
-    /// Next shared loop-cycle boundary at/after `now` (multiples of
-    /// `loopLengthSeconds` from song origin), with a grace window so a
+    /// Loop-lock quantize unit: ONE BAR at the song tempo, falling back to
+    /// the full loop cycle only when the tempo is unknown (web
+    /// padengine._lockLaunchTime parity). Snapping launches to whole
+    /// multiples of the ~6–8 s cycle meant a pad tapped mid-cycle sat armed
+    /// for seconds — it read as "the pad doesn't play". A single bar keeps
+    /// the wait ≤ 1 bar while the phase-locked join (lockPhaseSeconds)
+    /// supplies the intra-cycle position, so loops still land in unison.
+    private var lockGridUnitSeconds: Double {
+        guard let bpm = tempoBpm, bpm > 0 else { return loopLengthSeconds }
+        return (60.0 / bpm) * 4.0
+    }
+
+    /// Next lock-grid boundary at/after `now` (multiples of
+    /// `lockGridUnitSeconds` from song origin), with a grace window so a
     /// press just after a boundary fires NOW on that boundary instead of
-    /// waiting a whole cycle (critical for the first loop right after the
+    /// waiting a whole unit (critical for the first loop right after the
     /// transport auto-starts at ~0).
     private func nextLoopBoundary(after now: Double) -> Double {
-        let L = loopLengthSeconds
+        let L = lockGridUnitSeconds
         guard L > 0 else { return now }
         let grace = 0.12
         let r = now.truncatingRemainder(dividingBy: L)
@@ -346,7 +360,18 @@ public final class LaunchpadController {
     /// Fire the chop at `fireAtSongSeconds` (>= press time; equals it
     /// when quantize is off or within the grace window). The pad is
     /// included so the recording layer can capture grid coordinates.
-    @ObservationIgnored public var onTrigger: ((LaunchpadPad, PadAssignment, _ fireAtSongSeconds: Double) -> Void)?
+    ///
+    /// `lockPhaseSeconds` is the offset of this launch's PRE-shift
+    /// quantize boundary from the lock-era anchor (the first loop
+    /// launch's boundary), in the same domain as `fireAtSongSeconds`;
+    /// 0 for one-shots / unlocked launches. The audio layer folds it
+    /// mod the baked loop body so a loop tapped mid-jam JOINS at the
+    /// running cycle position instead of restarting its body (web
+    /// padengine phase-locked launch). It is deliberately the boundary,
+    /// not the shifted start: measuring the per-pad onset shift back in
+    /// as buffer offset would cancel the launch compensation and pads
+    /// would flam by their shift deltas.
+    @ObservationIgnored public var onTrigger: ((LaunchpadPad, PadAssignment, _ fireAtSongSeconds: Double, _ lockPhaseSeconds: Double) -> Void)?
     @ObservationIgnored public var onRelease: ((LaunchpadPad, PadAssignment) -> Void)?
     /// Normalized playhead (0..<1) for a pad that's currently hard-looping, else
     /// nil. Set by SessionController to query ChopPlayer; drives the on-pad
@@ -372,6 +397,16 @@ public final class LaunchpadController {
     /// Wall-clock anchor for the stopped-transport loop grid (host
     /// seconds of the first loop's launch; nil = no grid yet).
     @ObservationIgnored private var freerunAnchorHostSeconds: Double?
+    /// Song-time anchor of the ROLLING lock era: the first phase-locked
+    /// loop launch's pre-shift boundary. Later locked launches measure
+    /// `lockPhaseSeconds = boundary − anchor` from it so they join the
+    /// running cycle at the right body position (web `_lockAnchor`).
+    /// Desktop keeps this SEPARATE from `freerunAnchorHostSeconds`
+    /// because a stopped transport freezes song time — there is no
+    /// common clock between the two modes (web's ctx clock always
+    /// runs), so each mode anchors its own era. Cleared when a free-run
+    /// re-anchor starts a fresh era.
+    @ObservationIgnored private var lockAnchorSongSeconds: Double?
     /// Host wall clock in seconds — mach_absolute_time in production.
     /// Injectable (internal, `@testable`) so the free-run grid is
     /// deterministic under test; `nowProvider` can't stand in for it
@@ -704,17 +739,20 @@ public final class LaunchpadController {
         // means. Phase-locking applies only when the song is
         // actually rolling.
         let transportRolling = isTransportPlaying?() ?? false
-        // Loop + lock: start on the next SHARED loop-cycle boundary so every
-        // pad is phase-locked to one 8 s grid and they stack coherently. With
-        // lock off (or in Tap mode) fall back to bar-quantize / the Quantize
-        // control so a single hit still lands on the beat.
+        // Loop + lock: start on the next BAR of the shared lock lattice and
+        // join the running cycle at that boundary's phase, so pads stack
+        // coherently and a tap waits ≤ 1 bar. With lock off (or in Tap mode)
+        // fall back to bar-quantize / the Quantize control so a single hit
+        // still lands on the beat.
         let fireAt: Double
+        var lockPhaseSeconds = 0.0
         if !transportRolling {
             // FREE-RUN GRID: the first loop fires immediately and
-            // anchors a wall-clock cycle; later loop taps queue to
-            // that anchor so they stack in phase — the queuing feel,
-            // without auto-starting the transport. Tap mode and
-            // lock-off stay instant.
+            // anchors a wall-clock BAR grid (lockGridUnitSeconds — a
+            // single bar, so a tap waits ≤ 1 bar, never the full ~6–8 s
+            // cycle); later loop taps queue to that anchor so they
+            // stack in phase — the queuing feel, without auto-starting
+            // the transport. Tap mode and lock-off stay instant.
             if playbackMode == .loop && loopLockEnabled {
                 let hostNow = hostNowSeconds()
                 // Re-anchor whenever nothing is sounding: releasing ALL
@@ -723,23 +761,50 @@ public final class LaunchpadController {
                 // jam shouldn't wait on a grid nobody can hear).
                 if activePads.isEmpty || freerunAnchorHostSeconds == nil {
                     freerunAnchorHostSeconds = hostNow
+                    lockAnchorSongSeconds = nil   // fresh lock era
                     fireAt = now
                 } else {
-                    let L = loopLengthSeconds
+                    let L = lockGridUnitSeconds
                     let elapsed = hostNow - (freerunAnchorHostSeconds ?? hostNow)
                     let intoCycle = elapsed.truncatingRemainder(dividingBy: L)
                     // Small grace: a tap RIGHT on the boundary fires now.
-                    let delay = intoCycle < 0.08 ? 0 : (L - intoCycle)
-                    fireAt = now + delay
+                    let onBoundary = intoCycle < 0.08
+                    fireAt = now + (onBoundary ? 0 : L - intoCycle)
+                    // Boundary's wall offset from the free-run anchor —
+                    // the phase this loop joins its body at. Song time is
+                    // frozen here, so it CANNOT come from fireAt deltas
+                    // (those collapse the elapsed host time).
+                    lockPhaseSeconds = (elapsed - intoCycle) + (onBoundary ? 0 : L)
                 }
             } else {
                 fireAt = now
             }
         } else if playbackMode == .loop && loopLockEnabled {
             fireAt = nextLoopBoundary(after: now)
+            if let anchor = lockAnchorSongSeconds {
+                lockPhaseSeconds = fireAt - anchor
+            } else {
+                // Anchor the era at the PRE-shift boundary (never the
+                // shifted start — that would bake the first pad's onset
+                // shift into the grid and skew every later join by it).
+                lockAnchorSongSeconds = fireAt
+            }
         } else {
-            let effectiveQuantize: QuantizeMode =
-                (playbackMode == .loop && quantize == .off) ? .bar : quantize
+            // LOOPS lock to the BAR grid, never individual beats (web
+            // padengine parity). A multi-bar loop quantized to a sub-bar
+            // boundary starts on whatever beat you tapped near, so its
+            // bar 1 lands mid-bar: out of phase with the song's bars AND
+            // with every other loop, even though each is individually
+            // "on a beat" (the "queued pads start at random times" bug).
+            // Sub-bar granularity only makes musical sense for one-shots;
+            // .phrase stays — section boundaries are bar-aligned.
+            var effectiveQuantize = quantize
+            if playbackMode == .loop {
+                switch effectiveQuantize {
+                case .off, .eighth, .quarter, .half: effectiveQuantize = .bar
+                case .bar, .phrase: break
+                }
+            }
             fireAt = Quantizer.nextQuantized(
                 songSeconds: now,
                 mode: effectiveQuantize,
@@ -760,7 +825,7 @@ public final class LaunchpadController {
             }
         }
         transport?.setLight(.pulse(colorHint: colorHint(for: assignment)), at: pad)
-        onTrigger?(pad, assignment, fireAt)
+        onTrigger?(pad, assignment, fireAt, lockPhaseSeconds)
     }
 
     // MARK: - Arrangement replay (hands-free)
@@ -779,10 +844,23 @@ public final class LaunchpadController {
         let transportRolling = isTransportPlaying?() ?? false
         // Phase-lock to the shared loop grid while the song rolls; fire now when
         // stopped so a hands-free replay still sounds on a static transport.
-        let fireAt = (transportRolling && loopLockEnabled) ? nextLoopBoundary(after: now) : now
+        let fireAt: Double
+        var lockPhaseSeconds = 0.0
+        if transportRolling && loopLockEnabled {
+            fireAt = nextLoopBoundary(after: now)
+            // Same era anchoring as padDown: replayed loops join the running
+            // cycle at the boundary's phase, not restart their body.
+            if let anchor = lockAnchorSongSeconds {
+                lockPhaseSeconds = fireAt - anchor
+            } else {
+                lockAnchorSongSeconds = fireAt
+            }
+        } else {
+            fireAt = now
+        }
         activePads.insert(pad)
         transport?.setLight(.pulse(colorHint: colorHint(for: assignment)), at: pad)
-        onTrigger?(pad, assignment, fireAt)
+        onTrigger?(pad, assignment, fireAt, lockPhaseSeconds)
     }
 
     /// Release an arrangement-replay pad (kit.js `releasePadForReplay`).

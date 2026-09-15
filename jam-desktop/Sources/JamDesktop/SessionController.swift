@@ -388,11 +388,17 @@ final class SessionController: ObservableObject {
         linkSync.onTempoChanged = { [weak self] bpm in
             self?.sequencer.songBPM = bpm
         }
-        launchpad.onTrigger = { [weak self] pad, assignment, fireAt in
+        launchpad.onTrigger = { [weak self] pad, assignment, fireAt, lockPhase in
             guard let self else { return }
             print("[Trigger] pad=\(pad) stem=\(assignment.stem) chopIdx=\(assignment.chop.idx)")
             let rate = max(0.1, self.transport.tempoPct)
             var delay = max(0, fireAt - clock.nowSongSeconds) / rate
+            // Phase-locked join: lattice offset → WALL seconds with the same
+            // rate conversion as the delay. The baked buffers play at 1×, so
+            // the position a joining loop starts its body at is the wall time
+            // since the lock anchor (web measures ctx time), not song time.
+            // ChopPlayer folds it mod the baked body length.
+            var phaseOffset = lockPhase / rate
             // Drum-kit pad with a downloaded clean composite: play the FILE
             // (median-stacked, faded, latency-trimmed), not the raw stem
             // window. Always a one-shot — a lone drum hit has nothing to
@@ -404,7 +410,8 @@ final class SessionController: ObservableObject {
                 let looping = self.launchpad.playbackMode == .loop
                 self.chopPlayer.trigger(
                     file: url, startSec: nil, endSec: nil,
-                    afterSeconds: delay, loop: looping)
+                    afterSeconds: delay, loop: looping,
+                    phaseOffsetSeconds: looping ? phaseOffset : 0)
                 return
             }
             if let aid = assignment.chop.assetId, aid.hasPrefix("drumfile:"),
@@ -427,6 +434,10 @@ final class SessionController: ObservableObject {
             let linked = self.linkSync.enabled && self.linkSync.peers > 0
             if linked, self.launchpad.playbackMode == .loop {
                 delay = self.linkSync.secondsToNextBar()
+                // Link owns the launch grid here; the controller's lock
+                // lattice never saw this boundary, so a phase measured
+                // against it would join the body at a spurious offset.
+                phaseOffset = 0
             }
             // The Tap/Loop toggle drives playback: Loop = the chop region
             // loops (seamless crossfade) while held; Tap = one-shot that plays
@@ -454,7 +465,8 @@ final class SessionController: ObservableObject {
                 assignment, afterSeconds: delay,
                 loop: loopable, crossfadeMs: crossfadeMs,
                 loopBarSeconds: barSeconds,
-                cycleSeconds: cycleSeconds
+                cycleSeconds: cycleSeconds,
+                phaseOffsetSeconds: loopable ? phaseOffset : 0
             )
             // Publish for the session recorder. Timestamp = the
             // quantized fire-at moment (what actually SOUNDED), so
