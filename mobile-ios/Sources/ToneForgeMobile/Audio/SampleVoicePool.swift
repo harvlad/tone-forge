@@ -77,6 +77,11 @@ public struct SampleTrigger: Sendable {
     /// SeamlessLoop.exactCrossfaded). 0 = the whole buffer is the loop
     /// (no continuation available; seam falls back to edge ramps).
     public let loopBodyFrames: Int
+    /// Phase-locked join: seconds INTO the loop body playback begins at,
+    /// so a loop launched mid-jam sits at the same musical position as
+    /// the loops already ringing (web twin: `source.start(when, phase)`).
+    /// 0 = start at the top (one-shots, the first loop of a jam).
+    public let phaseSec: Double
 
     public init(
         padKey: SamplePadKey,
@@ -86,7 +91,8 @@ public struct SampleTrigger: Sendable {
         pan: Float = 0,
         effects: SamplePadEffects = .neutral,
         crossfadeMs: Double = 0,
-        loopBodyFrames: Int = 0
+        loopBodyFrames: Int = 0,
+        phaseSec: Double = 0
     ) {
         self.padKey = padKey
         self.loop = loop
@@ -96,6 +102,7 @@ public struct SampleTrigger: Sendable {
         self.effects = effects
         self.crossfadeMs = crossfadeMs
         self.loopBodyFrames = loopBodyFrames
+        self.phaseSec = phaseSec
     }
 }
 
@@ -150,6 +157,12 @@ public final class SampleVoicePool: ObservableObject {
         var audibleStartHostTime: UInt64
         /// One loop pass of the scheduled buffer, in seconds.
         var bufferDurationSec: Double
+        /// Buffer offset (seconds) the voice STARTED at — the phase-
+        /// locked join. loopPhase/releaseAtLoopEnd must add this, or
+        /// they'd report the position the voice would have had starting
+        /// from 0: visually desynced playheads (and early/late "musical
+        /// stop") on pads whose AUDIO is phase-locked.
+        var phaseStartSec: Double = 0
         /// A scheduled "complete the current loop pass, then stop"
         /// (releaseAtLoopEnd). Cancelled on retrigger/release.
         var pendingStopItem: DispatchWorkItem?
@@ -375,9 +388,40 @@ public final class SampleVoicePool: ObservableObject {
         // AVAudioUnitDelay.delayTime out of its valid range.
         applyEffects(req.effects.clamped(), to: slot)
 
-        // Schedule the buffer for immediate playback in the player's
-        // own timeline.
-        slot.player.scheduleBuffer(playBuffer, at: nil, options: options, completionHandler: nil)
+        // Schedule the buffer in the player's own timeline. A phase-
+        // locked join starts `phaseSec` INTO the loop body (web:
+        // `source.start(when, phase)`). AVAudioPlayerNode has no start
+        // offset for a looping buffer, so play the first partial pass
+        // [phaseFrame..<body] as its own segment, then queue the whole
+        // body looping — queued buffers run back-to-back sample-
+        // accurately, and the partial's tail meets the body's head
+        // across the baked seam, so the splice is as clean as the loop
+        // wrap itself.
+        slot.phaseStartSec = 0
+        var scheduledPhaseJoin = false
+        if req.loop, req.phaseSec > 0, playBuffer.format.sampleRate > 0 {
+            let sr = playBuffer.format.sampleRate
+            let frames = Int(playBuffer.frameLength)
+            let phaseFrame = min(max(0, Int((req.phaseSec * sr).rounded())),
+                                 max(0, frames - 1))
+            if phaseFrame > 0,
+               let partial = Self.sliceFrom(playBuffer, startFrame: phaseFrame) {
+                // Store the frame-quantized offset — what actually plays —
+                // so the drawn playhead matches the audio exactly.
+                slot.phaseStartSec = Double(phaseFrame) / sr
+                slot.player.scheduleBuffer(
+                    partial, at: nil, options: [.interrupts],
+                    completionHandler: nil)
+                // No .interrupts here: it would cut the partial pass off.
+                slot.player.scheduleBuffer(
+                    playBuffer, at: nil, options: [.loops],
+                    completionHandler: nil)
+                scheduledPhaseJoin = true
+            }
+        }
+        if !scheduledPhaseJoin {
+            slot.player.scheduleBuffer(playBuffer, at: nil, options: options, completionHandler: nil)
+        }
 
         // Future-time gating. Calling `play(at: AVAudioTime(hostTime:))`
         // directly throws NSException from AVAudioPlayerNodeImpl::StartImpl
@@ -539,7 +583,12 @@ public final class SampleVoicePool: ObservableObject {
             let elapsed = now > start
                 ? Double(now - start) / TransportClock.ticksPerSecond()
                 : 0
-            let remainder = duration - elapsed.truncatingRemainder(dividingBy: duration)
+            // A phase-joined voice began mid-body: its pass completes when
+            // the BUFFER position wraps, i.e. (elapsed + phaseStart) hits
+            // the body length — not `elapsed` alone.
+            let inPass = (elapsed + slot.phaseStartSec)
+                .truncatingRemainder(dividingBy: duration)
+            let remainder = duration - inPass
 
             // Identity token: if the slot is stolen/retriggered before
             // the deadline, the stale stop must not kill the new voice.
@@ -612,6 +661,28 @@ public final class SampleVoicePool: ObservableObject {
         return oldestIdx
     }
 
+    /// Copy of `buffer` from `startFrame` to its end — the first
+    /// partial pass of a phase-joined loop. nil for degenerate ranges
+    /// (caller falls back to a plain top-of-body schedule).
+    private static func sliceFrom(
+        _ buffer: AVAudioPCMBuffer, startFrame: Int
+    ) -> AVAudioPCMBuffer? {
+        let total = Int(buffer.frameLength)
+        let frames = total - startFrame
+        guard startFrame > 0, frames > 0,
+              let out = AVAudioPCMBuffer(
+                  pcmFormat: buffer.format,
+                  frameCapacity: AVAudioFrameCount(frames)),
+              let src = buffer.floatChannelData,
+              let dst = out.floatChannelData
+        else { return nil }
+        for ch in 0..<Int(buffer.format.channelCount) {
+            dst[ch].update(from: src[ch] + startFrame, count: frames)
+        }
+        out.frameLength = AVAudioFrameCount(frames)
+        return out
+    }
+
     /// Push the pad's clamped effect params onto the slot's AU nodes.
     /// The filter band is bypassed when the cutoff sits at the top of
     /// its window (20 kHz) to save the DSP cost of an audibly-neutral
@@ -641,10 +712,27 @@ public final class SampleVoicePool: ObservableObject {
             guard now > slot.audibleStartHostTime else { return 0 }
             let elapsedTicks = Double(now - slot.audibleStartHostTime)
             let elapsedSec = elapsedTicks / TransportClock.ticksPerSecond()
-            let phase = elapsedSec.truncatingRemainder(dividingBy: slot.bufferDurationSec)
-            return max(0, min(0.9999, phase / slot.bufferDurationSec))
+            return Self.loopReadout(
+                elapsedSec: elapsedSec,
+                phaseStartSec: slot.phaseStartSec,
+                bodySec: slot.bufferDurationSec)
         }
         return nil
+    }
+
+    /// Normalized loop position for `elapsedSec` of audible playback on a
+    /// voice that STARTED `phaseStartSec` into its body. The offset must
+    /// be included: without it the drawn playhead reports the position
+    /// the voice would have had starting from 0 — visually desynced pads
+    /// whose AUDIO is phase-locked (the "playheads at different
+    /// positions" bug). Web twin: padengine.js `padProgress`.
+    static func loopReadout(
+        elapsedSec: Double, phaseStartSec: Double, bodySec: Double
+    ) -> Double {
+        guard bodySec > 0 else { return 0 }
+        let phase = (elapsedSec + phaseStartSec)
+            .truncatingRemainder(dividingBy: bodySec)
+        return max(0, min(0.9999, phase / bodySec))
     }
 
     /// Recompute the published ringing-loop set from slot truth.
