@@ -111,6 +111,18 @@ def main() -> int:
             continue
         t0 = time.time()
         try:
+            # R2 presigns cap at 7 days, so stored stem URLs on older entries
+            # 403. Re-presign in-memory (same as the API's read choke points).
+            sp = result.get("stems_paths")
+            if isinstance(sp, dict):
+                from tone_forge import r2_storage
+
+                for role, raw in list(sp.items()):
+                    if isinstance(raw, str) and raw.startswith("https://"):
+                        try:
+                            sp[role] = r2_storage.refresh_url(raw)
+                        except Exception:  # noqa: BLE001
+                            pass
             with tempfile.TemporaryDirectory(prefix="tf_backfill_") as td:
                 stems = materialize_stems(result, Path(td))
                 if not stems:
