@@ -69,10 +69,10 @@ def main() -> int:
         p = out / f"config_{arm}.yaml"
         p.write_text(yaml.safe_dump(cfg, sort_keys=False))
         print(f"wrote {p}")
+    pairs = ", ".join("%s:%s" % (k, v["model_type"]) for k, v in ARMS.items())
     print("NOTE: model_type per arm is passed to MSST via --model_type "
-          f"({', '.join(f'{k}:{v['model_type']}' for k, v in ARMS.items())}); "
-          "model-size blocks come from MSST's example configs for the tiny "
-          "variants and are merged by the pod entry (see pod_entry script).")
+          "(" + pairs + "); model-size blocks come from MSST's example "
+          "configs for the tiny variants and are merged by the pod entry.")
     return 0
 
 
