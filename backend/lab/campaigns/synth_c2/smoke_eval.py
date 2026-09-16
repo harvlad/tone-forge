@@ -70,7 +70,12 @@ def main() -> int:
             continue
         scores = []
         for p in pair_dirs:
-            pp = pred_root / p.relative_to(args.pairs) / "synth.flac"
+            # inference input was infer_in/<track>__<variant>.flac; MSST's
+            # default template writes store_dir/<file_name>/<instr>.<codec>
+            name = f"{p.parent.name}__{p.name}"
+            pp = pred_root / name / "synth.flac"
+            if not pp.exists():
+                pp = pred_root / name / "synth.wav"
             if not pp.exists():
                 continue
             ref, _ = sf.read(p / "synth.flac", dtype="float32")

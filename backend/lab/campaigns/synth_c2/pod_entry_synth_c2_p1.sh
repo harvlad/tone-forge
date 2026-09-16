@@ -72,6 +72,23 @@ else
     && rm pairs_ship.tgz || echo "WARN pairs ship failed (continuing)"
 fi
 [ -n "$(ls pairs/train 2>/dev/null)" ] || { echo "FATAL no pairs produced"; hb manufacture FAILED; exit 3; }
+# MSST dataset_type 1 wants a FLAT dir of track folders each holding
+# <instrument>.flac; our pairs are nested track/variant. Symlink-flatten for
+# training, and give inference a flat dir of mixture files (its default
+# template writes store_dir/<file_name>/<instr>.flac). valid.py rglobs
+# mixture.flac so the nested tree is fine as valid_path.
+rm -rf flat_train infer_in && mkdir -p flat_train infer_in
+for t in pairs/train/*/; do tn=$(basename "$t")
+  for v in "$t"*/; do vn=$(basename "$v")
+    ln -s "$(readlink -f "$v")" "flat_train/${tn}__${vn}"
+  done
+done
+for t in pairs/valid/*/; do tn=$(basename "$t")
+  for v in "$t"*/; do vn=$(basename "$v")
+    ln -s "$(readlink -f "$v")/mixture.flac" "infer_in/${tn}__${vn}.flac"
+  done
+done
+echo "flat_train: $(ls flat_train | wc -l) dirs, infer_in: $(ls infer_in | wc -l) mixtures"
 hb manufacture ok
 
 # ---- stage 2: derive arm configs from the validated c6 recipe ----
@@ -91,7 +108,7 @@ for ARM in a_htdemucs b_melroformer c_scnet; do
       --model_type "$MT" \
       --config_path "arm_configs/config_${ARM}.yaml" \
       --results_path "results/$ARM" \
-      --data_path pairs/train \
+      --data_path flat_train \
       --valid_path pairs/valid \
       --num_workers 6 --device_ids 0 \
     || echo "ARM $ARM exited $? (timeout=2h cap)"
@@ -106,7 +123,7 @@ for ARM in a_htdemucs b_melroformer c_scnet; do
   python3 msst/inference.py --model_type "$MT" \
       --config_path "arm_configs/config_${ARM}.yaml" \
       --start_check_point "$CKPT" \
-      --input_folder pairs/valid --store_dir "results/$ARM/pred" \
+      --input_folder infer_in --store_dir "results/$ARM/pred" \
     || echo "inference $ARM failed"
 done
 
