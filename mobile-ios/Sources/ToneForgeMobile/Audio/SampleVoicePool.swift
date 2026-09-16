@@ -523,12 +523,20 @@ public final class SampleVoicePool: ObservableObject {
                 let slotIdx = idx
                 let engineRendered = engine?.engine.outputNode
                     .lastRenderTime?.isSampleTimeValid ?? false
+                // play(at:) needs the PLAYER's own render clock, not just
+                // the engine's: a freshly-attached player with an invalid
+                // lastRenderTime silently ignores a hostTime start (the
+                // armed voice never fires). Fall back to the dispatch
+                // path for exactly that case.
+                let playerRendered = player.lastRenderTime?.isSampleTimeValid ?? false
+                Diag.padsync("arm slot=\(slotIdx) pad=\(req.padKey.padIdx) delay=\(String(format: "%.3f", delaySec))s engineRendered=\(engineRendered) playerRendered=\(playerRendered)")
                 let item: DispatchWorkItem
-                if engineRendered {
+                if engineRendered && playerRendered {
                     player.play(at: AVAudioTime(hostTime: futureHost))
                     item = DispatchWorkItem { [weak self] in
                         Task { @MainActor [weak self] in
                             guard let self, self.slots.indices.contains(slotIdx) else { return }
+                            Diag.padsync("deadline slot=\(slotIdx) sampleAccurate playing=\(self.slots[slotIdx].player.isPlaying)")
                             self.slots[slotIdx].pendingPlayItem = nil
                             self.refreshRingingPadKeys()  // armed → playing
                         }
@@ -538,6 +546,7 @@ public final class SampleVoicePool: ObservableObject {
                         player.play()
                         Task { @MainActor [weak self] in
                             guard let self, self.slots.indices.contains(slotIdx) else { return }
+                            Diag.padsync("deadline slot=\(slotIdx) dispatchPath playing=\(self.slots[slotIdx].player.isPlaying)")
                             self.slots[slotIdx].pendingPlayItem = nil
                             self.refreshRingingPadKeys()  // armed → playing
                         }

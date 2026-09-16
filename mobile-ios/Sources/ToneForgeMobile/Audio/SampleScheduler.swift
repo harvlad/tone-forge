@@ -1236,6 +1236,7 @@ public final class SampleScheduler: ObservableObject {
                 forSongSeconds: targetSong + max(0, launchShift),
                 nowSong: nowSong)
         }
+        Diag.padsync("trigger pad=\(padIdx) pack=\(pid.suffix(8)) loop=\(willLoop) lock=\(willLoopLock) transport=\(transportRunning) targetSong=\(String(format: "%.3f", targetSong)) freeRunWait=\(String(format: "%.3f", freeRunWaitSec)) phase=\(String(format: "%.3f", phaseSec)) cycleFrames=\(loopCycleFrames) future=\(audioTime != nil)")
         pool.trigger(req, buffer: buffer, at: audioTime)
         #endif
 
