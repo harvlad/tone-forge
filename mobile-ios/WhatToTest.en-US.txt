@@ -1,50 +1,55 @@
 WHAT'S NEW IN THIS BUILD
 
-• Queued pads that never fired are fixed: pads armed to a bar boundary
-  (hourglass badge) could stay armed forever on a fresh app launch.
-  They now always fire on their boundary.
-• Learn tab fretboard is never empty: before the first chord (and in
-  chord gaps) it now shows the upcoming chord primed, like web — no
-  more bare neck with floating dashed rings.
-• Chord charts show finger numbers inside the dots and a barre capsule,
-  matching the web diagrams.
-• Transition coaching: a countdown bar + a text hint ("Same shape
-  +2 frets", "Move one finger only", "Barre at fret 1") now sits under
-  the Learn fretboard.
-• Everything from the previous build: full pad-timing parity with web,
-  playable section/chord pads on the 64 grid, tap-to-add in Add Sound,
-  cleaner Build tab.
+• Launchpad Edit Mode. Pads are now pure performance by default: no
+  hold menu, zero gesture overhead, and holds sustain as long as you
+  hold. The pad editing wheel (Add Sound / Chop / Loop / Effects /
+  Sequence / Delete) now lives behind a small pencil "Edit" chip on
+  the Samples row.
+• Fixed a long-standing hold bug this uncovered: EVERY pad hold was
+  silently cut at half a second by the hidden menu timer — including
+  on the Perform stage where no menu ever appeared. Held pads now ring
+  for the full hold.
+• Shared testing library: every account now sees all analyzed songs
+  (your own first) so you can jam on songs you know. Testing phase
+  only.
+• Plus everything from the last build: queued-pad fix, Learn fretboard
+  coaching (primed chord, finger numbers, barre, countdown + hints).
 
 HOW TO USE THE NEW FEATURES
 
-Learn coaching:
-1. Library → open an analyzed song → Learn tab.
-2. Before pressing play: the fretboard shows the song's first chord.
-3. Press play: the NEXT pill, countdown bar and hint update as chords
-   approach; dashed rings show where fingers land next.
+Edit Mode:
+1. Build tab → Samples. Note the pencil "Edit" chip at the right end
+   of the row with the 16|64 chips.
+2. Edit OFF (default): tap pads to play; HOLD a pad — it keeps
+   sounding the whole hold, no menu appears.
+3. Tap "Edit" ON: hold any pad — the radial editing wheel opens
+   (Add Sound / Chop / Loop / Effects / Sequence / Delete).
+4. Empty pads: tap always opens Add Sound, in both modes.
 
-Queued pads:
-1. Build tab → Samples → Latch.
-2. Tap several loop pads in a row, any time. Each shows an hourglass
-   until the next bar, then fires.
+Shared library:
+1. Library tab → all analyzed songs appear (yours listed first).
+2. Open any of them — full pads/Learn/Perform, like your own songs.
+   You can't delete songs that aren't yours.
 
 WHAT TO TEST
 
-1. FRESH LAUNCH, then immediately: Latch + tap 3-4 loop pads quickly.
-   Expected = every armed (hourglass) pad starts on the next bar and
-   stays in sync. Report any pad stuck on the hourglass or silent.
-2. Learn tab before pressing play: expected = first chord drawn solid,
-   with finger numbers; no empty fretboard, no stray dashed circles.
-3. Play through a song with chord changes: countdown + hint text should
-   track the next chord; barre chords (F, Bm) show the barre capsule.
-4. Repeat test 1 mid-session (after pads have played once): expected =
-   identical behavior.
+1. Edit OFF + Tap mode: press and HOLD a one-shot pad ~3 seconds.
+   Expected = it sounds for the full hold (before: cut at 0.5 s).
+2. Edit OFF: hold a pad — expected = NO menu ever appears.
+3. Edit ON: hold a filled pad — expected = radial wheel opens; pick
+   Loop and confirm the loop badge toggles.
+4. Perform tab: hold pads on stage — expected = full-length holds,
+   never a menu.
+5. Library: confirm you see the shared songs and can play them; try
+   deleting one that isn't yours (expected: it refuses).
+6. Re-run the queued-pads check from the last build: Latch + tap 3-4
+   loop pads — every hourglass pad fires on the next bar.
 
 KNOWN LIMITATIONS
-• 64-pad grid size is remembered per device — fresh installs default
-  to 16; tap 64 once.
+• Edit Mode is iOS-only for now; web and desktop still use always-on
+  hold menus (coming next).
 
 WHAT TO REPORT
-• Any hourglass pad that never fires (say: fresh launch or mid-session,
-  song playing or stopped, which pads).
-• Any empty Learn fretboard (say what the song/position was).
+• Any held pad that stops on its own (say: Tap or Latch, Edit on/off,
+  which tab).
+• Any menu appearing with Edit off.
