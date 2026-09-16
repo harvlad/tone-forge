@@ -1,63 +1,26 @@
 WHAT'S NEW IN THIS BUILD
 
-• THE never-ending-hourglass fix: songs with long ambient intros (like
-  Reptile) have their first detected downbeat deep into the song, and
-  queued pads waited for it — up to a minute. Pads now snap to a
-  tempo-true bar grid that converges exactly onto the song's real
-  first downbeat. Queued pads fire within one bar, always.
-• The 16/64/Edit chip row no longer crushes into vertical letters on
-  phone width (it scrolls).
+• Perform now stages the SAME grid size you configured in Build: pick
+  64 pads in Build and Perform shows all 64 (it was stuck at 16).
+• Everything from the last builds: the never-ending-hourglass fix for
+  long-intro songs, Launchpad Edit Mode (radial behind the pencil
+  chip), full-length pad holds, shared testing library, Learn
+  fretboard coaching.
 
-• Launchpad Edit Mode. Pads are now pure performance by default: no
-  hold menu, zero gesture overhead, and holds sustain as long as you
-  hold. The pad editing wheel (Add Sound / Chop / Loop / Effects /
-  Sequence / Delete) now lives behind a small pencil "Edit" chip on
-  the Samples row.
-• Fixed a long-standing hold bug this uncovered: EVERY pad hold was
-  silently cut at half a second by the hidden menu timer — including
-  on the Perform stage where no menu ever appeared. Held pads now ring
-  for the full hold.
-• Shared testing library: every account now sees all analyzed songs
-  (your own first) so you can jam on songs you know. Testing phase
-  only.
-• Plus everything from the last build: queued-pad fix, Learn fretboard
-  coaching (primed chord, finger numbers, barre, countdown + hints).
+HOW TO USE
 
-HOW TO USE THE NEW FEATURES
-
-Edit Mode:
-1. Build tab → Samples. Note the pencil "Edit" chip at the right end
-   of the row with the 16|64 chips.
-2. Edit OFF (default): tap pads to play; HOLD a pad — it keeps
-   sounding the whole hold, no menu appears.
-3. Tap "Edit" ON: hold any pad — the radial editing wheel opens
-   (Add Sound / Chop / Loop / Effects / Sequence / Delete).
-4. Empty pads: tap always opens Add Sound, in both modes.
-
-Shared library:
-1. Library tab → all analyzed songs appear (yours listed first).
-2. Open any of them — full pads/Learn/Perform, like your own songs.
-   You can't delete songs that aren't yours.
+1. Build tab → Samples → tap the 64 chip.
+2. Switch to the Perform tab: the stage now shows the full 8×8 with
+   the same pads, hotter tiles, no edit chrome.
 
 WHAT TO TEST
 
-1. Edit OFF + Tap mode: press and HOLD a one-shot pad ~3 seconds.
-   Expected = it sounds for the full hold (before: cut at 0.5 s).
-2. Edit OFF: hold a pad — expected = NO menu ever appears.
-3. Edit ON: hold a filled pad — expected = radial wheel opens; pick
-   Loop and confirm the loop badge toggles.
-4. Perform tab: hold pads on stage — expected = full-length holds,
-   never a menu.
-5. Library: confirm you see the shared songs and can play them; try
-   deleting one that isn't yours (expected: it refuses).
-6. Re-run the queued-pads check from the last build: Latch + tap 3-4
-   loop pads — every hourglass pad fires on the next bar.
-
-KNOWN LIMITATIONS
-• Edit Mode is iOS-only for now; web and desktop still use always-on
-  hold menus (coming next).
+1. Build 64 → Perform: expected = 64 pads on stage, all playable,
+   green section / purple chord pads included.
+2. Build 16 → Perform: expected = the classic 4×4 stage.
+3. Re-check the hourglass fix on Reptile if you haven't: Latch, queue
+   pads in the intro — all fire within one bar.
 
 WHAT TO REPORT
-• Any held pad that stops on its own (say: Tap or Latch, Edit on/off,
-  which tab).
-• Any menu appearing with Edit off.
+• Any pad playable in Build but silent on the Perform stage (say grid
+  size + pad color).
