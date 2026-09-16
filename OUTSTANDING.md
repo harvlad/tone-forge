@@ -204,3 +204,8 @@ kept 34 hits incl. peaks at 4% of accent.
   proxied requests, but a token is the intended production posture.
 - Upload cap tunable via `TONEFORGE_MAX_UPLOAD_MB` (default 500); nginx
   `client_max_body_size` should match.
+
+## Synth campaign license sign-offs (riley_synth_c2, opened 2026-09-16)
+- [ ] Counsel: Slakh2100/Lakh CC-BY-4.0 underlying-composition footnote — needed to move the corpus from cleared_internal to cleared_production (training-only use, no audio redistribution; low risk).
+- [ ] Counsel: htdemucs pretrained-weights position — repo states blanket MIT with no weights carve-out (issue #327 unanswered); document the MIT reading + the MUSDB training-data provenance note. Also covers existing production inference use.
+- Cambridge-MT: **permanently blocked for training** (FAQ explicitly forbids AI training; educational-only grant). Recorded so nobody re-litigates it.
