@@ -46,7 +46,10 @@ git clone -q https://github.com/ZFTurbo/Music-Source-Separation-Training msst ||
 ( cd msst \
   && { [ -z "${MSST_REF:-}" ] || git checkout -q "$MSST_REF"; } \
   && echo "msst @ $(git rev-parse --short HEAD)" \
-  && pip install -q -r requirements.txt 2>&1 | tail -1 ) || { echo "FATAL msst setup"; exit 3; }
+  && grep -viE "wxpython|pyaudio" requirements.txt > req_train.txt \
+  && pip install -q -r req_train.txt 2>&1 | tail -1 ) || { echo "FATAL msst setup"; exit 3; }
+# wxpython/pyaudio are MSST's GUI extras — they need system libs the pod
+# lacks and training never imports them.
 [ -f msst/train.py ] || { echo "FATAL msst/train.py missing"; exit 3; }
 hb fetch ok
 
