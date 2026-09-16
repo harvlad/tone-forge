@@ -307,6 +307,16 @@ class RemoteWorker:
         if local is None or not local.is_file():
             return False
         with requests.Session() as sess:
+            # Thread-own session for connection safety, but it MUST carry
+            # the main session's headers: a bare Session posts with no
+            # X-Engine-Token, and prod's engine guard 404s ("Not Found",
+            # enumeration-hiding) every early upload — each stem then
+            # burned 6 retries x 20 s before the authed tail-save path
+            # re-uploaded it, adding ~2-4.5 min to EVERY prod analysis.
+            # Dev never caught it: with no token configured the guard
+            # falls back to allow-loopback, so early upload "worked" in
+            # every local test and died only behind the prod token.
+            sess.headers.update(self.session.headers)
             self._upload_stem_with_retry(
                 job_id, role, self._compress_lossless(local), session=sess)
         return True
