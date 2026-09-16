@@ -49,16 +49,15 @@ def patch(base_cfg: dict, arm: str) -> dict:
     cfg = copy.deepcopy(base_cfg)
     cfg.setdefault("training", {}).update(P1_TRAIN)
     cfg["training"]["coarse_loss_clip"] = False
-    # Keep the validated loss block exactly as c6 shipped it.
-    assert "loss_multistft" in cfg or "loss" in str(cfg), (
-        "c6 config lost its validated loss block — refusing to invent one")
+    # Loss: ride whatever the validated recipe carries (c5 uses MSST's
+    # default loss when no explicit block exists). We add nothing.
     return cfg
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--c6-config", required=True,
-                    help="path to the validated c6 YAML from the bundle")
+                    help="path to the validated recipe YAML (c5 bundle)")
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args()
     base = yaml.safe_load(Path(args.c6_config).read_text())

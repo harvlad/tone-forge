@@ -11,7 +11,7 @@ OUTSTANDING.md). Total cap **$60**: P1 ≤$15, P2 ≤$40, P3 ≤$5.
 | File | Role |
 |---|---|
 | `manufacture_pairs.py` | rest = mix − synth (verified −61 dB), stats-driven gain/width augmentation, dual htdemucs pass → residual-domain `{mixture, synth, rest}` pairs |
-| `arm_config.py` | derives the 3 arm configs from the **validated c6 recipe** (loss/audio blocks verbatim) |
+| `arm_config.py` | derives the 3 arm configs from the **validated c5 recipe** (loss/audio blocks verbatim) |
 | `merge_model_blocks.py` | model/audio blocks copied from MSST's own example configs — no invented hyperparameters |
 | `smoke_eval.py` | SI-SDR vs identity/half baselines — **kill + ranking only, never promotion** |
 | `pod_entry_synth_c2_p1.sh` | preflight → fetch → manufacture → 3-arm race (2 h caps) → inference → smoke eval → ship artifacts to the volume |
@@ -25,7 +25,7 @@ load validates nothing at P1 scale.)
 
 1. Stage the P1 subset + code on the volume, served via `/factory`:
    `slakh_synth_p1` subset tarball (≤48 train + 8 valid tracks),
-   `synth_c2_code.tgz` (this directory), `c6_bundle.tgz` (already there).
+   `synth_c2_code.tgz` (this directory), `c5_bundle.tgz` (the surviving validated recipe; c6 was lost).
 2. Preflight checklist (memory: gpu-launch-preflight) — disk <85 %, nginx
    log alive, transfer hashes, image CUDA vs host driver, heartbeats.
 3. Create pod named `riley_synth_c2_p1` (A40 preferred, ~$0.40/h; the

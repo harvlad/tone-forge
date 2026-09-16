@@ -35,7 +35,7 @@ hb preflight ok
 hb fetch start
 curl -fsSL -o p1_subset.tgz "$JAMN_FACTORY/synth_c2_p1_subset.tgz" || { echo "FATAL subset fetch"; exit 3; }
 tar xzf p1_subset.tgz && rm p1_subset.tgz          # -> slakh_synth_p1/{train,valid}
-curl -fsSL -o c6_bundle.tgz "$JAMN_FACTORY/c6_bundle.tgz" && tar xzf c6_bundle.tgz && rm c6_bundle.tgz
+curl -fsSL -o c5_bundle.tgz "$JAMN_FACTORY/c5_bundle.tgz" && tar xzf c5_bundle.tgz && rm c5_bundle.tgz
 curl -fsSL -o campaign.tgz "$JAMN_FACTORY/synth_c2_code.tgz" && tar xzf campaign.tgz && rm campaign.tgz
 pip install -q soundfile pyyaml demucs 2>&1 | tail -1
 git clone -q https://github.com/ZFTurbo/Music-Source-Separation-Training msst \
@@ -49,7 +49,9 @@ python3 synth_c2/manufacture_pairs.py --src slakh_synth_p1/valid --out pairs/val
 hb manufacture ok
 
 # ---- stage 2: derive arm configs from the validated c6 recipe ----
-C6_CFG=$(ls c6*/config*.yaml c6*/*.yaml 2>/dev/null | head -1)
+# c6 bundle was lost to a self-loop symlink; c5 is the surviving
+# blind-validated recipe from the same campaign lineage.
+C6_CFG=$(ls configs/c5*.yaml 2>/dev/null | head -1)
 python3 synth_c2/arm_config.py --c6-config "$C6_CFG" --out-dir arm_configs
 # Merge tiny model blocks from MSST's own example configs (small variants).
 python3 synth_c2/merge_model_blocks.py --msst msst --configs arm_configs
