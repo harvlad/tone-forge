@@ -1,64 +1,50 @@
 WHAT'S NEW IN THIS BUILD
 
-• Pad timing now matches the web app exactly. Seven timing bugs fixed:
-  the first latched clip anchors the shared groove (everything you layer
-  after it lands in unison with it), loops of different lengths lock to
-  one shared cycle instead of drifting apart, queued pads start
-  sample-accurately on the beat, taps near the end of a song still
-  quantize to the bar grid, taps before the first downbeat wait for the
-  real downbeat, un-quantized loops join the groove mid-phrase like web,
-  and switching a latched pad off stops it immediately.
-• The green section pads and purple chord pads on the 64-pad grid are
-  now playable and loopable (they were painted but dead to touch).
-• Add Sound tiles now ADD on tap. The small corner play button previews.
-  (Before: tap previewed, and adding hid behind a secret long-press.)
-• Cleaner Build tab: the Build→Perform breadcrumb pill and the cramped
-  section-blocks strip are gone; the Pads and Arrangement rows merged
-  into one row (16|64 chips left, Rec/Play/Clear right); empty pads show
-  a small quiet + instead of a shouting one.
+• Queued pads that never fired are fixed: pads armed to a bar boundary
+  (hourglass badge) could stay armed forever on a fresh app launch.
+  They now always fire on their boundary.
+• Learn tab fretboard is never empty: before the first chord (and in
+  chord gaps) it now shows the upcoming chord primed, like web — no
+  more bare neck with floating dashed rings.
+• Chord charts show finger numbers inside the dots and a barre capsule,
+  matching the web diagrams.
+• Transition coaching: a countdown bar + a text hint ("Same shape
+  +2 frets", "Move one finger only", "Barre at fret 1") now sits under
+  the Learn fretboard.
+• Everything from the previous build: full pad-timing parity with web,
+  playable section/chord pads on the 64 grid, tap-to-add in Add Sound,
+  cleaner Build tab.
 
 HOW TO USE THE NEW FEATURES
 
-Pads in sync:
-1. Library → open any analyzed song → Build tab → Samples.
-2. Make sure the mode chip reads Latch. Tap 2-3 loop pads (waveform
-   cards) one after another, ANY time — mid-bar, whenever.
-3. Every pad should enter on the next bar boundary and their loop
-   rings/playheads should move together, exactly like the web app.
-4. Press the transport Play button — the song joins the same grid; pads
-   and song stay locked.
+Learn coaching:
+1. Library → open an analyzed song → Learn tab.
+2. Before pressing play: the fretboard shows the song's first chord.
+3. Press play: the NEXT pill, countdown bar and hint update as chords
+   approach; dashed rings show where fingers land next.
 
-Section/chord pads on the big grid:
-1. Build → Samples → tap the 64 chip (next to 16).
-2. Tap any green (Intro/Verse/Chorus) or purple (chord) pad — it plays
-   now; long-press → Loop toggles looping.
-
-Adding sounds:
-1. Long-press an empty pad (+) → Add Sound, or tap the Sounds chip.
-2. Tap any tile to put it on the pad. Corner ▶ button previews first.
+Queued pads:
+1. Build tab → Samples → Latch.
+2. Tap several loop pads in a row, any time. Each shows an hourglass
+   until the next bar, then fires.
 
 WHAT TO TEST
 
-1. Latch 3 loops of DIFFERENT lengths (e.g. a 2-bar drum + 4-bar synth):
-   expected = they repeat together on one shared cycle; report any
-   drift after a minute of playback.
-2. Tap the first pad while everything is stopped, then add more:
-   expected = later pads line up with the FIRST pad's groove.
-3. With the song playing, queue pads: expected = each enters exactly on
-   the next bar of the SONG, never early/late.
-4. Switch Latch → Tap and tap a ringing pad: expected = one-shots play
-   through; latched pads stop immediately when toggled off.
-5. On the 64 grid, play green + purple pads: expected = sound on every
-   filled pad; loop badge appears after radial → Loop.
-6. Add Sound: tap tiles in Sample Packs and Song Chops tabs: expected =
-   the sound lands on the pad you started from (or the next free kit
-   pad from the Sounds chip).
+1. FRESH LAUNCH, then immediately: Latch + tap 3-4 loop pads quickly.
+   Expected = every armed (hourglass) pad starts on the next bar and
+   stays in sync. Report any pad stuck on the hourglass or silent.
+2. Learn tab before pressing play: expected = first chord drawn solid,
+   with finger numbers; no empty fretboard, no stray dashed circles.
+3. Play through a song with chord changes: countdown + hint text should
+   track the next chord; barre chords (F, Bm) show the barre capsule.
+4. Repeat test 1 mid-session (after pads have played once): expected =
+   identical behavior.
 
 KNOWN LIMITATIONS
-• 64-pad grid size is remembered per device — fresh installs default to
-  16; tap 64 once.
-• Arrangement section strip is web/desktop only now (by design).
+• 64-pad grid size is remembered per device — fresh installs default
+  to 16; tap 64 once.
 
 WHAT TO REPORT
-• Any loop entering off-grid or out of phase (say song + which pads).
-• Any pad that lights but stays silent (say grid size + pad color).
+• Any hourglass pad that never fires (say: fresh launch or mid-session,
+  song playing or stopped, which pads).
+• Any empty Learn fretboard (say what the song/position was).
