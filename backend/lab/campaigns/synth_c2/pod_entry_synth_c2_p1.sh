@@ -54,11 +54,23 @@ git clone -q https://github.com/ZFTurbo/Music-Source-Separation-Training msst ||
 hb fetch ok
 
 # ---- stage 1: manufacture pairs (GPU htdemucs, deterministic) ----
+# PAIRS_URL short-circuits the ~40 min GPU manufacture with a prebuilt
+# tarball (salvaged/shipped from a previous run) — durability rule both ways.
 hb manufacture start
-python3 synth_c2/manufacture_pairs.py --src slakh_synth_p1/train --out pairs/train --limit "${P1_TRACKS:-40}" \
-  || { echo "FATAL manufacture train"; hb manufacture FAILED; exit 3; }
-python3 synth_c2/manufacture_pairs.py --src slakh_synth_p1/valid --out pairs/valid --limit 8 \
-  || { echo "FATAL manufacture valid"; hb manufacture FAILED; exit 3; }
+if [ -n "${PAIRS_URL:-}" ]; then
+  curl -fsSL -o pairs.tgz "$PAIRS_URL" && tar --no-same-owner -xzf pairs.tgz && rm pairs.tgz \
+    || { echo "FATAL pairs fetch"; hb manufacture FAILED; exit 3; }
+else
+  python3 synth_c2/manufacture_pairs.py --src slakh_synth_p1/train --out pairs/train --limit "${P1_TRACKS:-40}" \
+    || { echo "FATAL manufacture train"; hb manufacture FAILED; exit 3; }
+  python3 synth_c2/manufacture_pairs.py --src slakh_synth_p1/valid --out pairs/valid --limit 8 \
+    || { echo "FATAL manufacture valid"; hb manufacture FAILED; exit 3; }
+  # Ship pairs immediately — a later-stage failure must never cost the
+  # manufacture GPU time again.
+  tar czf pairs_ship.tgz pairs && scp -o StrictHostKeyChecking=no -i /tmp/ret_key pairs_ship.tgz \
+      root@jamn.app:/mnt/HC_Volume_106533567/factory/synth_c2_p1_pairs.tgz \
+    && rm pairs_ship.tgz || echo "WARN pairs ship failed (continuing)"
+fi
 [ -n "$(ls pairs/train 2>/dev/null)" ] || { echo "FATAL no pairs produced"; hb manufacture FAILED; exit 3; }
 hb manufacture ok
 

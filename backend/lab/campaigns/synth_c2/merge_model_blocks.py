@@ -10,6 +10,38 @@ from pathlib import Path
 
 import yaml
 
+
+# MSST example configs carry `!!python/tuple` tags (their loader handles
+# them); SafeLoader refuses. Round-trip them faithfully: construct as tuple,
+# re-emit with the same tag so the merged config stays byte-equivalent for
+# MSST's own loader.
+class _MsstLoader(yaml.SafeLoader):
+    pass
+
+
+_MsstLoader.add_constructor(
+    "tag:yaml.org,2002:python/tuple",
+    lambda loader, node: tuple(loader.construct_sequence(node)))
+
+
+class _MsstDumper(yaml.SafeDumper):
+    pass
+
+
+_MsstDumper.add_representer(
+    tuple,
+    lambda dumper, value: dumper.represent_sequence(
+        "tag:yaml.org,2002:python/tuple", list(value)))
+
+
+def _load(path: Path) -> dict:
+    return yaml.load(path.read_text(), Loader=_MsstLoader)
+
+
+def _dump(cfg: dict) -> str:
+    return yaml.dump(cfg, Dumper=_MsstDumper, sort_keys=False)
+
+
 # Preferred source config per arch, smallest-first globs.
 SOURCES = {
     "a_htdemucs": ["configs/config_musdb18_htdemucs.yaml", "configs/*htdemucs*.yaml"],
@@ -35,9 +67,9 @@ def main() -> int:
     msst = Path(args.msst)
     for arm in SOURCES:
         cfg_p = Path(args.configs) / f"config_{arm}.yaml"
-        cfg = yaml.safe_load(cfg_p.read_text())
+        cfg = _load(cfg_p)
         src_p = find_source(msst, arm)
-        src = yaml.safe_load(src_p.read_text())
+        src = _load(src_p)
         if "model" in src:
             cfg["model"] = src["model"]
         # Audio block must match the arch's expectations (chunk sizes differ
@@ -45,7 +77,7 @@ def main() -> int:
         if "audio" in src:
             cfg["audio"] = src["audio"]
             cfg["audio"]["sample_rate"] = 44100
-        cfg_p.write_text(yaml.safe_dump(cfg, sort_keys=False))
+        cfg_p.write_text(_dump(cfg))
         print(f"{arm}: model+audio blocks from {src_p.name}")
     return 0
 
