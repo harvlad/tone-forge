@@ -1,5 +1,13 @@
 WHAT'S NEW IN THIS BUILD
 
+• THE never-ending-hourglass fix: songs with long ambient intros (like
+  Reptile) have their first detected downbeat deep into the song, and
+  queued pads waited for it — up to a minute. Pads now snap to a
+  tempo-true bar grid that converges exactly onto the song's real
+  first downbeat. Queued pads fire within one bar, always.
+• The 16/64/Edit chip row no longer crushes into vertical letters on
+  phone width (it scrolls).
+
 • Launchpad Edit Mode. Pads are now pure performance by default: no
   hold menu, zero gesture overhead, and holds sustain as long as you
   hold. The pad editing wheel (Add Sound / Chop / Loop / Effects /
