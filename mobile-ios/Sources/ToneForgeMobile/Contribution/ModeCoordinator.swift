@@ -171,6 +171,24 @@ public final class ModeCoordinator: ObservableObject {
         // Song chops carry no loopPointSec, so without this override a
         // latched clip played one pass and went silent.
         s.loopOverride = latch
+        // Web/desktop parity — the surface MODE decides loop vs one-shot
+        // (web effectiveLoop: override ?? mode==="loop"; desktop gates on
+        // playbackMode == .loop). Tap therefore fires loop-CAPABLE pads
+        // (borrow renders: loopable:true, loopPointSec:0) as a single
+        // full one-shot pass. Without this force they fired as loops and
+        // the Tap finger-lift release cut them ~150 ms in — the
+        // "borrowed song full of non-loopable chords" report. A user's
+        // explicit radial Loop override still wins, exactly like web.
+        let padKey = SamplePadKey(packId: packId, padIdx: padIdx)
+        let hadPadOverride = s.padLoopOverrides[padKey] != nil
+        if !latch && !hadPadOverride {
+            s.setPadLoopOverride(packId: packId, padIdx: padIdx, false)
+        }
+        defer {
+            if !latch && !hadPadOverride {
+                s.setPadLoopOverride(packId: packId, padIdx: padIdx, nil)
+            }
+        }
         let result: SampleScheduler.TriggerResult
         if wasStopped {
             // First launch (transport just started or a plain tap):
@@ -509,13 +527,18 @@ public final class ModeCoordinator: ObservableObject {
                 // Tap mode: one-shots PLAY THROUGH (drum-machine feel;
                 // releasing on finger-lift cut a quick tap to ~50 ms of
                 // audio — "taps don't tap", worst right after switching
-                // from Latch while loops still ring). Release only a
-                // voice that is actually LOOPING on this pad — i.e. a
-                // leftover latched loop, which finger-lift may stop.
+                // from Latch while loops still ring). A pad the user
+                // radial-forced to Loop must ALSO survive the lift (web
+                // parity: the per-pad override outranks the mode) — its
+                // one-shot retrigger self-chokes it instead. Only a
+                // ringing voice on a pad with no loop claim (a stale
+                // latched voice) still releases here.
                 if !app.jamSettings.sampleLatch,
                    let t = target(row: row, col: col),
                    app.sampleVoicePool.ringingPadKeys.contains(
-                       SamplePadKey(packId: t.packId, padIdx: t.padIdx)) {
+                       SamplePadKey(packId: t.packId, padIdx: t.padIdx)),
+                   !app.sampleScheduler.padLoops(packId: t.packId,
+                                                 padIdx: t.padIdx) {
                     releaseJamSample(padIdx: t.padIdx, packId: t.packId)
                 }
                 return

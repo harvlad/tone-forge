@@ -1,6 +1,19 @@
 Jamn — TestFlight build notes
 
 WHAT'S NEW THIS BUILD
+• BORROWED PADS PLAY PROPERLY. Loading pads from another song ("Add from
+  another song") used to leave many chord/melody pads effectively dead —
+  a tap produced a ~150 ms blip. Two fixes: the server now marks every
+  borrowed loop as loopable (they are bar-exact renders by construction),
+  and the app now matches web semantics — in TAP mode a borrowed pad
+  plays its FULL pass as a one-shot; in LOOP/LATCH it loops until toggled
+  off. A pad you force to Loop via the hold-menu keeps looping in any
+  mode.
+• BORROW RE-ARRANGE FIX. Switching pad grid size (16↔64) or re-borrowing
+  with a session target no longer plays stale/wrong audio on borrowed
+  pads (the pack now reloads when its content changes).
+
+STILL IN FROM THE PREVIOUS BUILD (test if you haven't)
 • LOOPS PLAY IN TIME NOW. The pad timing engine was rebuilt to match the
   new web engine: a queued loop launches on the next BAR (never mid-bar on
   a beat), and it joins the loops already playing at the SAME position in
@@ -29,6 +42,11 @@ HOW TO USE
   pads. Older songs keep their old labels until re-analyzed.
 
 WHAT TO TEST
+0. BORROW: load a song → pads → "Add from another song" → pick a donor.
+   Tap chord/melody borrowed pads in TAP mode: EXPECTED each plays its
+   full phrase once (no 150 ms blip). Switch to LOOP/LATCH: EXPECTED they
+   loop until tapped off, in time. Flip 16↔64 and re-tap: EXPECTED same
+   audio, no silence/wrong pads.
 1. Song playing → Loop mode → tap 3–4 loop pads on different bars.
    EXPECTED: each starts on a bar boundary, in time with the song and each
    other; no flamming or off-grid entries. ACTUAL if broken: a pad enters

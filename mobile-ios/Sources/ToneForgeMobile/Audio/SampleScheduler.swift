@@ -164,6 +164,17 @@ public final class SampleScheduler: ObservableObject {
     /// Flip a pad's loop override (radial "Loop"). A ringing voice is
     /// released so the next trigger picks up the new behavior instead of
     /// an un-releasable loop lingering under a now-one-shot pad.
+    /// Explicitly set (or clear, with nil) a pad's loop override. Used by
+    /// the Tap-mode trigger path to force a single one-shot pass on
+    /// loop-capable pads (web/desktop parity: the surface MODE decides
+    /// loop vs one-shot; the pad's manifest flag only matters in Loop /
+    /// Latch). The radial menu keeps using togglePadLoop.
+    public func setPadLoopOverride(packId: String, padIdx: Int, _ value: Bool?) {
+        let key = SamplePadKey(packId: packId, padIdx: padIdx)
+        if let value { padLoopOverrides[key] = value }
+        else { padLoopOverrides.removeValue(forKey: key) }
+    }
+
     public func togglePadLoop(packId: String, padIdx: Int) {
         let key = SamplePadKey(packId: packId, padIdx: padIdx)
         let now = padLoops(packId: packId, padIdx: padIdx)
@@ -389,12 +400,34 @@ public final class SampleScheduler: ObservableObject {
     /// maps stem role → local file URL (from `BundleStore.cachedStem`).
     /// Silently skips pads whose file is missing so a partially-cached
     /// pack still triggers what it can.
+    /// Content fingerprint for the resident-pack guard. Borrow packs are
+    /// re-arranged under an UNCHANGED packId ("borrow-{donor}-{stem}":
+    /// 16↔64 relayout, session-target re-borrow), and the old
+    /// already-resident early-return then left triggers resolving against
+    /// the first load's stale pad layout — padNotFound silence or
+    /// wrong-pad audio. Cheap identity: pad count + per-pad idx/file/url.
+    private static func packFingerprint(_ pack: ResolvedSamplePack) -> Int {
+        var h = Hasher()
+        for p in pack.pack.pads {
+            h.combine(p.padIdx)
+            h.combine(p.filename ?? "")
+            h.combine(p.sampleUrl ?? "")
+            h.combine(p.stemSlice?.startSec ?? -1)
+            h.combine(p.stemSlice?.endSec ?? -1)
+        }
+        return h.finalize()
+    }
+    private var packFingerprints: [String: Int] = [:]
+
     public func preloadPack(
         _ pack: ResolvedSamplePack,
         stemFiles: [String: URL]
     ) throws {
         let packId = pack.pack.packId
-        guard loadedPacks[packId] == nil else { return }
+        let fp = Self.packFingerprint(pack)
+        if loadedPacks[packId] != nil, packFingerprints[packId] == fp { return }
+        loadedPacks[packId] = nil  // same id, different content: rebuild
+        packFingerprints[packId] = fp
 
         #if canImport(AVFoundation)
         let loaded = Self.decodePackBuffers(
@@ -432,7 +465,10 @@ public final class SampleScheduler: ObservableObject {
         stemFiles: [String: URL]
     ) async {
         let packId = pack.pack.packId
-        guard loadedPacks[packId] == nil else { return }
+        let fp = Self.packFingerprint(pack)
+        if loadedPacks[packId] != nil, packFingerprints[packId] == fp { return }
+        loadedPacks[packId] = nil  // same id, different content: rebuild
+        packFingerprints[packId] = fp
 
         #if canImport(AVFoundation)
         let target = engine?.canonicalFormat
@@ -441,7 +477,12 @@ public final class SampleScheduler: ObservableObject {
             Self.decodePackBuffers(pack, stemFiles: stemFiles, target: target,
                                    barSeconds: bar)
         }.value
-        guard loadedPacks[packId] == nil else { return }
+        // Post-await ownership check: install only if no pack landed
+        // meanwhile AND our fingerprint is still the wanted one (a
+        // concurrent reload with NEWER content must not be clobbered by
+        // this stale decode).
+        guard loadedPacks[packId] == nil, packFingerprints[packId] == fp
+        else { return }
         loadedPacks[packId] = LoadedPack(
             pack: pack, buffers: loaded.buffers,
             loopBodyFrames: loaded.loopBodyFrames,
@@ -1262,10 +1303,17 @@ public final class SampleScheduler: ObservableObject {
         // continuation split only holds for the untransformed base buffer.
         let loopBodyFrames = (buffer === baseBuffer)
             ? (entry.loopBodyFrames[padIdx] ?? 0) : 0
+        // Predicate parity with trigger()'s naturalLoop AND web's padengine
+        // mayLoop: the loopable flag was omitted here (manifest-loopable
+        // borrow pads fired as one-shots through the raw path only), and
+        // padLoopOverrides was ignored — so the Tap-mode one-shot force and
+        // the radial Loop override had no effect on raw triggers.
+        let rawNatural = pad.loopPointSec != nil
+            || (pad.loopable ?? false)
+            || (loopResolver?(pid, padIdx) ?? false)
         let req = SampleTrigger(
             padKey: padKey,
-            loop: loopOverride || pad.loopPointSec != nil
-                || (loopResolver?(pid, padIdx) ?? false),
+            loop: loopOverride || (padLoopOverrides[padKey] ?? rawNatural),
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,
             pan: pan,
