@@ -355,8 +355,15 @@ class AutoKitBuilder:
                         drop.update(id(c) for c in bad_children)
                 kept = [a for a in group if id(a) not in drop]
                 if group and not kept:
-                    best = max(group, key=_score)
-                    drop.discard(id(best))
+                    # Starvation safety — but never resurrect an INAUDIBLE
+                    # member: a below-floor slice put back on the grid gets
+                    # normalize-boosted ~25 dB by the clients and plays as
+                    # pure crackle (observed: a -41 dBFS guitar TEXTURE pad
+                    # on an EDM song). A missing window beats a noise pad.
+                    audible = [a for a in group if _audible(a)]
+                    if audible:
+                        best = max(audible, key=_score)
+                        drop.discard(id(best))
             return [a for a in assets if id(a) not in drop]
 
         ranked = _dedupe_variants(list(graph.ranked_assets()))
