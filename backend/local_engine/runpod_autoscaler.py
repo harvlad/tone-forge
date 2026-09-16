@@ -294,6 +294,11 @@ _CREATE_BACKSTOP_MAX = 12
 _last_create_ts = 0.0
 _last_create_ok = False
 _create_history: list = []  # timestamps of create attempts in the window
+# Last pod-create failure body (None after a success). The API's stranded-job
+# sweep reads this to fail queued jobs FAST with an honest message when the
+# account can't rent pods at all (balance exhausted) — otherwise the client
+# spun on "Waking up an analysis worker" forever while every create 500'd.
+last_create_error: Optional[str] = None
 
 
 def _reap_exited_pods() -> None:
@@ -430,12 +435,15 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
     if _auth_id:
         body["containerRegistryAuthId"] = _auth_id
     def _post(pod_body: dict) -> Optional[str]:
+        global last_create_error
         r = requests.post(f"{_REST}/pods", headers=_headers(), json=pod_body,
                           timeout=40)
         if r.status_code in (200, 201):
+            last_create_error = None
             return (r.json() or {}).get("id")
         # THE overnight-strand failure mode: a create that fails here used
         # to vanish without a trace. Log status + body, always.
+        last_create_error = r.text[:400]
         logger.error("autoscale: pod create FAILED HTTP %s: %s",
                      r.status_code, r.text[:400])
         return None

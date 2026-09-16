@@ -710,9 +710,40 @@ async def _fail_stranded_engine_jobs() -> int:
         return 0
     now = time.time()
     last_seen = _ENGINE_PRESENCE["last_seen"]
+    # Fast-fail when the account CANNOT rent pods at all (balance
+    # exhausted): no grace period helps — every create 500s and the
+    # client would spin at "Waking up an analysis worker" until the
+    # stranded timeout. Better an immediate, honest error.
+    balance_blocked = False
+    try:
+        from local_engine import runpod_autoscaler as _asc
+        balance_blocked = (
+            _asc.enabled()
+            and "balance is too low" in (_asc.last_create_error or "")
+        )
+    except Exception:  # noqa: BLE001
+        pass
     failed = 0
     for job in _JOBS.all():
         if job.kind != "engine" or job.status != "queued":
+            continue
+        if balance_blocked:
+            await _JOBS.update(
+                job.id,
+                status="error",
+                percent=0,
+                message="Analysis is temporarily unavailable",
+                error=(
+                    "The analysis compute account is out of credit, so no "
+                    "worker can start. Your song is still uploaded — try "
+                    "again once compute is topped up."
+                ),
+            )
+            failed += 1
+            logger.error(
+                "engine job %s failed fast: pod create blocked on balance",
+                job.id,
+            )
             continue
         if now - job.created_at < limit:
             continue
