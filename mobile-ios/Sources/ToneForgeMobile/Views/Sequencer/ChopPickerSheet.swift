@@ -179,8 +179,9 @@ struct ChopPickerSheet: View {
                         Section {
                             // 4-column tile grid (same layout as Sample
                             // Packs): a 24-chop song fits on one screen
-                            // instead of a 24-row scroll. Tap previews,
-                            // long-press adds — identical to pack tiles.
+                            // instead of a 24-row scroll. Tap adds, the
+                            // corner button previews — identical to pack
+                            // tiles.
                             LazyVGrid(
                                 columns: Array(
                                     repeating: GridItem(.flexible(), spacing: 10),
@@ -549,19 +550,26 @@ private struct PadPickerCell: View {
                 .padding(.horizontal, 6)
                 .padding(.top, 6)
 
-                // Play indicator (top-right corner)
+                // Preview button (top-right corner) — a real Button so
+                // preview and add are separate targets. Tap-anywhere used
+                // to preview while add hid behind an unadvertised 0.3 s
+                // long-press: "can't add these to the launchpad".
                 VStack {
                     HStack {
                         Spacer()
-                        Image(systemName: isPlaying ? "stop.fill" : "play.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .padding(5)
-                            .background(
-                                Circle()
-                                    .fill(isPlaying ? Color.orange : Color.black.opacity(0.4))
-                            )
-                            .padding(4)
+                        Button(action: togglePreview) {
+                            Image(systemName: isPlaying ? "stop.fill" : "play.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .padding(5)
+                                .background(
+                                    Circle()
+                                        .fill(isPlaying ? Color.orange : Color.black.opacity(0.4))
+                                )
+                                .padding(4)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(isPlaying ? "Stop preview" : "Preview")
                     }
                     Spacer()
                 }
@@ -571,34 +579,39 @@ private struct PadPickerCell: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            // Tap to toggle preview
-            if isPlaying {
-                onStop()
-                withAnimation(.easeInOut(duration: 0.1)) { isPlaying = false }
-            } else {
-                let dur = onPlay()
-                withAnimation(.easeInOut(duration: 0.1)) { isPlaying = true }
-                // Auto-revert the icon when a one-shot finishes.
-                if let dur {
-                    let token = UUID()
-                    playToken = token
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: UInt64(dur * 1_000_000_000))
-                        if playToken == token {
-                            withAnimation(.easeInOut(duration: 0.1)) { isPlaying = false }
-                        }
-                    }
-                }
-            }
+            // Tap the tile = add it to the launchpad (matches the
+            // Recordings/Sequences rows in this same sheet, and web).
+            onSelect()
         }
         .onLongPressGesture(minimumDuration: 0.3, pressing: { pressing in
             withAnimation(.easeInOut(duration: 0.1)) {
                 isPressed = pressing
             }
         }, perform: {
-            // Long press to add
+            // Long-press kept as a legacy alias for add.
             onSelect()
         })
+    }
+
+    private func togglePreview() {
+        if isPlaying {
+            onStop()
+            withAnimation(.easeInOut(duration: 0.1)) { isPlaying = false }
+        } else {
+            let dur = onPlay()
+            withAnimation(.easeInOut(duration: 0.1)) { isPlaying = true }
+            // Auto-revert the icon when a one-shot finishes.
+            if let dur {
+                let token = UUID()
+                playToken = token
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: UInt64(dur * 1_000_000_000))
+                    if playToken == token {
+                        withAnimation(.easeInOut(duration: 0.1)) { isPlaying = false }
+                    }
+                }
+            }
+        }
     }
 }
 
