@@ -786,3 +786,75 @@ conversion of the lattice offset; Link launches zero it — Link owns that grid)
 Pinned by `LaunchpadControllerTests` (bar-grid quantize, single-bar free-run
 wait, boundary-anchored phase, re-anchor resets, sub-bar upgrade) and
 `ChopPlayerPhaseLockTests` (fold, phase-aware progress, frame rounding).
+
+## D-029: Pad-timing convergence onto the web/iOS contract + Launchpad Edit Mode
+
+**Date:** 2026-09-17
+**Supersedes:** the D-028 clauses "`loopLockEnabled == false` skips the phase
+join entirely" and "`nextLoopBoundary` snaps to `lockGridUnitSeconds`" (the
+rest of D-028 stands, including the two-era anchor divergence).
+
+iOS closed seven verified divergences against the web authority (mobile
+commits 77231913, 38dc6e5e, 679a874e); this port converges desktop onto the
+same contract. What was actually divergent here vs already correct:
+
+- **Rolling lock boundaries now use the REAL bar grid.** `padDown`/`replayArm`
+  route through `rollingLoopBoundary` → the shared `Quantizer.nextQuantized`
+  (`.bar`): snap to the analyzer's downbeats, extrapolate FORWARD at tempo
+  past the last one (late-song presses stayed on-grid on web/iOS, fired into
+  a synthetic lattice here) and BACKWARD from grid[0] on long intros (web
+  `_transportLaunchTime`, padengine.js:1014/:1023/:1047). The old
+  k·bar-from-song-0 lattice was exactly the constant-tempo drift bug the web
+  fixed — desktop never armed pads onto the song's real bars. Full-cycle
+  lattice remains only with no bar data at all (web `_lockLaunchTime`
+  fallback); its grace aligned 0.12 → 0.08 s (web LOOP_LOCK_GRACE_SEC).
+- **EVERY looping trigger phase-joins its era** (web anchors/joins
+  unquantized launches too — padengine.js:1166/:1269-1273). Lock off now
+  means "no lattice wait" (the user's Quantize control governs, sub-bar
+  floored to `.bar` via `loopQuantize`, `.off` = start NOW), never "no
+  join". The lock toggle is the quantize switch for loops, not the
+  phase-lock switch.
+- **Silence = no sounding VOICE, not no latched pad.** The free-run re-anchor
+  consults `isAnyVoiceSounding` (SessionController → ChopPlayer
+  `soundingVoiceCount`) in addition to `activePads`; a still-ringing one-shot
+  holds the lattice (web `_voices.size`, padengine.js:1154). ChopPlayer
+  one-shots now free their slot on natural end via a gen-guarded
+  `.dataPlayedBack` completion, so the count reflects what actually sounds.
+- **Sample-accurate starts gated on live render clocks.** `play(at: hostTime)`
+  is silently ignored by a player whose own `lastRenderTime` is invalid
+  (iOS 679a874e) — and desktop attaches voices lazily, so a stack-another-pad
+  quantized press routinely landed on a never-rendered node and armed
+  forever. `scheduleStart` gates on engine + player render validity, falls
+  back to a deferred dispatch `play()`, and parks a `pendingPlay` work item
+  on BOTH paths as armed marker + cancel token (release kills a
+  not-yet-started voice).
+- **20 ms release fade** (`releaseFadeSec`, web release :1296 / iOS
+  `releaseSlot`): `release`/`stopAll` free the slot immediately (accounting
+  never waits out the fade) and ramp the voice mixer to zero before
+  `stop()` — the latch toggle-off used to hard-cut mid-body. `reattach`
+  keeps the hard stop (device-flap window).
+- **Already correct from D-022/D-028** (verified, no change): shared-cycle
+  tiling with the analyzer-region gate (`loopScore != nil` = web
+  `hasRegion`), the CYCLE as the join divisor and playhead period, pre-shift
+  boundary anchoring, phase-aware `loopProgress`, round-the-length frame
+  counts, immediate latch-off release routing.
+
+**Launchpad Edit Mode** (iOS 602a9043 parity): pencil chip in the panel
+header (`launchpadEditChip`, persisted `jam.launchpad.editMode`, default
+OFF). Edit OFF = pure performance pads — right-click radial, hover "⋯",
+move mode and clear-all are disarmed (`LaunchpadController
+.editAffordanceEnabled`, pinned in tests); empty-pad Add Sound stays in both
+modes. Desktop had NO hold timer (right-click is its edit gesture), so
+unlike iOS nothing ever cut a held voice — this is the semantic half of the
+parity contract, not a latency fix.
+
+**Where:** `LaunchpadController.swift` (`rollingLoopBoundary`,
+`loopQuantize`, `isAnyVoiceSounding`/`surfaceIsSilent`, `padDown`,
+`replayArm`, `editAffordanceEnabled`), `ChopPlayer.swift` (`scheduleStart`,
+`fadeOutAndStop`, `.dataPlayedBack` one-shot completion, `pendingPlay`/
+`fadeTask` voice state), `SessionController.swift` (sounding provider),
+`LaunchpadPanelView.swift` (`launchpadEditChip`, PadCell `editing` gate).
+Pinned by `LaunchpadControllerTests` (real-grid snap, forward/backward
+extrapolation, lock-off instant + join, sounding-voice anchor hold, edit
+gate) and `ChopPlayerFileReleaseTests` (immediate release accounting,
+armed-start cancel, one-shot natural-end clear).

@@ -96,8 +96,9 @@ features:
         evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Jam/JamView.swift#launchpadEditChip"
         note: "SEMANTIC: Edit OFF (the default) means ZERO gesture-recognition tax on pad touch-down — PadTouchUIView arms no long-press timer at all when no hold consumer exists, so a hold sustains instead of being hijacked (voice-cut + radial) at 0.5 s. It is NOT merely a hidden menu. Edit ON restores the hold-radial (Add Sound / Chop / Loop / Effects / Sequence / Delete). Empty-pad tap still opens Add Sound in both modes (not a performance path). The 64-grid and borrow pads share the SamplePadGrid4x4 tile component, so the rule covers them."
       desktop:
-        status: missing
-        note: "Follow-up — jam-desktop LaunchpadPanelView keeps its pad edit affordances always-on."
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Launchpad/LaunchpadPanelView.swift#launchpadEditChip"
+        note: "Pencil Edit chip on the panel header, persisted (jam.launchpad.editMode), default OFF. Edit OFF = pure performance pads: right-click radial, hover ⋯ hint, move mode and clear-all are all disarmed (LaunchpadController.editAffordanceEnabled, test-pinned); Edit ON restores them. Empty-pad click still opens Add Sound in both modes. SEMANTIC NOTE: desktop never had a hold timer (right-click is its edit gesture), so unlike iOS there was no voice-cut bug to fix — this row is the surface-contract half of the parity (edit gestures disarmed by default), not a latency fix."
       plugin:
         status: na
         note: "JUCE pad surface has no radial editing to gate."

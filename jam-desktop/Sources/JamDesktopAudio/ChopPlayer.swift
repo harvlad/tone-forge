@@ -69,6 +69,17 @@ public final class ChopPlayer {
         /// (USB plug): AVAudioEngine.connect threw NSException mid-
         /// UpdateGraphAfterReconfig.
         var outputWired: Bool = false
+        /// Armed marker + cancel token for a quantized (future) start —
+        /// present on BOTH start paths (mobile SampleVoicePool parity):
+        /// on the sample-accurate path it only flips armed→started at
+        /// the deadline; on the dispatch fallback it carries the actual
+        /// deferred play(). release() cancels it so a voice released
+        /// before its boundary dies silently instead of firing anyway.
+        var pendingPlay: DispatchWorkItem?
+        /// In-flight 20 ms release fade (releaseFadeSec). Cancelled when
+        /// the slot is re-claimed so a late `stop()` can't kill the new
+        /// voice.
+        var fadeTask: Task<Void, Never>?
     }
 
     private enum VoiceKey: Hashable {
@@ -391,6 +402,13 @@ public final class ChopPlayer {
         // it's the same stem (a same-stem retrigger keeps the duck, no blip).
         let takeoverStem: String? = { if case .chop(let s, _) = key { return s }; return nil }()
         if voices[index].takeoverStem != takeoverStem { endTakeover(index) }
+        // Kill the slot's prior async state BEFORE reuse: a still-armed
+        // start must not fire under the new voice, and an in-flight
+        // release fade's terminal stop() must not cut it.
+        voices[index].pendingPlay?.cancel()
+        voices[index].pendingPlay = nil
+        voices[index].fadeTask?.cancel()
+        voices[index].fadeTask = nil
 
         var voice = voices[index]
         voice.node.stop()
@@ -455,9 +473,16 @@ public final class ChopPlayer {
             // One-shot: read the region into a buffer and micro-fade its
             // edges so a slice that doesn't start/end on a zero-crossing
             // (stabs, drum hits) doesn't click on attack or tail. On natural
-            // end, restore the taken-over stem (gen-guarded against reuse).
-            voice.node.scheduleBuffer(buffer, at: nil, options: [],
-                                      completionHandler: oneShotCompletion(index, gen: capturedGen))
+            // end (.dataPlayedBack = audible-complete, not merely consumed
+            // by the render loop) restore the taken-over stem AND free the
+            // slot (gen-guarded against reuse) — web source.onended,
+            // padengine.js:1242-1256. Without the slot clear a finished
+            // stab held its voice "sounding" forever and the free-run
+            // re-anchor check saw a dead jam as live (iOS fix 77231913 #7).
+            voice.node.scheduleBuffer(
+                buffer, at: nil, options: [],
+                completionCallbackType: .dataPlayedBack,
+                completionHandler: oneShotCompletion(index, gen: capturedGen))
             voice.loopFrames = nil
             voice.phaseFrames = 0
         } else {
@@ -469,9 +494,9 @@ public final class ChopPlayer {
             voices[index] = voice
             return
         }
-        voice.node.play(at: playTime(afterSeconds: effectiveDelay))
         voice.key = key
         voices[index] = voice
+        scheduleStart(index: index, afterSeconds: effectiveDelay, gen: capturedGen)
         // Begin the new takeover AFTER the struct write-back (which would
         // otherwise clobber takeoverStem). Skip if already taking over this
         // same stem on this voice (same-stem retrigger — count unchanged).
@@ -480,17 +505,29 @@ public final class ChopPlayer {
         }
     }
 
-    /// Completion handler for a one-shot voice: on the audio thread when the
-    /// buffer finishes (or the node is stopped). Hops to the main actor and
-    /// ends the takeover only if this slot hasn't since been reused (gen
-    /// match). endTakeover is idempotent, so a stop-then-complete is safe.
-    private nonisolated func oneShotCompletion(_ index: Int, gen: Int) -> AVAudioNodeCompletionHandler {
-        { [weak self] in
+    /// Completion handler for a one-shot voice: fired when the audio has
+    /// PLAYED OUT (.dataPlayedBack; a stop() fires it early too). Hops to
+    /// the main actor and — only if this slot hasn't since been reused
+    /// (gen match) — ends the takeover and FREES the slot, so
+    /// `soundingVoiceCount` reflects what is actually audible (the
+    /// free-run re-anchor and idle-voice reuse both key on it).
+    /// endTakeover is idempotent, so a stop-then-complete is safe; a
+    /// stopped voice was already freed by release(), and the gen guard
+    /// makes the late callback a no-op after any retrigger.
+    private nonisolated func oneShotCompletion(
+        _ index: Int, gen: Int
+    ) -> AVAudioPlayerNodeCompletionHandler {
+        { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 guard self.voices.indices.contains(index),
                       self.voices[index].gen == gen else { return }
                 self.endTakeover(index)
+                // Loops never arrive here (no completion scheduled); only
+                // clear a one-shot's claim.
+                if self.voices[index].loopFrames == nil {
+                    self.voices[index].key = nil
+                }
             }
         }
     }
@@ -740,13 +777,16 @@ public final class ChopPlayer {
         }
     }
 
+    /// 20 ms release fade (web padengine.js release :1296; mobile
+    /// SampleVoicePool.releaseFadeSec). A latched loop toggled off used
+    /// to hard-stop mid-body — an audible click no other surface has.
+    public static let releaseFadeSec: Double = 0.020
+
     /// Stop the voice sounding `assignment`'s chop (pad released).
     public func release(_ assignment: PadAssignment) {
         let key = VoiceKey.chop(stem: assignment.stem, idx: assignment.chop.idx)
         for index in voices.indices where voices[index].key == key {
-            endTakeover(index)
-            voices[index].node.stop()
-            voices[index].key = nil
+            fadeOutAndStop(index)
         }
     }
 
@@ -756,17 +796,58 @@ public final class ChopPlayer {
     public func release(fileURL url: URL) {
         let key = VoiceKey.file(url)
         for index in voices.indices where voices[index].key == key {
-            endTakeover(index)
-            voices[index].node.stop()
-            voices[index].key = nil
+            fadeOutAndStop(index)
         }
     }
 
     public func stopAll() {
-        for index in voices.indices {
-            endTakeover(index)
+        for index in voices.indices where voices[index].key != nil {
+            fadeOutAndStop(index)
+        }
+    }
+
+    /// Release a voice: free the slot IMMEDIATELY (accounting must not
+    /// wait out the fade — re-triggers, `soundingVoiceCount` and the
+    /// free-run silence check all read it), then stop the node.
+    ///
+    /// - Armed, not yet audible (pendingPlay set): cancel the deadline
+    ///   item and hard-stop — `stop()` also discards a sample-accurate
+    ///   scheduled start; there is nothing audible to fade.
+    /// - Sounding: ramp the voice mixer to zero over `releaseFadeSec`
+    ///   (8 steps, mobile releaseSlot parity) and stop at the bottom —
+    ///   web's 20 ms gain ramp. Gen-guarded + cancellable so a slot
+    ///   reused mid-fade is never stopped by the stale fade.
+    private func fadeOutAndStop(_ index: Int) {
+        endTakeover(index)
+        voices[index].key = nil
+        voices[index].loopFrames = nil
+        voices[index].phaseFrames = 0
+        if let pending = voices[index].pendingPlay {
+            pending.cancel()
+            voices[index].pendingPlay = nil
+            voices[index].fadeTask?.cancel()
+            voices[index].fadeTask = nil
             voices[index].node.stop()
-            voices[index].key = nil
+            return
+        }
+        voices[index].fadeTask?.cancel()
+        let node = voices[index].node
+        let mixer = voices[index].mixer
+        let startVol = mixer.outputVolume
+        let gen = voices[index].gen
+        voices[index].fadeTask = Task { @MainActor [weak self] in
+            let steps = 8
+            let stepSec = Self.releaseFadeSec / Double(steps)
+            for step in 1...steps {
+                if Task.isCancelled { return }
+                mixer.outputVolume = startVol * Float(steps - step) / Float(steps)
+                try? await Task.sleep(nanoseconds: UInt64(stepSec * 1_000_000_000))
+            }
+            if Task.isCancelled { return }
+            node.stop()
+            guard let self, self.voices.indices.contains(index),
+                  self.voices[index].gen == gen else { return }
+            self.voices[index].fadeTask = nil
         }
     }
 
@@ -801,6 +882,13 @@ public final class ChopPlayer {
     public func reattach() {
         for index in voices.indices {
             endTakeover(index)
+            // Hard stop, no fade: reattach fires while the graph is
+            // rebuilding — the one window where touching nodes gently
+            // is NOT safer. Cancel any armed start / in-flight fade too.
+            voices[index].pendingPlay?.cancel()
+            voices[index].pendingPlay = nil
+            voices[index].fadeTask?.cancel()
+            voices[index].fadeTask = nil
             voices[index].node.stop()
             voices[index].key = nil
             // Mark unwired; the next trigger lazily rewires at canonical.
@@ -931,9 +1019,57 @@ public final class ChopPlayer {
         return index
     }
 
-    private func playTime(afterSeconds delay: Double) -> AVAudioTime? {
-        guard delay > 0.001 else { return nil }  // nil = play immediately
-        let ticks = UInt64(delay * TransportClock.ticksPerSecond())
-        return AVAudioTime(hostTime: mach_absolute_time() + ticks)
+    /// Start a claimed voice now or at a future boundary. Future starts
+    /// are SAMPLE-ACCURATE via `play(at: AVAudioTime(hostTime:))` — but
+    /// only once BOTH render clocks are live: `play(at:)` throws from
+    /// AVAudioPlayerNodeImpl::StartImpl before the engine's first render,
+    /// and a freshly-attached player whose own `lastRenderTime` is
+    /// invalid silently IGNORES a hostTime start, leaving the voice
+    /// armed forever (iOS 679a874e; the desktop pool attaches voices
+    /// lazily, so a stack-another-pad press routinely lands on a
+    /// never-rendered node). Those cases fall back to a deferred
+    /// dispatch `play()` (~1 ms jitter, boot-window only). BOTH paths
+    /// park a DispatchWorkItem on the slot as the armed marker + cancel
+    /// token — releasing a not-yet-started voice must kill it
+    /// (`player.stop()` discards a scheduled start; the fallback item is
+    /// simply cancelled).
+    private func scheduleStart(index: Int, afterSeconds delay: Double, gen: Int) {
+        let node = voices[index].node
+        guard delay > 0.001 else {
+            node.play()
+            return
+        }
+        let engineRendered = avEngine.outputNode
+            .lastRenderTime?.isSampleTimeValid ?? false
+        let playerRendered = node.lastRenderTime?.isSampleTimeValid ?? false
+        let item: DispatchWorkItem
+        if engineRendered && playerRendered {
+            let ticks = UInt64(delay * TransportClock.ticksPerSecond())
+            node.play(at: AVAudioTime(hostTime: mach_absolute_time() + ticks))
+            // Sample-accurate path: the deadline item only clears the
+            // armed marker (the start itself is already scheduled).
+            item = DispatchWorkItem { [weak self] in
+                Task { @MainActor in
+                    guard let self, self.voices.indices.contains(index),
+                          self.voices[index].gen == gen else { return }
+                    self.voices[index].pendingPlay = nil
+                }
+            }
+        } else {
+            item = DispatchWorkItem { [weak self] in
+                // play() straight from the dispatch thread (thread-safe,
+                // and hopping actors first would add jitter); the
+                // bookkeeping hop follows.
+                node.play()
+                Task { @MainActor in
+                    guard let self, self.voices.indices.contains(index),
+                          self.voices[index].gen == gen else { return }
+                    self.voices[index].pendingPlay = nil
+                }
+            }
+        }
+        voices[index].pendingPlay = item
+        DispatchQueue.global(qos: .userInteractive)
+            .asyncAfter(deadline: .now() + delay, execute: item)
     }
 }

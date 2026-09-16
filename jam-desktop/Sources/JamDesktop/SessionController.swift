@@ -529,6 +529,18 @@ final class SessionController: ObservableObject {
         launchpad.isTransportPlaying = { [weak self] in
             self?.transport.isPlaying ?? false
         }
+        // Free-run re-anchor silence check: the lattice anchor must hold
+        // while ANY voice is audible or armed — including a one-shot
+        // still ringing after its pad left activePads (web keeps
+        // _lockAnchor while _voices.size > 0, padengine.js:1154).
+        // ChopPlayer clears one-shot claims on natural end
+        // (.dataPlayedBack), so this count reflects what actually
+        // sounds. Pack-pad voices live in their own player and aren't
+        // counted; their pads sit in activePads while held, which the
+        // controller also consults.
+        launchpad.isAnyVoiceSounding = { [weak self] in
+            (self?.chopPlayer.soundingVoiceCount ?? 0) > 0
+        }
         launchpad.onLocalSampleTrigger = { [weak self] id in
             guard let self, let url = try? self.padSampleStore.wavURL(id: id) else { return }
             self.chopPlayer.trigger(file: url, startSec: nil, endSec: nil)

@@ -42,6 +42,15 @@ struct LaunchpadPanelView: View {
     @State private var radialMenuState: PadRadialMenuState?
     @State private var showSequencerEditor = false
     @State private var moveMode = false
+    /// Launchpad Edit Mode (web/iOS parity, iOS commit 602a9043): OFF by
+    /// default = the pads are a pure performance surface — no edit
+    /// gesture armed on filled pads (right-click radial + hover "⋯" are
+    /// the desktop edit gestures; there is no hold timer here, so unlike
+    /// iOS nothing ever cut a held voice — this gate is the SEMANTIC
+    /// half of the contract). ON = radial, move mode and clear-all.
+    /// Empty-pad Add Sound stays available in both modes. Persisted
+    /// (same UserDefaults pattern as iOS JamSettingsStore).
+    @AppStorage("jam.launchpad.editMode") private var editMode = false
     @State private var dragSourcePad: Int?
     @State private var showLayers = false
     /// Arrangement section strip is collapsed by default so it doesn't eat grid
@@ -394,6 +403,28 @@ struct LaunchpadPanelView: View {
 
     // MARK: - Header
 
+    /// Edit Mode toggle (the PARITY.yaml `launchpad-edit-mode` desktop
+    /// anchor; iOS twin: JamView.swift#launchpadEditChip). Pencil chip:
+    /// OFF (default) = pure performance pads — right-click radial, hover
+    /// "⋯", move mode and clear-all are all disarmed; ON = the editing
+    /// affordances return. Leaving Edit also exits move mode so a
+    /// pass-through drag surface can't outlive its chrome.
+    private var launchpadEditChip: some View {
+        Button {
+            editMode.toggle()
+            if !editMode { moveMode = false }
+        } label: {
+            Label("Edit", systemImage: "pencil")
+                .font(.caption)
+                .foregroundStyle(editMode ? JamTheme.accent : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(editMode
+            ? "Exit Edit mode — pads go back to pure performance"
+            : "Edit mode: right-click pads for chop/effects/loop/sequence, move + clear")
+        .accessibilityIdentifier("launchpad-edit-chip")
+    }
+
     private var header: some View {
         // Title + move/reset in one line, then the hardware status as a small
         // caption underneath — it used to float to the right via a Spacer,
@@ -403,25 +434,31 @@ struct LaunchpadPanelView: View {
                 Text("Launchpad")
                     .font(.title3.bold())
 
-                Button {
-                    moveMode.toggle()
-                } label: {
-                    Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
-                        .font(.body)
-                        .foregroundStyle(moveMode ? JamTheme.accent : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help(moveMode ? "Exit move mode" : "Move mode: drag pads to swap positions")
+                launchpadEditChip
 
-                Button {
-                    resetAllAssignments()
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
+                // Move + clear-all are edit affordances: hidden until Edit
+                // is on so the default surface is performance-only.
+                if editMode {
+                    Button {
+                        moveMode.toggle()
+                    } label: {
+                        Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                            .font(.body)
+                            .foregroundStyle(moveMode ? JamTheme.accent : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(moveMode ? "Exit move mode" : "Move mode: drag pads to swap positions")
+
+                    Button {
+                        resetAllAssignments()
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear all pad assignments")
                 }
-                .buttonStyle(.plain)
-                .help("Clear all pad assignments")
 
                 if !embedded {
                     Spacer()
@@ -1036,6 +1073,7 @@ struct LaunchpadPanelView: View {
                                 transformHost: session.transformHost,
                                 analysisId: model.session?.bundle.analysisId,
                                 moveMode: moveMode,
+                                editing: editMode,
                                 isDragSource: dragSourcePad == padIdx,
                                 onShowRadial: { state in
                                     radialMenuState = state
@@ -1097,6 +1135,11 @@ private struct PadCell: View {
     let transformHost: PadTransformHost
     let analysisId: String?
     let moveMode: Bool
+    /// Launchpad Edit Mode: false = performance surface — the pad arms
+    /// NO edit gesture (right-click radial / hover "⋯") when it has
+    /// content. Empty pads keep Add Sound regardless
+    /// (LaunchpadController.editAffordanceEnabled).
+    let editing: Bool
     let isDragSource: Bool
     /// Open radial menu at this pad.
     let onShowRadial: (PadRadialMenuState) -> Void
@@ -1187,9 +1230,10 @@ private struct PadCell: View {
             .overlay { moveModeOverlay }
             .overlay { playheadOverlay }
             // Right-click affordance (UX audit fix #3): the radial menu was
-            // invisible. A ⋯ on hover says "this pad has more".
+            // invisible. A ⋯ on hover says "this pad has more". Edit-gated:
+            // outside Edit there is no radial to advertise.
             .overlay(alignment: .topTrailing) {
-                if hovered, hasContent, !moveMode {
+                if hovered, hasContent, !moveMode, editing {
                     Image(systemName: "ellipsis.circle.fill")
                         .font(.system(size: 13))
                         .foregroundStyle(.white.opacity(0.55))
@@ -1372,6 +1416,12 @@ private struct PadCell: View {
 
     private func handleRightClick() {
         guard !moveMode else { return }
+        // Edit Mode gate (iOS 602a9043 parity): outside Edit a FILLED pad
+        // arms no edit gesture — right-click is a no-op, the surface is
+        // performance-only. An empty pad's Add Sound radial stays live in
+        // both modes (not a performance path).
+        guard LaunchpadController.editAffordanceEnabled(
+            editing: editing, hasContent: hasContent) else { return }
         showRadialMenu()
     }
 
