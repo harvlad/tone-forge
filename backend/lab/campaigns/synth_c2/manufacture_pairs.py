@@ -106,7 +106,10 @@ def load_separator():
 
 
 def process_track(tdir: Path, out_root: Path, residual, variants) -> int:
-    mix, _ = sf.read(tdir / "mix.flac", dtype="float32")
+    mix_p = tdir / "mixture.flac"
+    if not mix_p.exists():
+        mix_p = tdir / "mix.flac"
+    mix, _ = sf.read(mix_p, dtype="float32")
     syn, _ = sf.read(tdir / "synth.flac", dtype="float32")
     n = min(len(mix), len(syn))
     mix, syn = _to_stereo(mix[:n]), _to_stereo(syn[:n])
@@ -143,7 +146,8 @@ def main() -> int:
     want = {v.strip() for v in args.variants.split(",")}
     variants = [v for v in VARIANTS if v["id"] in want]
     residual = load_separator()
-    tracks = sorted(p for p in Path(args.src).iterdir() if (p / "mix.flac").exists())
+    tracks = sorted(p for p in Path(args.src).iterdir()
+                    if (p / "mixture.flac").exists() or (p / "mix.flac").exists())
     if args.limit:
         tracks = tracks[: args.limit]
     total = 0
