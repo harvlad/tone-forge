@@ -34,9 +34,9 @@ hb preflight ok
 # ---- fetch P1 bundle (subset tarball staged by the ignition script) ----
 hb fetch start
 curl -fsSL -o p1_subset.tgz "$JAMN_FACTORY/synth_c2_p1_subset.tgz" || { echo "FATAL subset fetch"; exit 3; }
-tar xzf p1_subset.tgz && rm p1_subset.tgz          # -> slakh_synth_p1/{train,valid}
-curl -fsSL -o c5_bundle.tgz "$JAMN_FACTORY/c5_bundle.tgz" && tar xzf c5_bundle.tgz && rm c5_bundle.tgz
-curl -fsSL -o campaign.tgz "$JAMN_FACTORY/synth_c2_code.tgz" && tar xzf campaign.tgz && rm campaign.tgz
+tar --no-same-owner -xzf p1_subset.tgz && rm p1_subset.tgz          # -> slakh_synth_p1/{train,valid}
+curl -fsSL -o c5_bundle.tgz "$JAMN_FACTORY/c5_bundle.tgz" && tar --no-same-owner -xzf c5_bundle.tgz && rm c5_bundle.tgz
+curl -fsSL -o campaign.tgz "$JAMN_FACTORY/synth_c2_code.tgz" && tar --no-same-owner -xzf campaign.tgz && rm campaign.tgz
 pip install -q soundfile pyyaml demucs 2>&1 | tail -1
 git clone -q https://github.com/ZFTurbo/Music-Source-Separation-Training msst \
   && cd msst && git checkout -q "${MSST_REF:-master}" && pip install -q -r requirements.txt 2>&1 | tail -1 && cd ..
