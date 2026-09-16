@@ -63,6 +63,18 @@ assert.equal(resolvePadCount("?pads=32", null), 16); // not a real layout
 assert.equal(resolvePadCount(null, "banana"), 16);
 assert.equal(resolvePadCount(undefined, undefined), 16);
 
+// Edit-mode preference (launchpad-edit-mode contract): ONLY a stored "1"
+// opts into edit affordances — unset/garbage/legacy junk must all resolve
+// to the performance-pure default OFF, never accidentally arm the
+// long-press hijack.
+const { resolveEditMode } = K._internals;
+assert.equal(resolveEditMode("1"), true);
+assert.equal(resolveEditMode("0"), false);
+assert.equal(resolveEditMode(null), false);
+assert.equal(resolveEditMode(undefined), false);
+assert.equal(resolveEditMode("true"), false); // strict — not a boolean parse
+assert.equal(resolveEditMode(""), false);
+
 // Layer picker: categories present in fixed order; members best
 // performanceScore first with loopScore fallback (native pads(in:)).
 const { layerCategories, padsInCategory } = K._internals;

@@ -113,6 +113,14 @@
   color: var(--jamn-accent, #8B5CF6);
 }
 
+/* Edit chip (launchpad-edit-mode parity): ON gets a faint accent fill on
+ * top of the shared .kit-toggle.is-on outline so "pads are editable right
+ * now" reads at a glance — the mode changes what a hold/right-click DOES,
+ * not just a panel's visibility. */
+.kit-toggle.kit-edit.is-on {
+  background: rgba(139, 92, 246, 0.14);
+}
+
 /* Latch only means something in Loop mode — fade it in Tap. */
 .kit-toggle.is-disabled {
   opacity: 0.4;

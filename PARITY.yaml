@@ -89,8 +89,9 @@ features:
     name: Launchpad Edit mode — zero-latency pads by default, hold-radial behind an Edit toggle
     platforms:
       web:
-        status: missing
-        note: "kit.js long-press radial is still always-on; follow-up — add the Edit toggle and drop hold recognition on pads when it's off."
+        status: done
+        evidence: "backend/static/kit.js#setEditMode"
+        note: "What web actually armed pre-fix: EVERY primary pointerdown set a 450 ms long-press timer whose firing called padUp (releasing the held voice) then opened the radial — the same hold-hijack iOS 602a9043 fixed, live on both mouse and touch — plus contextmenu → radial. Now: pencil Edit chip beside the 16|64/quantize chips (kit-toggle pattern), persisted jamn.kit.edit (jamn.kit.pads pattern), default OFF. Edit OFF arms NO timer on pointerdown (zero recognition tax; pointermove tracking already no-ops when no timer exists) and right-click opens nothing; the browser context menu stays suppressed in both modes so a touch long-press can't pop selection UI mid-performance. Edit ON = the radial exactly as it was. HONEST DEVIATION: web has no empty-pad Add Sound to preserve — empty tiles are disabled buttons (kit.js buildPadTile); adding sounds on web lives in header chrome (+ Add from another song / chop Load / radial Add sound), which the toggle does not gate."
       ios:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Jam/JamView.swift#launchpadEditChip"

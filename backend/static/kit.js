@@ -104,6 +104,14 @@
     return v === 64 ? 64 : 16;
   }
 
+  /** Edit-mode preference (persisted jamn.kit.edit): only a stored "1" is
+   * ON — unset, "0" or garbage all mean the default OFF, because the
+   * default is the CONTRACT (launchpad-edit-mode parity): pads are pure
+   * performance until the player explicitly opts into editing. */
+  function resolveEditMode(stored) {
+    return stored === "1";
+  }
+
   /** Normalize the /api/sample-packs catalog into sound-picker rows.
    * Accepts the raw `{packs:[...]}` response or a bare array; drops
    * entries without a packId. Pure — the picker sheet renders the result.
@@ -555,6 +563,12 @@
         kitKind: (opts && opts.kind && opts.kind !== "auto") ? opts.kind : null,
         view: "grid", // "grid" | "layers" (desktop LayerStackView port)
         padCount: 16, // 16 (4×4) or 64 (8×8 compact); resolved below
+        // Launchpad Edit Mode (iOS 602a9043 / desktop 02784521 contract):
+        // OFF (default) = performance-pure pads — no long-press timer armed,
+        // no right-click radial; ON = today's edit affordances. Resolved
+        // from localStorage below (jamn.kit.pads pattern).
+        editMode: false,
+        editBtn: null,
         layersEl: null,
         layerRows: null, // category → row elements, built by renderLayers
         // Usage feedback (assetId-keyed play/skip events, batched to
@@ -610,6 +624,8 @@
         var stored = window.localStorage ? window.localStorage.getItem("jamn.kit.pads") : null;
         current.padCount = resolvePadCount(
           window.location && window.location.search, stored);
+        current.editMode = resolveEditMode(
+          window.localStorage ? window.localStorage.getItem("jamn.kit.edit") : null);
       } catch (_) {}
       renderShell(current);
       // Feedback batches every 20 s (native parity); unmount flushes the
@@ -1000,6 +1016,22 @@
       sizeSeg.appendChild(b);
     });
 
+    // Edit chip (launchpad-edit-mode parity, iOS/desktop pencil chip). OFF
+    // (default) = performance-pure pads: pointerdown arms NO long-press
+    // timer (whose 450 ms firing used to padUp the held voice and pop the
+    // radial — a hold-hijack, not just a hidden menu) and right-click opens
+    // nothing. ON restores the radial exactly as it was.
+    var editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "kit-toggle kit-edit" + (s.editMode ? " is-on" : "");
+    editBtn.textContent = "✎ Edit";
+    editBtn.title = "Edit pads — hold or right-click a pad for its menu. "
+      + "Off = pads are pure performance: nothing interrupts a hold.";
+    editBtn.addEventListener("click", function () {
+      setEditMode(s, !s.editMode);
+    });
+    s.editBtn = editBtn;
+
     // Tap / Loop / Latch segmented toggle (DEFAULT Tap). One 3-way control:
     // Tap = one-shots, Loop = hold-to-play loops, Latch = loops that keep
     // playing after release (mode "loop" + s.latch). Latch used to be a
@@ -1119,6 +1151,7 @@
 
     controls.appendChild(viewSeg);
     controls.appendChild(sizeSeg);
+    controls.appendChild(editBtn);
     controls.appendChild(quant);
     controls.appendChild(seg);
     controls.appendChild(chopGroup);
@@ -1741,6 +1774,25 @@
       s.root.classList.toggle("kit-is-64", s.padCount === 64);
     } catch (_) {}
     if (s.gridEl) s.gridEl.classList.toggle("kit-grid-64", s.padCount === 64);
+  }
+
+  // ---------- Edit mode (launchpad-edit-mode parity) ----------
+
+  /** Flip Edit mode and persist it (jamn.kit.pads pattern). Edit is the
+   * single authority the pad handlers consult (desktop's
+   * editAffordanceEnabled): OFF disarms the long-press timer and the
+   * right-click radial at their entry points — the gesture recognition
+   * itself, not just its menu. Leaving Edit also dismisses an open radial
+   * so no orphaned edit chrome outlives the mode. */
+  function setEditMode(s, on) {
+    on = !!on;
+    if (s.editMode === on) return;
+    s.editMode = on;
+    try {
+      if (window.localStorage) window.localStorage.setItem("jamn.kit.edit", on ? "1" : "0");
+    } catch (_) {}
+    if (s.editBtn) s.editBtn.classList.toggle("is-on", on);
+    if (!on) closeRadial(s);
   }
 
   function setPadCount(s, n) {
@@ -2492,8 +2544,12 @@
         // Long-press ≥450 ms = the radial gesture (mobile hold-radial
         // parity; also the only path on touch, where contextmenu may
         // never fire). Movement past ~8 px cancels — that's a scrub.
+        // Edit OFF arms NOTHING here: no timer exists to hijack a hold,
+        // so a sustained press just keeps sounding (the timer's firing
+        // padUp()s the voice — with Edit off that would cut every hold
+        // at 450 ms, the exact bug iOS 602a9043 fixed).
         var p = s.padEls[padIdx];
-        if (p) {
+        if (p && s.editMode) {
           clearLp();
           p.lpX = ev.clientX;
           p.lpY = ev.clientY;
@@ -2523,10 +2579,15 @@
     };
     el.addEventListener("pointerup", up);
     el.addEventListener("pointercancel", up);
-    // Right-click = the same radial menu, never the browser menu.
+    // Right-click = the same radial menu, never the browser menu. The
+    // browser menu stays suppressed in BOTH modes — some mobile browsers
+    // fire contextmenu from a touch long-press, and selection/menu UI
+    // popping mid-performance is its own hijack — but the radial only
+    // opens in Edit mode.
     el.addEventListener("contextmenu", function (ev) {
       ev.preventDefault();
       clearLp();
+      if (!s.editMode) return;
       try {
         openRadial(s, padIdx, ev.clientX, ev.clientY);
       } catch (_) {}
@@ -4947,6 +5008,7 @@
       pickInstantGroove: pickInstantGroove,
       fmtTime: fmtTime,
       resolvePadCount: resolvePadCount,
+      resolveEditMode: resolveEditMode,
       layerCategories: layerCategories,
       padsInCategory: padsInCategory,
       padStepFlags: padStepFlags,
