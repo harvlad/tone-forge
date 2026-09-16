@@ -11,7 +11,9 @@
 // PadTouchOverlay(rows: 4) for multi-touch + slide migration.
 // Empty tiles show "+" and open the pad source sheet on tap;
 // long-press opens the effects editor / source sheet exactly like
-// the 8×8 grid.
+// the 8×8 grid — but ONLY when `editing` is on (holdRadialEnabled):
+// with editing off (Jam's default) or on stage, the overlay gets no
+// long-press handler and pad holds are pure performance.
 
 import SwiftUI
 import ToneForgeEngine
@@ -42,6 +44,14 @@ struct SamplePadGrid4x4: View {
     /// tap-to-add), the hold-radial is off, filled tiles run hotter and
     /// glow while ringing. Jam keeps the workbench (stage = false).
     var stage: Bool = false
+    /// EDIT gate (launchpad-edit-mode): when false, the hold-radial
+    /// recognition doesn't exist — PadTouchOverlay gets NO long-press
+    /// handler, so no hold timer is armed on touch-down and a sustained
+    /// hold plays out instead of being hijacked (voice cut + radial) at
+    /// 0.5 s. Jam's Edit chip drives this; Contribute's workbench keeps
+    /// the default (true). Empty-pad tap→Add Sound is unaffected — it
+    /// rides touch-down, not a hold.
+    var editing: Bool = true
     /// Grid dimensions. Default 4×4 = the top-left sample quadrant (the
     /// original Contribute/Perform/Jam-16 rack). Jam's 64 Launchpad passes
     /// 8×8 so the FULL grid renders with these same rich tiles — hold→radial
@@ -101,9 +111,16 @@ struct SamplePadGrid4x4: View {
                             let (gridRow, gridCol) = gridIndex(row: row, col: col)
                             coordinator.touchPadUp(row: gridRow, col: gridCol)
                         },
-                        onLongPress: { row, col in
-                            // Stage mode is play-only — no edit radial.
-                            guard !stage else { return }
+                        // nil (not a no-op closure) when the radial is off:
+                        // the overlay arms no hold timer at all, so
+                        // performance holds are never released at 0.5 s.
+                        // Stage was previously "guarded" inside the handler,
+                        // which still let the timer CUT the voice — holds on
+                        // the Perform stage died silently at half a second.
+                        onLongPress: !Self.holdRadialEnabled(
+                            editing: editing, stage: stage)
+                        ? nil
+                        : { row, col in
                             let (gridRow, gridCol) = gridIndex(row: row, col: col)
                             // Anchor the wheel on the pressed pad; clamp
                             // keeps the full wheel on-screen near edges so
@@ -246,6 +263,15 @@ struct SamplePadGrid4x4: View {
     }
 
     // MARK: - Radial Menu
+
+    /// The ONE decision for whether the hold-radial recognition exists
+    /// on this surface (launchpad-edit-mode). Pure and pinned by
+    /// SamplePadGrid4x4Tests so neither gate can silently rot:
+    /// - editing == false → performance mode, no hold recognition;
+    /// - stage == true    → Perform is play-only, never a bench.
+    static func holdRadialEnabled(editing: Bool, stage: Bool) -> Bool {
+        editing && !stage
+    }
 
     /// Tile spacing matches VStack/HStack spacing: 6 in tiles view.
     private let tileSpacing: CGFloat = 6

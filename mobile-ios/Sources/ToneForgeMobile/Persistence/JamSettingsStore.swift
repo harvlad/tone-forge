@@ -185,6 +185,22 @@ public final class JamSettingsStore: ObservableObject {
         }
     }
 
+    /// Launchpad Edit mode (launchpad-edit-mode): OFF (default) = pure
+    /// performance surface — pad touch-down arms NO long-press timer at
+    /// all (zero gesture-recognition tax; holds sustain instead of being
+    /// hijacked by the radial at 0.5 s). ON = the hold→radial editing
+    /// wheel (Add Sound / Chop / Loop / Effects / Sequence / Delete).
+    /// Own UserDefaults key (like `launchpadPadCount`) so it needs no
+    /// blob migration surgery. Defaults OFF: performers get zero-latency
+    /// pads out of the box; editing is the opt-in.
+    @Published public var launchpadEditMode: Bool =
+        (UserDefaults.standard.object(forKey: "jam.launchpadEditMode") as? Bool) ?? false {
+        didSet {
+            UserDefaults.standard.set(launchpadEditMode,
+                                      forKey: "jam.launchpadEditMode")
+        }
+    }
+
     /// Pads mode hold: keep touched pads down (suppress pad-up) until
     /// the chip is toggled off.
     @Published public var holdEnabled: Bool {

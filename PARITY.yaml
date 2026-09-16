@@ -85,6 +85,26 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: launchpad-edit-mode
+    name: Launchpad Edit mode — zero-latency pads by default, hold-radial behind an Edit toggle
+    platforms:
+      web:
+        status: missing
+        note: "kit.js long-press radial is still always-on; follow-up — add the Edit toggle and drop hold recognition on pads when it's off."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Jam/JamView.swift#launchpadEditChip"
+        note: "SEMANTIC: Edit OFF (the default) means ZERO gesture-recognition tax on pad touch-down — PadTouchUIView arms no long-press timer at all when no hold consumer exists, so a hold sustains instead of being hijacked (voice-cut + radial) at 0.5 s. It is NOT merely a hidden menu. Edit ON restores the hold-radial (Add Sound / Chop / Loop / Effects / Sequence / Delete). Empty-pad tap still opens Add Sound in both modes (not a performance path). The 64-grid and borrow pads share the SamplePadGrid4x4 tile component, so the rule covers them."
+      desktop:
+        status: missing
+        note: "Follow-up — jam-desktop LaunchpadPanelView keeps its pad edit affordances always-on."
+      plugin:
+        status: na
+        note: "JUCE pad surface has no radial editing to gate."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: midi-learn-pads
     name: MIDI Learn — external pad controllers drive the sample grid
     platforms:

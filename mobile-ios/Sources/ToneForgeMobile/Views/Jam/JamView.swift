@@ -354,11 +354,13 @@ struct JamView: View {
                 samplesStatusStrip
                 // ONE chrome row (was three label+control rows eating grid
                 // height): 16|64 size chips left, arrangement Rec/Play/Clear
-                // right. The labels said what the chips already say.
+                // + the Edit toggle trailing. The labels said what the chips
+                // already say.
                 HStack(spacing: 8) {
                     launchpadSizeChips
                     Spacer(minLength: 8)
                     ArrangementChips(arrangement: appState.arrangement)
+                    launchpadEditChip
                 }
                 .padding(.horizontal, 12)
                 // Shared loop-cycle strip: makes the invisible 8 s lock grid
@@ -380,12 +382,21 @@ struct JamView: View {
                 // The old 64 path (ModeGridView, a flat Canvas) dropped the
                 // radial and the waveforms — that grid stays for Contribute's
                 // arrange workbench, not the Launchpad.
+                // Both sizes get the SAME edit gate: with Edit off (the
+                // default) no long-press timer is armed on ANY pad —
+                // 16, 64-overflow and borrow pads alike (one tile
+                // component) — so holds are pure zero-tax performance.
                 if jamSettings.launchpadPadCount == 64, pendingChop == nil {
                     SamplePadGrid4x4(
-                        coordinator: coordinator, rows: 8, cols: 8,
+                        coordinator: coordinator,
+                        editing: jamSettings.launchpadEditMode,
+                        rows: 8, cols: 8,
                         pendingChop: $pendingChop)
                 } else {
-                    SamplePadGrid4x4(coordinator: coordinator, pendingChop: $pendingChop)
+                    SamplePadGrid4x4(
+                        coordinator: coordinator,
+                        editing: jamSettings.launchpadEditMode,
+                        pendingChop: $pendingChop)
                 }
             }
         }
@@ -421,6 +432,32 @@ struct JamView: View {
             }
         }
         .opacity(pendingChop != nil ? 0.4 : 1.0)
+    }
+
+    /// Edit toggle for the Launchpad (launchpad-edit-mode; this symbol
+    /// is the PARITY.yaml anchor). OFF — the default — is the
+    /// performance surface: pad touch-down arms NO long-press
+    /// recognition at all, so triggering carries zero gesture tax and
+    /// holds sustain instead of being cut by the radial at 0.5 s. ON
+    /// restores the hold→radial editing wheel (Add Sound / Chop / Loop /
+    /// Effects / Sequence / Delete). Empty-pad tap→Add Sound works in
+    /// both modes — adding a sound isn't a performance path.
+    private var launchpadEditChip: some View {
+        Button {
+            Haptics.selectionChanged()
+            jamSettings.launchpadEditMode.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "pencil")
+                    .font(.caption2)
+                Text("Edit")
+            }
+            .tfChip(active: jamSettings.launchpadEditMode)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(jamSettings.launchpadEditMode
+            ? "Edit mode on, pads open the editing menu on hold"
+            : "Edit mode off, pads are performance only")
     }
 
     // MARK: - Performance FX row (PERFORM_PARITY spec 1)

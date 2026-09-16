@@ -49,4 +49,23 @@ final class SamplePadGrid4x4Tests: XCTestCase {
             XCTAssertEqual(gridCol, expectedGridCol, "padIdx \(padIdx)")
         }
     }
+
+    /// launchpad-edit-mode: the hold-radial recognition exists ONLY on
+    /// an editing bench, never in performance. This single predicate
+    /// decides whether PadTouchOverlay gets a long-press handler at
+    /// all — false means Jam's Edit-off grid AND the Perform stage arm
+    /// no hold timer on touch-down (zero gesture-recognition tax).
+    func testHoldRadialGate() {
+        XCTAssertTrue(
+            SamplePadGrid4x4.holdRadialEnabled(editing: true, stage: false),
+            "Jam with Edit on is the bench — radial available")
+        XCTAssertFalse(
+            SamplePadGrid4x4.holdRadialEnabled(editing: false, stage: false),
+            "Edit off = performance: no hold recognition")
+        XCTAssertFalse(
+            SamplePadGrid4x4.holdRadialEnabled(editing: true, stage: true),
+            "stage is play-only even if a host passes editing")
+        XCTAssertFalse(
+            SamplePadGrid4x4.holdRadialEnabled(editing: false, stage: true))
+    }
 }
