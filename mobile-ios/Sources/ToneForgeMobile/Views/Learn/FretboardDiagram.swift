@@ -83,8 +83,36 @@ struct FretboardDiagram: View {
             )
         }
 
-        // Markers + dots.
-        let dotRadius = min(stringGap, fretGap) * 0.32
+        // Fingering: numbers inside the dots + a capsule across barre
+        // strings — web parity with renderChordDiagramSVG
+        // (chord_diagrams.js draws the barre rect first, then numbered
+        // dots on top). ChordFingering is the shared assignment used
+        // by the neck-play surface, so chart and neck agree.
+        let fingering = ChordFingering.assign(shape: shape)
+
+        // Markers + dots. Radius matches the web's dot/spacing ratio
+        // (r=5 on a 12 px string gap) so finger numbers stay legible.
+        let dotRadius = min(stringGap, fretGap) * 0.38
+
+        if let barreFret = fingering.barreFret,
+           let barreStrings = fingering.barreStrings {
+            let row = barreFret - shape.baseFret
+            if row >= 0, row < fretRows {
+                let y = gridRect.minY + (CGFloat(row) + 0.5) * fretGap
+                let x0 = stringX(barreStrings.lowerBound)
+                let x1 = stringX(barreStrings.upperBound)
+                let h = dotRadius * 1.6
+                let pad = dotRadius * 0.8
+                context.fill(
+                    Path(roundedRect: CGRect(
+                        x: x0 - pad, y: y - h / 2,
+                        width: x1 - x0 + pad * 2, height: h
+                    ), cornerRadius: h / 2),
+                    with: .color(Color.accentColor.opacity(0.45))
+                )
+            }
+        }
+
         for (s, state) in shape.strings.enumerated() {
             let markerCenter = CGPoint(
                 x: stringX(s), y: markerHeight / 2)
@@ -118,6 +146,20 @@ struct FretboardDiagram: View {
                         width: dotRadius * 2, height: dotRadius * 2)),
                     with: .color(Color.accentColor)
                 )
+                // Finger number inside the dot (web parity). Black on
+                // the bright accent fill, like the practice CTA text.
+                if let finger = fingering.notes.first(where: {
+                    $0.string == s && $0.fret == fret
+                })?.finger {
+                    context.draw(
+                        Text("\(finger)")
+                            .font(.system(
+                                size: max(6, dotRadius * 1.4),
+                                weight: .bold))
+                            .foregroundColor(.black),
+                        at: center
+                    )
+                }
             }
         }
     }

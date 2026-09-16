@@ -76,12 +76,42 @@ struct LearnView: View {
         MusicalKey.parse(appState.currentBundle?.meta.detectedKey)
     }
 
-    /// First chord that starts after the current one (or after the
-    /// playhead when nothing is sounding).
+    /// The chord the hero surfaces as NOW: the sounding chord, falling
+    /// FORWARD to the first upcoming chord when the playhead sits
+    /// before the first chord event or in a gap. Mirrors web's
+    /// prime-at-index-0 (jam.js `_onActiveChordChanged(0)` after
+    /// analysis) and desktop's ChordRibbonModel.window(at:) fall-
+    /// forward — without this `currentChord` is nil until the first
+    /// chord boundary and the hero renders an empty board.
+    private var displayedChord: ChordEvent? {
+        if let current = appState.currentChord { return current }
+        let chords = appState.currentBundle?.timeline.chords ?? []
+        return chords.first { $0.start > appState.songSeconds }
+    }
+
+    /// First chord that starts after the displayed one.
     private var nextChordSymbol: String? {
         let chords = appState.currentBundle?.timeline.chords ?? []
-        let after = appState.currentChord?.start ?? appState.songSeconds
-        return chords.first { $0.start > after + 0.01 }?.symbol
+        guard let shown = displayedChord else { return nil }
+        return chords.first { $0.start > shown.start + 0.01 }?.symbol
+    }
+
+    /// Anticipation state for the hero countdown — the same math the
+    /// practice overlay uses, but anchored on the DISPLAYED chord so
+    /// the bar agrees with the hero during the pre-first-chord prime.
+    private var heroPrediction: LearnSessionController.ChordPrediction? {
+        LearnSessionController.prediction(
+            chords: appState.currentBundle?.timeline.chords ?? [],
+            current: displayedChord,
+            now: appState.songSeconds
+        )
+    }
+
+    /// One-line coaching hint for the NOW → NEXT change (shared
+    /// ToneForgeEngine port of web's _computeTransitionHint).
+    private var transitionHint: String? {
+        ChordTransitionHint.hint(
+            from: displayedChord?.symbol, to: nextChordSymbol)
     }
 
     /// The section Practice starts: the one under the playhead,
@@ -151,7 +181,7 @@ struct LearnView: View {
             Group {
                 if showHand {
                     GuitarNeckPlayView(
-                        current: appState.currentChord?.symbol,
+                        current: displayedChord?.symbol,
                         next: nextChordSymbol,
                         key: songKey
                     )
@@ -164,6 +194,25 @@ struct LearnView: View {
             // Tap the chord area → transition practice (Phase 2).
             .contentShape(Rectangle())
             .onTapGesture { showTransitions = true }
+
+            // Web parity: the jam chord panel pairs its NOW/NEXT
+            // guidance with a countdown strip and a one-line
+            // transition hint; the overview hero gets the same
+            // anticipation aids, not just the practice overlay.
+            if let prediction = heroPrediction {
+                LearnCountdownBar(
+                    prediction: prediction,
+                    songSeconds: appState.songSeconds
+                )
+            }
+            if let hint = transitionHint {
+                Text(hint)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, TFTheme.Spacing.md)
+                    .accessibilityLabel("Transition hint: \(hint)")
+            }
 
             practiceButton
                 .padding(.horizontal, TFTheme.Spacing.md)
@@ -182,7 +231,7 @@ struct LearnView: View {
         HStack(spacing: 10) {
             ChordCard(
                 role: "NOW",
-                symbol: appState.currentChord?.symbol,
+                symbol: displayedChord?.symbol,
                 key: songKey,
                 emphasized: true
             )

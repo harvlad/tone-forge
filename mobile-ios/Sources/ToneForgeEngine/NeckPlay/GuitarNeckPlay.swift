@@ -574,14 +574,21 @@ public struct GuitarNeckPlaySurface: View {
             let plan = HandPlan.plan(
                 fingering: handFingering, geo: geo,
                 symbol: handTarget ?? current)
-            // Transition analysis only when both shapes live in the
-            // same fret window (open-position pairs — the common case).
-            let nextFingering: ChordFingering.Result? = transitionTo
-                .flatMap { GuitarVoicing.shape(symbol: $0) }
-                .flatMap { ns in
-                    ns.baseFret == (shape?.baseFret ?? 1)
-                        ? ChordFingering.assign(shape: ns) : nil
-                }
+            // Transition analysis only when a CURRENT shape exists AND
+            // both shapes live in the same fret window (open-position
+            // pairs — the common case). The current-shape gate matters:
+            // the old `shape?.baseFret ?? 1` default let a nil current
+            // + open-position next compute a transition of pure .place
+            // changes, rendering orphan dashed landing rings on a bare
+            // neck (pre-first-chord / chord-gap states).
+            let nextFingering: ChordFingering.Result? = shape.flatMap { cur in
+                transitionTo
+                    .flatMap { GuitarVoicing.shape(symbol: $0) }
+                    .flatMap { ns in
+                        ns.baseFret == cur.baseFret
+                            ? ChordFingering.assign(shape: ns) : nil
+                    }
+            }
             let transition = nextFingering.map {
                 ChordTransition.analyze(from: fingering, to: $0)
             }

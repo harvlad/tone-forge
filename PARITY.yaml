@@ -73,7 +73,7 @@ features:
         evidence: "backend/static/kit.js#resolvePadCount"
       ios:
         status: partial
-        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Jam/JamView.swift#launchpadSizeRow"
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Jam/JamView.swift#launchpadSizeChips"
         note: "16/64 toggle + rename to Launchpad shipped; external hardware LED mirror is Mac-only."
       desktop:
         status: done
@@ -596,3 +596,23 @@ features:
       connect:
         status: na
         note: "Connect mixes per-song stems by opaque id with no stem-role concept (its DSP is live guitar-input tone processing); a synth stem is just another {id,url} it plays, nothing role-specific to render."
+
+  - id: chord-transition-coaching
+    name: Chord-transition coaching (NOW/NEXT guidance, transition hint text, change countdown, finger-numbered diagrams)
+    platforms:
+      web:
+        status: partial
+        evidence: "backend/static/jam.js#_renderChordGuidance"
+        note: "Text transition hints (_computeTransitionHint) + NOW/NEXT chord diagrams with finger numbers and barre capsule (chord_diagrams.js#renderChordDiagramSVG) + countdown strip; no trajectory neck. Sanctioned divergence: the trajectory neck (role-colored animated dots + movement arrows) is an iOS/desktop-only visualization richer than web; web remains the authority for chord DIAGRAM content (finger numbers, barre)."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeEngine/NeckPlay/GuitarNeckPlay.swift#GuitarNeckPlaySurface"
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Rehearsal/RehearsalView.swift#GuitarNeckPlaySurface"
+      plugin:
+        status: na
+        note: "Sampler plugin has no song timeline UI — nothing to coach chord changes against."
+      connect:
+        status: na
+        note: "Audio companion (monitoring/tone engine); no chord or teaching UI surface."
