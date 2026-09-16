@@ -221,3 +221,42 @@ class TestClaim:
             api.app.state.auth_store.device_owner("dev-f")
         )
         assert owner == user.id
+
+
+class TestSharedLibraryFlag:
+    """TONEFORGE_SHARED_LIBRARY=1 — testing-phase full visibility.
+
+    Reads only: every signed-in account lists every analysis, own
+    entries first. Flag off restores private scope=mine. Removed
+    before public launch (copyright)."""
+
+    def _seed_two_owners(self, client):
+        token, user = _sign_in()
+        api._add_to_history({"name": "mine-song"}, owner_id=user.id)
+        api._add_to_history({"name": "other-song"}, owner_id="someone-else")
+        return token
+
+    def test_shared_flag_lists_everything_own_first(
+        self, client, monkeypatch
+    ):
+        monkeypatch.setenv("TONEFORGE_SHARED_LIBRARY", "1")
+        token = self._seed_two_owners(client)
+        r = client.get(
+            "/api/history?scope=mine",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        names = [e["name"] for e in r.json()["history"]]
+        assert "mine-song" in names and "other-song" in names
+        assert names.index("mine-song") < names.index("other-song")
+
+    def test_flag_off_keeps_scope_mine_private(self, client, monkeypatch):
+        monkeypatch.delenv("TONEFORGE_SHARED_LIBRARY", raising=False)
+        token = self._seed_two_owners(client)
+        r = client.get(
+            "/api/history?scope=mine",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        names = [e["name"] for e in r.json()["history"]]
+        assert "mine-song" in names and "other-song" not in names

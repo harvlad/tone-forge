@@ -4822,6 +4822,24 @@ async def get_history(
             if demo is None:
                 raise HTTPException(status_code=401, detail="Sign in required")
             history = [demo]
+        elif _shared_library_enabled():
+            # TESTING PHASE ONLY (TONEFORGE_SHARED_LIBRARY=1): every
+            # signed-in account sees the whole library so testers land on
+            # songs they know. Reads only — delete stays owner-gated.
+            # MUST be unset before public launch (copyright): uploaded
+            # commercial songs may not be redistributed to other users.
+            # Own songs first so "my uploads" still read as mine.
+            device_id = (request.headers.get("x-device-id") or "").strip()
+
+            def _is_mine(entry: dict) -> bool:
+                return (entry.get("owner_id") == user.id
+                        or bool(device_id
+                                and entry.get("device_id") == device_id))
+
+            history = (
+                [e for e in history if _is_mine(e)]
+                + [e for e in history if not _is_mine(e)]
+            )
         else:
             device_id = (request.headers.get("x-device-id") or "").strip()
             mine = [
@@ -5124,6 +5142,16 @@ async def _caller_identity(request: Request) -> tuple[str | None, str | None]:
     device_id = (request.headers.get("x-device-id") or "").strip() or None
     user = await current_user(request)
     return device_id, (user.id if user else None)
+
+
+def _shared_library_enabled() -> bool:
+    """TESTING PHASE ONLY: TONEFORGE_SHARED_LIBRARY=1 lets every signed-in
+    account list every analysis (reads only; delete stays owner-gated).
+    Unset before public launch — redistribution of uploaded commercial
+    songs is the same copyright exposure that keeps URL ingest off in
+    prod. Read per request so flipping it needs no restart."""
+    return (os.environ.get("TONEFORGE_SHARED_LIBRARY") or "").strip().lower() in (
+        "1", "true", "yes")
 
 
 def _caller_owns(entry: dict, device_id: str | None, user_id: str | None) -> bool:
