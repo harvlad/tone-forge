@@ -38,23 +38,35 @@ tar --no-same-owner -xzf p1_subset.tgz && rm p1_subset.tgz          # -> slakh_s
 curl -fsSL -o c5_bundle.tgz "$JAMN_FACTORY/c5_bundle.tgz" && tar --no-same-owner -xzf c5_bundle.tgz && rm c5_bundle.tgz
 curl -fsSL -o campaign.tgz "$JAMN_FACTORY/synth_c2_code.tgz" && tar --no-same-owner -xzf campaign.tgz && rm campaign.tgz
 pip install -q soundfile pyyaml demucs 2>&1 | tail -1
-git clone -q https://github.com/ZFTurbo/Music-Source-Separation-Training msst \
-  && cd msst && git checkout -q "${MSST_REF:-master}" && pip install -q -r requirements.txt 2>&1 | tail -1 && cd ..
+# Subshell so a failed checkout can never leak cwd into later stages (the
+# first P1 pod died exactly that way: MSST's default branch is main, the
+# checkout of "master" failed, cd .. never ran, every path resolved under
+# msst/). No MSST_REF -> ride default HEAD, but always log the commit.
+git clone -q https://github.com/ZFTurbo/Music-Source-Separation-Training msst || { echo "FATAL msst clone"; exit 3; }
+( cd msst \
+  && { [ -z "${MSST_REF:-}" ] || git checkout -q "$MSST_REF"; } \
+  && echo "msst @ $(git rev-parse --short HEAD)" \
+  && pip install -q -r requirements.txt 2>&1 | tail -1 ) || { echo "FATAL msst setup"; exit 3; }
+[ -f msst/train.py ] || { echo "FATAL msst/train.py missing"; exit 3; }
 hb fetch ok
 
 # ---- stage 1: manufacture pairs (GPU htdemucs, deterministic) ----
 hb manufacture start
-python3 synth_c2/manufacture_pairs.py --src slakh_synth_p1/train --out pairs/train --limit "${P1_TRACKS:-40}"
-python3 synth_c2/manufacture_pairs.py --src slakh_synth_p1/valid --out pairs/valid --limit 8
+python3 synth_c2/manufacture_pairs.py --src slakh_synth_p1/train --out pairs/train --limit "${P1_TRACKS:-40}" \
+  || { echo "FATAL manufacture train"; hb manufacture FAILED; exit 3; }
+python3 synth_c2/manufacture_pairs.py --src slakh_synth_p1/valid --out pairs/valid --limit 8 \
+  || { echo "FATAL manufacture valid"; hb manufacture FAILED; exit 3; }
+[ -n "$(ls pairs/train 2>/dev/null)" ] || { echo "FATAL no pairs produced"; hb manufacture FAILED; exit 3; }
 hb manufacture ok
 
 # ---- stage 2: derive arm configs from the validated c6 recipe ----
 # c6 bundle was lost to a self-loop symlink; c5 is the surviving
 # blind-validated recipe from the same campaign lineage.
 C6_CFG=$(ls configs/c5*.yaml 2>/dev/null | head -1)
-python3 synth_c2/arm_config.py --c6-config "$C6_CFG" --out-dir arm_configs
+[ -n "$C6_CFG" ] || { echo "FATAL c5 recipe missing"; exit 3; }
+python3 synth_c2/arm_config.py --c6-config "$C6_CFG" --out-dir arm_configs || { echo "FATAL arm_config"; exit 3; }
 # Merge tiny model blocks from MSST's own example configs (small variants).
-python3 synth_c2/merge_model_blocks.py --msst msst --configs arm_configs
+python3 synth_c2/merge_model_blocks.py --msst msst --configs arm_configs || { echo "FATAL merge blocks"; exit 3; }
 
 # ---- stage 3: the arm race (time-capped; num_epochs runaway lesson) ----
 for ARM in a_htdemucs b_melroformer c_scnet; do
