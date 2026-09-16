@@ -261,7 +261,15 @@ public final class SampleScheduler: ObservableObject {
     /// mid-cycle of the held loops. Falls back to the constant-tempo
     /// formula for packs without analyzer regions, 8 s without tempo.
     public var loopLengthSeconds: Double {
-        if let pid = activePackId, let entry = loadedPacks[pid] {
+        loopLengthSeconds(packId: activePackId)
+    }
+
+    /// Pack-scoped cycle: the trigger path passes the TRIGGERING pack's
+    /// id (which may not be the UI-fronted one — jam overflow / borrow
+    /// pads carry explicit packIds), so a pad always tiles/joins against
+    /// its own pack's cycle, never a stale carousel page's.
+    func loopLengthSeconds(packId: String?) -> Double {
+        if let pid = packId, let entry = loadedPacks[pid] {
             let cycle = entry.pack.pack.pads
                 .filter { ($0.loopable ?? false) || $0.loopStartSec != nil }
                 .compactMap { p -> Double? in
@@ -338,7 +346,9 @@ public final class SampleScheduler: ObservableObject {
     /// same-length loops sit at the same musical position at any wall
     /// time. Host time, not song time, because the free-run lattice must
     /// keep advancing while the transport clock is frozen.
-    private var loopLockAnchorHostSec: Double? = nil
+    /// internal (not private) so the timing tests can pin the anchoring
+    /// contract (first launch anchors / silence re-anchors) directly.
+    private(set) var loopLockAnchorHostSec: Double? = nil
 
     /// Buffer offset (seconds into the loop body) a phase-locked launch
     /// starts at. Measured from the PRE-shift lattice `boundary`, never
@@ -352,6 +362,25 @@ public final class SampleScheduler: ObservableObject {
         guard bodySec > 0 else { return 0 }
         let raw = (boundary - anchor).truncatingRemainder(dividingBy: bodySec)
         return raw < 0 ? raw + bodySec : raw
+    }
+
+    /// Shared-cycle target for a loop bake, in buffer frames: the pack
+    /// cycle (`loopLengthSeconds`) rounded at the buffer rate, floored at
+    /// the pad's own body (the longest region pad already fills the
+    /// cycle — no tiling). 0 = keep the pad's own length. Gated on a REAL
+    /// analyzer region exactly like the web (_bakePad hasRegion,
+    /// padengine.js:924-931): region-less loop pads (borrow-pack loops,
+    /// whole buffers) have no shared musical cycle — loopLengthSeconds
+    /// would fall back to an arbitrary 8 s lattice. Rounding (not trunc)
+    /// keeps the cycle frame count consistent with the rounded body
+    /// counts everywhere else (see decode's trunc-per-edge note).
+    static func sharedCycleFrames(
+        bodyFrames: Int, cycleSec: Double, sampleRate: Double,
+        hasRegion: Bool
+    ) -> Int {
+        guard hasRegion, bodyFrames > 0, cycleSec > 0, sampleRate > 0
+        else { return 0 }
+        return max(bodyFrames, Int((cycleSec * sampleRate).rounded()))
     }
 
     /// Bar-floor for loop launches: sub-bar quantize (1/8, 1/4, 1/2) is
@@ -976,11 +1005,15 @@ public final class SampleScheduler: ObservableObject {
 
         let padKey = SamplePadKey(packId: pid, padIdx: padIdx)
 
-        // Toggle mode: if already playing, second tap stops — but a
-        // LOOPING clip completes its current pass first (musical stop);
-        // armed/non-looping voices release immediately.
+        // Toggle mode: second tap stops NOW, with the 20 ms release fade.
+        // Web parity (kit.js padDown latch branch → engine.release →
+        // padengine.js:1296): a latched clip toggled off goes silent at
+        // the tap, not at the end of the loop pass. The old iOS-only
+        // "musical stop" (releaseAtLoopEnd) deferred up to a full cycle —
+        // on a 4-bar loop the pad kept ringing ~7 s after the user
+        // stopped it, a divergence no other surface has.
         if holdMode == .toggle, pool.isActive(padKey: padKey) {
-            pool.releaseAtLoopEnd(padKey: padKey)
+            pool.release(padKey: padKey)
             onEvent?(LayerEvent(
                 kind: .sampleOff,
                 songTimeSec: nowSongSeconds(),
@@ -1082,6 +1115,27 @@ public final class SampleScheduler: ObservableObject {
         let loopBodyFrames = (buffer === baseBuffer)
             ? (entry.loopBodyFrames[padIdx] ?? 0) : 0
 
+        // Shared-cycle lock (web _bakePad, padengine.js:924-931): a pad
+        // with a real analyzer region loops over the PACK's common cycle,
+        // not its own length — the voice pool tiles the seam-baked body up
+        // to this. The cycle is ALSO the loop period the phase join below
+        // must divide by: joining mod the un-tiled body put a 1-bar pad at
+        // the right sub-bar phase but the wrong bar of the 4-bar cycle.
+        // Transform/trim outputs no longer align with the decode-time
+        // region, so they keep their own length (same guard as
+        // loopBodyFrames above).
+        let hasRegion = pad.loopStartSec != nil && pad.loopEndSec != nil
+        let bodyFrames = loopBodyFrames > 0
+            ? min(loopBodyFrames, Int(buffer.frameLength))
+            : Int(buffer.frameLength)
+        let loopCycleFrames = (willLoop && buffer === baseBuffer)
+            ? Self.sharedCycleFrames(
+                bodyFrames: bodyFrames,
+                cycleSec: loopLengthSeconds(packId: pid),
+                sampleRate: buffer.format.sampleRate,
+                hasRegion: hasRegion)
+            : 0
+
         let rate = engine?.clock.rate ?? 1.0
         let nowHost = Self.nowHostSeconds()
 
@@ -1089,10 +1143,12 @@ public final class SampleScheduler: ObservableObject {
         // pad's own about-to-be-choked voice) sounding or armed →
         // abandon the stale lattice, so a fresh jam's first loop fires
         // immediately at phase 0 instead of waiting up to a bar for a
-        // grid nobody can hear. (One-shot slots are excluded on purpose:
-        // they read active forever — see SampleVoicePool.ringingPadKeys.)
+        // grid nobody can hear. `soundingPadKeys` includes still-audible
+        // one-shots — the web keeps `_lockAnchor` while ANY voice sounds
+        // (padengine.js:1154 checks `_voices.size`), so a ringing stab
+        // must hold the lattice a loop is about to join.
         if willLoopLock, !transportRunning,
-           pool.ringingPadKeys.subtracting([padKey]).isEmpty,
+           pool.soundingPadKeys.subtracting([padKey]).isEmpty,
            pool.pendingPadKeys.subtracting([padKey]).isEmpty {
             loopLockAnchorHostSec = nil
         }
@@ -1115,10 +1171,15 @@ public final class SampleScheduler: ObservableObject {
         }
 
         // Anchor the shared phase lattice at the PRE-shift boundary of
-        // the FIRST locked loop launch: anchoring at the shifted start
-        // time would bake that pad's own onset shift into the grid and
-        // skew every later join by it.
-        if willLoopLock, loopLockAnchorHostSec == nil {
+        // the FIRST loop launch: anchoring at the shifted start time
+        // would bake that pad's own onset shift into the grid and skew
+        // every later join by it. Gated on willLoop, NOT willLoopLock —
+        // the web anchors/joins EVERY looping trigger, quantized or not
+        // (padengine.js:1166 anchor, :1269-1273 join): an unquantized
+        // loop starts NOW (boundary = nowHost) but still mid-body, so it
+        // sits at the same musical position as the loops already ringing
+        // instead of restarting bar 1 against them.
+        if willLoop, loopLockAnchorHostSec == nil {
             loopLockAnchorHostSec = boundaryHost
         }
 
@@ -1126,16 +1187,18 @@ public final class SampleScheduler: ObservableObject {
         // seconds INTO its body — at any wall time every same-length
         // loop then sits at the same musical position, while its attack
         // still lands on the quantized bar. The first loop (boundary ==
-        // anchor) begins at phase 0; one-shots always start at 0.
+        // anchor) begins at phase 0; one-shots always start at 0. The
+        // period is the SHARED CYCLE when the pad tiles to one (web:
+        // entry.bodySec IS the cycle after _bakePad) — mod the un-tiled
+        // body a short pad joined at the right sub-bar phase but the
+        // wrong bar of the cycle.
         var phaseSec = 0.0
-        if willLoopLock, let anchor = loopLockAnchorHostSec,
+        if willLoop, let anchor = loopLockAnchorHostSec,
            buffer.format.sampleRate > 0 {
-            let bodyFrames = loopBodyFrames > 0
-                ? min(loopBodyFrames, Int(buffer.frameLength))
-                : Int(buffer.frameLength)
+            let cycleFrames = max(bodyFrames, loopCycleFrames)
             phaseSec = Self.phaseJoinSeconds(
                 boundary: boundaryHost, anchor: anchor,
-                bodySec: Double(bodyFrames) / buffer.format.sampleRate)
+                bodySec: Double(cycleFrames) / buffer.format.sampleRate)
         }
 
         let req = SampleTrigger(
@@ -1149,6 +1212,7 @@ public final class SampleScheduler: ObservableObject {
             effects: effects,
             crossfadeMs: crossfadeMs,
             loopBodyFrames: loopBodyFrames,
+            loopCycleFrames: loopCycleFrames,
             phaseSec: phaseSec
         )
         // Launch compensation for the onset-phase snap: the decode moved
@@ -1199,8 +1263,8 @@ public final class SampleScheduler: ObservableObject {
         let padKey = SamplePadKey(packId: Self.localPackId, padIdx: padIdx)
 
         if holdMode == .toggle, pool.isActive(padKey: padKey) {
-            // Looping voices complete the current pass (musical stop).
-            pool.releaseAtLoopEnd(padKey: padKey)
+            // Immediate release, same as pack pads (kit.js latch parity).
+            pool.release(padKey: padKey)
             onEvent?(LayerEvent(
                 kind: .sampleOff,
                 songTimeSec: nowSongSeconds(),
@@ -1311,14 +1375,31 @@ public final class SampleScheduler: ObservableObject {
         let rawNatural = pad.loopPointSec != nil
             || (pad.loopable ?? false)
             || (loopResolver?(pid, padIdx) ?? false)
+        let rawLoop = loopOverride || (padLoopOverrides[padKey] ?? rawNatural)
+        // Shared-cycle lock applies on the raw path too: the web tiles at
+        // BAKE time (_bakePad), so a replayed/instant-groove loop plays
+        // the same cycle-length buffer as a live-triggered one — a raw
+        // loop at its own shorter period would drift off live pads.
+        let hasRegion = pad.loopStartSec != nil && pad.loopEndSec != nil
+        let rawBodyFrames = loopBodyFrames > 0
+            ? min(loopBodyFrames, Int(buffer.frameLength))
+            : Int(buffer.frameLength)
+        let loopCycleFrames = (rawLoop && buffer === baseBuffer)
+            ? Self.sharedCycleFrames(
+                bodyFrames: rawBodyFrames,
+                cycleSec: loopLengthSeconds(packId: pid),
+                sampleRate: buffer.format.sampleRate,
+                hasRegion: hasRegion)
+            : 0
         let req = SampleTrigger(
             padKey: padKey,
-            loop: loopOverride || (padLoopOverrides[padKey] ?? rawNatural),
+            loop: rawLoop,
             chokeGroup: pad.chokeGroup,
             gainDb: pad.gainDb,
             pan: pan,
             effects: effects,
-            loopBodyFrames: loopBodyFrames
+            loopBodyFrames: loopBodyFrames,
+            loopCycleFrames: loopCycleFrames
         )
         pool.trigger(req, buffer: buffer, at: nil)
         #endif

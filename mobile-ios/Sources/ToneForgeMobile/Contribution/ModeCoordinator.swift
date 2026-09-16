@@ -159,11 +159,11 @@ public final class ModeCoordinator: ObservableObject {
         // (so clips quantize + loop in sync with each other) but NOT the
         // song stems — a synced sample jam without the song. The song is
         // started independently by the transport play button, which
-        // joins the stems onto the already-rolling clock.
+        // joins the stems onto the already-rolling clock. The clock is
+        // rolled AFTER the trigger (below): played first, the trigger
+        // would see the transport rolling and wait up to a bar for the
+        // song grid — this first clip IS beat 1.
         let wasStopped = app.audioEngine.clock.state != .playing
-        if latch && wasStopped {
-            app.audioEngine.clock.play()
-        }
         let s = app.sampleScheduler
         let savedHold = s.holdMode, savedQ = s.quantize, savedLoop = s.loopOverride
         s.holdMode = latch ? .toggle : .hold
@@ -191,10 +191,24 @@ public final class ModeCoordinator: ObservableObject {
         }
         let result: SampleScheduler.TriggerResult
         if wasStopped {
-            // First launch (transport just started or a plain tap):
-            // fire immediately — this clip IS beat 1, no bar wait. Use
-            // triggerRaw to bypass the pad's bar-quantize for this hit.
-            result = s.triggerRaw(padIdx: padIdx, packId: packId)
+            // First launch while the clock is stopped goes through the
+            // FULL trigger path, not triggerRaw: with the transport
+            // stopped, the scheduler's free-run branch fires NOW (a
+            // silent pool clears any stale lattice from the previous jam
+            // first) AND anchors the shared phase lattice at this clip's
+            // boundary — web parity: padengine.js:1154 clears _lockAnchor
+            // when silent + not rolling, :1166 anchors on the first loop
+            // launch. The old triggerRaw bypass never anchored, so the
+            // SECOND clip's boundary defined the lattice and clip 1
+            // played permanently out of unison with everything joined
+            // after it. The raw path also skipped the section gate, so
+            // that stays bypassed here — the first tap of a jam must
+            // always sound.
+            let savedSections = s.allowedSections
+            s.allowedSections = nil
+            result = s.trigger(padIdx: padIdx, packId: packId)
+            s.allowedSections = savedSections
+            if latch { app.audioEngine.clock.play() }
         } else {
             // Clock already rolling: quantize to the next bar so this
             // clip locks in with the ones already playing.

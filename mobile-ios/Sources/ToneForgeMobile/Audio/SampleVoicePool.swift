@@ -77,6 +77,12 @@ public struct SampleTrigger: Sendable {
     /// SeamlessLoop.exactCrossfaded). 0 = the whole buffer is the loop
     /// (no continuation available; seam falls back to edge ramps).
     public let loopBodyFrames: Int
+    /// Shared-cycle lock (web _bakePad, padengine.js:924-931): target
+    /// frame count the seam-baked loop body is TILED up to, so every pad
+    /// with a real analyzer region loops over the SAME period and stays
+    /// in unison. 0 (or ≤ body) = no tiling — the pad keeps its own
+    /// length (region-less loops, the longest region pad).
+    public let loopCycleFrames: Int
     /// Phase-locked join: seconds INTO the loop body playback begins at,
     /// so a loop launched mid-jam sits at the same musical position as
     /// the loops already ringing (web twin: `source.start(when, phase)`).
@@ -92,6 +98,7 @@ public struct SampleTrigger: Sendable {
         effects: SamplePadEffects = .neutral,
         crossfadeMs: Double = 0,
         loopBodyFrames: Int = 0,
+        loopCycleFrames: Int = 0,
         phaseSec: Double = 0
     ) {
         self.padKey = padKey
@@ -102,6 +109,7 @@ public struct SampleTrigger: Sendable {
         self.effects = effects
         self.crossfadeMs = crossfadeMs
         self.loopBodyFrames = loopBodyFrames
+        self.loopCycleFrames = loopCycleFrames
         self.phaseSec = phaseSec
     }
 }
@@ -117,12 +125,27 @@ public final class SampleVoicePool: ObservableObject {
 
     /// Pads with a currently-ringing *looping* voice, across all
     /// packs. Drives the "active pad" indicator on the pad grids.
-    /// Looping voices only change state through pool methods (they
-    /// never self-terminate), so event-driven recomputes are exact.
-    /// One-shots are deliberately excluded — their slots stay
-    /// `isActive` after the buffer ends (no completion handler), so
-    /// they'd read as ringing forever.
+    /// One-shots are deliberately excluded — the indicator is a loop
+    /// affordance (tap-to-stop) and a 200 ms stab flashing it reads as
+    /// flicker. Their slots DO clear on natural end now (the
+    /// .dataPlayedBack completion below); `soundingPadKeys` is the set
+    /// that includes them.
     @Published public private(set) var ringingPadKeys: Set<SamplePadKey> = []
+
+    /// Pads with ANY active voice — loops AND one-shots (whose natural
+    /// end clears the slot via the .dataPlayedBack completion handler).
+    /// The scheduler's free-run re-anchor check reads THIS, not
+    /// `ringingPadKeys`: the web engine keeps its lattice anchor while
+    /// any voice sounds (padengine.js:1154 checks `_voices.size`,
+    /// one-shots included), so a still-audible one-shot must hold the
+    /// anchor here too.
+    public var soundingPadKeys: Set<SamplePadKey> {
+        #if canImport(AVFoundation)
+        return Set(slots.compactMap { $0.isActive ? $0.padKey : nil })
+        #else
+        return []
+        #endif
+    }
 
     /// Pads with a launch scheduled for a future (quantized) time that
     /// hasn't fired yet — the "armed"/queued state (blinking clip on a
@@ -359,8 +382,22 @@ public final class SampleVoicePool: ObservableObject {
             let body = req.loopBodyFrames > 0
                 ? min(req.loopBodyFrames, Int(buffer.frameLength))
                 : Int(buffer.frameLength)
-            playBuffer = SeamlessLoop.exactCrossfaded(
+            var baked = SeamlessLoop.exactCrossfaded(
                 buffer, loopFrames: body, crossfadeMs: xfadeMs)
+            // Shared-cycle lock (web _bakePad, padengine.js:924-931): tile
+            // the seam-baked body up to the common cycle so a short region
+            // repeats INSIDE it and every latched pad shares ONE period.
+            // Without this a 1-bar pad looped at its own length against
+            // 4-bar neighbors — individually seamless, collectively
+            // drifting out of unison every pass. The scheduler gates
+            // loopCycleFrames on a real analyzer region, exactly like the
+            // web's hasRegion check; tileToLength is a no-op for
+            // target <= body (the longest region pad fills the cycle).
+            if req.loopCycleFrames > Int(baked.frameLength) {
+                baked = SeamlessLoop.tileToLength(
+                    baked, targetFrames: req.loopCycleFrames)
+            }
+            playBuffer = baked
         } else {
             playBuffer = buffer
         }
@@ -420,25 +457,62 @@ public final class SampleVoicePool: ObservableObject {
             }
         }
         if !scheduledPhaseJoin {
-            slot.player.scheduleBuffer(playBuffer, at: nil, options: options, completionHandler: nil)
+            if req.loop {
+                slot.player.scheduleBuffer(
+                    playBuffer, at: nil, options: options,
+                    completionHandler: nil)
+            } else {
+                // Natural-end tracking for one-shots (web: source.onended,
+                // padengine.js:1242-1256): the slot must read inactive once
+                // the buffer has PLAYED OUT — otherwise a finished stab held
+                // `isActive` forever, and anything keyed on "is anything
+                // sounding?" (the free-run re-anchor check) saw a dead jam
+                // as live. .dataPlayedBack fires when the audio is audible-
+                // complete, not merely consumed by the render loop. stop()/
+                // retrigger also fire this handler, so it no-ops unless the
+                // slot still holds THIS voice (token = startedAtHostTime,
+                // the web onended `voices.get(padIdx) === voice` guard).
+                let token = slot.startedAtHostTime
+                slot.player.scheduleBuffer(
+                    playBuffer, at: nil, options: options,
+                    completionCallbackType: .dataPlayedBack
+                ) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.slots.indices.contains(idx),
+                              self.slots[idx].isActive,
+                              !self.slots[idx].isLooping,
+                              self.slots[idx].startedAtHostTime == token
+                        else { return }
+                        self.slots[idx].isActive = false
+                        self.slots[idx].padKey = nil
+                        self.slots[idx].chokeGroup = nil
+                        self.refreshRingingPadKeys()
+                    }
+                }
+            }
         }
 
-        // Future-time gating. Calling `play(at: AVAudioTime(hostTime:))`
-        // directly throws NSException from AVAudioPlayerNodeImpl::StartImpl
-        // when the engine hasn't produced any output yet (fresh boot,
-        // first tap). Instead, compute the delay against mach_absolute_time
-        // and hand the actual `.play()` call to a high-priority Swift
-        // dispatch — precision drops from sample-accurate to ~1 ms,
-        // well within the perceptual budget for chord/beat-quantized
-        // pad triggers.
+        // Future-time gating. Once the engine has rendered at least once
+        // (outputNode.lastRenderTime is sample-time valid) the launch is
+        // handed to `play(at: AVAudioTime(hostTime:))` — SAMPLE-ACCURATE,
+        // the web engine's `source.start(startTime)`. The DispatchQueue
+        // fallback below has ~1 ms of scheduler jitter, which is audible
+        // as flam when several pads arm to the same quantize boundary.
         //
-        // The dispatch is wrapped in a DispatchWorkItem stored on the
-        // slot so that `releaseSlot(_:)` can cancel it if the user
-        // lifts their finger before the quantize target. Without this,
-        // hold-mode + quantize + a short tap produced silence: the
-        // release fade + player.stop() ran ~100 ms into a 400 ms
-        // quantize wait, so when the deferred play() finally fired it
-        // hit an already-stopped player with a muted mixer.
+        // Pre-first-render the fallback is mandatory: `play(at:)` throws
+        // NSException from AVAudioPlayerNodeImpl::StartImpl when the
+        // engine hasn't produced any output yet (fresh boot, first tap),
+        // so that boot window keeps the deferred `.play()` dispatch.
+        //
+        // BOTH paths store a DispatchWorkItem on the slot: it is the
+        // armed marker AND the cancel token `releaseSlot(_:)`/retrigger
+        // use to kill a not-yet-started voice (player.stop() discards a
+        // scheduled future start). Without it, hold-mode + quantize + a
+        // short tap produced silence: the release fade + player.stop()
+        // ran ~100 ms into a 400 ms quantize wait, so when the deferred
+        // play() finally fired it hit an already-stopped player with a
+        // muted mixer. On the sample-accurate path the item no longer
+        // calls play() — it only flips armed → playing at the deadline.
         if let t = time {
             let nowHost = mach_absolute_time()
             let futureHost = t.hostTime
@@ -447,12 +521,26 @@ public final class SampleVoicePool: ObservableObject {
             if delaySec > 0.0005 {
                 let player = slot.player
                 let slotIdx = idx
-                let item = DispatchWorkItem { [weak self] in
-                    player.play()
-                    Task { @MainActor [weak self] in
-                        guard let self, self.slots.indices.contains(slotIdx) else { return }
-                        self.slots[slotIdx].pendingPlayItem = nil
-                        self.refreshRingingPadKeys()  // armed → playing
+                let engineRendered = engine?.engine.outputNode
+                    .lastRenderTime?.isSampleTimeValid ?? false
+                let item: DispatchWorkItem
+                if engineRendered {
+                    player.play(at: AVAudioTime(hostTime: futureHost))
+                    item = DispatchWorkItem { [weak self] in
+                        Task { @MainActor [weak self] in
+                            guard let self, self.slots.indices.contains(slotIdx) else { return }
+                            self.slots[slotIdx].pendingPlayItem = nil
+                            self.refreshRingingPadKeys()  // armed → playing
+                        }
+                    }
+                } else {
+                    item = DispatchWorkItem { [weak self] in
+                        player.play()
+                        Task { @MainActor [weak self] in
+                            guard let self, self.slots.indices.contains(slotIdx) else { return }
+                            self.slots[slotIdx].pendingPlayItem = nil
+                            self.refreshRingingPadKeys()  // armed → playing
+                        }
                     }
                 }
                 slot.pendingPlayItem = item
@@ -539,7 +627,25 @@ public final class SampleVoicePool: ObservableObject {
         slot.mixer.pan = max(-1, min(1, req.pan))
         applyEffects(req.effects.clamped(), to: slot)
 
-        slot.player.scheduleBuffer(slicedBuffer, at: nil, options: [.interrupts], completionHandler: nil)
+        // Same natural-end tracking as one-shots in trigger(): a finished
+        // preview must not hold its slot "active" forever.
+        let token = slot.startedAtHostTime
+        slot.player.scheduleBuffer(
+            slicedBuffer, at: nil, options: [.interrupts],
+            completionCallbackType: .dataPlayedBack
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.slots.indices.contains(idx),
+                      self.slots[idx].isActive,
+                      !self.slots[idx].isLooping,
+                      self.slots[idx].startedAtHostTime == token
+                else { return }
+                self.slots[idx].isActive = false
+                self.slots[idx].padKey = nil
+                self.slots[idx].chokeGroup = nil
+                self.refreshRingingPadKeys()
+            }
+        }
         slot.player.play()
 
         slots[idx] = slot

@@ -30,9 +30,12 @@
 // there is neither beats nor tempo, the quantizer degrades to .off
 // (returns t unchanged) rather than fabricating a nonsense grid.
 //
-// Past the last known boundary the function also returns t — the
-// caller is playing off the tail of the analysed timeline, there's
-// nothing musical to snap to.
+// Past the last analysed boundary the grid is EXTRAPOLATED forward at
+// the song tempo from that last boundary (web twin: padengine.js
+// quantizeWaitSec anchored at the last real grid time, :1029-1036) —
+// a late-song press still lands on-grid instead of firing instantly
+// off it. Without tempo there is nothing to extrapolate with, so the
+// tap plays now.
 //
 // Complexity: O(log n) binary search on the boundary grid + O(k) grid
 // materialisation where k is bounded (~12 boundaries near t). Called
@@ -77,7 +80,48 @@ public enum Quantizer {
             tempoBpm: tempoBpm,
             around: t
         )
+        // Past the last analysed boundary: extrapolate the grid forward at
+        // tempo from that boundary (web: padengine.js:1029-1036). snap()
+        // would return t — instant fire, off the bar grid the loops already
+        // ringing were launched on. `.phrase` has no tempo period, so it
+        // keeps the play-now tail behavior.
+        if let last = grid.last, t > last + graceSeconds,
+           let bpm = tempoBpm, bpm > 0,
+           let beatsPerUnit = Self.intervalBeats(for: mode) {
+            return extrapolatedBoundary(
+                t: t, last: last, unit: 60.0 / bpm * beatsPerUnit,
+                graceSeconds: graceSeconds)
+        }
         return snap(t: t, grid: grid, graceSeconds: graceSeconds)
+    }
+
+    /// Grid spacing in BEATS for a tempo-periodic mode; nil for modes
+    /// with no tempo period (`.off`, `.phrase` — sections are events,
+    /// not a lattice). Single source for extrapolation + syntheticGrid
+    /// callers so the two grids can never disagree on spacing.
+    static func intervalBeats(for mode: QuantizeMode) -> Double? {
+        switch mode {
+        case .eighth: return 0.5
+        case .quarter: return 1
+        case .half: return 2
+        case .bar: return 4
+        case .off, .phrase: return nil
+        }
+    }
+
+    /// Next boundary on the constant-tempo lattice extrapolated from the
+    /// LAST real grid entry: `last + k·unit`. Within `graceSeconds` past
+    /// an (extrapolated) boundary → t, play now — same grace contract as
+    /// snap(). Web twin: quantizeWaitSec(songNow, unit, lastBoundary)
+    /// (padengine.js:409-414), whose 0-wait grace fold is the `return t`.
+    static func extrapolatedBoundary(
+        t: Double, last: Double, unit: Double, graceSeconds: Double
+    ) -> Double {
+        guard unit > 0, t > last else { return t }
+        let elapsed = t - last
+        let phase = elapsed.truncatingRemainder(dividingBy: unit)
+        if phase <= graceSeconds { return t }
+        return last + ((elapsed / unit).rounded(.down) + 1) * unit
     }
 
     // MARK: - Snap
@@ -125,20 +169,18 @@ public enum Quantizer {
         tempoBpm: Double?,
         around t: Double
     ) -> [Double] {
-        // Head-of-timeline handling: many bundles start their analysis
-        // 5–15 s into the track (silence / pickup measure before the
-        // drums enter). Tapping during that intro would snap forward to
-        // beats[0], producing a multi-second "delay" that reads as
-        // silence — the actual bug that made samples inaudible while a
-        // song was playing. Treat pre-analysis taps the same way the
-        // caller already treats post-analysis taps (snap() line where
-        // nextIdx == grid.count): the bundle grid isn't relevant here,
-        // so prefer the synthetic tempo grid derived from `tempoBpm`.
-        // The 0.25 s slack is generous enough that a legitimate on-
-        // beat tap slightly before beats[0] still lands on beats[0].
-        let preAnalysisSlack = 0.25
-        let beatsUsable = (beats.first.map { t >= $0 - preAnalysisSlack } ?? false) ? beats : []
-        let downbeatsUsable = (downbeats.first.map { t >= $0 - preAnalysisSlack } ?? false) ? downbeats : []
+        // Pre-first-boundary taps WAIT for the first REAL grid entry
+        // (snap() selects grid[0]) — web parity: nextGridTimeSec returns
+        // the first grid time when songNow is before it (padengine.js
+        // :427 "songNow before the first grid time → the first grid
+        // time"), so an intro tap arms until the music's actual downbeat.
+        // A previous iOS-only "head-of-timeline" carve-out substituted a
+        // synthetic t=0 tempo grid here, so intro taps fired on a lattice
+        // the song never plays — off the first real downbeat and off
+        // every other platform. The synthetic grid remains ONLY for
+        // bundles that carry no grid arrays at all.
+        let beatsUsable = beats
+        let downbeatsUsable = downbeats
 
         switch mode {
         case .off:
