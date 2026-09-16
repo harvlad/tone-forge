@@ -92,6 +92,29 @@ public enum Quantizer {
                 t: t, last: last, unit: 60.0 / bpm * beatsPerUnit,
                 graceSeconds: graceSeconds)
         }
+        // Before the first analysed boundary: extrapolate the grid
+        // BACKWARD from grid[0] at tempo. Wait-for-grid[0] read as
+        // "web parity" but is pathological when the analyzer's first
+        // downbeat sits deep into a long intro — Reptile's is at 53.7 s,
+        // so every queued pad armed for ~52 s ("never-ending hourglass",
+        // TestFlight 1046 device report). Intro taps now land on tempo
+        // bars phase-locked to converge exactly on the first real
+        // downbeat.
+        if let first = grid.first, t < first - graceSeconds,
+           let bpm = tempoBpm, bpm > 0,
+           let beatsPerUnit = Self.intervalBeats(for: mode) {
+            let unit = 60.0 / bpm * beatsPerUnit
+            if first - t > unit {
+                // Smallest virtual boundary >= t on the lattice
+                // first - k*unit (0 <= boundary - t < unit).
+                let k = ((first - t) / unit).rounded(.down)
+                let boundary = first - k * unit
+                // Same grace contract as snap(): t just past the PREVIOUS
+                // virtual boundary plays now.
+                if unit - (boundary - t) <= graceSeconds { return t }
+                return boundary
+            }
+        }
         return snap(t: t, grid: grid, graceSeconds: graceSeconds)
     }
 

@@ -308,30 +308,64 @@ final class QuantizerTests: XCTestCase {
         XCTAssertEqual(out, 0.0, accuracy: 1e-9)
     }
 
-    /// A tap during the intro — before the first analysed downbeat —
-    /// WAITS for that first real downbeat, even when a tempo is known
-    /// (the synthetic grid is only for bundles with no grid arrays).
-    func testPreFirstDownbeatWaitsForFirstRealEntry() {
+    /// A tap deep in the intro — more than one unit before the first
+    /// analysed downbeat — snaps to a virtual bar extrapolated BACKWARD
+    /// from grid[0] at tempo (lattice converges exactly on the real
+    /// downbeat). Wait-for-grid[0] armed pads for ~52 s on songs whose
+    /// first detected downbeat sits deep in a long intro (NIN Reptile:
+    /// 53.7 s — the "never-ending hourglass" device report).
+    func testDeepIntroTapSnapsToBackwardExtrapolatedBar() {
+        // bpm 120 → bar 2.0 s; grid[0]=5.0 → virtual bars at 1.0, 3.0.
         let out = Quantizer.nextQuantized(
-            songSeconds: 1.0,
+            songSeconds: 1.3,
             mode: .bar,
             beats: [5.0, 5.5, 6.0, 6.5],
             downbeats: [5.0, 7.0],
             sections: [],
             tempoBpm: 120
         )
-        XCTAssertEqual(out, 5.0, accuracy: 1e-9,
-                       "intro tap must arm until the music's real downbeat")
+        XCTAssertEqual(out, 3.0, accuracy: 1e-9,
+                       "intro tap lands on the virtual bar lattice "
+                       + "anchored at the first real downbeat")
     }
 
-    func testPreFirstBeatWaitsForFirstRealEntry() {
+    /// Within one unit of grid[0] the real entry wins (no extrapolation).
+    func testNearFirstDownbeatStillWaitsForRealEntry() {
         let out = Quantizer.nextQuantized(
-            songSeconds: 1.0,
+            songSeconds: 4.5,
+            mode: .bar,
+            beats: [5.0, 5.5, 6.0, 6.5],
+            downbeats: [5.0, 7.0],
+            sections: [],
+            tempoBpm: 120
+        )
+        XCTAssertEqual(out, 5.0, accuracy: 1e-9)
+    }
+
+    func testPreFirstBeatBackwardExtrapolates() {
+        // bpm 120, .quarter → unit 0.5; grid[0]=5.0 → virtual beats at
+        // 1.0, 1.5 — a 1.2 tap snaps to 1.5.
+        let out = Quantizer.nextQuantized(
+            songSeconds: 1.2,
             mode: .quarter,
             beats: [5.0, 5.5, 6.0, 6.5],
             downbeats: [5.0],
             sections: [],
             tempoBpm: 120
+        )
+        XCTAssertEqual(out, 1.5, accuracy: 1e-9)
+    }
+
+    /// No tempo → no lattice to extrapolate: the real grid entry wins
+    /// even from deep in the intro (synthetic behavior unchanged).
+    func testPreFirstDownbeatNoTempoWaitsForFirstRealEntry() {
+        let out = Quantizer.nextQuantized(
+            songSeconds: 1.0,
+            mode: .bar,
+            beats: [5.0, 5.5, 6.0, 6.5],
+            downbeats: [5.0, 7.0],
+            sections: [],
+            tempoBpm: nil
         )
         XCTAssertEqual(out, 5.0, accuracy: 1e-9)
     }

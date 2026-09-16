@@ -354,15 +354,20 @@ struct JamView: View {
                 samplesStatusStrip
                 // ONE chrome row (was three label+control rows eating grid
                 // height): 16|64 size chips left, arrangement Rec/Play/Clear
-                // + the Edit toggle trailing. The labels said what the chips
-                // already say.
-                HStack(spacing: 8) {
-                    launchpadSizeChips
-                    Spacer(minLength: 8)
-                    ArrangementChips(arrangement: appState.arrangement)
-                    launchpadEditChip
+                // + the Edit toggle trailing. Horizontal scroll + fixedSize:
+                // at iPhone width the packed row otherwise compressed chips
+                // into vertical letter-wrap ("1/6", "Edi/t").
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        launchpadSizeChips
+                        Spacer(minLength: 8)
+                        ArrangementChips(arrangement: appState.arrangement)
+                        launchpadEditChip
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 12)
+                    .frame(minWidth: UIScreen.main.bounds.width - 24)
                 }
-                .padding(.horizontal, 12)
                 // Shared loop-cycle strip: makes the invisible 8 s lock grid
                 // VISIBLE — a sweep of the current cycle with a countdown to
                 // the next boundary, so a locked pad's wait reads as musical

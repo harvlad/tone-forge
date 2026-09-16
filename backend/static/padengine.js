@@ -1020,6 +1020,24 @@ export class PadEngine {
     // 1. Real per-song grid: Beat snaps to actual beats, Bar to downbeats.
     const realGrid = grid === "beat" ? t.beatTimesSec : t.downbeatTimesSec;
     if (Array.isArray(realGrid) && realGrid.length > 0) {
+      // Before the first real boundary by more than one unit: extrapolate
+      // the grid BACKWARD from grid[0] at tempo. Waiting for grid[0]
+      // is pathological on long ambient intros — the analyzer's first
+      // downbeat on NIN "Reptile" sits at 53.7 s, so a queued intro pad
+      // armed for ~52 s (never-ending hourglass, found on iOS whose port
+      // faithfully copied this wait). Virtual bars converge exactly on
+      // the first real downbeat.
+      if (t.tempoBpm > 0) {
+        const bar = (60.0 / t.tempoBpm) * 4.0;
+        const unit = quantizeUnitSec(bar, grid);
+        const first = realGrid[0];
+        if (unit > 0 && songNow < first - LOOP_LOCK_GRACE_SEC && first - songNow > unit) {
+          // quantizeWaitSec anchored at grid[0] folds the phase for us
+          // (negative songNow-anchor is double-modded onto the lattice).
+          const wait = quantizeWaitSec(songNow, unit, first);
+          return now + wait / this._rate;
+        }
+      }
       const nextT = nextGridTimeSec(songNow, realGrid, LOOP_LOCK_GRACE_SEC);
       if (nextT != null) {
         // wait folds to 0 when a boundary just passed within grace.
