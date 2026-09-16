@@ -1,74 +1,64 @@
-Jamn — TestFlight build notes
+WHAT'S NEW IN THIS BUILD
 
-WHAT'S NEW THIS BUILD
-• BORROWED PADS PLAY PROPERLY. Loading pads from another song ("Add from
-  another song") used to leave many chord/melody pads effectively dead —
-  a tap produced a ~150 ms blip. Two fixes: the server now marks every
-  borrowed loop as loopable (they are bar-exact renders by construction),
-  and the app now matches web semantics — in TAP mode a borrowed pad
-  plays its FULL pass as a one-shot; in LOOP/LATCH it loops until toggled
-  off. A pad you force to Loop via the hold-menu keeps looping in any
-  mode.
-• BORROW RE-ARRANGE FIX. Switching pad grid size (16↔64) or re-borrowing
-  with a session target no longer plays stale/wrong audio on borrowed
-  pads (the pack now reloads when its content changes).
+• Pad timing now matches the web app exactly. Seven timing bugs fixed:
+  the first latched clip anchors the shared groove (everything you layer
+  after it lands in unison with it), loops of different lengths lock to
+  one shared cycle instead of drifting apart, queued pads start
+  sample-accurately on the beat, taps near the end of a song still
+  quantize to the bar grid, taps before the first downbeat wait for the
+  real downbeat, un-quantized loops join the groove mid-phrase like web,
+  and switching a latched pad off stops it immediately.
+• The green section pads and purple chord pads on the 64-pad grid are
+  now playable and loopable (they were painted but dead to touch).
+• Add Sound tiles now ADD on tap. The small corner play button previews.
+  (Before: tap previewed, and adding hid behind a secret long-press.)
+• Cleaner Build tab: the Build→Perform breadcrumb pill and the cramped
+  section-blocks strip are gone; the Pads and Arrangement rows merged
+  into one row (16|64 chips left, Rec/Play/Clear right); empty pads show
+  a small quiet + instead of a shouting one.
 
-STILL IN FROM THE PREVIOUS BUILD (test if you haven't)
-• LOOPS PLAY IN TIME NOW. The pad timing engine was rebuilt to match the
-  new web engine: a queued loop launches on the next BAR (never mid-bar on
-  a beat), and it joins the loops already playing at the SAME position in
-  the phrase — everything moves together instead of each loop starting from
-  its own beginning. This also fixes queued pads that used to sit silent
-  for up to ~6 seconds before firing when the song was stopped: the wait is
-  now at most one bar.
-• LOOP COUNTDOWN IS HONEST. The countdown strip above the pads now shows
-  the real wait to the next bar launch (it used to overstate by up to ~6 s).
-• SYNTH IS ITS OWN STEM. On songs analyzed after this update, synth content
-  shows up as a teal "Synth" channel in the Mixer and as teal "Synth" pads
-  in the Auto Kit — it used to be mislabeled "Guitar" or missing entirely.
-• BETTER PAD AUDIO (server-side). Pads now always slice from the
-  best-quality version of a part — degraded stereo-split copies are
-  detected and vetoed on the server, for every song analyzed or re-analyzed
-  from now on. Existing songs were upgraded server-side too.
+HOW TO USE THE NEW FEATURES
 
-HOW TO USE
-• PHASE-LOCKED LOOPS: load a song → Perform → Samples pads → set the mode
-  to Loop (or Latch). Tap several loop pads a few bars apart while the song
-  plays — each one comes in on the bar, already lined up with the others.
-  Stop the song and tap loop pads: they start within one bar of your tap
-  and lock to each other.
-• SYNTH STEM: analyze a synth-heavy song (electronic/pop). Mixer shows a
-  teal "Synth" channel; the Auto Kit shows teal "Synth lead"/"Synth pad"
-  pads. Older songs keep their old labels until re-analyzed.
+Pads in sync:
+1. Library → open any analyzed song → Build tab → Samples.
+2. Make sure the mode chip reads Latch. Tap 2-3 loop pads (waveform
+   cards) one after another, ANY time — mid-bar, whenever.
+3. Every pad should enter on the next bar boundary and their loop
+   rings/playheads should move together, exactly like the web app.
+4. Press the transport Play button — the song joins the same grid; pads
+   and song stay locked.
+
+Section/chord pads on the big grid:
+1. Build → Samples → tap the 64 chip (next to 16).
+2. Tap any green (Intro/Verse/Chorus) or purple (chord) pad — it plays
+   now; long-press → Loop toggles looping.
+
+Adding sounds:
+1. Long-press an empty pad (+) → Add Sound, or tap the Sounds chip.
+2. Tap any tile to put it on the pad. Corner ▶ button previews first.
 
 WHAT TO TEST
-0. BORROW: load a song → pads → "Add from another song" → pick a donor.
-   Tap chord/melody borrowed pads in TAP mode: EXPECTED each plays its
-   full phrase once (no 150 ms blip). Switch to LOOP/LATCH: EXPECTED they
-   loop until tapped off, in time. Flip 16↔64 and re-tap: EXPECTED same
-   audio, no silence/wrong pads.
-1. Song playing → Loop mode → tap 3–4 loop pads on different bars.
-   EXPECTED: each starts on a bar boundary, in time with the song and each
-   other; no flamming or off-grid entries. ACTUAL if broken: a pad enters
-   mid-bar or audibly out of phase.
-2. Song stopped → Loop mode → tap a loop pad, then another a moment later.
-   EXPECTED: first fires immediately, the next within one bar, locked
-   together. ACTUAL if broken: a pad sits silent for several seconds.
-3. Watch the loop countdown strip while a pad is queued.
-   EXPECTED: countdown matches when the pad actually enters.
-4. Analyze a new synth-heavy song. EXPECTED: teal Synth channel in Mixer,
-   teal Synth pads in the Auto Kit, labeled "Synth lead"/"Synth pad".
-5. Regression sweep: hold-menu on pads, pad waveforms, borrow
-   (Add from another song), Re-Drum/Flip, recording — all should behave as
-   in the previous build.
+
+1. Latch 3 loops of DIFFERENT lengths (e.g. a 2-bar drum + 4-bar synth):
+   expected = they repeat together on one shared cycle; report any
+   drift after a minute of playback.
+2. Tap the first pad while everything is stopped, then add more:
+   expected = later pads line up with the FIRST pad's groove.
+3. With the song playing, queue pads: expected = each enters exactly on
+   the next bar of the SONG, never early/late.
+4. Switch Latch → Tap and tap a ringing pad: expected = one-shots play
+   through; latched pads stop immediately when toggled off.
+5. On the 64 grid, play green + purple pads: expected = sound on every
+   filled pad; loop badge appears after radial → Loop.
+6. Add Sound: tap tiles in Sample Packs and Song Chops tabs: expected =
+   the sound lands on the pad you started from (or the next free kit
+   pad from the Sounds chip).
 
 KNOWN LIMITATIONS
-• Synth stem appears only on songs analyzed after the backend update;
-  re-analyze an old song to get it.
-• First analysis after ~15 idle minutes takes a few extra minutes while a
-  cloud worker cold-starts — later songs are fast.
+• 64-pad grid size is remembered per device — fresh installs default to
+  16; tap 64 once.
+• Arrangement section strip is web/desktop only now (by design).
 
 WHAT TO REPORT
 • Any loop entering off-grid or out of phase (say song + which pads).
-• Countdown disagreeing with the actual launch.
-• Synth content still labeled Guitar on a NEWLY analyzed song.
+• Any pad that lights but stays silent (say grid size + pad color).
