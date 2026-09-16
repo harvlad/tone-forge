@@ -45,11 +45,15 @@ extension ModeCoordinator {
                         layout.visual(at: PadIndex.at(row: row, col: col))
                 }
             }
-            // Hardware Launchpad: light the 48 non-quadrant cells with
-            // the song's overflow chops (jamSampleAt maps them by the
-            // same reading order) so the full 8×8 plays the whole song
-            // instead of leaving dead unlit cells. The on-screen 4×4
-            // only reads quadrant cells, so this is LED/hardware-only.
+            // Light the 48 non-quadrant cells with the song's overflow
+            // chops (jamSampleAt maps them by the same reading order) so
+            // the full 8×8 — hardware LEDs AND the on-screen 64 grid —
+            // plays the whole song instead of leaving dead cells. The
+            // touch path falls through to jamSampleAt for these, so a
+            // painted cell is always a playable cell. Cells the layout
+            // already bound (borrow-64 grids, pins) keep their visual —
+            // overwriting them showed overflow labels over pads whose
+            // taps played the binding.
             let overflow = app.jamOverflowPads
             if !overflow.isEmpty {
                 for row in 1...8 {
@@ -57,8 +61,12 @@ extension ModeCoordinator {
                         guard let idx = Self.jamOverflowIndex(row: row, col: col),
                               idx < overflow.count
                         else { continue }
+                        let flat = (row - 1) * 8 + (col - 1)
+                        guard padBindings[PadIndex.at(row: row, col: col).rawValue] == nil,
+                              visuals[flat].colorHint == 0
+                        else { continue }
                         let pad = overflow[idx]
-                        visuals[(row - 1) * 8 + (col - 1)] = PadVisual(
+                        visuals[flat] = PadVisual(
                             colorHint: Self.familyColor(pad.family),
                             label: pad.name
                         )

@@ -58,10 +58,6 @@ struct JamView: View {
 
     var body: some View {
         VStack(spacing: TFTheme.Spacing.sm) {
-            // Jam→Perform pipeline breadcrumb (shared with Perform): the
-            // build→stage relationship as a picture, current stage lit.
-            KitFlowPill(active: .jam)
-
             sectionStrip
 
             // Key editing + harmonic detail moved off the primary
@@ -356,16 +352,23 @@ struct JamView: View {
             // category colorHint.
             VStack(spacing: 6) {
                 samplesStatusStrip
-                launchpadSizeRow
+                // ONE chrome row (was three label+control rows eating grid
+                // height): 16|64 size chips left, arrangement Rec/Play/Clear
+                // right. The labels said what the chips already say.
+                HStack(spacing: 8) {
+                    launchpadSizeChips
+                    Spacer(minLength: 8)
+                    ArrangementChips(arrangement: appState.arrangement)
+                }
+                .padding(.horizontal, 12)
                 // Shared loop-cycle strip: makes the invisible 8 s lock grid
                 // VISIBLE — a sweep of the current cycle with a countdown to
                 // the next boundary, so a locked pad's wait reads as musical
                 // timing instead of a bug.
                 LoopCycleStrip()
-                // Live-capture arrangement: Rec through the song to capture
-                // which pads play per section, Play to replay hands-free
-                // (kit.js / jam-desktop parity). Hidden until the song has
-                // sections; own ObservedObject so the strip repaints live.
+                // Live-capture arrangement section strip (kit.js /
+                // jam-desktop parity). Hidden until the song has sections;
+                // own ObservedObject so the strip repaints live.
                 ArrangementBar(arrangement: appState.arrangement)
                 // Place mode (a Sounds pick waiting) always targets the 4×4
                 // kit — the picker assigns onto pack pads, so the 8×8 grid
@@ -390,12 +393,8 @@ struct JamView: View {
     /// mirror of the web kit's 16|64 segmented control (kit.js). 16 = the
     /// native 4×4 kit; 64 = the full 8×8 grid. Disabled in place mode so a
     /// picked sound always lands on the 4×4 kit rather than a bare 8×8 cell.
-    private var launchpadSizeRow: some View {
+    private var launchpadSizeChips: some View {
         HStack(spacing: 8) {
-            Text("Pads")
-                .font(.caption2)
-                .foregroundStyle(TFTheme.textSecondary)
-            Spacer()
             ForEach([16, 64], id: \.self) { count in
                 Button {
                     guard jamSettings.launchpadPadCount != count else { return }
@@ -419,7 +418,6 @@ struct JamView: View {
                 )
             }
         }
-        .padding(.horizontal, 12)
         .opacity(pendingChop != nil ? 0.4 : 1.0)
     }
 

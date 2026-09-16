@@ -509,9 +509,14 @@ public final class ModeCoordinator: ObservableObject {
         //  - hardware Launchpad: full 8×8 reading order → flat kit list.
         if appMode == .jamInKey && app.jamSettings.padMode == .samples {
             func target(row: Int, col: Int) -> (padIdx: Int, packId: String)? {
-                if event.source == .touch {
-                    let grid = PadIndex.at(row: row, col: col)
-                    guard let b = padBindings[grid.rawValue] else { return nil }
+                // Bindings first (pack quadrant, pins, borrow-64 grids) —
+                // then the overflow fallback for BOTH sources. Touch used
+                // to stop at padBindings, so the painted section/chord
+                // overflow pads on the on-screen 8×8 rendered filled but
+                // consumed taps silently; a hardware Launchpad press on
+                // the same cell played (web parity: every filled pad fires).
+                if event.source == .touch,
+                   let b = padBindings[PadIndex.at(row: row, col: col).rawValue] {
                     return (b.padIdx, b.packId)
                 }
                 return jamSampleAt(row: row, col: col)
@@ -591,9 +596,18 @@ public final class ModeCoordinator: ObservableObject {
 
     /// The scheduler key bound to a grid cell, or nil for empty cells.
     /// The radial menu uses this for its real pad identity instead of a
-    /// synthetic grid index.
+    /// synthetic grid index. In Jam Samples the overflow chops (painted
+    /// on the 8×8 beyond the bound quadrant) resolve too, so their loop
+    /// badge / radial Loop / waveform work like any bound pad.
     public func padBinding(row: Int, col: Int) -> (packId: String, padIdx: Int)? {
-        padBindings[PadIndex.at(row: row, col: col).rawValue]
+        if let b = padBindings[PadIndex.at(row: row, col: col).rawValue] {
+            return b
+        }
+        if appMode == .jamInKey, app.jamSettings.padMode == .samples,
+           let t = jamSampleAt(row: row, col: col) {
+            return (t.packId, t.padIdx)
+        }
+        return nil
     }
 
     /// Effective loop state of the pad bound at a grid cell (radial

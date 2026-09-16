@@ -478,9 +478,11 @@ struct SamplePadGrid4x4: View {
                 // Workbench: "+" invites adding. Stage: empty slots recede —
                 // you don't edit on stage.
                 if !stage {
+                    // Quiet affordance, not a headline — title3 made empty
+                    // slots louder than filled pads.
                     Image(systemName: "plus")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(TFTheme.textSecondary)
+                        .font(compact ? .caption2 : .footnote)
+                        .foregroundStyle(TFTheme.textSecondary.opacity(0.6))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
