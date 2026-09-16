@@ -599,19 +599,27 @@ def spinup_for_job(queue_depth: int = 1) -> None:
 
 
 def prewarm_async() -> None:
-    global _last_prewarm_ts
-    if not enabled():
-        return
-    now = time.time()
-    if now - _last_prewarm_ts < _PREWARM_DEBOUNCE_SEC:
-        return
-    _last_prewarm_ts = now
-    note_activity()  # user is here — hold the idle teardown
-    import threading
+    """Deliberately a NO-OP.
 
-    threading.Thread(
-        target=lambda: ensure_worker(1), daemon=True
-    ).start()
+    This used to spin a pod up on mere PRESENCE (the app-open /
+    engine-status polls) and, worse, stamp note_activity() on every poll
+    ("user is here — hold the idle teardown"). A browser tab left open on
+    jamn.app therefore CREATED a pod and held it alive indefinitely: the
+    idle window refreshed every poll, the pod ran until the account's
+    credit hit zero, and RunPod itself killed it. Forensics 2026-09-16:
+    one such pod ran 16.1 h with zero jobs (~$12), the dominant share of
+    a $20 balance burned twice over. After the pod died, the still-open
+    tab's prewarm kept attempting creates all night against a drained
+    account.
+
+    Pay-per-analysis means REAL WORK is the only pod trigger: upload
+    endpoints call spinup_for_job when a job exists, and the idle gate
+    holds pods only while jobs are pending/running. The cost of losing
+    prewarm is the cold boot on the first song of a session — the price
+    of paying $0 while somebody merely has a tab open. Kept as a stub so
+    the presence call sites need no changes.
+    """
+    return
 
 
 # --- idle tracking: terminate after RUNPOD_IDLE_MINUTES with no queued/running jobs ---

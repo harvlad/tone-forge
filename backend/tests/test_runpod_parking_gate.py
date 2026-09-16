@@ -68,6 +68,25 @@ def test_park_enabled_reads_env(monkeypatch):
     assert autoscale._park_enabled() is False
 
 
+def test_prewarm_is_a_noop(monkeypatch):
+    """Presence must never create or sustain a pod. prewarm_async once
+    stamped note_activity on every app-open/status poll — an open browser
+    tab held a pod alive until the account's credit hit zero (16.1 h /
+    ~\$12 of a \$20 balance, twice). Pay-per-analysis: only real jobs
+    trigger or hold compute."""
+    monkeypatch.setenv("RUNPOD_AUTOSCALE", "1")
+    monkeypatch.setenv("RUNPOD_API_KEY", "rpa_test")
+    called = []
+    monkeypatch.setattr(autoscale, "ensure_worker",
+                        lambda *a, **k: called.append("ensure"))
+    monkeypatch.setattr(autoscale, "note_activity",
+                        lambda: called.append("activity"))
+    before = autoscale._last_active_ts
+    autoscale.prewarm_async()
+    assert called == []
+    assert autoscale._last_active_ts == before
+
+
 def test_stall_grace_covers_a_cold_boot():
     """The reaper grace must exceed a real cold boot (image pull + model
     download can pass 5 min) or booting pods get reaped and jobs deadlock
