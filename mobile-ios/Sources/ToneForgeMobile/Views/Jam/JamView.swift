@@ -366,10 +366,12 @@ struct JamView: View {
                 // the next boundary, so a locked pad's wait reads as musical
                 // timing instead of a bug.
                 LoopCycleStrip()
-                // Live-capture arrangement section strip (kit.js /
-                // jam-desktop parity). Hidden until the song has sections;
-                // own ObservedObject so the strip repaints live.
-                ArrangementBar(arrangement: appState.arrangement)
+                // The arrangement section-block strip (web/desktop render
+                // it) is deliberately absent here: at phone width the
+                // proportional blocks ellipsize into "Chor…"/"…" confetti
+                // and the row costs a grid row of height. Rec/Play/Clear
+                // chips above carry the capture workflow; the section
+                // picker at the top already names where you are.
                 // Place mode (a Sounds pick waiting) always targets the 4×4
                 // kit — the picker assigns onto pack pads, so the 8×8 grid
                 // never becomes a place dead-end. Both sizes use the SAME rich
