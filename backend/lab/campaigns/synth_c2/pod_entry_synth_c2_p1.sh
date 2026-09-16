@@ -117,7 +117,7 @@ done
 
 # ---- stage 3b: inference on valid pairs per arm (feeds smoke eval) ----
 for ARM in a_htdemucs b_melroformer c_scnet; do
-  CKPT=$(ls -t results/$ARM/*.ckpt 2>/dev/null | head -1)
+  CKPT=$(ls -t results/$ARM/model_*.ckpt 2>/dev/null | head -1)
   [ -z "$CKPT" ] && { echo "no ckpt for $ARM — skipping inference"; continue; }
   MT=$(python3 -c "import yaml;print({'a_htdemucs':'htdemucs','b_melroformer':'mel_band_roformer','c_scnet':'scnet'}['$ARM'])")
   python3 msst/inference.py --model_type "$MT" \

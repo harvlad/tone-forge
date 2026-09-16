@@ -72,6 +72,15 @@ def main() -> int:
         src = _load(src_p)
         if "model" in src:
             cfg["model"] = src["model"]
+            # The example blocks are musdb-shaped (4 sources, sometimes
+            # mono) — P1 arms B/C died on shape errors from exactly this.
+            # Re-pin only keys the block already carries; never invent.
+            for key, val in (("stereo", True),
+                             ("num_stems", 2),
+                             ("sources", ["synth", "rest"]),
+                             ("instruments", ["synth", "rest"])):
+                if key in cfg["model"]:
+                    cfg["model"][key] = val
         # Audio block must match the arch's expectations (chunk sizes differ
         # per family) — take the upstream one, then re-pin our sample rate.
         if "audio" in src:
