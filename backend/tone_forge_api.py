@@ -719,7 +719,7 @@ async def _fail_stranded_engine_jobs() -> int:
         from local_engine import runpod_autoscaler as _asc
         balance_blocked = (
             _asc.enabled()
-            and "balance is too low" in (_asc.last_create_error or "")
+            and "balance is too low" in (_asc.last_create_error_fresh() or "")
         )
     except Exception:  # noqa: BLE001
         pass
