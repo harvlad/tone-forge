@@ -5293,6 +5293,7 @@ async def legal_page() -> HTMLResponse:
 
 @app.get("/api/history/{entry_id}/stem-audio/{role}")
 async def get_history_stem_audio(entry_id: str, role: str,
+                                 request: Request,
                                  format: Optional[str] = Query(None)):
     """Same-origin stem audio for the WEB app.
 
@@ -5309,6 +5310,26 @@ async def get_history_stem_audio(entry_id: str, role: str,
     native-container decode fails, keeping the cheap FLAC path for
     browsers that handle it.
     """
+    # Stems are IMMUTABLE per entry id (a re-analysis mints a new id), so
+    # serve them maximally cacheable: strong ETag + 1y immutable. The old
+    # 1-day max-age with NO validator meant any reopen past 24h, any
+    # cache-pressure eviction (6 stems x ~15 MB per song), or any hard
+    # reload re-downloaded every stem in full — the reported "songs
+    # re-download even though already downloaded". The ETag turns all of
+    # those into a 22-byte 304, answered before any R2 fetch or ffmpeg
+    # spawn.
+    etag = f'"stem-{entry_id}-{role}-{format or "native"}"'
+    if request.headers.get("if-none-match") == etag:
+        from fastapi.responses import Response as _Resp
+
+        return _Resp(status_code=304, headers={
+            "ETag": etag,
+            "Cache-Control": "public, max-age=31536000, immutable",
+        })
+    _stem_cache_headers = {
+        "ETag": etag,
+        "Cache-Control": "public, max-age=31536000, immutable",
+    }
     entry = _get_history_item(entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="History entry not found")
@@ -5351,10 +5372,10 @@ async def get_history_stem_audio(entry_id: str, role: str,
                 proc.terminate()
 
         return StreamingResponse(_iter_wav(), media_type="audio/wav",
-                                 headers={"Cache-Control": "public, max-age=86400"})
+                                 headers=_stem_cache_headers)
 
     if not src.startswith("http"):
-        return FileResponse(src, headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(src, headers=_stem_cache_headers)
     import requests as _requests
 
     def _iter():
@@ -5367,7 +5388,7 @@ async def get_history_stem_audio(entry_id: str, role: str,
     # Stems are immutable per analysis id — let the browser cache them so
     # a revisit skips the multi-MB transfer entirely.
     return StreamingResponse(_iter(), media_type=media,
-                             headers={"Cache-Control": "public, max-age=86400"})
+                             headers=_stem_cache_headers)
 
 
 @app.get("/api/session/{entry_id}")
