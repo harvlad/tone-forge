@@ -271,7 +271,16 @@ struct PerformView: View {
                 LoopCycleStrip()
                 // STAGE build of the Jam kit: same pads, play-only — empty
                 // slots recede, no edit radial, hotter tiles + ring glow.
-                SamplePadGrid4x4(coordinator: coordinator, stage: true)
+                // Grid SIZE follows the bench: the 16|64 chosen in Build is
+                // the instrument you configured — Perform stages that exact
+                // instrument ("Build has 64 pads but Perform only 16").
+                if jamSettings.launchpadPadCount == 64 {
+                    SamplePadGrid4x4(
+                        coordinator: coordinator, stage: true,
+                        rows: 8, cols: 8)
+                } else {
+                    SamplePadGrid4x4(coordinator: coordinator, stage: true)
+                }
             }
             .onAppear { appState.preloadAllSongDnaPacks() }
         }
