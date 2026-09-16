@@ -15615,6 +15615,10 @@
     // via the upload/streaming path (no cached entry) hydrate lazily.
     let _currentEntry = null;   // full history entry for the loaded song
     let _mountedEntryId = null; // last entry id handed to JamnKit.mount
+    // True while the pad surface shows an EXPLICIT pick from the Packs
+    // browser (curated pack / another song's kit) — blocks the
+    // view-activation auto-mount from clobbering it. Cleared on song load.
+    let _explicitKitMount = false;
 
     // Loaded-song label on the fixed playback bar — the transport buttons
     // otherwise carry no context about WHAT they play. Full name in the
@@ -15632,6 +15636,7 @@
       _currentEntry = entry || null;
       _labelSong(entry);
       _mountedEntryId = null; // force a remount for the new song
+      _explicitKitMount = false; // a new song reclaims the pad surface
       // Remix state is strictly per-song (native resetRemixState): drop
       // the saved original-drums buffer and clear the Humanize template
       // so the previous song's groove never leaks onto the new one.
@@ -15658,6 +15663,12 @@
       const id = state.analysisId;
       if (!id) return; // no song loaded — Jam pane stays empty
       if (!views.kit || !views.kit.classList.contains('active')) return;
+      // A pack (or another song's kit) picked from the Packs browser owns
+      // the pad surface until the next song load. Without this guard the
+      // view-activation auto-mount ran right after the picker's mount and
+      // clobbered it with the loaded song's kit — "clicked a pack and it
+      // just reloaded the song".
+      if (_explicitKitMount) return;
       if (_currentEntry && _currentEntry.id === id) {
         if (_mountedEntryId === id) return;
         try {
@@ -15954,6 +15965,7 @@
           onMountKit: desc => {
             if (desc.kind === 'sample-pack') {
               window.JamnKit?.mountPack?.(desc);
+              _explicitKitMount = true;
               showView('kit');
               return;
             }
@@ -15965,6 +15977,7 @@
                 _labelSong(entry);
                 window.JamnKit?.mount(entry, { kind: desc.kind });
                 _mountedEntryId = entry.id;
+                _explicitKitMount = true;
                 showView('kit');
               });
           },

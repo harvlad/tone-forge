@@ -137,6 +137,10 @@
   background: var(--jamn-accent, #8B5CF6);
   color: var(--jamn-text, #fff);
   cursor: pointer;
+  /* The session block beside it is a COLUMN (controls + caption), which
+   * makes its wrap-line tall; centering against that dropped Groove below
+   * the control row. Top-align so it sits on the same line as the pills. */
+  align-self: flex-start;
 }
 
 .kit-groove:hover {
