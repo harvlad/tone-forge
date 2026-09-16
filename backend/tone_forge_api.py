@@ -687,12 +687,24 @@ def _oldest_queued_engine_age() -> float:
 
 
 def _stranded_job_timeout_sec() -> float:
-    """TONEFORGE_STRANDED_JOB_MIN minutes (default 15, 0 disables)."""
+    """TONEFORGE_STRANDED_JOB_MIN minutes (default 35, 0 disables).
+
+    MUST stay comfortably above _WORKER_STALL_GRACE_SEC plus a worst-case
+    boot: the zombie reaper only fires while a job is still queued, so
+    with both at 15 min the fail sweep (which runs first in the tick)
+    killed the job at the exact moment the reap became eligible — the
+    2026-09-16 Reptile strand: pod RUNNING 15 min with no engine contact,
+    job failed, reaper never ran. The floor below enforces the invariant
+    even if ops misconfigures the pair.
+    """
     try:
-        minutes = float(os.environ.get("TONEFORGE_STRANDED_JOB_MIN", "15"))
+        minutes = float(os.environ.get("TONEFORGE_STRANDED_JOB_MIN", "35"))
     except ValueError:
-        minutes = 15.0
-    return max(0.0, minutes) * 60.0
+        minutes = 35.0
+    if minutes <= 0:
+        return 0.0
+    # reap grace + 10 min for the replacement pod to boot and claim
+    return max(minutes * 60.0, _WORKER_STALL_GRACE_SEC + 600.0)
 
 
 async def _fail_stranded_engine_jobs() -> int:

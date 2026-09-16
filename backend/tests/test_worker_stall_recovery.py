@@ -45,7 +45,10 @@ def _queued(registry, age_sec: float):
 # --- stranded queued jobs ------------------------------------------------
 
 def test_job_queued_past_timeout_with_no_worker_contact_errors(jobs):
-    job = _queued(jobs, 16 * 60)
+    # Past the default 35-min limit (raised from 15 so the zombie reaper —
+    # gated on queued>0 at the 15-min grace — always gets its window
+    # before the job is failed out).
+    job = _queued(jobs, 36 * 60)
     assert asyncio.run(api._fail_stranded_engine_jobs()) == 1
     assert jobs.get(job.id).status == "error"
     assert "No analysis worker" in (jobs.get(job.id).error or "")
