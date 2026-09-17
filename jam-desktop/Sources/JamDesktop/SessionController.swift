@@ -407,7 +407,9 @@ final class SessionController: ObservableObject {
             // (bar-length at the target tempo). Re-tap stops it (below).
             if let aid = assignment.chop.assetId, aid.hasPrefix("borrowfile:"),
                let url = self.drumKitSampleFiles[assignment.chop.idx] {
-                let looping = self.launchpad.playbackMode == .loop
+                // Every mode loops the voice now (Tap gate loops-while-held too);
+                // the controller decides start timing (Tap fires now).
+                let looping = self.launchpad.playbackMode.loops
                 self.chopPlayer.trigger(
                     file: url, startSec: nil, endSec: nil,
                     afterSeconds: delay, loop: looping,
@@ -432,19 +434,21 @@ final class SessionController: ObservableObject {
             // (Live's grid), not the song transport's — pads fired here
             // stack in phase with clips playing in the DAW.
             let linked = self.linkSync.enabled && self.linkSync.peers > 0
-            if linked, self.launchpad.playbackMode == .loop {
+            // Only the QUANTIZED loop modes (Loop/Latch) land on the Link bar;
+            // Tap is the zero-latency gate and fires now even when linked.
+            if linked, self.launchpad.playbackMode.quantizesLaunch {
                 delay = self.linkSync.secondsToNextBar()
                 // Link owns the launch grid here; the controller's lock
                 // lattice never saw this boundary, so a phase measured
                 // against it would join the body at a spurious offset.
                 phaseOffset = 0
             }
-            // The Tap/Loop toggle drives playback: Loop = the chop region
-            // loops (seamless crossfade) while held; Tap = one-shot that plays
-            // through. When looping, use Riley's measured seam crossfade if the
-            // chop carries one, else a safe 15 ms.
+            // All three modes (Tap | Loop | Latch) loop the chop region
+            // (seamless crossfade) so the voice is live + releasable — Tap
+            // loops-while-held, Loop/Latch loop in sync. Use Riley's measured
+            // seam crossfade if the chop carries one, else a safe 15 ms.
             let chop = assignment.chop
-            let loopable = self.launchpad.playbackMode == .loop
+            let loopable = self.launchpad.playbackMode.loops
             let rileyFade = chop.crossfadeMs ?? 0
             let crossfadeMs = loopable ? (rileyFade > 0 ? rileyFade : 15) : 0
             // Bar length (4/4) from the song tempo — the ChopPlayer snaps a loop
@@ -494,8 +498,12 @@ final class SessionController: ObservableObject {
         }
         launchpad.onRelease = { [weak self] pad, assignment in
             guard let self else { return }
-            // onRelease now fires only on a Loop-mode toggle-OFF (re-tap) — the
-            // controller no longer calls it on padUp. So always stop the voice.
+            // onRelease fires on a Tap/Loop GATE finger-lift (padUp) and on a
+            // Latch toggle-OFF (re-tap) — either way, stop the voice NOW. This
+            // is desktop's force-release equivalent: ChopPlayer.release keys on
+            // the sounding voice, never on the pad's intrinsic loop flags, so a
+            // gate-forced looping voice on a non-loopable chop still stops (the
+            // guard iOS had to add in e8566e69 has no desktop analogue).
             // Borrow/drumfile pads play a FILE voice (keyed .file(url)); the
             // chop-keyed release can't find them, so stop by URL — otherwise a
             // re-tap left the loop playing forever.
@@ -1389,7 +1397,7 @@ final class SessionController: ObservableObject {
                     source: source))
             }
             guard !mounts.isEmpty else { return }
-            launchpad.playbackMode = .loop      // borrow pads are loops
+            launchpad.playbackMode = .latch     // borrow pads LATCH (loop until re-tapped)
             launchpad.adoptBorrowAssignments(mounts)
             remixApplied =
                 "Applied: Borrow — your song on top, \(donorLabel) below, "

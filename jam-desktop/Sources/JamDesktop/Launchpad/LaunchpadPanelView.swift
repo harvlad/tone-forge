@@ -749,7 +749,9 @@ struct LaunchpadPanelView: View {
               + "A connected Launchpad mirrors this grid.")
     }
 
-    /// Tap = momentary (sounds only while held); Loop = latched seamless loop.
+    /// 3-way Tap | Loop | Latch (web/iOS parity). Tap = zero-latency gate
+    /// (fires now, sounds while held, stops on release); Loop = quantized
+    /// HOLD-to-play (release stops); Latch = quantized TOGGLE (re-tap stops).
     private var playbackModePicker: some View {
         Picker("Play", selection: playbackModeBinding) {
             ForEach(LaunchpadController.PadPlaybackMode.allCases, id: \.self) {
@@ -1195,9 +1197,11 @@ private struct PadCell: View {
             .onHover { hovered = $0 }
     }
 
-    /// Mouse-down on a pad: filled pads sound for the hold (Tap = momentary,
-    /// stopped on release by handlePrimaryUp; Loop toggles on/off). Empty
-    /// pads open the create radial.
+    /// Mouse-down on a pad: filled pads sound (Tap fires instantly; Loop/Latch
+    /// quantize). Tap & Loop stop on release (handlePrimaryUp); Latch toggles
+    /// on/off across two presses. Empty pads open the create radial. Left-click
+    /// always performs — Edit mode gates only the right-click radial, so
+    /// entering Edit never sounds a pad (desktop has no hold-to-edit gesture).
     private func handlePrimaryDown() {
         guard !moveMode else { return }
         if hasContent {
@@ -1207,8 +1211,9 @@ private struct PadCell: View {
         }
     }
 
-    /// Mouse-up: release the pad so Tap stops on finger-lift (Loop stays
-    /// latched — padUp is a no-op for it in the controller).
+    /// Mouse-up: release the pad so Tap AND Loop stop on finger-lift (they are
+    /// momentary/hold gates); Latch stays latched — padUp is a no-op for it in
+    /// the controller.
     private func handlePrimaryUp() {
         guard !moveMode, hasContent else { return }
         launchpad.padUp(pad)

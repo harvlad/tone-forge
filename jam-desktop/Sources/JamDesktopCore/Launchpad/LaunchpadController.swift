@@ -62,13 +62,49 @@ public final class LaunchpadController {
         "chord", "section", "beat", "phrase", "onset", "drum-bundle",
     ]
 
-    /// How a pad plays back. `.tap` = one-shot: press plays the sample and it
-    /// plays THROUGH to the end (release doesn't cut it). `.loop` = the chop
-    /// region loops (seamless crossfade) for as long as the pad is held.
+    /// How a pad plays back — the 3-way Tap | Loop | Latch contract shared with
+    /// iOS (SampleTriggerMode) and web (kit.js setMode). All three LOOP the
+    /// voice (iOS f081d725: a one-shot that plays its full length can't be
+    /// stopped on finger-lift); they differ in launch timing and finger-lift.
     public enum PadPlaybackMode: String, CaseIterable, Sendable {
+        /// Zero-latency GATE: fires the instant the pad is pressed — no
+        /// quantize, no bar-wait, no armed hourglass — even while the transport
+        /// rolls; loops while held so a hold sustains; STOPS on finger-lift (a
+        /// quick tap = a short blip). iOS twin: SampleTriggerMode.tap under
+        /// `forceInstantLaunch` (37f851d6/d56dc351/f081d725) — the deliberate
+        /// iOS/desktop deviation from web, which quantizes tap. Tap never rolls
+        /// the clock or seeds the shared lattice (a tap is not a synced clip).
         case tap
+        /// Quantized HOLD-to-play loop: launch phase-locks to the shared
+        /// lattice, the clip loops while held, finger-lift RELEASES it
+        /// immediately. iOS twin: SampleTriggerMode.loop. (This is the gate
+        /// desktop was MISSING — its old "loop" was a toggle, i.e. Latch.)
         case loop
-        public var title: String { self == .tap ? "Tap" : "Loop" }
+        /// Quantized TOGGLE loop: launch phase-locks, the clip latches and
+        /// keeps looping until a re-tap stops it (finger-lift is a no-op).
+        /// This is desktop's ORIGINAL Loop behavior, now correctly named.
+        /// iOS twin: SampleTriggerMode.latch.
+        case latch
+
+        public var title: String {
+            switch self {
+            case .tap:   return "Tap"
+            case .loop:  return "Loop"
+            case .latch: return "Latch"
+            }
+        }
+        /// The voice loops in EVERY mode (iOS f081d725 — all three force the
+        /// buffer to loop). Loop/Latch so the clip repeats in sync; Tap so the
+        /// momentary gate is a live, releasable, sustaining voice. Genuine
+        /// one-shots (drum hits, played through the file path) still play their
+        /// own length regardless of this.
+        public var loops: Bool { true }
+        /// Loop/Latch launch QUANTIZED + phase-locked to the shared lattice;
+        /// Tap is the zero-latency gate that always fires NOW.
+        public var quantizesLaunch: Bool { self != .tap }
+        /// Latch is the only TOGGLE (re-tap stops); Tap and Loop are momentary/
+        /// hold gates whose finger-lift is driven explicitly by padUp.
+        public var isToggle: Bool { self == .latch }
     }
 
     /// Musical category of a pad — groups + colors the grid and drives Instant
@@ -148,7 +184,11 @@ public final class LaunchpadController {
     /// (drums/bass/chords/lead/rhythm/texture) — all bar-synced via the Loop
     /// path, so one tap yields a locked, playable groove.
     public func instantGroove() {
-        playbackMode = .loop
+        // Latch (not Loop): Instant Groove fires pads with no finger holding
+        // them, so they must LATCH and stay looping (a hold-to-play Loop would
+        // stop the moment nothing "holds" it), and a re-tap must toggle a
+        // groove layer off.
+        playbackMode = .latch
         let targets: [PadCategory] = [.drums, .bass, .chords, .lead, .rhythm, .texture]
         var best: [PadCategory: LaunchpadPad] = [:]
         var bestScore: [PadCategory: Double] = [:]
@@ -188,7 +228,10 @@ public final class LaunchpadController {
     /// Make `pad` the active loop for its category: stop whatever was looping in
     /// that category, start this one (looping, bar-synced).
     public func setLayer(_ pad: LaunchpadPad, category: PadCategory) {
-        playbackMode = .loop
+        // Latch: layers are latched loops toggled by re-tap (setLayer/
+        // clearLayer/toggleLayer all stop a layer via a second padDown, the
+        // Latch toggle-off branch). A hold-to-play Loop would never stay up.
+        playbackMode = .latch
         for p in activePads where self.category(for: p) == category && p != pad {
             padDown(p)   // toggle-off the previous layer
         }
@@ -786,9 +829,11 @@ public final class LaunchpadController {
 
         // Normal chop trigger.
         guard let assignment = assignments[pad] else { return }
-        // Loop mode is a TOGGLE: re-tapping a currently-looping pad stops it.
-        // Tap mode is a one-shot that plays through. Neither stops on padUp.
-        if playbackMode == .loop && activePads.contains(pad) {
+        // Only LATCH is a toggle: re-tapping a currently-latched pad stops it.
+        // Tap and Loop are momentary/hold gates driven by padUp — a re-tap
+        // there starts a FRESH voice (iOS parity: Loop/Tap use .hold, so they
+        // never hit the toggle-off branch), so the guard is Latch-only.
+        if playbackMode.isToggle && activePads.contains(pad) {
             activePads.remove(pad)
             transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
             // Usage feedback: held >= 3 s = play, killed sooner = skip.
@@ -808,7 +853,11 @@ public final class LaunchpadController {
         // means. Phase-locking applies only when the song is
         // actually rolling.
         let transportRolling = isTransportPlaying?() ?? false
-        let willLoop = playbackMode == .loop
+        // The voice loops in every mode (all three force loop, iOS f081d725);
+        // `instant` (Tap) is the zero-latency gate that fires NOW regardless of
+        // quantize, lock or the transport, and never seeds/advances the grid.
+        let willLoop = playbackMode.loops
+        let instant = playbackMode == .tap
         // Loop + lock: start on the next BAR of the shared lock lattice, so
         // pads stack coherently and a tap waits ≤ 1 bar. Lock off keeps the
         // user's Quantize control (sub-bar floored to .bar; .off = NOW).
@@ -818,15 +867,34 @@ public final class LaunchpadController {
         // loop's bar 1 against the mix).
         let fireAt: Double
         var lockPhaseSeconds = 0.0
-        if !transportRolling {
+        if instant {
+            // TAP — the zero-latency gate: ALWAYS fire NOW (no quantize, no
+            // loop-lock, no arm/hourglass) whether the transport is stopped OR
+            // rolling, and NEVER seed or advance the shared grid (a tap must
+            // not move the lattice the Loop/Latch pads share). The voice still
+            // loops (willLoop) so a hold sustains and finger-lift stops it; it
+            // JOINS the current era's cycle so a rolling tap over running loops
+            // lands mid-body in unison — the willLoop-gated phase-join iOS
+            // keeps under forceInstantLaunch (the .bar force there is Loop/
+            // Latch-only). No active era → phase 0, so a lone tap plays from
+            // the body start (its attack).
+            fireAt = now
+            if transportRolling {
+                if let anchor = lockAnchorSongSeconds {
+                    lockPhaseSeconds = fireAt - anchor
+                }
+            } else if let anchor = freerunAnchorHostSeconds {
+                lockPhaseSeconds = hostNowSeconds() - anchor
+            }
+        } else if !transportRolling {
             // FREE-RUN GRID: the first loop fires immediately and
             // anchors a wall-clock BAR grid (lockGridUnitSeconds — a
             // single bar, so a tap waits ≤ 1 bar, never the full ~6–8 s
             // cycle); later loop taps queue to that anchor so they
             // stack in phase — the queuing feel, without auto-starting
-            // the transport. Tap mode stays instant; a lock-off loop is
-            // instant too but still measures its join phase from the
-            // free-run era (boundary = now, web unquantized launch).
+            // the transport. (Tap is handled by the instant branch above; a
+            // lock-off loop is instant too but still measures its join phase
+            // from the free-run era — boundary = now, web unquantized launch.)
             if willLoop && loopLockEnabled {
                 let hostNow = hostNowSeconds()
                 // Re-anchor whenever nothing is SOUNDING: releasing all
@@ -882,11 +950,10 @@ public final class LaunchpadController {
                 lockAnchorSongSeconds = fireAt
             }
         } else {
-            // Rolling, lock off or Tap mode: the user's Quantize control,
-            // with loop launches floored to the BAR grid (loopQuantize —
-            // sub-bar loop starts land mid-bar, the "queued pads start at
-            // random times" bug; `.off` loops start NOW). One-shots keep
-            // the user's grid untouched.
+            // Rolling, lock off (Loop/Latch — Tap took the instant branch):
+            // the user's Quantize control, with loop launches floored to the
+            // BAR grid (loopQuantize — sub-bar loop starts land mid-bar, the
+            // "queued pads start at random times" bug; `.off` loops start NOW).
             fireAt = Quantizer.nextQuantized(
                 songSeconds: now,
                 mode: Self.loopQuantize(quantize, willLoop: willLoop),
@@ -906,10 +973,11 @@ public final class LaunchpadController {
             }
         }
         activePads.insert(pad)
-        // Usage feedback: loops judge play/skip at toggle-off; a tap
-        // one-shot firing IS the play signal.
+        // Usage feedback: a LATCHED loop judges play/skip at its toggle-off
+        // (held ≥ 3 s = play); Tap and Loop gates release on padUp, so their
+        // trigger firing IS the play signal.
         if let assetId = assignment.chop.assetId {
-            if playbackMode == .loop {
+            if playbackMode.isToggle {
                 padUsageStart[pad] = Date()
             } else {
                 onPadUsage?(assetId, "play")
@@ -986,14 +1054,16 @@ public final class LaunchpadController {
             }
         }
 
-        // Normal chop release. Tap is MOMENTARY — it sounds only while held,
-        // so releasing stops the voice (and restores any taken-over stem).
-        // Loop is a latch: it keeps looping until re-tapped, so padUp is a
-        // no-op for it (the re-tap in padDown toggles it off).
+        // Normal chop release. Tap AND Loop are momentary/HOLD gates — they
+        // sound only while held, so finger-lift STOPS the voice NOW (and
+        // restores any taken-over stem). Latch keeps looping until re-tapped,
+        // so padUp is a no-op for it (the re-tap in padDown toggles it off).
+        // iOS parity: jamPadUpAction → .immediate for loop & tap, .none for
+        // latch (e8566e69/f081d725/d56dc351).
         guard let assignment = assignments[pad] else { return }
-        if playbackMode == .tap {
+        if !playbackMode.isToggle {
             activePads.remove(pad)
-            onRelease?(pad, assignment)   // stop the momentary voice
+            onRelease?(pad, assignment)   // stop the momentary/gate voice NOW
             transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
         }
     }

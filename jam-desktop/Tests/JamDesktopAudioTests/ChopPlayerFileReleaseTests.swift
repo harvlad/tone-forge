@@ -10,6 +10,7 @@
 import AVFoundation
 import XCTest
 import ToneForgeEngine
+import JamDesktopCore
 @testable import JamDesktopAudio
 
 @MainActor
@@ -83,6 +84,38 @@ final class ChopPlayerFileReleaseTests: XCTestCase {
         wait(for: [exp], timeout: 2.0)
         XCTAssertEqual(player.soundingVoiceCount, 0,
                        "a released armed voice must never fire at its old boundary")
+    }
+
+    func testLoopingChopVoiceForceStopsOnRelease() async throws {
+        // Desktop's force-release equivalent (iOS e8566e69): a Tap/Loop gate
+        // forces the voice to LOOP even on a chop with NO intrinsic loop
+        // points, and finger-lift must still stop it. ChopPlayer.release keys
+        // on the sounding voice — never on the pad's intrinsic loop flags — so
+        // there is no guard to bypass: a gate-forced looping voice on a
+        // non-loopable chop is silenced on release. (iOS had to add a `force`
+        // flag to defeat its padLoops guard; desktop needs none.)
+        let engine = AVAudioEngine()
+        let player = ChopPlayer(avEngine: engine)
+        let url = try makeWAV()
+        defer { try? FileManager.default.removeItem(at: url) }
+        _ = engine.mainMixerNode
+        try engine.start()
+        defer { engine.stop() }
+        await player.load(stemURLs: ["other": url])
+
+        // A plain chop — no loopScore / loopPointSec: NOT intrinsically loopable.
+        let chop = Chop(
+            idx: 0, startSec: 0, endSec: 0.2, durationSec: 0.2, kind: "chord")
+        let assignment = PadAssignment(chop: chop, stem: "other")
+
+        // The gate forces the voice to loop (loop: true) so a hold sustains.
+        player.trigger(assignment, afterSeconds: 0, loop: true)
+        XCTAssertEqual(player.soundingVoiceCount, 1,
+                       "a gate-forced loop must claim a live voice")
+
+        player.release(assignment)
+        XCTAssertEqual(player.soundingVoiceCount, 0,
+                       "finger-lift force-stops the looping voice (no intrinsic-loop guard)")
     }
 
     func testOneShotFreesSlotOnNaturalEnd() throws {

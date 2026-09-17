@@ -82,7 +82,7 @@ final class LaunchpadBorrowSmokeTests: XCTestCase {
 
     func testBorrowGridFillsWithDistinctStemColors() {
         let (c, _) = makeController()
-        c.playbackMode = .loop
+        c.playbackMode = .latch      // borrow pads latch (loop until re-tapped)
         c.adoptBorrowAssignments(mounts())
 
         // Grid is non-empty — the failure a user sees as a blank grid.
@@ -109,7 +109,7 @@ final class LaunchpadBorrowSmokeTests: XCTestCase {
 
     func testPadTogglesActiveAndStopClears() {
         let (c, _) = makeController()
-        c.playbackMode = .loop
+        c.playbackMode = .latch            // borrow pads latch (toggle on re-tap)
         c.loopLockEnabled = false          // fire immediately, no quantize wait
         c.adoptBorrowAssignments(mounts())
 
@@ -121,11 +121,11 @@ final class LaunchpadBorrowSmokeTests: XCTestCase {
         c.padDown(pad)
         XCTAssertTrue(c.activePads.contains(pad), "tap should activate the pad")
 
-        // Re-tap → stops (loop toggle). This is the "pad won't stop on re-tap"
+        // Re-tap → stops (latch toggle). This is the "pad won't stop on re-tap"
         // regression guard at the controller level.
         c.padDown(pad)
         XCTAssertFalse(c.activePads.contains(pad),
-                       "re-tap should toggle the loop off")
+                       "re-tap should toggle the latched loop off")
 
         // Re-activate two pads, then Stop clears all + fires hard voice-stop.
         var hardStopped = false
