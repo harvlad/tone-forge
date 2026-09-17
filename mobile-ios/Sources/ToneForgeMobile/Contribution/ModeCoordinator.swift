@@ -199,13 +199,13 @@ public final class ModeCoordinator: ObservableObject {
         // re-tap starts a fresh voice instead of hitting padDown's toggle-off
         // branch.
         s.holdMode = latch ? .toggle : .hold
-        // Loop/Latch = session-view clip: force the buffer to LOOP regardless
-        // of loop points (song chops carry none, so without this a clip played
-        // one pass and went silent). Tap does NOT force loop — its voice loops
-        // only if the pad is genuinely loop-capable (loopable/loopPointSec),
-        // so a real one-shot plays through and a loopable pad loops while held.
-        // A user's explicit radial Loop override still wins in every mode.
-        s.loopOverride = rollsClock
+        // ALL three modes force the buffer to LOOP regardless of loop points
+        // (song chops carry none). Loop/Latch need it to repeat in sync; Tap
+        // needs it so the voice is a live, releasable, sustaining gate — a
+        // one-shot that plays its full length can't be stopped on finger-lift
+        // ("tap makes the whole pad clip play"), so Tap forces loop too and
+        // padUp releases it NOW (hold = sustain, quick tap = short blip).
+        s.loopOverride = true
         // Tap is always immediate: no bar-quantize, no loop-lock, no arm/
         // hourglass — even while the transport rolls and even though the voice
         // loops. Loop/Latch keep the shared-lattice quantize + phase-lock.
@@ -606,10 +606,9 @@ public final class ModeCoordinator: ObservableObject {
             case .padUp(let row, let col):
                 // Finger-lift semantics are per-mode (jamPadUpAction): Loop =
                 // HOLD-to-play gate (release NOW), Latch = toggle (hold; the
-                // next tap releases), Tap = zero-latency one-shot that loops
-                // while held → a ringing looping voice releases at the END of
-                // its current pass (quick tap = one clean pass, hold = sustain
-                // until the next boundary), a non-loop tap plays through.
+                // next tap releases), Tap = zero-latency momentary gate (plays
+                // only while held, release stops NOW — quick tap = short blip,
+                // hold = sustain).
                 guard let t = target(row: row, col: col) else { return }
                 let padKey = SamplePadKey(packId: t.packId, padIdx: t.padIdx)
                 switch Self.jamPadUpAction(
