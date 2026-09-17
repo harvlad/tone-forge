@@ -1,40 +1,33 @@
 WHAT'S NEW IN THIS BUILD
 
-• Sample trigger modes are now Tap | Loop | Latch (was just a Latch
-  toggle):
-  – Tap = zero-latency GATE. Fires the instant you touch (no bar-wait,
-    no hourglass). Plays only while held — quick tap = short blip, hold
-    = sustains, release stops it now.
-  – Loop = hold-to-play, locked to the beat grid, release stops.
-  – Latch = tap on / tap off (loops until re-tapped).
-• The green section pads and purple chord pads on the 64 grid now show
-  the loop/play indicator when latched (they were dead before), and are
-  labelled with a type line — "Vocals / Intro", "Chord / D".
-• Perform stages the same grid size you set in Build — pick 64 in Build,
-  Perform shows all 64 (was stuck at 16).
+• Edit mode no longer sounds the pad. Holding a pad to open the radial
+  menu used to fire it on/off (an audible blip) — in Edit mode a pad
+  touch is now silent; only the hold-for-radial gesture acts. Toggle
+  Edit off to play.
+• (Also in the last build, in case you missed it) Tap | Loop | Latch
+  trigger modes: Tap = zero-latency gate (instant, hold to sustain,
+  release stops); Loop = beat-locked hold-to-play; Latch = tap on/off.
+  Section/chord pads on the 64 grid show their loop indicator + a type
+  label ("Vocals / Intro", "Chord / D"). Perform stages the grid size
+  you set in Build.
 
-HOW TO USE
+HOW TO USE EDIT MODE
 
-Trigger modes (Build → Samples): the Tap | Loop | Latch chips lead the
-row above the pads (scroll the row if needed).
-• Tap: press a pad — instant sound, no waiting. Hold to sustain, lift to
-  stop.
-• Loop: press — waits for the next bar, loops while held, lift stops.
-• Latch: press to start the loop, press again to stop.
+1. Build → Samples. Tap the pencil "Edit" chip (right end of the chip
+   row).
+2. Edit ON: hold a pad → the radial editing wheel opens, NO sound.
+3. Edit OFF: pads play normally (Tap/Loop/Latch as chosen).
 
 WHAT TO TEST
 
-1. Tap mode: hit any pad — expected = INSTANT, no hourglass. Hold it —
-   sustains. Lift — stops immediately. Quick tap — short blip.
-2. Tap a green/purple 64-grid pad in Latch — expected = loop badge +
-   glow appear (they didn't before), label shows "Vocals/Intro" or
-   "Chord/D".
-3. Loop mode: press-hold a pad — waits for the bar, loops while held,
-   stops on release.
-4. Build 64 → Perform tab — expected = full 8×8 on stage.
-5. Reptile intro + Latch: queue pads in the intro — all fire within one
-   bar (no never-ending hourglass).
+1. Edit ON: hold several pads to open the radial — expected = NO audio
+   blip, just the wheel. Pick Loop/Chop/etc.
+2. Edit OFF + Tap: hit a pad — instant sound, hold sustains, release
+   stops.
+3. Green/purple 64-grid pads in Latch — loop badge + glow show, labels
+   read "Vocals/Intro" or "Chord/D".
+4. Build 64 → Perform — full 8×8 on stage.
 
 WHAT TO REPORT
-• Any Tap pad that keeps playing after you lift (say grid size + pad).
-• Any pad that lights but stays silent.
+• Any sound when touching a pad with Edit ON.
+• Any Tap pad that keeps playing after you lift.
