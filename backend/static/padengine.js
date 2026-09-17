@@ -1107,15 +1107,35 @@ export class PadEngine {
       } catch (_) {
         fire();
       }
-      return { startTime: null, loop: !!opts.loop && entry.loopBuffer != null, deferred: true };
+      return {
+        startTime: null,
+        loop: PadEngine.willLoopFor(opts, entry.loopBuffer != null, entry.oneShotBuffer != null),
+        deferred: true,
+      };
     }
     return this._startVoice(padIdx, entry, opts);
   }
 
+  /** Will a trigger produce a LOOPING (held, releasable) voice? A normal loop
+   * needs a baked loop buffer; a Tap gate (opts.forceLoop) loops even a
+   * non-loopable pad by wrapping its raw one-shot, so the voice is a live,
+   * releasable, sustaining gate rather than a one-shot that plays its full
+   * length (iOS loopOverride parity — SampleScheduler forcing the buffer to
+   * loop). Pure so the Tap-gate contract is unit-testable. */
+  static willLoopFor(opts, hasLoopBuffer, hasOneShot) {
+    if (!opts || !opts.loop) return false;
+    if (hasLoopBuffer) return true;
+    return !!opts.forceLoop && !!hasOneShot;
+  }
+
   _startVoice(padIdx, entry, opts) {
-    const wantLoop = !!opts.loop;
     const quantized = !!opts.quantized;
-    const willLoop = wantLoop && entry.loopBuffer != null;
+    const hasLoopBuf = entry.loopBuffer != null;
+    const willLoop = PadEngine.willLoopFor(opts, hasLoopBuf, entry.oneShotBuffer != null);
+    // A Tap force-looping a NON-loopable pad: the voice loops (releasable gate)
+    // but has no baked seam and no shared musical cycle, so it never joins the
+    // lattice (quantize wait / phase-lock / anchor) — it fires at `now`, phase 0.
+    const forceLoopOneShot = willLoop && !hasLoopBuf;
 
     // Stem this trigger takes over. Same-stem retrigger keeps the duck (no
     // deactivate/activate blip): the count transfers from the old voice to
@@ -1139,7 +1159,7 @@ export class PadEngine {
     // cancel the compensation — pads would flam by (shift_B - shift_A),
     // up to the ±60 ms onset-search window each way.
     let boundary = now;
-    if (willLoop) {
+    if (willLoop && !forceLoopOneShot) {
       let target = now;
       if (quantized) {
         // Transport rolling → quantize against the SONG's bar grid;
@@ -1229,13 +1249,23 @@ export class PadEngine {
       source.connect(gain);
     }
     gain.connect(this.destination);
-    if (willLoop) {
+    if (willLoop && !forceLoopOneShot) {
       // Baked buffer is exactly the body length; the seam is baked so the
       // browser's hard wrap at loopEnd is clean.
       source.buffer = entry.loopBuffer;
       source.loop = true;
       source.loopStart = 0;
       source.loopEnd = entry.bodySec;
+    } else if (forceLoopOneShot) {
+      // Tap gate on a non-loopable pad: loop the RAW one-shot so the voice is
+      // a live, releasable, sustaining gate (iOS loopOverride parity). No baked
+      // seam, so the wrap isn't crossfaded — acceptable for a momentary held
+      // gate (a quick tap is a short blip; a hold sustains until finger-lift).
+      source.buffer = entry.oneShotBuffer;
+      source.loop = true;
+      source.loopStart = 0;
+      source.loopEnd =
+        (entry.oneShotBuffer && entry.oneShotBuffer.duration) || entry.bodySec || 0;
     } else {
       source.buffer = entry.oneShotBuffer;
     }
@@ -1284,12 +1314,14 @@ export class PadEngine {
     // still lands on the quantized bar. The first loop (boundary == anchor)
     // begins at phase 0. One-shots start at 0. voice.phaseSec feeds
     // padProgress so the DRAWN playhead reports the true buffer position.
-    if (willLoop && entry.bodySec > 0 && this._lockAnchor != null) {
+    if (willLoop && !forceLoopOneShot && entry.bodySec > 0 && this._lockAnchor != null) {
       const body = entry.bodySec;
       const phase = (((boundary - this._lockAnchor) % body) + body) % body;
       voice.phaseSec = phase;
       source.start(startTime, phase);
     } else {
+      // Tap gate (force-looped one-shot) and the first lattice loop both start
+      // at phase 0 / `now` — the gate never joins the shared lattice.
       source.start(startTime);
     }
     // Armed watchdog: a quantized launch must be sounding by its own wait

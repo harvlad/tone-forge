@@ -124,3 +124,20 @@ test("nextGridTimeSec snaps to the first grid time at/after now-minus-grace", ()
   assert.equal(nextGridTimeSec(3.5, grid, 0.08), 5.0);
   assert.equal(nextGridTimeSec(9.0, grid, 0.08), null); // past the end
 });
+
+test("willLoopFor: Tap gate force-loops even a non-loopable pad", () => {
+  // Normal loop: needs a baked loop buffer (a one-shot alone never loops).
+  assert.equal(PadEngine.willLoopFor({ loop: true }, true, true), true);
+  assert.equal(PadEngine.willLoopFor({ loop: true }, false, true), false);
+  // Tap gate (forceLoop): loops a NON-loopable pad by wrapping its one-shot, so
+  // the voice is a live, releasable gate instead of a one-shot that plays its
+  // whole length (iOS loopOverride parity — the "tap plays the whole clip" bug).
+  assert.equal(PadEngine.willLoopFor({ loop: true, forceLoop: true }, false, true), true);
+  // …but only when the pad actually HAS a one-shot to loop.
+  assert.equal(PadEngine.willLoopFor({ loop: true, forceLoop: true }, false, false), false);
+  // A loopable pad under a Tap still loops (uses its baked loop buffer).
+  assert.equal(PadEngine.willLoopFor({ loop: true, forceLoop: true }, true, true), true);
+  // No loop requested → never loops, forceLoop or not.
+  assert.equal(PadEngine.willLoopFor({ loop: false, forceLoop: true }, true, true), false);
+  assert.equal(PadEngine.willLoopFor(null, true, true), false);
+});

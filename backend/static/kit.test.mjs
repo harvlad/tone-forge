@@ -51,6 +51,33 @@ assert.deepEqual(
   [8]
 );
 
+// Tap|Loop|Latch press/release plan (pure — iOS ModeCoordinator parity, the
+// web twin of jamPadUpAction). This is the single source of truth padDown/
+// padUp use, and the SAME entry point the hardware Launchpad drives via
+// synthetic pointer events (lp-hw.js onMidi → pointerdown/up), so a plugged-in
+// pad gets the identical zero-latency Tap gate.
+const { padPressPlan, padReleasePlan } = K._internals;
+// Tap (no radial override) = the zero-latency momentary GATE (NEW contract,
+// diverges from web's OLD quantized fire-and-forget Tap): fires immediately,
+// force-loops, and releases on finger-lift.
+assert.deepEqual(padPressPlan("tap", false, null), { kind: "tapGate", latch: false });
+assert.equal(padReleasePlan(padPressPlan("tap", false, null)), true); // padUp force-stops
+// Latch flag is irrelevant in Tap mode (Latch only exists inside Loop mode).
+assert.deepEqual(padPressPlan("tap", true, null), { kind: "tapGate", latch: false });
+// Loop mode, no Latch = HOLD-to-play gate: quantized launch, release stops.
+assert.deepEqual(padPressPlan("loop", false, null), { kind: "loop", latch: false });
+assert.equal(padReleasePlan(padPressPlan("loop", false, null)), true);
+// Loop mode + Latch = TOGGLE: holds on finger-lift (a re-tap/padDown stops it).
+assert.deepEqual(padPressPlan("loop", true, null), { kind: "loop", latch: true });
+assert.equal(padReleasePlan(padPressPlan("loop", true, null)), false);
+// Radial override OUTRANKS the mode in EVERY mode (web+iOS parity):
+//   loop-override → latches (holds); one-shot-override → plays through.
+assert.deepEqual(padPressPlan("tap", false, true), { kind: "loop", latch: true });
+assert.equal(padReleasePlan(padPressPlan("tap", false, true)), false); // override loop latches under Tap
+assert.deepEqual(padPressPlan("loop", false, false), { kind: "oneshot", latch: false });
+assert.equal(padReleasePlan(padPressPlan("loop", false, false)), false); // one-shot fire-and-forget
+assert.equal(padReleasePlan(null), false);
+
 // Pad-count preference: URL ?pads= wins, else stored, else 16; only 16/64
 // are real layouts, anything else falls back.
 const { resolvePadCount } = K._internals;

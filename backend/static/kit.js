@@ -1713,6 +1713,39 @@
     return p.loopOverride != null ? p.loopOverride : s.mode === "loop";
   }
 
+  /** Pure per-mode press plan (iOS ModeCoordinator.triggerJamSample parity).
+   * Given the surface mode ("tap" | "loop"), the Latch flag, and the pad's
+   * radial loopOverride (true | false | null), decide how a press behaves.
+   * A radial override OUTRANKS the mode in every mode (web+iOS parity):
+   *   - loopOverride === true  → "loop" that LATCHES (radial Stop / re-tap ends).
+   *   - loopOverride === false → "oneshot" (plays through; finger-lift ignored).
+   * With no override the surface mode decides:
+   *   - mode "tap"  → "tapGate": the zero-latency momentary GATE — fires
+   *     IMMEDIATELY (no quantize, no bar-wait, no armed hourglass, even while
+   *     the transport rolls), FORCE-loops the voice so it sustains while held,
+   *     and force-STOPS on finger-lift. This DELIBERATELY diverges from web's
+   *     OLD Tap (a quantized fire-and-forget one-shot) to match iOS per user.
+   *   - mode "loop" → "loop"; latches when Latch is on, else HOLD-to-play.
+   * Pure so the padDown/padUp contract is unit-testable without a DOM/engine
+   * (the web twin of ModeCoordinator.jamPadUpAction). */
+  function padPressPlan(mode, latch, loopOverride) {
+    if (loopOverride === true) return { kind: "loop", latch: true };
+    if (loopOverride === false) return { kind: "oneshot", latch: false };
+    if (mode !== "loop") return { kind: "tapGate", latch: false };
+    return { kind: "loop", latch: !!latch };
+  }
+
+  /** Pure finger-lift plan: does padUp RELEASE the pad's voice for this press
+   * plan? Tap gate = always (force-stop NOW); Loop = release only when it is
+   * NOT latched (HOLD-to-play gate); Latch + radial-loop + one-shot = hold.
+   * (iOS jamPadUpAction twin.) */
+  function padReleasePlan(plan) {
+    if (!plan) return false;
+    if (plan.kind === "tapGate") return true;
+    if (plan.kind === "loop") return !plan.latch;
+    return false;
+  }
+
   /** Instant Groove picker (pure — mirrors LaunchpadController.instantGroove):
    * the single best pad per core category by performanceScore || loopScore.
    * Returns padIdx values in the fixed category order. */
@@ -2512,6 +2545,7 @@
     s.padEls[i] = {
       el: el, ring: ring, sweep: sweep, canvas: canvas, badge: badge, fxBadge: fxBadge, tint: tint,
       ui: "idle", loop: false,
+      tapGate: false, // true while a Tap momentary-gate voice is held (padUp force-stops it)
       loopOverride: null, // radial per-pad override: true=loop, false=one-shot, null=follow mode
       lp: null, lpX: 0, lpY: 0, // long-press (radial) timer state
     };
@@ -2540,28 +2574,32 @@
             el.setPointerCapture(ev.pointerId);
           } catch (_) {}
         }
-        padDown(s, padIdx);
-        // Long-press ≥450 ms = the radial gesture (mobile hold-radial
-        // parity; also the only path on touch, where contextmenu may
-        // never fire). Movement past ~8 px cancels — that's a scrub.
-        // Edit OFF arms NOTHING here: no timer exists to hijack a hold,
-        // so a sustained press just keeps sounding (the timer's firing
-        // padUp()s the voice — with Edit off that would cut every hold
-        // at 450 ms, the exact bug iOS 602a9043 fixed).
         var p = s.padEls[padIdx];
         if (p && s.editMode) {
+          // Edit = CONFIGURE, not perform: a pad touch NEVER sounds the pad.
+          // Previously padDown sounded it and the 450 ms radial timer padUp'd
+          // it — an audible on→off blip before the menu opened (user report:
+          // "holding to open the radial fires the pad on and off"). We now arm
+          // ONLY the hold-for-radial gesture and leave the pad silent; a quick
+          // tap in Edit mode is silent too (Edit is for configuring, the radial
+          // itself auditions). Movement past ~8 px cancels — that's a scrub.
           clearLp();
           p.lpX = ev.clientX;
           p.lpY = ev.clientY;
           p.lp = setTimeout(function () {
             p.lp = null;
             try {
-              padUp(s, padIdx); // release the held voice before the menu takes over
               el.classList.remove("is-pressed");
               openRadial(s, padIdx, p.lpX, p.lpY);
             } catch (_) {}
           }, 450);
+          return;
         }
+        // Edit OFF = pure performance path: sound the pad now. No timer exists
+        // to hijack a hold, so a sustained press just keeps sounding (the
+        // timer's firing padUp()s the voice — with Edit off that would cut
+        // every hold at 450 ms, the exact bug iOS 602a9043 fixed).
+        padDown(s, padIdx);
       } catch (_) {}
     });
     el.addEventListener("pointermove", function (ev) {
@@ -2573,6 +2611,10 @@
     });
     var up = function () {
       clearLp();
+      // Edit = configure: the press never sounded the pad, so release nothing
+      // (symmetric with the pointerdown skip above) — this also protects any
+      // radial-started audition from a stray finger-lift on the same tile.
+      if (s.editMode) return;
       try {
         padUp(s, padIdx);
       } catch (_) {}
@@ -2608,7 +2650,24 @@
   function padDown(s, padIdx) {
     var p = s.padEls[padIdx];
     if (!p || !can(s.engine, "trigger")) return;
-    var wantLoop = effectiveLoop(s, p);
+    var plan = padPressPlan(s.mode, s.latch, p.loopOverride);
+    if (plan.kind === "tapGate") {
+      // Tap = zero-latency momentary GATE (iOS 37f851d6/f081d725/d56dc351/
+      // e8566e69). Fires IMMEDIATELY — ignores the quantize axis, no bar-wait,
+      // no armed hourglass — and FORCE-loops the voice (forceLoop covers even a
+      // non-loopable pad, so it's a live, releasable, sustaining voice, not a
+      // one-shot that plays its whole length). padUp force-stops it (the web
+      // engine's release() has no intrinsic-loop guard, so it stops whatever is
+      // sounding). Quick tap = short blip, hold = sustain, release = stop now.
+      p.loop = true;
+      p.tapGate = true;
+      s.engine.trigger(padIdx, { loop: true, forceLoop: true, quantized: false });
+      noteTrigger(s, padIdx);
+      setUi(s, padIdx, "playing"); // sounding NOW — never "waiting for the beat"
+      return;
+    }
+    p.tapGate = false;
+    var wantLoop = plan.kind === "loop";
     var q = s.quantize !== "off";
     // grid ("beat" | "bar") is the quantize unit the engine aligns to: Beat
     // fires on the next quarter-note, Bar on the next downbeat, both locked
@@ -2617,15 +2676,15 @@
     var opts = { loop: wantLoop, quantized: q };
     if (q) opts.grid = s.quantize;
     if (!wantLoop) {
-      // One-shot fire-and-forget; release is ignored (padUp checks .loop).
+      // Radial one-shot override: fire-and-forget; release is ignored.
       p.loop = false;
       s.engine.trigger(padIdx, opts);
       noteTrigger(s, padIdx);
       setUi(s, padIdx, "playing"); // immediate start; rAF ends it via padProgress
       return;
     }
-    // Loop path (Loop mode, or a radial loop-override in Tap mode).
-    if ((s.latch || p.loopOverride === true) && (p.ui === "armed" || p.ui === "playing")) {
+    // Loop path (Loop mode, or a radial loop-override).
+    if (plan.latch && (p.ui === "armed" || p.ui === "playing")) {
       // Latch ON (and override-loops, which behave latched): second tap
       // toggles off.
       if (can(s.engine, "release")) s.engine.release(padIdx);
@@ -2644,9 +2703,17 @@
   function padUp(s, padIdx) {
     var p = s.padEls[padIdx];
     if (!p) return;
-    if (s.latch || !p.loop) return; // tap/one-shot = fire-and-forget; latch holds
-    if (p.loopOverride === true) return; // override-loops latch (radial Stop / re-tap ends them)
-    if (s.mode !== "loop") return;
+    var plan = padPressPlan(s.mode, s.latch, p.loopOverride);
+    if (!padReleasePlan(plan)) {
+      p.tapGate = false; // latch/one-shot/radial-loop hold — nothing to release
+      return;
+    }
+    // A Loop-mode HOLD releases only a voice we actually started as a loop
+    // (never armed / never started). The Tap gate always releases: its voice
+    // is looping via forceLoop even on a non-loopable pad, so p.loop is set and
+    // the engine force-stops it (mirrors iOS releaseJamSample force-release).
+    if (plan.kind === "loop" && !p.loop) return;
+    p.tapGate = false;
     if (can(s.engine, "release")) s.engine.release(padIdx);
     setUi(s, padIdx, "idle");
   }
@@ -5006,6 +5073,8 @@
       resolveStemUrl: resolveStemUrl,
       parseColor: parseColor,
       pickInstantGroove: pickInstantGroove,
+      padPressPlan: padPressPlan,
+      padReleasePlan: padReleasePlan,
       fmtTime: fmtTime,
       resolvePadCount: resolvePadCount,
       resolveEditMode: resolveEditMode,
