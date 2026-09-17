@@ -1,26 +1,40 @@
 WHAT'S NEW IN THIS BUILD
 
-• Perform now stages the SAME grid size you configured in Build: pick
-  64 pads in Build and Perform shows all 64 (it was stuck at 16).
-• Everything from the last builds: the never-ending-hourglass fix for
-  long-intro songs, Launchpad Edit Mode (radial behind the pencil
-  chip), full-length pad holds, shared testing library, Learn
-  fretboard coaching.
+• Sample trigger modes are now Tap | Loop | Latch (was just a Latch
+  toggle):
+  – Tap = zero-latency GATE. Fires the instant you touch (no bar-wait,
+    no hourglass). Plays only while held — quick tap = short blip, hold
+    = sustains, release stops it now.
+  – Loop = hold-to-play, locked to the beat grid, release stops.
+  – Latch = tap on / tap off (loops until re-tapped).
+• The green section pads and purple chord pads on the 64 grid now show
+  the loop/play indicator when latched (they were dead before), and are
+  labelled with a type line — "Vocals / Intro", "Chord / D".
+• Perform stages the same grid size you set in Build — pick 64 in Build,
+  Perform shows all 64 (was stuck at 16).
 
 HOW TO USE
 
-1. Build tab → Samples → tap the 64 chip.
-2. Switch to the Perform tab: the stage now shows the full 8×8 with
-   the same pads, hotter tiles, no edit chrome.
+Trigger modes (Build → Samples): the Tap | Loop | Latch chips lead the
+row above the pads (scroll the row if needed).
+• Tap: press a pad — instant sound, no waiting. Hold to sustain, lift to
+  stop.
+• Loop: press — waits for the next bar, loops while held, lift stops.
+• Latch: press to start the loop, press again to stop.
 
 WHAT TO TEST
 
-1. Build 64 → Perform: expected = 64 pads on stage, all playable,
-   green section / purple chord pads included.
-2. Build 16 → Perform: expected = the classic 4×4 stage.
-3. Re-check the hourglass fix on Reptile if you haven't: Latch, queue
-   pads in the intro — all fire within one bar.
+1. Tap mode: hit any pad — expected = INSTANT, no hourglass. Hold it —
+   sustains. Lift — stops immediately. Quick tap — short blip.
+2. Tap a green/purple 64-grid pad in Latch — expected = loop badge +
+   glow appear (they didn't before), label shows "Vocals/Intro" or
+   "Chord/D".
+3. Loop mode: press-hold a pad — waits for the bar, loops while held,
+   stops on release.
+4. Build 64 → Perform tab — expected = full 8×8 on stage.
+5. Reptile intro + Latch: queue pads in the intro — all fire within one
+   bar (no never-ending hourglass).
 
 WHAT TO REPORT
-• Any pad playable in Build but silent on the Perform stage (say grid
-  size + pad color).
+• Any Tap pad that keeps playing after you lift (say grid size + pad).
+• Any pad that lights but stays silent.
