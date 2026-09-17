@@ -253,7 +253,10 @@ struct JamView: View {
             case .chords:
                 triggerModeToggle
             case .samples:
-                sampleTriggerModeChips
+                // Tap|Loop|Latch lives on the samples chrome row below —
+                // three text chips here overflowed the mode row at phone
+                // width and squeezed to zero-width blobs.
+                EmptyView()
             }
 
             compactAffordances
@@ -378,6 +381,9 @@ struct JamView: View {
                 // into vertical letter-wrap ("1/6", "Edi/t").
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
+                        // Tap|Loop|Latch first — the most-used control, so
+                        // it's always visible without scrolling.
+                        sampleTriggerModeChips
                         launchpadSizeChips
                         Spacer(minLength: 8)
                         ArrangementChips(arrangement: appState.arrangement)
