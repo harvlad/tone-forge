@@ -1437,7 +1437,14 @@ public final class SampleScheduler: ObservableObject {
     /// fire the release fade + player.stop() before the deferred
     /// play() dispatched, leaving the pad silent. Only looping pads
     /// need touch-up-to-release semantics.
-    public func release(padIdx: Int, packId: String? = nil) {
+    /// `force` bypasses the `padLoops` intrinsic-loop guard: a Jam gate
+    /// (Tap/Loop finger-lift) forces a voice to loop via the transient
+    /// scheduler-wide `loopOverride`, which is already restored by the
+    /// time padUp fires — so the pad's INTRINSIC loop state reads false
+    /// and the guard refused to release the still-looping voice (chord/
+    /// section pads played their whole clip on finger-lift). A force
+    /// release stops whatever is actually sounding on the pad.
+    public func release(padIdx: Int, packId: String? = nil, force: Bool = false) {
         #if canImport(AVFoundation)
         // Local pads are one-shots (play to completion, no touch-up
         // release) UNLESS their transform chain contains `.loop` —
@@ -1451,7 +1458,7 @@ public final class SampleScheduler: ObservableObject {
                 packId: Self.localPackId, padIdx: padIdx
             )
             if holdMode == .hold,
-               loopResolver?(Self.localPackId, padIdx) ?? false,
+               force || (loopResolver?(Self.localPackId, padIdx) ?? false),
                pool.isActive(padKey: localKey) {
                 pool.release(padKey: localKey)
                 onEvent?(LayerEvent(
@@ -1471,8 +1478,10 @@ public final class SampleScheduler: ObservableObject {
               loadedPacks[pid] != nil
         else { return }
         // Effective loop state (incl. the radial per-pad override and
-        // kit `loopable` pads, which loop without a loopPointSec).
-        guard padLoops(packId: pid, padIdx: padIdx) else { return }
+        // kit `loopable` pads, which loop without a loopPointSec). A
+        // forced gate release skips this — the voice is looping via the
+        // transient loopOverride, not the pad's intrinsic flags.
+        guard force || padLoops(packId: pid, padIdx: padIdx) else { return }
         let padKey = SamplePadKey(packId: pid, padIdx: padIdx)
         if pool.isActive(padKey: padKey) {
             pool.release(padKey: padKey)

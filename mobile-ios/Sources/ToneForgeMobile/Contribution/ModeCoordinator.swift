@@ -305,7 +305,10 @@ public final class ModeCoordinator: ObservableObject {
     /// Release a held (Loop-mode) Jam sample on finger-up — IMMEDIATE stop
     /// with the 20 ms fade (HOLD-to-play gate).
     public func releaseJamSample(padIdx: Int, packId: String) {
-        app.sampleScheduler.release(padIdx: padIdx, packId: packId)
+        // force: an explicit finger-lift gate must stop the voice even
+        // though the pad isn't intrinsically loopable — it's looping via
+        // the transient loopOverride, which release() can't see by padUp.
+        app.sampleScheduler.release(padIdx: padIdx, packId: packId, force: true)
     }
 
     /// Release a held Tap-mode Jam loop at the END of its current pass, so a
