@@ -146,4 +146,52 @@ final class JamSettingsStoreTests: XCTestCase {
         XCTAssertNil(store.effectiveKey(detectedKey: nil, analysisId: nil))
         XCTAssertNil(store.effectiveKey(detectedKey: "??", analysisId: nil))
     }
+
+    // MARK: - Sample trigger mode (3-way) + bool→mode migration
+
+    private let latchKey = "jam.sampleLatch"
+    private let tapMigKey = "jam.sampleLatch.tapDefaultMigrated"
+    private let modeKey = "jam.sampleTriggerMode"
+
+    func testTriggerModeDefaultsToTap() {
+        let store = JamSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.sampleTriggerMode, .tap)
+    }
+
+    func testTriggerModePersistsAcrossInstances() {
+        let a = JamSettingsStore(defaults: defaults)
+        a.sampleTriggerMode = .loop
+        let b = JamSettingsStore(defaults: defaults)
+        XCTAssertEqual(b.sampleTriggerMode, .loop, "Loop must survive a relaunch")
+    }
+
+    func testMigrationLegacyLatchTrueBecomesLatch() {
+        // A device with Latch a real user choice (tapDefault reset already
+        // ran, so it isn't clobbered) folds into the 3-way .latch.
+        defaults.set(true, forKey: latchKey)
+        defaults.set(true, forKey: tapMigKey)
+        let store = JamSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.sampleTriggerMode, .latch)
+    }
+
+    func testMigrationLegacyLatchFalseBecomesTap() {
+        defaults.set(false, forKey: latchKey)
+        defaults.set(true, forKey: tapMigKey)
+        let store = JamSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.sampleTriggerMode, .tap)
+    }
+
+    func testMigrationRunsOnceAndPreservesLaterLoopChoice() {
+        // First launch migrates legacy latch=true → .latch…
+        defaults.set(true, forKey: latchKey)
+        defaults.set(true, forKey: tapMigKey)
+        let first = JamSettingsStore(defaults: defaults)
+        XCTAssertEqual(first.sampleTriggerMode, .latch)
+        // …the user then picks the new Loop mode…
+        first.sampleTriggerMode = .loop
+        // …and a later launch must NOT re-derive from the stale latch bool
+        // and clobber Loop back to Latch.
+        let later = JamSettingsStore(defaults: defaults)
+        XCTAssertEqual(later.sampleTriggerMode, .loop)
+    }
 }

@@ -237,7 +237,14 @@ struct PerformView: View {
                 if isLatch { chordPadController.clearLatches() }
             })
         case .samples:
-            return (jamSettings.sampleLatch, { jamSettings.sampleLatch.toggle() })
+            // Perform keeps a BINARY latch pill (the stage surface stays
+            // simple); Loop's hold-to-play gate lives on Jam's 3-way segment.
+            // The pill toggles Latch ⇄ Tap — a mode set to Loop in Jam reads
+            // as off here and flips to Latch on tap.
+            return (jamSettings.sampleTriggerMode == .latch, {
+                jamSettings.sampleTriggerMode =
+                    jamSettings.sampleTriggerMode == .latch ? .tap : .latch
+            })
         case .pads:
             return nil
         }

@@ -83,6 +83,33 @@ public enum JamPadMode: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// How the Samples grid triggers a pad — the 3-way web-parity control
+/// (kit.js Tap|Loop|Latch segment). Tap = one-shots that play through;
+/// Loop = HOLD-to-play loops (press starts the loop, finger-lift releases
+/// it — a momentary gate); Latch = loops that keep playing until re-tapped
+/// (a toggle). Loop and Latch BOTH loop and BOTH phase-lock/quantize the
+/// launch identically — they differ only in what finger-lift does (Loop
+/// releases, Latch holds). Replaced the old 2-state `sampleLatch` Bool,
+/// which could express Tap and Latch but not Loop.
+public enum SampleTriggerMode: String, CaseIterable, Codable, Sendable {
+    case tap
+    case loop
+    case latch
+
+    public var displayName: String {
+        switch self {
+        case .tap:   return "Tap"
+        case .loop:  return "Loop"
+        case .latch: return "Latch"
+        }
+    }
+
+    /// Loop-capable modes repeat the chop (Tap fires a single one-shot).
+    /// Both Loop and Latch loop; the clock is rolled and the shared phase
+    /// lattice anchored for either.
+    public var loops: Bool { self != .tap }
+}
+
 @MainActor
 public final class JamSettingsStore: ObservableObject {
 
@@ -152,16 +179,20 @@ public final class JamSettingsStore: ObservableObject {
         didSet { save() }
     }
 
-    /// Samples trigger mode: Latch (tap on/off, loops) vs Tap (plays
-    /// while held). Shared so on-screen + Launchpad hardware agree.
-    /// Persisted (UserDefaults, independent of the settings blob so no
-    /// migration surgery). Defaults to Latch.
-    // Default OFF (Tap): with latch on, a fresh install tapping a
-    // starter one-shot retriggered like a machine gun before any song
-    // loaded. Latch is an opt-in performance mode, not the baseline.
-    @Published public var sampleLatch: Bool =
-        (UserDefaults.standard.object(forKey: "jam.sampleLatch") as? Bool) ?? false {
-        didSet { UserDefaults.standard.set(sampleLatch, forKey: "jam.sampleLatch") }
+    /// Samples trigger mode: Tap | Loop | Latch (web parity — kit.js's
+    /// Tap|Loop|Latch segment). Shared so on-screen + Launchpad hardware
+    /// agree. Its own UserDefaults key (`jam.sampleTriggerMode`), like the
+    /// 2-state `jam.sampleLatch` Bool it replaces, so it needs no
+    /// settings-blob migration surgery. Assigned in `init` AFTER the
+    /// bool→mode migration runs — declaring it WITHOUT a default expression
+    /// forces that ordering (a default expression reading UserDefaults would
+    /// fire during Phase-1 init, before the migration writes the key).
+    /// Defaults to Tap: with a looping mode a fresh install tapping a
+    /// starter one-shot retriggers like a machine gun before any song loads.
+    @Published public var sampleTriggerMode: SampleTriggerMode {
+        didSet {
+            defaults.set(sampleTriggerMode.rawValue, forKey: "jam.sampleTriggerMode")
+        }
     }
 
     /// Which Song DNA pack (stem) the Samples grid is showing. nil =
@@ -173,7 +204,7 @@ public final class JamSettingsStore: ObservableObject {
     /// the on-screen mirror of the web kit's 16|64 toggle (kit.js
     /// `resolvePadCount`). Only 16 and 64 are real layouts; any other
     /// persisted value degrades to 16 rather than a broken grid. Kept in
-    /// its own UserDefaults key (like `sampleLatch`) so it needs no blob
+    /// its own UserDefaults key (like `sampleTriggerMode`) so it needs no blob
     /// migration surgery. Defaults to 16 (the native 4×4 kit scale).
     @Published public var launchpadPadCount: Int =
         ((UserDefaults.standard.object(forKey: "jam.launchpadPadCount") as? Int) == 64 ? 64 : 16) {
@@ -235,6 +266,24 @@ public final class JamSettingsStore: ObservableObject {
             defaults.set(false, forKey: "jam.sampleLatch")
             defaults.set(true, forKey: "jam.sampleLatch.tapDefaultMigrated")
         }
+        // One-time migration: fold the retired 2-state `jam.sampleLatch`
+        // Bool into the 3-way `jam.sampleTriggerMode`. Old true → .latch,
+        // old false → .tap; Loop (hold-to-play) is new, so nobody starts on
+        // it. Guarded by the mode key's own absence so a user who later
+        // picks Loop/Latch keeps it across relaunches. Runs AFTER the
+        // tapDefault reset above, so a legacy machine-gun latch still lands
+        // on Tap. `sampleTriggerMode` is then assigned from this key inside
+        // init (not via a default expression) so the write is observed.
+        if defaults.string(forKey: "jam.sampleTriggerMode") == nil {
+            let legacyLatch = (defaults.object(forKey: "jam.sampleLatch") as? Bool) ?? false
+            defaults.set(
+                (legacyLatch ? SampleTriggerMode.latch : .tap).rawValue,
+                forKey: "jam.sampleTriggerMode"
+            )
+        }
+        self.sampleTriggerMode = SampleTriggerMode(
+            rawValue: defaults.string(forKey: "jam.sampleTriggerMode") ?? ""
+        ) ?? .tap
         let loaded = Self.load(from: defaults) ?? Persisted.defaults
         self.scaleVariant = loaded.scaleVariant
         self.highlightCurrentChord = loaded.highlightCurrentChord

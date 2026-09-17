@@ -701,7 +701,7 @@ final class JamFirstLaunchAnchorTests: XCTestCase {
         XCTAssertNil(app.sampleScheduler.loopLockAnchorHostSec)
         XCTAssertNotEqual(app.audioEngine.clock.state, .playing)
 
-        app.modeCoordinator.triggerJamSample(padIdx: 0, packId: "jam", latch: true)
+        app.modeCoordinator.triggerJamSample(padIdx: 0, packId: "jam", mode: .latch)
 
         XCTAssertNotNil(
             app.sampleScheduler.loopLockAnchorHostSec,

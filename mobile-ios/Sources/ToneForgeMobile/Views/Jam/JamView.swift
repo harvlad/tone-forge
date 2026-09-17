@@ -253,14 +253,7 @@ struct JamView: View {
             case .chords:
                 triggerModeToggle
             case .samples:
-                Button {
-                    jamSettings.sampleLatch.toggle()
-                } label: {
-                    Text(jamSettings.sampleLatch ? "Latch" : "Tap")
-                        .tfChip(active: jamSettings.sampleLatch)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Sample trigger mode: \(jamSettings.sampleLatch ? "Latch" : "Tap"), tap to toggle")
+                sampleTriggerModeChips
             }
 
             compactAffordances
@@ -285,6 +278,32 @@ struct JamView: View {
         if mode == .pads {
             // Latched chord visuals make no sense off-surface.
             chordPadController.clearLatches()
+        }
+    }
+
+    /// [Tap | Loop | Latch] sample-trigger segment — the mobile mirror of
+    /// the web kit's 3-way control (kit.js Tap|Loop|Latch). Tap = one-shots
+    /// that play through; Loop = HOLD-to-play loops (press starts, finger-up
+    /// stops — a momentary gate); Latch = loops that keep playing until
+    /// re-tapped. Same adjacent-`.tfChip` pattern as the 16|64 size chips so
+    /// the three read as one mutually-exclusive segmented choice.
+    private var sampleTriggerModeChips: some View {
+        HStack(spacing: 8) {
+            ForEach(SampleTriggerMode.allCases, id: \.rawValue) { mode in
+                Button {
+                    guard jamSettings.sampleTriggerMode != mode else { return }
+                    Haptics.selectionChanged()
+                    jamSettings.sampleTriggerMode = mode
+                } label: {
+                    Text(mode.displayName)
+                        .tfChip(active: jamSettings.sampleTriggerMode == mode)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(mode.displayName) sample trigger mode")
+                .accessibilityAddTraits(
+                    jamSettings.sampleTriggerMode == mode ? [.isSelected] : []
+                )
+            }
         }
     }
 

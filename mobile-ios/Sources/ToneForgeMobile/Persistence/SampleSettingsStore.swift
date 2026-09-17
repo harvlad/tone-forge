@@ -162,7 +162,7 @@ public final class SampleSettingsStore: ObservableObject {
     /// decks, TE boxes, custom LPD8 programs). Empty = use the
     /// contiguous baseNote default. Sidecar UserDefaults key, NOT the
     /// settings blob — same no-migration-surgery pattern as
-    /// jam.sampleLatch.
+    /// jam.sampleTriggerMode.
     @Published public var midiPadNoteMap: [Int: Int] {
         didSet {
             let pairs = midiPadNoteMap.map { [$0.key, $0.value] }

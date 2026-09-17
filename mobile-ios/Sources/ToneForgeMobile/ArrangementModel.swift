@@ -178,7 +178,7 @@ final class ArrangementModel: ObservableObject {
     /// are skipped.
     private func arm(grid: Int) {
         guard let b = app.modeCoordinator.padBindings[grid] else { return }
-        app.modeCoordinator.triggerJamSample(padIdx: b.padIdx, packId: b.packId, latch: true)
+        app.modeCoordinator.triggerJamSample(padIdx: b.padIdx, packId: b.packId, mode: .latch)
     }
 
     private func release(grid: Int) {

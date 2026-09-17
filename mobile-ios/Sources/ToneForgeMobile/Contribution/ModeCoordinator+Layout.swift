@@ -68,7 +68,16 @@ extension ModeCoordinator {
                         let pad = overflow[idx]
                         visuals[flat] = PadVisual(
                             colorHint: Self.familyColor(pad.family),
-                            label: pad.name
+                            label: pad.name,
+                            // Two-part label so an overflow pad isn't a bare
+                            // "Intro"/"D" (ambiguous next to the descriptive
+                            // quadrant pads): a friendly TYPE on the small
+                            // top line (sourceLabel, 7–9 pt), the specific
+                            // name below. Reuses the borrow source-song line's
+                            // renderer — borrow pads are bound (padBindings)
+                            // so they never reach this branch, no collision.
+                            sourceLabel: Self.overflowTypeLabel(
+                                stem: pad.stem, family: pad.family, name: pad.name)
                         )
                     }
                 }
@@ -121,6 +130,36 @@ extension ModeCoordinator {
             SamplePadKey(packId: binding.packId, padIdx: binding.padIdx)
         ) {
             out.insert(raw)
+        }
+        // Jam Samples overflow cells — the green section + purple chord pads
+        // OUTSIDE the bound quadrant — resolve through jamOverflowPads, never
+        // padBindings, so the loop above alone left them ring-less even while
+        // they looped and latched (75323c35 made them PLAY, but the play/loop
+        // indicator never lit). Walk exactly the cells the painter filled
+        // (rebuildLayout's overflow branch: unbound cell + valid overflow
+        // index) and light any whose overflow chop is in the ringing set, so
+        // the ring set matches the painted set. This runs for the ARMED set
+        // too (SamplePadGrid4x4 passes pendingPadKeys through here), so
+        // overflow pads also get the "waiting for the beat" hourglass.
+        if appMode == .jamInKey, app.jamSettings.padMode == .samples {
+            let overflow = app.jamOverflowPads
+            if !overflow.isEmpty {
+                for row in 1...8 {
+                    for col in 1...8 {
+                        let raw = PadIndex.at(row: row, col: col).rawValue
+                        guard padBindings[raw] == nil,
+                              let idx = Self.jamOverflowIndex(row: row, col: col),
+                              idx < overflow.count
+                        else { continue }
+                        let pad = overflow[idx]
+                        if keys.contains(
+                            SamplePadKey(packId: pad.packId, padIdx: pad.padIdx)
+                        ) {
+                            out.insert(raw)
+                        }
+                    }
+                }
+            }
         }
         return out
     }
@@ -286,6 +325,47 @@ extension ModeCoordinator {
         case .vocoded:  return .vocoded
         case .songChop: return .transformed
         }
+    }
+
+    /// Friendly TYPE line for an overflow pad's small top `sourceLabel`
+    /// (overflow section/chord pads otherwise showed only a bare "Intro"/"D",
+    /// ambiguous next to the descriptive quadrant pads). Chord stabs read
+    /// "Chord"; everything else reads its Title-cased stem ("vocals" →
+    /// "Vocals"). A chord is a pads/stabs family OR a chord-symbol-shaped
+    /// name ("D"/"Em7"/"G/B") — section loops are named "Intro"/"Chorus"/…
+    /// and fall through to the stem.
+    nonisolated static func overflowTypeLabel(stem: String, family: SampleFamily, name: String) -> String {
+        if family == .pads || family == .stabs || looksLikeChordSymbol(name) {
+            return "Chord"
+        }
+        return titleCasedStem(stem)
+    }
+
+    /// "vocals" → "Vocals", "OTHER" → "Other". Empty stem → "Loop".
+    nonisolated static func titleCasedStem(_ stem: String) -> String {
+        let s = stem.trimmingCharacters(in: .whitespaces)
+        guard let first = s.first else { return "Loop" }
+        return first.uppercased() + s.dropFirst().lowercased()
+    }
+
+    /// True when a pad name is shaped like a chord symbol ("D", "Em7",
+    /// "F#m7b5", "G/B") rather than a section name ("Intro", "Chorus",
+    /// "Bridge"). Heuristic, label-only: a wrong verdict just swaps which
+    /// friendly type shows, never audio. The first char must be a note
+    /// letter A–G; the rest may only be accidentals, chord-quality letters
+    /// (m/maj/min/dim/aug/sus/add), extensions, or a slash bass — any other
+    /// word letter (the h/o/r in "Chorus"/"Bridge") disqualifies it.
+    nonisolated static func looksLikeChordSymbol(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard let first = trimmed.first, ("A"..."G").contains(first) else { return false }
+        // Chord-quality letters (M m a j i n d u g s), accidentals, extensions,
+        // and uppercase A–G for a slash bass ("G/B", "A/E"). Any OTHER word
+        // letter (the h/o/r in "Chorus"/"Bridge") disqualifies it.
+        let allowed = Set("ABCDEFGMmajindugs#b♯♭°+/()0123456789")
+        for ch in trimmed.dropFirst() where !allowed.contains(ch) {
+            return false
+        }
+        return true
     }
 
     /// Short pad label for a classified local sample.
