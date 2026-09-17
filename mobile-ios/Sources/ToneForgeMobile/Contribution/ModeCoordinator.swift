@@ -270,7 +270,10 @@ public final class ModeCoordinator: ObservableObject {
         switch mode {
         case .loop:  return .immediate
         case .latch: return .none
-        case .tap:   return (isRinging && padLoops) ? .atLoopEnd : .none
+        // Tap = momentary GATE: plays only while held, finger-lift stops
+        // it NOW (not at the loop boundary) — a quick tap is a short blip,
+        // a hold sustains. User: "i only want it to play on hold."
+        case .tap:   return isRinging ? .immediate : .none
         }
     }
 

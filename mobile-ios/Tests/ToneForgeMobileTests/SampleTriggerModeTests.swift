@@ -48,27 +48,25 @@ final class SampleTriggerModeTests: XCTestCase {
             mode: .latch, isRinging: false, padLoops: false), .none)
     }
 
-    func testTapModeLoopingReleasesAtLoopEnd() {
-        // A ringing looping Tap voice releases at the END of its current
-        // pass — a quick tap plays exactly one clean pass, a hold sustains
-        // until the next boundary. NOT an immediate mid-pass cut (the old
-        // "taps don't tap" ~150 ms bug), NOT play-forever.
+    func testTapModeIsAMomentaryGate() {
+        // Tap plays ONLY while held: any ringing voice (looping or not)
+        // stops the instant the finger lifts — a quick tap is a short
+        // blip, a hold sustains. User: "i only want it to play on hold."
         XCTAssertEqual(
             ModeCoordinator.jamPadUpAction(
                 mode: .tap, isRinging: true, padLoops: true),
-            .atLoopEnd)
-    }
-
-    func testTapModeNonLoopIsNoOp() {
-        // A genuine one-shot (non-looping) plays through — padUp does
-        // nothing, whatever the ring state.
-        XCTAssertEqual(
-            ModeCoordinator.jamPadUpAction(
-                mode: .tap, isRinging: false, padLoops: false),
-            .none)
+            .immediate)
         XCTAssertEqual(
             ModeCoordinator.jamPadUpAction(
                 mode: .tap, isRinging: true, padLoops: false),
+            .immediate)
+    }
+
+    func testTapModeSilentPadIsNoOp() {
+        // Nothing ringing on this pad → padUp does nothing.
+        XCTAssertEqual(
+            ModeCoordinator.jamPadUpAction(
+                mode: .tap, isRinging: false, padLoops: false),
             .none)
     }
 
