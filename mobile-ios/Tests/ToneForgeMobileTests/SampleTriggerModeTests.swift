@@ -4,10 +4,12 @@
 // kit.js's Tap|Loop|Latch segment) and the two pure pieces of logic it
 // drives:
 //
-//   * ModeCoordinator.jamPadUpReleases — the finger-lift contract. Loop
-//     is a HOLD-to-play GATE (release on lift), Latch is a TOGGLE (hold;
-//     the next tap releases), Tap plays one-shots through and only
-//     releases a stale ringing non-loop voice (a leftover latched voice).
+//   * ModeCoordinator.jamPadUpAction — the finger-lift contract. Loop is
+//     a HOLD-to-play GATE (release IMMEDIATELY on lift), Latch is a TOGGLE
+//     (hold; the next tap releases), Tap is a zero-latency one-shot that
+//     loops while held → a ringing looping voice releases AT the end of
+//     its current loop pass (quick tap = one clean pass, hold = sustain);
+//     a non-loop tap plays through (no-op).
 //   * ModeCoordinator.overflowTypeLabel / looksLikeChordSymbol — the
 //     friendly TYPE line on 64-grid overflow pads (chord stab → "Chord",
 //     section loop → its Title-cased stem).
@@ -21,38 +23,53 @@ import ToneForgeEngine
 
 final class SampleTriggerModeTests: XCTestCase {
 
-    // MARK: - padUp release contract (kit.js padUp parity)
+    // MARK: - padUp release contract
 
-    func testLoopModeAlwaysReleasesOnPadUp() {
-        // HOLD-to-play gate: finger-lift stops the loop regardless of
-        // ring/loop state — the whole point of the new Loop mode.
-        XCTAssertTrue(ModeCoordinator.jamPadUpReleases(
-            mode: .loop, isRinging: true, padLoops: true))
-        XCTAssertTrue(ModeCoordinator.jamPadUpReleases(
-            mode: .loop, isRinging: false, padLoops: false))
-        XCTAssertTrue(ModeCoordinator.jamPadUpReleases(
-            mode: .loop, isRinging: true, padLoops: false))
+    func testLoopModeReleasesImmediatelyOnPadUp() {
+        // HOLD-to-play gate: finger-lift stops the loop NOW regardless of
+        // ring/loop state — the whole point of Loop mode.
+        for ring in [true, false] {
+            for loops in [true, false] {
+                XCTAssertEqual(
+                    ModeCoordinator.jamPadUpAction(
+                        mode: .loop, isRinging: ring, padLoops: loops),
+                    .immediate,
+                    "Loop always releases immediately (ring=\(ring) loops=\(loops))")
+            }
+        }
     }
 
     func testLatchModeNeverReleasesOnPadUp() {
         // Toggle: the voice holds through the lift; a second tap (padDown)
         // is what releases it. This is the behavior Loop must NOT share.
-        XCTAssertFalse(ModeCoordinator.jamPadUpReleases(
-            mode: .latch, isRinging: true, padLoops: true))
-        XCTAssertFalse(ModeCoordinator.jamPadUpReleases(
-            mode: .latch, isRinging: false, padLoops: false))
+        XCTAssertEqual(ModeCoordinator.jamPadUpAction(
+            mode: .latch, isRinging: true, padLoops: true), .none)
+        XCTAssertEqual(ModeCoordinator.jamPadUpAction(
+            mode: .latch, isRinging: false, padLoops: false), .none)
     }
 
-    func testTapModeReleasesOnlyStaleRingingNonLoopVoice() {
-        // Nothing ringing → one-shot already played through, nothing to do.
-        XCTAssertFalse(ModeCoordinator.jamPadUpReleases(
-            mode: .tap, isRinging: false, padLoops: false))
-        // A radial Loop override outranks the mode (web parity) → survives.
-        XCTAssertFalse(ModeCoordinator.jamPadUpReleases(
-            mode: .tap, isRinging: true, padLoops: true))
-        // A stale latched voice still ringing with no loop claim → released.
-        XCTAssertTrue(ModeCoordinator.jamPadUpReleases(
-            mode: .tap, isRinging: true, padLoops: false))
+    func testTapModeLoopingReleasesAtLoopEnd() {
+        // A ringing looping Tap voice releases at the END of its current
+        // pass — a quick tap plays exactly one clean pass, a hold sustains
+        // until the next boundary. NOT an immediate mid-pass cut (the old
+        // "taps don't tap" ~150 ms bug), NOT play-forever.
+        XCTAssertEqual(
+            ModeCoordinator.jamPadUpAction(
+                mode: .tap, isRinging: true, padLoops: true),
+            .atLoopEnd)
+    }
+
+    func testTapModeNonLoopIsNoOp() {
+        // A genuine one-shot (non-looping) plays through — padUp does
+        // nothing, whatever the ring state.
+        XCTAssertEqual(
+            ModeCoordinator.jamPadUpAction(
+                mode: .tap, isRinging: false, padLoops: false),
+            .none)
+        XCTAssertEqual(
+            ModeCoordinator.jamPadUpAction(
+                mode: .tap, isRinging: true, padLoops: false),
+            .none)
     }
 
     // MARK: - Mode semantics

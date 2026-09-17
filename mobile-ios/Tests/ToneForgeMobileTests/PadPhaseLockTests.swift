@@ -636,6 +636,97 @@ final class PadPhaseLockTests: XCTestCase {
             + "not at the end of the loop pass — the old musical stop kept a "
             + "4-bar loop ringing ~7 s after the user stopped it")
     }
+
+    // MARK: - 10. Jam Tap = zero-latency, no bar-quantize hourglass
+
+    /// A Tap on a LOOP-capable pad fires at `now` even while the transport
+    /// rolls with a bar grid set: `forceInstantLaunch` defeats the bar
+    /// quantize AND the loop-lock, so there is no armed/hourglass wait. The
+    /// baseline (same pad, no override) arms to the next bar — the exact
+    /// hourglass the Tap contract forbids.
+    func testForceInstantLaunchFiresLoopNowNotNextBar() throws {
+        let pack = try makePack(packId: "tap", pads: [(0, true)])
+        try scheduler.setActivePack(pack, stemFiles: [:])
+        load120BpmBundle()
+        scheduler.loopLock = true
+        scheduler.quantize = .bar
+        engine.clock.play()
+        engine.clock.seek(to: 0.6)          // mid-bar: next downbeat is 2.0
+
+        // Baseline (Loop/Latch): a looping pad arms to the next bar.
+        guard case .scheduled(let barT) = scheduler.trigger(padIdx: 0, packId: "tap")
+        else { return XCTFail("loop pad did not schedule") }
+        XCTAssertEqual(barT, 2.0, accuracy: 1e-9,
+                       "without the instant override a looping pad quantizes to the bar")
+        scheduler.release(padIdx: 0, packId: "tap")
+
+        // Tap: forceInstantLaunch → fires at the current song time, never
+        // the next bar. Bounded assert (clock is live, so `now` drifts a
+        // sliver past the 0.6 seek) — the point is it did NOT jump to 2.0.
+        scheduler.forceInstantLaunch = true
+        engine.clock.seek(to: 0.6)
+        guard case .scheduled(let nowT) = scheduler.trigger(padIdx: 0, packId: "tap")
+        else { return XCTFail("tap pad did not schedule") }
+        XCTAssertLessThan(nowT, 1.0,
+                          "Tap fires at now, never the next bar — no hourglass")
+        XCTAssertGreaterThanOrEqual(nowT, 0.6 - 1e-6)
+    }
+
+    /// Voice-level twin: with the transport rolling + loop-lock on, the
+    /// baseline looping pad ARMS (pending), but the same pad under
+    /// `forceInstantLaunch` RINGS immediately and is never pending — the
+    /// hourglass never shows for a Tap.
+    func testForceInstantLaunchLoopingVoiceRingsNotArmed() throws {
+        try requireRunningEngine()
+        let pack = try makePack(packId: "tapv", pads: [(0, true)])
+        try scheduler.setActivePack(pack, stemFiles: [:])
+        load120BpmBundle()
+        scheduler.loopLock = true
+        scheduler.quantize = .bar
+        engine.clock.play()
+        engine.clock.seek(to: 0.6)          // 1.4 s to the next downbeat
+        let key = SamplePadKey(packId: "tapv", padIdx: 0)
+
+        scheduler.trigger(padIdx: 0, packId: "tapv")
+        XCTAssertTrue(pool.pendingPadKeys.contains(key),
+                      "baseline looping pad arms to the bar (hourglass)")
+        scheduler.release(padIdx: 0, packId: "tapv")
+
+        scheduler.forceInstantLaunch = true
+        engine.clock.seek(to: 0.6)
+        scheduler.trigger(padIdx: 0, packId: "tapv")
+        XCTAssertTrue(pool.ringingPadKeys.contains(key),
+                      "a Tap fires immediately — the voice rings now")
+        XCTAssertFalse(pool.pendingPadKeys.contains(key),
+                       "a Tap never arms: no hourglass")
+    }
+
+    /// `scheduler.releaseAtLoopEnd` (Tap padUp on a looping voice) lets the
+    /// current pass finish, then stops — a quick tap plays one clean pass
+    /// and does NOT cut mid-pass (the old ~150 ms "taps don't tap" bug) or
+    /// ring forever.
+    func testReleaseAtLoopEndCompletesPassThenStops() async throws {
+        try requireRunningEngine()
+        let pack = try makePack(packId: "tapend", pads: [(0, true)]) // 0.25 s loop
+        try scheduler.setActivePack(pack, stemFiles: [:])
+        let key = SamplePadKey(packId: "tapend", padIdx: 0)
+
+        scheduler.trigger(padIdx: 0, packId: "tapend")
+        XCTAssertTrue(pool.isActive(padKey: key), "looping tap must ring")
+
+        // Release-at-loop-end fired right after the trigger: the pass has
+        // ~0.25 s left, so the voice must still be sounding immediately
+        // after (NOT an immediate mid-pass cut).
+        scheduler.releaseAtLoopEnd(padIdx: 0, packId: "tapend")
+        XCTAssertTrue(pool.isActive(padKey: key),
+                      "release-at-loop-end must NOT cut the voice mid-pass")
+
+        // By well past one 0.25 s pass (+ 20 ms fade) it has stopped —
+        // not looping forever.
+        try await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertFalse(pool.isActive(padKey: key),
+                       "the voice releases at the end of its pass, not forever")
+    }
 }
 
 // MARK: - Jam Samples first-launch anchoring (ModeCoordinator, FIX 1)
@@ -713,5 +804,21 @@ final class JamFirstLaunchAnchorTests: XCTestCase {
             "the latch launch still rolls the session clock — after the "
             + "trigger, so the free-run branch (fire now + anchor) handles "
             + "beat 1 instead of a song-bar wait")
+    }
+
+    /// A Tap is NOT a synced clip: it must leave the transport stopped (the
+    /// clock stays put) — unlike Loop/Latch, which roll it. This is the
+    /// coordinator half of the decoupling: `rollsClock` is Loop/Latch-only.
+    func testTapDoesNotRollTheClock() throws {
+        let pack = try makeChopPack(packId: "jamtap")
+        try app.sampleScheduler.setActivePack(pack, stemFiles: [:])
+        XCTAssertNotEqual(app.audioEngine.clock.state, .playing)
+
+        app.modeCoordinator.triggerJamSample(padIdx: 0, packId: "jamtap", mode: .tap)
+
+        XCTAssertNotEqual(
+            app.audioEngine.clock.state, .playing,
+            "a Tap leaves the transport stopped — it is not a synced clip, "
+            + "so it must not roll the session clock the way Loop/Latch do")
     }
 }

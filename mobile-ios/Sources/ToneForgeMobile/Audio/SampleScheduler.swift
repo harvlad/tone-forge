@@ -76,6 +76,14 @@ public final class SampleScheduler: ObservableObject {
     /// loopPointSec, but a latched clip must ring continuously until
     /// toggled off, like an Ableton clip.
     public var loopOverride = false
+    /// Force the next trigger to launch IMMEDIATELY — no launch quantize, no
+    /// loop-lock, so it fires at `now` with no armed/hourglass wait even while
+    /// the transport rolls and even when the voice loops. Set (and restored)
+    /// around the Jam Tap path: a Tap is a zero-latency one-shot that still
+    /// loops-while-held, so it must loop the voice but skip the shared-lattice
+    /// bar-quantize + loop-lock that Loop/Latch use. Distinct from
+    /// `loopOverride` (which forces looping): this defeats WAITING, not looping.
+    public var forceInstantLaunch = false
     @Published public var beatBarMode: BeatBarMode = .beat
     /// Section-label whitelist. `nil` = allow all; empty set = allow none.
     @Published public var allowedSections: Set<String>? = nil
@@ -1058,7 +1066,11 @@ public final class SampleScheduler: ObservableObject {
             && !(pad.loopable ?? false)
             && !(padLoopOverrides[padKey] ?? false)
             && !(loopResolver?(pid, padIdx) ?? false)
-        let effectiveQuantize: QuantizeMode = (transportRunning && !tapModeInstant)
+        // `forceInstantLaunch` (Jam Tap) fires NOW regardless of the pad's
+        // manifest defaultQuantize or a global grid — a Tap is zero-latency
+        // by contract even on a loop-capable pad (which tapModeInstant, gated
+        // on non-loop, can't cover).
+        let effectiveQuantize: QuantizeMode = (transportRunning && !tapModeInstant && !forceInstantLaunch)
             ? (pad.defaultQuantize ?? quantize)
             : .off
         // Will this trigger loop? (Same predicate as the SampleTrigger below.)
@@ -1075,7 +1087,11 @@ public final class SampleScheduler: ObservableObject {
         // otherwise normal quantize, with sub-bar grids promoted to the
         // bar for looping pads (loopQuantize) so a loop can never start
         // mid-bar.
-        let willLoopLock = loopLock && willLoop
+        // A Tap loops the voice but must NOT arm to the bar lattice — the
+        // loop-lock wait is exactly the hourglass the Tap contract forbids.
+        // The willLoop-gated phase JOIN below still runs, so a rolling Tap
+        // loop still lands mid-body in unison, it just fires now.
+        let willLoopLock = loopLock && willLoop && !forceInstantLaunch
         let targetSong: Double = (willLoopLock && transportRunning)
             ? nextLoopBoundary(after: nowSong)
             : Quantizer.nextQuantized(
@@ -1466,6 +1482,21 @@ public final class SampleScheduler: ObservableObject {
                 params: LayerEvent.Params(padIdx: padIdx, packIdOverride: pid)
             ))
         }
+    }
+
+    /// Musical release for a Tap-mode held loop: let the CURRENT loop pass
+    /// finish, then stop (so a quick tap plays exactly one clean pass and a
+    /// hold sustains until the next boundary after finger-up). Ungated by
+    /// holdMode/padLoops — the Tap padUp contract already decided this pad
+    /// loops; the pool releases a non-looping or still-armed voice
+    /// immediately, but Tap only routes looping voices here.
+    public func releaseAtLoopEnd(padIdx: Int, packId: String) {
+        #if canImport(AVFoundation)
+        let key = SamplePadKey(packId: packId, padIdx: padIdx)
+        if pool.isActive(padKey: key) {
+            pool.releaseAtLoopEnd(padKey: key)
+        }
+        #endif
     }
 
     /// Unconditionally stop every active voice for a pad. Unlike
