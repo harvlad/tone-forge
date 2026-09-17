@@ -105,10 +105,21 @@ struct SamplePadGrid4x4: View {
                                 }
                                 return
                             }
+                            // EDIT mode = configure, not perform: a filled-pad
+                            // touch does NOT sound — otherwise holding for the
+                            // radial fired the pad on (padDown) then off (the
+                            // radial's release), an audible blip. Only the hold
+                            // (radial) gesture acts here; toggle Edit off to play.
+                            guard !Self.holdRadialEnabled(editing: editing, stage: stage)
+                            else { return }
                             coordinator.touchPadDown(row: gridRow, col: gridCol)
                         },
                         onPadUp: { row, col in
                             let (gridRow, gridCol) = gridIndex(row: row, col: col)
+                            // Mirror the padDown edit guard: no trigger was
+                            // fired in edit mode, so nothing to release.
+                            guard !Self.holdRadialEnabled(editing: editing, stage: stage)
+                            else { return }
                             coordinator.touchPadUp(row: gridRow, col: gridCol)
                         },
                         // nil (not a no-op closure) when the radial is off:
