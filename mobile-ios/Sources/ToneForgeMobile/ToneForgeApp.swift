@@ -704,6 +704,30 @@ public final class AppState: ObservableObject {
     /// spinner + disables the row's Bounce action while present.
     @Published public private(set) var bouncingSessionIds: Set<UUID> = []
 
+    // MARK: - Session audio recording (master-bus capture)
+    //
+    // The bottom transport's Record pill drives THIS — a live tap on
+    // the engine's outputNode that writes the fully-processed mix (song
+    // + pads + FX + master chain) to an .m4a in the take store. It is
+    // deliberately separate from `sessionRecorder` above: that captures
+    // replayable events (no audio) and still backs the sequencer +
+    // Contribute sketches. This captures the actual sound.
+
+    /// Records the master-bus output to an m4a. Lazy so it binds to the
+    /// shared engine only once the engine exists.
+    public lazy var outputRecorder = OutputRecorder(engine: audioEngine.engine)
+    /// On-disk store for recorded audio takes (Documents/takes). Root
+    /// injectable through the same override as the session store so
+    /// tests stay hermetic.
+    public let audioTakeStore: AudioTakeStore
+    /// Recorded audio takes, newest first. Loaded at boot, refreshed on
+    /// every save/rename/delete.
+    @Published public private(set) var savedAudioTakes: [AudioTake] = []
+    /// Forwards the recorder's nested @Published changes (state /
+    /// elapsed / peak) up to AppState so the transport pill + meter
+    /// re-render even when the transport clock isn't ticking.
+    private var outputRecorderCancellable: AnyCancellable?
+
     // MARK: - Layer A/B slots (D-022 Phase 7)
 
     /// Per-slot session players. Both pump the bus with `isReplay = true`
@@ -779,6 +803,10 @@ public final class AppState: ObservableObject {
         learnProgressRoot: URL? = nil
     ) {
         sessionStore = SessionStore(root: sessionStoreRoot)
+        // Shares the session store's Documents-root override so tests
+        // that inject a temp root capture takes there too, never in the
+        // real container.
+        audioTakeStore = AudioTakeStore(root: sessionStoreRoot)
         learnProgressStore = LearnProgressStore(root: learnProgressRoot)
         // Device identity + account: every Engine client stamps its
         // requests from AuthContext, so seed it before any fetch.
@@ -853,6 +881,16 @@ public final class AppState: ObservableObject {
         // autosave into the store; the shelf lists saved sessions.
         _ = sessionRecorder
         savedSessions = sessionStore.list()
+        // Session audio recording: touch the lazy recorder (binds it to
+        // the engine's outputNode), wire the cap-auto-stop to finalize a
+        // take, forward its @Published changes so the pill/meter live-
+        // update, and list what's already on disk.
+        outputRecorder.onAutoStop = { [weak self] url in
+            self?.finalizeOutputTake(url)
+        }
+        outputRecorderCancellable = outputRecorder.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+        savedAudioTakes = audioTakeStore.list()
         // D-022 Phase 7: rehydrate sketch layer slots (no song loaded
         // at boot, so use the sketch sentinel).
         rehydrateLayerSlots(analysisId: Self.sketchSlotId)
@@ -2989,6 +3027,10 @@ public final class AppState: ObservableObject {
             usbLaunchpad?.suspend()
             micRecorder.cancel()
             vocoderCapture.cancel()
+            // Finalize an in-flight output capture rather than strand the
+            // tap: pause() below stops the transport, so keeping the tap
+            // armed would only record silence until we're killed.
+            if outputRecorder.state == .recording { stopOutputRecording() }
             if isPlaying { pause() }
             if sessionRecorder.state == .recording {
                 do {
@@ -3031,6 +3073,7 @@ public final class AppState: ObservableObject {
                 recorderActive: sessionRecorder.state != .idle,
                 captureActive: micRecorder.isRecording
                     || vocoderCapture.isCapturing
+                    || outputRecorder.state == .recording
             )
         #endif
     }
@@ -3452,6 +3495,81 @@ public final class AppState: ObservableObject {
             seek(to: 0)
         }
         syncIdleTimer()
+    }
+
+    // MARK: - Session audio recording (master-bus capture)
+
+    /// Start capturing the session's audio output. Rolls the transport
+    /// first if it's parked (like the event recorder does) so there's
+    /// actually sound flowing into the tap, then installs the output
+    /// tap. Surfaces a reason via `layerError` if the engine isn't
+    /// ready — pressing Record must never silently no-op.
+    public func startOutputRecording() {
+        guard outputRecorder.state == .idle else { return }
+        layerError = nil
+        if !isPlaying { play() }
+        if !outputRecorder.start() {
+            layerError = "Couldn't start recording — audio engine isn't running."
+        }
+        syncIdleTimer()
+    }
+
+    /// Stop capturing, save the take to the store, and refresh the
+    /// library list. The transport keeps rolling — the user asked to
+    /// stop recording, not to stop the music.
+    public func stopOutputRecording() {
+        guard let url = outputRecorder.stop() else {
+            syncIdleTimer()
+            return
+        }
+        finalizeOutputTake(url)
+        syncIdleTimer()
+    }
+
+    /// Ingest a finished capture (from a manual stop OR the safety-cap
+    /// auto-stop) into the take store and refresh the list. nil means
+    /// nothing was captured — just refresh so the pill resets.
+    private func finalizeOutputTake(_ url: URL?) {
+        guard let url else {
+            reloadAudioTakes()
+            return
+        }
+        do {
+            _ = try audioTakeStore.ingest(
+                recordingAt: url,
+                title: audioTakeStore.nextDefaultTitle(),
+                durationSec: outputRecorder.elapsedSec,
+                songId: currentBundle?.analysisId
+            )
+        } catch {
+            layerError = "Save recording: \(error.localizedDescription)"
+        }
+        reloadAudioTakes()
+    }
+
+    /// Re-read the recorded takes from disk.
+    public func reloadAudioTakes() {
+        savedAudioTakes = audioTakeStore.list()
+    }
+
+    /// Rename a recorded take on disk + in the in-memory list.
+    public func renameAudioTake(id: UUID, to newTitle: String) {
+        do {
+            try audioTakeStore.rename(id: id, to: newTitle)
+            reloadAudioTakes()
+        } catch {
+            layerError = "Rename recording: \(error.localizedDescription)"
+        }
+    }
+
+    /// Delete a recorded take (audio + metadata) from disk.
+    public func deleteAudioTake(id: UUID) {
+        do {
+            try audioTakeStore.delete(id: id)
+            reloadAudioTakes()
+        } catch {
+            layerError = "Delete recording: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Layer A/B slots (D-022 Phase 7)

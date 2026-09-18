@@ -42,11 +42,13 @@ struct TransportRow: View {
             // Full transport stop (halt + rewind + stop samples)
             stopButton
 
-            // Record toggle. NEVER fixedSize: the armed label ("Ready —
-            // start playing") is wider than the remaining row space and
-            // a fixed-size pill overflowed the HStack, shifting the
-            // ENTIRE screen sideways whenever the transport armed.
-            RecordToggle()
+            // Record toggle — the bottom transport captures the session's
+            // AUDIO OUTPUT (master-bus mix → Library Recordings), not
+            // replayable events. The sequencer's pill keeps event capture.
+            // NEVER fixedSize: the recording label ("Rec 1:23") grows and
+            // a fixed-size pill overflowed the HStack, shifting the ENTIRE
+            // screen sideways.
+            RecordToggle(mode: .audioOutput)
 
             // Melody guide: play the song's extracted melody line on the
             // wavetable synth in time with the transport. Hidden when the

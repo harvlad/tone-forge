@@ -1,20 +1,24 @@
 // RecordToggle.swift
 //
-// Compact recorder pill on the Play tab. Arms the P6
-// SessionCaptureRecorder (D-015 — the legacy layer recorder is
-// frozen read-only). Works in both contexts: song loaded (session
-// keyed to the bundle's analysisId) and song-less sketch (synthetic
-// tempo grid, optional 1-bar count-in). Shows one of four states:
+// The recorder pill, in one of two modes (the mode picks WHAT gets
+// recorded, not how the pill looks):
 //
-//   idle       →  ● Record          (accented dot, tap to arm)
-//   armed      →  ○ Ready…          (outlined, waiting for first event)
-//   count-in   →  ○ Count-in…       (sketch only: lead bar clicking)
-//   recording  →  ● Rec 12 events   (pulsing dot + live count)
+//   .sessionEvents (default) — arms the P6 SessionCaptureRecorder
+//     (D-015; the legacy layer recorder is frozen read-only). Captures
+//     replayable ContributionEvents, no audio. Used by the sequencer
+//     and Contribute sketches. States: idle / armed / count-in /
+//     recording (live event count). Tap: arm → stop-and-save; long-
+//     press: discard.
 //
-// Tap semantics:
-//   idle → armSessionRecording() (context resolved inside AppState)
-//   armed / recording → stopAndSaveSessionRecording()
-//   long-press while armed/recording → cancelSessionRecording()
+//   .audioOutput — drives the OutputRecorder, which taps the engine's
+//     master bus and writes the actual mixed SOUND (song + pads + FX)
+//     to an .m4a in Library → Recordings. The bottom transport uses
+//     this. States: idle / recording (live elapsed). Tap: start →
+//     stop-and-save. There is no "arm" or "discard" — the file is the
+//     take, kept the moment you stop.
+//
+// The two are deliberately independent: repointing the transport pill
+// to audio must not disturb the event recorder the sequencer relies on.
 
 import SwiftUI
 import ToneForgeEngine
@@ -22,6 +26,11 @@ import ToneForgeEngine
 struct RecordToggle: View {
     @EnvironmentObject private var appState: AppState
     @State private var pulse: Bool = false
+
+    /// What this pill records. The bottom transport captures audio; the
+    /// sequencer (and any other instance) captures replayable events.
+    enum RecordMode { case sessionEvents, audioOutput }
+    var mode: RecordMode = .sessionEvents
 
     /// When false, arming does not start the song transport. The
     /// sequencer sets this — its own clock drives playback, so
@@ -44,7 +53,7 @@ struct RecordToggle: View {
     var body: some View {
         HStack(spacing: 10) {
             dot
-            if !(compact && appState.sessionRecorder.state == .idle) {
+            if !(compact && phase == .idle) {
                 Text(label)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(labelColor)
@@ -80,14 +89,10 @@ struct RecordToggle: View {
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(accessibilityLabelText)
-        .accessibilityHint(
-            appState.sessionRecorder.state == .idle
-                ? "Arms the recorder"
-                : "Stops and saves. Long-press to discard."
-        )
+        .accessibilityHint(accessibilityHintText)
         .onAppear { pulse = true }
         .animation(
-            appState.sessionRecorder.state == .recording
+            phase == .recording
                 ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
                 : .default,
             value: pulse
@@ -99,7 +104,7 @@ struct RecordToggle: View {
     @ViewBuilder
     private var dot: some View {
         let color = dotColor
-        switch appState.sessionRecorder.state {
+        switch phase {
         case .idle:
             Circle().fill(color).frame(width: 12, height: 12)
         case .armed:
@@ -113,17 +118,45 @@ struct RecordToggle: View {
 
     // MARK: - Derived state
 
+    /// Rendering-only three-state abstraction over whichever recorder
+    /// this mode drives. Audio mode has no `.armed` (capture starts
+    /// immediately), so it only ever reports idle/recording.
+    private enum Phase { case idle, armed, recording }
+
+    private var phase: Phase {
+        switch mode {
+        case .audioOutput:
+            return appState.outputRecorder.state == .recording ? .recording : .idle
+        case .sessionEvents:
+            switch appState.sessionRecorder.state {
+            case .idle:      return .idle
+            case .armed:     return .armed
+            case .recording: return .recording
+            }
+        }
+    }
+
     private var hasBundle: Bool { appState.currentBundle != nil }
 
     /// Sketch count-in window: transport is running the negative lead
     /// bar of an armed take. Uses the published `songSeconds` mirror
-    /// (30 fps tick) so the label live-updates.
+    /// (30 fps tick) so the label live-updates. Event mode only — audio
+    /// capture has no count-in.
     private var isCountingIn: Bool {
-        !hasBundle && appState.sessionRecorder.state != .idle
+        mode == .sessionEvents && !hasBundle
+            && appState.sessionRecorder.state != .idle
             && appState.songSeconds < 0
     }
 
     private var accessibilityLabelText: String {
+        if mode == .audioOutput {
+            switch appState.outputRecorder.state {
+            case .idle: return "Record session audio"
+            case .recording:
+                return "Recording session audio, "
+                    + "\(Int(appState.outputRecorder.elapsedSec)) seconds"
+            }
+        }
         if isCountingIn { return "Recording count-in" }
         switch appState.sessionRecorder.state {
         case .idle:      return "Record"
@@ -133,7 +166,24 @@ struct RecordToggle: View {
         }
     }
 
+    private var accessibilityHintText: String {
+        if mode == .audioOutput {
+            return appState.outputRecorder.state == .idle
+                ? "Records the session's audio to your Library"
+                : "Stops and saves the recording"
+        }
+        return appState.sessionRecorder.state == .idle
+            ? "Arms the recorder"
+            : "Stops and saves. Long-press to discard."
+    }
+
     private var label: String {
+        if mode == .audioOutput {
+            switch appState.outputRecorder.state {
+            case .idle:      return "Record"
+            case .recording: return "Rec \(Self.timeLabel(appState.outputRecorder.elapsedSec))"
+            }
+        }
         if isCountingIn { return "Count-in…" }
         switch appState.sessionRecorder.state {
         case .idle:      return "Record"
@@ -143,7 +193,7 @@ struct RecordToggle: View {
     }
 
     private var labelColor: Color {
-        switch appState.sessionRecorder.state {
+        switch phase {
         case .idle:      return .primary
         case .armed:     return .secondary
         case .recording: return Color.red
@@ -151,20 +201,32 @@ struct RecordToggle: View {
     }
 
     private var dotColor: Color {
-        appState.sessionRecorder.state == .idle ? Color.red.opacity(0.85) : Color.red
+        phase == .idle ? Color.red.opacity(0.85) : Color.red
     }
 
     private var borderColor: Color {
-        switch appState.sessionRecorder.state {
+        switch phase {
         case .idle:      return Color.white.opacity(0.08)
         case .armed:     return Color.orange.opacity(0.55)
         case .recording: return Color.red.opacity(0.85)
         }
     }
 
+    private static func timeLabel(_ s: Double) -> String {
+        let total = max(0, Int(s.rounded(.down)))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
     // MARK: - Actions
 
     private func handleTap() {
+        if mode == .audioOutput {
+            switch appState.outputRecorder.state {
+            case .idle:      appState.startOutputRecording()
+            case .recording: appState.stopOutputRecording()
+            }
+            return
+        }
         switch appState.sessionRecorder.state {
         case .idle:
             appState.armSessionRecording(startTransport: startsTransport)
@@ -176,6 +238,9 @@ struct RecordToggle: View {
     }
 
     private func handleLongPress() {
+        // Audio mode has no discard — the file is the take; a long-press
+        // does nothing rather than risk dropping a good capture.
+        guard mode == .sessionEvents else { return }
         guard appState.sessionRecorder.state != .idle else { return }
         appState.cancelSessionRecording()
         onStop?()

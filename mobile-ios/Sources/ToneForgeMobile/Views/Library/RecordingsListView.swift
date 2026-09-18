@@ -1,16 +1,19 @@
 // RecordingsListView.swift
 //
-// The Library tab's Recordings segment (D-022) — saved layers for
-// the loaded song plus song-less sketches. Extracted from the
-// deleted ProfileView. Two sections: "Song Layers" lists every saved
-// LayerTimeline for the current song (`AppState.savedLayers`);
-// "Sketches" lists song-less takes under the `__sketch__` sentinel
-// (`AppState.savedSketchLayers`) — a sketch is a take recorded on
-// the Contribute tab with no song loaded. Both share the row UI
-// (play toggle, rename, share, delete); upload + m4a export are
-// song-only.
+// The Library tab's Recordings segment (D-022). Three sections:
+//   "Audio Recordings" — actual m4a captures of the session's output
+//     cut by the bottom transport's Record button (`AppState
+//     .savedAudioTakes`). These are SOUND, not events; they play back
+//     on a plain AVAudioPlayer, independent of any song.
+//   "Song Layers" — saved LayerTimelines (replayable events) for the
+//     current song (`AppState.savedLayers`).
+//   "Sketches" — song-less event takes under the `__sketch__` sentinel
+//     (`AppState.savedSketchLayers`).
+// The two event sections share the layer row UI (play toggle, rename,
+// share, delete); upload + m4a export are song-only.
 
 import SwiftUI
+import AVFoundation
 import ToneForgeEngine
 #if canImport(UIKit)
 import UIKit
@@ -21,23 +24,152 @@ struct RecordingsListView: View {
 
     @State private var renamingLayerId: String? = nil
     @State private var renameText: String = ""
+    /// Inline-rename target for an audio take (separate id space from
+    /// the layer rows above).
+    @State private var renamingTakeId: UUID? = nil
+    @State private var takeRenameText: String = ""
+    /// Plays back recorded audio takes off a simple AVAudioPlayer —
+    /// takes are finished files, so they need no engine graph.
+    @StateObject private var takePlayer = AudioTakePlayer()
     /// Wraps the URL of the just-rendered m4a so `.sheet(item:)` can
     /// present a UIActivityViewController with the exported file.
     @State private var m4aShareItem: ShareFileItem? = nil
 
     var body: some View {
         List {
+            audioTakesSection
             layersSection
             sketchLayersSection
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(TFTheme.background)
+        .onDisappear { takePlayer.stop() }
         #if canImport(UIKit)
         .sheet(item: $m4aShareItem) { item in
             ActivityShareSheet(activityItems: [item.url])
         }
         #endif
+    }
+
+    // MARK: - Audio takes section
+
+    @ViewBuilder
+    private var audioTakesSection: some View {
+        Section {
+            if appState.savedAudioTakes.isEmpty {
+                Text("No recordings yet. Hit Record on the transport bar to capture what you hear — song, pads and effects together.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(appState.savedAudioTakes) { take in
+                    audioTakeRow(take)
+                        .tfLibraryRowChrome()
+                }
+            }
+        } header: {
+            Text("Audio Recordings")
+        } footer: {
+            if !appState.savedAudioTakes.isEmpty {
+                Text("Recorded straight off the session's audio output. Play them back here, or share the .m4a.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func audioTakeRow(_ take: AudioTake) -> some View {
+        let isPlaying = takePlayer.playingId == take.id
+        HStack(spacing: 12) {
+            Button {
+                takePlayer.toggle(take)
+            } label: {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(tileGradient(for: take.id.uuidString))
+                    .frame(width: 52, height: 52)
+                    .overlay(
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(TFTheme.stroke, lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.borderless)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if renamingTakeId == take.id {
+                    TextField("Recording name", text: $takeRenameText)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { commitTakeRename(take) }
+                } else {
+                    Text(take.title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(TFTheme.textPrimary)
+                        .lineLimit(1)
+                }
+                Text(takeSubtitle(take))
+                    .font(.caption)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Menu {
+                Button(renamingTakeId == take.id ? "Save name" : "Rename") {
+                    if renamingTakeId == take.id {
+                        commitTakeRename(take)
+                    } else {
+                        renamingTakeId = take.id
+                        takeRenameText = take.title
+                    }
+                }
+                #if canImport(UIKit)
+                Button {
+                    m4aShareItem = ShareFileItem(url: take.fileURL)
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                #endif
+                Button("Delete", role: .destructive) {
+                    if isPlaying { takePlayer.stop() }
+                    appState.deleteAudioTake(id: take.id)
+                    if renamingTakeId == take.id { renamingTakeId = nil }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .rotationEffect(.degrees(90))
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+        }
+        .tfLibraryCard(active: isPlaying)
+        .contentShape(Rectangle())
+    }
+
+    private func takeSubtitle(_ take: AudioTake) -> String {
+        var parts = [formatDuration(take.durationSec)]
+        parts.append(Self.takeDateFormatter.string(from: take.createdAt))
+        return parts.joined(separator: " · ")
+    }
+
+    private static let takeDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
+    private func commitTakeRename(_ take: AudioTake) {
+        let trimmed = takeRenameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            appState.renameAudioTake(id: take.id, to: trimmed)
+        }
+        renamingTakeId = nil
+        takeRenameText = ""
     }
 
     // MARK: - Layers section
@@ -304,5 +436,49 @@ struct RecordingsListView: View {
         }
         renamingLayerId = nil
         renameText = ""
+    }
+}
+
+/// Plays back recorded audio takes on a standalone AVAudioPlayer. Takes
+/// are finished m4a files, so they play through the media services
+/// without touching the live AVAudioEngine graph. `playingId` drives
+/// the row's play/pause glyph; the delegate clears it when playback
+/// runs out so the button doesn't stick on "pause".
+@MainActor
+final class AudioTakePlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
+    @Published private(set) var playingId: UUID?
+    private var player: AVAudioPlayer?
+
+    /// Play the take, or stop if it's the one already playing.
+    func toggle(_ take: AudioTake) {
+        if playingId == take.id {
+            stop()
+            return
+        }
+        stop()
+        do {
+            let p = try AVAudioPlayer(contentsOf: take.fileURL)
+            p.delegate = self
+            guard p.play() else { return }
+            player = p
+            playingId = take.id
+        } catch {
+            playingId = nil
+        }
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+        playingId = nil
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(
+        _ player: AVAudioPlayer, successfully flag: Bool
+    ) {
+        Task { @MainActor in
+            self.player = nil
+            self.playingId = nil
+        }
     }
 }

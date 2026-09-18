@@ -660,3 +660,22 @@ features:
       connect:
         status: na
         note: "Audio companion (monitoring/tone engine); no chord or teaching UI surface."
+
+  - id: session-audio-recording
+    name: Bottom transport Record captures the session's audio OUTPUT (mixed sound — stems + pads + FX + master chain) to a file in Library → Recordings
+    platforms:
+      web:
+        status: missing
+        note: "Bottom-bar Record → master-bus capture is iOS-only for now. Web's transport has no output-capture; a MediaRecorder off the WebAudio master would be the port, plus a Recordings surface. Follow-up."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Audio/OutputRecorder.swift#OutputRecorder"
+      desktop:
+        status: missing
+        note: "jam-desktop transport has no audio-output recorder yet; would tap the AVAudioEngine master the same way OutputRecorder does and add a Recordings list. Follow-up."
+      plugin:
+        status: na
+        note: "The JUCE sampler runs inside a host; the host (DAW) records the plugin's output. An in-plugin session bounce would duplicate the host's own transport recording."
+      connect:
+        status: na
+        note: "Connect is a live monitoring/tone engine with no session transport or Library — nothing to arm a session-output recorder against."
