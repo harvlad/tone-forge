@@ -749,9 +749,12 @@ struct LaunchpadPanelView: View {
               + "A connected Launchpad mirrors this grid.")
     }
 
-    /// 3-way Tap | Loop | Latch (web/iOS parity). Tap = zero-latency gate
-    /// (fires now, sounds while held, stops on release); Loop = quantized
-    /// HOLD-to-play (release stops); Latch = quantized TOGGLE (re-tap stops).
+    /// 3-way One-Shot | Follow | Latch (web/iOS parity, 28fec22e). One-Shot =
+    /// finger-drumming gate — fires now FROM THE TOP (phase 0), retriggers each
+    /// tap, stops on release; Follow = zero-latency gate that joins the shared
+    /// clock phase (mid-body) so layered pads lock, stops on release; Latch =
+    /// quantized TOGGLE (re-tap stops). `.fixedSize()` sizes the segmented
+    /// control to its content, so the wider "One-Shot" label isn't clipped.
     private var playbackModePicker: some View {
         Picker("Play", selection: playbackModeBinding) {
             ForEach(LaunchpadController.PadPlaybackMode.allCases, id: \.self) {

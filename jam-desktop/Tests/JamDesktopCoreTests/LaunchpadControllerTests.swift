@@ -218,15 +218,15 @@ final class LaunchpadControllerTests: XCTestCase {
         return controller
     }
 
-    func testDefaultPlaybackModeIsTapAndFiresImmediately() {
+    func testDefaultPlaybackModeIsFollowAndFiresImmediately() {
         var now = 1.23
         let controller = loopController(tempoBpm: 120, now: { now })
-        XCTAssertEqual(controller.playbackMode, .tap)
+        XCTAssertEqual(controller.playbackMode, .follow)  // Follow is the new default
 
         var fireAt: Double?
         controller.onTrigger = { _, _, t, _ in fireAt = t }
 
-        // Stopped transport: tap is instant.
+        // Stopped transport: Follow is instant.
         controller.padDown(LaunchpadPad(row: 0, col: 0))
         XCTAssertEqual(fireAt, 1.23)
         // Rolling transport, quantize off: still instant.
@@ -245,7 +245,7 @@ final class LaunchpadControllerTests: XCTestCase {
         // nextLoopBoundary; the pre-D-029 desktop divergence).
         var now = 3.0
         let controller = loopController(tempoBpm: 100, now: { now })
-        controller.playbackMode = .loop
+        controller.playbackMode = .latch     // the quantized launch path
         XCTAssertTrue(controller.loopLockEnabled)  // lock is the default
         controller.isTransportPlaying = { true }
 
@@ -269,7 +269,7 @@ final class LaunchpadControllerTests: XCTestCase {
         // (web padengine.js:1047, iOS 77231913 fix #3).
         var now = 4.85
         let controller = loopController(tempoBpm: 100, now: { now })
-        controller.playbackMode = .loop
+        controller.playbackMode = .latch     // the quantized launch path
         controller.isTransportPlaying = { true }
 
         var fireAt: Double?
@@ -303,7 +303,7 @@ final class LaunchpadControllerTests: XCTestCase {
                 stem: "other", sliceMode: "chord",
                 chops: [chop(0), chop(1)])]
         ))
-        controller.playbackMode = .loop
+        controller.playbackMode = .latch     // the quantized launch path
         controller.isTransportPlaying = { true }
 
         var fireAt: Double?
@@ -324,7 +324,7 @@ final class LaunchpadControllerTests: XCTestCase {
         // which would cancel the launch compensation and flam the pads.
         var now = 3.0
         let controller = loopController(tempoBpm: 100, now: { now })  // downbeats [0,2,4]
-        controller.playbackMode = .loop
+        controller.playbackMode = .latch     // the quantized launch path
         controller.isTransportPlaying = { true }
 
         var fireAt: Double?
@@ -353,7 +353,7 @@ final class LaunchpadControllerTests: XCTestCase {
         var now = 5.0
         var hostNow = 1000.0
         let controller = loopController(tempoBpm: 120, now: { now })  // bar 2 s
-        controller.playbackMode = .loop
+        controller.playbackMode = .latch     // the quantized launch path
         controller.isTransportPlaying = { false }
         controller.hostNowSeconds = { hostNow }
 
@@ -396,8 +396,8 @@ final class LaunchpadControllerTests: XCTestCase {
         let controller = loopController(tempoBpm: 120, now: { now })  // bar 2 s
         // Latch (a quantized, latched loop) so a re-tap toggles the pad OFF —
         // the free-run re-anchor keys on activePads/silence, which Latch's
-        // toggle-off empties. (Loop is now hold-to-play; a re-tap wouldn't
-        // toggle, and Tap is instant — neither exercises this grid.)
+        // toggle-off empties. (One-Shot/Follow are instant hold gates — a
+        // re-tap wouldn't toggle; neither exercises this quantized grid.)
         controller.playbackMode = .latch
         controller.isTransportPlaying = { false }
         controller.hostNowSeconds = { hostNow }
@@ -438,7 +438,7 @@ final class LaunchpadControllerTests: XCTestCase {
         var now = 5.0
         var hostNow = 1000.0
         let controller = loopController(tempoBpm: nil, now: { now })
-        controller.playbackMode = .loop
+        controller.playbackMode = .latch     // the quantized launch path
         controller.isTransportPlaying = { false }
         controller.hostNowSeconds = { hostNow }
 
@@ -461,7 +461,7 @@ final class LaunchpadControllerTests: XCTestCase {
         // join — divergent on both counts.)
         var now = 0.7
         let controller = loopController(tempoBpm: 100, now: { now })
-        controller.playbackMode = .loop
+        controller.playbackMode = .latch     // the quantized launch path
         controller.loopLockEnabled = false
         controller.isTransportPlaying = { true }
         controller.quantize = .off
@@ -498,7 +498,7 @@ final class LaunchpadControllerTests: XCTestCase {
         var now = 5.0
         var hostNow = 1000.0
         let controller = loopController(tempoBpm: 120, now: { now })
-        controller.playbackMode = .loop
+        controller.playbackMode = .latch     // the quantized launch path
         controller.loopLockEnabled = false
         controller.isTransportPlaying = { false }
         controller.hostNowSeconds = { hostNow }
@@ -566,21 +566,24 @@ final class LaunchpadControllerTests: XCTestCase {
         XCTAssertEqual(phase ?? -1, 0, accuracy: 1e-9)
     }
 
-    // MARK: - 3-way Tap | Loop | Latch finger contracts
+    // MARK: - 3-way One-Shot | Follow | Latch finger contracts
     //
-    // The shipped iOS contract (37f851d6/d56dc351/f081d725/e8566e69), ported:
-    // Tap = zero-latency gate (fires NOW ignoring quantize/lock even while
-    // rolling, loops-while-held, releases on lift); Loop = quantized HOLD-to-
-    // play (releases on lift); Latch = quantized TOGGLE (holds, re-tap stops).
+    // The shipped iOS taxonomy (28fec22e, atop 37f851d6/d56dc351/f081d725/
+    // e8566e69), ported: One-Shot = finger-drumming gate (fires NOW ignoring
+    // quantize/lock even while rolling, FROM THE SAMPLE TOP/phase 0, loops-
+    // while-held, releases on lift, retriggers each tap); Follow = the same
+    // zero-latency gate but JOINS the shared clock phase (mid-body) so layered
+    // pads lock — desktop's old "Tap", renamed; Latch = quantized TOGGLE (holds,
+    // re-tap stops). Only Latch quantizes / drives the shared grid.
 
-    func testTapFiresNowNotQuantizedWhileRolling() {
-        // Tap is always immediate: with the transport ROLLING and a Bar grid
-        // set, a Loop/Latch would arm to the next downbeat (2.0 here); Tap
-        // fires at the press time (no bar-wait, no hourglass). iOS
-        // forceInstantLaunch — the .bar force is Loop/Latch-only.
+    func testFollowFiresNowNotQuantizedWhileRolling() {
+        // Follow is always immediate: with the transport ROLLING and a Bar grid
+        // set, Latch would arm to the next downbeat (2.0 here); Follow fires at
+        // the press time (no bar-wait, no hourglass). iOS forceInstantLaunch —
+        // the .bar force is Latch-only now.
         var now = 0.7
         let controller = loopController(tempoBpm: 100, now: { now })  // downbeats [0,2,4]
-        XCTAssertEqual(controller.playbackMode, .tap)  // Tap is the default
+        XCTAssertEqual(controller.playbackMode, .follow)  // Follow is the default
         controller.quantize = .bar
         controller.isTransportPlaying = { true }
 
@@ -589,31 +592,112 @@ final class LaunchpadControllerTests: XCTestCase {
         controller.padDown(LaunchpadPad(row: 0, col: 0))
         XCTAssertEqual(fireAt ?? -1, 0.7, accuracy: 1e-9)
 
-        // A Loop over the same grid DOES arm to the downbeat (2.0) — proves
-        // the instant fire is Tap-specific, not a dead quantizer.
-        controller.playbackMode = .loop
+        // One-Shot is instant too (the finger-drumming gate) — still fires NOW.
+        controller.playbackMode = .oneShot
         now = 0.7
         controller.padDown(LaunchpadPad(row: 0, col: 1))
+        XCTAssertEqual(fireAt ?? -1, 0.7, accuracy: 1e-9)
+
+        // Latch over the same grid DOES arm to the downbeat (2.0) — proves the
+        // instant fire is gate-specific, not a dead quantizer.
+        controller.playbackMode = .latch
+        now = 0.7
+        controller.padDown(LaunchpadPad(row: 0, col: 2))
         XCTAssertEqual(fireAt ?? -1, 2.0, accuracy: 1e-9)
     }
 
-    func testLoopModeIsHoldToPlayReleasesOnPadUp() {
-        // Loop = HOLD-to-play gate: press starts the (quantized) loop, finger-
-        // lift RELEASES it immediately — the gate desktop was missing (its old
-        // Loop was a toggle). A re-tap does NOT toggle it off.
-        let controller = makeController()
-        controller.setChops([chop(0)], stem: "other", sliceMode: "chord")
-        controller.playbackMode = .loop
+    func testOneShotStartsFromZeroWhileFollowJoinsMidBody() {
+        // The One-Shot mechanic (iOS forceZeroPhase, 28fec22e): both One-Shot
+        // and Follow fire instantly, but One-Shot starts the voice at the
+        // SAMPLE TOP (lockPhaseSeconds == 0, no lattice join) while Follow
+        // JOINS the running era mid-body (phase = now − era anchor).
+        var now = 1.0
+        let controller = loopController(tempoBpm: 100, now: { now })  // downbeats [0,2,4]
+        controller.isTransportPlaying = { true }
 
-        var releases = 0
-        controller.onRelease = { _, _ in releases += 1 }
-        let pad = LaunchpadPad(row: 0, col: 0)
+        var phase: Double?
+        controller.onTrigger = { _, _, _, p in phase = p }
 
-        controller.padDown(pad)
-        XCTAssertTrue(controller.activePads.contains(pad))
-        controller.padUp(pad)
-        XCTAssertEqual(releases, 1, "Loop is hold-to-play: padUp releases NOW")
-        XCTAssertFalse(controller.activePads.contains(pad))
+        // Latch establishes the rolling era: it quantizes to the 2.0 downbeat
+        // and anchors the shared lattice there (phase 0 for the first launch).
+        controller.playbackMode = .latch
+        controller.padDown(LaunchpadPad(row: 0, col: 0))
+        XCTAssertEqual(phase ?? -1, 0, accuracy: 1e-9)
+
+        // Follow now lands mid-body: phase = now − anchor = 3.5 − 2.0 = 1.5
+        // (the audio layer folds this mod the baked body so layered pads lock).
+        controller.playbackMode = .follow
+        now = 3.5
+        controller.padDown(LaunchpadPad(row: 0, col: 1))
+        XCTAssertEqual(phase ?? -1, 1.5, accuracy: 1e-9)
+
+        // One-Shot over the SAME live era forces phase 0 — it retriggers from
+        // the sample top instead of joining, the whole point of the mode.
+        controller.playbackMode = .oneShot
+        now = 4.2
+        controller.padDown(LaunchpadPad(row: 0, col: 2))
+        XCTAssertEqual(phase ?? -1, 0, accuracy: 1e-9)
+    }
+
+    func testGateModesAreHoldToPlayReleasesOnPadUp() {
+        // One-Shot and Follow are both momentary HOLD-to-play gates: press
+        // starts the voice, finger-lift RELEASES it immediately. They differ
+        // only in start phase, never on release. A re-tap does NOT toggle off.
+        for mode in [LaunchpadController.PadPlaybackMode.oneShot, .follow] {
+            let controller = makeController()
+            controller.setChops([chop(0)], stem: "other", sliceMode: "chord")
+            controller.playbackMode = mode
+
+            var releases = 0
+            controller.onRelease = { _, _ in releases += 1 }
+            let pad = LaunchpadPad(row: 0, col: 0)
+
+            controller.padDown(pad)
+            XCTAssertTrue(controller.activePads.contains(pad))
+            controller.padUp(pad)
+            XCTAssertEqual(releases, 1, "\(mode) is hold-to-play: padUp releases NOW")
+            XCTAssertFalse(controller.activePads.contains(pad))
+        }
+    }
+
+    func testPlaybackModeEnumContract() {
+        // Case set/order, labels, and the two behavior axes (parity with iOS
+        // SampleTriggerMode, 28fec22e).
+        typealias Mode = LaunchpadController.PadPlaybackMode
+        XCTAssertEqual(Mode.allCases, [.oneShot, .follow, .latch])
+        XCTAssertEqual(Mode.oneShot.title, "One-Shot")
+        XCTAssertEqual(Mode.follow.title, "Follow")
+        XCTAssertEqual(Mode.latch.title, "Latch")
+        // Only One-Shot starts from the sample top (phase 0).
+        XCTAssertTrue(Mode.oneShot.startsFromZero)
+        XCTAssertFalse(Mode.follow.startsFromZero)
+        XCTAssertFalse(Mode.latch.startsFromZero)
+        // Only Latch quantizes / drives the shared grid (the iOS rolls-clock
+        // axis); One-Shot and Follow are zero-latency gates.
+        XCTAssertFalse(Mode.oneShot.quantizesLaunch)
+        XCTAssertFalse(Mode.follow.quantizesLaunch)
+        XCTAssertTrue(Mode.latch.quantizesLaunch)
+        // The voice force-loops in every mode (iOS loopOverride twin).
+        XCTAssertTrue(Mode.oneShot.loops)
+        XCTAssertTrue(Mode.follow.loops)
+        XCTAssertTrue(Mode.latch.loops)
+        // Only Latch is a toggle.
+        XCTAssertTrue(Mode.latch.isToggle)
+        XCTAssertFalse(Mode.follow.isToggle)
+        XCTAssertFalse(Mode.oneShot.isToggle)
+    }
+
+    func testLegacyModeMigration() {
+        // A raw value persisted before 28fec22e (tap|loop|latch) migrates onto
+        // the new taxonomy rather than decoding to an unknown mode: retired
+        // tap/loop fold onto Follow, latch stays latch, current cases round-trip.
+        typealias Mode = LaunchpadController.PadPlaybackMode
+        XCTAssertEqual(Mode.migratedFromLegacy("tap"), .follow)
+        XCTAssertEqual(Mode.migratedFromLegacy("loop"), .follow)
+        XCTAssertEqual(Mode.migratedFromLegacy("latch"), .latch)
+        XCTAssertEqual(Mode.migratedFromLegacy("oneShot"), .oneShot)
+        XCTAssertEqual(Mode.migratedFromLegacy("follow"), .follow)
+        XCTAssertNil(Mode.migratedFromLegacy("bogus"))
     }
 
     func testLatchModeTogglesAndIgnoresPadUp() {
@@ -674,7 +758,7 @@ final class LaunchpadControllerTests: XCTestCase {
                 stem: "other", sliceMode: "chord",
                 chops: [chop(0), chop(1)])]
         ))
-        controller.playbackMode = .loop
+        controller.playbackMode = .latch     // the quantized launch path
         controller.loopLockEnabled = false
         controller.isTransportPlaying = { true }
         controller.quantize = .quarter
@@ -690,10 +774,10 @@ final class LaunchpadControllerTests: XCTestCase {
         // (lock-off loops join too since D-029 — willLoop gates the join).
         XCTAssertEqual(phase ?? -1, 0, accuracy: 1e-9)
 
-        // Tap is the zero-latency gate: it IGNORES the Quantize control and
+        // Follow is the zero-latency gate: it IGNORES the Quantize control and
         // fires NOW even while rolling (the beat grid would owe 1.2). This is
         // the deliberate iOS/desktop deviation from web (forceInstantLaunch).
-        controller.playbackMode = .tap
+        controller.playbackMode = .follow
         now = 0.7
         controller.padDown(LaunchpadPad(row: 0, col: 1))
         XCTAssertEqual(fireAt ?? -1, 0.7, accuracy: 1e-9)

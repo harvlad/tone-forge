@@ -407,8 +407,9 @@ final class SessionController: ObservableObject {
             // (bar-length at the target tempo). Re-tap stops it (below).
             if let aid = assignment.chop.assetId, aid.hasPrefix("borrowfile:"),
                let url = self.drumKitSampleFiles[assignment.chop.idx] {
-                // Every mode loops the voice now (Tap gate loops-while-held too);
-                // the controller decides start timing (Tap fires now).
+                // Every mode loops the voice now (the One-Shot/Follow gates
+                // loop-while-held too); the controller decides start timing
+                // (One-Shot/Follow fire now, One-Shot from the top).
                 let looping = self.launchpad.playbackMode.loops
                 self.chopPlayer.trigger(
                     file: url, startSec: nil, endSec: nil,
@@ -434,8 +435,8 @@ final class SessionController: ObservableObject {
             // (Live's grid), not the song transport's — pads fired here
             // stack in phase with clips playing in the DAW.
             let linked = self.linkSync.enabled && self.linkSync.peers > 0
-            // Only the QUANTIZED loop modes (Loop/Latch) land on the Link bar;
-            // Tap is the zero-latency gate and fires now even when linked.
+            // Only the QUANTIZED mode (Latch) lands on the Link bar; One-Shot
+            // and Follow are zero-latency gates and fire now even when linked.
             if linked, self.launchpad.playbackMode.quantizesLaunch {
                 delay = self.linkSync.secondsToNextBar()
                 // Link owns the launch grid here; the controller's lock
@@ -443,9 +444,9 @@ final class SessionController: ObservableObject {
                 // against it would join the body at a spurious offset.
                 phaseOffset = 0
             }
-            // All three modes (Tap | Loop | Latch) loop the chop region
-            // (seamless crossfade) so the voice is live + releasable — Tap
-            // loops-while-held, Loop/Latch loop in sync. Use Riley's measured
+            // All three modes (One-Shot | Follow | Latch) loop the chop region
+            // (seamless crossfade) so the voice is live + releasable — One-Shot/
+            // Follow loop-while-held, Latch loops in sync. Use Riley's measured
             // seam crossfade if the chop carries one, else a safe 15 ms.
             let chop = assignment.chop
             let loopable = self.launchpad.playbackMode.loops
@@ -498,8 +499,8 @@ final class SessionController: ObservableObject {
         }
         launchpad.onRelease = { [weak self] pad, assignment in
             guard let self else { return }
-            // onRelease fires on a Tap/Loop GATE finger-lift (padUp) and on a
-            // Latch toggle-OFF (re-tap) — either way, stop the voice NOW. This
+            // onRelease fires on a One-Shot/Follow GATE finger-lift (padUp) and
+            // on a Latch toggle-OFF (re-tap) — either way, stop the voice NOW. This
             // is desktop's force-release equivalent: ChopPlayer.release keys on
             // the sounding voice, never on the pad's intrinsic loop flags, so a
             // gate-forced looping voice on a non-loopable chop still stops (the
