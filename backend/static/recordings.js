@@ -7,16 +7,23 @@
  * The native apps capture an EVENT LOG (SessionCapture — pad events +
  * pad-mapping snapshot, no audio) and re-render it through the engine.
  * The web has no offline bounce path, so this surface captures the
- * rendered AUDIO instead: the host connects its master output into a
- * MediaStreamAudioDestinationNode tap and we run a MediaRecorder over
- * it. There are deliberately NO backend endpoints for this (the only
- * server-side recording seam is the mobile LayerTimeline layer-sync
- * routes) — takes are client-local, persisted in IndexedDB.
+ * rendered AUDIO instead: hosts connect their master outputs into a
+ * shared MIX BUS (a MediaStreamAudioDestinationNode) and we run a
+ * MediaRecorder over it. The bus is ADDITIVE — the song player, the
+ * kit PadEngine, and the launchpad synth each attach their own master
+ * and the take equals their sum (the web mirror of iOS masterTapNode).
+ * Sources living in a DIFFERENT AudioContext (kit.js owns its own) are
+ * bridged over their MediaStream, because Web Audio nodes cannot
+ * connect across contexts. There are deliberately NO backend endpoints
+ * for this (the only server-side recording seam is the mobile
+ * LayerTimeline layer-sync routes) — takes are client-local, persisted
+ * in IndexedDB.
  *
  * Host wiring (one line after building the audio graph):
  *   masterGain.connect(JamnRecordings.createTap(audioContext));
  * or, if the host already owns a stream/node:
  *   JamnRecordings.attachSource(mediaStreamOrNode);
+ * Both are additive and idempotent per source object.
  *
  * mount(container, ctx) with ctx = { audioContext } renders the
  * record button + takes list into `container`; unmount() tears it
@@ -140,37 +147,142 @@
   }
 
   // ---------- capture source ----------
+  //
+  // The take must equal what the speakers get, so the capture point is
+  // a MIX BUS, not a single node. Every attach SUMS into tapNode; it
+  // never replaces earlier sources (the pre-fix code replaced the song
+  // tap with whatever attached last — that is exactly how kit-pad audio
+  // went missing from takes). Cross-context sources are bridged:
+  //   foreign node → MediaStreamDestination (its ctx) → stream →
+  //   MediaStreamAudioSource (mix ctx) → tapNode.
 
   var sourceStream = null; // MediaStream we hand to MediaRecorder
-  var tapNode = null;      // MediaStreamAudioDestinationNode we created
+  var tapNode = null;      // MediaStreamAudioDestinationNode = the mix bus
+  var bridgeNodes = [];    // keep-alive refs for cross-context bridges
+  var pendingStreams = []; // streams attached before any mix bus existed
+  var attachedSources =
+    typeof WeakSet !== 'undefined' ? new WeakSet() : null;
 
-  /** Create (or reuse) the tap node the host connects master into. */
+  /**
+   * What can we do with this source? Pure — exercised by tests.
+   *   'stream'   MediaStream: bridge (or hold until a mix bus exists)
+   *   'tap'      has a .stream (MediaStreamAudioDestinationNode): its
+   *              stream is bridged; adopted as THE bus if none exists
+   *   'node'     connectable AudioNode: connect/bridge into the bus
+   *   'unusable' everything else — notably AudioDestinationNode, whose
+   *              numberOfOutputs is 0 so nothing can be tapped off it
+   *              (the old jam.js kctx.destination fallback hit this and
+   *              threw, which is why kit audio silently never recorded)
+   */
+  function classifySource(x, isStream) {
+    if (!x) return 'unusable';
+    if (isStream(x)) return 'stream';
+    if (x.stream && isStream(x.stream)) return 'tap';
+    if (x.context && typeof x.connect === 'function') {
+      return x.numberOfOutputs === 0 ? 'unusable' : 'node';
+    }
+    return 'unusable';
+  }
+
+  function isMediaStream(x) {
+    return typeof MediaStream !== 'undefined' && x instanceof MediaStream;
+  }
+
+  /** Drop a mix bus whose context died (host closed/rebuilt it). Live
+   * hosts re-attach their fresh masters on their own rebuild paths. */
+  function resetIfClosed() {
+    if (tapNode && tapNode.context && tapNode.context.state === 'closed') {
+      tapNode = null;
+      sourceStream = null;
+      bridgeNodes = [];
+    }
+  }
+
+  /** Sum a foreign MediaStream into the mix bus (or queue it). */
+  function bridgeStream(stream) {
+    if (!tapNode) {
+      pendingStreams.push(stream);
+      // Legacy single-source contract: with no bus at all, record the
+      // stream directly rather than staying silent.
+      if (!sourceStream) sourceStream = stream;
+      return;
+    }
+    try {
+      var src = tapNode.context.createMediaStreamSource(stream);
+      src.connect(tapNode);
+      bridgeNodes.push(src); // keep-alive; GC would mute the bridge
+    } catch (_) {
+      // Ended/empty stream — nothing to record from it.
+    }
+  }
+
+  /** Create (or reuse) the tap node the host connects master into.
+   * First call establishes the mix bus in that context; a later call
+   * from a DIFFERENT context gets a local feeder node whose audio is
+   * bridged into the existing bus, so both hosts end up on one take. */
   function createTap(audioContext) {
+    resetIfClosed();
     if (tapNode && tapNode.context === audioContext) return tapNode;
-    tapNode = audioContext.createMediaStreamDestination();
-    sourceStream = tapNode.stream;
+    var dest = audioContext.createMediaStreamDestination();
+    if (!tapNode) {
+      tapNode = dest;
+      sourceStream = tapNode.stream;
+      var queued = pendingStreams;
+      pendingStreams = [];
+      for (var i = 0; i < queued.length; i++) bridgeStream(queued[i]);
+    } else {
+      bridgeStream(dest.stream);
+    }
     updateRecordButton();
-    return tapNode;
+    return dest;
   }
 
   /**
    * Accepts a MediaStream, a MediaStreamAudioDestinationNode, or any
    * plain AudioNode (we grow a destination node in its own context and
    * connect it — the host doesn't have to know about tap plumbing).
+   * Additive: each new source is SUMMED with what is already attached.
+   * Idempotent per object, so hosts may re-attach on every (re)mount.
    */
   function attachSource(streamOrNode) {
-    if (!streamOrNode) return;
-    if (typeof MediaStream !== 'undefined' && streamOrNode instanceof MediaStream) {
-      sourceStream = streamOrNode;
-    } else if (streamOrNode.stream instanceof MediaStream) {
-      // MediaStreamAudioDestinationNode (or anything duck-typed like it)
-      tapNode = streamOrNode;
-      sourceStream = streamOrNode.stream;
-    } else if (streamOrNode.context && typeof streamOrNode.connect === 'function') {
-      var dest = streamOrNode.context.createMediaStreamDestination();
-      streamOrNode.connect(dest);
-      tapNode = dest;
-      sourceStream = dest.stream;
+    resetIfClosed();
+    var kind = classifySource(streamOrNode, isMediaStream);
+    if (kind === 'unusable') return;
+    if (attachedSources) {
+      if (attachedSources.has(streamOrNode)) return;
+      attachedSources.add(streamOrNode);
+    }
+    if (kind === 'stream') {
+      bridgeStream(streamOrNode);
+    } else if (kind === 'tap') {
+      if (!tapNode) {
+        // No bus yet — adopt it (legacy contract) and flush the queue.
+        tapNode = streamOrNode;
+        sourceStream = streamOrNode.stream;
+        var queued = pendingStreams;
+        pendingStreams = [];
+        for (var i = 0; i < queued.length; i++) bridgeStream(queued[i]);
+      } else {
+        bridgeStream(streamOrNode.stream);
+      }
+    } else { // 'node'
+      var nodeCtx = streamOrNode.context;
+      if (nodeCtx.state === 'closed') return;
+      if (!tapNode) {
+        tapNode = nodeCtx.createMediaStreamDestination();
+        sourceStream = tapNode.stream;
+        var q = pendingStreams;
+        pendingStreams = [];
+        for (var j = 0; j < q.length; j++) bridgeStream(q[j]);
+      }
+      if (nodeCtx === tapNode.context) {
+        try { streamOrNode.connect(tapNode); } catch (_) {}
+      } else {
+        var local = nodeCtx.createMediaStreamDestination();
+        try { streamOrNode.connect(local); } catch (_) { return; }
+        bridgeStream(local.stream);
+        bridgeNodes.push(local); // keep the feeder alive too
+      }
     }
     updateRecordButton();
   }
@@ -485,6 +597,14 @@
     unmount: unmount,
     attachSource: attachSource,
     createTap: createTap,
+    // Transport-arm parity (iOS bottom-transport Record): the toolbar
+    // record tool arms/stops capture in one tap instead of only opening
+    // the surface.
+    isRecording: isRecording,
+    toggleRecord: function () {
+      if (isRecording()) stopRecording(); else startRecording();
+      return isRecording();
+    },
     // Pure helpers exposed for tests (node --test style harnesses can
     // import this file in a stub window and exercise these directly).
     _pure: {
@@ -492,7 +612,8 @@
       extensionFor: extensionFor,
       formatDuration: formatDuration,
       defaultTakeName: defaultTakeName,
-      downloadFilename: downloadFilename
+      downloadFilename: downloadFilename,
+      classifySource: classifySource
     }
   };
 })();

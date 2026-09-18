@@ -689,6 +689,25 @@
 
   // ---------- data + audio load ----------
 
+  /** Pad master bus: PadEngine → s.master → destination, with s.master
+   * also handed to the session recorder's mix bus. Kit runs its OWN
+   * AudioContext, so before this the recorder (which tapped only the
+   * jam.js song bus) could never hear the pads — kit-only jams recorded
+   * silence. recordings.js bridges across contexts and is additive +
+   * idempotent, so re-attaching a fresh node on every (re)mount is the
+   * intended contract. */
+  function wireKitMaster(s) {
+    s.master = s.ctx.createGain();
+    s.master.connect(s.ctx.destination);
+    try {
+      if (window.JamnRecordings &&
+          typeof window.JamnRecordings.attachSource === "function") {
+        window.JamnRecordings.attachSource(s.master);
+      }
+    } catch (_) {}
+    return s.master;
+  }
+
   /** Fetch the kit manifest at the surface's current pad count. The server
    * clamps pads at 16 today (Query le=16) — a 64 ask degrades to 16 in
    * place (grid follows padCount, so the fallback renders 4×4, not a
@@ -885,7 +904,7 @@
           if (typeof PadEngine !== "function") throw new Error("PadEngine missing");
           s.dsp = mod; // pure DSP exports feed applyPadRegion rebakes
           s.stems = stems;
-          s.engine = new PadEngine(s.ctx, s.ctx.destination);
+          s.engine = new PadEngine(s.ctx, wireKitMaster(s));
           if (can(s.engine, "setStems")) s.engine.setStems(stems);
           if (can(s.engine, "setKit"))
             s.engine.setKit(s.kit, { tempoBpm: entry.result.tempo_bpm });
@@ -4422,7 +4441,7 @@
             var PadEngine = mod && (mod.PadEngine || (mod.default && mod.default.PadEngine));
             s.dsp = mod;
             s.stems = stems;
-            s.engine = new PadEngine(s.ctx, s.ctx.destination);
+            s.engine = new PadEngine(s.ctx, wireKitMaster(s));
             s.engine.setStems(stems);
             if (isBorrow) {
               if (!borrowMeta.length) throw new Error("no borrow pads decoded");
@@ -5099,6 +5118,9 @@
     engine: function () { return current && current.engine; },
     pads: function () { return (current && current.pads) || []; },
     audioContext: function () { return current && current.ctx; },
+    // Pad master bus (PadEngine output, pre-destination) — the node the
+    // session recorder taps so takes hear the pads (see wireKitMaster).
+    masterNode: function () { return current && current.master; },
     // Current kit kind: 'auto' (default song kit), 'drums', 'flip', or
     // 'pack' — lets Remix's pads-follow respect the mode the user chose
     // instead of force-switching to the drum kit on every Re-Drum.

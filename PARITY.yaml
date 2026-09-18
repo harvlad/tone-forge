@@ -665,9 +665,9 @@ features:
     name: Bottom transport Record captures the session's audio OUTPUT (mixed sound — stems + pads + FX + master chain) to a file in Library → Recordings
     platforms:
       web:
-        status: partial
+        status: done
         evidence: "backend/static/recordings.js#JamnRecordings"
-        note: "Web already captures master audio takes (recordings.js#JamnRecordings: createTap off the master + a Recordings surface) BUT kit-pad audio is absent from web takes — the tap hangs off the song bus only, so pads/kit FX never reach the take. Real bug, tracked as follow-up."
+        note: "Takes capture the full master mix: recordings.js is an additive mix bus (attachSource sums sources, bridging across AudioContexts) fed by the song bus post-FX master tap (jam.js#_ensureMasterTap), the kit PadEngine master (kit.js#wireKitMaster — kit runs its own context; this was the kit-pads-silent bug), and the launchpad synth master. Click routes post-tap so the metronome never prints (iOS 323b9085 parity). Toolbar Record is a one-tap transport arm (jam.js act('record') → JamnRecordings.toggleRecord). Takes are client-local (IndexedDB), matching the local-takes semantics of the native lists."
       ios:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeMobile/Audio/OutputRecorder.swift#OutputRecorder"

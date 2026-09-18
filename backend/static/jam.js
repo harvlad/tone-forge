@@ -3785,6 +3785,34 @@
     _fxRenderUI();
   }
 
+  // Master tap bus — the LAST node before ctx.destination for everything
+  // musical (song bus post-FX, launchpad synth master). The session
+  // recorder taps HERE, so takes equal what the speakers get (web mirror
+  // of iOS masterTapNode). The click track deliberately connects to
+  // destination directly — POST-tap — so the metronome is audible but
+  // never printed into a take (iOS 323b9085 parity). Keyed on the
+  // context like fxNodes so a rebuilt context gets a fresh bus.
+  function _ensureMasterTap() {
+    const ctx = state.ctx;
+    if (!ctx) return null;
+    if (state.masterTap && state.masterTapCtx === ctx) return state.masterTap;
+    const tap = ctx.createGain();
+    tap.gain.value = 1.0;
+    tap.connect(ctx.destination);
+    state.masterTap = tap;
+    state.masterTapCtx = ctx;
+    _wireRecorderTap();
+    return tap;
+  }
+
+  // Hand the master tap to the recorder mix bus. Additive + idempotent
+  // on the recordings side, so calling this at every graph build AND at
+  // recordings mount is safe regardless of which happens first.
+  function _wireRecorderTap() {
+    if (!state.masterTap || !window.JamnRecordings) return;
+    try { window.JamnRecordings.attachSource(state.masterTap); } catch (_) {}
+  }
+
   // Build (once per AudioContext) the master FX node graph. Nodes are
   // keyed on the context so a watchdog-driven context rebuild gets a
   // fresh chain.
@@ -3824,7 +3852,10 @@
     eqHigh.connect(comp);
     comp.connect(makeup);
     makeup.connect(limiter);
-    limiter.connect(ctx.destination);
+    // Terminate into the master tap (→ destination) so takes capture
+    // the post-FX signal, not the raw pre-EQ bus.
+    const tapOut = _ensureMasterTap() || ctx.destination;
+    limiter.connect(tapOut);
     input.connect(fxSend);
     fxSend.connect(convolver);
     convolver.connect(delayDry);
@@ -3834,7 +3865,7 @@
     delayFb.connect(delay);
     delay.connect(delayWet);
     delayWet.connect(fxReturn);
-    fxReturn.connect(ctx.destination);
+    fxReturn.connect(tapOut);
     state.fxNodes = {
       ctx, input, eqLow, eqMid, eqHigh, comp, makeup, limiter,
       fxSend, convolver, delayDry, delay, delayFb, delayWet, fxReturn,
@@ -3853,7 +3884,9 @@
     } catch (e) {
       console.warn('[fx] master FX chain unavailable, direct routing:', e);
     }
-    state.masterGain.connect(state.ctx.destination);
+    // Even the no-FX fallback goes through the master tap so takes
+    // still hear the song bus.
+    state.masterGain.connect(_ensureMasterTap() || state.ctx.destination);
   }
 
   // Generated reverb impulse: exponentially-decaying noise, one-pole
@@ -6674,7 +6707,10 @@
     // too quiet against drums+bass+guitar; 0.6 sits roughly at -4 dB
     // peak after the envelope which the ear actually catches.
     state.clickGain.gain.value = 0.6;
-    state.clickGain.connect(state.masterGain);
+    // POST-tap on purpose: straight to destination, bypassing the master
+    // FX chain AND the recorder tap, so the metronome guides the player
+    // but never prints into a session take (iOS 323b9085 parity).
+    state.clickGain.connect(state.ctx.destination);
     return state.clickGain;
   }
 
@@ -9915,10 +9951,12 @@
 
     const s = state.settings;
 
-    // Master fader for the whole pad synth.
+    // Master fader for the whole pad synth. Routed through the master
+    // tap (ctx here IS state.ctx — adopted above) so launchpad voices
+    // and chops land in session takes alongside the song bus.
     const master = ctx.createGain();
     master.gain.value = s.launchpadMasterGain;
-    master.connect(ctx.destination);
+    master.connect(_ensureMasterTap() || ctx.destination);
 
     // Shared bus feeding both a dry path and a wet (reverb) path. The
     // two sub-buses below (voiceBus, chopBus) sum into this bus so the
@@ -15942,13 +15980,14 @@
       try {
         const ctx = state.ctx || window.JamnKit?.audioContext?.();
         window.JamnRecordings.mount(root, { audioContext: ctx });
-        // Tap whatever master buses exist so the take hears the jam.
-        if (ctx && state.masterGain) {
-          try { state.masterGain.connect(window.JamnRecordings.createTap(ctx)); } catch (_) {}
-        }
-        const kctx = window.JamnKit?.audioContext?.();
-        if (kctx && kctx !== ctx) {
-          try { window.JamnRecordings.attachSource(kctx.destination); } catch (_) {}
+        // Feed the recorder mix bus from every master that exists NOW.
+        // Both attaches are additive + idempotent on the recordings
+        // side, and each engine also self-attaches when its graph
+        // (re)builds — so mount order and kit remounts don't matter.
+        _wireRecorderTap();
+        const kmaster = window.JamnKit?.masterNode?.();
+        if (kmaster) {
+          try { window.JamnRecordings.attachSource(kmaster); } catch (_) {}
         }
         _recMounted = true;
       } catch (e) { console.warn('[jamn-router] recordings mount failed:', e); }
@@ -16432,7 +16471,13 @@
           } catch (_) {}
           break;
         case 'packs': showView('packs'); break;
-        case 'record': showView('recordings'); break;
+        case 'record':
+          // One-tap transport arm (iOS bottom-transport Record parity):
+          // open the surface AND toggle capture. Browsing takes without
+          // arming stays available via the sidebar Recordings item.
+          showView('recordings');
+          try { window.JamnRecordings?.toggleRecord?.(); } catch (_) {}
+          break;
         case 'synth': showView('kit'); break; // Jam Pads = web wavetable synth
         case 'play':
           try { if (state.isPlaying) pauseAll(); else playAll(); } catch (_) {}

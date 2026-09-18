@@ -12,6 +12,11 @@ new Function("window", "document", src)(window, document);
 const K = window.JamnKit;
 assert.equal(typeof K.mount, "function");
 assert.equal(typeof K.unmount, "function");
+// Pad master bus handle: the session recorder taps this so takes hear
+// the pads (the old graph went PadEngine → destination with no tappable
+// point — kit-only jams recorded silence). No mount → no node.
+assert.equal(typeof K.masterNode, "function");
+assert.ok(!K.masterNode());
 
 const { resolveStemUrl, parseColor } = K._internals;
 assert.equal(resolveStemUrl("/api/stems/x.wav"), "https://jamn.app/api/stems/x.wav");
