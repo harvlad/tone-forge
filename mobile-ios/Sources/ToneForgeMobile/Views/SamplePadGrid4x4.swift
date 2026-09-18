@@ -106,12 +106,28 @@ struct SamplePadGrid4x4: View {
                                 return
                             }
                             // EDIT mode = configure, not perform: a filled-pad
-                            // touch does NOT sound — otherwise holding for the
-                            // radial fired the pad on (padDown) then off (the
-                            // radial's release), an audible blip. Only the hold
-                            // (radial) gesture acts here; toggle Edit off to play.
-                            guard !Self.holdRadialEnabled(editing: editing, stage: stage)
-                            else { return }
+                            // touch does NOT sound. But silent-dead pads read
+                            // as broken ("pads dont work, i press them and they
+                            // dont react") — so in Edit mode a plain TAP opens
+                            // the radial immediately (hold still works too):
+                            // every touch edits, the mode explains itself.
+                            if Self.holdRadialEnabled(editing: editing, stage: stage) {
+                                let center = padCenter(
+                                    localRow: row, localCol: col, size: geo.size)
+                                var actions = coordinator.radialActions(
+                                    row: gridRow, col: gridCol)
+                                if onBeatCapture == nil {
+                                    actions.removeAll { $0 == .beatCapture }
+                                }
+                                radialMenuState = makeRadialMenuState(
+                                    gridRow: gridRow,
+                                    gridCol: gridCol,
+                                    center: center,
+                                    containerSize: geo.size,
+                                    actions: actions
+                                )
+                                return
+                            }
                             coordinator.touchPadDown(row: gridRow, col: gridCol)
                         },
                         onPadUp: { row, col in
