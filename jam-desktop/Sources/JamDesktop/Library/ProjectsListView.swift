@@ -57,15 +57,23 @@ struct ProjectsListView: View {
     }
 
     private var saveRow: some View {
-        HStack(spacing: 8) {
-            TextField("Name this workspace…", text: $saveName)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit(saveCurrent)
-            Button("Save workspace as project", action: saveCurrent)
-                .disabled(session.attachedAnalysisId == nil)
-                .help(session.attachedAnalysisId == nil
-                    ? "Load a song first — a project is a per-song workspace"
-                    : "Keep the current pads, FX, edits and borrows as a named project")
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TextField("Name this workspace…", text: $saveName)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(saveCurrent)
+                Button("Save workspace as project", action: saveCurrent)
+                    .disabled(session.attachedAnalysisId == nil)
+                    .help("Keep the current pads, FX, edits and borrows as a named project")
+            }
+            // A silently-disabled button reads as broken ("cant save a
+            // project") — say WHY inline, not only in a hover tooltip.
+            if session.attachedAnalysisId == nil {
+                Label("Load a song first — a project is a per-song workspace.",
+                      systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
     }
