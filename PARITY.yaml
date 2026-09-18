@@ -378,6 +378,26 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: vinyl-crate
+    name: "Vinyl Crate — shared curated CC-BY/CC0 donor pool: session-matched suggestions + faceted browse (genre/tempo/key/mood/tags), borrowed loops on pick"
+    platforms:
+      web:
+        status: missing
+        note: "Companion build. Extend the borrow picker (kit.js#openBorrowPicker) with a My songs | Crate source toggle: a 'For your session' ranked strip (GET /api/crate/candidates) + a 'Browse the crate' faceted grid (GET /api/crate/search) reusing renderBorrowBody rows, mounting via the same /borrow -> mountManifest path (GET /api/crate/{id}/borrow). Attribution on every crate row (CC-BY); export-locked badge for BY-SA (exportEncumbered)."
+      ios:
+        status: missing
+        note: "Companion build. BorrowPickerSheet.swift gains a My songs | Crate segmented control + a facet/search section fed by AppState.fetchCrateCandidates / searchCrate / loadCrateLoops (twins of the borrow clients), mounting through the same SampleBank.arrangeBorrowLayout. Attribution + export-locked per row."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Launchpad/BorrowPickerView.swift#BorrowSource"
+        note: "BorrowPickerView gains a My songs | Crate source picker. Crate mode shows a 'For your session' ranked strip (SessionController.crateCandidates -> GET /api/crate/candidates, with a Similar|Contrast genre-affinity toggle) plus a 'Browse the crate' panel: free-text search + genre/mood facet chips (from the response's facetCounts) + CC0/BY-only, near-tempo and in-key filter toggles (SessionController.searchCrate -> GET /api/crate/search). Row tap -> SessionController.loadCrateLoops -> GET /api/crate/{id}/borrow, mounted through the SAME applyBorrowPack path as own-song borrow (source-tagged 64/divider layout, latch, content-addressed BorrowContext keyed on the crate id so a re-opened workspace re-resolves the loop + attribution). Every crate row shows the CC attribution; CC-BY-SA rows carry an 'export-locked' badge (exportEncumbered), and un-renderable rows (no graph / missing stem) are greyed. Wire DTOs + the facet->query builder are pure in JamDesktopCore (CrateModels.swift), pinned by CrateModelsDecodeTests; the export-encumbrance gate at the EXPORT path (ALS/preset/bundle) is follow-up, badged in the UI now. Backend crate subsystem + web/iOS pickers are companion builds."
+      plugin:
+        status: na
+        note: "No borrow/remix surface in the JUCE editor (same gap as borrow-loops); the crate is a picker feature on the borrow surface."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: live-arrangement
     name: "Live-capture arrangement — Rec through a song to capture pads-per-section, Play replays hands-free"
     platforms:
