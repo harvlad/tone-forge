@@ -84,6 +84,13 @@ public final class SampleScheduler: ObservableObject {
     /// bar-quantize + loop-lock that Loop/Latch use. Distinct from
     /// `loopOverride` (which forces looping): this defeats WAITING, not looping.
     public var forceInstantLaunch = false
+    /// Start the voice at phase 0 (the sample's beginning) instead of
+    /// phase-joining the shared lattice. Set around the Jam One-Shot path:
+    /// One-Shot is a finger-drumming gate that retriggers from the TOP
+    /// every tap — the opposite of Follow (old Tap), which joins mid-body
+    /// at the shared clock point so layered pads lock together. Independent
+    /// of forceInstantLaunch (both are set for One-Shot: fire NOW, from 0).
+    public var forceZeroPhase = false
     @Published public var beatBarMode: BeatBarMode = .beat
     /// Section-label whitelist. `nil` = allow all; empty set = allow none.
     @Published public var allowedSections: Set<String>? = nil
@@ -1209,7 +1216,7 @@ public final class SampleScheduler: ObservableObject {
         // body a short pad joined at the right sub-bar phase but the
         // wrong bar of the cycle.
         var phaseSec = 0.0
-        if willLoop, let anchor = loopLockAnchorHostSec,
+        if willLoop, !forceZeroPhase, let anchor = loopLockAnchorHostSec,
            buffer.format.sampleRate > 0 {
             let cycleFrames = max(bodyFrames, loopCycleFrames)
             phaseSec = Self.phaseJoinSeconds(

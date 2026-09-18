@@ -153,16 +153,16 @@ final class JamSettingsStoreTests: XCTestCase {
     private let tapMigKey = "jam.sampleLatch.tapDefaultMigrated"
     private let modeKey = "jam.sampleTriggerMode"
 
-    func testTriggerModeDefaultsToTap() {
+    func testTriggerModeDefaultsToFollow() {
         let store = JamSettingsStore(defaults: defaults)
-        XCTAssertEqual(store.sampleTriggerMode, .tap)
+        XCTAssertEqual(store.sampleTriggerMode, .follow)
     }
 
     func testTriggerModePersistsAcrossInstances() {
         let a = JamSettingsStore(defaults: defaults)
-        a.sampleTriggerMode = .loop
+        a.sampleTriggerMode = .oneShot
         let b = JamSettingsStore(defaults: defaults)
-        XCTAssertEqual(b.sampleTriggerMode, .loop, "Loop must survive a relaunch")
+        XCTAssertEqual(b.sampleTriggerMode, .oneShot, "One-Shot must survive a relaunch")
     }
 
     func testMigrationLegacyLatchTrueBecomesLatch() {
@@ -174,24 +174,33 @@ final class JamSettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.sampleTriggerMode, .latch)
     }
 
-    func testMigrationLegacyLatchFalseBecomesTap() {
+    func testMigrationLegacyLatchFalseBecomesFollow() {
         defaults.set(false, forKey: latchKey)
         defaults.set(true, forKey: tapMigKey)
         let store = JamSettingsStore(defaults: defaults)
-        XCTAssertEqual(store.sampleTriggerMode, .tap)
+        XCTAssertEqual(store.sampleTriggerMode, .follow)
     }
 
-    func testMigrationRunsOnceAndPreservesLaterLoopChoice() {
+    func testStoredLegacyTapModeMigratesToFollow() {
+        // A user who last ran on the old tap|loop|latch set has "tap"/"loop"
+        // stored; both fold onto Follow rather than an unknown mode.
+        defaults.set("tap", forKey: modeKey)
+        XCTAssertEqual(JamSettingsStore(defaults: defaults).sampleTriggerMode, .follow)
+        defaults.set("loop", forKey: modeKey)
+        XCTAssertEqual(JamSettingsStore(defaults: defaults).sampleTriggerMode, .follow)
+    }
+
+    func testMigrationRunsOnceAndPreservesLaterModeChoice() {
         // First launch migrates legacy latch=true → .latch…
         defaults.set(true, forKey: latchKey)
         defaults.set(true, forKey: tapMigKey)
         let first = JamSettingsStore(defaults: defaults)
         XCTAssertEqual(first.sampleTriggerMode, .latch)
-        // …the user then picks the new Loop mode…
-        first.sampleTriggerMode = .loop
+        // …the user then picks One-Shot…
+        first.sampleTriggerMode = .oneShot
         // …and a later launch must NOT re-derive from the stale latch bool
-        // and clobber Loop back to Latch.
+        // and clobber it back to Latch.
         let later = JamSettingsStore(defaults: defaults)
-        XCTAssertEqual(later.sampleTriggerMode, .loop)
+        XCTAssertEqual(later.sampleTriggerMode, .oneShot)
     }
 }

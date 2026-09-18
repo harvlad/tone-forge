@@ -25,64 +25,71 @@ final class SampleTriggerModeTests: XCTestCase {
 
     // MARK: - padUp release contract
 
-    func testLoopModeReleasesImmediatelyOnPadUp() {
-        // HOLD-to-play gate: finger-lift stops the loop NOW regardless of
-        // ring/loop state — the whole point of Loop mode.
-        for ring in [true, false] {
+    func testGateModesReleaseImmediatelyOnPadUp() {
+        // One-Shot and Follow are momentary gates: a ringing voice stops NOW
+        // on finger-lift regardless of loop state. They differ only in start
+        // phase, never on release.
+        for mode in [SampleTriggerMode.oneShot, .follow] {
             for loops in [true, false] {
                 XCTAssertEqual(
                     ModeCoordinator.jamPadUpAction(
-                        mode: .loop, isRinging: ring, padLoops: loops),
+                        mode: mode, isRinging: true, padLoops: loops),
                     .immediate,
-                    "Loop always releases immediately (ring=\(ring) loops=\(loops))")
+                    "\(mode) releases immediately when ringing (loops=\(loops))")
             }
         }
     }
 
     func testLatchModeNeverReleasesOnPadUp() {
         // Toggle: the voice holds through the lift; a second tap (padDown)
-        // is what releases it. This is the behavior Loop must NOT share.
+        // is what releases it.
         XCTAssertEqual(ModeCoordinator.jamPadUpAction(
             mode: .latch, isRinging: true, padLoops: true), .none)
         XCTAssertEqual(ModeCoordinator.jamPadUpAction(
             mode: .latch, isRinging: false, padLoops: false), .none)
     }
 
-    func testTapModeIsAMomentaryGate() {
-        // Tap plays ONLY while held: any ringing voice (looping or not)
-        // stops the instant the finger lifts — a quick tap is a short
-        // blip, a hold sustains. User: "i only want it to play on hold."
-        XCTAssertEqual(
-            ModeCoordinator.jamPadUpAction(
-                mode: .tap, isRinging: true, padLoops: true),
-            .immediate)
-        XCTAssertEqual(
-            ModeCoordinator.jamPadUpAction(
-                mode: .tap, isRinging: true, padLoops: false),
-            .immediate)
-    }
-
-    func testTapModeSilentPadIsNoOp() {
+    func testGateModeSilentPadIsNoOp() {
         // Nothing ringing on this pad → padUp does nothing.
-        XCTAssertEqual(
-            ModeCoordinator.jamPadUpAction(
-                mode: .tap, isRinging: false, padLoops: false),
-            .none)
+        for mode in [SampleTriggerMode.oneShot, .follow] {
+            XCTAssertEqual(
+                ModeCoordinator.jamPadUpAction(
+                    mode: mode, isRinging: false, padLoops: false),
+                .none)
+        }
     }
 
     // MARK: - Mode semantics
 
-    func testLoopAndLatchLoopButTapDoesNot() {
-        XCTAssertFalse(SampleTriggerMode.tap.loops)
-        XCTAssertTrue(SampleTriggerMode.loop.loops)
+    func testOnlyLatchRollsTheClock() {
+        // loops == rollsClock: only Latch drives the shared clock. One-Shot
+        // and Follow are momentary gates.
+        XCTAssertFalse(SampleTriggerMode.oneShot.loops)
+        XCTAssertFalse(SampleTriggerMode.follow.loops)
         XCTAssertTrue(SampleTriggerMode.latch.loops)
     }
 
+    func testOnlyOneShotStartsFromZero() {
+        // One-Shot retriggers from the sample top; Follow/Latch join the
+        // shared clock phase.
+        XCTAssertTrue(SampleTriggerMode.oneShot.startsFromZero)
+        XCTAssertFalse(SampleTriggerMode.follow.startsFromZero)
+        XCTAssertFalse(SampleTriggerMode.latch.startsFromZero)
+    }
+
     func testDisplayNamesAndCaseOrder() {
-        XCTAssertEqual(SampleTriggerMode.allCases, [.tap, .loop, .latch])
-        XCTAssertEqual(SampleTriggerMode.tap.displayName, "Tap")
-        XCTAssertEqual(SampleTriggerMode.loop.displayName, "Loop")
+        XCTAssertEqual(SampleTriggerMode.allCases, [.oneShot, .follow, .latch])
+        XCTAssertEqual(SampleTriggerMode.oneShot.displayName, "One-Shot")
+        XCTAssertEqual(SampleTriggerMode.follow.displayName, "Follow")
         XCTAssertEqual(SampleTriggerMode.latch.displayName, "Latch")
+    }
+
+    func testLegacyModeMigration() {
+        // Retired tap/loop fold onto Follow; latch stays latch.
+        XCTAssertEqual(SampleTriggerMode.migratedFromLegacy("tap"), .follow)
+        XCTAssertEqual(SampleTriggerMode.migratedFromLegacy("loop"), .follow)
+        XCTAssertEqual(SampleTriggerMode.migratedFromLegacy("latch"), .latch)
+        XCTAssertEqual(SampleTriggerMode.migratedFromLegacy("oneShot"), .oneShot)
     }
 
     // MARK: - Overflow pad TYPE label (FIX 2)

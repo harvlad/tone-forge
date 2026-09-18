@@ -155,29 +155,26 @@ public final class ModeCoordinator: ObservableObject {
     public func triggerJamSample(padIdx: Int, packId: String, mode: SampleTriggerMode) {
         isExecuting = true
         defer { isExecuting = false }
-        // Three distinct finger contracts (web parity for Loop/Latch; Tap is
-        // an iOS-only, deliberately more-immediate contract per user request):
-        //   Loop  — quantized launch, HOLD-to-play (release stops now).
-        //   Latch — quantized launch, TOGGLE (re-tap stops).
-        //   Tap   — ZERO-LATENCY one-shot that LOOPS WHILE HELD: fires the
-        //           instant the pad is pressed (no bar-quantize, no arm, no
-        //           hourglass) whether the clock is stopped OR rolling, loops
-        //           a loop-capable pad while the finger is down, and releases
-        //           at the END of the current loop pass on finger-up (padUp) —
-        //           so a quick tap plays exactly one clean pass (a one-shot)
-        //           and a hold sustains until the next boundary. A genuinely
-        //           non-loopable sample just plays its own length.
+        // Three finger contracts (One-Shot|Follow|Latch, user taxonomy):
+        //   One-Shot — finger-drumming gate: fires the instant the pad is
+        //              pressed, from the SAMPLE TOP (phase 0, no clock sync),
+        //              loops-while-held, release stops NOW. Retriggers from
+        //              the beginning every tap.
+        //   Follow   — fires instantly too, but JOINS the shared clock at its
+        //              current phase (mid-body) so layered pads lock together;
+        //              release stops. (The old "Tap" — behavior preserved.)
+        //   Latch    — quantized launch, TOGGLE (re-tap stops), synced loop.
         //
-        // Two axes, DECOUPLED: `rollsClock` (Loop/Latch) rolls the shared
-        // session CLOCK and forces the buffer to loop as a synced clip; Tap
-        // does neither — a tap is not a synced clip, so it leaves the
-        // transport stopped and lets the pad's own loop-ability decide whether
-        // the voice loops. `instant` (Tap) forces an immediate launch
-        // (forceInstantLaunch) that defeats bar-quantize AND loop-lock, so the
-        // voice loops-while-held but never arms.
+        // Axes: `rollsClock` (Latch only) rolls the shared session CLOCK and
+        // forces a synced clip. One-Shot and Follow are momentary gates —
+        // they don't drive the clock. `instant` (One-Shot + Follow) forces an
+        // immediate launch that defeats bar-quantize + loop-lock so the voice
+        // loops-while-held but never arms. `zeroPhase` (One-Shot only) starts
+        // the voice at phase 0 instead of phase-joining the lattice.
         let latch = mode == .latch
-        let rollsClock = mode.loops        // Loop/Latch only (Tap.loops == false)
-        let instant = mode == .tap
+        let rollsClock = mode.loops        // Latch only (One-Shot/Follow == false)
+        let instant = mode != .latch       // One-Shot + Follow fire immediately
+        let zeroPhase = mode.startsFromZero // One-Shot starts from the sample top
         // Session feel: launching a Loop/Latch clip while stopped rolls the
         // CLOCK (so clips quantize + loop in sync with each other) but NOT the
         // song stems. The clock is rolled AFTER the trigger (below): played
@@ -187,11 +184,13 @@ public final class ModeCoordinator: ObservableObject {
         let s = app.sampleScheduler
         let savedHold = s.holdMode, savedQ = s.quantize
         let savedLoop = s.loopOverride, savedInstant = s.forceInstantLaunch
+        let savedZeroPhase = s.forceZeroPhase
         defer {
             s.holdMode = savedHold
             s.quantize = savedQ
             s.loopOverride = savedLoop
             s.forceInstantLaunch = savedInstant
+            s.forceZeroPhase = savedZeroPhase
         }
         // Latch alone is a TOGGLE (re-tap stops). Tap and Loop use .hold —
         // Loop's finger-lift release and Tap's release-at-loop-end are both
@@ -200,16 +199,20 @@ public final class ModeCoordinator: ObservableObject {
         // branch.
         s.holdMode = latch ? .toggle : .hold
         // ALL three modes force the buffer to LOOP regardless of loop points
-        // (song chops carry none). Loop/Latch need it to repeat in sync; Tap
-        // needs it so the voice is a live, releasable, sustaining gate — a
+        // (song chops carry none). Latch needs it to repeat in sync; the
+        // One-Shot/Follow gates need it so the voice is live + releasable — a
         // one-shot that plays its full length can't be stopped on finger-lift
-        // ("tap makes the whole pad clip play"), so Tap forces loop too and
-        // padUp releases it NOW (hold = sustain, quick tap = short blip).
+        // ("tap makes the whole pad clip play"), so they force loop too and
+        // padUp releases NOW (hold = sustain, quick tap = short blip).
         s.loopOverride = true
-        // Tap is always immediate: no bar-quantize, no loop-lock, no arm/
-        // hourglass — even while the transport rolls and even though the voice
-        // loops. Loop/Latch keep the shared-lattice quantize + phase-lock.
+        // One-Shot + Follow are always immediate: no bar-quantize, no
+        // loop-lock, no arm/hourglass — even while the transport rolls and
+        // even though the voice loops. Latch keeps the shared-lattice
+        // quantize + phase-lock.
         s.forceInstantLaunch = instant
+        // One-Shot starts at the sample TOP (phase 0); Follow/Latch join the
+        // shared clock phase so layered pads lock together.
+        s.forceZeroPhase = zeroPhase
         let result: SampleScheduler.TriggerResult
         if wasStopped {
             // First launch while the clock is stopped goes through the
@@ -252,28 +255,21 @@ public final class ModeCoordinator: ObservableObject {
     /// What a Jam-sample padUp should do to the pad's voice, given the trigger
     /// mode and the pad's live ring/loop state. Pure so the padUp contract is
     /// unit-testable without an audio graph.
-    ///   - loop  — HOLD-to-play gate → release IMMEDIATELY on finger-lift.
+    ///   - oneShot / follow — momentary GATE: a ringing voice stops NOW on
+    ///             finger-lift (quick tap = short blip, hold = sustain).
     ///   - latch — TOGGLE → nothing on lift (a second tap, i.e. padDown,
     ///             releases).
-    ///   - tap   — zero-latency one-shot that loops while held: a ringing
-    ///             LOOPING voice releases AT the end of its current loop pass
-    ///             (quick tap = one clean pass, hold = sustain until the next
-    ///             boundary after lift); a non-looping one-shot plays THROUGH
-    ///             (nothing). This deviates from web (where Tap quantizes via
-    ///             the separate quantize axis) — iOS Tap is deliberately
-    ///             always-immediate + loop-while-held per user request.
     enum JamPadUpAction: Equatable { case none, immediate, atLoopEnd }
 
     nonisolated static func jamPadUpAction(
         mode: SampleTriggerMode, isRinging: Bool, padLoops: Bool
     ) -> JamPadUpAction {
         switch mode {
-        case .loop:  return .immediate
         case .latch: return .none
-        // Tap = momentary GATE: plays only while held, finger-lift stops
-        // it NOW (not at the loop boundary) — a quick tap is a short blip,
-        // a hold sustains. User: "i only want it to play on hold."
-        case .tap:   return isRinging ? .immediate : .none
+        // One-Shot and Follow are both momentary gates: plays only while
+        // held, finger-lift stops it NOW. They differ only in START phase
+        // (One-Shot from the top, Follow joins the clock), not on release.
+        case .oneShot, .follow: return isRinging ? .immediate : .none
         }
     }
 

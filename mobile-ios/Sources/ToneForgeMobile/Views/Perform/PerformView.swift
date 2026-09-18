@@ -239,11 +239,11 @@ struct PerformView: View {
         case .samples:
             // Perform keeps a BINARY latch pill (the stage surface stays
             // simple); Loop's hold-to-play gate lives on Jam's 3-way segment.
-            // The pill toggles Latch ⇄ Tap — a mode set to Loop in Jam reads
-            // as off here and flips to Latch on tap.
+            // The pill toggles Latch ⇄ Follow — a mode set to One-Shot in
+            // Jam reads as off here and flips to Latch on tap.
             return (jamSettings.sampleTriggerMode == .latch, {
                 jamSettings.sampleTriggerMode =
-                    jamSettings.sampleTriggerMode == .latch ? .tap : .latch
+                    jamSettings.sampleTriggerMode == .latch ? .follow : .latch
             })
         case .pads:
             return nil

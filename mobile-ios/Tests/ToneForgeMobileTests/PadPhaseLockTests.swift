@@ -814,7 +814,7 @@ final class JamFirstLaunchAnchorTests: XCTestCase {
         try app.sampleScheduler.setActivePack(pack, stemFiles: [:])
         XCTAssertNotEqual(app.audioEngine.clock.state, .playing)
 
-        app.modeCoordinator.triggerJamSample(padIdx: 0, packId: "jamtap", mode: .tap)
+        app.modeCoordinator.triggerJamSample(padIdx: 0, packId: "jamtap", mode: .follow)
 
         XCTAssertNotEqual(
             app.audioEngine.clock.state, .playing,

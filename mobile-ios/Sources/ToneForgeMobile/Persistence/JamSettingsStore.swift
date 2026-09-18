@@ -92,22 +92,44 @@ public enum JamPadMode: String, CaseIterable, Codable, Sendable {
 /// releases, Latch holds). Replaced the old 2-state `sampleLatch` Bool,
 /// which could express Tap and Latch but not Loop.
 public enum SampleTriggerMode: String, CaseIterable, Codable, Sendable {
-    case tap
-    case loop
+    /// One-Shot: a finger-drumming gate — every tap retriggers the sample
+    /// from its BEGINNING (phase 0, no clock sync), plays while held,
+    /// release stops now. Distinct from Follow only in the start phase.
+    case oneShot
+    /// Follow: the old "Tap" — fires immediately and JOINS the shared clock
+    /// at its current point (mid-body), so layered pads lock together;
+    /// release stops. The behavior the user liked, renamed.
+    case follow
+    /// Latch: synced loop — tap on / tap off, hands-free until re-tapped.
     case latch
 
     public var displayName: String {
         switch self {
-        case .tap:   return "Tap"
-        case .loop:  return "Loop"
-        case .latch: return "Latch"
+        case .oneShot: return "One-Shot"
+        case .follow:  return "Follow"
+        case .latch:   return "Latch"
         }
     }
 
-    /// Loop-capable modes repeat the chop (Tap fires a single one-shot).
-    /// Both Loop and Latch loop; the clock is rolled and the shared phase
-    /// lattice anchored for either.
-    public var loops: Bool { self != .tap }
+    /// Rolls the shared clock + anchors the phase lattice so later pads
+    /// sync to this one. Only Latch (the sustained loop) does — One-Shot
+    /// and Follow are momentary gates that never drive the clock.
+    public var loops: Bool { self == .latch }
+
+    /// One-Shot retriggers from the sample top (phase 0); Follow/Latch
+    /// join the shared clock phase.
+    public var startsFromZero: Bool { self == .oneShot }
+
+    /// Map a legacy persisted value (tap/loop/latch) onto the new set.
+    /// tap → follow (the synced tap they had); loop → follow (a synced
+    /// gate, closest survivor); latch → latch.
+    static func migratedFromLegacy(_ raw: String) -> SampleTriggerMode? {
+        switch raw {
+        case "tap", "loop": return .follow
+        case "latch":       return .latch
+        default:            return SampleTriggerMode(rawValue: raw)
+        }
+    }
 }
 
 @MainActor
@@ -277,13 +299,16 @@ public final class JamSettingsStore: ObservableObject {
         if defaults.string(forKey: "jam.sampleTriggerMode") == nil {
             let legacyLatch = (defaults.object(forKey: "jam.sampleLatch") as? Bool) ?? false
             defaults.set(
-                (legacyLatch ? SampleTriggerMode.latch : .tap).rawValue,
+                (legacyLatch ? SampleTriggerMode.latch : .follow).rawValue,
                 forKey: "jam.sampleTriggerMode"
             )
         }
-        self.sampleTriggerMode = SampleTriggerMode(
-            rawValue: defaults.string(forKey: "jam.sampleTriggerMode") ?? ""
-        ) ?? .tap
+        // The mode set changed tap|loop|latch → oneShot|follow|latch:
+        // migrate a stored legacy value (tap/loop → follow) so an existing
+        // user isn't dropped onto an unknown mode. New default is Follow.
+        self.sampleTriggerMode = SampleTriggerMode.migratedFromLegacy(
+            defaults.string(forKey: "jam.sampleTriggerMode") ?? ""
+        ) ?? .follow
         let loaded = Self.load(from: defaults) ?? Persisted.defaults
         self.scaleVariant = loaded.scaleVariant
         self.highlightCurrentChord = loaded.highlightCurrentChord
