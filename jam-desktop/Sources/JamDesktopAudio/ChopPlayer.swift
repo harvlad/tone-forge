@@ -32,8 +32,29 @@
 
 import Foundation
 import AVFoundation
+import os
 import ToneForgeEngine
 import JamDesktopCore
+
+/// Epoch lock shared between a voice's press path (main actor) and its
+/// detached release-fade: the press ADVANCES the epoch when it reuses
+/// the slot; the fade's ramp steps and its terminal stop/re-park run
+/// only while their epoch is still current, atomically vs the advance.
+/// Without it a stale fade could drag the new voice's volume down or
+/// stop a buffer a press just scheduled — a race the old main-actor
+/// fade never had (main serialized cancel and ramp), introduced when
+/// the ramp moved off-main for the 20-ms-means-20-ms release fix.
+final class VoiceGate: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock(initialState: 0)
+    @discardableResult func advance() -> Int {
+        lock.withLock { $0 += 1; return $0 }
+    }
+    func current() -> Int { lock.withLock { $0 } }
+    /// Runs `body` under the lock iff `epoch` is still current.
+    func ifCurrent(_ epoch: Int, _ body: () -> Void) {
+        lock.withLock { if $0 == epoch { body() } }
+    }
+}
 
 @MainActor
 public final class ChopPlayer {
@@ -80,6 +101,21 @@ public final class ChopPlayer {
         /// the slot is re-claimed so a late `stop()` can't kill the new
         /// voice.
         var fadeTask: Task<Void, Never>?
+        /// PARKED: the node is `play()`ing with an EMPTY queue, so a
+        /// scheduled buffer starts at the next render cycle with NO
+        /// further control call. `play()` blocks its caller for up to a
+        /// full render quantum (~10.7 ms measured at 512f/48k) — paying
+        /// it per press serialized rapid same-pad hammering into
+        /// 100–500 ms main-queue pileups. Voices are parked by
+        /// `warmUpPool()` and re-parked by the release fade's terminal.
+        var parked: Bool = false
+        /// Player sample time at THIS launch. A parked node's sample
+        /// clock keeps running from its park `play()`, so loopProgress
+        /// must measure rendered frames from the launch baseline, not
+        /// from zero.
+        var startSampleTime: Int64 = 0
+        /// Press ↔ detached-fade epoch lock (see VoiceGate).
+        let gate = VoiceGate()
     }
 
     private enum VoiceKey: Hashable {
@@ -97,6 +133,10 @@ public final class ChopPlayer {
     /// Exposed for regression tests: a re-tap must drop the count back to 0,
     /// including borrow/drumfile pads that play through `.file(url)` voices.
     public var soundingVoiceCount: Int { voices.filter { $0.key != nil }.count }
+    /// PARKED voices (playing, empty queue — zero-control-call claims).
+    /// Test seam: warmUpPool fills it, presses drain it, fade terminals
+    /// refill it.
+    var parkedVoiceCount: Int { voices.filter(\.parked).count }
     private var files: [String: AVAudioFile] = [:]
     /// Readers for sequencer customURL sources, cached per URL.
     private var fileCache: [URL: AVAudioFile] = [:]
@@ -458,39 +498,14 @@ public final class ChopPlayer {
             sampleRate: sampleRate, fileLength: file.length)
         guard frameCount > 0, startFrame < file.length else { return }
 
-        let index = claimVoice(for: key)
-        // Stem this trigger takes over (bundle chops only; file voices don't
-        // duck the song). End the claimed slot's PRIOR takeover first — unless
-        // it's the same stem (a same-stem retrigger keeps the duck, no blip).
-        let takeoverStem: String? = { if case .chop(let s, _) = key { return s }; return nil }()
-        if voices[index].takeoverStem != takeoverStem { endTakeover(index) }
-        // Kill the slot's prior async state BEFORE reuse: a still-armed
-        // start must not fire under the new voice, and an in-flight
-        // release fade's terminal stop() must not cut it.
-        voices[index].pendingPlay?.cancel()
-        voices[index].pendingPlay = nil
-        voices[index].fadeTask?.cancel()
-        voices[index].fadeTask = nil
-
-        var voice = voices[index]
-        voice.node.stop()
-        voice.gen &+= 1
-        let capturedGen = voice.gen
-
-        // Voice chains are wired ONCE at the canonical 48 kHz stereo format
-        // (lazy, reset by reattach). Buffers are CONVERTED to canonical at
-        // read instead of rewiring the chain per file format — per-format
-        // engine.connect calls threw -10868 / NSException whenever a trigger
-        // raced a device reconfig or crossed sample rates (drums 44.1 k).
-        if !voice.outputWired {
-            wireVoice(voice)
-            voice.outputWired = true
-            voice.format = Self.canonicalFormat
-        }
-        applyEffects(effects.clamped(), to: voice)
-        voice.mixer.outputVolume = min(max(velocity, 0), 1)
-        voice.mixer.pan = min(max(pan, -1), 1)
-
+        // Prepare the audio BEFORE touching any voice: the parked-voice
+        // fast path needs the effective start delay before a buffer
+        // lands on a node — a parked (playing, empty-queue) player
+        // begins a scheduled buffer at the next render cycle, so a
+        // QUANTIZED start must un-park (stop) its node before queueing.
+        var loopPlan: (body: AVAudioPCMBuffer, head: AVAudioPCMBuffer?,
+                       phaseFrames: AVAudioFrameCount)?
+        var oneShotBuffer: AVAudioPCMBuffer?
         var effectiveDelay = delaySeconds
         if loop, let baked = loopBuffer(file: file, startFrame: startFrame,
                                         frameCount: AVAudioFrameCount(frameCount),
@@ -511,17 +526,14 @@ public final class ChopPlayer {
                 offsetSeconds: phaseOffsetSeconds,
                 bodyFrames: Int64(baked.buffer.frameLength),
                 sampleRate: Self.canonicalFormat.sampleRate)
+            var head: AVAudioPCMBuffer?
             var phaseFrames: AVAudioFrameCount = 0
-            if phase > 0, let head = Self.tailSegment(
+            if phase > 0, let tail = Self.tailSegment(
                 of: baked.buffer, from: AVAudioFrameCount(phase)) {
                 phaseFrames = AVAudioFrameCount(phase)
-                voice.node.scheduleBuffer(head, at: nil, options: [], completionHandler: nil)
+                head = tail
             }
-            // Seamless looping: the [start,end] region is read into a buffer,
-            // crossfaded (SeamlessLoop) and hard-looped so a held pad never clicks.
-            voice.node.scheduleBuffer(baked.buffer, at: nil, options: [.loops], completionHandler: nil)
-            voice.loopFrames = baked.buffer.frameLength
-            voice.phaseFrames = phaseFrames
+            loopPlan = (baked.buffer, head, phaseFrames)
             // Launch compensation for the onset-phase snap: the region was
             // shifted so its cut sits just before the attack, which moves
             // the content's downbeat off the region start by `shiftSec`.
@@ -532,6 +544,86 @@ public final class ChopPlayer {
             effectiveDelay = max(0, delaySeconds + baked.shiftSec)
         } else if let buffer = regionBuffer(file: file, startFrame: startFrame,
                                             frameCount: AVAudioFrameCount(frameCount)) {
+            oneShotBuffer = buffer
+        } else {
+            // Buffer read/convert failed — skip the trigger. (No raw
+            // scheduleSegment fallback: the file's native format may not
+            // match the canonical chain, and a mismatched schedule is the
+            // same crash class we're eliminating.)
+            print("[ChopPlayer] dropped trigger: region read failed")
+            return
+        }
+
+        // RETRIGGER = ROTATE (web padengine parity — a re-trigger release-
+        // fades the pad's prior source and starts a NEW one): the press
+        // claims a parked/idle voice and the superseded voice fades out
+        // underneath, off the press path (see bottom). The old same-slot
+        // steal did stop()+play() on the press path — play() blocks its
+        // caller up to a full render quantum (~10.7 ms measured), which
+        // serialized rapid same-pad presses into 100–500 ms main-queue
+        // pileups on hardware.
+        let prior = voices.firstIndex { $0.key == key }
+
+        let index = claimVoice(for: key)
+        // Stem this trigger takes over (bundle chops only; file voices don't
+        // duck the song). End the claimed slot's PRIOR takeover first — unless
+        // it's the same stem (a same-stem retrigger keeps the duck, no blip).
+        let takeoverStem: String? = { if case .chop(let s, _) = key { return s }; return nil }()
+        if voices[index].takeoverStem != takeoverStem { endTakeover(index) }
+        // Kill the slot's prior async state BEFORE reuse: a still-armed
+        // start must not fire under the new voice, and an in-flight
+        // release fade must not touch it — the epoch advance is the
+        // atomic half of that promise (VoiceGate): a detached fade
+        // between its cancel check and its terminal can no longer stop
+        // or re-volume this slot.
+        voices[index].pendingPlay?.cancel()
+        voices[index].pendingPlay = nil
+        voices[index].fadeTask?.cancel()
+        voices[index].fadeTask = nil
+        voices[index].gate.advance()
+
+        var voice = voices[index]
+        voice.gen &+= 1
+        let capturedGen = voice.gen
+
+        // Node control: a PARKED node needs NO call for an instant start
+        // (the queued buffer begins at the next render cycle on its own).
+        // Stop only a sounding stolen node (clear its old queue) or a
+        // parked node facing a QUANTIZED launch (a parked node cannot
+        // defer a buffer; play(at:) needs a stopped player).
+        if voice.node.isPlaying {
+            if !voice.parked || effectiveDelay > 0.001 {
+                voice.node.stop()
+                voice.parked = false
+            }
+        } else {
+            voice.parked = false
+        }
+
+        // Voice chains are wired ONCE at the canonical 48 kHz stereo format
+        // (lazy, reset by reattach). Buffers are CONVERTED to canonical at
+        // read instead of rewiring the chain per file format — per-format
+        // engine.connect calls threw -10868 / NSException whenever a trigger
+        // raced a device reconfig or crossed sample rates (drums 44.1 k).
+        if !voice.outputWired {
+            wireVoice(voice)
+            voice.outputWired = true
+            voice.format = Self.canonicalFormat
+        }
+        applyEffects(effects.clamped(), to: voice)
+        voice.mixer.outputVolume = min(max(velocity, 0), 1)
+        voice.mixer.pan = min(max(pan, -1), 1)
+
+        if let plan = loopPlan {
+            if let head = plan.head {
+                voice.node.scheduleBuffer(head, at: nil, options: [], completionHandler: nil)
+            }
+            // Seamless looping: the [start,end] region is read into a buffer,
+            // crossfaded (SeamlessLoop) and hard-looped so a held pad never clicks.
+            voice.node.scheduleBuffer(plan.body, at: nil, options: [.loops], completionHandler: nil)
+            voice.loopFrames = plan.body.frameLength
+            voice.phaseFrames = plan.phaseFrames
+        } else if let buffer = oneShotBuffer {
             // One-shot: read the region into a buffer and micro-fade its
             // edges so a slice that doesn't start/end on a zero-crossing
             // (stabs, drum hits) doesn't click on attack or tail. On natural
@@ -547,16 +639,9 @@ public final class ChopPlayer {
                 completionHandler: oneShotCompletion(index, gen: capturedGen))
             voice.loopFrames = nil
             voice.phaseFrames = 0
-        } else {
-            // Buffer read/convert failed — skip the trigger. (No raw
-            // scheduleSegment fallback: the file's native format may not
-            // match the canonical chain, and a mismatched schedule is the
-            // same crash class we're eliminating.)
-            print("[ChopPlayer] dropped trigger: region read failed")
-            voices[index] = voice
-            return
         }
         voice.key = key
+        voice.parked = false   // sounding (or armed) from here on
         voices[index] = voice
         scheduleStart(index: index, afterSeconds: effectiveDelay, gen: capturedGen)
         // Begin the new takeover AFTER the struct write-back (which would
@@ -564,6 +649,14 @@ public final class ChopPlayer {
         // same stem on this voice (same-stem retrigger — count unchanged).
         if let s = takeoverStem, voices[index].takeoverStem != s {
             beginTakeover(index, stem: s)
+        }
+        // Rotation: fade the superseded voice AFTER the new takeover began
+        // (same-stem count goes 1→2→1 — never a 0-crossing duck/restore
+        // blip), entirely off the press path. When the pool was so starved
+        // that claimVoice stole the prior voice itself, this is a no-op
+        // and behavior degrades to the old same-slot steal.
+        if let prior, prior != index, voices[prior].key == key {
+            fadeOutAndStop(prior)
         }
     }
 
@@ -589,6 +682,12 @@ public final class ChopPlayer {
                 // clear a one-shot's claim.
                 if self.voices[index].loopFrames == nil {
                     self.voices[index].key = nil
+                    // Played out NATURALLY → the node is still running
+                    // with an empty queue: that IS the parked state, so
+                    // the slot goes straight back into the zero-cost
+                    // claim pool. An early completion from a stop()
+                    // reports !isPlaying and stays un-parked.
+                    self.voices[index].parked = self.voices[index].node.isPlaying
                 }
             }
         }
@@ -615,7 +714,10 @@ public final class ChopPlayer {
             guard let frames = v.loopFrames, frames > 0, v.node.isPlaying,
                   let rt = v.node.lastRenderTime,
                   let pt = v.node.playerTime(forNodeTime: rt) else { return nil }
-            let s = pt.sampleTime
+            // Rendered frames SINCE THIS LAUNCH: a voice launched on a
+            // parked node inherits the park's running sample clock, so
+            // subtract the baseline captured at schedule time.
+            let s = pt.sampleTime - v.startSampleTime
             guard s >= 0 else { return 0 }  // scheduled but not yet fired
             return Self.loopProgressValue(
                 renderedFrames: s, phaseFrames: Int64(v.phaseFrames),
@@ -858,7 +960,7 @@ public final class ChopPlayer {
     /// 20 ms release fade (web padengine.js release :1296; mobile
     /// SampleVoicePool.releaseFadeSec). A latched loop toggled off used
     /// to hard-stop mid-body — an audible click no other surface has.
-    public static let releaseFadeSec: Double = 0.020
+    nonisolated public static let releaseFadeSec: Double = 0.020
 
     /// Stop the voice sounding `assignment`'s chop (pad released).
     public func release(_ assignment: PadAssignment) {
@@ -905,7 +1007,11 @@ public final class ChopPlayer {
             voices[index].pendingPlay = nil
             voices[index].fadeTask?.cancel()
             voices[index].fadeTask = nil
+            voices[index].gate.advance()
             voices[index].node.stop()
+            // Left un-parked (parking here would block main ~a render
+            // quantum for a rare case); the next claim pays one play().
+            voices[index].parked = false
             return
         }
         voices[index].fadeTask?.cancel()
@@ -913,27 +1019,58 @@ public final class ChopPlayer {
         let mixer = voices[index].mixer
         let startVol = mixer.outputVolume
         let gen = voices[index].gen
+        let gate = voices[index].gate
+        let epoch = gate.advance()   // supersede any older fade
+        let engine = avEngine
         // The ramp runs OFF the main actor: it used to await the main
         // actor between its 8 × 2.5 ms steps, so a busy UI (the full-
         // window grid repaint a pad press itself provokes) stretched
         // the 20 ms fade to 100+ ms of audible tail — the hardware
-        // "release sticks" bug. Mixer volume and player stop() are
-        // thread-safe (scheduleStart's fallback already calls play()
-        // from a dispatch thread); only the slot bookkeeping hops back.
+        // "release sticks" bug. Mixer volume and player stop()/play()
+        // are thread-safe (scheduleStart's fallback already calls
+        // play() from a dispatch thread); only slot bookkeeping hops
+        // back. Every node touch is epoch-guarded (VoiceGate): a press
+        // that reuses this slot advances the epoch atomically, so a
+        // stale ramp step can't drag the new voice's volume down and a
+        // stale terminal can't stop a buffer the press just scheduled.
         voices[index].fadeTask = Task.detached(priority: .userInitiated) { [weak self] in
             let steps = 8
             let stepSec = Self.releaseFadeSec / Double(steps)
             for step in 1...steps {
                 if Task.isCancelled { return }
-                mixer.outputVolume = startVol * Float(steps - step) / Float(steps)
+                gate.ifCurrent(epoch) {
+                    mixer.outputVolume = startVol * Float(steps - step) / Float(steps)
+                }
                 try? await Task.sleep(nanoseconds: UInt64(stepSec * 1_000_000_000))
             }
             if Task.isCancelled { return }
-            node.stop()
+            // Terminal: stop the node, then RE-PARK it (play() with an
+            // empty queue) so the next press starts its buffer with no
+            // control-call roundtrip. The gate is held only around
+            // stop() and a pure epoch re-check — NEVER through play(),
+            // which blocks up to a render quantum: holding it there
+            // made a colliding press wait that long inside its own
+            // epoch advance (measured 20–46 ms spikes at saturation).
+            // A press interleaving anywhere here advances the epoch
+            // BEFORE its first node op, so the re-check no-ops the park;
+            // the one residual hole (press advances in the sub-µs after
+            // the re-check passes) can start the node under a QUANTIZED
+            // claim of this exact fading slot — reachable only at full
+            // pool saturation since claims prefer other parked voices,
+            // and worth one early loop start, not a wrong note.
+            gate.ifCurrent(epoch) { node.stop() }
+            var parkedNow = false
+            if engine.isRunning {
+                gate.ifCurrent(epoch) { parkedNow = true }
+                if parkedNow { node.play() }
+            }
+            let didPark = parkedNow
+            let player = self
             await MainActor.run {
-                guard let self, self.voices.indices.contains(index),
-                      self.voices[index].gen == gen else { return }
-                self.voices[index].fadeTask = nil
+                guard let player, player.voices.indices.contains(index),
+                      player.voices[index].gen == gen else { return }
+                player.voices[index].fadeTask = nil
+                player.voices[index].parked = didPark
             }
         }
     }
@@ -971,17 +1108,23 @@ public final class ChopPlayer {
             endTakeover(index)
             // Hard stop, no fade: reattach fires while the graph is
             // rebuilding — the one window where touching nodes gently
-            // is NOT safer. Cancel any armed start / in-flight fade too.
+            // is NOT safer. Cancel any armed start / in-flight fade too
+            // (epoch advance makes a mid-flight fade terminal a no-op).
             voices[index].pendingPlay?.cancel()
             voices[index].pendingPlay = nil
             voices[index].fadeTask?.cancel()
             voices[index].fadeTask = nil
+            voices[index].gate.advance()
             voices[index].node.stop()
             voices[index].key = nil
+            voices[index].parked = false
+            voices[index].startSampleTime = 0
             // Mark unwired; the next trigger lazily rewires at canonical.
             // (Not rewired eagerly here — reattach fires while the graph is
             // still settling from the device flap, exactly when connect
-            // calls are dangerous.)
+            // calls are dangerous. The session re-warms/parks the pool
+            // via warmUpPool() from onGraphReattached, once the bus is
+            // back.)
             voices[index].outputWired = false
             voices[index].format = nil
         }
@@ -1050,42 +1193,23 @@ public final class ChopPlayer {
 
     // MARK: - Pool
 
-    /// Prefer stealing the voice already sounding `key` (retrigger),
-    /// else the next idle voice, else round-robin steal. Grows the
-    /// pool lazily up to `poolSize`.
+    /// Prefer a PARKED voice (playing, empty queue — zero-control-call
+    /// start), else any fully idle voice, else grow the pool, else
+    /// round-robin steal. The old same-key steal is gone — retriggers
+    /// ROTATE (schedule() fades the prior voice off the press path) —
+    /// and the old idle scan examined only the FIRST nil-key slot, so
+    /// a still-fading voice there grew the pool on every rapid press.
     private func claimVoice(for key: VoiceKey) -> Int {
-        if let own = voices.firstIndex(where: { $0.key == key }) {
-            return own
+        if let parked = voices.firstIndex(where: { $0.key == nil && $0.parked }) {
+            return parked
         }
-        if let idle = voices.firstIndex(where: { $0.key == nil }),
-           !voices[idle].node.isPlaying
-        {
+        if let idle = voices.firstIndex(where: {
+            $0.key == nil && !$0.node.isPlaying
+        }) {
             return idle
         }
         if voices.count < Self.poolSize {
-            let node = AVAudioPlayerNode()
-            // Neutral chain so an idle voice is inaudible: wetDryMix=0
-            // mutes the delay tap, feedback=0 stops buildup; the EQ
-            // band starts bypassed. Real params land on trigger.
-            let delay = AVAudioUnitDelay()
-            delay.wetDryMix = 0
-            delay.feedback = 0
-            delay.delayTime = SamplePadEffects.neutral.delayTimeSec
-            let eq = AVAudioUnitEQ(numberOfBands: 1)
-            let band = eq.bands[0]
-            band.filterType = .resonantLowPass
-            band.frequency = Float(SamplePadEffects.neutral.filterCutoffHz)
-            band.bandwidth = Float(SamplePadEffects.neutral.filterResonanceDb)
-            band.bypass = true
-            let mixer = AVAudioMixerNode()
-            avEngine.attach(node)
-            avEngine.attach(delay)
-            avEngine.attach(eq)
-            avEngine.attach(mixer)
-            voices.append(Voice(
-                node: node, delay: delay, eq: eq, mixer: mixer,
-                format: nil, key: nil
-            ))
+            voices.append(makeVoice())
             return voices.count - 1
         }
         // Pool full: steal — but NEVER a ringing loop if a one-shot voice
@@ -1106,6 +1230,79 @@ public final class ChopPlayer {
         return index
     }
 
+    /// One voice chain, attached but unwired/unparked. Neutral chain so
+    /// an idle voice is inaudible: wetDryMix=0 mutes the delay tap,
+    /// feedback=0 stops buildup; the EQ band starts bypassed. Real
+    /// params land on trigger.
+    private func makeVoice() -> Voice {
+        let node = AVAudioPlayerNode()
+        let delay = AVAudioUnitDelay()
+        delay.wetDryMix = 0
+        delay.feedback = 0
+        delay.delayTime = SamplePadEffects.neutral.delayTimeSec
+        let eq = AVAudioUnitEQ(numberOfBands: 1)
+        let band = eq.bands[0]
+        band.filterType = .resonantLowPass
+        band.frequency = Float(SamplePadEffects.neutral.filterCutoffHz)
+        band.bandwidth = Float(SamplePadEffects.neutral.filterResonanceDb)
+        band.bypass = true
+        let mixer = AVAudioMixerNode()
+        avEngine.attach(node)
+        avEngine.attach(delay)
+        avEngine.attach(eq)
+        avEngine.attach(mixer)
+        return Voice(
+            node: node, delay: delay, eq: eq, mixer: mixer,
+            format: nil, key: nil
+        )
+    }
+
+    // MARK: - Pool warm-up (press-path latency)
+
+    /// Build, wire and PARK the whole voice pool OFF the press path. A
+    /// parked voice is `play()`ing with an empty queue: scheduling a
+    /// buffer on it starts at the next render cycle with no further
+    /// control call. `play()` blocks its caller for up to one render
+    /// quantum (~10.7 ms measured at 512f/48k) — paying that per press
+    /// was the same-pad burst serializer. Parking runs on a detached
+    /// task (the calls are thread-safe; 16 nodes ≈ 170 ms would hitch
+    /// the caller otherwise); flags land back on the main actor,
+    /// gen-guarded against slots a concurrent press claimed meanwhile.
+    /// Call once the engine is running and the output bus is live
+    /// (session attach, and again after a graph rebuild's reattach()).
+    /// Idempotent; safe to race live presses.
+    public func warmUpPool() async {
+        guard avEngine.isRunning else { return }
+        while voices.count < Self.poolSize {
+            voices.append(makeVoice())
+        }
+        var toPark: [(index: Int, node: AVAudioPlayerNode, gen: Int)] = []
+        for index in voices.indices {
+            if !voices[index].outputWired {
+                wireVoice(voices[index])
+                voices[index].outputWired = true
+                voices[index].format = Self.canonicalFormat
+            }
+            let v = voices[index]
+            if v.key == nil, v.pendingPlay == nil, v.fadeTask == nil,
+               !v.parked, !v.node.isPlaying {
+                toPark.append((index, v.node, v.gen))
+            }
+        }
+        guard !toPark.isEmpty else { return }
+        let nodes = toPark.map(\.node)
+        await Task.detached(priority: .userInitiated) {
+            for node in nodes { node.play() }
+        }.value
+        for item in toPark {
+            guard voices.indices.contains(item.index),
+                  voices[item.index].gen == item.gen,
+                  voices[item.index].key == nil,
+                  voices[item.index].node.isPlaying else { continue }
+            voices[item.index].parked = true
+        }
+    }
+
     /// Start a claimed voice now or at a future boundary. Future starts
     /// are SAMPLE-ACCURATE via `play(at: AVAudioTime(hostTime:))` — but
     /// only once BOTH render clocks are live: `play(at:)` throws from
@@ -1120,12 +1317,38 @@ public final class ChopPlayer {
     /// token — releasing a not-yet-started voice must kill it
     /// (`player.stop()` discards a scheduled start; the fallback item is
     /// simply cancelled).
+    /// play() calls made on the INSTANT press path (delay ≤ 1 ms). After
+    /// warmUpPool every instant press should ride a parked voice and
+    /// this stays 0 — the burst regression test pins it, because each
+    /// such call blocks the caller up to a render quantum.
+    private(set) var immediatePlayCount = 0
+
     private func scheduleStart(index: Int, afterSeconds delay: Double, gen: Int) {
         let node = voices[index].node
         guard delay > 0.001 else {
-            node.play()
+            if node.isPlaying {
+                // Parked fast path: the queued buffer begins at the next
+                // render cycle on its own — NO play() (which blocks the
+                // caller up to a full render quantum, ~10.7 ms measured;
+                // the same-pad burst serializer). Baseline the player's
+                // running sample clock so loopProgress measures from
+                // THIS launch, not from the park's play().
+                if let rt = node.lastRenderTime,
+                   let pt = node.playerTime(forNodeTime: rt) {
+                    voices[index].startSampleTime = pt.sampleTime
+                } else {
+                    voices[index].startSampleTime = 0
+                }
+            } else {
+                voices[index].startSampleTime = 0
+                immediatePlayCount += 1
+                node.play()
+            }
             return
         }
+        // Quantized launch: schedule() already un-parked (stopped) the
+        // node, so the player clock restarts at 0 on either start path.
+        voices[index].startSampleTime = 0
         let engineRendered = avEngine.outputNode
             .lastRenderTime?.isSampleTimeValid ?? false
         let playerRendered = node.lastRenderTime?.isSampleTimeValid ?? false

@@ -268,6 +268,11 @@ final class SessionController: ObservableObject {
         engine.onGraphReattached = { [weak self] in
             self?.monitor.startInputMeter()
             self?.chopPlayer.reattach()
+            // Re-wire + re-park the voice pool now the bus is live again
+            // (reattach left every voice stopped/unwired) — otherwise the
+            // first presses after a device flap each pay a blocking
+            // play() control roundtrip on the press path.
+            Task { [weak self] in await self?.chopPlayer.warmUpPool() }
             self?.synthNode.reattach()
             if let musicBus = self?.engine.musicBus.input {
                 self?.vocoderMonitor.reattach(outputNode: musicBus)
@@ -877,6 +882,10 @@ final class SessionController: ObservableObject {
         activeBorrowContext = nil
         launchpad.configure(bundle: session.bundle)
         await chopPlayer.load(stemURLs: session.stemURLs)
+        // Park the voice pool while we're off the touch path, so the
+        // session's first presses (and every rapid retrigger) start
+        // their buffers with zero play() control roundtrips.
+        await chopPlayer.warmUpPool()
         sequencer.stop()
         sequencer.songBPM = session.bundle.meta.tempoBpm ?? 120
         // Joining Link alone: seed the session with the song's tempo so

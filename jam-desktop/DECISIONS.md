@@ -986,3 +986,64 @@ failed-connect, stable-clear, stamped clocks, palette hues),
 `LaunchpadControllerTests` (stamped seam + press-stamp fire time, display
 color through the press cycle, borrow LED category) and
 `ChopPlayerLoopBakeCacheTests` (bake-once, prewarm-hit).
+
+## D-032: Parked-voice rotation — the same-pad burst fix
+
+**Date:** 2026-09-18
+**Context:** With D-031 in place, single hardware taps measured healthy
+(press→trigger 2–11 ms) but rapid same-pad hammering exploded:
+press→trigger 138/314/516 ms, padUp→release up to 433 ms
+(JAM_PAD_LATENCY_LOG on a Launchpad Pro MK3).
+
+**Root cause (measured, not guessed):** per-step laps in `schedule()`
+showed every sub-step sub-millisecond EXCEPT `AVAudioPlayerNode.play()`
+— a flat ~10.7 ms per press, one full render quantum (512f @ 48 kHz):
+play() blocks its caller until the render thread picks the start up. At
+finger-drumming rates that alone eats the inter-press budget; with the
+UI repaint each press also provokes, the main queue backlogs and
+latencies climb monotonically — exactly the observed burst numbers.
+Contributing: the old claim policy stole the SAME slot per key
+(stop+play per press) and its idle scan examined only the FIRST
+nil-key slot, so a still-fading voice there grew the pool on every
+rapid press.
+
+**Decision — never pay a node control call on the press path:**
+
+- **Parked voices.** `warmUpPool()` (session attach + post-reattach via
+  `onGraphReattached`) builds, wires and `play()`s the whole 16-voice
+  pool with empty queues. A press on a parked node just
+  `scheduleBuffer()`s — the buffer starts at the next render cycle, no
+  play(). The park calls run on a detached task (16 × ~10.7 ms would
+  hitch attach), flags land back gen-guarded.
+- **Retrigger = rotate (web padengine parity).** A same-key trigger
+  claims a FRESH parked voice; the superseded voice release-fades off
+  the press path (fade begun AFTER the new takeover so the same-stem
+  ref-count never crosses 0 — no duck/restore blip). The fade terminal
+  stops AND re-parks the node, so a sustained jam recycles the pool.
+- **Quantized launches still stop-then-play(at:).** A parked node
+  cannot defer a buffer, so `schedule()` un-parks (stops) the node
+  when the effective delay is quantized — computed BEFORE any buffer
+  is queued (the bake now runs before the voice is touched).
+- **VoiceGate epoch lock.** Press ↔ detached-fade coordination: the
+  press advances the epoch atomically when reusing a slot; the fade's
+  ramp steps and terminal stop run only while their epoch is current.
+  The gate is never held through play() (that wait was measurable as
+  20–46 ms press spikes at saturation); the residual sub-µs hole can
+  at worst start one quantized loop early under full pool saturation.
+- **loopProgress baseline.** A parked node's sample clock runs from its
+  park play(), so voices record `startSampleTime` at launch and the
+  playhead ring measures from there.
+
+**Measured (headless, 8 s loop region, warm caches):** realistic
+13 Hz hammer: 0.1–1.5 ms per press (was a flat ~11.6 ms each + main
+pileup); single taps 0.1 ms; zero-gap saturation (~500 Hz, humanly
+unreachable) still shows occasional 10–50 ms steal-path spikes —
+accepted backpressure.
+
+**Where:** `Sources/JamDesktopAudio/ChopPlayer.swift` (Voice.parked/
+startSampleTime/gate, VoiceGate, schedule() restructure, claimVoice,
+warmUpPool, fade terminal, immediatePlayCount seam),
+`Sources/JamDesktop/SessionController.swift` (warm-up call sites).
+Pinned by `ChopPlayerBurstTests`: zero press-path play() calls across a
+12-cycle zero-gap hammer with bounded cost, retrigger keys exactly one
+voice, fade terminal re-parks drained voices.
