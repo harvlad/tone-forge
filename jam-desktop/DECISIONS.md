@@ -1047,3 +1047,54 @@ warmUpPool, fade terminal, immediatePlayCount seam),
 Pinned by `ChopPlayerBurstTests`: zero press-path play() calls across a
 12-cycle zero-gap hammer with bounded cost, retrigger keys exactly one
 voice, fade terminal re-parks drained voices.
+
+## D-033: Receive-thread fast release — the pad-up half of the burst fix
+
+**Date:** 2026-09-18
+**Context:** After D-032, hardware press→trigger measured flat
+0.33–0.47 ms across a sustained same-pad hammer, but padUp→release
+still spiked 54–145 ms interleaved with healthy 5–30 ms events.
+
+**Root cause:** the main-path release HANDLING costs ~0.1 ms (benched)
+— the spikes are the MIDI→main hop itself. Each press mutates
+activePads → SwiftUI invalidates the full-window pad grid → the commit
+runs on the main runloop between the press and its release; a pad-up
+dispatched during that commit waits for it. The asymmetry is causal,
+not lucky: presses always arrive AFTER the previous cycle's commit has
+drained (the user's finger gap), while releases arrive 30–80 ms after
+their own press — squarely inside the commit the press provoked. So
+presses measured sub-millisecond while releases queued.
+
+**Decision — begin the audible fade on the MIDI receive thread:**
+
+- `USBLaunchpadTransport.setFastPadUpTap`: a lock-boxed `@Sendable`
+  tap invoked ON the receive thread the instant a release message
+  decodes (Note On vel-0 / Note Off, same mapping as `deliver()`),
+  BEFORE the main hop. Audio-only; the stamped padUp still follows on
+  main with all bookkeeping/LED/recording work.
+- `ChopPlayer.padReleased(tag:)` (nonisolated): pad-tag → voice
+  registry (`fastReleaseRefs`, unfair-locked; written at trigger time
+  via the new `padTag:` parameter threaded through both `trigger`
+  overloads). Begins the 20 ms mixer ramp on a detached task — ~µs on
+  the calling thread. NO terminal stop/re-park: that stays with the
+  authoritative main-path release, which always follows in the event
+  stream.
+- **Composition by epoch (VoiceGate):** every ramp step is
+  epoch-guarded. The main release advances the voice's epoch — the
+  fast ramp dies and the main ramp continues from the already-lowered
+  volume (audio only ever fades downward). A re-press advances the
+  epoch and re-registers the tag, so a stale fast ramp can never drag
+  the new voice down. A fast release racing ahead of its press's main
+  hop finds a stale epoch and no-ops — never wrong audio, at worst no
+  fast benefit for that one event.
+- Registry cleared on load/unload/reattach; only hardware pads use it
+  (on-screen taps are main-originated — no hop to skip).
+
+**Where:** `Sources/JamDesktopAudio/ChopPlayer.swift` (registry,
+padReleased, padTag plumbing), `Sources/JamDesktopCore/Launchpad/
+USBLaunchpadTransport.swift` (fast tap), minimal SessionController
+wiring (tap install + padTag at the three trigger sites). Pinned by
+`ChopPlayerBurstTests` (fade completes while the main actor is
+deliberately blocked; epoch composition across release/retrigger;
+sub-10 ms call bound under hammer) and `USBLaunchpadTransportTests`
+(tap fires pre-hop, releases only, grid notes only).

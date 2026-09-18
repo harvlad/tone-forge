@@ -32,6 +32,7 @@
 
 import Foundation
 import Observation
+import os
 import ToneForgeEngine
 
 /// Desktop-side widening of the shared LaunchpadTransport seam:
@@ -71,6 +72,25 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
     /// When set, these REPLACE the legacy closures above.
     @ObservationIgnored public var onPadDownStamped: ((LaunchpadPad, Double, UInt64) -> Void)?
     @ObservationIgnored public var onPadUpStamped: ((LaunchpadPad, Double, UInt64) -> Void)?
+
+    /// RECEIVE-THREAD pad-up tap: fires ON the MIDI thread the instant a
+    /// release message decodes, BEFORE the main hop. Audio-only fast
+    /// path — the stamped padUp still follows on main with all the
+    /// bookkeeping/LED/recording work, so the tap MUST be idempotent
+    /// under that (ChopPlayer's fast fade is: the main release
+    /// supersedes it via the voice's epoch gate). Exists because a
+    /// press's SwiftUI commit can swallow the main hop for 50–145 ms
+    /// under same-pad hammering, which audibly delayed releases while
+    /// presses (parked voices, no commit in front of them) stayed
+    /// sub-millisecond. Lock-boxed: assigned on main, read on the
+    /// receive thread.
+    @ObservationIgnored private let fastPadUpBox =
+        OSAllocatedUnfairLock<(@Sendable (LaunchpadPad) -> Void)?>(initialState: nil)
+
+    /// Install (or clear) the receive-thread pad-up tap.
+    public func setFastPadUpTap(_ tap: (@Sendable (LaunchpadPad) -> Void)?) {
+        fastPadUpBox.withLock { $0 = tap }
+    }
     /// Events arrive pre-stamped from the MIDI thread.
     @ObservationIgnored public var onContribution: ((ContributionEvent) -> Void)?
     /// Outer-button presses (Bool = down).
@@ -160,10 +180,30 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
 
     private func connect(source: MIDIEndpoint, destination: MIDIEndpoint) {
         let nowProvider = self.nowProvider
+        let fastPadUpBox = self.fastPadUpBox
         let connected = midi.connectInput(source) { [weak self] messages, packetHostTime in
             // MIDI receive thread: stamp BEFORE the hop.
             let now = nowProvider()
             let hostTime = packetHostTime != 0 ? packetHostTime : now.host
+            // Fast pad-up tap, STILL on the receive thread: release
+            // decoding mirrors deliver() (Note On vel-0 or Note Off,
+            // channel 1) through the same pure protocol mapping, so the
+            // audio fade can begin ~a render quantum after the packet
+            // instead of after the main hop.
+            if let tap = fastPadUpBox.withLock({ $0 }) {
+                for message in messages {
+                    let released: UInt8?
+                    switch message {
+                    case .noteOn(0, let note, 0):  released = note
+                    case .noteOff(0, let note, _): released = note
+                    default:                       released = nil
+                    }
+                    if let note = released,
+                       let pad = LaunchpadProMK3Protocol.padIndex(forNote: note) {
+                        tap(LaunchpadPad(row: 8 - pad.row, col: pad.col - 1))
+                    }
+                }
+            }
             DispatchQueue.main.async {
                 self?.deliver(messages, songSeconds: now.song, hostTime: hostTime)
             }

@@ -139,6 +139,37 @@ final class USBLaunchpadTransportTests: XCTestCase {
         XCTAssertEqual(legacyCalls, 0, "stamped callbacks replace legacy")
     }
 
+    /// The receive-thread pad-up tap fires the instant a release
+    /// message decodes — BEFORE the main hop (no queue drain here!) —
+    /// and only for releases, never presses. This is the seam the
+    /// zero-latency audio release rides; the stamped padUp still
+    /// follows on main.
+    func testFastPadUpTapFiresOnReceiveThreadBeforeMainHop() {
+        final class PadBox: @unchecked Sendable {
+            var pads: [LaunchpadPad] = []
+        }
+        let transport = makeTransport()
+        let box = PadBox()
+        transport.setFastPadUpTap { pad in box.pads.append(pad) }
+        midi.plugInLaunchpad()
+
+        // FakeMIDIInterface invokes the receive handler synchronously,
+        // so anything visible WITHOUT draining the main queue happened
+        // pre-hop.
+        midi.receive([
+            .noteOn(channel: 0, note: 11, velocity: 127),   // press: no tap
+            .noteOn(channel: 0, note: 11, velocity: 0),     // vel-0 release
+            .noteOff(channel: 0, note: 45, velocity: 64),   // real Note Off
+            .noteOn(channel: 1, note: 11, velocity: 0),     // wrong channel
+            .noteOff(channel: 0, note: 9, velocity: 0),     // not a grid note
+        ])
+
+        XCTAssertEqual(box.pads, [
+            LaunchpadPad(row: 7, col: 0),   // note 11
+            LaunchpadPad(row: 4, col: 4),   // note 45
+        ], "tap fires pre-hop, releases only, grid notes only")
+    }
+
     func testVelocityScalesAndZeroPacketStampFallsBack() {
         let transport = makeTransport()
         midi.plugInLaunchpad()

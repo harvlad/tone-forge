@@ -337,6 +337,15 @@ final class SessionController: ObservableObject {
         )
         usbLaunchpad = usb
         launchpad.attach(transport: usb)
+        // RECEIVE-THREAD release tap: the audible fade must not wait on
+        // the MIDI→main hop — a press's SwiftUI commit swallowed pad-ups
+        // for 50–145 ms under same-pad hammering. Audio-only; the
+        // stamped padUp still follows on main with all bookkeeping and
+        // supersedes the fast fade via the voice's epoch gate.
+        let fastReleasePlayer = chopPlayer
+        usb.setFastPadUpTap { pad in
+            fastReleasePlayer.padReleased(tag: pad.row * 8 + pad.col)
+        }
         // Hardware transport controls (Launchpad Pro MK3 side buttons).
         // Left column: Play (CC 20, row 2) toggles the song transport;
         // the bottom-left button (CC 10, row 1) is global stop. Every
@@ -428,7 +437,8 @@ final class SessionController: ObservableObject {
                     file: url, startSec: nil, endSec: nil,
                     effects: self.effectsForPad(assignment),
                     afterSeconds: delay, loop: looping,
-                    phaseOffsetSeconds: looping ? phaseOffset : 0)
+                    phaseOffsetSeconds: looping ? phaseOffset : 0,
+                    padTag: pad.row * 8 + pad.col)
                 return
             }
             if let aid = assignment.chop.assetId, aid.hasPrefix("drumfile:"),
@@ -436,7 +446,8 @@ final class SessionController: ObservableObject {
                 self.chopPlayer.trigger(
                     file: url, startSec: nil, endSec: nil,
                     effects: self.effectsForPad(assignment),
-                    afterSeconds: delay)
+                    afterSeconds: delay,
+                    padTag: pad.row * 8 + pad.col)
                 if let coords = PadEventMapping.eventCoordinates(for: pad) {
                     self.eventBus.publish(ContributionEvent(
                         source: .launchpad,
@@ -491,7 +502,8 @@ final class SessionController: ObservableObject {
                 loop: loopable, crossfadeMs: crossfadeMs,
                 loopBarSeconds: barSeconds,
                 cycleSeconds: cycleSeconds,
-                phaseOffsetSeconds: loopable ? phaseOffset : 0
+                phaseOffsetSeconds: loopable ? phaseOffset : 0,
+                padTag: pad.row * 8 + pad.col
             )
             // Publish for the session recorder. Timestamp = the
             // quantized fire-at moment (what actually SOUNDED), so

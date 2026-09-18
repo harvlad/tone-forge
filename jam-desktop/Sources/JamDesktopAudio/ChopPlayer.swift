@@ -137,6 +137,70 @@ public final class ChopPlayer {
     /// Test seam: warmUpPool fills it, presses drain it, fade terminals
     /// refill it.
     var parkedVoiceCount: Int { voices.filter(\.parked).count }
+
+    // MARK: - Receive-thread fast release
+
+    /// What a receive-thread release needs to BEGIN the audible fade
+    /// without the main actor: the voice's mixer, its epoch gate, and
+    /// the epoch stamped at trigger time (stale epoch = the voice was
+    /// reused/released since — the ramp no-ops). @unchecked: the nodes
+    /// are only parameter-set, never re-wired, off-main.
+    private struct FastReleaseRef: @unchecked Sendable {
+        let mixer: AVAudioMixerNode
+        let gate: VoiceGate
+        let epoch: Int
+    }
+    /// padTag → the voice that pad last triggered. Written on the main
+    /// actor at trigger time, read from the MIDI receive thread at
+    /// pad-up — hence the lock, not actor isolation.
+    private let fastReleaseRefs =
+        OSAllocatedUnfairLock<[Int: FastReleaseRef]>(initialState: [:])
+
+    /// RECEIVE-THREAD release: begins the audible `releaseFadeSec` fade
+    /// for the voice last triggered with `tag`, WITHOUT touching the
+    /// main actor. The authoritative main-path release still follows
+    /// (bookkeeping, LED, terminal stop/re-park) and composes with
+    /// this: it advances the voice's epoch — killing this ramp — and
+    /// starts its own ramp from the already-lowered volume, so audio
+    /// only ever fades downward, never re-blips.
+    ///
+    /// Why it exists: hardware pad-ups ride the MIDI→main hop, and the
+    /// SwiftUI commit each press provokes can swallow that hop for
+    /// 50–145 ms under same-pad hammering (presses land after commits,
+    /// releases land during them) — the release then audibly "sticks"
+    /// even though the main-path handling itself costs ~0.1 ms. This
+    /// entry costs ~µs on the receive thread (dict lookup + task spawn)
+    /// and the fade begins within a render quantum of the packet.
+    nonisolated public func padReleased(tag: Int) {
+        guard let ref = fastReleaseRefs.withLock({ $0[tag] }) else { return }
+        guard ref.gate.current() == ref.epoch else { return }   // reused/released
+        Task.detached(priority: .userInitiated) {
+            let steps = 8
+            let stepSec = Self.releaseFadeSec / Double(steps)
+            let startVol = ref.mixer.outputVolume
+            for step in 1...steps {
+                var live = false
+                ref.gate.ifCurrent(ref.epoch) {
+                    ref.mixer.outputVolume = startVol * Float(steps - step) / Float(steps)
+                    live = true
+                }
+                // Epoch moved: the main release (or a re-trigger) owns the
+                // voice now — its ramp/volume set supersedes this one.
+                if !live { return }
+                try? await Task.sleep(nanoseconds: UInt64(stepSec * 1_000_000_000))
+            }
+            // No terminal here: stop + re-park stay with the main-path
+            // release, which always follows in the event stream.
+        }
+    }
+
+    /// Test seam: the current mixer volume of the voice `tag` last
+    /// triggered (nil = no registration). Nonisolated so a test can
+    /// observe the fast fade while the main actor is deliberately
+    /// stalled.
+    nonisolated func fastReleaseVolume(tag: Int) -> Float? {
+        fastReleaseRefs.withLock { $0[tag] }?.mixer.outputVolume
+    }
     private var files: [String: AVAudioFile] = [:]
     /// Readers for sequencer customURL sources, cached per URL.
     private var fileCache: [URL: AVAudioFile] = [:]
@@ -237,6 +301,7 @@ public final class ChopPlayer {
         files = opened
         regionCache.removeAll()
         loopCache.removeAll()
+        fastReleaseRefs.withLock { $0.removeAll() }
     }
 
     /// 44-bin peak envelope for a pad's chop — the grid tiles draw
@@ -286,6 +351,7 @@ public final class ChopPlayer {
         fileCache.removeAll()
         regionCache.removeAll()
         loopCache.removeAll()
+        fastReleaseRefs.withLock { $0.removeAll() }
     }
 
     // MARK: - Prewarm
@@ -364,7 +430,8 @@ public final class ChopPlayer {
         crossfadeMs: Double = 0,
         loopBarSeconds: Double = 0,
         cycleSeconds: Double = 0,
-        phaseOffsetSeconds: Double = 0
+        phaseOffsetSeconds: Double = 0,
+        padTag: Int? = nil
     ) {
         guard let file = files[assignment.stem] else { return }
         let chop = assignment.chop
@@ -391,7 +458,8 @@ public final class ChopPlayer {
             loop: loop,
             crossfadeMs: crossfadeMs,
             tileToCycleSec: tileToCycleSec,
-            phaseOffsetSeconds: phaseOffsetSeconds
+            phaseOffsetSeconds: phaseOffsetSeconds,
+            padTag: padTag
         )
     }
 
@@ -452,7 +520,8 @@ public final class ChopPlayer {
         pan: Float = 0,
         afterSeconds delaySeconds: Double = 0,
         loop: Bool = false,
-        phaseOffsetSeconds: Double = 0
+        phaseOffsetSeconds: Double = 0,
+        padTag: Int? = nil
     ) {
         guard let file = cachedFile(for: url) else { return }
         let duration = Double(file.length) / file.fileFormat.sampleRate
@@ -469,7 +538,8 @@ public final class ChopPlayer {
             afterSeconds: delaySeconds,
             loop: loop,
             crossfadeMs: loop ? 12 : 0,
-            phaseOffsetSeconds: phaseOffsetSeconds
+            phaseOffsetSeconds: phaseOffsetSeconds,
+            padTag: padTag
         )
     }
 
@@ -485,7 +555,8 @@ public final class ChopPlayer {
         loop: Bool = false,
         crossfadeMs: Double = 0,
         tileToCycleSec: Double = 0,
-        phaseOffsetSeconds: Double = 0
+        phaseOffsetSeconds: Double = 0,
+        padTag: Int? = nil
     ) {
         guard avEngine.isRunning else {
             print("[ChopPlayer] dropped trigger: engine not running")
@@ -580,7 +651,7 @@ public final class ChopPlayer {
         voices[index].pendingPlay = nil
         voices[index].fadeTask?.cancel()
         voices[index].fadeTask = nil
-        voices[index].gate.advance()
+        let fastEpoch = voices[index].gate.advance()
 
         var voice = voices[index]
         voice.gen &+= 1
@@ -649,6 +720,18 @@ public final class ChopPlayer {
         // same stem on this voice (same-stem retrigger — count unchanged).
         if let s = takeoverStem, voices[index].takeoverStem != s {
             beginTakeover(index, stem: s)
+        }
+        // Register the receive-thread fast-release ref for this pad: the
+        // MIDI thread can begin THIS voice's audible fade the moment the
+        // pad-up packet decodes, without waiting on the main hop. Epoch-
+        // stamped, so once the voice is released or reused the ref is
+        // inert.
+        if let padTag {
+            let ref = FastReleaseRef(
+                mixer: voices[index].mixer,
+                gate: voices[index].gate,
+                epoch: fastEpoch)
+            fastReleaseRefs.withLock { $0[padTag] = ref }
         }
         // Rotation: fade the superseded voice AFTER the new takeover began
         // (same-stem count goes 1→2→1 — never a 0-crossing duck/restore
@@ -1104,6 +1187,7 @@ public final class ChopPlayer {
     /// (device flap) — attached nodes survive but their connections
     /// drop.
     public func reattach() {
+        fastReleaseRefs.withLock { $0.removeAll() }
         for index in voices.indices {
             endTakeover(index)
             // Hard stop, no fade: reattach fires while the graph is

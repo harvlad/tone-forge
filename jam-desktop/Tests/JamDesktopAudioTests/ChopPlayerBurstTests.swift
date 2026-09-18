@@ -116,6 +116,97 @@ final class ChopPlayerBurstTests: XCTestCase {
         XCTAssertEqual(player.soundingVoiceCount, 0)
     }
 
+    // MARK: - Receive-thread fast release
+
+    /// The audible release must not wait for the MIDI→main hop: on
+    /// hardware, the SwiftUI commit each press provokes swallowed
+    /// pad-up deliveries for 50–145 ms under same-pad hammering while
+    /// the main-path release handling itself measured ~0.1 ms.
+    /// padReleased(tag:) begins the fade from ANY thread; here the
+    /// main actor is deliberately blocked the whole time, so a fade
+    /// observed at ~0 volume afterwards ran entirely without main.
+    func testFastReleaseFadesWhileMainActorIsBlocked() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        await player.load(stemURLs: ["other": url])
+        let a = PadAssignment(chop: chop, stem: "other")
+        await player.warmUpPool()
+
+        let tag = 7
+        player.trigger(a, afterSeconds: 0, loop: true, crossfadeMs: 15,
+                       loopBarSeconds: 2.0, cycleSeconds: 4.0, padTag: tag)
+        XCTAssertEqual(player.fastReleaseVolume(tag: tag), 1.0)
+
+        // Fire the fast release from off-main, then BLOCK the main
+        // actor synchronously for 3× the fade length.
+        Thread.detachNewThread { player.padReleased(tag: tag) }
+        usleep(60_000)   // main actor stalled; the fade must still run
+
+        let v = player.fastReleaseVolume(tag: tag) ?? 1.0
+        XCTAssertLessThanOrEqual(v, 0.01,
+            "the 20 ms fade must complete while main is stalled")
+        // Bookkeeping is deliberately untouched — the authoritative
+        // main-path release does it when the hop finally lands.
+        XCTAssertEqual(player.soundingVoiceCount, 1)
+        player.release(a)
+        XCTAssertEqual(player.soundingVoiceCount, 0)
+    }
+
+    /// Composition with the main path + retrigger: the fast fade is
+    /// epoch-guarded, so a re-press re-registers the pad at full
+    /// volume and any stale fast ramp cannot drag the NEW voice down.
+    func testFastReleaseComposesWithRetrigger() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        await player.load(stemURLs: ["other": url])
+        let a = PadAssignment(chop: chop, stem: "other")
+        await player.warmUpPool()
+
+        let tag = 3
+        player.trigger(a, afterSeconds: 0, loop: true, crossfadeMs: 15,
+                       loopBarSeconds: 2.0, cycleSeconds: 4.0, padTag: tag)
+        player.padReleased(tag: tag)         // fast fade begins
+        player.release(a)                    // main path follows
+        player.trigger(a, afterSeconds: 0, loop: true, crossfadeMs: 15,
+                       loopBarSeconds: 2.0, cycleSeconds: 4.0, padTag: tag)
+
+        // Let any stale ramp (from the first cycle) run out.
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        XCTAssertEqual(player.fastReleaseVolume(tag: tag), 1.0,
+            "the re-pressed voice keeps its full volume; stale fast "
+            + "ramps die on the epoch gate")
+        XCTAssertEqual(player.soundingVoiceCount, 1)
+        player.release(a)
+    }
+
+    /// The receive-thread entry itself must be ~free — it runs on the
+    /// MIDI thread. Hammer cycles: every padReleased call bounded.
+    func testFastReleaseCallCostBoundedUnderHammer() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        await player.load(stemURLs: ["other": url])
+        let a = PadAssignment(chop: chop, stem: "other")
+        await player.prewarm([(chop: chop, stem: "other")],
+                             loopBarSeconds: 2.0, cycleSeconds: 4.0)
+        await player.warmUpPool()
+
+        let tag = 12
+        var worst = 0.0
+        for _ in 0..<12 {
+            player.trigger(a, afterSeconds: 0, loop: true,
+                           crossfadeMs: ChopPlayer.defaultPadCrossfadeMs,
+                           loopBarSeconds: 2.0, cycleSeconds: 4.0, padTag: tag)
+            let t0 = CFAbsoluteTimeGetCurrent()
+            player.padReleased(tag: tag)
+            worst = max(worst, (CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            player.release(a)   // main-path bookkeeping
+        }
+        // Dict lookup + task spawn ≈ µs; 10 ms is a generous CI bound
+        // (pre-fix the audible release start waited on the main hop —
+        // 50–145 ms measured on hardware).
+        XCTAssertLessThan(worst, 10.0, "fast release must stay ~free on the MIDI thread")
+    }
+
     func testFadeTerminalReparksDrainedVoices() async throws {
         let (engine, player, url) = try makePlayer()
         defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
