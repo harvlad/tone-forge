@@ -255,11 +255,12 @@ struct RootView: View {
                 ConnectStatusPill(status: session.bridge.status)
             }
         }
-        // Launchpad is a NON-MODAL floating panel (UX audit fix #5): the
-        // fretboard/song stays visible and interactive behind it, so you can
-        // watch the song play while triggering loops — the core premise a
-        // covering modal sheet made impossible. Trailing-aligned so the neck
-        // (leading) stays in view on wide windows.
+        // Launchpad is a NON-MODAL floating panel (UX audit fix #5): unlike a
+        // modal sheet it never blocks the song, and Esc/✕ drop straight back
+        // to the view beneath. It now fills the window minus this 16pt inset
+        // — the old 800×952 self-cap stranded half of a large window and
+        // shrank the pads to ~60pt; the inset + border + shadow are what keep
+        // it reading as a panel over the view, not a mode switch.
         .overlay(alignment: .center) {
             // Perform IS the inline Launchpad now, so the floating panel only
             // pops over OTHER views (e.g. Guitar — jam pads while watching the

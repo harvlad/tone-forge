@@ -117,15 +117,14 @@ struct LaunchpadPanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(12)
-        // Left rail is a fixed 300pt column of stacked control groups; the
-        // grid fills the rest. Height CAPS at 952 but yields to a shorter
-        // window — a hard 952 clipped rows on smaller displays. The grid
-        // sizes itself from whatever height remains.
-        // Embedded as PerformView's center: fill the column (PerformView owns
-        // the header/transport/mixer around it). Floating overlay stays 800 so
-        // the neck shows behind it.
-        .frame(maxWidth: embedded ? .infinity : 800)
-        .frame(maxHeight: embedded ? .infinity : 952)
+        // Fill whatever the host offers in BOTH presentations. The floating
+        // overlay used to cap itself at 800×952 "so the neck shows behind it"
+        // — on a 2000×1300 window that stranded over half the screen and
+        // starved the 8×8 grid down to ~60pt pads beside a fixed 250pt rail.
+        // RootView already insets the overlay 16pt (border + shadow keep it
+        // reading as a panel); the grid is the point of this surface, so it
+        // gets all the space. Embedded (Perform) was always fill.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(JamTheme.background)
         .preferredColorScheme(.dark)
         .tint(JamTheme.accent)
@@ -1046,6 +1045,14 @@ struct LaunchpadPanelView: View {
         model.session?.bundle.stems.map(\.role) ?? []
     }
 
+    /// True when the surface is completely blank — no song loaded, no chop
+    /// grid, no custom pad slots. Gates the compact ghost-grid empty state.
+    private var gridIsIdle: Bool {
+        model.session == nil
+            && launchpad.assignments.isEmpty
+            && session.padAssignmentStore.assignments.isEmpty
+    }
+
     // MARK: - Grid
 
     private var padGrid: some View {
@@ -1060,10 +1067,19 @@ struct LaunchpadPanelView: View {
         return GeometryReader { geo in
             let spacing: CGFloat = 8
             // SQUARE pads (like a real launchpad): one cell side from the
-            // shorter axis. The grid centers in the filled area — the reclaimed
-            // vertical chrome already makes it big; square is the deliberate look.
-            let side = (min(geo.size.width, geo.size.height)
-                        - spacing * CGFloat(cols - 1)) / CGFloat(cols)
+            // shorter axis, so the grid fills the height left after chrome
+            // and centers in the remaining width. 16-pad mode caps the cell
+            // — with the panel now filling the window, an uncapped 4×4
+            // balloons into comically huge pads; 200pt keeps it
+            // drum-machine-sized. 64-pad keeps every point it can get.
+            let fit = (min(geo.size.width, geo.size.height)
+                       - spacing * CGFloat(cols - 1)) / CGFloat(cols)
+            // Idle (nothing loaded or assigned anywhere): a full-window wall
+            // of empty cells reads as broken, so the ghost grid stays small
+            // under a hint. Pads stay live — tap → Add Sound works songless.
+            let modeCap: CGFloat = cols == 4 ? 200 : .infinity
+            let idleCap: CGFloat = gridIsIdle ? 72 : .infinity
+            let side = min(fit, modeCap, idleCap)
             VStack(spacing: spacing) {
                 ForEach(0..<cols, id: \.self) { row in
                     HStack(spacing: spacing) {
@@ -1101,6 +1117,14 @@ struct LaunchpadPanelView: View {
                             .accessibilityIdentifier("pad-\(pad.row * 8 + pad.col)")
                         }
                     }
+                }
+                if gridIsIdle {
+                    // Same wording family as RehearsalView's empty state.
+                    Text("No song loaded — pick one in Intake, "
+                         + "or tap any pad to add a sound")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 14)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
