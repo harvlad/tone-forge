@@ -255,8 +255,9 @@ features:
         status: missing
         note: "lp-hw.js drives grid notes + LED mirror only; no control-CC handling beyond mode plumbing. Queued for the hardware-integration parity audit — the desktop assignment table (jam-desktop DECISIONS D-036) is the spec to port."
       ios:
-        status: missing
-        note: "USBLaunchpadTransport forwards onControlButton but nothing consumes it. Queued for the hardware-integration parity audit (D-036 table is the spec); Core surface is shareable via ToneForgeEngine if lifted."
+        status: partial
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Launchpad/LaunchpadControlSurface.swift#LaunchpadControlSurface"
+        note: "The CC → function ASSIGNMENT is now a shared engine table (ToneForgeEngine LaunchpadControlMapping — identical to desktop's D-036 map, pinned by LaunchpadControlMappingTests) consumed by the iOS host surface. Mapped: CC20 play/pause + CC10 global stop (AppState.stopEverything: pause + sequences + pads); CC30/40/50 One-Shot|Follow|Latch (writes jamSettings.sampleTriggerMode, the SAME store the on-screen chips use); Clear(60) loop-lock; ◄►(91/92) 16/64 incl. the borrow relayout the on-screen chips do; Chord(95) Instant Groove (inert on an empty grid, amber flash); Record Arm(1) = the session OUTPUT recorder toggle — iOS has no armed state, LED is dim red ↔ red pulse; Stop Clip(8) stop-all-pads with amber flash; Mute…Device(2–7) kit-category layer toggles (DRUMS/BASS/CHORDS/SYNTH/LEAD/TEXTURE, best-pad start via the Instant-Groove selection rule); scene 79–19 section jumps through selectSection (section-strip semantics incl. lock-follow). PARTIAL because the sequencer trio is deliberately inert + dark (Session 93, pattern select 101–108, sequencer play 89): iOS has no global sequencer panel — SequenceBuilderSheet is pad-scoped. Control LEDs ride the desktop seam port (USBLaunchpadTransport.setControlLights: own controlLedCache, PadIndex.isValid bypass with the inverse grid-address gate, reconnect redraw), repainted at 10 Hz off the existing hardware timer. Pinned by LaunchpadControlSurfaceTests + USBLaunchpadTransportTests control-LED cases."
       desktop:
         status: done
         evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/LaunchpadControlSurface.swift#LaunchpadControlSurface"

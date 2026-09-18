@@ -1386,3 +1386,65 @@ already stops and rebuilds `melodyPlayer` per song in `AppState.activate`.
 (rejected — that IS how iOS drifted); clearing the analysisId-keyed stores too
 (rejected — deletes pre-Projects state, desktop precedent).
 
+## D-037 — MK3 function-button map on iOS (shared engine table) + press-path bake prewarm
+
+**Date:** 2026-09-18
+**Decision:** iOS gets the hardware Launchpad's function buttons (desktop
+D-036 map). The CC → function ASSIGNMENT moves to a PURE engine table,
+`ToneForgeEngine/Launchpad/LaunchpadControlMapping` — identical to desktop's
+approved map, host-test-pinned — so the two platforms cannot drift on what a
+button MEANS. The new `ToneForgeMobile` `LaunchpadControlSurface` consumes it,
+closure-injected (fully testable without AppState), and owns the LED contract
+(desktop colors: selected-mode white, loop-lock amber, record red pulse,
+layer category accents, section blocks lit/pulse).
+
+Mapped on iOS: play/pause (20), global stop (10 → `stopEverything`: pause +
+sequences + pads), One-Shot/Follow/Latch (30/40/50 →
+`jamSettings.sampleTriggerMode`, the same store the on-screen chips write),
+loop-lock (60), 16/64 (91/92 incl. borrow relayout), Instant Groove (95,
+inert on an empty grid), record toggle (1 → the session OUTPUT recorder; no
+armed state on iOS, so the LED is dim-red ↔ pulsing red), stop-all (8),
+layer toggles (2–7 over kit categories DRUMS/BASS/CHORDS/SYNTH/LEAD/TEXTURE —
+stop the category's sounding pads, else start its best-scoring pad by the
+Instant-Groove rule), section jumps (79–19 → `selectSection`, the strip's
+lock-follow semantics). Deliberately INERT + dark: Session (93), pattern
+select (101–108), sequencer play (89) — iOS has no global sequencer panel
+(`SequenceBuilderSheet` is pad-scoped); the assignment stays reserved so the
+buttons can land when/if a panel exists.
+
+Control LEDs ride the desktop seam ported verbatim:
+`USBLaunchpadTransport.setControlLights` with its own `controlLedCache`,
+bypassing the grid's `PadIndex.isValid` gate (with the INVERSE gate so the
+control path can never paint grid addresses), redrawn on reconnect/resume.
+State repaints at 10 Hz off the existing hardware timer (diffed, cheap).
+
+**Latency (D-038 audit finding, partial):** the per-press seam-bake DSP
+(`exactCrossfaded` + `tileToLength` ran on the main actor on EVERY loop
+trigger) is now memoized in `SampleVoicePool` (`cachedLoopBake`, keyed on
+source buffer identity + resolved bake params, source-retaining so identifier
+reuse can't serve stale audio) and PREWARMED off-main at pack preload
+(`SampleScheduler.prewarmLoopBakes` after `preloadPackAsync`), so a press is
+normally a dictionary hit. The receive-thread fast press/release lanes
+(desktop ChopPlayer armed-plan engine, D-032/D-033/D-038) are NOT ported:
+iOS's pool is AVAudioPlayerNode/main-actor throughout, and a faithful port is
+an engine rewrite, not a patch — deferred deliberately rather than shipped
+half-safe. The main-actor hop before audible start therefore remains on iOS;
+mitigations in place stay (pre-hop stamping, sample-accurate `play(at:)` for
+quantized launches).
+
+**Where:** `Sources/ToneForgeEngine/Launchpad/LaunchpadControlMapping.swift`,
+`Sources/ToneForgeMobile/Launchpad/LaunchpadControlSurface.swift`,
+`Sources/ToneForgeMobile/Launchpad/USBLaunchpadTransport.swift`,
+`Sources/ToneForgeMobile/ToneForgeApp.swift` (`makeControlSurface`,
+`stopEverything`, `toggleKitLayer`/`kitLayerActivity`),
+`Sources/ToneForgeMobile/Audio/SampleVoicePool.swift` (bake cache),
+`Sources/ToneForgeMobile/Audio/SampleScheduler.swift` (prewarm). Pinned by
+`LaunchpadControlMappingTests` (engine, CI-gated),
+`LaunchpadControlSurfaceTests`, `USBLaunchpadTransportTests` control-LED
+cases. PARITY.yaml `launchpad-mk3-function-buttons` ios → partial.
+
+**Alternatives:** duplicating desktop's table into a mobile file (rejected —
+assignment drift is a parity bug by definition); mapping the sequencer trio
+onto the pad-scoped sheet (rejected — a global button opening a random pad's
+sheet is not the desktop semantic); baking on first press only, no prewarm
+(rejected — the first press per pad is exactly the audible one).
