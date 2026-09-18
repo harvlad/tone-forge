@@ -1445,3 +1445,232 @@
 .kit-borrow-cand:disabled .kit-borrow-cand-act {
   color: var(--jamn-text2, #A1A1AA);
 }
+
+/* ---------- Vinyl Crate (shared CC donor pool) ---------- */
+
+/* The crate's browse form needs more width than a bare donor list. */
+.kit-borrow-pop.is-crate {
+  width: 340px;
+}
+
+/* Source toggle: My songs | Crate — the segmented-group shell. */
+.kit-borrow-src {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--jamn-surface1, #14141A);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.kit-borrow-srcbtn {
+  appearance: none;
+  flex: 1 1 0;
+  border: 0;
+  background: transparent;
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.kit-borrow-srcbtn.is-on {
+  background: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+}
+
+/* Crate controls block — sub-mode toggle + genre affinity / facet form. */
+.kit-crate-ctrls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.kit-crate-ctrls[hidden] {
+  display: none;
+}
+
+/* Sub-mode: For your session | Browse crate. */
+.kit-crate-mode {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--jamn-surface1, #14141A);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+}
+
+.kit-crate-modebtn {
+  appearance: none;
+  flex: 1 1 0;
+  border: 0;
+  background: transparent;
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.kit-crate-modebtn.is-on {
+  background: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+}
+
+/* Genre affinity row (match mode). */
+.kit-crate-genremode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kit-crate-flabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--jamn-text2, #A1A1AA);
+}
+
+/* A pill — genre affinity toggle + facet-count chips share this look. */
+.kit-crate-chip {
+  appearance: none;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text2, #A1A1AA);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.kit-crate-chip.is-on {
+  border-color: var(--jamn-accent, #8B5CF6);
+  background: var(--jamn-accent, #8B5CF6);
+  color: var(--jamn-text, #fff);
+}
+
+/* Facet form (browse mode). */
+.kit-crate-facets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kit-crate-q {
+  appearance: none;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 9px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+}
+
+.kit-crate-q:focus,
+.kit-crate-input:focus {
+  outline: none;
+  border-color: var(--jamn-accent, #8B5CF6);
+}
+
+.kit-crate-fgrid {
+  display: flex;
+  gap: 6px;
+}
+
+.kit-crate-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.kit-crate-input {
+  appearance: none;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 7px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 7px;
+  background: var(--jamn-surface2, #1C1C24);
+  color: var(--jamn-text, #fff);
+}
+
+.kit-crate-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.kit-crate-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.kit-crate-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--jamn-text2, #A1A1AA);
+  cursor: pointer;
+}
+
+.kit-crate-check input {
+  accent-color: var(--jamn-accent, #8B5CF6);
+}
+
+.kit-crate-chiphost {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kit-crate-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Crate row — the donor-row shell plus a required attribution sub-line. */
+.kit-crate-namerow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The BY-SA export warning badge. */
+.kit-crate-lock {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--jamn-warn, #F59E0B);
+  border: 1px solid var(--jamn-warn, #F59E0B);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+/* Attribution (CC-BY obligation) — always visible on every crate row. */
+.kit-crate-attrib {
+  font-size: 10px;
+  color: var(--jamn-text2, #A1A1AA);
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

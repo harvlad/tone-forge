@@ -664,6 +664,136 @@ assert.deepEqual(arrangementDiff(null, null), { toArm: [], toRelease: [] });
   assert.deepEqual(parseArrangement(serializeArrangement(captured)), { 1: [0, 2, 5] });
 }
 
+// ---- Vinyl Crate (shared CC donor pool): pure match/search/attribution ----
+const {
+  keyToCamelot, crateLicenseLabel, crateLicenseIsShareAlike,
+  normalizeCrateTrack, crateAttribution, crateMatchHint, crateMetaLine,
+  crateQueryString,
+} = K._internals;
+
+// Camelot wheel: minor = A, major = B; relative major/minor share a number
+// (A minor 8A ↔ C major 8B). Garbage (no note letter) → "" so "?" can't
+// masquerade as 8B.
+assert.equal(keyToCamelot("A minor"), "8A");
+assert.equal(keyToCamelot("C"), "8B");
+assert.equal(keyToCamelot("C major"), "8B");
+assert.equal(keyToCamelot("G major"), "9B");
+assert.equal(keyToCamelot("E minor"), "9A"); // relative of G major → same number
+assert.equal(keyToCamelot("Bb minor"), "3A"); // flat folds to A# (pc 10)
+assert.equal(keyToCamelot("G# minor"), "1A");
+assert.equal(keyToCamelot("B"), "1B");
+assert.equal(keyToCamelot(""), "");
+assert.equal(keyToCamelot("?"), "");
+assert.equal(keyToCamelot(null), "");
+
+// License labels + the ShareAlike (export-encumbering) predicate.
+assert.equal(crateLicenseLabel("CC0"), "CC0");
+assert.equal(crateLicenseLabel("CC-BY-4.0"), "CC-BY 4.0");
+assert.equal(crateLicenseLabel("CC-BY"), "CC-BY");
+assert.equal(crateLicenseLabel("CC-BY-SA-4.0"), "CC-BY-SA 4.0");
+assert.equal(crateLicenseLabel(""), "");
+assert.equal(crateLicenseIsShareAlike("CC-BY-SA-4.0"), true);
+assert.equal(crateLicenseIsShareAlike("CC-BY-4.0"), false);
+assert.equal(crateLicenseIsShareAlike("CC0"), false);
+
+// normalizeCrateTrack: NESTED features/license (dataclass asdict shape).
+{
+  const t = normalizeCrateTrack({
+    id: "crate:jamendo:1",
+    title: "Neon Dawn", artist: "Kite", album: "Skylines", year: 2019,
+    genre: "house", subgenres: ["deep house"], tags: ["night", "synth"], mood: "uplifting",
+    license: {
+      license_id: "CC-BY-4.0",
+      license_url: "https://creativecommons.org/licenses/by/4.0/",
+      attribution: "Neon Dawn by Kite (CC BY 4.0)",
+      source: "jamendo", source_track_id: "1", source_url: "https://j/1",
+      content_hash: "abc", acquired_at: "2026-01-01", export_encumbered: false,
+    },
+    features: {
+      tempo_bpm: 124, tempo_confidence: 0.8, detected_key: "A minor", key_confidence: 0.7,
+      duration_s: 180, section_count: 6, available_stems: ["drums", "bass", "other"],
+      has_vocals: false, energy: 0.5,
+    },
+    graph_available: true,
+  });
+  assert.equal(t.id, "crate:jamendo:1");
+  assert.equal(t.title, "Neon Dawn");
+  assert.equal(t.artist, "Kite");
+  assert.equal(t.genre, "house");
+  assert.deepEqual(t.tags, ["night", "synth"]);
+  assert.equal(t.licenseId, "CC-BY-4.0");
+  assert.equal(t.exportEncumbered, false);
+  assert.equal(t.tempo, 124);
+  assert.equal(t.key, "A minor");
+  assert.equal(t.camelot, "8A");
+  assert.deepEqual(t.stems, ["drums", "bass", "other"]);
+  assert.equal(t.graphAvailable, true);
+  assert.equal(t.matchScore, null); // no match extras on a bare track row
+  // Stored attribution is the legally-vetted credit — used verbatim.
+  assert.equal(crateAttribution(t), "Neon Dawn by Kite (CC BY 4.0)");
+}
+
+// normalizeCrateTrack: FLAT candidate (camelCase + comma-string stems), no
+// export_encumbered boolean → derived from the BY-SA id; match extras present.
+{
+  const t = normalizeCrateTrack({
+    trackId: "crate:fma:9", name: "Grit", artist: "Lo",
+    licenseId: "CC-BY-SA-4.0", attribution: "Grit by Lo (CC BY-SA 4.0)",
+    tempo: 90, detected_key: "C", available_stems: "drums,vocals", has_vocals: true,
+    matchScore: 0.82, harmonic: 0.91, tempo_distance: 0.05,
+  });
+  assert.equal(t.id, "crate:fma:9");
+  assert.equal(t.title, "Grit"); // from `name`
+  assert.equal(t.licenseId, "CC-BY-SA-4.0");
+  assert.equal(t.exportEncumbered, true); // derived — no explicit boolean
+  assert.equal(t.tempo, 90);
+  assert.equal(t.camelot, "8B");
+  assert.deepEqual(t.stems, ["drums", "vocals"]);
+  assert.equal(t.hasVocals, true);
+  assert.equal(t.matchScore, 0.82);
+  assert.equal(t.harmonic, 0.91);
+  assert.equal(t.tempoDistance, 0.05);
+}
+
+// Rows with no usable id drop out of a list.
+assert.equal(normalizeCrateTrack({ title: "x" }), null);
+assert.equal(normalizeCrateTrack(null), null);
+assert.equal(normalizeCrateTrack("nope"), null);
+
+// crateAttribution composes when the backend stored no credit string.
+assert.equal(
+  crateAttribution({ title: "Solo", artist: "Ray", licenseId: "CC0" }),
+  "Solo — Ray · CC0"
+);
+assert.equal(crateAttribution({ title: "Solo", licenseId: "" }), "Solo");
+assert.equal(crateAttribution(null), "");
+
+// Match hint: weighted matchScore bands, else harmonic bands, else "".
+assert.equal(crateMatchHint({ matchScore: 0.85 }), "great match");
+assert.equal(crateMatchHint({ matchScore: 0.65 }), "good match");
+assert.equal(crateMatchHint({ matchScore: 0.45 }), "fair match");
+assert.equal(crateMatchHint({ matchScore: 0.2 }), "");
+assert.equal(crateMatchHint({ harmonic: 0.95 }), "key match");
+assert.equal(crateMatchHint({ harmonic: 0.8 }), "fits");
+assert.equal(crateMatchHint({}), "");
+
+// Meta line: tempo · Camelot+key · genre (mood fallback when no genre).
+assert.equal(
+  crateMetaLine({ tempo: 124, key: "A minor", camelot: "8A", genre: "house" }),
+  "124 bpm · 8A A minor · house"
+);
+assert.equal(crateMetaLine({ tempo: 0, key: "", camelot: "", mood: "dark" }), "dark");
+assert.equal(crateMetaLine(null), "");
+
+// Query string: skips empty/false/null/undefined, arrays→comma, true→"1",
+// stable insertion order.
+assert.equal(
+  crateQueryString({ a: 1, b: "", c: null, d: undefined, e: false, f: "x y", g: [1, 2], h: true }),
+  "a=1&f=x%20y&g=1%2C2&h=1"
+);
+assert.equal(crateQueryString({}), "");
+assert.equal(crateQueryString({ stems: [] }), ""); // empty array skipped
+
 // applyPadRegion with nothing mounted → false, never a throw.
 assert.equal(K.applyPadRegion(0, { startSec: 0, endSec: 1 }), false);
 

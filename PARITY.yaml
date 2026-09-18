@@ -378,6 +378,26 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: vinyl-crate
+    name: "Vinyl Crate — a shared, curated CC-BY/CC0 donor pool you can session-match OR search/browse, borrowed onto pads like an owned song"
+    platforms:
+      web:
+        status: partial
+        evidence: "backend/static/kit.js#loadCrateCandidates"
+        note: "Web PICKER shipped: the \"+ Add from another song\" popover gained a \"My songs | Crate\" source toggle (openBorrowPicker#kit-borrow-src). Crate has two modes — \"For your session\" (loadCrateCandidates → GET /api/crate/candidates, session-ranked by tempo/harmony/melody/energy/genre/instrumentation, with a Similar|Contrast genre-affinity toggle) and \"Browse crate\" (loadCrateSearch → GET /api/crate/search, faceted: free-text q + key/Camelot + BPM range + clean-export + has-vocals + live genre/mood facet-count chips). A pick calls applyCrateBorrow → doCrateLoad → GET /api/crate/{id}/borrow → mountManifest, landing matched loops on the pads through the same borrow layout as an owned song. Every crate row shows the required CC attribution (.kit-crate-attrib: title — artist · CC license, keyToCamelot for the key badge) and an \"export-locked\" badge on CC-BY-SA (crateLicenseIsShareAlike / export_encumbered). normalizeCrateTrack tolerates the CrateTrack DTO's nested features/license OR a flat candidate row. Pure helpers pinned by kit.test.mjs. PARTIAL: depends on the backend crate subsystem (contracts.CrateTrack + tone_forge/crate/* + the three /api/crate routes) + seed registry; the picker degrades to \"The Vinyl Crate isn't available yet.\" on 404 until those land."
+      ios:
+        status: missing
+        note: "Web-first landing (this build is the web picker only). Follow-up: a BorrowPickerSheet source segment (My songs | Crate) + CrateCandidate DTO + AppState.fetchCrateCandidates/searchCrate/loadCrateLoops, reusing SessionTargetControls and the mountManifest path. The backend crate endpoints are shared, so this is a client-only add once they exist."
+      desktop:
+        status: missing
+        note: "Web-first landing. Follow-up: a BorrowSource picker in BorrowPickerView + SessionController.crateCandidates/loadCrateLoops + a facet/search bar, reusing SamplePack mount + arrangeBorrowLayout and carrying attribution onto the pad source label. Client-only add once the shared backend endpoints land."
+      plugin:
+        status: na
+        note: "No Remix/borrow surface in the JUCE editor (same as borrow-loops / borrow-on-launchpad); nothing to hang a crate picker on."
+      connect:
+        status: na
+        note: "No pad or song surface — Connect is the low-latency monitoring companion."
+
   - id: live-arrangement
     name: "Live-capture arrangement — Rec through a song to capture pads-per-section, Play replays hands-free"
     platforms:
