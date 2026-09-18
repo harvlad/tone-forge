@@ -1636,6 +1636,13 @@ public final class AppState: ObservableObject {
         // separately so sketch-layer metadata can name them.
         if currentBundle == nil {
             sketchSettings.lastSketchPackId = pack.pack.packId
+            // Song-less default is the 16-pad view (user direction): a
+            // ≤16-pad pack on the 64 grid is mostly "+" cells and reads
+            // as broken. Only shrink — never fight an explicit 64 with
+            // a pack that actually spans it (borrow layouts).
+            if pack.pack.pads.count <= 16 {
+                jamSettings.launchpadPadCount = 16
+            }
         }
         // New pack → new sample-quadrant content + pad bindings. Labels
         // come from the manifest, not the buffers, so this is safe to

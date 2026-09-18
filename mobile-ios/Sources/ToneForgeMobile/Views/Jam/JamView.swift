@@ -824,13 +824,13 @@ struct JamView: View {
             .background(TFTheme.accent.opacity(0.20),
                         in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 12)
-        } else if appState.currentBundle == nil, !appState.canvasModeOn {
+        } else if appState.currentBundle == nil, !appState.canvasModeOn,
+                  (appState.activeSamplePack?.pack.pads.isEmpty ?? true) {
             // No song open isn't a failure — it's an invitation, with
             // BOTH ways in: a Library song, or a from-scratch blank
-            // canvas (Projects v2). Always shown song-less (it used to
-            // hide behind a stale autoKitError, so the entry points
-            // were invisible on a fresh visit). A live canvas session
-            // with a borrow mounted is working-as-intended: no strip.
+            // canvas (Projects v2). Hidden the moment ANY pack with
+            // content is mounted (curated pack, canvas borrow) — an
+            // invite floating over a live playable kit is noise.
             // Two rows at phone width: the invitation line, then the
             // two entry buttons — one crowded row wrapped the text to
             // two lines and jammed the buttons against it.
