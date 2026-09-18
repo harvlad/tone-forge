@@ -2048,6 +2048,17 @@ public final class AppState: ObservableObject {
         // clears its active blank project in songDidActivate below).
         canvasModeOn = false
         currentBundle = bundle
+        // Per-song reset of the NOTE-SYNTH layer (web 5d1e3bd0 /
+        // desktop 8e56570c parity — SongActivationPolicy, D-038): the
+        // melody guide is a per-song opt-in, never sticky state; left
+        // on it played the NEXT song's melody on the synth uninvited
+        // at the first tick. Rebuilding the player below was never the
+        // fix — the TOGGLE is what survived. Also silence any synth
+        // voice still held (guide edge) so it can't ring across the
+        // load.
+        melodyGuideEnabled = SongActivationPolicy
+            .melodyGuideEnabledAfterSongLoad(wasEnabled: melodyGuideEnabled)
+        wavetableSynthNode.allNotesOff()
         // Melody follow-along: rebuild the player for the new song.
         // gainScale trims the synth under the stems.
         melodyPlayer?.stop()

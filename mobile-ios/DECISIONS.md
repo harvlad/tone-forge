@@ -1370,8 +1370,16 @@ commit 8e56570c) that the hardware-Launchpad audit confirmed iOS still had:
    and stay), with `sequencePadManager.stopAll()` BEFORE the swap so a
    running pattern can't orphan its voice, then the grid re-derives.
 
-The third leg of 8e56570c (per-song melody-guide reset) needed no port: iOS
-already stops and rebuilds `melodyPlayer` per song in `AppState.activate`.
+~~The third leg of 8e56570c (per-song melody-guide reset) needed no port: iOS
+already stops and rebuilds `melodyPlayer` per song in `AppState.activate`.~~
+**[SUPERSEDED 2026-09-19 by D-038 — this claim (echoed from commit 958c6841's
+message) was WRONG.** Rebuilding `melodyPlayer` was never the fix. The bug the
+desktop twin 8e56570c actually killed was that `melodyGuideEnabled` — the
+per-song opt-in TOGGLE — survived the song switch; the tick path
+(`ToneForgeApp.swift` `tick()`) replays whatever `melodyPlayer` is currently
+loaded through it while that flag is on, so a guide armed on song A played song
+B's melody on the wavetable synth uninvited the moment playback rolled. iOS had
+the same defect. The melody-guide leg DID need a port; landed in D-038.]
 
 **Where:** `Sources/ToneForgeEngine/Launchpad/LaunchpadProMK3Protocol.swift`
 (`portFamilyFragment`/`isFamilyPort`),
@@ -1448,3 +1456,53 @@ assignment drift is a parity bug by definition); mapping the sequencer trio
 onto the pad-scoped sheet (rejected — a global button opening a random pad's
 sheet is not the desktop semantic); baking on first press only, no prewarm
 (rejected — the first press per pad is exactly the audible one).
+
+## D-038 — Melody-guide reset on song switch (the D-036 leg that DID need a port)
+
+**Date:** 2026-09-19
+**Supersedes:** the "needed no port" paragraph in D-036 (and the same claim in
+commit 958c6841's message).
+
+**Context:** D-036 ported two of the three legs of desktop's synth-leak fix
+(8e56570c) and asserted the third — the per-song melody-guide reset — needed no
+iOS port because `AppState.activate` "already stops and rebuilds
+`melodyPlayer`". A later adversarial review caught that this was wrong, on the
+exact reasoning that made it desktop's bug:
+
+- `melodyGuideEnabled` is a per-song opt-in TOGGLE, not derived state. It is
+  the flag the tick loop gates on (`ToneForgeApp.swift` `tick()` →
+  `melodyPlayer?.advance(to:)`).
+- `activate()` rebuilt `melodyPlayer` for the NEW song but never reset that
+  flag. Rebuilding the player is precisely NOT the fix — it just hands the
+  still-armed guide a fresh sequence to replay.
+- So a guide armed on song A stayed on across the switch and played song B's
+  melody on the wavetable synth uninvited the instant the transport rolled —
+  the literal twin of web 5d1e3bd0 and desktop 8e56570c leg 3.
+
+**Decision:** `AppState.activate` now resets `melodyGuideEnabled` via
+`SongActivationPolicy.melodyGuideEnabledAfterSongLoad(wasEnabled:)` (which
+always returns `false`) and calls `wavetableSynthNode.allNotesOff()` so no held
+guide/keyboard voice rings across the load — matching desktop's
+`SessionController.attach` semantics exactly.
+
+**Shared vs per-platform:** desktop's `SongActivationPolicy` lives in
+`JamDesktopCore`, NOT in `ToneForgeEngine`, so it is not reachable from iOS. It
+is deliberately kept a per-platform TWIN rather than hoisted into the shared
+engine: desktop files import `ToneForgeEngine` and `JamDesktopCore` side by
+side, so a second `SongActivationPolicy` in the engine would make every
+unqualified desktop reference ambiguous. The DECISION is what's shared (web
+5d1e3bd0 / desktop 8e56570c / iOS D-038); the pinned per-platform test is the
+drift guard.
+
+**Where:** `Sources/ToneForgeMobile/App/SongActivationPolicy.swift` (pure,
+pinned twin of the desktop type), `Sources/ToneForgeMobile/ToneForgeApp.swift`
+(`AppState.activate` — toggle reset + `allNotesOff`). Pinned by
+`SongActivationPolicyTests.testMelodyGuideNeverSurvivesASongSwitch` (the pure
+policy) and `.testActivateResetsMelodyGuideToggle` (the WIRING — a stem-less
+fixture proves `activate()` actually clears the flag, headless).
+
+**Alternatives:** hoisting `SongActivationPolicy` into `ToneForgeEngine`
+(rejected — the desktop name collision above); resetting the flag in
+`melodyPlayer`'s rebuild block only (rejected — leaves the window between
+`currentBundle = bundle` and the rebuild, and reads as "player rebuild is the
+fix", which is the mistake D-036 made).
