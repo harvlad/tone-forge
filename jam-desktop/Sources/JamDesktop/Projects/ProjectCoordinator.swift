@@ -187,7 +187,20 @@ final class ProjectCoordinator: ObservableObject {
         if snapshot == nil {
             snapshot = store.loadWorking(analysisId: analysisId)?.snapshot
         }
-        guard let snapshot else { return }
+        guard let snapshot else {
+            // No workspace for this song: swap the GLOBAL stores to the
+            // song's defaults. The old early-return left them holding
+            // the PREVIOUS song's workspace — its pack pads surfaced as
+            // phantom tiles on every song that lacked a project of its
+            // own (D-034).
+            suppressAutoSave = true
+            ProjectStateBridge.activateFresh(
+                padAssignments: session.padAssignmentStore,
+                padFX: session.padFXStore
+            )
+            suppressAutoSave = false
+            return
+        }
         applyRestore(snapshot, analysisId: analysisId)
     }
 

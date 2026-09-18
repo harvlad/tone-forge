@@ -927,6 +927,15 @@ final class SessionController: ObservableObject {
         // Remix state is per-song: a Re-Drum swap or groove template from
         // the previous song must never leak into this one.
         resetRemixState()
+        // Per-song reset of the NOTE-SYNTH layer (web 5d1e3bd0 parity —
+        // SongActivationPolicy): the melody guide is a per-song opt-in,
+        // never sticky state; left on it played the NEXT song's melody
+        // on the synth uninvited. Also silence any synth voice still
+        // held (guide edge or MIDI-keyboard note) so it can't ring
+        // across the load.
+        melodyGuideEnabled = SongActivationPolicy
+            .melodyGuideEnabledAfterSongLoad(wasEnabled: melodyGuideEnabled)
+        synthNode.allNotesOff()
         // Melody follow-along: rebuild the player for the new song.
         // gainScale trims the synth under the stems — full-scale hits
         // would swamp the mix.

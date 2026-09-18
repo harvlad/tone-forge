@@ -1098,3 +1098,86 @@ wiring (tap install + padTag at the three trigger sites). Pinned by
 deliberately blocked; epoch composition across release/retrigger;
 sub-10 ms call bound under hammer) and `USBLaunchpadTransportTests`
 (tap fires pre-hop, releases only, grid notes only).
+
+## D-034: Pad hardware has ONE delivery authority — no synth notes on pad presses
+
+**Date:** 2026-09-18
+**Context:** On the hardware Launchpad, every pad press also played a
+wavetable-synth note on top of the pad's loop — chromatic pitches
+unrelated to the song, on every song. The web app had just root-caused
+the same symptom (stale `instrument-melody` driver + a force-enabled
+merged surface, fixed in 5d1e3bd0 by per-song driver reset + surface
+arbitration). Separately, two phantom purple pack-pad tiles (speaker
+glyph) sat among empty cells of the 64-grid on songs that never had
+pack pads assigned.
+
+**Root causes (three, not one):**
+
+1. **Dual pad mapping — the synth note.** `MIDIKeyboardTransport`
+   (default routing `.synth`: every note voices `DesktopSynthNode`)
+   excluded only the endpoint named exactly "LPProMK3 MIDI" or a
+   display name containing "Launchpad Pro MK3". The MK3 exposes THREE
+   USB interfaces (DAW / MIDI / DIN), and CoreMIDI decorates display
+   names LATE during a plug-in burst (D-031: "LPProMK3 MIDI" →
+   "Launchpad Pro MK3 LPProMK3 MIDI"). In that window the DAW/DIN
+   interfaces matched neither branch, the keyboard transport connected
+   to them, and a later name resolution is not guaranteed another
+   setup-changed rescan — the stale connection stuck for the session.
+   Every grid note then double-delivered: USBLaunchpadTransport →
+   LaunchpadController → chop loop, AND MIDIKeyboardTransport →
+   `.midiNote` → `synthNode.noteOn(midi: <grid note 11–88>)`.
+   Song-independent, hence "all songs". (NOT a regression from
+   8f41ff17/b3727853: the stamped seam correctly REPLACES the legacy
+   pad callbacks — `padEvent` calls stamped OR legacy, never both —
+   and `usb.onContribution` has no consumer. The exclusion hole
+   predates both; today was simply the first extended hardware
+   session.)
+2. **Phantom pack tiles.** `ProjectCoordinator.songDidActivate`
+   early-returned when a song had no working project, leaving the
+   GLOBAL `PadAssignmentStore`/`PadFXStore` holding the previous
+   song's workspace. Observed on this machine: one song's working
+   project carries two packPad refs (house-classic #5, lo-fi-hiphop
+   #7) — restored once, they surfaced on every project-less song.
+   Visual leak only: pack pads voice through PackPadPlayer→ChopPlayer,
+   never the synth.
+3. **Stale melody guide (the web bug's literal twin).**
+   `melodyGuideEnabled` survived song switches — attach() rebuilt the
+   player but never reset the toggle, so a per-song synth-note guide
+   mode played the NEXT song's melody uninvited once the transport
+   rolled.
+
+**Decision:**
+
+- **Single delivery authority (arbitration):** `isLaunchpad` now
+  matches the port-family fragment "LPProMK3" (USB string descriptor,
+  present on all three interfaces at every enumeration stage) in name
+  or display name, plus the decorated-name fallback. While the pad
+  grid owns the Launchpad, a hardware pad press reaches ONLY
+  LaunchpadController — the note/chord synth never fires on pad
+  presses; notes sound only on their own explicitly selected surface
+  (iOS Notes | Chords | Samples semantics, web arbitration parity).
+  The `.synth` route remains for genuine keyboards — that is its job.
+- **Per-song reset of the note-synth layer:** attach() resets
+  `melodyGuideEnabled` (via `SongActivationPolicy`, pure + pinned) and
+  calls `synthNode.allNotesOff()` so no guide/keyboard note rings
+  across a load (web 5d1e3bd0 parity).
+- **Per-song store swap:** activation WITHOUT a workspace now swaps
+  the global stores to defaults (`ProjectStateBridge.activateFresh` —
+  assignment table + FX map only; analysisId-keyed stores are
+  untouched: they cannot leak and clearing them would delete
+  pre-Projects state). iOS's coordinator has the same early-return
+  inherit and the same three-port exclusion shape in its
+  MIDIKeyboardTransport — flagged as follow-ups, not silently
+  diverged.
+
+**Where:** `Sources/JamDesktopCore/Launchpad/MIDIKeyboardTransport.swift`
+(`launchpadPortFamily`, `isLaunchpad`),
+`Sources/JamDesktopCore/Projects/ProjectStateBridge.swift`
+(`activateFresh`), `Sources/JamDesktopCore/Session/SongActivationPolicy.swift`,
+`Sources/JamDesktop/Projects/ProjectCoordinator.swift` (no-workspace
+swap), `Sources/JamDesktop/SessionController.swift` (attach-time synth
+reset). Pinned by `MIDIKeyboardTransportTests` (all three interfaces
+excluded in decorated AND pre-resolution name states; grid notes
+injected at every LP endpoint produce zero events — no synth note on a
+pad press), `ProjectStateBridgeTests` (`activateFresh` clears global
+stores, leaves per-song stores), and `SongActivationPolicyTests`.

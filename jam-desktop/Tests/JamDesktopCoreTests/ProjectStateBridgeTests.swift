@@ -325,6 +325,43 @@ final class ProjectStateBridgeTests: XCTestCase {
         XCTAssertTrue(arrangements.captured(analysisId: "song1").isEmpty)
     }
 
+    // MARK: - Activation without a workspace (D-034)
+
+    func testActivateFreshClearsTheGlobalStores() {
+        // The observed phantom-tile state: two pack pads written into
+        // the GLOBAL assignment table by one song's workspace, then
+        // inherited by every song without a workspace of its own
+        // (songDidActivate used to leave the stores untouched).
+        padAssignments.assign(
+            .packPad(packId: "house-classic", padIdx: 5), padIdx: 26)
+        padAssignments.assign(
+            .packPad(packId: "lo-fi-hiphop", padIdx: 7), padIdx: 43)
+        padFX.setEffects(.neutral, packId: "house-classic", padIdx: 5)
+
+        ProjectStateBridge.activateFresh(
+            padAssignments: padAssignments, padFX: padFX)
+
+        XCTAssertTrue(padAssignments.assignments.isEmpty)
+        XCTAssertTrue(padFX.effectsByKey.isEmpty)
+    }
+
+    func testActivateFreshLeavesPerSongStoresAlone() {
+        // Chop edits + arrangements are analysisId-keyed — they cannot
+        // leak across songs, and clearing them on plain activation
+        // would delete pre-Projects state. activateFresh must not
+        // touch them (that is `reset`, the explicit user action).
+        var edits = ChopEdits(presetKey: "harmonic")
+        edits.splits.append(ChopSplit(parentIndex: 0, splitPoint: 0.5))
+        chopEdits.save(edits, analysisId: "song1")
+        arrangements.save([1: [2]], analysisId: "song1")
+
+        ProjectStateBridge.activateFresh(
+            padAssignments: padAssignments, padFX: padFX)
+
+        XCTAssertFalse(chopEdits.edits(analysisId: "song1").isEmpty)
+        XCTAssertEqual(arrangements.captured(analysisId: "song1"), [1: [2]])
+    }
+
     // MARK: - Borrow refs (content-addressed)
 
     private func borrowPad(

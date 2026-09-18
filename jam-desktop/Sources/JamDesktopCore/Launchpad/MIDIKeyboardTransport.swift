@@ -102,11 +102,30 @@ public final class MIDIKeyboardTransport: ObservableObject {
 
     // MARK: - Discovery
 
-    /// A Launchpad Pro MK3 interface — owned by USBLaunchpadTransport,
-    /// so excluded here to avoid double-firing its grid notes.
+    /// Port-family fragment shared by ALL of the MK3's USB interfaces
+    /// ("LPProMK3 DAW" / "LPProMK3 MIDI" / "LPProMK3 DIN"), served
+    /// from the device's USB string descriptor — present at every
+    /// enumeration stage, unlike the device-decorated display name.
+    static let launchpadPortFamily = "LPProMK3"
+
+    /// ANY Launchpad Pro MK3 interface — the grid is owned by
+    /// USBLaunchpadTransport, so every one of the device's ports is
+    /// excluded here; a connection would double-fire its notes.
+    ///
+    /// The old check (exact MIDI-port name OR device-decorated display
+    /// name) was leaky: the MK3 exposes THREE interfaces, and CoreMIDI
+    /// resolves display names LATE during a plug-in burst (D-031:
+    /// "LPProMK3 MIDI" only later becomes "Launchpad Pro MK3 LPProMK3
+    /// MIDI"). In that window the DAW/DIN interfaces matched neither
+    /// branch, this transport connected to them, and — with the
+    /// default `.synth` routing — every grid press ALSO voiced a
+    /// wavetable note over its pad loop ("dual pad mapping", D-034).
+    /// The port-family fragment matches all three ports in both name
+    /// states, so pad hardware has exactly ONE delivery authority.
     private static func isLaunchpad(_ endpoint: MIDIEndpoint) -> Bool {
-        if endpoint.name == LaunchpadProMK3Protocol.midiPortName { return true }
-        return endpoint.displayName.contains(LaunchpadProMK3Protocol.deviceNameFragment)
+        endpoint.name.contains(launchpadPortFamily)
+            || endpoint.displayName.contains(launchpadPortFamily)
+            || endpoint.displayName.contains(LaunchpadProMK3Protocol.deviceNameFragment)
     }
 
     private func rescan() {

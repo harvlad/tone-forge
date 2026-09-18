@@ -76,6 +76,68 @@ final class MIDIKeyboardTransportTests: XCTestCase {
         XCTAssertEqual(t.connectedInputs, ["Arturia KeyLab MIDI"])
     }
 
+    func testExcludesAllThreeLaunchpadInterfaces() {
+        // Steady state (decorated display names): DAW + DIN + MIDI are
+        // ALL the pad device — none may double-deliver its notes here.
+        _ = makeTransport()
+        midi.fakeSources = [FakeMIDIInterface.launchpadDAW,
+                            FakeMIDIInterface.launchpadDIN,
+                            FakeMIDIInterface.launchpadMIDI,
+                            Self.keyboard]
+        midi.fakeDestinations = midi.fakeSources
+        midi.onSetupChanged?()
+
+        XCTAssertEqual(midi.connectedInputs, [Self.keyboard])
+    }
+
+    // The D-031/D-034 enumeration race: during a plug-in burst CoreMIDI
+    // has not yet decorated display names with the device name, so each
+    // interface's displayName is just its port name. The old exclusion
+    // (exact "LPProMK3 MIDI" OR decorated display name) let the DAW and
+    // DIN interfaces through in this state; with the default `.synth`
+    // routing every hardware pad press then ALSO voiced a wavetable
+    // note over its pad loop — the "dual pad mapping" bug.
+    private static let rawDAW = MIDIEndpoint(
+        ref: 103, name: "LPProMK3 DAW", displayName: "LPProMK3 DAW")
+    private static let rawDIN = MIDIEndpoint(
+        ref: 102, name: "LPProMK3 DIN", displayName: "LPProMK3 DIN")
+    private static let rawMIDI = MIDIEndpoint(
+        ref: 101, name: "LPProMK3 MIDI", displayName: "LPProMK3 MIDI")
+
+    func testExcludesLaunchpadPortsBeforeDisplayNamesResolve() {
+        _ = makeTransport()
+        midi.fakeSources = [Self.rawDAW, Self.rawDIN, Self.rawMIDI, Self.keyboard]
+        midi.fakeDestinations = midi.fakeSources
+        midi.onSetupChanged?()
+
+        XCTAssertEqual(midi.connectedInputs, [Self.keyboard])
+    }
+
+    func testLaunchpadGridNoteNeverReachesTheSynthRoute() {
+        // Arbitration (web parity): while the pad grid owns the
+        // Launchpad, a hardware pad press must trigger ONLY its pad
+        // loop — never a `.midiNote` that SessionController would voice
+        // on the wavetable synth. Inject grid notes at every LP
+        // interface, in both name states: nothing may come out.
+        _ = makeTransport()
+        midi.fakeSources = [Self.rawDAW, Self.rawDIN, Self.rawMIDI,
+                            FakeMIDIInterface.launchpadDAW,
+                            FakeMIDIInterface.launchpadDIN,
+                            FakeMIDIInterface.launchpadMIDI]
+        midi.fakeDestinations = midi.fakeSources
+        midi.onSetupChanged?()
+
+        for endpoint in midi.fakeSources {
+            // Note 51 = a real MK3 grid pad in Programmer Mode.
+            midi.receive([.noteOn(channel: 0, note: 51, velocity: 100)],
+                         from: endpoint)
+        }
+        drainMainQueue()
+
+        XCTAssertTrue(midi.connectedInputs.isEmpty)
+        XCTAssertTrue(events.isEmpty)   // no synth note, no pad event
+    }
+
     // MARK: - Note input
 
     func testNoteOnEmitsMidiNoteEvent() {
