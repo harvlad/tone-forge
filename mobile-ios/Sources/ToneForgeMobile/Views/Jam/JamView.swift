@@ -375,10 +375,12 @@ struct JamView: View {
             VStack(spacing: 6) {
                 samplesStatusStrip
                 // ONE chrome row (was three label+control rows eating grid
-                // height): 16|64 size chips left, arrangement Rec/Play/Clear
-                // + the Edit toggle trailing. Horizontal scroll + fixedSize:
-                // at iPhone width the packed row otherwise compressed chips
-                // into vertical letter-wrap ("1/6", "Edi/t").
+                // height): mode chips + 16|64 size left, Edit toggle
+                // trailing. Horizontal scroll + fixedSize: at iPhone width
+                // the packed row otherwise compressed chips into vertical
+                // letter-wrap ("1/6", "Edi/t"). (The arrangement
+                // Rec/Play/Clear capture chips were removed — low-value,
+                // and the bottom-bar Record now captures session audio.)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         // Tap|Loop|Latch first — the most-used control, so
@@ -386,7 +388,6 @@ struct JamView: View {
                         sampleTriggerModeChips
                         launchpadSizeChips
                         Spacer(minLength: 8)
-                        ArrangementChips(arrangement: appState.arrangement)
                         launchpadEditChip
                     }
                     .fixedSize(horizontal: true, vertical: false)
