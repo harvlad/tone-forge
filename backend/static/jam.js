@@ -3272,16 +3272,10 @@
   function _launchpadResetForNewSong() {
     // Per-song driver state: chord assignment, melody lane, active pads.
     try { window.Launchpad && window.Launchpad.onSongUnloaded(); } catch (_) {}
-    // Drop the driver back to the persisted baseline mode. Song-scoped
-    // modes (toolbar Melody tool → 'instrument-melody') bypass
-    // state.settings, so without this the mode — and its pad-press synth
-    // voices — leaks into every subsequent song.
-    try {
-      if (window.Launchpad && window.Launchpad.setMode) {
-        window.Launchpad.setMode(state.settings.launchpadEnabled
-          ? state.settings.launchpadMode : 'off');
-      }
-    } catch (_) {}
+    // Re-derive the driver mode from the CURRENT surface (pad-surface
+    // tab when the kit view is up, legacy panel baseline elsewhere) so
+    // a song-scoped or leaked mode can't outlive its song.
+    try { _applyPadSurfaceDriverMode(); } catch (_) {}
     // Held keyboard-synth voices: a note-off lost across the switch
     // would drone forever under the new song.
     try { _midiKbReleaseAll(); } catch (_) {}
@@ -3566,6 +3560,22 @@
     buildChordRibbon(activeChordArray());
     syncChordViewModeRowVisibility();
     syncChordOverlaysVisibility();
+    // The driver just received the NEW song's key + chords (onSongKey
+    // above, onChordsLoaded inside buildChordRibbon). Re-assert the
+    // surface's driver mode — buildChordRibbon's preset auto-suggest
+    // (_onLaunchpadChordsChanged → _applyLaunchpadPreset) may have just
+    // set the PRESET's mode, but while the pad surface is up the TAB
+    // owns the driver (the preset write still updated the baseline
+    // settings, which is what off-surface views resolve to). Then
+    // restamp a visible Notes/Chords grid's labels for this song.
+    try { _applyPadSurfaceDriverMode(); } catch (_) {}
+    if (_currentPadSurface() !== 'samples') {
+      try { _refreshPadSurfaceLabels(); } catch (_) {}
+      try {
+        window.Launchpad
+          && _renderLaunchpadMirror(window.Launchpad.getGridColors());
+      } catch (_) {}
+    }
     // Prime the guidance + tab panels at index 0 so the user sees a
     // populated NOW PLAYING / NEXT UP / LEAD PART surface immediately
     // after analysis completes — without this, both panels stay empty
@@ -8207,6 +8217,7 @@
     // ---- Launchpad Pro MK3 wiring --------------------------------------
     _initLaunchpadUI();
     _initLaunchpadPanel();
+    _initPadSurfaceTabs();
   }
 
   // Match a raw MIDI device name to a known controller family and return
@@ -9002,8 +9013,10 @@
         if (typeof window.Launchpad.setInstrumentSubmode === 'function') {
           window.Launchpad.setInstrumentSubmode(state.settings.launchpadInstrumentSubmode);
         }
-        window.Launchpad.setMode(state.settings.launchpadEnabled
-          ? state.settings.launchpadMode : 'off');
+        // Surface-aware: when the pad surface (#view-kit) is already
+        // active — deep-link boot race — the tab owns the mode; else
+        // this is the legacy enable-gated baseline as before.
+        window.Launchpad.setMode(_padSurfaceDriverMode());
         // If the songKey has already been detected before this init ran
         // (unlikely — settings init happens on DOMContentLoaded — but
         // cheap), replay it so the module sees it.
@@ -9324,6 +9337,9 @@
         onGridChange: _renderLaunchpadMirror,
         onModeChange: (_m) => {
           try { _renderLaunchpadLegend(window.Launchpad.getLegendInfo()); } catch (_) {}
+          // Pad meanings changed with the mode — restamp the on-screen
+          // grid's chord/note labels (no-op when #lp-grid is absent).
+          try { _refreshPadSurfaceLabels(); } catch (_) {}
           // Mode change may toggle whether the octave arrows are active
           // (they're blanked while Contribute owns the left column).
           // Small defer so it lands after the mode's own initial paint.
@@ -9484,6 +9500,158 @@
       cap.textContent = info.caption;
       el.appendChild(cap);
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Pad-surface taxonomy — Notes | Chords | Samples (#pad-surface-tabs)
+  // ------------------------------------------------------------------
+  // Web port of the iOS Jam surface's JamPadMode segmented control
+  // (JamView padModeRow: Pads | Chords | Samples — "Pads" is the note
+  // surface; the user-facing web label is Notes). The tab is the ONE
+  // owner of the Launchpad driver's mode while the pad surface is up:
+  //   samples — today's kit grid (kit.js). Driver forced 'off'; the kit
+  //             owns every press (see _samplesSurfaceOwnsPress).
+  //   notes   — in-key synth note grid. Driver 'instrument-<submode>';
+  //             the orphaned on-screen mirror (#lp-grid, rehomed into
+  //             #view-kit) is the screen UI, hardware presses play the
+  //             same voices via the driver's own _onMidi.
+  //   chords  — the song's chord grid (driver 'song-verify'): pads are
+  //             the assigned chords, strummed by _launchpadPlayPress,
+  //             active/next chord highlighted from the transport.
+  // The active tab is stamped as data-pad-surface on #view-kit so
+  // lp-hw.js (hardware routing + LED mirror) and the press-arbitration
+  // gate read it with no module coupling. Persisted per browser under
+  // jamn.padSurface; default samples (today's behavior).
+
+  const _PAD_SURFACES = ['notes', 'chords', 'samples'];
+
+  function _currentPadSurface() {
+    const v = document.getElementById('view-kit');
+    const s = v && v.dataset ? v.dataset.padSurface : null;
+    return _PAD_SURFACES.includes(s) ? s : 'samples';
+  }
+
+  // The driver mode the current surface calls for. Kit view active: the
+  // tab owns the driver. Any other view: the legacy panel baseline
+  // (enable-checkbox gated), so the stage-panel workflows keep their
+  // persisted mode.
+  function _padSurfaceDriverMode() {
+    const v = document.getElementById('view-kit');
+    if (v && v.classList.contains('active')) {
+      const s = _currentPadSurface();
+      if (s === 'notes') {
+        // 'drum' is a hardware sampler stub with no web voice — coerce
+        // to synth so the Notes tab always sounds. 'free-play' is a
+        // top-level mode, not an instrument-<sub>.
+        let sub = state.settings.launchpadInstrumentSubmode || 'synth';
+        if (sub === 'drum') sub = 'synth';
+        return sub === 'free-play' ? 'free-play' : ('instrument-' + sub);
+      }
+      if (s === 'chords') return 'song-verify';
+      return 'off';
+    }
+    return state.settings.launchpadEnabled
+      ? state.settings.launchpadMode : 'off';
+  }
+
+  function _applyPadSurfaceDriverMode() {
+    try {
+      if (window.Launchpad && window.Launchpad.setMode) {
+        window.Launchpad.setMode(_padSurfaceDriverMode());
+      }
+    } catch (_) {}
+  }
+
+  // Stamp chord symbols / note names onto the mirror pads. Labels only
+  // change on mode/key/chord-assignment changes, so this is called from
+  // those edges (tab select, onModeChange, song load) rather than every
+  // grid paint.
+  function _refreshPadSurfaceLabels() {
+    const grid = document.getElementById('lp-grid');
+    if (!grid || !window.Launchpad || !window.Launchpad.getPadMeaning) return;
+    const pads = grid.querySelectorAll('.lp-pad');
+    for (const btn of pads) {
+      const padIdx = parseInt(btn.dataset.padIdx, 10);
+      let label = '';
+      let title = '';
+      try {
+        const m = window.Launchpad.getPadMeaning(padIdx);
+        title = _formatPadMeaningTitle(m);
+        if (m) {
+          if (m.kind === 'chord') label = m.symbol || '';
+          else if (m.kind === 'note') label = m.noteName || '';
+          else if (m.kind === 'drum') label = m.name || '';
+        }
+      } catch (_) {}
+      let span = btn.querySelector('.lp-pad-label');
+      if (!span) {
+        span = document.createElement('span');
+        span.className = 'lp-pad-label';
+        btn.appendChild(span);
+      }
+      span.textContent = label;
+      btn.title = title;
+    }
+  }
+
+  /** Select a pad surface: stamp + persist, swap panes, bind the driver
+   * mode, repaint the mirror/labels/legend. Idempotent — also used to
+   * RE-apply the stored tab when the kit view (re)activates. */
+  function _selectPadSurface(name) {
+    if (!_PAD_SURFACES.includes(name)) name = 'samples';
+    const v = document.getElementById('view-kit');
+    if (v) v.dataset.padSurface = name;
+    try {
+      if (window.localStorage) window.localStorage.setItem('jamn.padSurface', name);
+    } catch (_) {}
+    document.querySelectorAll('#pad-surface-tabs .pad-surface-tab').forEach((b) => {
+      const on = b.dataset.surface === name;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const notesRoot = document.getElementById('pad-notes-surface');
+    if (notesRoot) notesRoot.hidden = (name === 'samples');
+    const kitRoot = document.getElementById('kit-root');
+    if (kitRoot) kitRoot.hidden = (name !== 'samples');
+    // Remix transforms drive the kit — park the bar off-surface too.
+    const remixRoot = document.getElementById('remix-root');
+    if (remixRoot) remixRoot.hidden = (name !== 'samples');
+    _applyPadSurfaceDriverMode();
+    if (name !== 'samples' && window.Launchpad) {
+      try { _renderLaunchpadMirror(window.Launchpad.getGridColors()); } catch (_) {}
+      try { _refreshPadSurfaceLabels(); } catch (_) {}
+      try { _renderLaunchpadLegend(window.Launchpad.getLegendInfo()); } catch (_) {}
+    }
+    if (name === 'samples') {
+      // A kit that (re)rendered while #kit-root was hidden skipped its
+      // waveform pass (kit.js drawWaveInto sees zero client sizes and
+      // bails). The kit's own window-resize listener is the sanctioned
+      // redraw path — nudge it once the unhidden grid has laid out.
+      try {
+        requestAnimationFrame(() => {
+          try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+        });
+      } catch (_) {}
+    }
+  }
+
+  function _initPadSurfaceTabs() {
+    const strip = document.getElementById('pad-surface-tabs');
+    if (!strip) return;
+    strip.querySelectorAll('.pad-surface-tab').forEach((b) => {
+      b.addEventListener('click', () => {
+        // The click IS a user gesture — bootstrap the synth context so
+        // notes/chords presses (screen or MIDI) can sound immediately.
+        try { _ensureLaunchpadSynth(); } catch (_) {}
+        _selectPadSurface(b.dataset.surface);
+      });
+    });
+    let saved = null;
+    try {
+      saved = window.localStorage
+        ? window.localStorage.getItem('jamn.padSurface') : null;
+    } catch (_) {}
+    _selectPadSurface(saved || 'samples');
   }
 
   // ------------------------------------------------------------------
@@ -16267,13 +16435,19 @@
         // skips the mount branch (and its attach), so re-arm the physical
         // Launchpad mirror here.
         try { window.JamnLpHW?.attach?.().catch(() => {}); } catch (_) {}
+        // The stored pad-surface tab owns the driver while the pad
+        // surface is up — re-apply it (mode + pane visibility + mirror
+        // repaint) now that #view-kit is the active view.
+        try { _selectPadSurface(_currentPadSurface()); } catch (_) {}
       } else {
         // Leaving the Launchpad surface: stop the kit's hardware LED
         // mirror. Its tick kept repainting the kit grid over whatever the
         // driver's own song/chord modes painted. detach() blanks its
         // block, so hand the driver a full repaint to restore the mode's
-        // own colors.
+        // own colors — after re-deriving the mode for the new surface
+        // (legacy panel baseline; the tab only rules the kit view).
         try { window.JamnLpHW?.detach?.(); } catch (_) {}
+        try { _applyPadSurfaceDriverMode(); } catch (_) {}
         try { window.Launchpad?.repaint?.(); } catch (_) {}
       }
       if (name === 'library') _renderLibrary();
@@ -16583,7 +16757,12 @@
           showView('recordings');
           try { window.JamnRecordings?.toggleRecord?.(); } catch (_) {}
           break;
-        case 'synth': showView('kit'); break; // Jam Pads = web wavetable synth
+        case 'synth':
+          // The synth tool IS the Notes surface now that the taxonomy
+          // is explicit — open the pad surface on its Notes tab.
+          showView('kit');
+          try { _selectPadSurface('notes'); } catch (_) {}
+          break;
         case 'play':
           try { if (state.isPlaying) pauseAll(); else playAll(); } catch (_) {}
           break;
@@ -16595,14 +16774,14 @@
         case 'melody':
           // Dimmed (no-op) when the song carries no melody lane.
           if (!state.melody) return;
-          // Lands on the merged pad surface; the melody-guide submode
-          // calls below target the untouched in-stage Launchpad panel
-          // driver (window.Launchpad) and stay feature-checked no-ops here.
+          // Melody guide = the NOTES surface in melody submode. Going
+          // through the tab switcher (not a bare driver setMode, which
+          // is exactly the leak 5d1e3bd0/cea1cf47 closed) keeps press
+          // arbitration, LED ownership and the screen UI consistent.
           showView('kit');
-          try { window.Launchpad && window.Launchpad.setInstrumentSubmode &&
-                window.Launchpad.setInstrumentSubmode('melody'); } catch (_) {}
-          try { window.Launchpad && window.Launchpad.setMode &&
-                window.Launchpad.setMode('instrument-melody'); } catch (_) {}
+          state.settings.launchpadInstrumentSubmode = 'melody';
+          saveSettings();
+          try { _selectPadSurface('notes'); } catch (_) {}
           break;
         case 'remix':
           try { window.JamnRemix && window.JamnRemix.open && window.JamnRemix.open(); } catch (_) {}

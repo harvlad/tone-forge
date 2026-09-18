@@ -81,9 +81,17 @@
     return !!(d && typeof d.isConnected === "function" && d.isConnected());
   }
 
-  function kitViewActive() {
+  /** The kit grid owns hardware presses + LEDs only while the merged pad
+   * surface is the active view AND showing its SAMPLES tab. jam.js stamps
+   * the active tab as data-pad-surface on #view-kit (absent = legacy
+   * markup = samples). On the Notes/Chords tabs the driver
+   * (window.Launchpad) owns the device: its mode paints the grid and its
+   * own _onMidi turns presses into synth voices — routing those presses
+   * into kit pads here would re-create the loop+synth double-fire. */
+  function samplesGridActive() {
     var v = document.getElementById("view-kit");
-    return !!(v && v.classList.contains("active"));
+    if (!v || !v.classList.contains("active")) return false;
+    return (v.getAttribute("data-pad-surface") || "samples") === "samples";
   }
 
   // ---------- grid geometry (follows the kit's 16↔64 toggle) ----------
@@ -197,10 +205,20 @@
     S.state = connected ? "attached" : "unavailable";
     if (!connected) return;
 
-    if (!kitViewActive()) {
-      // Off-surface: keep our LEDs dark instead of showing a stale grid;
-      // the driver's own mode painter owns the device there.
-      if (S.ledCache.length) blankAll();
+    if (!samplesGridActive()) {
+      // Off-surface (other view, or the Notes/Chords tab): drop our LEDs
+      // ONCE on the edge and hand the device straight back to the
+      // driver's own mode painter — blankAll alone would wipe whatever
+      // the driver painted with nothing left to repaint it. Connected is
+      // already true here (checked above), so blankAll really clears the
+      // cache and this edge fires exactly once per standdown.
+      if (S.ledCache.length) {
+        blankAll();
+        var dd = lp();
+        if (dd && typeof dd.repaint === "function") {
+          try { dd.repaint(); } catch (_) {}
+        }
+      }
       return;
     }
 
@@ -266,7 +284,7 @@
     var isOn = status === 0x90 && (data[2] || 0) > 0;
     var isOff = status === 0x80 || (status === 0x90 && (data[2] || 0) === 0);
     if (!isOn && !isOff) return;
-    if (!kitViewActive()) return;      // other surfaces own the grid then
+    if (!samplesGridActive()) return;  // driver owns presses off the samples grid
     var cols = gridCols();
     var padIdx = padForHwNote(data[1], cols);
     if (padIdx < 0) return;            // ring button / outside the block

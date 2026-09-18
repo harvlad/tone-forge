@@ -702,3 +702,24 @@ features:
       connect:
         status: na
         note: "No pad surface — nothing to snapshot."
+
+  - id: jam-pad-surfaces
+    name: Jam pad-surface taxonomy — Notes | Chords | Samples switcher with per-surface press ownership (samples grid silences the note/chord synth; notes/chords sound only when explicitly selected)
+    platforms:
+      web:
+        status: done
+        evidence: "backend/static/jam.js#_selectPadSurface"
+        note: "Explicit tab strip on #view-kit (#pad-surface-tabs), the web home of iOS JamPadMode (iOS names the note surface 'Pads'; web labels it Notes). The active tab is stamped as data-pad-surface on #view-kit and is the ONE owner of the Launchpad driver's mode while the pad surface is up: Samples = the kit grid with the driver forced 'off' plus a press-level arbitration gate (_samplesSurfaceOwnsPress in _launchpadPushPress) so a persisted/leaked instrument or chord mode can never stack synth notes on kit loops again (the double-fire bug); Notes = in-key synth note grid (driver 'instrument-<submode>', drum coerced to synth) rendered by the rehomed on-screen mirror (#lp-grid + chord/note labels via _refreshPadSurfaceLabels, presses through pressPadFromScreen); Chords = the song's chord grid (driver 'song-verify', chord-symbol labels, active/next highlight from the transport, strums via _launchpadPlayPress). Hardware Launchpad follows the tab: lp-hw.js samplesGridActive gates both its note-input routing into kit pads and its LED kit-mirror, handing the device back to the driver's own painter (blank-once + repaint) on Notes/Chords. Toolbar integration: the Melody tool = Notes tab in melody submode, the synth tool = Notes tab. Persisted per browser as jamn.padSurface (default samples); off the kit view the legacy panel baseline (enable-gated launchpadMode) still rules, so stage-panel workflows are untouched."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeMobile/Views/Jam/JamView.swift#padModeRow"
+        note: "JamPadMode { pads, chords, samples } segmented chips (padModeRow) — the reference taxonomy. Pads = JamPadGrid12 in-key note pads on the PadSynth, Chords = ChordPadGridView, Samples = the launchpad kit; surfaces are mutually exclusive by construction (one padGrid switch), so iOS never had web's double-consumer press leak."
+      desktop:
+        status: missing
+        note: "Desktop's Launchpad panel is samples-only (LaunchpadPanelView); no Notes/Chords performance surface exists yet. Needs the JamPadMode taxonomy + a note/chord voice, sharing ConnectCore/ToneForgeEngine synth semantics."
+      plugin:
+        status: na
+        note: "jamn Kit is a sampler — kit pads only; note/chord performance surfaces belong to the jam apps (same rationale as launchpad-pad-grid)."
+      connect:
+        status: na
+        note: "No pad surface."

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>JamN — What are we playing?</title>
-<link rel="stylesheet" href="/static/jam.css?v=81" />
+<link rel="stylesheet" href="/static/jam.css?v=82" />
 <link rel="stylesheet" href="/static/kit.css?v=17">
 <link rel="stylesheet" href="/static/stage.css?v=4">
 <link rel="stylesheet" href="/static/sequencer.css?v=2">
@@ -1321,7 +1321,31 @@
   <!-- Sample-kit surface (sidebar TOOLS → Jam Pads). kit.js owns
        everything inside #kit-root via window.JamnKit.mount(entry); the
        router calls it whenever this pane activates with a loaded song. -->
-  <section class="view" id="view-kit">
+  <section class="view" id="view-kit" data-pad-surface="samples">
+    <!-- Pad-surface switcher — the iOS JamPadMode taxonomy (JamView
+         padModeRow Pads|Chords|Samples; "Pads" = the note surface, web
+         labels it Notes). jam.js _initPadSurfaceTabs wires it; the
+         active tab is stamped as data-pad-surface above so lp-hw.js
+         (hardware routing/LEDs) and the press-arbitration gate read it
+         straight off the DOM. Samples = the kit grid (default). -->
+    <div id="pad-surface-tabs" class="pad-surface-tabs" role="tablist" aria-label="Pad surface">
+      <button type="button" class="pad-surface-tab" data-surface="notes" role="tab"
+              aria-selected="false" title="Notes — play in-key synth notes on the pads">Notes</button>
+      <button type="button" class="pad-surface-tab" data-surface="chords" role="tab"
+              aria-selected="false" title="Chords — strum this song's chords on the pads">Chords</button>
+      <button type="button" class="pad-surface-tab is-active" data-surface="samples" role="tab"
+              aria-selected="true" title="Samples — the song's kit loops and one-shots">Samples</button>
+    </div>
+    <!-- Notes/Chords surface: the on-screen driver mirror (#lp-grid,
+         rehomed here from the retired chord-Perform panel — the CSS and
+         the jam.js builder/renderer/legend machinery were already in
+         place, orphaned). Hidden while the Samples tab is active. -->
+    <div id="pad-notes-surface" class="pad-notes-surface" hidden>
+      <div class="lp-grid-wrap">
+        <div id="lp-grid" class="lp-grid"></div>
+        <div id="lp-legend" class="lp-legend"></div>
+      </div>
+    </div>
     <!-- Remix bar: the web home of the native Remix sheets (one-tap
          Flip / Humanize / Re-Drum / Instrument Pack). remix.js owns
          everything inside #remix-root; the router mounts it alongside
@@ -1501,7 +1525,7 @@
 <script src="/static/packs.js?v=1"></script>
 <script src="/static/contribute.js?v=2"></script>
 <script src="/static/chopedit.js?v=2"></script>
-<script src="/static/lp-hw.js?v=2"></script>
-<script src="/static/jam.js?v=159"></script>
+<script src="/static/lp-hw.js?v=3"></script>
+<script src="/static/jam.js?v=160"></script>
 </body>
 </html>

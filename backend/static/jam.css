@@ -5174,3 +5174,54 @@ body:has(#view-intake.active) #view-intake.active { width: 100%; }
   margin: 0 auto;
   width: 100%;
 }
+
+/* ---- Pad-surface tabs (Notes | Chords | Samples, #view-kit) ----
+   The iOS JamPadMode segmented control's web home. Same underline-tab
+   idiom as .center-tabs so the switcher reads as chrome, not content. */
+.pad-surface-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 10px;
+  border-bottom: 1px solid var(--border, #2A2A36);
+}
+.pad-surface-tab {
+  background: transparent;
+  border: 0;
+  color: var(--text-dim, #A1A1AA);
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.pad-surface-tab:hover { color: var(--text, #FFFFFF); }
+.pad-surface-tab.is-active {
+  color: var(--text, #FFFFFF);
+  border-bottom-color: var(--accent, #8B5CF6);
+}
+
+/* Notes/Chords surface wrapper: center the rehomed mirror grid and cap
+   it so the 8×8 never towers past the viewport (same intent as the
+   original .lp-grid-wrap cap, re-derived for this pane's chrome). */
+.pad-notes-surface { padding: 4px 0 12px; }
+.pad-notes-surface .lp-grid-wrap {
+  width: min(560px, 100%, calc(100vh - 260px));
+}
+
+/* On-pad chord-symbol / note-name labels for the on-screen grid.
+   Explicit color: the renderer drives the button's `color` for the
+   currentColor glow (or `transparent` on unlit pads), which a plain
+   inherited span would pick up and vanish with. */
+.lp-pad-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(8px, 1.4vw, 12px);
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+  overflow: hidden;
+}
