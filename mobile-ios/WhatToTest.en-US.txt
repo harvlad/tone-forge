@@ -1,37 +1,36 @@
 WHAT'S NEW IN THIS BUILD
 
-• Sample trigger modes are now One-Shot | Follow | Latch (replaces
-  Tap | Loop | Latch):
-  – One-Shot = finger-drumming. Every tap plays the sample FROM THE
-    BEGINNING, no clock sync. Hold to sustain, release stops. Tap fast
-    to retrigger from the top each time.
-  – Follow = plays IN SYNC with the other pads (locks to the shared
-    clock point). This is the old "Tap" you liked — renamed. Release
-    stops.
-  – Latch = synced loop, tap on / tap off (unchanged).
-• Loop mode is gone (it overlapped with Latch). If you were on Tap or
-  Loop, you're now on Follow.
+• The bottom Record button now records YOUR ACTUAL SESSION AUDIO — the
+  full mix you hear (song + pads + FX + master processing) — and saves
+  it to Library → Recordings as an audio file you can play, rename and
+  share.
+• The old arrangement Rec / Play / Clear chips are gone from the
+  Samples row (low value, cluttered the chrome).
+• (From the last build) One-Shot | Follow | Latch trigger modes.
 
 HOW TO USE
 
-Build → Samples. The mode chips (One-Shot | Follow | Latch) lead the
-row above the pads.
-• One-Shot: tap a pad — it plays from the sample start every time. Great
-  for drum hits / finger-drumming.
-• Follow: tap pads — they lock to the same clock position so layers stay
-  in time.
-• Latch: tap to start a loop, tap again to stop.
+1. Load a song → Build → jam on the pads (press transport Play if you
+   want the song underneath).
+2. Tap the transport Record pill — it starts capturing what you hear.
+   (Starts the song too if it was stopped.)
+3. Tap it again to stop. The take lands in Library → Recordings under
+   "Audio Recordings".
+4. Play it back there; rename / share (exports the m4a) / delete from
+   the row menu. Recording stops by itself at 15 minutes or if you
+   background the app.
 
 WHAT TO TEST
 
-1. One-Shot: tap a pad repeatedly — expected = restarts from the TOP
-   each tap, instant, no sync. Hold = sustains, release = stops.
-2. Follow: with a few pads going, tap another — expected = it drops in
-   IN SYNC at the shared clock point (not from the top).
-3. Latch: tap on / tap off a synced loop.
-4. Plug in a Launchpad (if you have one): One-Shot gives instant
-   from-the-top hits on the hardware too.
+1. Record a 20-second jam (song + pads) → stop → play the take in
+   Library. Expected = it sounds exactly like what you heard, pads
+   included.
+2. Record with ONLY pads (song stopped). Expected = pads captured.
+3. Stop recording while the song plays — the music keeps going, only
+   the capture stops.
+4. Rename and share a take (share sheet exports the audio file).
+5. Quick sanity on One-Shot / Follow / Latch from the last build.
 
 WHAT TO REPORT
-• Any One-Shot pad that does NOT start from the beginning.
-• Any Follow pad that starts from the top instead of locking to the mix.
+• Any crash on Record (this build fixes one).
+• A take that's silent or missing the pads.
