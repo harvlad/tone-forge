@@ -94,6 +94,16 @@ public struct RootView: View {
                         + "own supply.",
                     onDismiss: { appState.dismissUnderpowerBanner() }
                 )
+            } else if let notice = appState.projects.notice {
+                // Projects restore problem ("Needs <donor>…"): visible
+                // wherever the user is, dismissible, never a crash or a
+                // silent drop.
+                BannerView(
+                    icon: "square.grid.4x3.fill",
+                    title: "Project restore",
+                    message: notice,
+                    onDismiss: { appState.projects.notice = nil }
+                )
             }
         }
         .animation(.easeInOut(duration: 0.2),
@@ -177,6 +187,8 @@ struct LibraryView: View {
                     songsList
                 case .packs:
                     PacksBrowserView()
+                case .projects:
+                    ProjectsListView()
                 case .recordings:
                     RecordingsListView()
                 }

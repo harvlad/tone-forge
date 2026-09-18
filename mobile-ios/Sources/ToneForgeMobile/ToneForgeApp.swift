@@ -388,6 +388,12 @@ public final class AppState: ObservableObject {
     /// from `tick()` and re-seated per song in `activate(bundle:)`.
     lazy var arrangement: ArrangementModel = ArrangementModel(app: self)
 
+    /// Projects/Workspaces (v1): capture/restore/reset of the per-song
+    /// pad workspace + the Library → Projects list. Lazy so headless
+    /// AppStates only pay for it once a song activates (the hook in
+    /// `activate` is its first touch).
+    public lazy var projects: ProjectCoordinator = ProjectCoordinator(app: self)
+
     /// Launchpad Pro MK3 hardware transport (P2). Created in
     /// `bootAudio` (see `wireLaunchpad`) so headless AppStates —
     /// snapshot tests construct one without booting — never open a
@@ -1595,6 +1601,10 @@ public final class AppState: ObservableObject {
         // come from the manifest, not the buffers, so this is safe to
         // paint before the decode lands.
         modeCoordinator.refreshLayout()
+        // Projects auto-save: pack changes (kit swap, borrow mount) are
+        // workspace state. Guarded so the init-time starter-pack load
+        // never constructs the lazy coordinator.
+        if currentBundle != nil { projects.noteWorkspaceChanged() }
         // Register the pack's shipped starter groove (if any) into the
         // sequencer store so it shows up in the sequence picker.
         // Idempotent by the pattern's deterministic id.
@@ -1957,6 +1967,12 @@ public final class AppState: ObservableObject {
         // D-022 Phase 7: rehydrate layer A/B slots for this song.
         rehydrateLayerSlots(analysisId: bundle.analysisId)
 
+        // Projects (v1): restore this song's pending/working workspace
+        // over the baseline just built (assignments, FX, gates,
+        // arrangement, launchpad settings). Borrow re-derivation waits
+        // for the auto-kit (projects.autoKitDidMount).
+        projects.songDidActivate(bundle: bundle)
+
         // Song is fully activated (grid, transport, chords wired) —
         // let the caller navigate NOW, before the stem download.
         onReady?()
@@ -2191,6 +2207,10 @@ public final class AppState: ObservableObject {
                                 "Applied: Auto Kit — the song's best loops are on the pads. Tap a pad to hear them."
                         }
                     }
+                    // Projects: the kit is mounted — a restored
+                    // workspace's borrows can re-derive now without the
+                    // kit activation clobbering the borrow pack.
+                    self.projects.autoKitDidMount(analysisId: analysisId)
                     return
                 } catch {
                     lastError = error
@@ -2198,6 +2218,9 @@ public final class AppState: ObservableObject {
             }
             guard self.currentBundle?.analysisId == analysisId else { return }
             self.autoKitError = lastError?.localizedDescription ?? "Kit unavailable."
+            // Kit failed, but a restored borrow mounts its own pack —
+            // still worth attempting.
+            self.projects.autoKitDidMount(analysisId: analysisId)
         }
     }
 
@@ -2554,13 +2577,19 @@ public final class AppState: ObservableObject {
     /// so the 16/64 pad toggle can RE-ARRANGE a borrow (16 = best-of-both, 64 =
     /// full) instead of the 4×4 clipping to the top rows and dropping the donor.
     /// nil = no borrow active; cleared when a non-borrow pack is activated.
-    private var activeBorrowContext: BorrowContext?
-    private struct BorrowContext {
+    /// Internal (not private) so ProjectCoordinator can capture the mounted
+    /// borrow into content-addressed BorrowRefs.
+    var activeBorrowContext: BorrowContext?
+    struct BorrowContext {
         let fetched: SamplePack
         let base: URL
         let stems: [String: URL]
         let hostName: String?
         let donorName: String
+        /// The donor song's analysisId + the stem the picker requested —
+        /// what a project snapshot needs to re-request this borrow.
+        let donorId: String
+        let stem: String
     }
     /// True while a borrow is mounted — drives the JamView size toggle to
     /// re-arrange rather than clip.
@@ -2597,8 +2626,24 @@ public final class AppState: ObservableObject {
     /// Load a donor's borrowed loops onto the pads as loopable file pads
     /// (bar-synced to this song). Real recorded loops, tempo-matched — the
     /// coherent alternative to synthesized Re-Drum.
-    public func loadBorrowLoops(donorId: String, stem: String) {
-        guard currentBundle != nil, borrowBusyDonor == nil else { return }
+    ///
+    /// `completion` (project restore): called once with the RAW fetched
+    /// pack on a successful mount — its pads carry the content-address
+    /// fields (`sourceLoopStartSec`/`assetId`) restore matches BorrowRefs
+    /// against — or with the error when the borrow can't mount (donor
+    /// gone, network down, another borrow in flight). Interactive callers
+    /// pass nil and keep the remixError/remixApplied surface.
+    public func loadBorrowLoops(
+        donorId: String, stem: String,
+        completion: ((Result<SamplePack, Error>) -> Void)? = nil
+    ) {
+        guard currentBundle != nil, borrowBusyDonor == nil else {
+            completion?(.failure(NSError(
+                domain: "Borrow", code: 1,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Another borrow is loading (or no song is loaded)."])))
+            return
+        }
         borrowBusyDonor = donorId
         remixError = nil
         let base = backendBaseURL
@@ -2632,9 +2677,19 @@ public final class AppState: ObservableObject {
                 let files = await Self.downloadKitSamples(pack: pack, base: base)
                 guard !files.isEmpty else {
                     self.remixError = "Borrowed loops didn't download."
+                    completion?(.failure(NSError(
+                        domain: "Borrow", code: 2,
+                        userInfo: [NSLocalizedDescriptionKey:
+                            "Borrowed loops didn't download."])))
                     return
                 }
-                guard self.currentBundle?.analysisId == analysisId else { return }
+                guard self.currentBundle?.analysisId == analysisId else {
+                    completion?(.failure(NSError(
+                        domain: "Borrow", code: 3,
+                        userInfo: [NSLocalizedDescriptionKey:
+                            "Song changed while the borrow loaded."])))
+                    return
+                }
                 // Retain the raw borrow so the 16/64 toggle can RE-ARRANGE (16 =
                 // best-of-both) instead of the 4×4 clipping to the top rows and
                 // dropping the donor. Set BEFORE activateSamplePack, which keeps
@@ -2642,7 +2697,8 @@ public final class AppState: ObservableObject {
                 // any other pack.
                 self.activeBorrowContext = BorrowContext(
                     fetched: fetched, base: base, stems: stems,
-                    hostName: hostName, donorName: donorLabel)
+                    hostName: hostName, donorName: donorLabel,
+                    donorId: donorId, stem: stem)
                 // Keep the surface on the full 8×8 (mirrors web's "stay in 64 —
                 // never shrink to 16"). The 16|64 toggle still works and now
                 // re-arranges the borrow; this only nudges it up on load.
@@ -2659,8 +2715,10 @@ public final class AppState: ObservableObject {
                     : "Applied: Borrow — \(pack.name) on the pads, "
                         + "locked to this song's tempo."
                 Haptics.padTrigger()
+                completion?(.success(fetched))
             } catch {
                 self.remixError = error.localizedDescription
+                completion?(.failure(error))
             }
         }
     }

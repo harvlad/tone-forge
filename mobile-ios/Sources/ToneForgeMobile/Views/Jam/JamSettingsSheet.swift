@@ -20,10 +20,14 @@ struct JamSettingsSheet: View {
     /// surface the performer is currently on, so it stays reachable
     /// after moving out of the Jam toolbar.
     @ObservedObject var chordPadController: ChordPadController
+    @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
     /// Key editing moved here from the Jam toolbar (grid gets the room).
     @State private var showKeySheet = false
+    /// "Save workspace as project…" naming alert.
+    @State private var showSaveWorkspace = false
+    @State private var saveWorkspaceName = ""
 
     private var isMinorFamilyKey: Bool {
         switch controller.effectiveKey?.scale {
@@ -109,6 +113,35 @@ struct JamSettingsSheet: View {
                         onDecrement: { setOctaveShift(octaveShift - 1) }
                     )
                 }
+
+                // Projects (v1): name a durable copy of the current
+                // pad workspace, or reset the song to its default kit.
+                // The in-progress workspace auto-saves regardless.
+                if appState.currentBundle != nil {
+                    Section {
+                        Button {
+                            saveWorkspaceName = ""
+                            showSaveWorkspace = true
+                        } label: {
+                            Label("Save workspace as project…",
+                                  systemImage: "square.and.arrow.down")
+                        }
+                        Button(role: .destructive) {
+                            appState.projects.resetToSong()
+                            dismiss()
+                        } label: {
+                            Label("Reset workspace to song",
+                                  systemImage: "arrow.uturn.backward")
+                        }
+                    } header: {
+                        Text("Workspace")
+                    } footer: {
+                        Text("Pads, effects, sequences and borrowed "
+                            + "loops for this song. Saved projects live "
+                            + "in Library \u{2192} Projects; changes "
+                            + "auto-save to a per-song working copy.")
+                    }
+                }
             }
             .navigationTitle("Jam Settings")
             #if os(iOS)
@@ -116,6 +149,18 @@ struct JamSettingsSheet: View {
             #endif
             .sheet(isPresented: $showKeySheet) {
                 ScaleWheelSheet(controller: controller, jamSettings: jamSettings)
+            }
+            .alert("Save workspace", isPresented: $showSaveWorkspace) {
+                TextField("Project name", text: $saveWorkspaceName)
+                Button("Save") {
+                    appState.projects
+                        .saveCurrentAsProject(named: saveWorkspaceName)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Saves this song's pads, effects, sequences and "
+                    + "borrowed loops as a project in Library \u{2192} "
+                    + "Projects.")
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

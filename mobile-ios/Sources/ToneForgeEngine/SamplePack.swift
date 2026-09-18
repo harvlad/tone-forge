@@ -200,6 +200,24 @@ public struct SamplePad: Codable, Sendable, Equatable {
     /// once the host/donor names are known, so the grid can show a small
     /// per-pad source-song label. Decoded-if-present only for round-trips.
     public let sourceName: String?
+    /// Borrow/kit pads: the CONCRETE stem role this pad was cut from
+    /// ("drums", "bass", "guitar_center", …) — the backend's `stemRole`
+    /// field, distinct from `stemSlice` (file-backed borrow pads have no
+    /// slice). Nil on packs that don't send it.
+    public let stemRole: String?
+    /// Borrow only — CONTENT ADDRESS, not a playback window: the
+    /// donor-timeline loop span that keyed this pad's render
+    /// (borrow.py `sourceLoopStartSec`/`sourceLoopEndSec`). Project
+    /// snapshots persist this (BorrowRef) instead of the response's
+    /// renumbered padIdx. Deliberately SEPARATE from
+    /// `loopStartSec`/`loopEndSec`: those drive the pack's shared
+    /// lock-cycle and would skew it at fold ratio != 1 (donor seconds
+    /// != rendered seconds).
+    public let sourceLoopStartSec: Double?
+    public let sourceLoopEndSec: Double?
+    /// Borrow only: signed semitone transpose the render applied
+    /// (0 = pitchless drums / host pads / no key conform).
+    public let transposeSemis: Int?
 
     public init(
         padIdx: Int,
@@ -225,7 +243,11 @@ public struct SamplePad: Codable, Sendable, Equatable {
         assetId: String? = nil,
         sampleUrl: String? = nil,
         source: String? = nil,
-        sourceName: String? = nil
+        sourceName: String? = nil,
+        stemRole: String? = nil,
+        sourceLoopStartSec: Double? = nil,
+        sourceLoopEndSec: Double? = nil,
+        transposeSemis: Int? = nil
     ) {
         self.padIdx = padIdx
         self.name = name
@@ -251,6 +273,10 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.sampleUrl = sampleUrl
         self.source = source
         self.sourceName = sourceName
+        self.stemRole = stemRole
+        self.sourceLoopStartSec = sourceLoopStartSec
+        self.sourceLoopEndSec = sourceLoopEndSec
+        self.transposeSemis = transposeSemis
     }
 
     // Custom decoding to default `gainDb` when the key is absent.
@@ -262,7 +288,8 @@ public struct SamplePad: Codable, Sendable, Equatable {
              loopPointSec, gainDb, defaultQuantize, stemSlice, effects,
              loopStartSec, loopEndSec, loopScore, loopable, contentType,
              performanceScore, difficulty, category, crossfadeMs, assetId,
-             sampleUrl, source, sourceName
+             sampleUrl, source, sourceName, stemRole,
+             sourceLoopStartSec, sourceLoopEndSec, transposeSemis
     }
 
     public init(from decoder: Decoder) throws {
@@ -291,6 +318,13 @@ public struct SamplePad: Codable, Sendable, Equatable {
         self.sampleUrl = try c.decodeIfPresent(String.self, forKey: .sampleUrl)
         self.source = try c.decodeIfPresent(String.self, forKey: .source)
         self.sourceName = try c.decodeIfPresent(String.self, forKey: .sourceName)
+        self.stemRole = try c.decodeIfPresent(String.self, forKey: .stemRole)
+        self.sourceLoopStartSec = try c.decodeIfPresent(
+            Double.self, forKey: .sourceLoopStartSec)
+        self.sourceLoopEndSec = try c.decodeIfPresent(
+            Double.self, forKey: .sourceLoopEndSec)
+        self.transposeSemis = try c.decodeIfPresent(
+            Int.self, forKey: .transposeSemis)
     }
 
     /// A copy of this pad with a new grid position and (optionally) a
@@ -307,7 +341,11 @@ public struct SamplePad: Codable, Sendable, Equatable {
             performanceScore: performanceScore, difficulty: difficulty,
             category: category, crossfadeMs: crossfadeMs, assetId: assetId,
             sampleUrl: sampleUrl, source: source,
-            sourceName: sourceName ?? self.sourceName)
+            sourceName: sourceName ?? self.sourceName,
+            stemRole: stemRole,
+            sourceLoopStartSec: sourceLoopStartSec,
+            sourceLoopEndSec: sourceLoopEndSec,
+            transposeSemis: transposeSemis)
     }
 }
 

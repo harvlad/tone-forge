@@ -665,8 +665,9 @@ features:
     name: Bottom transport Record captures the session's audio OUTPUT (mixed sound — stems + pads + FX + master chain) to a file in Library → Recordings
     platforms:
       web:
-        status: missing
-        note: "Bottom-bar Record → master-bus capture is iOS-only for now. Web's transport has no output-capture; a MediaRecorder off the WebAudio master would be the port, plus a Recordings surface. Follow-up."
+        status: partial
+        evidence: "backend/static/recordings.js#JamnRecordings"
+        note: "Web already captures master audio takes (recordings.js#JamnRecordings: createTap off the master + a Recordings surface) BUT kit-pad audio is absent from web takes — the tap hangs off the song bus only, so pads/kit FX never reach the take. Real bug, tracked as follow-up."
       ios:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeMobile/Audio/OutputRecorder.swift#OutputRecorder"
@@ -679,3 +680,22 @@ features:
       connect:
         status: na
         note: "Connect is a live monitoring/tone engine with no session transport or Library — nothing to arm a session-output recorder against."
+
+  - id: project-workspaces
+    name: Projects — save/load/duplicate/reset a per-song pad workspace (pad assignments, pad FX, hidden pads, section gates, sequences, chop edits, arrangement, launchpad settings, borrows) with auto-save of the working project
+    platforms:
+      web:
+        status: missing
+        note: "No pad-assignment persistence exists on web at all today — kit.js rebuilds the grid from the server kit each mount, so there is no per-song workspace state to snapshot yet. The ProjectSnapshot JSON (ToneForgeEngine/Projects/ProjectSnapshot.swift) is the cross-surface contract web would serialize to."
+      ios:
+        status: done
+        evidence: "mobile-ios/Sources/ToneForgeEngine/Projects/ProjectSnapshot.swift#ProjectSnapshot"
+      desktop:
+        status: missing
+        note: "jam-desktop stores are global, not per-song, so a snapshot has nothing per-song to capture yet; the contract types now live in the shared engine (ToneForgeEngine/Projects/ProjectSnapshot.swift) for desktop to compile against when its stores go per-song."
+      plugin:
+        status: na
+        note: "The host DAW's project file is the workspace container for the plugin; jamn-level per-pad state persistence inside the plugin is a separate gap tracked outside this row."
+      connect:
+        status: na
+        note: "No pad surface — nothing to snapshot."

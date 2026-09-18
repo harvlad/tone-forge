@@ -61,6 +61,14 @@ public final class PadAssignmentStore: ObservableObject {
         save()
     }
 
+    /// Replace the ENTIRE assignment table (all modes) in one write —
+    /// project restore/reset. Empty per-mode maps are dropped so the
+    /// stored shape stays identical to incremental `assign` writes.
+    public func replaceAll(_ byMode: [String: [Int: PadSlot]]) {
+        assignmentsByMode = byMode.filter { !$0.value.isEmpty }
+        save()
+    }
+
     /// Drop every assignment pointing at a deleted local sample —
     /// called by the delete flow so pads never dangle.
     public func removeAll(referencing id: UUID) {
