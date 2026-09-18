@@ -209,18 +209,28 @@ final class BorrowLayoutTests: XCTestCase {
         XCTAssertEqual(lp.padCount, 64)
         XCTAssertEqual(lp.assignments.count, 24, "all 24 borrow pads at 64")
 
-        // Toggle to 16: best-of-both, both songs present, none of the donor lost.
+        // Toggle to 16: best-of-both, both songs present, none of the donor
+        // lost. Compact slots decode 4-WIDE — the 16 grid is the 4×4 BLOCK
+        // (rows 0–3 × cols 0–3) on screen AND hardware (D-037); the old /8
+        // decode strung them across the top two 8-wide rows, half of them
+        // outside the block the screen draws.
         lp.padCount = 16
         XCTAssertEqual(lp.assignments.count, 16, "16 pads at 4×4")
         for slot in 0..<8 {
             XCTAssertEqual(
-                lp.sourceLabel(for: LaunchpadPad(row: slot / 8, col: slot % 8)),
-                "Host", "initial fills the top half at 16")
+                lp.sourceLabel(for: LaunchpadPad(row: slot / 4, col: slot % 4)),
+                "Host", "initial fills the top half of the 4×4 block")
         }
         for slot in 8..<16 {
             XCTAssertEqual(
-                lp.sourceLabel(for: LaunchpadPad(row: slot / 8, col: slot % 8)),
-                "Donor", "donor fills the bottom half at 16")
+                lp.sourceLabel(for: LaunchpadPad(row: slot / 4, col: slot % 4)),
+                "Donor", "donor fills the bottom half of the 4×4 block")
+        }
+        // Nothing may land outside the block — every compact pad is visible.
+        for (pad, _) in lp.assignments {
+            XCTAssertTrue(pad.row < 4 && pad.col < 4,
+                          "compact borrow pad \(pad) outside the 4×4 block")
+            XCTAssertTrue(lp.isPadVisible(pad))
         }
 
         // Toggle back to 64 restores the FULL set (re-arranged from the retained

@@ -414,6 +414,38 @@ public final class ChopPlayer {
         }
     }
 
+    /// Warm downloaded FILE pads (`drumfile:` composites, borrow loops):
+    /// open the reader and decode BOTH variants a press can ask for —
+    /// the whole-file one-shot region and the 12 ms-crossfade loop bake
+    /// `trigger(file:)` derives — so a flood kit's first press doesn't
+    /// pay AVAudioFile open + read + SRC on the press path. The file
+    /// twin of `prewarm(_:)`, which only covers stem-chop regions; the
+    /// frame math mirrors `trigger(file:)` exactly so the cache keys
+    /// match the live press. Yields between files; safe to race a press
+    /// (both caches re-check).
+    public func prewarmFiles(_ urls: [URL]) async {
+        for url in urls {
+            guard let file = cachedFile(for: url) else { continue }
+            let duration = Double(file.length) / file.fileFormat.sampleRate
+            let frames = Self.regionFrameCount(
+                startSec: 0, endSec: duration,
+                sampleRate: file.fileFormat.sampleRate,
+                fileLength: file.length)
+            guard frames > 0 else { continue }
+            _ = regionBuffer(file: file, startFrame: 0,
+                             frameCount: AVAudioFrameCount(frames))
+            await Task.yield()
+            _ = loopBuffer(file: file, startFrame: 0,
+                           frameCount: AVAudioFrameCount(frames),
+                           crossfadeMs: 12)
+            await Task.yield()
+        }
+    }
+
+    /// Test seam: file readers currently open (prewarmFiles fills it,
+    /// trigger(file:) reuses it).
+    var cachedFileCount: Int { fileCache.count }
+
     // MARK: - Trigger / release
 
     /// Play `assignment`'s chop after `delaySeconds` of wall-clock

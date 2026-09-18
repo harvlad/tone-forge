@@ -207,6 +207,181 @@ final class ChopPlayerBurstTests: XCTestCase {
         XCTAssertLessThan(worst, 10.0, "fast release must stay ~free on the MIDI thread")
     }
 
+    // MARK: - Flood-mounted grid (64-pad kit) rides the same fast paths
+
+    /// A SERVER-flood kit pad fixture: stemSlice windows all inside the
+    /// test WAV, stems cycling the real roles so the mount spans stems
+    /// like a genuine /kit?pads=64 manifest.
+    private func floodPack(pads: Int) -> SamplePack {
+        let stems = ["drums", "bass", "other", "vocals"]
+        let padList = (0..<pads).map { i in
+            SamplePad(
+                padIdx: i, name: "Pad \(i)", family: .mixed,
+                colorHint: "#EF4444",
+                stemSlice: StemSlice(
+                    stemRole: stems[i % stems.count],
+                    startSec: Double(i % 8) * 0.5,
+                    endSec: Double(i % 8) * 0.5 + 2.0),
+                loopScore: 0.8, loopable: true,
+                contentType: "rhythm_loop", category: "DRUMS",
+                assetId: "asset-\(i)")
+        }
+        return SamplePack(packId: "flood", name: "Flood", family: .mixed,
+                          pads: padList)
+    }
+
+    /// SessionController's onTrigger routing, reduced to its audio calls:
+    /// `drumfile:`/`borrowfile:` assignments play their downloaded FILE,
+    /// everything else the stem chop — both through ChopPlayer.schedule
+    /// with the pad's tag. Keeping the twin here pins that EVERY mount
+    /// route's press registers the receive-thread fast-release ref and
+    /// rides parked voices.
+    private func wire(
+        _ controller: LaunchpadController, to player: ChopPlayer,
+        sampleFiles: [Int: URL] = [:]
+    ) {
+        controller.onTrigger = { pad, assignment, _, _ in
+            let tag = pad.row * 8 + pad.col
+            if let aid = assignment.chop.assetId,
+               aid.hasPrefix("drumfile:") || aid.hasPrefix("borrowfile:"),
+               let url = sampleFiles[assignment.chop.idx] {
+                player.trigger(file: url, startSec: nil, endSec: nil,
+                               afterSeconds: 0, loop: false, padTag: tag)
+                return
+            }
+            player.trigger(assignment, afterSeconds: 0, loop: true,
+                           crossfadeMs: ChopPlayer.defaultPadCrossfadeMs,
+                           loopBarSeconds: 2.0, cycleSeconds: 4.0,
+                           padTag: tag)
+        }
+        controller.onRelease = { _, assignment in
+            if let aid = assignment.chop.assetId,
+               aid.hasPrefix("drumfile:") || aid.hasPrefix("borrowfile:"),
+               let url = sampleFiles[assignment.chop.idx] {
+                player.release(fileURL: url)
+            } else {
+                player.release(assignment)
+            }
+        }
+        controller.onStopAllVoices = { player.stopAll() }
+    }
+
+    /// Burst across a FLOOD-mounted 64-pad grid (not the auto-kit
+    /// fixture): presses ride parked voices — zero play() on the press
+    /// path — and every pressed pad lands in the fast-release registry,
+    /// so the MIDI receive thread can begin its fade. Pins that the
+    /// 64-flood mount route (KitGridMapper → adoptAssignments →
+    /// padDown → onTrigger) kept every latency guarantee the 16-pad
+    /// auto kit had (b3727853 parked rotation + 40625901 fast release).
+    func testFloodMountedGridBurstNoPressPathPlayAndFastReleaseRegistered() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        await player.load(stemURLs: [
+            "drums": url, "bass": url, "other": url, "vocals": url,
+        ])
+        let controller = LaunchpadController(nowProvider: { 0 })
+        controller.adoptAssignments(
+            KitGridMapper.pairs(pack: floodPack(pads: 64)))
+        controller.playbackMode = .oneShot   // instant gate: fires NOW
+        wire(controller, to: player)
+        await player.prewarm(
+            controller.assignments.values.map { (chop: $0.chop, stem: $0.stem) },
+            loopBarSeconds: 2.0, cycleSeconds: 4.0)
+        await player.warmUpPool()
+        XCTAssertEqual(player.immediatePlayCount, 0)
+
+        // 12 different flood pads (parked pool holds 16): press each via
+        // the pipeline, assert registration, then release both lanes.
+        for i in 0..<12 {
+            let pad = LaunchpadPad(row: i / 8, col: i % 8)
+            controller.padDown(pad, pressSongSeconds: 0, pressHostTime: 1)
+            let tag = pad.row * 8 + pad.col
+            XCTAssertNotNil(player.fastReleaseVolume(tag: tag),
+                "flood pad \(i) press must register its fast-release ref")
+            player.padReleased(tag: tag)          // receive-thread lane
+            controller.padUp(pad, pressHostTime: 2)   // main lane follows
+        }
+        XCTAssertEqual(player.immediatePlayCount, 0,
+            "flood presses must ride parked voices — zero play() on the press path")
+    }
+
+    /// EVERY mount route registers padTags at trigger: chop grids
+    /// (setChops), kit flood incl. `drumfile:` file pads
+    /// (adoptAssignments), and borrow file pads
+    /// (adoptBorrowAssignments). A route whose press skips registration
+    /// leaves its pad-up waiting on the main hop — the exact class of
+    /// slow lane this suite exists to forbid.
+    func testEveryMountRouteRegistersPadTags() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        let fileURL = try makeWAV(seconds: 2)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        await player.load(stemURLs: ["drums": url, "other": url])
+        await player.warmUpPool()
+        let controller = LaunchpadController(nowProvider: { 0 })
+        controller.playbackMode = .oneShot
+        wire(controller, to: player, sampleFiles: [0: fileURL, 1: fileURL])
+
+        func pressAndAssert(_ pad: LaunchpadPad, route: String) {
+            let tag = pad.row * 8 + pad.col
+            controller.padDown(pad, pressSongSeconds: 0, pressHostTime: 1)
+            XCTAssertNotNil(player.fastReleaseVolume(tag: tag),
+                "\(route) press must register the fast-release padTag")
+            controller.padUp(pad, pressHostTime: 2)
+        }
+
+        // 1) Chop grid (panel stem/sliceMode load).
+        controller.setChops(
+            [Chop(idx: 0, startSec: 0, endSec: 2, durationSec: 2,
+                  kind: "phrase", loopable: true, loopScore: 0.9)],
+            stem: "other", sliceMode: "chord")
+        pressAndAssert(LaunchpadPad(row: 0, col: 0), route: "chop grid")
+
+        // 2) Kit flood with a downloaded composite: pad 1 gets the
+        //    drumfile: sentinel and must register through the FILE lane.
+        let pack = floodPack(pads: 2)
+        controller.adoptAssignments(
+            KitGridMapper.pairs(pack: pack, sampleFiles: [1: fileURL]))
+        pressAndAssert(LaunchpadPad(row: 0, col: 0), route: "kit stem pad")
+        pressAndAssert(LaunchpadPad(row: 0, col: 1), route: "kit drumfile pad")
+
+        // 3) Borrow mount (file pads, capacity-aware layout).
+        controller.adoptBorrowAssignments([
+            .init(chop: Chop(idx: 0, startSec: 0, endSec: 2, durationSec: 2,
+                             kind: "phrase", sectionLabel: "Loop",
+                             loopable: true, loopScore: 1.0,
+                             assetId: "borrowfile:0"),
+                  stem: "drums", sourceLabel: "This song", source: .initial)
+        ])
+        pressAndAssert(LaunchpadPad(row: 0, col: 0), route: "borrow pad")
+    }
+
+    /// prewarmFiles: the FILE twin of prewarm — after it, a file pad's
+    /// first press is a cache hit (no read/bake on the press path) and
+    /// its reader is already open.
+    func testPrewarmFilesWarmsReaderAndLoopBake() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        let fileURL = try makeWAV(seconds: 2)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        await player.load(stemURLs: [:])
+        await player.warmUpPool()
+
+        await player.prewarmFiles([fileURL])
+        XCTAssertEqual(player.cachedFileCount, 1, "reader opened off-path")
+        let bakesAfterPrewarm = player.loopBakeCount
+
+        // The live press derives the SAME loop-bake key (whole file,
+        // 12 ms crossfade) — it must be a cache hit.
+        player.trigger(file: fileURL, startSec: nil, endSec: nil,
+                       afterSeconds: 0, loop: true, padTag: 5)
+        XCTAssertEqual(player.loopBakeCount, bakesAfterPrewarm,
+            "first press of a prewarmed file pad must not re-bake")
+        XCTAssertNotNil(player.fastReleaseVolume(tag: 5))
+        XCTAssertEqual(player.immediatePlayCount, 0)
+        player.release(fileURL: fileURL)
+    }
+
     func testFadeTerminalReparksDrainedVoices() async throws {
         let (engine, player, url) = try makePlayer()
         defer { engine.stop(); try? FileManager.default.removeItem(at: url) }

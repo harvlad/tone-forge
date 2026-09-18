@@ -1022,13 +1022,14 @@ struct LaunchpadPanelView: View {
     // MARK: - Grid
 
     private var padGrid: some View {
-        // 16-pad mode is a compact 4×4 showing the first 16 pads (idx 0–15,
-        // the Auto Kit's footprint); 64-pad mode is the full 8×8. Display
-        // cells map row-major onto the SAME LaunchpadPad indices the
-        // controller and hardware use — a cell's grid idx is `dRow*cols +
-        // dCol`, decoded back to LaunchpadPad on the 8-wide grid — so
+        // 16-pad mode is a compact 4×4 BLOCK (grid rows 0–3 × cols 0–3);
+        // 64-pad mode is the full 8×8. A display cell IS its grid cell —
+        // (row, col) maps 1:1 onto the LaunchpadPad the controller mounts
+        // and the hardware lights (D-037: the old dRow*cols+dCol → /8
+        // decode drew the compact grid as a 4×4 while the hardware lit the
+        // top two 8-wide rows — two different shapes for one surface). So
         // triggering, assignments, swaps and the LED mirror are identical
-        // in both views; only how many pads are shown changes.
+        // in both views; only how much of the grid is shown changes.
         let cols = launchpad.padCount == 16 ? 4 : 8
         return GeometryReader { geo in
             let spacing: CGFloat = 8
@@ -1050,8 +1051,8 @@ struct LaunchpadPanelView: View {
                 ForEach(0..<cols, id: \.self) { row in
                     HStack(spacing: spacing) {
                         ForEach(0..<cols, id: \.self) { col in
-                            let padIdx = row * cols + col
-                            let pad = LaunchpadPad(row: padIdx / 8, col: padIdx % 8)
+                            let pad = LaunchpadPad(row: row, col: col)
+                            let padIdx = pad.row * 8 + pad.col
                             PadCell(
                                 pad: pad,
                                 launchpad: launchpad,

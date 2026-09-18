@@ -1385,3 +1385,73 @@ Pinned by `LaunchpadControlSurfaceTests` (assignment table, per-button
 actions, LED transitions, reserved buttons) and
 `USBLaunchpadTransportTests` (gate bypass, control-cache diffing,
 palette pulses, reconnect redraw, grid/control cache independence).
+
+## D-037: Compact 16 is the 4×4 BLOCK everywhere + instrumentation that can't go silent
+
+**Date:** 2026-09-18
+**Decision:** three coupled corrections after the "pads still lag /
+instrumentation went silent since the flood merge" report.
+
+**1. The silence was an evidence artifact, not a bypassed press path.**
+The stamped hardware pipeline (USBLaunchpadTransport.padEvent →
+onPadDownStamped → LaunchpadController.padDown → SessionController
+onTrigger `[Trigger]` print + `logPadLatency`) was traced end-to-end at
+HEAD and is intact for every mount route — KitGridFloodTests now pins
+that all 64 flood pads fire through it. The captured logs told the real
+story: `print()` writes to libc stdout, which is FULLY buffered when
+redirected to a file, so only sessions that quit cleanly (Cmd-Q →
+exit-time flush) ever showed content; killed or still-running sessions
+left 135-byte logs holding just stderr's NSLog banner. The timeline
+proves it — the "silent" logs start at the 18:06 build, BEFORE the
+flood merge landed (18:17). Fix: `latencyLogEnabled` now line-buffers
+stdout (`setvbuf(_IOLBF)`) when `JAM_PAD_LATENCY_LOG=1`, armed at
+controller init, so `tail -f` shows every line live and a kill can't
+eat the evidence.
+
+**2. Compact 16 = the 4×4 block on screen AND hardware.** D-017 made
+`padCount` a pure display window over idx<16 — which the screen drew as
+a 4×4 while the hardware lit the top two 8-wide rows: one surface, two
+shapes. Superseded: the compact geometry is now the 4×4 BLOCK (rows
+0–3 × cols 0–3) everywhere. `gridWidth(forPadCount:)`/`slotPad` are the
+one placement rule; `adoptAssignments`, chop `layout()` and the borrow
+`applyBorrowLayout` (whose compact gridSlots were always 4-wide — the
+/8 decode strung half of them outside the block) all place through it,
+and a 16⇄64 toggle RE-LAYS the grid from its retained source (adopted
+kit pairs / rawChops / borrowMounts) instead of windowing. Voices stop
+on a toggle (the borrow path always did) — a re-lay moves pads, and a
+held loop must not orphan. Kit grids additionally refetch at the new
+count exactly as before (D-035); the local re-lay just keeps the
+surface correct while the fetch flies. Trade-off accepted: persisted
+pad-slot overrides keyed 8-wide (padIdx 4–7, 12–15, …) fall outside
+the compact block — same class as D-017's hidden-cell rule.
+
+**3. Parallel slow lanes closed.** The MIDI-Learn keyboard pad route
+triggered ChopPlayer DIRECTLY (no stamps, no quantize/section/latch
+semantics, no `[Trigger]`/latency instrumentation, no padTag → the
+receive-thread fast release never covered it). It now rides
+`launchpad.padDown/padUp` with the transport's receive-thread stamps;
+onTrigger publishes the canonical grid event (the raw publish
+double-recorded). Trade-off: pad velocity dropped — grid pads are
+gates on every surface. And downloaded FILE pads (`drumfile:`/
+`borrowfile:`) — which `prewarm(_:)` cannot see — get
+`ChopPlayer.prewarmFiles`: reader + one-shot region + the exact
+12 ms-crossfade loop bake `trigger(file:)` derives, warmed off the
+press path at every mount that downloads composites (auto/drum kit,
+donor kit, borrow).
+
+**Why not a receive-thread fast PRESS path:** the good-build logs show
+press→trigger main-hop spikes (100–400 ms under same-pad hammering
+with full-window repaints) that parked voices don't remove — the
+scheduleBuffer still waits on the hop. That is the real remaining lag
+and it predates the flood. It needs per-pad armed plans consumable on
+the MIDI thread (the press twin of D-033) — deliberately NOT bolted on
+here; tracked as follow-up.
+
+**Where:** `LaunchpadController` (geometry, re-lay, retained pairs,
+line-buffering), `LaunchpadPanelView.padGrid` (cell = grid cell),
+`SessionController` (keyboard lane, prewarmFiles wiring),
+`ChopPlayer.prewarmFiles`. Pinned by KitGridFloodTests (block
+placement, toggle re-lay, stamped pipeline for all 64 flood pads,
+compact press gating), ChopPlayerBurstTests (flood-mounted burst:
+zero press-path play(), fast-release registration on every mount
+route, prewarmFiles cache hit), BorrowLayoutTests (compact block).

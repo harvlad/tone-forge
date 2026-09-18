@@ -370,26 +370,29 @@ public final class LaunchpadController {
     public var loopLockEnabled: Bool = true
 
     /// How many pads the merged Launchpad surface currently shows and
-    /// mirrors to hardware: 16 (compact 4×4 — the first 16 pads, ideal
-    /// for the 16-pad Auto Kit) or 64 (full 8×8). This is a DISPLAY +
-    /// hardware-LED concern only: assignments for pads beyond the count
-    /// are retained (hidden/dark), so toggling back to 64 restores the
-    /// whole grid untouched. A physical press on an out-of-range pad is
-    /// ignored, and any voice sounding in a now-hidden cell is silenced
-    /// so a held loop can't ring on with no visible pad to stop it.
+    /// mirrors to hardware: 16 (compact 4×4 BLOCK — rows 0–3 × cols 0–3,
+    /// the shape the on-screen compact grid draws and mobile's 4×4
+    /// convention) or 64 (full 8×8). A 16⇄64 change RE-LAYS the grid
+    /// from its retained source (kit pairs / raw chops / borrow mounts)
+    /// at the new geometry, so screen and hardware always show the same
+    /// shape — the old idx<16 window put the compact grid on the top TWO
+    /// 8-wide hardware rows while the screen drew a 4×4 (D-037). A
+    /// physical press on an out-of-range pad is ignored.
     public var padCount: Int = 64 {
         didSet {
             guard padCount != oldValue else { return }
-            if padCount < oldValue { silenceOutOfRange() }
             // A mounted borrow RE-ARRANGES at the new capacity (16 =
             // best-of-both, 64 = full) rather than clipping the 64 view and
-            // dropping the donor. Every OTHER grid tells the host, which
-            // refetches a pack-kit grid at the new count (web parity:
-            // kit.js setPadCount → reloadKit — the 64-pad flood is built
-            // server-side, never subset client-side).
+            // dropping the donor. Every OTHER grid re-lays locally from its
+            // retained source, then tells the host, which ALSO refetches a
+            // pack-kit grid at the new count (web parity: kit.js
+            // setPadCount → reloadKit — the 64-pad flood is built
+            // server-side, never subset client-side; the local re-lay just
+            // keeps the surface correct until the refetch lands).
             if borrowMounts != nil {
                 applyBorrowLayout(at: padCount)
             } else {
+                relayoutForPadCount()
                 onPadCountChanged?(padCount)
             }
             repaint()
@@ -405,22 +408,64 @@ public final class LaunchpadController {
     /// refetch.
     @ObservationIgnored public var onPadCountChanged: ((Int) -> Void)?
 
-    /// Whether `pad` is within the current `padCount` window (idx < count),
-    /// i.e. visible on screen and lit on hardware. Pads are numbered
-    /// row-major on the 8-wide grid, so the first 16 (idx 0–15) span the
-    /// top two hardware rows and fill the compact 4×4 on screen.
-    public func isPadVisible(_ pad: LaunchpadPad) -> Bool {
-        pad.row * 8 + pad.col < padCount
+    /// Grid width for a pad-count: the compact 16 is a 4×4 BLOCK
+    /// (rows 0–3 × cols 0–3) — the same shape the on-screen compact
+    /// grid draws and mobile's 4×4 convention — not the top two 8-wide
+    /// rows (which made the physical Launchpad disagree with the screen
+    /// it mirrors; D-037). 64 keeps the full 8×8.
+    static func gridWidth(forPadCount count: Int) -> Int {
+        count == 16 ? 4 : 8
     }
 
-    /// Stop and clear any sounding pad that fell outside the pad-count
-    /// window after a shrink (64 → 16). Chop loops are released through
-    /// `onRelease`; one-shot pack/local samples play through harmlessly.
-    private func silenceOutOfRange() {
-        for pad in Array(activePads) where !isPadVisible(pad) {
-            if let a = assignments[pad] { onRelease?(pad, a) }
-            activePads.remove(pad)
+    /// Row-major slot → grid pad at the given pad-count's geometry.
+    /// Pure so mount, re-lay and the tests all place identically.
+    static func slotPad(_ slot: Int, padCount: Int) -> LaunchpadPad {
+        let width = gridWidth(forPadCount: padCount)
+        return LaunchpadPad(row: slot / width, col: slot % width)
+    }
+
+    /// Whether `pad` is inside the current 16/64 geometry — the 4×4
+    /// block at 16, the whole grid at 64 — i.e. visible on screen and
+    /// lit on hardware.
+    public func isPadVisible(_ pad: LaunchpadPad) -> Bool {
+        let width = Self.gridWidth(forPadCount: padCount)
+        let rows = padCount / width
+        return pad.row >= 0 && pad.col >= 0
+            && pad.row < rows && pad.col < width
+    }
+
+    /// Re-lay the CURRENT grid at the new 16/64 geometry from its
+    /// retained source (adopted kit pairs, else the raw chop set). The
+    /// compact 16 is a 4×4 block, so a resize is a real re-arrangement,
+    /// not a window: kill sounding voices first — exactly what the
+    /// borrow path has always done on a toggle — so a held loop can't
+    /// be orphaned when its pad moves cells. Grid provenance flags
+    /// (isKitGridMounted etc.) are deliberately untouched: the grid's
+    /// CONTENT is unchanged, only its shape.
+    private func relayoutForPadCount() {
+        onStopAllVoices?()
+        activePads.removeAll()
+        if let pairs = adoptedPairs {
+            assignments = Self.placeRowMajor(pairs, padCount: padCount)
+        } else if let stem {
+            assignments = Self.placeRowMajor(
+                displayChops.map { (chop: $0, stem: stem) },
+                padCount: padCount)
         }
+    }
+
+    /// Lay (chop, stem) pairs row-major into the geometry for
+    /// `padCount`, clamped to its capacity. The ONE placement rule for
+    /// kit mounts, chop grids and 16/64 re-lays.
+    private static func placeRowMajor(
+        _ pairs: [(chop: Chop, stem: String)], padCount: Int
+    ) -> [LaunchpadPad: PadAssignment] {
+        var next: [LaunchpadPad: PadAssignment] = [:]
+        for (slot, pair) in pairs.prefix(padCount).enumerated() {
+            next[slotPad(slot, padCount: padCount)] =
+                PadAssignment(chop: pair.chop, stem: pair.stem)
+        }
+        return next
     }
 
     /// Target sample-loop length in seconds: the 8 s kit window snapped to a
@@ -662,6 +707,10 @@ public final class LaunchpadController {
     ) {
         self.nowProvider = nowProvider
         self.fetcher = fetcher
+        // Arm the instrumentation's line-buffering NOW, not at the first
+        // logPadLatency guard — the host's [Trigger] print fires earlier
+        // on the same press and must not sit in a 64 KB stdio buffer.
+        _ = Self.latencyLogEnabled
     }
 
     // MARK: - Wiring
@@ -767,14 +816,14 @@ public final class LaunchpadController {
         // a held loop can't be orphaned into an unstoppable ring (callers
         // already cleared activePads).
         onStopAllVoices?()
-        var next: [LaunchpadPad: PadAssignment] = [:]
         if let stem {
-            for (slot, chop) in displayChops.prefix(64).enumerated() {
-                let pad = LaunchpadPad(row: slot / 8, col: slot % 8)
-                next[pad] = PadAssignment(chop: chop, stem: stem)
-            }
+            assignments = Self.placeRowMajor(
+                displayChops.map { (chop: $0, stem: stem) },
+                padCount: padCount)
+        } else {
+            assignments = [:]
         }
-        assignments = next
+        adoptedPairs = nil         // a chop grid supersedes any kit mount
         borrowSourceLabels = [:]   // a fresh single-song grid drops borrow labels
         borrowMounts = nil         // …and the toggle stops re-arranging a borrow
         isKitGridMounted = false   // …and the 16/64 toggle stops refetching kits
@@ -792,9 +841,16 @@ public final class LaunchpadController {
     /// chop-grid → auto-kit replacement.
     public private(set) var isKitGridMounted = false
 
+    /// The full adopted kit pair set (up to 64), retained so a 16/64
+    /// toggle can RE-LAY the grid at the new geometry (the compact 16
+    /// is a 4×4 block, not a window) while the host's refetch is in
+    /// flight. Cleared by any chop-grid or borrow mount.
+    @ObservationIgnored private var adoptedPairs: [(chop: Chop, stem: String)]?
+
     /// Adopt a MULTI-STEM assignment set (Performance-Intelligence auto-kit):
     /// each pad is a (chop, stem) pair spanning different stems, laid out
-    /// row-major. Unlike `loadChops` (one stem), this drives the grid from a
+    /// row-major at the CURRENT 16/64 geometry (4-wide block at 16, 8-wide
+    /// at 64). Unlike `loadChops` (one stem), this drives the grid from a
     /// pre-built kit — the chops carry their own stem + loop `kind`.
     public func adoptAssignments(_ pairs: [(chop: Chop, stem: String)]) {
         // Kill every sounding voice BEFORE the assignment map changes — a
@@ -802,12 +858,8 @@ public final class LaunchpadController {
         // it once its slot points at a different chop (orphaned voice).
         onStopAllVoices?()
         activePads.removeAll()
-        var next: [LaunchpadPad: PadAssignment] = [:]
-        for (slot, pair) in pairs.prefix(64).enumerated() {
-            let pad = LaunchpadPad(row: slot / 8, col: slot % 8)
-            next[pad] = PadAssignment(chop: pair.chop, stem: pair.stem)
-        }
-        assignments = next
+        adoptedPairs = Array(pairs.prefix(64))
+        assignments = Self.placeRowMajor(adoptedPairs ?? [], padCount: padCount)
         borrowSourceLabels = [:]
         borrowMounts = nil
         isKitGridMounted = true
@@ -861,6 +913,7 @@ public final class LaunchpadController {
     /// re-arranges (16 = best-of-both) rather than hiding the donor.
     public func adoptBorrowAssignments(_ mounts: [BorrowMount]) {
         borrowMounts = mounts
+        adoptedPairs = nil         // a borrow supersedes any kit mount
         isKitGridMounted = false   // borrow grids re-arrange locally, never refetch
         // Borrow opens on the full grid. Setting padCount fires the didSet,
         // which applies the layout; if already 64 the didSet is a no-op, so lay
@@ -892,9 +945,13 @@ public final class LaunchpadController {
         let layout = arrangeBorrowLayout(refs, cols: cols, rows: rows)
         var next: [LaunchpadPad: PadAssignment] = [:]
         var labels: [LaunchpadPad: String] = [:]
-        for pl in layout.placements where (0..<64).contains(pl.gridSlot) {
+        // gridSlot is row-major at the layout's OWN width (4 at 16, 8 at
+        // 64 — web kit.js draws the compact grid 4 wide). Decoding it /8
+        // put the compact pads on the top two 8-wide rows, half of them
+        // OUTSIDE the 4×4 block the screen shows (D-037).
+        for pl in layout.placements where (0..<capacity).contains(pl.gridSlot) {
             let mount = mounts[pl.inputIndex]
-            let pad = LaunchpadPad(row: pl.gridSlot / 8, col: pl.gridSlot % 8)
+            let pad = LaunchpadPad(row: pl.gridSlot / cols, col: pl.gridSlot % cols)
             next[pad] = PadAssignment(chop: mount.chop, stem: mount.stem)
             labels[pad] = mount.sourceLabel
         }
@@ -1145,8 +1202,24 @@ public final class LaunchpadController {
     /// dispatch delta for hardware pads, so the main-hop cost is
     /// measurable on a real device (CI can't attach hardware — the
     /// tests pin the math/wiring; this pins the numbers).
-    static let latencyLogEnabled =
-        ProcessInfo.processInfo.environment["JAM_PAD_LATENCY_LOG"] == "1"
+    static let latencyLogEnabled: Bool = {
+        let enabled =
+            ProcessInfo.processInfo.environment["JAM_PAD_LATENCY_LOG"] == "1"
+        if enabled {
+            // Captured runs: print() rides libc stdout, which is FULLY
+            // buffered when it isn't a TTY (app > log.txt), so a killed
+            // or still-running session shows NOTHING and a `tail -f`
+            // never moves — only a clean Cmd-Q flushes at exit. That is
+            // exactly the 2026-09-18 "instrumentation went silent after
+            // the flood merge" scare: the 135-byte logs held only
+            // stderr's NSLog banner while the press pipeline ran fine
+            // (the pre-merge logs looked alive because those runs quit
+            // cleanly). Line-buffer stdout while the flag is on so every
+            // [Trigger]/[PadLatency] line lands the moment it prints.
+            setvbuf(stdout, nil, _IOLBF, 0)
+        }
+        return enabled
+    }()
 
     private func logPadLatency(_ label: String, pressHostTime: UInt64?) {
         guard Self.latencyLogEnabled, let pressHostTime, pressHostTime > 0

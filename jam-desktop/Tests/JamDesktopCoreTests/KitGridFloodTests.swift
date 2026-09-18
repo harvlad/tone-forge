@@ -369,6 +369,176 @@ final class KitGridFloodTests: XCTestCase {
         XCTAssertEqual(fired, [16, 64])
     }
 
+    // MARK: - Compact 16 = the 4×4 BLOCK, screen AND hardware (D-037)
+
+    func testCompactKitMountsAsFourByFourBlock() {
+        // A pads=16 kit mounted while the surface is compact fills grid
+        // rows 0–3 × cols 0–3 — the SAME shape the on-screen 4×4 draws —
+        // never the top two 8-wide hardware rows (the 2×8 regression: the
+        // hardware Launchpad lit a different shape than the screen).
+        let controller = makeController()
+        controller.padCount = 16
+        controller.adoptAssignments(
+            KitGridMapper.pairs(pack: floodPack(pads: 16)))
+        XCTAssertEqual(controller.assignments.count, 16)
+        for row in 0..<4 {
+            for col in 0..<4 {
+                let pad = LaunchpadPad(row: row, col: col)
+                XCTAssertNotNil(controller.assignments[pad],
+                                "block cell (\(row),\(col)) must be filled")
+                XCTAssertTrue(controller.isPadVisible(pad))
+                // Server order runs 4-wide through the block.
+                XCTAssertEqual(controller.assignments[pad]?.chop.idx,
+                               row * 4 + col)
+            }
+        }
+        // Nothing outside the block — including the old 2×8 cells.
+        XCTAssertNil(controller.assignments[LaunchpadPad(row: 0, col: 4)])
+        XCTAssertNil(controller.assignments[LaunchpadPad(row: 1, col: 7)])
+        XCTAssertFalse(controller.isPadVisible(LaunchpadPad(row: 0, col: 4)))
+        XCTAssertFalse(controller.isPadVisible(LaunchpadPad(row: 4, col: 0)))
+    }
+
+    func testToggleRelaysKitBetweenBlockAndFullGrid() {
+        // 64-flood mounted, then 16: the retained pairs re-lay as the 4×4
+        // block (first 16, server order) IMMEDIATELY — the host's refetch
+        // replaces them later, but the surface must never show a stale
+        // shape. Back to 64: the full flood returns from the retained set.
+        let controller = makeController()
+        controller.adoptAssignments(KitGridMapper.pairs(pack: floodPack()))
+        controller.padCount = 16
+        XCTAssertEqual(controller.assignments.count, 16)
+        for (pad, a) in controller.assignments {
+            XCTAssertTrue(pad.row < 4 && pad.col < 4,
+                          "compact kit pad \(pad) outside the 4×4 block")
+            XCTAssertLessThan(a.chop.idx, 16, "compact shows the first 16")
+        }
+        XCTAssertTrue(controller.isKitGridMounted,
+                      "re-lay must not drop kit provenance (the refetch keys on it)")
+        controller.padCount = 64
+        XCTAssertEqual(controller.assignments.count, 64, "64 restores the flood")
+        XCTAssertEqual(
+            controller.assignments[LaunchpadPad(row: 7, col: 7)]?.chop.idx, 63)
+    }
+
+    func testChopGridRelaysAcrossToggle() {
+        // Chop grids (panel stem/sliceMode loads) re-lay from rawChops the
+        // same way: 16 = first 16 chops in the block, 64 = all, restored.
+        let controller = makeController()
+        let chops = (0..<64).map {
+            Chop(idx: $0, startSec: Double($0), endSec: Double($0) + 1,
+                 durationSec: 1, kind: "chord")
+        }
+        controller.setChops(chops, stem: "other", sliceMode: "chord")
+        XCTAssertEqual(controller.assignments.count, 64)
+        controller.padCount = 16
+        XCTAssertEqual(controller.assignments.count, 16)
+        for (pad, a) in controller.assignments {
+            XCTAssertTrue(pad.row < 4 && pad.col < 4)
+            XCTAssertLessThan(a.chop.idx, 16)
+        }
+        controller.padCount = 64
+        XCTAssertEqual(controller.assignments.count, 64,
+                       "toggling back restores the whole chop grid")
+    }
+
+    // MARK: - ONE press pipeline: flood pads ride the stamped padDown path
+
+    /// Hardware transport twin that delivers STAMPED pad events — what
+    /// USBLaunchpadTransport does on the MIDI receive thread.
+    private final class StampedFakeTransport: LaunchpadTransport,
+                                              StampedPadTransport {
+        var connectionState: LaunchpadConnectionState { .onScreen }
+        var onPadDown: ((LaunchpadPad) -> Void)?
+        var onPadUp: ((LaunchpadPad) -> Void)?
+        var onPadDownStamped: ((LaunchpadPad, Double, UInt64) -> Void)?
+        var onPadUpStamped: ((LaunchpadPad, Double, UInt64) -> Void)?
+        var legacyDeliveries = 0
+        func setLight(_ light: LaunchpadLight, at pad: LaunchpadPad) {}
+        func setLights(_ frame: [LaunchpadPad: LaunchpadLight]) {}
+        func clearLights() {}
+        /// Deliver exactly like the USB transport: stamped wins, legacy
+        /// only as fallback (never both).
+        func press(_ pad: LaunchpadPad, songSeconds: Double, hostTime: UInt64) {
+            if let stamped = onPadDownStamped {
+                stamped(pad, songSeconds, hostTime)
+            } else {
+                legacyDeliveries += 1
+                onPadDown?(pad)
+            }
+        }
+        func release(_ pad: LaunchpadPad, songSeconds: Double, hostTime: UInt64) {
+            if let stamped = onPadUpStamped {
+                stamped(pad, songSeconds, hostTime)
+            } else {
+                legacyDeliveries += 1
+                onPadUp?(pad)
+            }
+        }
+    }
+
+    /// EVERY flood-mounted pad's hardware press must land in onTrigger —
+    /// the single instrumented pipeline ([Trigger]/logPadLatency, the
+    /// quantizer fed the receive-thread stamp, SessionController's padTag
+    /// registration). A flood pad that sounds through any other lane is
+    /// exactly the parallel-slow-lane regression this pins against.
+    func testEveryFloodPadPressReachesOnTriggerViaStampedPath() {
+        let transport = StampedFakeTransport()
+        let controller = LaunchpadController(
+            nowProvider: { 0 }, fetcher: FakeFetcher())
+        controller.attach(transport: transport)
+        controller.adoptAssignments(KitGridMapper.pairs(pack: floodPack()))
+        controller.playbackMode = .oneShot   // instant gate: fires NOW
+
+        var triggered: [LaunchpadPad] = []
+        var released: [LaunchpadPad] = []
+        controller.onTrigger = { pad, assignment, _, _ in
+            triggered.append(pad)
+            // The assignment under the pad is the one the press fires.
+            XCTAssertEqual(controller.assignments[pad]?.chop.idx,
+                           assignment.chop.idx)
+        }
+        controller.onRelease = { pad, _ in released.append(pad) }
+
+        for row in 0..<8 {
+            for col in 0..<8 {
+                let pad = LaunchpadPad(row: row, col: col)
+                transport.press(pad, songSeconds: 0, hostTime: 1)
+                transport.release(pad, songSeconds: 0, hostTime: 2)
+            }
+        }
+        XCTAssertEqual(triggered.count, 64,
+                       "every flood pad rides the ONE stamped press pipeline")
+        XCTAssertEqual(released.count, 64,
+                       "every flood pad-up rides the same pipeline")
+        XCTAssertEqual(transport.legacyDeliveries, 0,
+                       "a stamped transport must never fall to the legacy lane")
+    }
+
+    /// Same pipeline pin at the compact 4×4: block presses fire, presses
+    /// outside the block are dropped dark (no hidden-cell triggering).
+    func testCompactBlockPressesFireAndOutsideBlockIsDropped() {
+        let transport = StampedFakeTransport()
+        let controller = LaunchpadController(
+            nowProvider: { 0 }, fetcher: FakeFetcher())
+        controller.attach(transport: transport)
+        controller.padCount = 16
+        controller.adoptAssignments(
+            KitGridMapper.pairs(pack: floodPack(pads: 16)))
+        controller.playbackMode = .oneShot
+
+        var triggered: [LaunchpadPad] = []
+        controller.onTrigger = { pad, _, _, _ in triggered.append(pad) }
+        for row in 0..<8 {
+            for col in 0..<8 {
+                transport.press(LaunchpadPad(row: row, col: col),
+                                songSeconds: 0, hostTime: 1)
+            }
+        }
+        XCTAssertEqual(triggered.count, 16, "exactly the block fires")
+        XCTAssertTrue(triggered.allSatisfy { $0.row < 4 && $0.col < 4 })
+    }
+
     func testPadCountToggleDoesNotFireReloadHookForMountedBorrow() {
         // A borrow re-arranges locally (applyBorrowLayout) — refetching the
         // auto kit would clobber the donor grid.

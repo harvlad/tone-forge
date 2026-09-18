@@ -696,25 +696,36 @@ final class SessionController: ObservableObject {
                 } else {
                     self.synthNode.noteOff(midi: note)
                 }
+                // Publish for the recorder (pad events publish from the
+                // shared pipeline below, with quantized timestamps).
+                self.eventBus.publish(event)
             case .padDown(let row, let col):
-                // Sample pad route: resolve grid cell to assignment
-                if let pad = PadEventMapping.launchpadPad(row: row, col: col),
-                   let assignment = self.launchpad.assignments[pad] {
-                    self.chopPlayer.trigger(
-                        assignment, afterSeconds: 0,
-                        effects: self.effectsForPad(assignment),
-                        velocity: Float(event.velocity))
+                // MIDI-Learn sample pads ride the ONE press pipeline —
+                // LaunchpadController.padDown with the receive-thread
+                // stamps the transport put on the event — never a direct
+                // ChopPlayer call. The old direct lane skipped quantize,
+                // section gates, Latch semantics, the [Trigger]/
+                // logPadLatency instrumentation AND padTag registration
+                // (so the fast-release registry never covered it); pads
+                // fired unquantized at whatever the main hop delivered.
+                // Trade-off: pad velocity is dropped — grid pads are
+                // gates on every surface (the Launchpad path never
+                // carried velocity either). onTrigger publishes the
+                // canonical grid event, so no raw publish here (it
+                // double-recorded the press).
+                if let pad = PadEventMapping.launchpadPad(row: row, col: col) {
+                    self.launchpad.padDown(
+                        pad,
+                        pressSongSeconds: event.timestamp,
+                        pressHostTime: event.hostTime)
                 }
             case .padUp(let row, let col):
-                if let pad = PadEventMapping.launchpadPad(row: row, col: col),
-                   let assignment = self.launchpad.assignments[pad] {
-                    self.chopPlayer.release(assignment)
+                if let pad = PadEventMapping.launchpadPad(row: row, col: col) {
+                    self.launchpad.padUp(pad, pressHostTime: event.hostTime)
                 }
             default:
-                break
+                self.eventBus.publish(event)
             }
-            // Publish all keyboard events for recording
-            self.eventBus.publish(event)
         }
 
         // Replayed takes resolve pads against the CURRENT grid and
@@ -1222,6 +1233,10 @@ final class SessionController: ObservableObject {
             Task { [weak self] in
                 await self?.chopPlayer.prewarm(
                     pairs, loopBarSeconds: kitBarSeconds, cycleSeconds: kitCycle)
+                // Downloaded composites (`drumfile:` pads) play FILES, which
+                // prewarm(_:) can't see — warm their readers/bakes too or the
+                // flood's file pads pay open+read+SRC on their first press.
+                await self?.chopPlayer.prewarmFiles(Array(sampleFiles.values))
             }
             if announce {
                 // Kits land on a surface that only sounds when TOUCHED —
@@ -1491,6 +1506,10 @@ final class SessionController: ObservableObject {
         let files = await Self.downloadKitSamples(pack: donorPack, base: base)
         guard !files.isEmpty else { return false }
         drumKitSampleFiles = files
+        // Donor pads are ALL file pads — warm them off the press path.
+        Task { [weak self] in
+            await self?.chopPlayer.prewarmFiles(Array(files.values))
+        }
         let pairs: [(chop: Chop, stem: String)] = donorPack.pads.compactMap { pad in
             guard files[pad.padIdx] != nil, pad.loopable != true else { return nil }
             let chop = Chop(
@@ -1590,6 +1609,10 @@ final class SessionController: ObservableObject {
             }
             guard attachedAnalysisId == analysisId else { return }
             drumKitSampleFiles = files
+            // Borrow pads are ALL file pads — warm them off the press path.
+            Task { [weak self] in
+                await self?.chopPlayer.prewarmFiles(Array(files.values))
+            }
 
             // Only pads whose sample downloaded can mount. Keep their backend
             // padIdx (drumKitSampleFiles is keyed on it) and their source tag +
