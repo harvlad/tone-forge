@@ -499,6 +499,10 @@ public final class AppState: ObservableObject {
     /// on the sketch context (D-016 synthetic tempo grid) — the same
     /// degrade sketches already prove out.
     public func mountBlankCanvas() {
+        // A fresh canvas starts at the 16-pad view — a wall of 64 empty
+        // cells reads as broken; grow to 64 from the size chips once
+        // pads exist (user direction 2026-09-18).
+        jamSettings.launchpadPadCount = 16
         if currentBundle != nil { ejectSong() }
         canvasModeOn = true
         autoKitError = nil

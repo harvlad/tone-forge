@@ -30,6 +30,10 @@ public enum JamView: String, CaseIterable, Sendable {
 @MainActor
 public final class AppModel: ObservableObject {
 
+    /// Menu-bar "Projects…" request (⌘⇧P). RootView observes and
+    /// presents the Projects sheet; reset back to false on present.
+    @Published public var projectsSheetRequested = false
+
     /// Currently visible top-level view. Starts at intake, exactly
     /// like the web app; SessionLoader flips to perform/bandRoom.
     @Published public var view: JamView = .intake

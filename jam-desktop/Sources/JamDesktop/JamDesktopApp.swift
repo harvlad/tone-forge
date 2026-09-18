@@ -33,6 +33,16 @@ struct JamDesktopApp: App {
                 .tint(JamTheme.accent)
         }
         .windowResizability(.contentMinSize)
+        .commands {
+            // Projects in the top menu (user ask): same sheet the
+            // sidebar/toolbar opens, reachable from anywhere via ⌘⇧P.
+            CommandMenu("Projects") {
+                Button("Open Projects…") {
+                    model.projectsSheetRequested = true
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+            }
+        }
 
         Settings {
             SettingsView()

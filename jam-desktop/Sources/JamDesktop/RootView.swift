@@ -297,6 +297,14 @@ struct RootView: View {
                 .environmentObject(model)
                 .environmentObject(session)
         }
+        // Menu-bar "Projects…" (⌘⇧P) — the CommandMenu can't reach this
+        // view's @State, so it raises a model flag we consume here.
+        .onChange(of: model.projectsSheetRequested) { _, requested in
+            if requested {
+                model.projectsSheetRequested = false
+                showProjects = true
+            }
+        }
         .sheet(isPresented: $showRemix) {
             RemixSheetView()
                 .environmentObject(session)

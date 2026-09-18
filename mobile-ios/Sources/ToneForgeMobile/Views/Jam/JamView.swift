@@ -831,22 +831,36 @@ struct JamView: View {
             // hide behind a stale autoKitError, so the entry points
             // were invisible on a fresh visit). A live canvas session
             // with a borrow mounted is working-as-intended: no strip.
-            HStack(spacing: 8) {
-                Image(systemName: "music.note")
-                    .font(.caption)
-                Text("Open a song — or start from scratch")
-                    .font(.caption)
-                Spacer()
-                Button("Library") { appState.selectedTab = .library }
-                    .font(.caption.weight(.semibold))
-                Button("Blank canvas") {
-                    appState.projects.createBlankProject()
+            // Two rows at phone width: the invitation line, then the
+            // two entry buttons — one crowded row wrapped the text to
+            // two lines and jammed the buttons against it.
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "music.note")
+                        .font(.caption)
+                    Text("Open a song — or start from scratch")
+                        .font(.caption)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
-                .font(.caption.weight(.semibold))
+                HStack(spacing: 10) {
+                    Button("Library") { appState.selectedTab = .library }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.bordered)
+                        .tint(TFTheme.accent)
+                    Button("Blank canvas") {
+                        appState.projects.createBlankProject()
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .tint(TFTheme.accent)
+                    Spacer()
+                }
             }
             .foregroundStyle(TFTheme.textPrimary)
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(TFTheme.accent.opacity(0.20),
                         in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 12)

@@ -53,7 +53,17 @@ struct RecordToggle: View {
     var body: some View {
         HStack(spacing: 10) {
             dot
-            if !(compact && phase == .idle) {
+            // Audio mode is glanceable, not wordy: idle = just the red
+            // dot; recording = a live level meter + elapsed, no "Record"
+            // label (user: "the record red dot is enough").
+            if mode == .audioOutput {
+                if phase == .recording {
+                    liveLevelMeter
+                    Text(Self.timeLabel(appState.outputRecorder.elapsedSec))
+                        .font(.caption.weight(.medium).monospacedDigit())
+                        .foregroundStyle(Color.red)
+                }
+            } else if !(compact && phase == .idle) {
                 Text(label)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(labelColor)
@@ -63,7 +73,7 @@ struct RecordToggle: View {
                     // the armed copy got long.
                     .minimumScaleFactor(0.6)
             }
-            if !compact {
+            if !compact && mode != .audioOutput {
                 Spacer()
                 if let error = appState.layerError {
                     Text(error)
@@ -100,6 +110,28 @@ struct RecordToggle: View {
     }
 
     // MARK: - Sub-views
+
+    /// Rolling realtime level bars while audio-recording — the visible
+    /// proof capture is alive. Fed by OutputRecorder's published `peak`
+    /// (per tap buffer); newest sample on the right.
+    @State private var levels: [Float] = []
+
+    private var liveLevelMeter: some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
+                Capsule()
+                    .fill(Color.red.opacity(0.85))
+                    .frame(width: 3,
+                           height: max(3, CGFloat(min(level, 1)) * 22))
+            }
+        }
+        .frame(height: 24)
+        .onReceive(appState.outputRecorder.$peak) { peak in
+            levels.append(peak)
+            if levels.count > 18 { levels.removeFirst(levels.count - 18) }
+        }
+        .onDisappear { levels = [] }
+    }
 
     @ViewBuilder
     private var dot: some View {
