@@ -309,7 +309,33 @@ public final class LaunchpadController {
     /// so future kits re-rank around what the user actually plays.
     public var onPadUsage: ((String, String) -> Void)?
     private var padUsageStart: [LaunchpadPad: Date] = [:]
-    public var playbackMode: PadPlaybackMode = .follow
+    public var playbackMode: PadPlaybackMode = .follow {
+        didSet {
+            guard playbackMode != oldValue else { return }
+            onSurfaceSettingChanged?()
+        }
+    }
+
+    /// Per-song section allowlist (iOS SampleSettingsStore.sectionGates
+    /// twin, restored by Projects). TRI-STATE, matching
+    /// `SectionResolver.isAllowed`: nil = allow all (default), empty =
+    /// deny all, else allow only the listed labels. Consulted by
+    /// `padDown`/`replayArm` against the CURRENT playhead position —
+    /// the same "Play only in" semantics iOS enforces in
+    /// SampleScheduler. Cleared on song configure/reset (per-song
+    /// state); desktop has no gate-editing UI yet, so values arrive
+    /// via restored workspaces and round-trip losslessly.
+    public var sectionGate: Set<String>? {
+        didSet {
+            guard sectionGate != oldValue else { return }
+            onSurfaceSettingChanged?()
+        }
+    }
+
+    /// Fired when a workspace-tracked surface setting mutates
+    /// (padCount / playbackMode / sectionGate) — the Projects
+    /// auto-save hook.
+    @ObservationIgnored public var onSurfaceSettingChanged: (() -> Void)?
     /// Loop lock: when on, a triggered loop snaps to the next BAR of the
     /// shared lock lattice and the wait stays ≤ 1 bar. Off = the loop
     /// starts per the user's Quantize control (instant at `.off`).
@@ -338,6 +364,7 @@ public final class LaunchpadController {
             // dropping the donor. Non-borrow grids just repaint.
             if borrowMounts != nil { applyBorrowLayout(at: padCount) }
             repaint()
+            onSurfaceSettingChanged?()
         }
     }
 
@@ -620,6 +647,9 @@ public final class LaunchpadController {
         analysisId = bundle.analysisId
         activePads.removeAll()
         fetchError = nil
+        // Per-song state: the previous song's gate must never mute
+        // this one. A restored workspace re-sets it after configure.
+        sectionGate = nil
 
         let chosen: (key: String, preset: BundlePreset)? =
             bundle.presets["harmonic"].map { ("harmonic", $0) }
@@ -644,6 +674,7 @@ public final class LaunchpadController {
         timeline = nil
         tempoBpm = nil
         analysisId = nil
+        sectionGate = nil
         setChops([], stem: nil, sliceMode: nil)
     }
 
@@ -871,6 +902,14 @@ public final class LaunchpadController {
             onRelease?(pad, assignment)   // stop the loop
             return
         }
+        // Section gate ("Play only in" — iOS SampleScheduler parity):
+        // a trigger while the playhead sits in a disallowed section is
+        // dropped silently. The toggle-OFF branch above is deliberately
+        // NOT gated — stopping a latched loop must always work.
+        guard SectionResolver.isAllowed(
+            t: nowProvider(), in: timeline?.sections ?? [],
+            allowed: sectionGate
+        ) else { return }
         let now = nowProvider()
         // Transport STOPPED: loops fire immediately and free-run
         // (mobile parity). Auto-starting the transport for a clock
@@ -1033,6 +1072,12 @@ public final class LaunchpadController {
         let pad = LaunchpadPad(row: index / 8, col: index % 8)
         guard isPadVisible(pad), let assignment = assignments[pad],
               !activePads.contains(pad) else { return }
+        // Same section gate as a live padDown — replay must not sound
+        // pads in a section the workspace gates out.
+        guard SectionResolver.isAllowed(
+            t: nowProvider(), in: timeline?.sections ?? [],
+            allowed: sectionGate
+        ) else { return }
         let now = nowProvider()
         let transportRolling = isTransportPlaying?() ?? false
         // Phase-lock to the shared loop grid while the song rolls; fire now when

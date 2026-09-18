@@ -25,6 +25,11 @@ public final class ChopEditStore {
     /// Fired with the analysisId after any mutation persists.
     @ObservationIgnored public var onEditsChanged: ((String) -> Void)?
 
+    /// Fired after any mutation persists (Project auto-save hook;
+    /// separate slot from onEditsChanged, which SessionController
+    /// consumes for grid re-resolution).
+    @ObservationIgnored public var onChanged: (() -> Void)?
+
     private static let defaultsKey = "jamdesktop.chopEdits"
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -81,6 +86,21 @@ public final class ChopEditStore {
         save(ChopEdits(presetKey: presetKey), analysisId: analysisId)
     }
 
+    /// Replace ALL of one song's edits at once (Project restore /
+    /// reset). Empty collections are pruned; an empty map clears the
+    /// song entirely (analyzer boundaries). Fires onEditsChanged so a
+    /// live grid re-resolves.
+    public func replaceAll(_ edits: [String: ChopEdits], analysisId: String) {
+        let pruned = edits.filter { $0.value.hasEdits }
+        if pruned.isEmpty {
+            songs.removeValue(forKey: analysisId)
+        } else {
+            songs[analysisId] = pruned
+        }
+        persist()
+        onEditsChanged?(analysisId)
+    }
+
     // MARK: - Persistence
 
     private struct Persisted: Codable {
@@ -100,5 +120,6 @@ public final class ChopEditStore {
         if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: Self.defaultsKey)
         }
+        onChanged?()
     }
 }

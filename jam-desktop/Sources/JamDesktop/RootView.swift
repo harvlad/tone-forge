@@ -20,6 +20,7 @@ struct RootView: View {
     @State private var showSequencer = false
     @State private var showRecordings = false
     @State private var showPacks = false
+    @State private var showProjects = false
     @State private var showBeatCapture = false
     @State private var showRemix = false
     @State private var showVocoder = false
@@ -43,6 +44,7 @@ struct RootView: View {
                     onSequencerTap: { showSequencer = true },
                     onRecordingsTap: { showRecordings = true },
                     onPacksTap: { showPacks = true },
+                    onProjectsTap: { showProjects = true },
                     onViewAllSongs: { model.view = .bandRoom }
                 )
                 .environmentObject(history)
@@ -81,6 +83,28 @@ struct RootView: View {
                 .padding(28)
                 .background(.ultraThinMaterial,
                             in: RoundedRectangle(cornerRadius: 14))
+            }
+        }
+        // Project-restore problems ("Needs <donor>…") surface as a
+        // dismissible banner on every view — a silent borrow drop is
+        // exactly the failure mode the notice exists to prevent.
+        .overlay(alignment: .top) {
+            if let notice = session.projects.notice {
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundStyle(.yellow)
+                    Text(notice)
+                        .font(.callout)
+                        .lineLimit(3)
+                    Button("Dismiss") { session.projects.notice = nil }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(JamTheme.accent)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial,
+                            in: RoundedRectangle(cornerRadius: 10))
+                .padding(.top, 14)
             }
         }
         .overlay(alignment: .bottom) {
@@ -202,6 +226,14 @@ struct RootView: View {
                     Label("Remix", systemImage: "sparkles")
                 }
                 .help("Remix — one-tap transforms of this song and its samples")
+                // Projects: per-song workspaces (save/load the pad
+                // setup). Same group, same 10-element-cap reason.
+                Button {
+                    showProjects.toggle()
+                } label: {
+                    Label("Projects", systemImage: "square.grid.4x3.fill")
+                }
+                .help("Projects — save and reload this song's pad workspace")
             }
             ToolbarItem(placement: .automatic) {
                 Button {
@@ -256,6 +288,11 @@ struct RootView: View {
         }
         .sheet(isPresented: $showPacks) {
             PacksBrowserView()
+                .environmentObject(model)
+                .environmentObject(session)
+        }
+        .sheet(isPresented: $showProjects) {
+            ProjectsListView()
                 .environmentObject(model)
                 .environmentObject(session)
         }

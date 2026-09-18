@@ -68,6 +68,14 @@ final class SessionController: ObservableObject {
     let patternStore = SequencerPatternStore()
     /// Custom pad assignments (sequences, local samples, packs).
     let padAssignmentStore = PadAssignmentStore()
+    /// Per-pad FX overrides ("packId#padIdx", the cross-surface key
+    /// iOS persists into Project snapshots). Consulted at trigger
+    /// time; ChopPlayer.applyEffects renders the actual chain.
+    let padFXStore = PadFXStore()
+    /// Projects v1: per-song workspace capture/restore + auto-save.
+    /// Lazy (needs self); touched in `startBridge` so the auto-save
+    /// hooks are armed before the first mutation.
+    private(set) lazy var projects = ProjectCoordinator(session: self)
     /// Multiple patterns running on pads simultaneously.
     private(set) lazy var sequencePadManager = SequencePadManager(
         eventBus: eventBus,
@@ -413,6 +421,7 @@ final class SessionController: ObservableObject {
                 let looping = self.launchpad.playbackMode.loops
                 self.chopPlayer.trigger(
                     file: url, startSec: nil, endSec: nil,
+                    effects: self.effectsForPad(assignment),
                     afterSeconds: delay, loop: looping,
                     phaseOffsetSeconds: looping ? phaseOffset : 0)
                 return
@@ -420,7 +429,9 @@ final class SessionController: ObservableObject {
             if let aid = assignment.chop.assetId, aid.hasPrefix("drumfile:"),
                let url = self.drumKitSampleFiles[assignment.chop.idx] {
                 self.chopPlayer.trigger(
-                    file: url, startSec: nil, endSec: nil, afterSeconds: delay)
+                    file: url, startSec: nil, endSec: nil,
+                    effects: self.effectsForPad(assignment),
+                    afterSeconds: delay)
                 if let coords = PadEventMapping.eventCoordinates(for: pad) {
                     self.eventBus.publish(ContributionEvent(
                         source: .launchpad,
@@ -468,6 +479,7 @@ final class SessionController: ObservableObject {
             let cycleSeconds = loopable ? self.launchpad.loopLengthSeconds : 0
             self.chopPlayer.trigger(
                 assignment, afterSeconds: delay,
+                effects: self.effectsForPad(assignment),
                 loop: loopable, crossfadeMs: crossfadeMs,
                 loopBarSeconds: barSeconds,
                 cycleSeconds: cycleSeconds,
@@ -592,7 +604,10 @@ final class SessionController: ObservableObject {
                 // Sample pad route: resolve grid cell to assignment
                 if let pad = PadEventMapping.launchpadPad(row: row, col: col),
                    let assignment = self.launchpad.assignments[pad] {
-                    self.chopPlayer.trigger(assignment, afterSeconds: 0, velocity: Float(event.velocity))
+                    self.chopPlayer.trigger(
+                        assignment, afterSeconds: 0,
+                        effects: self.effectsForPad(assignment),
+                        velocity: Float(event.velocity))
                 }
             case .padUp(let row, let col):
                 if let pad = PadEventMapping.launchpadPad(row: row, col: col),
@@ -612,8 +627,11 @@ final class SessionController: ObservableObject {
             self?.launchpad.assignments[pad]
         }
         replayExecutor.onTrigger = { [weak self] assignment, velocity in
-            self?.chopPlayer.trigger(
-                assignment, afterSeconds: 0, velocity: velocity)
+            guard let self else { return }
+            self.chopPlayer.trigger(
+                assignment, afterSeconds: 0,
+                effects: self.effectsForPad(assignment),
+                velocity: velocity)
         }
         replayExecutor.onRelease = { [weak self] assignment in
             self?.chopPlayer.release(assignment)
@@ -724,6 +742,8 @@ final class SessionController: ObservableObject {
     func startBridge(sessionId: String, backendBaseURL: URL) {
         foreignAudioOwnerSeen = false
         self.backendBaseURL = backendBaseURL
+        // Arm the Projects auto-save hooks before anything mutates.
+        _ = projects
         bridge.start(
             sessionId: sessionId,
             url: BridgeClient.bridgeURL(backendBaseURL: backendBaseURL)
@@ -848,6 +868,10 @@ final class SessionController: ObservableObject {
         ribbon = ChordRibbonModel(timeline: session.bundle.timeline)
         attachedAnalysisId = session.bundle.analysisId
         applyMix()
+        // Fresh song = fresh grid provenance: no pack mounted yet, no
+        // borrow context to resurrect stale FX keys or BorrowRefs.
+        activeGridPackId = nil
+        activeBorrowContext = nil
         launchpad.configure(bundle: session.bundle)
         await chopPlayer.load(stemURLs: session.stemURLs)
         sequencer.stop()
@@ -857,6 +881,11 @@ final class SessionController: ObservableObject {
         linkSync.seedTempoIfAlone(session.bundle.meta.tempoBpm ?? 120)
         attachedBundle = session.bundle
         attachedStemURLs = session.stemURLs
+        // Projects: restore the pending/working workspace over the
+        // fresh stores NOW — before the arrangement runtime and the
+        // chop-edit overlay below read them. Borrows re-derive after
+        // the auto-kit lands (autoKitDidMount at the end of attach).
+        projects.songDidActivate(bundle: session.bundle)
         // Live-capture arrangement: collapse this song's sections into blocks
         // and restore any saved capture (kit.js parity).
         arrangement.loadSong(
@@ -905,6 +934,7 @@ final class SessionController: ObservableObject {
         // preset grid so first presses don't pay the read+SRC.
         let presetAssignments = launchpad.assignments.values
             .map { (chop: $0.chop, stem: $0.stem) }
+        let activatedId = session.bundle.analysisId
         Task { [weak self] in
             await self?.chopPlayer.prewarm(presetAssignments)
             // kind explicit: every song opens on the Auto Kit — a Drum Kit
@@ -912,6 +942,9 @@ final class SessionController: ObservableObject {
             // announce: false — automatic attach-time load, not a Remix
             // action; it must not seed a stale "Applied:" line.
             await self?.loadAutoKit(kind: "auto", announce: false)
+            // Projects: the kit has settled (mounted or failed) — the
+            // earliest point a restored borrow mount won't be clobbered.
+            self?.projects.autoKitDidMount(analysisId: activatedId)
         }
     }
 
@@ -954,6 +987,53 @@ final class SessionController: ObservableObject {
     /// Only consulted for assignments whose chop carries the `drumfile:`
     /// sentinel assetId, so stale entries can never hijack preset chops.
     private var drumKitSampleFiles: [Int: URL] = [:]
+
+    /// Pack identity of the CURRENT pad grid when it came from a pack
+    /// (auto kit / drum kit / donor kit / borrow); nil for bundle-preset
+    /// or fetched chop grids. Per-pad FX keys ("packId#padIdx") resolve
+    /// against it — the same packId iOS keys the same kit's FX on, so a
+    /// workspace saved on iPhone sounds identical here.
+    private(set) var activeGridPackId: String?
+
+    /// The mounted borrow's provenance, retained so Project snapshots
+    /// can capture CONTENT-ADDRESSED BorrowRefs (donor + span +
+    /// assetId from the backend's fields — never the response padIdx,
+    /// which is renumbered per response). `pads` are the pads that
+    /// actually mounted (their sample files downloaded).
+    struct BorrowContext {
+        let donorId: String
+        let donorName: String?
+        let stem: String
+        let pads: [SamplePad]
+    }
+    private(set) var activeBorrowContext: BorrowContext?
+
+    /// Per-pad FX for the current pack-derived grid, else neutral.
+    /// Keyed on the mounted pack's id + the pad's own pack index
+    /// (chop.idx carries it for every pack-derived grid). The assetId
+    /// guard keeps a stale pack id from bleeding FX onto a
+    /// preset/fetched chop grid mounted behind SessionController's
+    /// back (LaunchpadPanel's stem/sliceMode loads).
+    func effectsForPad(_ assignment: PadAssignment) -> SamplePadEffects {
+        guard let packId = activeGridPackId,
+              assignment.chop.assetId != nil else { return .neutral }
+        return padFXStore.effects(packId: packId, padIdx: assignment.chop.idx)
+            ?? .neutral
+    }
+
+    /// Rebuild the arrangement runtime from the (restored/reset)
+    /// store — the Projects coordinator calls this after swapping
+    /// ArrangementStore contents mid-session.
+    func reloadArrangementRuntime() {
+        guard let bundle = attachedBundle else { return }
+        arrangement.loadSong(
+            analysisId: bundle.analysisId,
+            sections: bundle.timeline.sections.map {
+                ArrangementSectionInput(
+                    type: $0.label ?? "", start: $0.start, end: $0.end)
+            }
+        )
+    }
 
     /// `announce: false` for programmatic loads (song-attach Auto Kit, the
     /// Re-Drum pads follow-up) — only a user-initiated kit tap should
@@ -1024,6 +1104,10 @@ final class SessionController: ObservableObject {
                 return (chop, slice.stemRole)
             }
             launchpad.adoptAssignments(pairs)
+            // FX keys resolve against this kit's identity; a non-borrow
+            // grid also retires any mounted borrow context.
+            activeGridPackId = pack.packId
+            activeBorrowContext = nil
             // Decode the kit's buffers off the touch path so the first
             // press of every pad fires without the read+SRC delay.
             Task { [weak self] in await self?.chopPlayer.prewarm(pairs) }
@@ -1282,6 +1366,8 @@ final class SessionController: ObservableObject {
         }
         guard !pairs.isEmpty else { return false }
         launchpad.adoptAssignments(pairs)
+        activeGridPackId = donorPack.packId
+        activeBorrowContext = nil
         return true
     }
 
@@ -1400,6 +1486,17 @@ final class SessionController: ObservableObject {
             guard !mounts.isEmpty else { return }
             launchpad.playbackMode = .latch     // borrow pads LATCH (loop until re-tapped)
             launchpad.adoptBorrowAssignments(mounts)
+            // Retain provenance for Project snapshots: FX keys resolve
+            // on the borrow pack's id; BorrowRefs capture the mounted
+            // pads' CONTENT ADDRESS (sourceLoopStartSec/EndSec/assetId
+            // from the backend), never the response padIdx.
+            activeGridPackId = pack.packId
+            activeBorrowContext = BorrowContext(
+                donorId: donorId,
+                donorName: donorLabel,
+                stem: stem,
+                pads: mountable
+            )
             remixApplied =
                 "Applied: Borrow — your song on top, \(donorLabel) below, "
                 + "looped to this song's tempo."

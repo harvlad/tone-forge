@@ -18,6 +18,9 @@ public final class SequencerPatternStore {
     /// Saved patterns keyed by pattern id. Auto-saved on mutation.
     public private(set) var patterns: [UUID: SequencerPattern] = [:]
 
+    /// Fired after any mutation persists (Project auto-save hook).
+    @ObservationIgnored public var onChanged: (() -> Void)?
+
     private static let defaultsKey = "jamdesktop.sequencerPatterns"
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -89,5 +92,6 @@ public final class SequencerPatternStore {
         } catch {
             NSLog("[SequencerPatternStore] Encode failed: %@", error.localizedDescription)
         }
+        onChanged?()
     }
 }

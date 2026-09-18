@@ -691,8 +691,9 @@ features:
         status: done
         evidence: "mobile-ios/Sources/ToneForgeEngine/Projects/ProjectSnapshot.swift#ProjectSnapshot"
       desktop:
-        status: missing
-        note: "jam-desktop stores are global, not per-song, so a snapshot has nothing per-song to capture yet; the contract types now live in the shared engine (ToneForgeEngine/Projects/ProjectSnapshot.swift) for desktop to compile against when its stores go per-song."
+        status: partial
+        evidence: "jam-desktop/Sources/JamDesktopCore/Projects/ProjectStateBridge.swift#ProjectStateBridge"
+        note: "Full port on the shared snapshot contract: sample-axis pad assignments translated 0..63⇄PadIndex 11..88 (other modes preserved verbatim), NEW per-pad FX store applied at trigger time (PadFXStore; no desktop FX editor yet), section gates enforced live at padDown (SectionResolver), chop edits + arrangement + launchpad settings + content-addressed borrow re-derivation, auto-save working project, Projects sheet (save/load/rename/duplicate/reset/delete). Partial because hiddenPads are preserved-on-round-trip only (no desktop hide/visibility surface) and v2 blank-canvas projects load only on iOS."
       plugin:
         status: na
         note: "The host DAW's project file is the workspace container for the plugin; jamn-level per-pad state persistence inside the plugin is a separate gap tracked outside this row."

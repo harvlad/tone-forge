@@ -21,6 +21,9 @@ public final class ArrangementStore {
     /// analysisId → serialized capture JSON (the web `jamn.arrangement.<id>` blob).
     public private(set) var songs: [String: String] = [:]
 
+    /// Fired after any mutation persists (Project auto-save hook).
+    @ObservationIgnored public var onChanged: (() -> Void)?
+
     private static let defaultsKey = "jamdesktop.arrangements"
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -65,5 +68,6 @@ public final class ArrangementStore {
         if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: Self.defaultsKey)
         }
+        onChanged?()
     }
 }

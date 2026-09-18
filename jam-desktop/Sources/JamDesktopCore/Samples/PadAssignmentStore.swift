@@ -74,6 +74,9 @@ public final class PadAssignmentStore {
     /// Assignments keyed by pad index (0..<64 for 8x8 grid).
     public private(set) var assignments: [Int: PadSlotReference] = [:]
 
+    /// Fired after any mutation persists (Project auto-save hook).
+    @ObservationIgnored public var onChanged: (() -> Void)?
+
     private static let defaultsKey = "jamdesktop.padAssignments"
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -117,6 +120,13 @@ public final class PadAssignmentStore {
         persist()
     }
 
+    /// Replace the WHOLE table (Project restore/reset). Whole-value by
+    /// design: a workspace is the complete pad surface, not a patch.
+    public func replaceAll(_ next: [Int: PadSlotReference]) {
+        assignments = next
+        persist()
+    }
+
     // MARK: - Persistence
 
     private struct Persisted: Codable {
@@ -149,5 +159,6 @@ public final class PadAssignmentStore {
         } catch {
             NSLog("[PadAssignmentStore] Encode failed: %@", error.localizedDescription)
         }
+        onChanged?()
     }
 }

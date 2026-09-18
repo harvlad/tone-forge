@@ -858,3 +858,66 @@ Pinned by `LaunchpadControllerTests` (real-grid snap, forward/backward
 extrapolation, lock-off instant + join, sounding-voice anchor hold, edit
 gate) and `ChopPlayerFileReleaseTests` (immediate release accounting,
 armed-start cancel, one-shot natural-end clear).
+
+## D-030: Projects v1 — per-song workspaces on the shared snapshot contract
+
+**Date:** 2026-09-18
+**Decision:** Port iOS Projects (mobile c887452d) to desktop against the
+SAME wire contract (`ToneForgeEngine/Projects/ProjectSnapshot.swift`) —
+no desktop-only schema. A project file written on either platform decodes
+on the other. The port's desktop-specific choices:
+
+- **Sample-axis translation, everything else preserved.** The snapshot's
+  `padAssignments` is mode → PadIndex(11..88, row 1 = bottom) → PadSlot;
+  desktop has one surface with row-major 0..63 top-left indexing.
+  `ProjectStateBridge` owns the bijection (the exact formula iOS lays
+  pack pads with: `PadIndex.at(row: 8 - d/8, col: d%8 + 1)`) and
+  snapshots/restores ONLY the "sample" axis; other modes' entries,
+  `hiddenPads`, and the transform chain of unchanged sample slots
+  round-trip verbatim through the last-restored snapshot.
+- **Per-pad FX exist on desktop now.** New `PadFXStore`
+  ("packId#padIdx", the iOS key form; JSON under Application
+  Support/Jamn/padFX.json) consulted at trigger time via
+  `SessionController.effectsForPad` — chop, borrow/drum FILE, MIDI-map
+  and replay paths all pass it into ChopPlayer's existing
+  `applyEffects` chain, which had been receiving `.neutral` forever.
+  Keyed on the mounted pack's id (`activeGridPackId`) + `chop.idx`,
+  gated on `chop.assetId != nil` so a stale pack id can't bleed FX
+  onto a preset/fetched chop grid. No desktop FX editor yet — values
+  arrive via restored workspaces (typically authored on iOS).
+- **Section gates are LIVE, not just preserved.** `LaunchpadController.
+  sectionGate` + `SectionResolver.isAllowed` at `padDown`/`replayArm`
+  (playhead-position semantics, iOS SampleScheduler parity). Latch
+  toggle-OFF is deliberately ungated — stopping must always work.
+- **Borrows are content-addressed.** `loadBorrowLoops` retains a
+  `BorrowContext` (donor + the mounted pads' backend
+  `sourceLoopStartSec`/`sourceLoopEndSec`/`assetId`); capture builds
+  `BorrowRef`s from it (host/span-less pads dropped — response padIdx
+  is NEVER identity), restore re-requests the donor after the auto-kit
+  lands and verifies by `BorrowRef.matches`; a drifted kit or missing
+  donor surfaces a "Needs <donor>" banner, then the workspace's saved
+  trigger mode is re-asserted over the mount's forced Latch.
+- **Global-store swap semantics.** Desktop stores stay global (iOS's
+  glue-over-stores approach): restore whole-value swaps assignment
+  table / FX map / the song's chop edits + arrangement; reset-to-song
+  empties them, deletes the working file and reloads the auto-kit.
+  chopEdits is the one field desktop is CANONICAL for (per-analysisId
+  ChopEditStore; iOS captures nil today).
+- **Auto-save without ObservableObject.** The @Observable stores got
+  explicit `onChanged` hooks (fired in `persist()`) + the controller's
+  `onSurfaceSettingChanged`; the coordinator debounces ~2 s into
+  `Application Support/Jamn/projects/working/{analysisId}.json`.
+  Restore runs inside `SessionController.attach` BEFORE
+  `arrangement.loadSong`/`applyChopEdits` read their stores.
+- **v2 blank-canvas (nil baseSongId, landed concurrently in the shared
+  contract) is load-blocked on desktop** with a notice — there is no
+  desktop canvas surface yet; files still list and round-trip.
+
+**Where:** `Sources/JamDesktopCore/Projects/` (ProjectStateBridge,
+ProjectStore), `Sources/JamDesktopCore/Samples/PadFXStore.swift`,
+`Sources/JamDesktop/Projects/ProjectCoordinator.swift`,
+`Sources/JamDesktop/Library/ProjectsListView.swift`, SessionController
+attach/kit/borrow seams. Pinned by `ProjectStateBridgeTests`
+(translation bijection incl. the iOS-formula cross-check, round-trip,
+preservation, tri-state gates, borrow content-match), `ProjectStoreTests`,
+`PadFXStoreTests`, `LaunchpadSectionGateTests`.
