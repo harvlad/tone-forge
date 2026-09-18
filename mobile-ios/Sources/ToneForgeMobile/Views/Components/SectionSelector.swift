@@ -22,8 +22,15 @@ struct SectionSelector: View {
     var currentIndex: Int?
     /// Index of the next section (Perform's "NEXT").
     var nextIndex: Int?
+    /// Index of the SECTION-LOCKED section (the transport's A/B loop
+    /// covers it). The locked chip carries a lock glyph — the loop state
+    /// used to be invisible outside the Loop chip, so a song "stuck on
+    /// the intro" read as a playback bug.
+    var lockedIndex: Int?
     var style: Style = .compact
     let onSelect: (SectionEvent) -> Void
+    /// Long-press a chip: lock/unlock playback to that section.
+    var onToggleLock: ((SectionEvent) -> Void)?
     /// Optional trailing "NEXT" chip (Perform). Nil hides it.
     var showNext: Bool = false
 
@@ -48,6 +55,7 @@ struct SectionSelector: View {
     private func chip(index i: Int, section s: SectionEvent) -> some View {
         let isCurrent = currentIndex == i
         let isNext = nextIndex == i
+        let isLocked = lockedIndex == i
         // Suppress the name line when the label is just the position
         // letter (generic "A"/"B" sections) — otherwise it reads "A / A".
         let name = s.label
@@ -59,9 +67,16 @@ struct SectionSelector: View {
             onSelect(s)
         } label: {
             VStack(spacing: 2) {
-                Text(letter(i))
-                    .font(style == .prominent ? .title3.weight(.bold) : .headline.weight(.semibold))
-                    .foregroundStyle(isCurrent ? TFTheme.textPrimary : TFTheme.textSecondary)
+                HStack(spacing: 3) {
+                    Text(letter(i))
+                        .font(style == .prominent ? .title3.weight(.bold) : .headline.weight(.semibold))
+                        .foregroundStyle(isCurrent ? TFTheme.textPrimary : TFTheme.textSecondary)
+                    if isLocked {
+                        Image(systemName: "lock.fill")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(TFTheme.accent)
+                    }
+                }
                 if showName, let name {
                     Text(name)
                         .font(TFTheme.sectionLabel)
@@ -73,17 +88,29 @@ struct SectionSelector: View {
             .frame(height: TFTheme.sectionHeight)
             .padding(.horizontal, TFTheme.Spacing.sm)
             .background(
-                isCurrent ? TFTheme.accent.opacity(0.30) : TFTheme.surface2,
+                isLocked ? TFTheme.accent.opacity(0.45)
+                    : (isCurrent ? TFTheme.accent.opacity(0.30) : TFTheme.surface2),
                 in: RoundedRectangle(cornerRadius: TFTheme.Radius.medium)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: TFTheme.Radius.medium)
-                    .stroke(isCurrent ? TFTheme.accent : (isNext ? TFTheme.accent.opacity(0.5) : TFTheme.border),
-                            lineWidth: isCurrent ? 1.5 : 1)
+                    .stroke(isLocked || isCurrent ? TFTheme.accent
+                                : (isNext ? TFTheme.accent.opacity(0.5) : TFTheme.border),
+                            lineWidth: isLocked || isCurrent ? 1.5 : 1)
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text("Section \(letter(i)), \(s.label ?? "")"))
+        // Long-press = lock/unlock playback to this section. Simultaneous
+        // so a quick tap still selects.
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                guard let onToggleLock else { return }
+                Haptics.toggle()
+                onToggleLock(s)
+            }
+        )
+        .accessibilityLabel(Text(
+            "Section \(letter(i)), \(s.label ?? "")\(isLocked ? ", locked" : "")"))
         .accessibilityAddTraits(isCurrent ? [.isSelected] : [])
     }
 

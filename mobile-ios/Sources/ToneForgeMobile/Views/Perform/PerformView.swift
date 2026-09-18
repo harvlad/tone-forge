@@ -211,8 +211,10 @@ struct PerformView: View {
                 sections: sections,
                 currentIndex: cur,
                 nextIndex: cur.map { min($0 + 1, sections.count - 1) },
+                lockedIndex: sections.firstIndex(where: appState.isSectionLocked),
                 style: .prominent,
-                onSelect: { appState.seekAndPlay(to: $0.start) },
+                onSelect: { appState.selectSection($0, andPlay: true) },
+                onToggleLock: { appState.toggleSectionLock($0) },
                 showNext: true
             )
         }

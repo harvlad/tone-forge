@@ -168,8 +168,10 @@ struct LearnView: View {
                 SectionSelector(
                     sections: sections,
                     currentIndex: currentSectionIndex,
+                    lockedIndex: sections.firstIndex(where: appState.isSectionLocked),
                     style: .compact,
-                    onSelect: { appState.seek(to: $0.start) }
+                    onSelect: { appState.selectSection($0) },
+                    onToggleLock: { appState.toggleSectionLock($0) }
                 )
             }
 

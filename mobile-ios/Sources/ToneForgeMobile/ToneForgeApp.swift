@@ -3320,6 +3320,34 @@ public final class AppState: ObservableObject {
         loopRegion = region
     }
 
+    /// True when the active A/B loop covers exactly this section — the
+    /// section strip's lock glyph keys on it.
+    public func isSectionLocked(_ s: SectionEvent) -> Bool {
+        guard let r = loopRegion else { return false }
+        return abs(r.startSec - s.start) < 0.01 && abs(r.endSec - s.end) < 0.01
+    }
+
+    /// Section-strip tap: seek to the section; an ACTIVE section lock
+    /// FOLLOWS the selection (predictable — you moved, the lock moved),
+    /// no lock stays no lock.
+    public func selectSection(_ s: SectionEvent, andPlay: Bool = false) {
+        if loopRegion != nil {
+            setLoop(LoopRegion(startSec: s.start, endSec: s.end))
+        }
+        seek(to: s.start)
+        if andPlay, !isPlaying { play() }
+    }
+
+    /// Section-strip long-press: lock playback to this section, or
+    /// unlock if it's already the locked one.
+    public func toggleSectionLock(_ s: SectionEvent) {
+        if isSectionLocked(s) {
+            setLoop(nil)
+        } else {
+            setLoop(LoopRegion(startSec: s.start, endSec: s.end))
+        }
+    }
+
     /// Set the practice playback rate (D-022, Learn tab's Speed
     /// control). Clamped to `LearnSettingsStore.rateRange` and
     /// persisted. No-op while the session recorder is armed or
@@ -3567,7 +3595,10 @@ public final class AppState: ObservableObject {
     public func startOutputRecording() {
         guard outputRecorder.state == .idle else { return }
         layerError = nil
-        if !isPlaying { play() }
+        // Deliberately does NOT roll the transport: Record records, the
+        // player decides whether the song runs (user call — a pads-only
+        // take with the song parked is a legitimate session). The engine
+        // itself is running from boot, so the tap always has a graph.
         if !outputRecorder.start() {
             layerError = "Couldn't start recording — audio engine isn't running."
         }
