@@ -937,6 +937,25 @@ def render_kit_loops(source_id: str, source_result: Dict, target_bpm: float, *,
                    else {}),
                 "defaultQuantize": "1 bar",
                 "sampleFile": fname,
+                # Content-addressed identity for project snapshots: the
+                # DONOR-timeline span that fed _cache_key, the transpose the
+                # render actually applied, and (when the curated kit pad has
+                # one) its stable graph-asset id. padIdx is renumbered per
+                # response and drifts with pad-usage feedback, so clients
+                # must NEVER persist it as identity — these fields are what
+                # a saved workspace re-requests and re-matches by.
+                # Deliberately NOT the "loopStartSec"/"loopEndSec" keys:
+                # every surface reads those as a window/cycle on the pad's
+                # OWN audio (SampleScheduler.loopLengthSeconds,
+                # padengine._loopRegion), and this span is donor-timeline —
+                # at fold ratio != 1 it would corrupt the pack's shared
+                # lock-cycle (span seconds != rendered seconds).
+                "sourceLoopStartSec": round(float(a), 4),
+                "sourceLoopEndSec": round(float(b), 4),
+                "transposeSemis": n_steps,
+                **({"assetId": pad["assetId"]}
+                   if isinstance(pad.get("assetId"), str) and pad["assetId"]
+                   else {}),
             })
     return out_pads
 

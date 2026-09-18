@@ -559,6 +559,58 @@ def test_kit_borrow_host_initial_never_transposes(tmp_path, monkeypatch):
     assert all(p["source"] == "initial" for p in host)
 
 
+def test_kit_borrow_pads_carry_content_addressed_identity(tmp_path, monkeypatch):
+    """Project snapshots need a CONTENT-ADDRESSED ref to a borrow pad —
+    padIdx is renumbered per response and drifts with pad-usage feedback,
+    so it can never be persisted as identity. Every borrow pad must carry
+    the donor-timeline span that fed _cache_key (sourceLoopStartSec/
+    sourceLoopEndSec), the transpose the render applied, and the curated
+    kit pad's stable graph assetId when it has one.
+
+    The span must NOT ship under the client-facing "loopStartSec"/
+    "loopEndSec" keys: every surface reads those as a window/cycle on the
+    pad's OWN audio (SampleScheduler.loopLengthSeconds, padengine
+    ._loopRegion), and a donor-timeline span at fold ratio != 1 would
+    corrupt the pack's shared lock-cycle."""
+    kit = _curated_kit()
+    kit[0]["assetId"] = "asset-drums-1"     # curated kit pads carry graph ids
+    kit[1]["assetId"] = "asset-bass-7"
+    # kit[2]/kit[3] deliberately left without assetId (drumfile/pack-sourced
+    # pads have none) — the field must then be ABSENT, not null.
+    result = _kit_borrow_fixture(tmp_path, monkeypatch, kit, host_key="C major")
+
+    pads = borrow.render_kit_loops(
+        "donorX", result, 120.0, source_tag="donor",
+        target_key="G minor", source_name="Donor")
+    assert len(pads) == 4
+    by_name = {p["name"]: p for p in pads}
+
+    for p in pads:
+        # The span is the kit pad's own loop region, donor timeline.
+        src = next(k for k in kit if k["name"] == p["name"])
+        assert p["sourceLoopStartSec"] == pytest.approx(src["loopStartSec"])
+        assert p["sourceLoopEndSec"] == pytest.approx(src["loopEndSec"])
+        # Never under the client window/cycle keys (shared-cycle skew).
+        assert "loopStartSec" not in p
+        assert "loopEndSec" not in p
+
+    assert by_name["Drums beat"]["assetId"] == "asset-drums-1"
+    assert by_name["Bass groove Verse"]["assetId"] == "asset-bass-7"
+    assert "assetId" not in by_name["Guitar riff Chorus"]
+    assert "assetId" not in by_name["Vocal"]
+
+    # transposeSemis mirrors the per-pad conform gate: drums pitchless (0),
+    # donor harmonic pads carry the real C→G move (-5, shortest path).
+    assert by_name["Drums beat"]["transposeSemis"] == 0
+    assert by_name["Bass groove Verse"]["transposeSemis"] == -5
+
+    # Host 'initial' pads never transpose — transposeSemis pins that too.
+    host = borrow.render_kit_loops(
+        "hostX", result, 120.0, source_tag="initial",
+        target_key="G minor", source_name="This song")
+    assert all(p["transposeSemis"] == 0 for p in host)
+
+
 def test_kit_borrow_empty_kit_yields_no_pads(tmp_path, monkeypatch):
     """A song whose kit builder returns nothing borrows nothing (the handler
     then 422s) — never a crash."""
