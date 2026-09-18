@@ -1272,3 +1272,116 @@ provenance, toggle-hook gating) + `ProjectStateBridgeTests`
 (`activateFresh` persists across relaunch; the empties/per-song-store
 pins are D-034's) + `kit.test.mjs`/
 `lpview.test.mjs` (SYNTH groove target + layer row + category map).
+
+## D-036: Launchpad Pro MK3 function-button map — the full surface, not just Play/Stop
+
+**Date:** 2026-09-18
+**Decision:** Every function button around the MK3's 8×8 grid that Jamn
+can meaningfully drive gets a mapped action AND a state LED, resolved
+against the device's real physical layout (User Guide p.11 hardware
+overview × the Programmer-mode CC scheme, PDF p.19). Tap tempo is
+explicitly parked; Shift stays reserved as a future modifier; Setup and
+the logo are untouched. The map, dispatch and LED contract live in
+JamDesktopCore (`LaunchpadControlSurface`) so tests pin the physical
+instrument, not a UI.
+
+**The assignment table** (physical label → CC → function → LED):
+
+| Physical | CC | Function | LED |
+|---|---|---|---|
+| ○ Record / Capture MIDI | 10 | global stop (kept from D-031-era wiring) | dim red |
+| ▷ Play | 20 | song transport play/pause (kept) | green pulse playing / dim green |
+| Fixed Length | 30 | trigger mode **One-Shot** | white when selected, dim otherwise |
+| Quantise | 40 | trigger mode **Follow** | " |
+| Duplicate | 50 | trigger mode **Latch** | " |
+| Clear | 60 | pad **loop-lock** toggle | amber on / dim amber off |
+| ▼ / ▲ (left col) | 70/80 | unmapped | off |
+| Shift | 90 | reserved (modifier, future) | untouched |
+| ◄ | 91 | grid size **16** (the on-screen SIZE control, incl. borrow relayout / kit refetch semantics via `padCount`) | white when 16 active |
+| ► | 92 | grid size **64** | white when 64 active |
+| Session | 93 | open/close the **Sequencer panel** | white open / dim closed |
+| Note / Custom | 94/96 | unmapped | off |
+| Chord | 95 | **Instant Groove** | dim amber, bright flash on press |
+| Sequencer / Projects | 97/98 | unmapped (free for a future tier) | off |
+| > scene top | 89 | **sequencer play/stop** | green pulse running / dim green |
+| > scenes 2–8 | 79…19 | **section blocks 0–6** (top→bottom = song order): press seeks the transport to the block start — the exact `SectionStripView.onSeek` path | lit when the block exists, white pulse on the active block |
+| Record Arm | 1 | session take **record toggle** (RecordToggle's state machine: idle→arm, armed/recording→stop+save) | dim red idle / orange armed / **red pulse recording** |
+| Mute…Device | 2–7 | per-category **layer toggles**: drums, bass, chords, synth, lead, texture (the on-screen Layers stack order) | category accent: pulse active / dim available / off empty |
+| Stop Clip | 8 | **stop all pads** (pads only — the song keeps playing; CC 10 is the everything-stop) | dim amber, bright **amber flash** on press |
+| Track select 1–8 | 101–108 | **sequencer pattern select** (pattern-store sort order) | dim stored / white current / white pulse current+running |
+
+**Approved-map deviations, forced by the physical layout** (the map was
+signed off against button NAMES; the hardware overview then fixed the
+real positions):
+
+- *"Quantise = loop-lock"* (Tier 2) collides with the Tier-1 mode-select
+  triplet, which the approval pins to CC 30/40/50 — and CC 40 IS the
+  physical Quantise key. Tier 1 wins; loop-lock lands on **Clear (60)**,
+  the free button directly above the triplet. (Fixed Length, the other
+  perfect label, is CC 30 = One-Shot.)
+- *"Play-triangle adjacent to the sequencer function"* → the top-right
+  scene arrow (**89**): the only play-triangle-styled buttons are ▷ (20,
+  taken by the kept transport toggle) and the eight ">" scene arrows,
+  whose printed sub-labels (Patterns, Steps, …) are the MK3's own
+  sequencer cluster; 89 sits directly under the Sequencer/Projects keys.
+  Sections therefore occupy 7 scene buttons, not 8 — songs with more
+  blocks than buttons truncate (the strip already scrolls visually).
+- *Layer mutes*: 7 requested categories into 6 free cells (Record Arm +
+  Stop Clip bookend the row). The row mirrors the on-screen Layers
+  stack (`LayerStackView`: drums/bass/chords/synth/lead/texture/vocal)
+  truncated to six — **rhythm** (requested but never on the Layers
+  surface) and **vocal** don't fit.
+
+**Mechanism:**
+
+- `LaunchpadControlSurface` (Core): pure `function(for:)` assignment
+  table + `handle(_:down:)` dispatch + `controlLightFrame()` LED state.
+  Host actions (transport, recorder, sequencer panel/patterns, section
+  seek) arrive as closures from SessionController; LaunchpadController/
+  ArrangementController state is read directly. Repainted from
+  `SessionController.tick()` (30 Hz) and after every handled press —
+  cheap, because diffing is the transport's job.
+- `ControlButtonLightTransport` + `USBLaunchpadTransport.
+  setControlLights`: a control-LED path with its OWN `controlLedCache`
+  that deliberately **bypasses the `PadIndex.isValid` gate** — the grid
+  path validates 11..88 and must keep doing so, while function buttons
+  live at CC addresses that gate rejects (`ColorSpec` encodes any 7-bit
+  address; the gate was the only obstacle). `redrawAll()` now replays
+  BOTH caches, so reconnect/resume repaints every function LED.
+- Sequencer panel plumbing: `SessionController.sequencerPanelOpen`
+  (@Published) replaces RootView's local `showSequencer` @State — the
+  `projectsSheetRequested` pattern upgraded to a stateful flag because
+  hardware needs open AND close plus honest LED state when the user
+  dismisses the sheet by hand.
+
+**Also in this change:** the Launchpad panel's Arrangement **Rec /
+Play / Clear control row is removed** — only the section-blocks strip
+remains. Web made the same IA call (`feat(web)` b1a6191b removed
+kit.js's control row); iOS has NOT — `ArrangementBar.swift`'s
+`ArrangementChips` still ship Rec/Play/Clear, so the iOS removal is
+queued, not landed. The capture/replay machinery
+(`ArrangementController` + runtime + store) stays and the scene
+buttons read block/active state from it — but honestly: restored
+workspaces LOAD their captures, and replay is currently UNREACHABLE
+on desktop (nothing calls `ArrangementController.togglePlaying()` any
+more, and `ArrangementRuntime.tick` only replays while playing).
+That's why PARITY's live-arrangement desktop row is `partial`; the
+hardware Shift layer is the named future home for capture/replay
+controls.
+
+**Residual:** control LEDs are tick-driven — `SessionController.tick()`
+repaints them, and the 30 Hz driver is PerformView (the sequencer
+panel ticks too while its sheet is up). State that changes while no
+ticking view is mounted repaints on the next press or tick — accepted
+for now.
+
+**Where:** `Sources/JamDesktopCore/Launchpad/LaunchpadControlSurface.swift`,
+`USBLaunchpadTransport.swift` (`controlLedCache`, `setControlLights`,
+`redrawAll`), `Sources/JamDesktop/SessionController.swift`
+(`controlSurface` wiring, `sequencerPanelOpen`, tick repaint),
+`RootView.swift` (sequencer sheet binding),
+`Launchpad/LaunchpadPanelView.swift` (`arrangementRow` = strip only).
+Pinned by `LaunchpadControlSurfaceTests` (assignment table, per-button
+actions, LED transitions, reserved buttons) and
+`USBLaunchpadTransportTests` (gate bypass, control-cache diffing,
+palette pulses, reconnect redraw, grid/control cache independence).

@@ -248,6 +248,26 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: launchpad-mk3-function-buttons
+    name: "Launchpad Pro MK3 function-button map — the buttons AROUND the grid drive the session (transport, trigger mode, loop lock, grid size, record, stop-clip, section jump, layer toggles, sequencer panel/play/pattern select) with state LEDs"
+    platforms:
+      web:
+        status: missing
+        note: "lp-hw.js drives grid notes + LED mirror only; no control-CC handling beyond mode plumbing. Queued for the hardware-integration parity audit — the desktop assignment table (jam-desktop DECISIONS D-036) is the spec to port."
+      ios:
+        status: missing
+        note: "USBLaunchpadTransport forwards onControlButton but nothing consumes it. Queued for the hardware-integration parity audit (D-036 table is the spec); Core surface is shareable via ToneForgeEngine if lifted."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/LaunchpadControlSurface.swift#LaunchpadControlSurface"
+        note: "Full approved map (D-036): CC20 play/pause + CC10 global stop kept; CC30/40/50 One-Shot|Follow|Latch select; Clear(60) loop-lock; ◄►(91/92) 16/64 size; Session(93) sequencer panel; Chord(95) Instant Groove; Record Arm(1) take-record toggle (red pulse while recording); Stop Clip(8) stop-all-pads with amber press flash; Mute…Device(2–7) per-category layer toggles; track select(101–108) pattern select; scene arrows 89 = sequencer play/stop, 79–19 = section blocks (lit/pulse, press = SectionStripView.onSeek path). LEDs via ControlButtonLightTransport (own controlLedCache, PadIndex.isValid bypass, reconnect redraw). Tap tempo parked; Shift reserved. Pinned by LaunchpadControlSurfaceTests + USBLaunchpadTransportTests."
+      plugin:
+        status: na
+        note: "Host/DAW territory (same rationale as launchpad-mk3)."
+      connect:
+        status: na
+        note: "No pad surface."
+
   - id: master-fx-panel
     name: Master FX panel (D-022 — mixer FX tab, 3-band EQ / comp / reverb+delay sends / presets)
     platforms:
@@ -368,9 +388,9 @@ features:
         evidence: "mobile-ios/Sources/ToneForgeMobile/ArrangementModel.swift#ArrangementModel"
         note: "ArrangementModel drives the shared ArrangementRuntime from AppState.tick(): reads active grid indices passively from SampleVoicePool.ringing/pendingPadKeys inverted through ModeCoordinator.padBindings (Rec never perturbs the pad-trigger path), replays via ModeCoordinator.triggerJamSample(latch:true)/releaseJamSample at block boundaries, Rec/Play mutually exclusive, Clear releases + forgets. Per-song persistence under jamn.arrangement.<analysisId> (web-compatible Arrangement.serialize/parse). JamView keeps only the proportional section strip (the Rec/Play/Clear capture chips were removed as low-value; the bottom-bar Record captures session audio), gated to Samples mode. Re-seated per song in activate(bundle:). Shared engine pinned by ArrangementTests 18/18 (D-030/D-031)."
       desktop:
-        status: done
+        status: partial
         evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/ArrangementController.swift#ArrangementController"
-        note: "ArrangementController drives the shared ArrangementRuntime from SessionController.tick(): reads launchpad.activePads + transport time, records per block, replays via LaunchpadController.replayArm/replayRelease (phase-locked loops, mode-independent). Per-song ArrangementStore (jamdesktop.arrangements blob, web-compatible serialize/parse). LaunchpadPanelView.arrangementRow = Rec/Play/Clear + proportional section strip with playhead."
+        note: "Engine intact, capture UI removed by design: ArrangementController still drives the shared ArrangementRuntime from SessionController.tick() (records per block, replays via replayArm/replayRelease, per-song ArrangementStore, web-compatible serialize/parse) and restored-workspace captures LOAD — but the on-screen Rec/Play/Clear control row was deliberately removed (web made the same IA call, kit.js's row is gone; iOS still ships its Rec/Play/Clear chips, removal queued; only the section-blocks strip remains, now also mirrored on the MK3 scene buttons per D-036), so desktop currently has no way to start a capture OR a replay: nothing calls ArrangementController.togglePlaying, and the runtime only replays while playing. Partial until a capture affordance returns (hardware Shift-layer candidate) or the feature is re-scoped."
       plugin:
         status: na
         note: "No song-section transport or pad-arrangement surface in the JUCE sampler."

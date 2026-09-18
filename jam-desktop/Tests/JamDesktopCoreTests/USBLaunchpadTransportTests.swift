@@ -507,4 +507,161 @@ final class USBLaunchpadTransportTests: XCTestCase {
         )
         XCTAssertTrue(transport.underpowerSuspected)
     }
+
+    // MARK: - Control-button LEDs (function buttons, D-036)
+
+    /// The control path must light CC addresses the grid gate rejects
+    /// — 93 (Session, "row 9"), 8 (Stop Clip, "col 8 row 0") and 101
+    /// (track select) are all PadIndex.isValid == false, which is
+    /// exactly why the dedicated method exists.
+    func testControlLightsBypassPadValidityGate() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        midi.sent.removeAll()
+
+        XCTAssertFalse(PadIndex(93).isValid)
+        XCTAssertFalse(PadIndex(8).isValid)
+        XCTAssertFalse(PadIndex(101).isValid)
+
+        transport.setControlLight(.solid(colorHint: 0xFF0000), cc: 93)
+        XCTAssertEqual(
+            midi.sent.map(\.sysex),
+            [LaunchpadProMK3Protocol.sysExHeader
+                + [0x03, 0x03, 93, 0x7F, 0x00, 0x00, 0xF7]]
+        )
+
+        // Batched frame: one message, both CCs addressed raw.
+        midi.sent.removeAll()
+        transport.setControlLights([
+            8: .solid(colorHint: 0x00FF00),
+            101: .solid(colorHint: 0x0000FF),
+        ])
+        XCTAssertEqual(midi.sent.count, 1)
+        XCTAssertEqual(midi.sent[0].sysex.count, 18)   // 7 + 2×5 + 1
+    }
+
+    func testControlLedCacheDiffsRepeatSends() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        midi.sent.removeAll()
+
+        transport.setControlLight(.solid(colorHint: 0xFFBF00), cc: 8)
+        XCTAssertEqual(midi.sent.count, 1)
+        // Unchanged → nothing on the wire.
+        transport.setControlLight(.solid(colorHint: 0xFFBF00), cc: 8)
+        XCTAssertEqual(midi.sent.count, 1)
+        // Changed → one more message.
+        transport.setControlLight(.off, cc: 8)
+        XCTAssertEqual(midi.sent.count, 2)
+    }
+
+    /// Control pulses ride the palette path like grid pulses — red
+    /// recording pulse lands on the PDF-cited red entry.
+    func testControlPulseMapsToNearestPaletteEntry() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        midi.sent.removeAll()
+
+        transport.setControlLight(.pulse(colorHint: 0xFF0000), cc: 1)
+        XCTAssertEqual(
+            midi.sent.map(\.sysex),
+            [LaunchpadProMK3Protocol.ledPulse(
+                pad: PadIndex(1),
+                palette: LaunchpadProMK3Protocol.paletteRed
+            )]
+        )
+    }
+
+    /// Reconnect repaints EVERYTHING — grid and function buttons —
+    /// from their caches, so a replug never leaves control LEDs dark.
+    func testReconnectRedrawsControlLedsFromCache() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        transport.setControlLight(.solid(colorHint: 0xFF0000), cc: 93)
+        transport.setControlLight(.solid(colorHint: 0xFFBF00), cc: 8)
+
+        midi.unplugLaunchpad()
+        midi.sent.removeAll()
+        midi.plugInLaunchpad()
+
+        // Programmer mode + one redraw: 64 grid + 2 control specs =
+        // 7 + 66×5 + 1 bytes.
+        XCTAssertEqual(midi.sent.count, 2)
+        let redraw = midi.sent[1].sysex
+        XCTAssertEqual(redraw.count, 338)
+        for spec: [UInt8] in [
+            [0x03, 8, 0x7F, 0x5F, 0x00],    // Stop Clip amber (>>1)
+            [0x03, 93, 0x7F, 0x00, 0x00],   // Session red
+        ] {
+            XCTAssertTrue(redraw.indices.dropLast(4).contains { i in
+                Array(redraw[i..<i + 5]) == spec
+            }, "reconnect redraw missing control spec \(spec)")
+        }
+    }
+
+    /// The gate-bypass must not swing the other way: a control write
+    /// aimed at a VALID grid address (11..88) is rejected — nothing on
+    /// the wire, nothing cached — so a mis-caller can't repaint pads
+    /// behind ledCache's back and leave the grid diff blind to it.
+    func testControlPathRejectsGridPadAddresses() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+
+        // Grid paints top-left pad at PadIndex 81 via the grid path.
+        let pad = LaunchpadPad(row: 0, col: 0)
+        transport.setLight(.solid(colorHint: 0xFF8800), at: pad)
+        midi.sent.removeAll()
+
+        // Mis-aimed control writes at grid addresses: dropped whole,
+        // even when batched with a legitimate function-button CC.
+        transport.setControlLight(.solid(colorHint: 0x00FF00), cc: 81)
+        XCTAssertTrue(midi.sent.isEmpty, "grid address dropped")
+        transport.setControlLights([
+            45: .solid(colorHint: 0x00FF00),   // valid grid pad
+            93: .solid(colorHint: 0xFF0000),   // Session — legit
+        ])
+        XCTAssertEqual(
+            midi.sent.map(\.sysex),
+            [LaunchpadProMK3Protocol.sysExHeader
+                + [0x03, 0x03, 93, 0x7F, 0x00, 0x00, 0xF7]],
+            "only the function-button CC reaches the wire"
+        )
+
+        // ledCache stayed authoritative: the grid pad still diffs as
+        // unchanged, and a reconnect redraw carries the GRID color for
+        // 81 (the rejected write never entered controlLedCache, which
+        // would have double-addressed the pad).
+        midi.sent.removeAll()
+        transport.setLight(.solid(colorHint: 0xFF8800), at: pad)
+        XCTAssertTrue(midi.sent.isEmpty, "grid cache undisturbed")
+
+        midi.unplugLaunchpad()
+        midi.sent.removeAll()
+        midi.plugInLaunchpad()
+        let redraw = midi.sent[1].sysex
+        // 64 grid + 1 control (93) specs = 7 + 65×5 + 1 bytes.
+        XCTAssertEqual(redraw.count, 333)
+        XCTAssertTrue(redraw.indices.dropLast(4).contains { i in
+            Array(redraw[i..<i + 5]) == [0x03, 81, 0x7F, 0x44, 0x00]
+        }, "pad 81 redraws with the grid color (0xFF8800 >> 1)")
+    }
+
+    /// Grid frames and control frames stay independent: a control
+    /// write never perturbs the grid cache (a full-frame grid redraw
+    /// still diffs to nothing) and vice versa.
+    func testControlAndGridLedCachesAreIndependent() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+
+        let pad = LaunchpadPad(row: 0, col: 0)
+        transport.setLight(.solid(colorHint: 0xFF8800), at: pad)
+        midi.sent.removeAll()
+
+        transport.setControlLight(.solid(colorHint: 0xFF8800), cc: 91)
+        XCTAssertEqual(midi.sent.count, 1)
+
+        // The grid pad is still cached — resending it is a no-op.
+        transport.setLight(.solid(colorHint: 0xFF8800), at: pad)
+        XCTAssertEqual(midi.sent.count, 1)
+    }
 }

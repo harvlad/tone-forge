@@ -90,6 +90,18 @@ final class SessionController: ObservableObject {
     private(set) lazy var arrangement = ArrangementController(
         launchpad: launchpad, store: arrangementStore
     )
+    /// Launchpad Pro MK3 function-button map (D-036): assignment table
+    /// + LED contract in Core (test-pinned); wired to the host actions
+    /// in init and repainted from tick() (transport diffs, so the 30 Hz
+    /// refresh only hits the wire on change).
+    private(set) lazy var controlSurface = LaunchpadControlSurface(
+        launchpad: launchpad, arrangement: arrangement
+    )
+    /// Sequencer panel visibility — RootView presents the sheet bound
+    /// to this (the AppModel.projectsSheetRequested published-flag
+    /// pattern, made two-way so the hardware Session button can both
+    /// OPEN and CLOSE it and light its LED from real state).
+    @Published var sequencerPanelOpen = false
     /// Layer recording: capture/replay state + JSON library (P4).
     let recording: RecordingModel
     /// Jam in Key pad surface state (P5) — pure logic; notes route
@@ -346,23 +358,77 @@ final class SessionController: ObservableObject {
         usb.setFastPadUpTap { pad in
             fastReleasePlayer.padReleased(tag: pad.row * 8 + pad.col)
         }
-        // Hardware transport controls (Launchpad Pro MK3 side buttons).
-        // Left column: Play (CC 20, row 2) toggles the song transport;
-        // the bottom-left button (CC 10, row 1) is global stop. Every
-        // control press is logged so unexpected labels can be mapped.
+        // Hardware function buttons (Launchpad Pro MK3): the approved
+        // assignment table + LED contract live in the Core
+        // LaunchpadControlSurface (D-036, test-pinned); this class only
+        // supplies the host actions the Core layer can't reach.
         usb.onControlButton = { [weak self] button, down in
-            guard let self, down else { return }
-            print("[Launchpad] control button: \(button)")
-            switch button {
-            case .left(row: 2):
-                self.transport.isPlaying ? self.transport.pause()
-                                         : self.transport.play()
-            case .left(row: 1):
-                self.stopEverything()
-            default:
-                break
+            guard let self else { return }
+            if down { print("[Launchpad] control button: \(button)") }
+            self.controlSurface.handle(button, down: down)
+        }
+        controlSurface.onPlayPause = { [weak self] in
+            guard let self else { return }
+            self.transport.isPlaying ? self.transport.pause()
+                                     : self.transport.play()
+        }
+        controlSurface.onGlobalStop = { [weak self] in self?.stopEverything() }
+        controlSurface.isTransportPlaying = { [weak self] in
+            self?.transport.isPlaying ?? false
+        }
+        // Record Arm = the RecordToggle button's exact state machine:
+        // idle arms a take, armed/recording stops and saves it.
+        controlSurface.onRecordToggle = { [weak self] in
+            guard let self else { return }
+            switch self.recording.recorder.state {
+            case .idle: self.armRecording()
+            default:    self.recording.stopRecording()
             }
         }
+        controlSurface.recordState = { [weak self] in
+            switch self?.recording.recorder.state {
+            case .armed?:     return .armed
+            case .recording?: return .recording
+            default:          return .idle
+            }
+        }
+        // Scene buttons jump the transport exactly like clicking the
+        // on-screen section strip (SectionStripView.onSeek).
+        controlSurface.onSectionJump = { [weak self] startSec in
+            self?.transport.seek(to: startSec)
+        }
+        controlSurface.onSequencerPanelToggle = { [weak self] in
+            self?.sequencerPanelOpen.toggle()
+        }
+        controlSurface.isSequencerPanelOpen = { [weak self] in
+            self?.sequencerPanelOpen ?? false
+        }
+        controlSurface.onSequencerPlayStop = { [weak self] in
+            self?.toggleSequencerPlayback()
+        }
+        controlSurface.isSequencerPlaying = { [weak self] in
+            self?.sequencer.isPlaying ?? false
+        }
+        controlSurface.patternIds = { [weak self] in
+            self?.patternStore.all().map(\.id) ?? []
+        }
+        controlSurface.currentPatternId = { [weak self] in
+            self?.sequencer.pattern.id
+        }
+        controlSurface.onPatternSelect = { [weak self] index in
+            guard let self else { return }
+            let patterns = self.patternStore.all()
+            guard patterns.indices.contains(index) else { return }
+            // Re-selecting the loaded pattern is a no-op, not a restart.
+            guard patterns[index].id != self.sequencer.pattern.id else { return }
+            let wasPlaying = self.sequencer.isPlaying
+            if wasPlaying { self.sequencer.stop() }
+            self.sequencer.pattern = patterns[index]
+            // Swapping mid-play keeps playing (song-synced restart on
+            // the next downbeat when the transport rolls).
+            if wasPlaying { self.toggleSequencerPlayback() }
+        }
+        controlSurface.attachLights(usb)
         // Usage feedback loop: pad play/skip outcomes batch to the
         // backend every 20 s so future kits re-rank around what the
         // user actually plays (same loop as the jamn Kit plugin).
@@ -822,6 +888,11 @@ final class SessionController: ObservableObject {
         if transport.isPlaying {
             sendTransportState(discrete: false)
         }
+        // Hardware function-button LEDs follow live state (recording
+        // pulse, active section, sequencer run light…). Diffed by the
+        // transport's control-LED cache — no MIDI unless something
+        // changed.
+        controlSurface.repaintControls()
     }
 
     /// Song-time at which a queued sequencer start should fire (the next
