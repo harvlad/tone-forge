@@ -3320,11 +3320,16 @@ public final class AppState: ObservableObject {
         loopRegion = region
     }
 
-    /// True when the active A/B loop covers exactly this section — the
-    /// section strip's lock glyph keys on it.
+    /// True when the active A/B loop COVERS this section (containment,
+    /// not equality): Learn can set a merged region spanning several
+    /// timeline sections (Reptile's intro = four A–D sections), and an
+    /// equality key left the lock active but INVISIBLE on the strip —
+    /// "song still stuck on intro" with no glyph anywhere. Any chip
+    /// inside the loop shows the lock; long-press any of them clears
+    /// the whole region.
     public func isSectionLocked(_ s: SectionEvent) -> Bool {
         guard let r = loopRegion else { return false }
-        return abs(r.startSec - s.start) < 0.01 && abs(r.endSec - s.end) < 0.01
+        return s.start >= r.startSec - 0.01 && s.end <= r.endSec + 0.01
     }
 
     /// Section-strip tap: seek to the section; an ACTIVE section lock

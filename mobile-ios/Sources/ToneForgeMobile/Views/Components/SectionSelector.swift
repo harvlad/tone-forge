@@ -22,11 +22,12 @@ struct SectionSelector: View {
     var currentIndex: Int?
     /// Index of the next section (Perform's "NEXT").
     var nextIndex: Int?
-    /// Index of the SECTION-LOCKED section (the transport's A/B loop
-    /// covers it). The locked chip carries a lock glyph — the loop state
-    /// used to be invisible outside the Loop chip, so a song "stuck on
-    /// the intro" read as a playback bug.
-    var lockedIndex: Int?
+    /// Indices of SECTION-LOCKED sections — every section the
+    /// transport's A/B loop covers (a merged Learn region can span
+    /// several). Locked chips carry a lock glyph — the loop state used
+    /// to be invisible outside the Loop chip, so a song "stuck on the
+    /// intro" read as a playback bug.
+    var lockedIndices: Set<Int> = []
     var style: Style = .compact
     let onSelect: (SectionEvent) -> Void
     /// Long-press a chip: lock/unlock playback to that section.
@@ -55,7 +56,7 @@ struct SectionSelector: View {
     private func chip(index i: Int, section s: SectionEvent) -> some View {
         let isCurrent = currentIndex == i
         let isNext = nextIndex == i
-        let isLocked = lockedIndex == i
+        let isLocked = lockedIndices.contains(i)
         // Suppress the name line when the label is just the position
         // letter (generic "A"/"B" sections) — otherwise it reads "A / A".
         let name = s.label

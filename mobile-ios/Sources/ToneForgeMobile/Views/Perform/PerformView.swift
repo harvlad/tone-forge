@@ -211,7 +211,7 @@ struct PerformView: View {
                 sections: sections,
                 currentIndex: cur,
                 nextIndex: cur.map { min($0 + 1, sections.count - 1) },
-                lockedIndex: sections.firstIndex(where: appState.isSectionLocked),
+                lockedIndices: Set(sections.indices.filter { appState.isSectionLocked(sections[$0]) }),
                 style: .prominent,
                 onSelect: { appState.selectSection($0, andPlay: true) },
                 onToggleLock: { appState.toggleSectionLock($0) },
