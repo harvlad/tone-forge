@@ -301,6 +301,122 @@ public final class SampleVoicePool: ObservableObject {
         #endif
     }
 
+    // MARK: - Loop seam-bake cache (D-038 press path)
+
+    #if canImport(AVFoundation)
+    /// Bake identity: the SOURCE buffer plus every parameter that
+    /// shapes the bake. crossfade keyed by bit pattern (exact-Double
+    /// equality — both producers resolve it from the same pad fields).
+    private struct LoopBakeKey: Hashable {
+        let buffer: ObjectIdentifier
+        let bodyFrames: Int
+        let crossfadeBits: UInt64
+        let cycleFrames: Int
+    }
+    /// Values retain the SOURCE buffer too: a freed buffer's
+    /// ObjectIdentifier can be reused by a new allocation, and a stale
+    /// hit would then play the wrong audio — retention pins the
+    /// identity for the entry's lifetime (hits also verify `===`).
+    private var loopBakeCache:
+        [LoopBakeKey: (source: AVAudioPCMBuffer, baked: AVAudioPCMBuffer)] = [:]
+    /// Tiled 4-bar stereo bakes run to MBs each; a per-kit working set
+    /// is ~12–24 loops, so cap well above that and clear wholesale on
+    /// overflow (entries re-memo on the next press/preload — LRU
+    /// bookkeeping isn't worth it here).
+    private static let loopBakeCacheCap = 64
+
+    /// Press-path lookup: memo hit or bake-now-and-store.
+    func cachedLoopBake(
+        _ buffer: AVAudioPCMBuffer,
+        bodyFrames: Int, crossfadeMs: Double, cycleFrames: Int
+    ) -> AVAudioPCMBuffer {
+        let key = LoopBakeKey(
+            buffer: ObjectIdentifier(buffer), bodyFrames: bodyFrames,
+            crossfadeBits: crossfadeMs.bitPattern, cycleFrames: cycleFrames)
+        if let hit = loopBakeCache[key], hit.source === buffer {
+            return hit.baked
+        }
+        let baked = Self.bakeLoop(
+            buffer, bodyFrames: bodyFrames, crossfadeMs: crossfadeMs,
+            cycleFrames: cycleFrames)
+        storeLoopBake(key: key, source: buffer, baked: baked)
+        return baked
+    }
+
+    /// Preload-time prewarm: bake OFF the main actor and memoize, so
+    /// the first press of a kit loop is already a cache hit. Takes the
+    /// RAW SampleTrigger-shaped params and resolves them exactly like
+    /// the press path (one derivation, no drift).
+    public func prewarmLoopBake(
+        buffer: AVAudioPCMBuffer,
+        loopBodyFrames: Int, crossfadeMs: Double, loopCycleFrames: Int
+    ) {
+        let xfadeMs = crossfadeMs > 0 ? crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
+        let body = loopBodyFrames > 0
+            ? min(loopBodyFrames, Int(buffer.frameLength))
+            : Int(buffer.frameLength)
+        let key = LoopBakeKey(
+            buffer: ObjectIdentifier(buffer), bodyFrames: body,
+            crossfadeBits: xfadeMs.bitPattern, cycleFrames: loopCycleFrames)
+        if let hit = loopBakeCache[key], hit.source === buffer { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let baked = SampleVoicePool.bakeLoop(
+                buffer, bodyFrames: body, crossfadeMs: xfadeMs,
+                cycleFrames: loopCycleFrames)
+            guard let self else { return }
+            await MainActor.run {
+                self.storeLoopBake(key: key, source: buffer, baked: baked)
+            }
+        }
+    }
+
+    private func storeLoopBake(
+        key: LoopBakeKey, source: AVAudioPCMBuffer, baked: AVAudioPCMBuffer
+    ) {
+        if loopBakeCache.count >= Self.loopBakeCacheCap {
+            loopBakeCache.removeAll(keepingCapacity: true)
+        }
+        loopBakeCache[key] = (source, baked)
+    }
+
+    /// The seam bake, extracted pure + nonisolated so the preload
+    /// prewarm can run it off the main actor.
+    ///
+    /// A scored loop carries a measured crossfade length (loopScore →
+    /// ms); an unscored one (Jam latch/loopOverride, loop-point, local
+    /// `.loop`, Instant Groove via triggerRaw) falls back to the
+    /// default floor instead of hard-looping. Non-loop one-shots never
+    /// reach here (they play the raw, already edge-faded buffer).
+    ///
+    /// EXACT LENGTH: the seam bake must never change the loop period.
+    /// The old `crossfaded()` returned n − x frames, so every held loop
+    /// ran 8–30 ms short of the bar-snapped grid and drifted (each pad
+    /// by a different x). `exactCrossfaded` keeps the period at the
+    /// loop body length, using the buffer's continuation frames
+    /// (loopBodyFrames split) when the decoder supplied them.
+    ///
+    /// Shared-cycle lock (web _bakePad, padengine.js:924-931): tile
+    /// the seam-baked body up to the common cycle so a short region
+    /// repeats INSIDE it and every latched pad shares ONE period.
+    /// Without this a 1-bar pad looped at its own length against
+    /// 4-bar neighbors — individually seamless, collectively
+    /// drifting out of unison every pass. The scheduler gates
+    /// loopCycleFrames on a real analyzer region, exactly like the
+    /// web's hasRegion check; tileToLength is a no-op for
+    /// target <= body (the longest region pad fills the cycle).
+    nonisolated static func bakeLoop(
+        _ buffer: AVAudioPCMBuffer,
+        bodyFrames: Int, crossfadeMs: Double, cycleFrames: Int
+    ) -> AVAudioPCMBuffer {
+        var baked = SeamlessLoop.exactCrossfaded(
+            buffer, loopFrames: bodyFrames, crossfadeMs: crossfadeMs)
+        if cycleFrames > Int(baked.frameLength) {
+            baked = SeamlessLoop.tileToLength(baked, targetFrames: cycleFrames)
+        }
+        return baked
+    }
+    #endif
+
     // MARK: - Trigger
 
     /// Fire a sample. If `at` is nil, plays immediately; otherwise the
@@ -362,42 +478,23 @@ public final class SampleVoicePool: ObservableObject {
             ? Double(buffer.frameLength) / buffer.format.sampleRate
             : 0
 
-        // Seamless looping: EVERY looping voice gets an overlap-add seam so
-        // the hard buffer loop has no click at the wrap. A scored loop
-        // carries a measured crossfade length (loopScore → ms); an unscored
-        // one (Jam latch/loopOverride, loop-point, local `.loop`, Instant
-        // Groove via triggerRaw) falls back to the default floor instead of
-        // hard-looping. Non-loop one-shots play the raw (already edge-faded)
-        // buffer.
-        //
-        // EXACT LENGTH: the seam bake must never change the loop period.
-        // The old `crossfaded()` returned n − x frames, so every held loop
-        // ran 8–30 ms short of the bar-snapped grid and drifted (each pad
-        // by a different x). `exactCrossfaded` keeps the period at the
-        // loop body length, using the buffer's continuation frames
-        // (loopBodyFrames split) when the decoder supplied them.
+        // Seamless looping: EVERY looping voice gets an overlap-add
+        // seam (see bakeLoop). MEMOIZED (D-038 press-path hazard): the
+        // seam bake + cycle tiling are per-press DSP on the main actor
+        // — a press stalled audibly behind buffer-length memcpy/fade
+        // math on every trigger. The scheduler prewarms this cache at
+        // pack preload, so a press normally reduces to a dictionary
+        // hit; a miss (transform/trim output, latch-forced loop on an
+        // unscored pad) bakes once and memoizes.
         let xfadeMs = req.crossfadeMs > 0 ? req.crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
         let playBuffer: AVAudioPCMBuffer
         if req.loop {
             let body = req.loopBodyFrames > 0
                 ? min(req.loopBodyFrames, Int(buffer.frameLength))
                 : Int(buffer.frameLength)
-            var baked = SeamlessLoop.exactCrossfaded(
-                buffer, loopFrames: body, crossfadeMs: xfadeMs)
-            // Shared-cycle lock (web _bakePad, padengine.js:924-931): tile
-            // the seam-baked body up to the common cycle so a short region
-            // repeats INSIDE it and every latched pad shares ONE period.
-            // Without this a 1-bar pad looped at its own length against
-            // 4-bar neighbors — individually seamless, collectively
-            // drifting out of unison every pass. The scheduler gates
-            // loopCycleFrames on a real analyzer region, exactly like the
-            // web's hasRegion check; tileToLength is a no-op for
-            // target <= body (the longest region pad fills the cycle).
-            if req.loopCycleFrames > Int(baked.frameLength) {
-                baked = SeamlessLoop.tileToLength(
-                    baked, targetFrames: req.loopCycleFrames)
-            }
-            playBuffer = baked
+            playBuffer = cachedLoopBake(
+                buffer, bodyFrames: body, crossfadeMs: xfadeMs,
+                cycleFrames: req.loopCycleFrames)
         } else {
             playBuffer = buffer
         }

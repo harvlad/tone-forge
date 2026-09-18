@@ -220,8 +220,10 @@ extension ModeCoordinator {
                     ?? (pad.loopPointSec != nil || (pad.loopable ?? false))
                 content[grid.rawValue] = PadContent(
                     label: pad.name,
-                    colorHint: Self.hexColorHint(pad.colorHint)
-                        ?? Self.familyColor(pad.family),
+                    // Shared resolver (hex → category → family) so the
+                    // Sequence Builder's `.pads` tiles match this pad's
+                    // Launchpad twin exactly (D-039).
+                    colorHint: Self.padColorHint(for: pad),
                     badge: hasEffectsOverride ? .edited : nil,
                     loops: loops,
                     // Borrow: the small source-song line under the tint
@@ -384,7 +386,7 @@ extension ModeCoordinator {
     /// Family → 0xRRGGBB grid color. Pack manifests carry a *named*
     /// colorHint string ("purple") aimed at the web UI; the grid keys
     /// off family instead so all packs get a consistent palette.
-    static func familyColor(_ family: SampleFamily) -> UInt32 {
+    nonisolated static func familyColor(_ family: SampleFamily) -> UInt32 {
         switch family {
         case .pads:       return 0xA855F7
         case .percussion: return 0xF97316
@@ -395,6 +397,44 @@ extension ModeCoordinator {
         case .vocals:     return 0x22C55E
         case .mixed:      return 0x9CA3AF
         }
+    }
+
+    /// Musical CATEGORY → 0xRRGGBB, mirroring the backend
+    /// `kit_builder._CATEGORY_HEX` (and JamView.categoryTint) so every
+    /// surface groups/colors auto-kit pads identically — drums red,
+    /// bass green, chords amber, lead orange, vocal pink, etc. nil for
+    /// pads with no (or an unknown) category, which fall to family.
+    nonisolated static func categoryColor(_ category: String?) -> UInt32? {
+        switch category {
+        case "DRUMS":   return 0xEF4444
+        case "BASS":    return 0x22C55E
+        case "CHORDS":  return 0xF59E0B
+        case "LEAD":    return 0xF97316
+        case "VOCAL":   return 0xEC4899
+        case "RHYTHM":  return 0x3B82F6
+        case "TEXTURE": return 0x06B6D4
+        case "FX":      return 0xA855F7
+        case "STAB":    return 0x8B5CF6
+        case "SAMPLE":  return 0x64748B
+        case "SYNTH":   return 0x14B8A6
+        default:        return nil
+        }
+    }
+
+    /// The ONE pad-tile color source (0xRRGGBB) for a pack pad, shared
+    /// by the Launchpad tiles (SamplePadGrid4x4 via the layout below)
+    /// and the Sequence Builder so a pad and its sequence-builder twin
+    /// can never drift. Priority: an EXPLICIT per-pad hex (auto-kit /
+    /// borrow pads carry a real per-category hex from the backend) →
+    /// the musical CATEGORY → the coarse sound-family palette. The
+    /// Sequence Builder used to tint off `family` ALONE (via a
+    /// SEPARATE, subtly different `TFTheme.familyTint` table), which
+    /// collapsed guitar-lead / guitar-chords / synth-chords / bass-stab
+    /// / vocal-lead all into one pink `.stabs` block.
+    nonisolated static func padColorHint(for pad: SamplePad) -> UInt32 {
+        hexColorHint(pad.colorHint)
+            ?? categoryColor(pad.category)
+            ?? familyColor(pad.family)
     }
 
     /// An EXPLICIT per-pad colorHint from the manifest, as 0xRRGGBB — or nil

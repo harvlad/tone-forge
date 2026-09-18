@@ -226,4 +226,28 @@ final class ProjectStateBridgeTests: XCTestCase {
         // touch it.
         XCTAssertNotNil(patternStore.pattern(id: pattern.id))
     }
+
+    // MARK: - activateFresh (no-workspace song activation)
+
+    func testActivateFreshClearsGlobalStoresOnly() {
+        let pattern = seedStores()
+
+        ProjectStateBridge.activateFresh(
+            padAssignments: padAssignments,
+            sampleSettings: sampleSettings)
+
+        // The GLOBAL stores are swapped to defaults — the previous
+        // song's workspace must not leak onto a fresh song's grid
+        // (the phantom-pad-tiles bug, desktop D-034 / 8e56570c).
+        XCTAssertTrue(padAssignments.assignmentsByMode.isEmpty)
+        XCTAssertTrue(sampleSettings.padEffectsByKey.isEmpty)
+        XCTAssertTrue(sampleSettings.hiddenPadKeys.isEmpty)
+        // analysisId-keyed state and the pattern library are NOT
+        // workspace leaks — they stay (unlike the explicit reset).
+        XCTAssertEqual(sampleSettings.sectionGates(for: analysisId), ["chorus"])
+        XCTAssertEqual(
+            arrangementStore.captured(analysisId: analysisId),
+            [0: [11, 12], 3: [88]])
+        XCTAssertNotNil(patternStore.pattern(id: pattern.id))
+    }
 }

@@ -399,6 +399,10 @@ public final class AppState: ObservableObject {
     /// snapshot tests construct one without booting — never open a
     /// CoreMIDI client.
     @Published public private(set) var usbLaunchpad: USBLaunchpadTransport?
+    /// D-036 function-button host: the buttons AROUND the MK3 grid.
+    /// Created with the transport in `wireLaunchpad`; not @Published —
+    /// no view observes it (it's hardware-only surface).
+    public private(set) var launchpadControlSurface: LaunchpadControlSurface?
     private var launchpadCancellables: Set<AnyCancellable> = []
 
     /// Generic MIDI note controller transport (keyboards / pad boxes).
@@ -447,6 +451,18 @@ public final class AppState: ObservableObject {
     /// Pattern id the sequencer should seed itself from on next open
     /// (set by Beat Capture "Open in Sequencer"; cleared once consumed).
     @Published public var pendingSequencerPatternId: UUID?
+    /// Contribute sequencer panel open state. Lifted out of the view
+    /// so the hardware Launchpad Session button (CC 93) can toggle the
+    /// SAME panel the on-screen sequencer chip drives — the desktop
+    /// LaunchpadControlSurface.onSequencerPanelToggle / isSequencerPanelOpen
+    /// seam, mirrored on iOS (D-039). The panel renders in Sample mode.
+    @Published public var sequencerPanelOpen = false
+    /// The Contribute sequencer panel's live SequencerPlayer while the
+    /// panel is on screen (SequencerTabView registers it on appear,
+    /// clears on disappear). Weak so the view keeps sole ownership; the
+    /// hardware sequencer play/stop button (CC 89) toggles this preview.
+    /// nil ⇒ the button is inert (panel closed).
+    public weak var activeSequencerPlayer: SequencerPlayer?
     public lazy var micRecorder: MicRecorder =
         MicRecorder(session: audioEngine.session)
 
@@ -1026,6 +1042,15 @@ public final class AppState: ObservableObject {
         transport.onContribution = { [weak self] event in
             self?.contributionBus.publish(event)
         }
+        // Hardware function buttons (D-036): the CC → function table is
+        // the shared engine LaunchpadControlMapping; the surface below
+        // translates to AppState actions and owns the LED contract.
+        let surface = makeControlSurface()
+        transport.onControlButton = { [weak surface] button, down in
+            surface?.handle(button, down: down)
+        }
+        surface.attachLights(transport)
+        launchpadControlSurface = surface
         modeCoordinator.$padVisuals
             .sink { [weak transport] visuals in
                 transport?.setLights(Self.launchpadFrame(from: visuals))
@@ -1041,6 +1066,11 @@ public final class AppState: ObservableObject {
             .autoconnect()
             .sink { [weak self, weak transport] _ in
                 guard let self = self else { return }
+                // Function-button LEDs re-derive here too (cheap: the
+                // transport diffs against its control-LED cache), so
+                // transport/section/layer state stays live on the
+                // hardware without per-store subscriptions.
+                self.launchpadControlSurface?.repaintControls()
                 let practicing = self.learnController.phase == .practicing
                 if self.launchpadPracticeWasActive && !practicing {
                     self.launchpadPracticeWasActive = false
@@ -1081,6 +1111,121 @@ public final class AppState: ObservableObject {
         #endif
         usbLaunchpad = transport
         wireMIDIKeyboard()
+    }
+
+    /// Build the D-036 function-button surface wired to AppState. The
+    /// CC assignment table lives in the engine (LaunchpadControlMapping,
+    /// desktop-pinned); this only supplies the host actions + LED state.
+    private func makeControlSurface() -> LaunchpadControlSurface {
+        let surface = LaunchpadControlSurface()
+        surface.onPlayPause = { [weak self] in self?.togglePlayPause() }
+        surface.onGlobalStop = { [weak self] in self?.stopEverything() }
+        surface.isTransportPlaying = { [weak self] in self?.isPlaying ?? false }
+        surface.onSelectMode = { [weak self] mode in
+            self?.jamSettings.sampleTriggerMode = mode
+        }
+        surface.triggerMode = { [weak self] in
+            self?.jamSettings.sampleTriggerMode ?? .follow
+        }
+        surface.onLoopLockToggle = { [weak self] in
+            self?.sampleScheduler.loopLock.toggle()
+        }
+        surface.isLoopLocked = { [weak self] in
+            self?.sampleScheduler.loopLock ?? false
+        }
+        // 16|64 select, incl. the borrow relayout the on-screen chips
+        // do (JamView.launchpadSizeChips semantics — a mounted borrow
+        // re-arranges at the new capacity so the switch drops no song).
+        surface.onGridSize = { [weak self] count in
+            guard let self, self.jamSettings.launchpadPadCount != count
+            else { return }
+            self.jamSettings.launchpadPadCount = count
+            if self.hasActiveBorrow {
+                Task { await self.relayoutActiveBorrow(capacity: count) }
+            }
+        }
+        surface.padCount = { [weak self] in
+            self?.jamSettings.launchpadPadCount ?? 16
+        }
+        surface.onInstantGroove = { [weak self] in self?.instantGroove() }
+        surface.gridIsEmpty = { [weak self] in
+            self?.activeSamplePack?.pack.pads.isEmpty ?? true
+        }
+        // Record Arm = the session output recorder's exact state
+        // machine (RecordToggle): idle starts a take, recording stops
+        // and saves it.
+        surface.onRecordToggle = { [weak self] in
+            guard let self else { return }
+            if self.outputRecorder.state == .idle {
+                self.startOutputRecording()
+            } else {
+                self.stopOutputRecording()
+            }
+        }
+        surface.isRecording = { [weak self] in
+            self?.outputRecorder.state == .recording
+        }
+        surface.onStopAllPads = { [weak self] in self?.stopAllPads() }
+        surface.onLayerToggle = { [weak self] index in
+            self?.toggleKitLayer(index: index)
+        }
+        surface.layerActivity = { [weak self] index in
+            self?.kitLayerActivity(index: index) ?? .empty
+        }
+        surface.layerAccent = { index in
+            Self.launchpadLayerAccents.indices.contains(index)
+                ? Self.launchpadLayerAccents[index] : 0
+        }
+        // Scene buttons jump exactly like tapping the on-screen strip
+        // (SectionSelector.onSelect → selectSection), lock-follow
+        // semantics included.
+        surface.onSectionJump = { [weak self] index in
+            guard let self,
+                  let sections = self.currentBundle?.timeline.sections,
+                  sections.indices.contains(index) else { return }
+            self.selectSection(sections[index])
+        }
+        surface.sectionCount = { [weak self] in
+            self?.currentBundle?.timeline.sections.count ?? 0
+        }
+        surface.activeSectionIndex = { [weak self] in
+            guard let self,
+                  let sections = self.currentBundle?.timeline.sections
+            else { return nil }
+            let t = self.songSeconds
+            return sections.firstIndex { $0.start <= t && t < $0.end }
+        }
+        // Session (CC 93) = the Contribute sequencer panel — the same
+        // `showSequencer` state the on-screen chip drives (desktop's
+        // onSequencerPanelToggle / isSequencerPanelOpen seam). The panel
+        // renders in Sample mode, exactly as the on-screen toggle does.
+        surface.onSequencerPanelToggle = { [weak self] in
+            self?.sequencerPanelOpen.toggle()
+        }
+        surface.isSequencerPanelOpen = { [weak self] in
+            self?.sequencerPanelOpen ?? false
+        }
+        // Sequencer play/stop (CC 89) = the panel's preview loop.
+        surface.onSequencerPlayStop = { [weak self] in
+            self?.toggleSequencerPreview()
+        }
+        surface.isSequencerPlaying = { [weak self] in
+            self?.activeSequencerPlayer?.isPlaying ?? false
+        }
+        return surface
+    }
+
+    /// Hardware sequencer play/stop (CC 89): toggle the Contribute
+    /// sequencer panel's preview loop. Reachable only while the panel
+    /// is open (its SequencerTabView owns the player) — an accepted iOS
+    /// constraint: Session (CC 93) opens the panel, then this plays it.
+    func toggleSequencerPreview() {
+        guard let player = activeSequencerPlayer else { return }
+        if player.isPlaying {
+            player.stop()
+        } else {
+            player.play(sync: false)
+        }
     }
 
     /// Generic MIDI note controllers (keyboards / pad boxes). Separate
@@ -1945,6 +2090,17 @@ public final class AppState: ObservableObject {
         // clears its active blank project in songDidActivate below).
         canvasModeOn = false
         currentBundle = bundle
+        // Per-song reset of the NOTE-SYNTH layer (web 5d1e3bd0 /
+        // desktop 8e56570c parity — SongActivationPolicy, D-038): the
+        // melody guide is a per-song opt-in, never sticky state; left
+        // on it played the NEXT song's melody on the synth uninvited
+        // at the first tick. Rebuilding the player below was never the
+        // fix — the TOGGLE is what survived. Also silence any synth
+        // voice still held (guide edge) so it can't ring across the
+        // load.
+        melodyGuideEnabled = SongActivationPolicy
+            .melodyGuideEnabledAfterSongLoad(wasEnabled: melodyGuideEnabled)
+        wavetableSynthNode.allNotesOff()
         // Melody follow-along: rebuild the player for the new song.
         // gainScale trims the synth under the stems.
         melodyPlayer?.stop()
@@ -2911,6 +3067,78 @@ public final class AppState: ObservableObject {
         let packId = pack.pack.packId
         for pad in pack.pack.pads {
             sampleScheduler.release(padIdx: pad.padIdx, packId: packId)
+        }
+        updateDrumDuck()
+    }
+
+    /// Hardware ○ (CC 10) global stop — desktop `stopEverything`
+    /// parity: park the transport AND silence pads + running
+    /// sequences (stopAllPads alone leaves the song playing; pause
+    /// alone leaves latched loops ringing).
+    public func stopEverything() {
+        pause()
+        modeCoordinator.sequencePadManager.stopAll()
+        stopAllPads()
+    }
+
+    // MARK: - Kit layers (hardware CC 2–7)
+
+    /// CC 2–7 in track-control order — mirrors desktop's layer row
+    /// (LaunchpadControlSurface.layerRow: drums, bass, chords, synth,
+    /// lead, texture). Category strings are the kit manifest's.
+    public static let launchpadLayerCategories =
+        ["DRUMS", "BASS", "CHORDS", "SYNTH", "LEAD", "TEXTURE"]
+    /// Category accents for the layer LEDs — same hexes as
+    /// JamView.categoryTint (SYNTH = the residual-`other` teal).
+    static let launchpadLayerAccents: [UInt32] =
+        [0xEF4444, 0x22C55E, 0xF59E0B, 0x14B8A6, 0xF97316, 0x06B6D4]
+
+    /// LED truth for a hardware layer column: does the active kit
+    /// have pads in the category, and is any sounding/armed?
+    public func kitLayerActivity(index: Int) -> LaunchpadControlSurface.LayerActivity {
+        guard Self.launchpadLayerCategories.indices.contains(index),
+              let pack = activeSamplePack else { return .empty }
+        let category = Self.launchpadLayerCategories[index]
+        let pads = pack.pack.pads.filter { $0.category == category }
+        guard !pads.isEmpty else { return .empty }
+        let packId = pack.pack.packId
+        let keys = sampleVoicePool.ringingPadKeys
+            .union(sampleVoicePool.pendingPadKeys)
+        let active = pads.contains {
+            keys.contains(SamplePadKey(packId: packId, padIdx: $0.padIdx))
+        }
+        return active ? .active : .available
+    }
+
+    /// Toggle a layer: stop the category's sounding pads, else start
+    /// its best-scoring pad bar-synced — the Instant Groove selection
+    /// rule per category (desktop LaunchpadController.toggleLayer
+    /// semantics on the iOS scheduler).
+    public func toggleKitLayer(index: Int) {
+        guard Self.launchpadLayerCategories.indices.contains(index),
+              let pack = activeSamplePack else { return }
+        let category = Self.launchpadLayerCategories[index]
+        let packId = pack.pack.packId
+        let keys = sampleVoicePool.ringingPadKeys
+            .union(sampleVoicePool.pendingPadKeys)
+        let sounding = pack.pack.pads.filter {
+            $0.category == category
+                && keys.contains(SamplePadKey(packId: packId, padIdx: $0.padIdx))
+        }
+        if !sounding.isEmpty {
+            for pad in sounding {
+                sampleScheduler.release(padIdx: pad.padIdx, packId: packId)
+            }
+        } else {
+            let best = pack.pack.pads
+                .filter { $0.category == category }
+                .max {
+                    ($0.performanceScore ?? $0.loopScore ?? 0)
+                        < ($1.performanceScore ?? $1.loopScore ?? 0)
+                }
+            if let best {
+                _ = sampleScheduler.triggerRaw(padIdx: best.padIdx, packId: packId)
+            }
         }
         updateDrumDuck()
     }

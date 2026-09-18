@@ -251,6 +251,59 @@ final class USBLaunchpadTransportTests: XCTestCase {
         })
     }
 
+    // MARK: - Control-button LEDs (D-036)
+
+    func testControlLightsBypassGridGateAndDiff() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        midi.sent.removeAll()
+
+        // CC 20 (▷ Play) is NOT a valid grid PadIndex — the dedicated
+        // control path must still light it (7 + 1×5 + 1 bytes).
+        transport.setControlLights([20: .solid(colorHint: 0x00FF00)])
+        XCTAssertEqual(midi.sent.count, 1)
+        XCTAssertEqual(
+            midi.sent[0].sysex,
+            LaunchpadProMK3Protocol.sysExHeader
+                + [0x03, 0x03, 20, 0x00, 0x7F, 0x00, 0xF7]
+        )
+
+        // Unchanged frame → diffed away, nothing sent.
+        transport.setControlLights([20: .solid(colorHint: 0x00FF00)])
+        XCTAssertEqual(midi.sent.count, 1)
+    }
+
+    func testControlPathRejectsGridAddresses() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        midi.sent.removeAll()
+
+        // CC 55 IS a valid pad address (row 5, col 5) — painting it via
+        // the control path would desync the grid's ledCache. Rejected.
+        transport.setControlLights([55: .solid(colorHint: 0xFFFFFF)])
+        XCTAssertTrue(midi.sent.isEmpty)
+    }
+
+    func testReconnectRepaintsControlLeds() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        transport.setControlLights([60: .solid(colorHint: 0xF59E0B)])
+        midi.unplugLaunchpad()
+        midi.sent.removeAll()
+
+        midi.plugInLaunchpad()
+        // Programmer mode + redraw: 64 grid specs + 1 control spec
+        // (328 + 5 = 333 bytes, still one message).
+        XCTAssertEqual(midi.sent.count, 2)
+        let redraw = midi.sent[1].sysex
+        XCTAssertEqual(redraw.count, 333)
+        // 0xF59E0B → wire bytes (>>1): 0x7A 0x4F 0x05 at CC 60.
+        let ccSpec: [UInt8] = [0x03, 60, 0x7A, 0x4F, 0x05]
+        XCTAssertTrue(redraw.indices.dropLast(4).contains { i in
+            Array(redraw[i..<i + 5]) == ccSpec
+        })
+    }
+
     // MARK: - Suspend / resume (lifecycle)
 
     func testSuspendSendsLiveModeAndResumeRestores() {

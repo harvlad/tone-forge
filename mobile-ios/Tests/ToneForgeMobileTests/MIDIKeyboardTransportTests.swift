@@ -76,6 +76,29 @@ final class MIDIKeyboardTransportTests: XCTestCase {
         XCTAssertEqual(t.connectedInputs, ["Arturia KeyLab MIDI"])
     }
 
+    func testExcludesAllLaunchpadInterfacesMidEnumeration() {
+        // The synth-leak regression (desktop D-031/D-034, 8e56570c):
+        // during a plug-in burst CoreMIDI has not yet decorated the
+        // display names, and the MK3's DAW/DIN interfaces matched
+        // neither branch of the old check — this transport connected
+        // to them and every grid press ALSO voiced a wavetable note.
+        // The port-family fragment must exclude all three interfaces
+        // in the undecorated state too.
+        let t = makeTransport()
+        let bareDAW = MIDIEndpoint(
+            ref: 301, name: "LPProMK3 DAW", displayName: "LPProMK3 DAW")
+        let bareDIN = MIDIEndpoint(
+            ref: 302, name: "LPProMK3 DIN", displayName: "LPProMK3 DIN")
+        let bareMIDI = MIDIEndpoint(
+            ref: 303, name: "LPProMK3 MIDI", displayName: "LPProMK3 MIDI")
+        midi.fakeSources = [bareDAW, bareDIN, bareMIDI, Self.keyboard]
+        midi.fakeDestinations = midi.fakeSources
+        midi.onSetupChanged?()
+
+        XCTAssertEqual(midi.connectedInputs, [Self.keyboard])
+        XCTAssertEqual(t.connectedInputs, ["Arturia KeyLab MIDI"])
+    }
+
     // MARK: - Note input
 
     func testNoteOnEmitsMidiNoteEvent() {

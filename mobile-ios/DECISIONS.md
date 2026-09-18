@@ -1343,3 +1343,238 @@ pads are file-backed renders that play with nothing downloaded); a separate
 canvas store keyed off-analysisId (rejected — the sentinel keeps ONE bridge
 and one snapshot shape across v1/v2); auto-creating an anonymous working
 canvas (rejected — a canvas with no Library row would strand its auto-saves).
+
+## D-036 — Synth-leak parity ports: Launchpad port-family exclusion + no-workspace store swap
+
+**Date:** 2026-09-18
+**Decision:** Port the two desktop synth-leak fixes (desktop D-031/D-034/D-035,
+commit 8e56570c) that the hardware-Launchpad audit confirmed iOS still had:
+
+1. **Port-family exclusion.** `MIDIKeyboardTransport.isLaunchpad` matched the
+   exact MIDI-port name OR the device-decorated display name — but the MK3
+   exposes THREE USB interfaces and CoreMIDI resolves display names LATE
+   during a plug-in burst, so the DAW/DIN ports matched neither branch, the
+   keyboard transport connected to them, and (default `.synth` routing) every
+   grid press ALSO voiced a wavetable note over its pad loop. The predicate is
+   now the shared engine `LaunchpadProMK3Protocol.isFamilyPort` — the
+   `"LPProMK3"` port-family fragment against name AND displayName, matching
+   all three ports at every enumeration stage. Pad hardware has exactly ONE
+   delivery authority.
+2. **No-workspace activation swap.** `ProjectCoordinator.songDidActivate`
+   early-returned when a song had no saved/working project, leaving the GLOBAL
+   stores (`PadAssignmentStore`, pad FX / hidden set on
+   `SampleSettingsStore`) holding the previous song's workspace — phantom pad
+   tiles on every song without a project. New
+   `ProjectStateBridge.activateFresh` empties exactly the global stores
+   (analysisId-keyed gates/arrangement and the pattern library are NOT leaks
+   and stay), with `sequencePadManager.stopAll()` BEFORE the swap so a
+   running pattern can't orphan its voice, then the grid re-derives.
+
+~~The third leg of 8e56570c (per-song melody-guide reset) needed no port: iOS
+already stops and rebuilds `melodyPlayer` per song in `AppState.activate`.~~
+**[SUPERSEDED 2026-09-19 by D-038 — this claim (echoed from commit 958c6841's
+message) was WRONG.** Rebuilding `melodyPlayer` was never the fix. The bug the
+desktop twin 8e56570c actually killed was that `melodyGuideEnabled` — the
+per-song opt-in TOGGLE — survived the song switch; the tick path
+(`ToneForgeApp.swift` `tick()`) replays whatever `melodyPlayer` is currently
+loaded through it while that flag is on, so a guide armed on song A played song
+B's melody on the wavetable synth uninvited the moment playback rolled. iOS had
+the same defect. The melody-guide leg DID need a port; landed in D-038.]
+
+**Where:** `Sources/ToneForgeEngine/Launchpad/LaunchpadProMK3Protocol.swift`
+(`portFamilyFragment`/`isFamilyPort`),
+`Sources/ToneForgeMobile/Launchpad/MIDIKeyboardTransport.swift`,
+`Sources/ToneForgeMobile/Projects/ProjectStateBridge.swift` (`activateFresh`),
+`Sources/ToneForgeMobile/Projects/ProjectCoordinator.swift`. Pinned by
+`LaunchpadControlMappingTests` (family-port cases, engine),
+`MIDIKeyboardTransportTests.testExcludesAllLaunchpadInterfacesMidEnumeration`,
+`ProjectStateBridgeTests.testActivateFreshClearsGlobalStoresOnly`.
+
+**Alternatives:** keeping per-platform predicates in sync by convention
+(rejected — that IS how iOS drifted); clearing the analysisId-keyed stores too
+(rejected — deletes pre-Projects state, desktop precedent).
+
+## D-037 — MK3 function-button map on iOS (shared engine table) + press-path bake prewarm
+
+**Date:** 2026-09-18
+**Decision:** iOS gets the hardware Launchpad's function buttons (desktop
+D-036 map). The CC → function ASSIGNMENT moves to a PURE engine table,
+`ToneForgeEngine/Launchpad/LaunchpadControlMapping` — identical to desktop's
+approved map, host-test-pinned — so the two platforms cannot drift on what a
+button MEANS. The new `ToneForgeMobile` `LaunchpadControlSurface` consumes it,
+closure-injected (fully testable without AppState), and owns the LED contract
+(desktop colors: selected-mode white, loop-lock amber, record red pulse,
+layer category accents, section blocks lit/pulse).
+
+Mapped on iOS: play/pause (20), global stop (10 → `stopEverything`: pause +
+sequences + pads), One-Shot/Follow/Latch (30/40/50 →
+`jamSettings.sampleTriggerMode`, the same store the on-screen chips write),
+loop-lock (60), 16/64 (91/92 incl. borrow relayout), Instant Groove (95,
+inert on an empty grid), record toggle (1 → the session OUTPUT recorder; no
+armed state on iOS, so the LED is dim-red ↔ pulsing red), stop-all (8),
+layer toggles (2–7 over kit categories DRUMS/BASS/CHORDS/SYNTH/LEAD/TEXTURE —
+stop the category's sounding pads, else start its best-scoring pad by the
+Instant-Groove rule), section jumps (79–19 → `selectSection`, the strip's
+lock-follow semantics). Deliberately INERT + dark: Session (93), pattern
+select (101–108), sequencer play (89) — iOS has no global sequencer panel
+(`SequenceBuilderSheet` is pad-scoped); the assignment stays reserved so the
+buttons can land when/if a panel exists.
+
+Control LEDs ride the desktop seam ported verbatim:
+`USBLaunchpadTransport.setControlLights` with its own `controlLedCache`,
+bypassing the grid's `PadIndex.isValid` gate (with the INVERSE gate so the
+control path can never paint grid addresses), redrawn on reconnect/resume.
+State repaints at 10 Hz off the existing hardware timer (diffed, cheap).
+
+**Latency (D-038 audit finding, partial):** the per-press seam-bake DSP
+(`exactCrossfaded` + `tileToLength` ran on the main actor on EVERY loop
+trigger) is now memoized in `SampleVoicePool` (`cachedLoopBake`, keyed on
+source buffer identity + resolved bake params, source-retaining so identifier
+reuse can't serve stale audio) and PREWARMED off-main at pack preload
+(`SampleScheduler.prewarmLoopBakes` after `preloadPackAsync`), so a press is
+normally a dictionary hit. The receive-thread fast press/release lanes
+(desktop ChopPlayer armed-plan engine, D-032/D-033/D-038) are NOT ported:
+iOS's pool is AVAudioPlayerNode/main-actor throughout, and a faithful port is
+an engine rewrite, not a patch — deferred deliberately rather than shipped
+half-safe. The main-actor hop before audible start therefore remains on iOS;
+mitigations in place stay (pre-hop stamping, sample-accurate `play(at:)` for
+quantized launches).
+
+**Where:** `Sources/ToneForgeEngine/Launchpad/LaunchpadControlMapping.swift`,
+`Sources/ToneForgeMobile/Launchpad/LaunchpadControlSurface.swift`,
+`Sources/ToneForgeMobile/Launchpad/USBLaunchpadTransport.swift`,
+`Sources/ToneForgeMobile/ToneForgeApp.swift` (`makeControlSurface`,
+`stopEverything`, `toggleKitLayer`/`kitLayerActivity`),
+`Sources/ToneForgeMobile/Audio/SampleVoicePool.swift` (bake cache),
+`Sources/ToneForgeMobile/Audio/SampleScheduler.swift` (prewarm). Pinned by
+`LaunchpadControlMappingTests` (engine, CI-gated),
+`LaunchpadControlSurfaceTests`, `USBLaunchpadTransportTests` control-LED
+cases. PARITY.yaml `launchpad-mk3-function-buttons` ios → partial.
+
+**Alternatives:** duplicating desktop's table into a mobile file (rejected —
+assignment drift is a parity bug by definition); mapping the sequencer trio
+onto the pad-scoped sheet (rejected — a global button opening a random pad's
+sheet is not the desktop semantic); baking on first press only, no prewarm
+(rejected — the first press per pad is exactly the audible one).
+
+## D-038 — Melody-guide reset on song switch (the D-036 leg that DID need a port)
+
+**Date:** 2026-09-19
+**Supersedes:** the "needed no port" paragraph in D-036 (and the same claim in
+commit 958c6841's message).
+
+**Context:** D-036 ported two of the three legs of desktop's synth-leak fix
+(8e56570c) and asserted the third — the per-song melody-guide reset — needed no
+iOS port because `AppState.activate` "already stops and rebuilds
+`melodyPlayer`". A later adversarial review caught that this was wrong, on the
+exact reasoning that made it desktop's bug:
+
+- `melodyGuideEnabled` is a per-song opt-in TOGGLE, not derived state. It is
+  the flag the tick loop gates on (`ToneForgeApp.swift` `tick()` →
+  `melodyPlayer?.advance(to:)`).
+- `activate()` rebuilt `melodyPlayer` for the NEW song but never reset that
+  flag. Rebuilding the player is precisely NOT the fix — it just hands the
+  still-armed guide a fresh sequence to replay.
+- So a guide armed on song A stayed on across the switch and played song B's
+  melody on the wavetable synth uninvited the instant the transport rolled —
+  the literal twin of web 5d1e3bd0 and desktop 8e56570c leg 3.
+
+**Decision:** `AppState.activate` now resets `melodyGuideEnabled` via
+`SongActivationPolicy.melodyGuideEnabledAfterSongLoad(wasEnabled:)` (which
+always returns `false`) and calls `wavetableSynthNode.allNotesOff()` so no held
+guide/keyboard voice rings across the load — matching desktop's
+`SessionController.attach` semantics exactly.
+
+**Shared vs per-platform:** desktop's `SongActivationPolicy` lives in
+`JamDesktopCore`, NOT in `ToneForgeEngine`, so it is not reachable from iOS. It
+is deliberately kept a per-platform TWIN rather than hoisted into the shared
+engine: desktop files import `ToneForgeEngine` and `JamDesktopCore` side by
+side, so a second `SongActivationPolicy` in the engine would make every
+unqualified desktop reference ambiguous. The DECISION is what's shared (web
+5d1e3bd0 / desktop 8e56570c / iOS D-038); the pinned per-platform test is the
+drift guard.
+
+**Where:** `Sources/ToneForgeMobile/App/SongActivationPolicy.swift` (pure,
+pinned twin of the desktop type), `Sources/ToneForgeMobile/ToneForgeApp.swift`
+(`AppState.activate` — toggle reset + `allNotesOff`). Pinned by
+`SongActivationPolicyTests.testMelodyGuideNeverSurvivesASongSwitch` (the pure
+policy) and `.testActivateResetsMelodyGuideToggle` (the WIRING — a stem-less
+fixture proves `activate()` actually clears the flag, headless).
+
+**Alternatives:** hoisting `SongActivationPolicy` into `ToneForgeEngine`
+(rejected — the desktop name collision above); resetting the flag in
+`melodyPlayer`'s rebuild block only (rejected — leaves the window between
+`currentBundle = bundle` and the rebuild, and reads as "player rebuild is the
+fix", which is the mistake D-036 made).
+
+## D-039 — MK3 Session/play wired to the iOS sequencer (D-037 correction) + one pad-color source
+
+**Date:** 2026-09-19
+**Corrects:** D-037's claim that Session (CC 93), pattern select (CC 101–108)
+and sequencer play/stop (CC 89) were "deliberately inert + dark — no iOS
+sequencer panel." That premise was wrong.
+
+**Context (the correction):** iOS DOES have a sequencer. The Contribute
+surface's "Sequencer" chip (`ContributeSurface.sequencerToggle`) flips
+`showSequencer`, which swaps the pad grid for `SequencerTabView` (Pattern /
+Timeline over a `SequencerPlayer`); a per-pad `SequenceBuilderSheet` (radial
+menu) records pad loops with its own preview player. D-037 conflated "no
+desktop-style A–D pattern-slot grid" with "no sequencer at all" and left three
+CCs hard-inert.
+
+**Decision (FIX 1 — wiring):**
+- `showSequencer` is lifted out of the `ContributeSurface` view into
+  `AppState.sequencerPanelOpen` (a computed `showSequencer` shim keeps the
+  view code intact). Session (CC 93) toggles that SAME state — the exact
+  mirror of desktop's `LaunchpadControlSurface.onSequencerPanelToggle` /
+  `isSequencerPanelOpen` seam. LED lit while open. The panel renders in Sample
+  mode, identical to the on-screen chip's own constraint.
+- Sequencer play/stop (CC 89) toggles the panel's preview loop.
+  `SequencerTabView` registers its `SequencerPlayer` on
+  `AppState.activeSequencerPlayer` (weak) while on screen and clears it on
+  disappear; `AppState.toggleSequencerPreview()` does `play(sync:false)` /
+  `stop()`. LED pulses while playing. Reachable only while the panel is open
+  (its view owns the player) — an ACCEPTED constraint: Session opens, then
+  play works. Best-effort LED accuracy rides the existing 10 Hz control-LED
+  repaint.
+- Pattern select (CC 101–108) stays genuinely inert + dark, now marked PARITY
+  `na` (not `missing`): iOS has no pattern-SLOT model — the Sequence Builder
+  records ONE pad sequence, there are no slots to pick. The shared engine
+  `LaunchpadControlMapping` assignment is unchanged (a button never means
+  something different per platform); only the iOS SURFACE dispatch/LEDs moved.
+
+**Decision (FIX 2 — one pad-color source):** the Sequence Builder's `.pads`
+tiles tinted off `TFTheme.familyTint(pad.family)` — the coarse 8-bucket
+`SampleFamily`, which collapses guitar-lead / guitar-chords / synth-chords /
+bass-stab / vocal-lead all into one pink `.stabs` block, AND is a SEPARATE
+palette table from the launchpad's (`.pads` is `0x6E5AF7` in `familyTint` vs
+`0xA855F7` in `familyColor` — already drifted). The Launchpad tiles
+(`SamplePadGrid4x4` via `ModeCoordinator+Layout`) color a pad by its real
+per-category hex. Both paths now go through ONE resolver,
+`ModeCoordinator.padColorHint(for:)` = explicit per-pad hex (auto-kit / borrow
+pads carry a `kit_builder._CATEGORY_HEX` value from the backend) → musical
+`category` (mirrors that same map / `JamView.categoryTint`) → coarse family.
+A Sequence Builder pad and its Launchpad twin can no longer differ.
+
+**Where:** `Sources/ToneForgeMobile/Launchpad/LaunchpadControlSurface.swift`
+(new `onSequencerPanelToggle` / `onSequencerPlayStop` +
+`isSequencerPanelOpen` / `isSequencerPlaying`, dispatch + LEDs),
+`ToneForgeApp.swift` (`sequencerPanelOpen`, weak `activeSequencerPlayer`,
+`toggleSequencerPreview`, `makeControlSurface` closures),
+`Views/ContributeSurface.swift` (computed `showSequencer`),
+`Views/Sequencer/SequencerTabView.swift` (register/unregister the player),
+`Contribution/ModeCoordinator+Layout.swift` (`categoryColor`, `padColorHint`,
+layer routed through it), `Views/Sequencer/SequenceBuilderSheet.swift` (`.pads`
+tint via `padColorHint`), engine `LaunchpadControlMapping.swift` (doc only).
+Pinned by `LaunchpadControlSurfaceTests` (Session/play dispatch, pattern-select
+inert, Session/sequencer LED frame) and new `PadColorResolutionTests`
+(hex → category → family priority; category beats family; twin match).
+
+**Alternatives:** forcing Sample mode on Session-open (rejected — the on-screen
+chip doesn't, so the hardware button matches it exactly); registering the
+`SequenceBuilderSheet` preview player as the active one too (rejected — two
+players clobbering one weak slot; the Session button opens the panel, not the
+pad sheet); reproducing only `hexColorHint ?? familyColor` in the resolver
+(rejected — routing BOTH surfaces through one function that ALSO honors the
+`category` string aligns iOS with desktop/web and makes drift structurally
+impossible).

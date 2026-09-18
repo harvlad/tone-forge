@@ -269,6 +269,29 @@ public enum LaunchpadProMK3Protocol {
     /// ("Launchpad Pro MK3 LPProMK3 MIDI" on macOS/iOS).
     public static let deviceNameFragment = "Launchpad Pro MK3"
 
+    /// Port-family fragment shared by ALL of the MK3's USB interfaces
+    /// ("LPProMK3 DAW" / "LPProMK3 MIDI" / "LPProMK3 DIN"), served
+    /// from the device's USB string descriptor — present at every
+    /// CoreMIDI enumeration stage, unlike the device-decorated display
+    /// name, which resolves LATE during a plug-in burst (desktop
+    /// D-031: "LPProMK3 MIDI" only later becomes "Launchpad Pro MK3
+    /// LPProMK3 MIDI").
+    public static let portFamilyFragment = "LPProMK3"
+
+    /// True when a (name, displayName) endpoint pair belongs to ANY
+    /// Launchpad Pro MK3 interface, at ANY enumeration stage. This is
+    /// the EXCLUSION predicate generic-keyboard transports use: the
+    /// MK3's grid is owned by the dedicated Launchpad transport, so a
+    /// keyboard transport connecting to any of its three ports would
+    /// double-fire pad notes — with `.synth` routing, every grid press
+    /// ALSO voiced a wavetable note over its pad loop (the "dual pad
+    /// mapping" synth leak, desktop D-034 / 8e56570c).
+    public static func isFamilyPort(name: String, displayName: String) -> Bool {
+        name.contains(portFamilyFragment)
+            || displayName.contains(portFamilyFragment)
+            || displayName.contains(deviceNameFragment)
+    }
+
     // MARK: SysEx
 
     /// All SysEx begins F0h 00h 20h 29h 02h 0Eh, then a command

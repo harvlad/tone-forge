@@ -531,10 +531,48 @@ public final class SampleScheduler: ObservableObject {
             pack: pack, buffers: loaded.buffers,
             loopBodyFrames: loaded.loopBodyFrames,
             loopShiftSec: loaded.loopShiftSec)
+        prewarmLoopBakes(packId: packId)
         #else
         loadedPacks[packId] = LoadedPack(pack: pack)
         #endif
     }
+
+    #if canImport(AVFoundation)
+    /// D-038 press-path prewarm: hand every loop-capable pad's bake
+    /// params to the voice pool so the seam bake runs OFF the main
+    /// actor at preload, not on the first press (per-press it was
+    /// buffer-length memcpy/fade DSP between finger and sound).
+    /// Derivations mirror `trigger` for the untransformed base-buffer
+    /// case (crossfade clamp, body split, shared-cycle gate); a press
+    /// whose resolved params differ (transform/trim output, a
+    /// latch-forced loop on a non-loopable pad) just misses the memo
+    /// and bakes once then. Async path only — the sync `preloadPack`
+    /// serves offline export + tests, where blocking is harmless.
+    private func prewarmLoopBakes(packId: String) {
+        guard let entry = loadedPacks[packId] else { return }
+        let cycleSec = loopLengthSeconds(packId: packId)
+        for pad in entry.pack.pack.pads {
+            let willLoop = pad.loopPointSec != nil || (pad.loopable ?? false)
+            guard willLoop, let buffer = entry.buffers[pad.padIdx] else { continue }
+            let crossfadeMs: Double = pad.crossfadeMs.map { max(8.0, min(30.0, $0)) }
+                ?? pad.loopScore.map { max(8.0, min(30.0, (1.0 - $0) * 45.0)) }
+                ?? 0
+            let loopBodyFrames = entry.loopBodyFrames[pad.padIdx] ?? 0
+            let bodyFrames = loopBodyFrames > 0
+                ? min(loopBodyFrames, Int(buffer.frameLength))
+                : Int(buffer.frameLength)
+            let hasRegion = pad.loopStartSec != nil && pad.loopEndSec != nil
+            let cycleFrames = Self.sharedCycleFrames(
+                bodyFrames: bodyFrames,
+                cycleSec: cycleSec,
+                sampleRate: buffer.format.sampleRate,
+                hasRegion: hasRegion)
+            pool.prewarmLoopBake(
+                buffer: buffer, loopBodyFrames: loopBodyFrames,
+                crossfadeMs: crossfadeMs, loopCycleFrames: cycleFrames)
+        }
+    }
+    #endif
 
     #if canImport(AVFoundation)
     /// Decode + canonical-format-convert every pad buffer for `pack`.

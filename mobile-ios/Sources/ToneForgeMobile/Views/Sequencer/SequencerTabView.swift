@@ -83,7 +83,19 @@ struct SequencerTabView: View {
             player.songBPM = songBPM
             // Sound bundleChop/localSample/customURL tracks (non-bus).
             player.delegate = appState
+            // Register with AppState so the hardware Launchpad sequencer
+            // play/stop button (CC 89) can drive THIS panel's preview
+            // loop while it's on screen (D-039). Weak on the AppState
+            // side, so this stays the sole owner.
+            appState.activeSequencerPlayer = player
             seedInitialPatternIfNeeded()
+        }
+        .onDisappear {
+            // Only relinquish if we're still the registered player — a
+            // freshly appearing panel may have already claimed the slot.
+            if appState.activeSequencerPlayer === player {
+                appState.activeSequencerPlayer = nil
+            }
         }
         .onChange(of: songBPM) { _, newBPM in
             player.songBPM = newBPM
