@@ -55,28 +55,43 @@ assert.deepEqual(
 // web twin of jamPadUpAction). This is the single source of truth padDown/
 // padUp use, and the SAME entry point the hardware Launchpad drives via
 // synthetic pointer events (lp-hw.js onMidi → pointerdown/up), so a plugged-in
-// pad gets the identical zero-latency Tap gate.
-const { padPressPlan, padReleasePlan } = K._internals;
-// Tap (no radial override) = the zero-latency momentary GATE (NEW contract,
-// diverges from web's OLD quantized fire-and-forget Tap): fires immediately,
-// force-loops, and releases on finger-lift.
-assert.deepEqual(padPressPlan("tap", false, null), { kind: "tapGate", latch: false });
-assert.equal(padReleasePlan(padPressPlan("tap", false, null)), true); // padUp force-stops
-// Latch flag is irrelevant in Tap mode (Latch only exists inside Loop mode).
-assert.deepEqual(padPressPlan("tap", true, null), { kind: "tapGate", latch: false });
-// Loop mode, no Latch = HOLD-to-play gate: quantized launch, release stops.
-assert.deepEqual(padPressPlan("loop", false, null), { kind: "loop", latch: false });
-assert.equal(padReleasePlan(padPressPlan("loop", false, null)), true);
-// Loop mode + Latch = TOGGLE: holds on finger-lift (a re-tap/padDown stops it).
-assert.deepEqual(padPressPlan("loop", true, null), { kind: "loop", latch: true });
-assert.equal(padReleasePlan(padPressPlan("loop", true, null)), false);
+// pad gets the identical One-Shot | Follow | Latch behavior.
+const { padPressPlan, padReleasePlan, migrateTriggerMode } = K._internals;
+// One-Shot | Follow | Latch taxonomy (iOS 28fec22e). One-Shot and Follow are
+// the SAME zero-latency momentary gate — fire immediately, force-loop, release
+// on finger-lift — differing ONLY in start phase (startFromZero). Latch is the
+// quantized synced loop that toggles.
+//
+// One-Shot (no radial override): gate that starts from the SAMPLE TOP.
+assert.deepEqual(padPressPlan("one", false, null), { kind: "gate", latch: false, startFromZero: true });
+assert.equal(padReleasePlan(padPressPlan("one", false, null)), true); // padUp force-stops
+// Follow: the same gate, but JOINS the shared clock phase (startFromZero false).
+assert.deepEqual(padPressPlan("follow", false, null), { kind: "gate", latch: false, startFromZero: false });
+assert.equal(padReleasePlan(padPressPlan("follow", false, null)), true); // padUp force-stops
+// The One-Shot / Follow split is EXACTLY startFromZero — nothing else differs.
+assert.equal(padPressPlan("one", false, null).startFromZero, true, "One-Shot starts at phase 0");
+assert.equal(padPressPlan("follow", false, null).startFromZero, false, "Follow joins the clock phase");
+// Latch = quantized synced loop, TOGGLE: holds on finger-lift (a re-tap stops it).
+assert.deepEqual(padPressPlan("latch", true, null), { kind: "loop", latch: true, startFromZero: false });
+assert.equal(padReleasePlan(padPressPlan("latch", true, null)), false);
 // Radial override OUTRANKS the mode in EVERY mode (web+iOS parity):
 //   loop-override → latches (holds); one-shot-override → plays through.
-assert.deepEqual(padPressPlan("tap", false, true), { kind: "loop", latch: true });
-assert.equal(padReleasePlan(padPressPlan("tap", false, true)), false); // override loop latches under Tap
-assert.deepEqual(padPressPlan("loop", false, false), { kind: "oneshot", latch: false });
-assert.equal(padReleasePlan(padPressPlan("loop", false, false)), false); // one-shot fire-and-forget
+assert.deepEqual(padPressPlan("one", false, true), { kind: "loop", latch: true, startFromZero: false });
+assert.equal(padReleasePlan(padPressPlan("one", false, true)), false); // override loop latches under One-Shot
+assert.deepEqual(padPressPlan("follow", false, false), { kind: "oneshot", latch: false, startFromZero: false });
+assert.equal(padReleasePlan(padPressPlan("follow", false, false)), false); // one-shot fire-and-forget
 assert.equal(padReleasePlan(null), false);
+
+// Legacy → new migration (iOS SampleTriggerMode.migratedFromLegacy twin): the
+// retired tap/loop both fold onto Follow, latch stays, unknown/absent → Follow,
+// a new value passes through.
+assert.equal(migrateTriggerMode("tap"), "follow");
+assert.equal(migrateTriggerMode("loop"), "follow");
+assert.equal(migrateTriggerMode("latch"), "latch");
+assert.equal(migrateTriggerMode("one"), "one");
+assert.equal(migrateTriggerMode("follow"), "follow");
+assert.equal(migrateTriggerMode(""), "follow");
+assert.equal(migrateTriggerMode("garbage"), "follow");
 
 // Pad-count preference: URL ?pads= wins, else stored, else 16; only 16/64
 // are real layouts, anything else falls back.

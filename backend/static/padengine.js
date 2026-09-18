@@ -1128,6 +1128,25 @@ export class PadEngine {
     return !!opts.forceLoop && !!hasOneShot;
   }
 
+  /** Buffer offset (seconds into the body) a looping voice starts at so it
+   * JOINS the shared phase lattice already playing — `(boundary - anchor) mod
+   * body`, so at any wall time every same-length loop sits at the same musical
+   * position while its attack still lands on the quantized bar. Returns 0
+   * (start from the TOP) whenever the voice must NOT phase-join:
+   *   - an explicit `opts.forceZeroPhase` — the One-Shot gate fires from the
+   *     sample top every tap, the opposite of Follow (which joins mid-body);
+   *   - a force-looped one-shot gate (no baked seam, no shared musical cycle);
+   *   - a non-looping voice, a zero-length body, or no anchor set yet.
+   * Pure so the One-Shot-vs-Follow start-phase split is unit-testable without
+   * an audio graph (the web twin of iOS SampleScheduler.forceZeroPhase +
+   * phaseJoinSeconds). */
+  static phaseJoinSec(opts, willLoop, forceLoopOneShot, bodySec, boundary, lockAnchor) {
+    if (!willLoop || forceLoopOneShot) return 0;
+    if (opts && opts.forceZeroPhase) return 0; // One-Shot: from the sample top
+    if (!(bodySec > 0) || lockAnchor == null) return 0;
+    return (((boundary - lockAnchor) % bodySec) + bodySec) % bodySec;
+  }
+
   _startVoice(padIdx, entry, opts) {
     const quantized = !!opts.quantized;
     const hasLoopBuf = entry.loopBuffer != null;
@@ -1314,14 +1333,16 @@ export class PadEngine {
     // still lands on the quantized bar. The first loop (boundary == anchor)
     // begins at phase 0. One-shots start at 0. voice.phaseSec feeds
     // padProgress so the DRAWN playhead reports the true buffer position.
-    if (willLoop && !forceLoopOneShot && entry.bodySec > 0 && this._lockAnchor != null) {
-      const body = entry.bodySec;
-      const phase = (((boundary - this._lockAnchor) % body) + body) % body;
-      voice.phaseSec = phase;
+    const phase = PadEngine.phaseJoinSec(
+      opts, willLoop, forceLoopOneShot, entry.bodySec, boundary, this._lockAnchor);
+    voice.phaseSec = phase;
+    if (phase > 0) {
+      // Follow (and any lattice loop tapped mid-cycle) joins mid-body.
       source.start(startTime, phase);
     } else {
-      // Tap gate (force-looped one-shot) and the first lattice loop both start
-      // at phase 0 / `now` — the gate never joins the shared lattice.
+      // Phase 0 / `now`: One-Shot (forceZeroPhase, fires from the sample top),
+      // a force-looped one-shot gate, and the first lattice loop all start at
+      // the buffer's beginning — the gate never joins the shared lattice.
       source.start(startTime);
     }
     // Armed watchdog: a quantized launch must be sounding by its own wait

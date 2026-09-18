@@ -141,3 +141,31 @@ test("willLoopFor: Tap gate force-loops even a non-loopable pad", () => {
   assert.equal(PadEngine.willLoopFor({ loop: false, forceLoop: true }, true, true), false);
   assert.equal(PadEngine.willLoopFor(null, true, true), false);
 });
+
+test("phaseJoinSec: One-Shot starts from the top (phase 0), Follow joins mid-body", () => {
+  const body = 4 * BAR;
+  const anchor = 10.0;
+  const boundary = anchor + 2 * BAR; // tapped two bars into the shared cycle
+  const expectedJoin = (((boundary - anchor) % body) + body) % body; // = 2*BAR
+  assert.ok(expectedJoin > 0);
+  // Follow (no forceZeroPhase): a looping voice JOINS the lattice mid-body so
+  // layered pads lock together.
+  assert.ok(
+    Math.abs(PadEngine.phaseJoinSec({}, true, false, body, boundary, anchor) - expectedJoin) < 1e-9,
+    "Follow joins at (boundary - anchor) mod body",
+  );
+  // One-Shot (forceZeroPhase): the SAME looping voice starts at phase 0 — the
+  // sample top — regardless of the shared lattice/anchor (the web twin of iOS
+  // SampleScheduler.forceZeroPhase skipping the phase-join).
+  assert.equal(
+    PadEngine.phaseJoinSec({ forceZeroPhase: true }, true, false, body, boundary, anchor),
+    0,
+    "One-Shot starts from the sample top even when the lattice has a phase",
+  );
+  // A force-looped one-shot gate (no baked seam / shared cycle) never joins.
+  assert.equal(PadEngine.phaseJoinSec({}, true, true, body, boundary, anchor), 0);
+  // Non-looping voices, zero-length bodies, and no-anchor-yet all start at 0.
+  assert.equal(PadEngine.phaseJoinSec({}, false, false, body, boundary, anchor), 0);
+  assert.equal(PadEngine.phaseJoinSec({}, true, false, 0, boundary, anchor), 0);
+  assert.equal(PadEngine.phaseJoinSec({}, true, false, body, boundary, null), 0);
+});

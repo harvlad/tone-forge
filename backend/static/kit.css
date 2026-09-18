@@ -84,7 +84,11 @@
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-  padding: 4px 12px;
+  /* Trimmed from 12px so the wider One-Shot | Follow | Latch labels still fit
+   * the segment on one row; nowrap keeps the hyphen in "One-Shot" from
+   * breaking the button across two lines (which would jog the toolbar row). */
+  padding: 4px 10px;
+  white-space: nowrap;
   border-radius: 6px;
   cursor: pointer;
 }

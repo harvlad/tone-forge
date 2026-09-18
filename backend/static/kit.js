@@ -544,14 +544,14 @@
         engine: null,
         pads: [], // server pad dicts, index = padIdx
         padEls: [], // { el, ring, sweep, canvas, badge, tint, ui, loop, loopOverride, lp, lpX, lpY }
-        mode: "tap", // DEFAULT Tap
+        mode: loadTriggerMode(), // One-Shot | Follow | Latch (persisted jamn.kit.mode; default Follow)
         // Quantize grid for triggers. Sourced from the system-wide
         // JamnQuantize setting so this surface starts in sync with the
         // Launchpad; falls back to "bar" (the historical default) if the
         // shared module didn't load. "off" would silently change how
         // existing kits feel, hence the conservative fallback.
         quantize: window.JamnQuantize ? window.JamnQuantize.get() : "bar",
-        latch: false,
+        latch: false, // derived mirror of mode === "latch"; setMode keeps it current
         raf: 0,
         onResize: null,
         stems: null, // role → decoded AudioBuffer (kept for applyPadRegion rebakes)
@@ -1032,26 +1032,26 @@
     });
     s.editBtn = editBtn;
 
-    // Tap / Loop / Latch segmented toggle (DEFAULT Tap). One 3-way control:
-    // Tap = one-shots, Loop = hold-to-play loops, Latch = loops that keep
-    // playing after release (mode "loop" + s.latch). Latch used to be a
-    // separate toggle stranded at the far end of the header; folding it in
-    // makes the three playback behaviors one mutually-exclusive choice.
-    // Buttons kept on state so Instant Groove can flip the mode
-    // programmatically (setMode derives the highlight from mode+latch).
+    // One-Shot / Follow / Latch segmented toggle (DEFAULT Follow; iOS
+    // 28fec22e taxonomy). One 3-way control, mutually exclusive:
+    //   One-Shot = finger-drumming gate, fires from the SAMPLE TOP every tap.
+    //   Follow   = the same immediate gate, but joins the shared clock phase
+    //              so layered pads lock together (the old "Tap", renamed).
+    //   Latch    = quantized synced loop, tap on / tap off.
+    // Buttons kept on state so Instant Groove / setLayer can flip the mode
+    // programmatically (setMode highlights the chip that IS the mode).
     var seg = document.createElement("div");
     seg.className = "kit-seg";
     seg.setAttribute("role", "group");
     s.modeBtns = {};
-    [["tap", "Tap"], ["loop", "Loop"], ["latch", "Latch"]].forEach(function (pair) {
+    [["one", "One-Shot"], ["follow", "Follow"], ["latch", "Latch"]].forEach(function (pair) {
       var key = pair[0];
       var b = document.createElement("button");
       b.type = "button";
       b.className = "kit-seg-btn" + (key === s.mode ? " is-on" : "");
       b.textContent = pair[1];
       b.addEventListener("click", function () {
-        s.latch = key === "latch";
-        setMode(s, key === "tap" ? "tap" : "loop");
+        setMode(s, key);
       });
       s.modeBtns[key] = b;
       seg.appendChild(b);
@@ -1695,53 +1695,96 @@
 
   // ---------- mode / quantize / instant groove ----------
 
+  // Persisted sample-trigger mode (jamn.kit.pads / jamn.kit.edit pattern):
+  // One-Shot | Follow | Latch, a single 3-way authority (iOS 28fec22e's
+  // SampleTriggerMode). Values: "one" | "follow" | "latch".
+  var TRIGGER_MODE_KEY = "jamn.kit.mode";
+
+  /** Fold a persisted trigger-mode string onto the current taxonomy. The set
+   * changed tap|loop|latch → one|follow|latch (iOS 28fec22e): a stored legacy
+   * "tap" or "loop" both become Follow (the synced gate that survives the
+   * drop of Loop), "latch" stays, and anything unknown/absent defaults to
+   * Follow. Mirrors iOS SampleTriggerMode.migratedFromLegacy. Pure so the
+   * one-time migration is unit-testable. */
+  function migrateTriggerMode(raw) {
+    if (raw === "one" || raw === "follow" || raw === "latch") return raw;
+    if (raw === "tap" || raw === "loop") return "follow";
+    return "follow";
+  }
+
+  /** Load the persisted trigger mode (migrating any legacy value). */
+  function loadTriggerMode() {
+    try {
+      if (!window.localStorage) return "follow";
+      return migrateTriggerMode(window.localStorage.getItem(TRIGGER_MODE_KEY) || "");
+    } catch (_) {
+      return "follow";
+    }
+  }
+
+  /** Persist the trigger mode so it survives a reload (matches iOS, whose
+   * mode is a stored setting rather than a per-session default). */
+  function persistTriggerMode(mode) {
+    try {
+      if (window.localStorage) window.localStorage.setItem(TRIGGER_MODE_KEY, mode);
+    } catch (_) {}
+  }
+
   function setMode(s, mode) {
     s.mode = mode;
+    // s.latch mirrors the sole loop mode so padPressPlan's (mode, latch, …)
+    // signature and any latch reader stay honest; mode is the authority.
+    s.latch = mode === "latch";
+    persistTriggerMode(mode);
     if (s.modeBtns) {
-      // Highlight derives from mode + latch: the Tap|Loop|Latch segment is
-      // one 3-way choice where Latch == loop mode with s.latch set. A
-      // programmatic setMode(s, "loop") (Instant Groove) keeps whatever
-      // latch state the user chose.
-      var key = mode === "loop" ? (s.latch ? "latch" : "loop") : "tap";
-      for (var k in s.modeBtns) s.modeBtns[k].classList.toggle("is-on", k === key);
+      // One 3-way choice — the chip key IS the mode ("one" | "follow" |
+      // "latch"). A programmatic setMode(s, "latch") (Instant Groove /
+      // setLayer) highlights Latch, matching what those synced loops do.
+      for (var k in s.modeBtns) s.modeBtns[k].classList.toggle("is-on", k === mode);
     }
   }
 
   /** Effective loop behavior for a pad press: the per-pad radial override
-   * wins; otherwise the surface mode decides. */
+   * wins; otherwise only Latch is a persistent loop (One-Shot/Follow are
+   * momentary gates, not standing loops). */
   function effectiveLoop(s, p) {
-    return p.loopOverride != null ? p.loopOverride : s.mode === "loop";
+    return p.loopOverride != null ? p.loopOverride : s.mode === "latch";
   }
 
   /** Pure per-mode press plan (iOS ModeCoordinator.triggerJamSample parity).
-   * Given the surface mode ("tap" | "loop"), the Latch flag, and the pad's
-   * radial loopOverride (true | false | null), decide how a press behaves.
-   * A radial override OUTRANKS the mode in every mode (web+iOS parity):
+   * Given the surface mode ("one" | "follow" | "latch"), the derived Latch
+   * flag, and the pad's radial loopOverride (true | false | null), decide how
+   * a press behaves. A radial override OUTRANKS the mode (web+iOS parity):
    *   - loopOverride === true  → "loop" that LATCHES (radial Stop / re-tap ends).
    *   - loopOverride === false → "oneshot" (plays through; finger-lift ignored).
-   * With no override the surface mode decides:
-   *   - mode "tap"  → "tapGate": the zero-latency momentary GATE — fires
-   *     IMMEDIATELY (no quantize, no bar-wait, no armed hourglass, even while
-   *     the transport rolls), FORCE-loops the voice so it sustains while held,
-   *     and force-STOPS on finger-lift. This DELIBERATELY diverges from web's
-   *     OLD Tap (a quantized fire-and-forget one-shot) to match iOS per user.
-   *   - mode "loop" → "loop"; latches when Latch is on, else HOLD-to-play.
-   * Pure so the padDown/padUp contract is unit-testable without a DOM/engine
-   * (the web twin of ModeCoordinator.jamPadUpAction). */
+   * With no override the surface mode decides (One-Shot | Follow | Latch):
+   *   - "latch"  → "loop" that latches: quantized synced loop, TOGGLE.
+   *   - "one"    → "gate" with startFromZero: the zero-latency momentary gate,
+   *     but every tap starts from the SAMPLE TOP (phase 0, no clock join);
+   *     force-loops while held, releases NOW on finger-lift (finger-drumming).
+   *   - "follow" → "gate": the same immediate gate, but JOINS the shared clock
+   *     phase (mid-body) so layered pads lock together; releases NOW. (This is
+   *     the old web "Tap", renamed — behavior preserved.)
+   * Both gate modes fire IMMEDIATELY (no quantize, no bar-wait, no armed
+   * hourglass, even while the transport rolls) and FORCE-loop the voice so it
+   * is a live, releasable, sustaining gate. Pure so the padDown/padUp contract
+   * is unit-testable without a DOM/engine (the web twin of
+   * ModeCoordinator.jamPadUpAction). */
   function padPressPlan(mode, latch, loopOverride) {
-    if (loopOverride === true) return { kind: "loop", latch: true };
-    if (loopOverride === false) return { kind: "oneshot", latch: false };
-    if (mode !== "loop") return { kind: "tapGate", latch: false };
-    return { kind: "loop", latch: !!latch };
+    if (loopOverride === true) return { kind: "loop", latch: true, startFromZero: false };
+    if (loopOverride === false) return { kind: "oneshot", latch: false, startFromZero: false };
+    if (mode === "latch" || latch) return { kind: "loop", latch: true, startFromZero: false };
+    // One-Shot and Follow are the same gate; they differ ONLY in start phase.
+    return { kind: "gate", latch: false, startFromZero: mode === "one" };
   }
 
   /** Pure finger-lift plan: does padUp RELEASE the pad's voice for this press
-   * plan? Tap gate = always (force-stop NOW); Loop = release only when it is
-   * NOT latched (HOLD-to-play gate); Latch + radial-loop + one-shot = hold.
-   * (iOS jamPadUpAction twin.) */
+   * plan? Gate (One-Shot + Follow) = always (force-stop NOW); Loop = release
+   * only when NOT latched; Latch + radial-loop + one-shot = hold. (iOS
+   * jamPadUpAction twin — One-Shot and Follow release identically.) */
   function padReleasePlan(plan) {
     if (!plan) return false;
-    if (plan.kind === "tapGate") return true;
+    if (plan.kind === "gate") return true;
     if (plan.kind === "loop") return !plan.latch;
     return false;
   }
@@ -1769,7 +1812,7 @@
 
   function instantGroove(s) {
     if (!can(s.engine, "trigger")) return;
-    setMode(s, "loop");
+    setMode(s, "latch"); // synced loops that keep playing = Latch in the new taxonomy
     var grid = s.quantize === "off" ? "bar" : s.quantize;
     pickInstantGroove(s.pads).forEach(function (idx) {
       var p = s.padEls[idx];
@@ -2218,7 +2261,7 @@
    * looping, quantized (category-exclusive, LaunchpadController.setLayer). */
   function setLayer(s, cat, padIdx) {
     if (!can(s.engine, "trigger")) return;
-    setMode(s, "loop");
+    setMode(s, "latch"); // category-exclusive synced loops = Latch in the new taxonomy
     var members = padsInCategory(s.pads, cat);
     for (var i = 0; i < members.length; i++) {
       var idx = members[i].padIdx;
@@ -2545,8 +2588,8 @@
     s.padEls[i] = {
       el: el, ring: ring, sweep: sweep, canvas: canvas, badge: badge, fxBadge: fxBadge, tint: tint,
       ui: "idle", loop: false,
-      tapGate: false, // true while a Tap momentary-gate voice is held (padUp force-stops it)
-      loopOverride: null, // radial per-pad override: true=loop, false=one-shot, null=follow mode
+      tapGate: false, // true while a One-Shot/Follow gate voice is held (padUp force-stops it)
+      loopOverride: null, // radial per-pad override: true=loop, false=one-shot, null=surface mode
       lp: null, lpX: 0, lpY: 0, // long-press (radial) timer state
     };
     wirePad(s, i, el);
@@ -2651,17 +2694,25 @@
     var p = s.padEls[padIdx];
     if (!p || !can(s.engine, "trigger")) return;
     var plan = padPressPlan(s.mode, s.latch, p.loopOverride);
-    if (plan.kind === "tapGate") {
-      // Tap = zero-latency momentary GATE (iOS 37f851d6/f081d725/d56dc351/
-      // e8566e69). Fires IMMEDIATELY — ignores the quantize axis, no bar-wait,
-      // no armed hourglass — and FORCE-loops the voice (forceLoop covers even a
-      // non-loopable pad, so it's a live, releasable, sustaining voice, not a
-      // one-shot that plays its whole length). padUp force-stops it (the web
-      // engine's release() has no intrinsic-loop guard, so it stops whatever is
-      // sounding). Quick tap = short blip, hold = sustain, release = stop now.
+    if (plan.kind === "gate") {
+      // One-Shot / Follow = zero-latency momentary GATE (iOS 28fec22e
+      // ModeCoordinator). Fires IMMEDIATELY — ignores the quantize axis, no
+      // bar-wait, no armed hourglass — and FORCE-loops the voice (forceLoop
+      // covers even a non-loopable pad, so it's a live, releasable, sustaining
+      // voice, not a one-shot that plays its whole length). padUp force-stops
+      // it. Quick tap = short blip, hold = sustain, release = stop now.
+      // startFromZero (One-Shot only) → forceZeroPhase: the voice starts at the
+      // sample TOP (phase 0) every tap instead of phase-joining the shared
+      // clock; Follow leaves it unset and lands mid-body at the clock point so
+      // layered pads lock together.
       p.loop = true;
       p.tapGate = true;
-      s.engine.trigger(padIdx, { loop: true, forceLoop: true, quantized: false });
+      s.engine.trigger(padIdx, {
+        loop: true,
+        forceLoop: true,
+        quantized: false,
+        forceZeroPhase: plan.startFromZero,
+      });
       noteTrigger(s, padIdx);
       setUi(s, padIdx, "playing"); // sounding NOW — never "waiting for the beat"
       return;
@@ -2708,10 +2759,11 @@
       p.tapGate = false; // latch/one-shot/radial-loop hold — nothing to release
       return;
     }
-    // A Loop-mode HOLD releases only a voice we actually started as a loop
-    // (never armed / never started). The Tap gate always releases: its voice
-    // is looping via forceLoop even on a non-loopable pad, so p.loop is set and
-    // the engine force-stops it (mirrors iOS releaseJamSample force-release).
+    // A Latch loop releases only a voice we actually started as a loop
+    // (never armed / never started). The gate (One-Shot/Follow) always
+    // releases: its voice is looping via forceLoop even on a non-loopable pad,
+    // so p.loop is set and the engine force-stops it (mirrors iOS
+    // releaseJamSample force-release).
     if (plan.kind === "loop" && !p.loop) return;
     p.tapGate = false;
     if (can(s.engine, "release")) s.engine.release(padIdx);
@@ -4272,9 +4324,9 @@
     if (current) unmount();
     current = {
       root: root, entry: null, alive: true, ctx: null, engine: null,
-      pads: [], padEls: [], mode: "tap",
+      pads: [], padEls: [], mode: loadTriggerMode(), // persisted jamn.kit.mode; default Follow
       quantize: window.JamnQuantize ? window.JamnQuantize.get() : "bar",
-      latch: false,
+      latch: false, // derived mirror of mode === "latch"; setMode keeps it current
       raf: 0, onResize: null, stems: null, dsp: null, radial: null,
       transportTimer: 0, engineTransport: null, engineTransportTimer: 0,
       // Packs keep the 16 grid (their manifests are 16-pad) and have no
@@ -5075,6 +5127,7 @@
       pickInstantGroove: pickInstantGroove,
       padPressPlan: padPressPlan,
       padReleasePlan: padReleasePlan,
+      migrateTriggerMode: migrateTriggerMode,
       fmtTime: fmtTime,
       resolvePadCount: resolvePadCount,
       resolveEditMode: resolveEditMode,
