@@ -1,33 +1,37 @@
 WHAT'S NEW IN THIS BUILD
 
-• Edit mode no longer sounds the pad. Holding a pad to open the radial
-  menu used to fire it on/off (an audible blip) — in Edit mode a pad
-  touch is now silent; only the hold-for-radial gesture acts. Toggle
-  Edit off to play.
-• (Also in the last build, in case you missed it) Tap | Loop | Latch
-  trigger modes: Tap = zero-latency gate (instant, hold to sustain,
-  release stops); Loop = beat-locked hold-to-play; Latch = tap on/off.
-  Section/chord pads on the 64 grid show their loop indicator + a type
-  label ("Vocals / Intro", "Chord / D"). Perform stages the grid size
-  you set in Build.
+• Sample trigger modes are now One-Shot | Follow | Latch (replaces
+  Tap | Loop | Latch):
+  – One-Shot = finger-drumming. Every tap plays the sample FROM THE
+    BEGINNING, no clock sync. Hold to sustain, release stops. Tap fast
+    to retrigger from the top each time.
+  – Follow = plays IN SYNC with the other pads (locks to the shared
+    clock point). This is the old "Tap" you liked — renamed. Release
+    stops.
+  – Latch = synced loop, tap on / tap off (unchanged).
+• Loop mode is gone (it overlapped with Latch). If you were on Tap or
+  Loop, you're now on Follow.
 
-HOW TO USE EDIT MODE
+HOW TO USE
 
-1. Build → Samples. Tap the pencil "Edit" chip (right end of the chip
-   row).
-2. Edit ON: hold a pad → the radial editing wheel opens, NO sound.
-3. Edit OFF: pads play normally (Tap/Loop/Latch as chosen).
+Build → Samples. The mode chips (One-Shot | Follow | Latch) lead the
+row above the pads.
+• One-Shot: tap a pad — it plays from the sample start every time. Great
+  for drum hits / finger-drumming.
+• Follow: tap pads — they lock to the same clock position so layers stay
+  in time.
+• Latch: tap to start a loop, tap again to stop.
 
 WHAT TO TEST
 
-1. Edit ON: hold several pads to open the radial — expected = NO audio
-   blip, just the wheel. Pick Loop/Chop/etc.
-2. Edit OFF + Tap: hit a pad — instant sound, hold sustains, release
-   stops.
-3. Green/purple 64-grid pads in Latch — loop badge + glow show, labels
-   read "Vocals/Intro" or "Chord/D".
-4. Build 64 → Perform — full 8×8 on stage.
+1. One-Shot: tap a pad repeatedly — expected = restarts from the TOP
+   each tap, instant, no sync. Hold = sustains, release = stops.
+2. Follow: with a few pads going, tap another — expected = it drops in
+   IN SYNC at the shared clock point (not from the top).
+3. Latch: tap on / tap off a synced loop.
+4. Plug in a Launchpad (if you have one): One-Shot gives instant
+   from-the-top hits on the hardware too.
 
 WHAT TO REPORT
-• Any sound when touching a pad with Edit ON.
-• Any Tap pad that keeps playing after you lift.
+• Any One-Shot pad that does NOT start from the beginning.
+• Any Follow pad that starts from the top instead of locking to the mix.
