@@ -590,6 +590,12 @@ struct LaunchpadPanelView: View {
                                     .padding(.horizontal, 5)
                             }
                             .frame(width: max(2, geo.size.width * frac - 2))
+                            .contentShape(Rectangle())
+                            // Click-to-jump: the SAME transport seek the
+                            // hardware scene buttons (D-036 sectionJump)
+                            // and the web strip use — the strip is
+                            // orientation AND navigation, like web.
+                            .onTapGesture { session.transport.seek(to: b.start) }
                     }
                 }
                 if let f = arr.playheadFrac {
