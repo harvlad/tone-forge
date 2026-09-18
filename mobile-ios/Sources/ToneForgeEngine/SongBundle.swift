@@ -374,6 +374,13 @@ public struct Chop: Codable, Sendable, Equatable {
     public let patternId: String?
     /// Graph-asset id for the usage feedback loop (kit chops only).
     public let assetId: String?
+    /// Server-assigned musical category ("DRUMS"/"BASS"/…/"SYNTH") from the
+    /// kit manifest. Carried so clients render the SERVER'S grouping — a
+    /// client recomputing category from stem+contentType cannot know the
+    /// residual-`other`-is-SYNTH case (kit_builder `_category_for`, which
+    /// consults the graph's `residual_is_synth` flag). nil on chops routes
+    /// that don't send it (legacy / non-kit grids).
+    public let category: String?
 
     public init(
         idx: Int,
@@ -392,7 +399,8 @@ public struct Chop: Codable, Sendable, Equatable {
         loopScore: Double? = nil,
         crossfadeMs: Double? = nil,
         patternId: String? = nil,
-        assetId: String? = nil
+        assetId: String? = nil,
+        category: String? = nil
     ) {
         self.idx = idx
         self.startSec = startSec
@@ -411,5 +419,6 @@ public struct Chop: Codable, Sendable, Equatable {
         self.crossfadeMs = crossfadeMs
         self.patternId = patternId
         self.assetId = assetId
+        self.category = category
     }
 }

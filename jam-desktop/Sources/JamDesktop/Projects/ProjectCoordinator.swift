@@ -187,7 +187,28 @@ final class ProjectCoordinator: ObservableObject {
         if snapshot == nil {
             snapshot = store.loadWorking(analysisId: analysisId)?.snapshot
         }
-        guard let snapshot else { return }
+        guard let snapshot else {
+            // No workspace for this song ⇒ its workspace is the EMPTY one.
+            // The assignment/FX stores are machine-global (UserDefaults /
+            // one JSON file); leaving them untouched here let `.packPad`
+            // slots persisted by an earlier song or app launch render as
+            // phantom purple "speaker" tiles — live, triggerable pads —
+            // among this song's empty cells. Same whole-value swap
+            // semantics as a restore, just with nothing in it. suppress:
+            // the clears' onChanged hooks must not auto-save an empty
+            // working project for the fresh song.
+            // A pattern still running on a slot about to vanish would
+            // sound on with no pad able to stop it (the orphaned-voice
+            // class of bug).
+            session.sequencePadManager.stopAll()
+            suppressAutoSave = true
+            ProjectStateBridge.clearGlobalPadState(
+                padAssignments: session.padAssignmentStore,
+                padFX: session.padFXStore
+            )
+            suppressAutoSave = false
+            return
+        }
         applyRestore(snapshot, analysisId: analysisId)
     }
 

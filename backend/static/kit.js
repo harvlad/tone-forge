@@ -29,7 +29,7 @@
   var CHOP_CATEGORY_HEX = {
     DRUMS: 0xef4444, BASS: 0x22c55e, CHORDS: 0xf59e0b, LEAD: 0xf97316,
     VOCAL: 0xec4899, RHYTHM: 0x3b82f6, TEXTURE: 0x06b6d4, FX: 0xa855f7,
-    STAB: 0x8b5cf6, SAMPLE: 0x64748b,
+    STAB: 0x8b5cf6, SAMPLE: 0x64748b, SYNTH: 0x14b8a6,
   };
   // Slice modes lpview offered (its row-2 "Slices" select), verbatim.
   var CHOP_SLICE_MODES = ["beat", "phrase", "onset", "chord", "section", "drum-bundle"];
@@ -191,8 +191,10 @@
 
   // Layer-row order — the full category set the kit builder emits, in its
   // grid grouping order (desktop LayerStackView shows a subset; the web rack
-  // shows every category actually present).
-  var LAYER_ORDER = ["DRUMS", "BASS", "CHORDS", "LEAD", "RHYTHM", "TEXTURE", "VOCAL"];
+  // shows every category actually present). SYNTH: on a 6-stem song the
+  // harmonic body is the residual-`other` SYNTH category (kit_builder
+  // residual_is_synth) — desktop racks it (LayerStackView), so web must too.
+  var LAYER_ORDER = ["DRUMS", "BASS", "CHORDS", "SYNTH", "LEAD", "RHYTHM", "TEXTURE", "VOCAL"];
 
   /** Categories present in the kit, in fixed LAYER_ORDER. */
   function layerCategories(pads) {
@@ -1823,7 +1825,10 @@
    * the single best pad per core category by performanceScore || loopScore.
    * Returns padIdx values in the fixed category order. */
   function pickInstantGroove(pads) {
-    var targets = ["DRUMS", "BASS", "CHORDS", "LEAD", "RHYTHM", "TEXTURE"];
+    // SYNTH included (LaunchpadController.instantGroove twin): on a 6-stem
+    // song the harmonic body lives in the SYNTH category — without it the
+    // groove would skip that material entirely.
+    var targets = ["DRUMS", "BASS", "CHORDS", "SYNTH", "LEAD", "RHYTHM", "TEXTURE"];
     var best = {};
     (pads || []).forEach(function (p) {
       if (!p || typeof p.padIdx !== "number") return;
@@ -2002,6 +2007,7 @@
       case "drums": return "DRUMS";
       case "bass": return "BASS";
       case "vocals": return "VOCAL";
+      case "synth": return "SYNTH"; // 6s `other` residual, own category
       default: break;
     }
     switch (contentType) {

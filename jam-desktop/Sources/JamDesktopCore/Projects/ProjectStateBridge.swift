@@ -264,6 +264,25 @@ public enum ProjectStateBridge {
         arrangementStore.save([:], analysisId: analysisId)
     }
 
+    /// Song activated with NO workspace snapshot: swap in the EMPTY
+    /// workspace over the two MACHINE-GLOBAL stores. Restore's whole-value
+    /// semantics apply to the no-workspace case too — without this, a
+    /// `.packPad`/`.localSample` slot persisted by an earlier song or app
+    /// launch (UserDefaults `jamdesktop.padAssignments`) survived onto
+    /// EVERY later song's grid as a phantom purple "speaker" tile among
+    /// empty cells, still triggerable. Chop edits and arrangement are
+    /// per-analysisId stores (they cannot leak) and the sequencer pattern
+    /// LIBRARY is a global collection by design — only the pad surface +
+    /// FX map swap.
+    @MainActor
+    public static func clearGlobalPadState(
+        padAssignments: PadAssignmentStore,
+        padFX: PadFXStore
+    ) {
+        padAssignments.replaceAll([:])
+        padFX.replaceAll([:])
+    }
+
     // MARK: - Borrow helpers (pure, pinned by tests)
 
     /// Content-addressed refs for a mounted borrow. BorrowRef.init?

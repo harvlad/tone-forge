@@ -1558,10 +1558,11 @@ private struct PadCell: View {
             return Color.white.opacity(0.06)
         }
         // ONE color source for screen + hardware: the controller's
-        // displayColorHint (borrow-category → Riley-category → raw hint
-        // precedence lives THERE, and the hardware LEDs paint the same
-        // value — the screen/LED mismatch was this view computing its
-        // own colors while the LEDs got raw chop hints).
+        // displayColorHint (borrow-category → verbatim kit hint →
+        // category → raw hint precedence lives THERE, and the hardware
+        // LEDs paint the same value — the screen/LED mismatch was this
+        // view computing its own colors while the LEDs got raw chop
+        // hints).
         let hint = Int(launchpad.displayColorHint(for: assignment, at: pad))
         let base = Color(
             red: Double((hint >> 16) & 0xFF) / 255.0,

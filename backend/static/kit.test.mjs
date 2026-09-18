@@ -43,9 +43,10 @@ assert.deepEqual(
     { padIdx: 4, category: "VOCAL", performanceScore: 1.0 }, // not a groove target
     { padIdx: 5, category: "LEAD" }, // no scores → 0, still the only lead
     { padIdx: 6 }, // no category → skipped
+    { padIdx: 9, category: "SYNTH", performanceScore: 0.6 }, // 6-stem residual — a target
     { category: "TEXTURE", performanceScore: 0.8 }, // no padIdx → skipped
   ]),
-  [1, 2, 5] // drums, bass, lead — category order, not score order
+  [1, 2, 9, 5] // drums, bass, synth, lead — category order, not score order
 );
 // performanceScore wins over a higher loopScore (native `??` chain).
 assert.deepEqual(
@@ -132,9 +133,10 @@ const layerPads = [
   { padIdx: 3, category: "DRUMS", loopScore: 0.7 }, // loopScore fallback
   { padIdx: 4, category: "VOCAL" },
   { padIdx: 5 }, // no category → dropped
+  { padIdx: 6, category: "SYNTH" }, // 6-stem residual — its own rack row
   { category: "BASS", performanceScore: 1 }, // no padIdx → dropped
 ];
-assert.deepEqual(layerCategories(layerPads), ["DRUMS", "LEAD", "VOCAL"]);
+assert.deepEqual(layerCategories(layerPads), ["DRUMS", "SYNTH", "LEAD", "VOCAL"]);
 assert.deepEqual(layerCategories([]), []);
 assert.deepEqual(layerCategories(null), []);
 assert.deepEqual(

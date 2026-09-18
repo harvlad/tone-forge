@@ -51,6 +51,7 @@
     FX: 0xa855f7,
     STAB: 0x8b5cf6,
     SAMPLE: 0x64748b,
+    SYNTH: 0x14b8a6,
   };
 
   var DEFAULT_HEX = 0x5b6b8c; // muted blue (Controller.defaultColorHint feel)
@@ -194,6 +195,8 @@
         return "BASS";
       case "vocals":
         return "VOCAL";
+      case "synth":
+        return "SYNTH"; // 6s `other` residual, own category
       default:
         break;
     }
@@ -279,7 +282,9 @@
   /** Pick the best (highest-scoring) loop pad per musical category — a port
    * of kit.js pickInstantGroove. Returns an array of padIdx. Pure. */
   function pickInstantGroove(pads) {
-    var targets = ["DRUMS", "BASS", "CHORDS", "LEAD", "RHYTHM", "TEXTURE"];
+    // SYNTH included — kit.js/LaunchpadController twin (6-stem songs put
+    // the harmonic body in the SYNTH category).
+    var targets = ["DRUMS", "BASS", "CHORDS", "SYNTH", "LEAD", "RHYTHM", "TEXTURE"];
     var best = {};
     (pads || []).forEach(function (p) {
       if (!p || typeof p.padIdx !== "number") return;

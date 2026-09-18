@@ -388,4 +388,47 @@ final class ProjectStateBridgeTests: XCTestCase {
         XCTAssertEqual(ProjectStateBridge.logicalStem("guitar_center"), "other")
         XCTAssertEqual(ProjectStateBridge.logicalStem("other"), "other")
     }
+
+    // MARK: - Phantom pack-pad fix (no-workspace song ⇒ empty workspace)
+
+    /// The phantom-pad regression: `.packPad` slots persisted in the
+    /// MACHINE-GLOBAL UserDefaults store by an earlier song/app launch
+    /// rendered as purple "speaker" tiles on EVERY song's grid. A song
+    /// activating with NO workspace must swap in the empty workspace over
+    /// the two global stores (same whole-value semantics as a restore).
+    func testClearGlobalPadStateEmptiesBothGlobalStores() {
+        padAssignments.assign(
+            .packPad(packId: "auto-oldsong-intermediate", padIdx: 3),
+            padIdx: 24)
+        padAssignments.assign(
+            .packPad(packId: "auto-oldsong-intermediate", padIdx: 7),
+            padIdx: 33)
+        padFX.setEffects(
+            SamplePadEffects(
+                delayTimeSec: 0.4, delayFeedback: 30, delayMix: 25,
+                filterCutoffHz: 4_000, filterResonanceDb: 3),
+            packId: "somepack", padIdx: 3)
+
+        ProjectStateBridge.clearGlobalPadState(
+            padAssignments: padAssignments, padFX: padFX)
+
+        XCTAssertTrue(padAssignments.assignments.isEmpty)
+        XCTAssertTrue(padFX.effectsByKey.isEmpty)
+    }
+
+    /// The clear must PERSIST — the phantoms lived in UserDefaults, so an
+    /// in-memory clear alone would resurrect them on the next launch.
+    func testClearGlobalPadStatePersistsAcrossReload() {
+        padAssignments.assign(
+            .packPad(packId: "stale-pack", padIdx: 0), padIdx: 24)
+        ProjectStateBridge.clearGlobalPadState(
+            padAssignments: padAssignments, padFX: padFX)
+
+        // Fresh store instances over the same backing suite/dir = relaunch.
+        let reloadedAssignments = PadAssignmentStore(defaults: defaults)
+        let reloadedFX = PadFXStore(root: tempDir)
+        XCTAssertTrue(reloadedAssignments.assignments.isEmpty)
+        XCTAssertTrue(reloadedFX.effectsByKey.isEmpty)
+        XCTAssertNil(reloadedAssignments.slot(padIdx: 24))
+    }
 }

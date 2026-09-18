@@ -33,7 +33,8 @@ public struct KitClient: Sendable {
     /// - Parameters:
     ///   - skill: `"beginner" | "intermediate" | "advanced"` — filters pad
     ///     difficulty / loop preference.
-    ///   - pads: kit size (1…16).
+    ///   - pads: kit size (1…64 — the backend tops up to the ask; 64 is the
+    ///     web/desktop full-grid flood, 16 the compact kit).
     ///   - kind: `"auto"` (mixed performance kit) or `"drums"` (the song's
     ///     drum stem as classified one-shot hits + groove loops).
     public func fetchKit(

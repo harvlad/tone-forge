@@ -986,3 +986,88 @@ failed-connect, stable-clear, stamped clocks, palette hues),
 `LaunchpadControllerTests` (stamped seam + press-stamp fire time, display
 color through the press cycle, borrow LED category) and
 `ChopPlayerLoopBakeCacheTests` (bake-once, prewarm-hit).
+
+## D-032: Web-parity 64-pad kit flood + phantom pack-pad fix (empty workspace on no-snapshot songs)
+
+**Date:** 2026-09-18
+**Decision:** The 64 grid fills exactly like web, from the same backend
+build; and a song with no saved workspace gets the EMPTY workspace, not
+the previous song's leftover global pad slots.
+
+- **The 64-pad flood is fetched, not built.** Web fills all 64 cells
+  because kit.js asks `/api/song/{id}/kit?pads=64` and the backend's
+  AutoKitBuilder tops up the whole ask (stems × sections, kit=5+
+  category-grouped padIdx rows, "Drums beat Verse" labels,
+  `_CATEGORY_HEX` colors). Desktop hard-coded `pads: 16` — a stale-clamp
+  legacy from when the route rejected more — so 64 mode showed 16 kit
+  pads over 48 dead cells. Now: `loadAutoKit` requests
+  `launchpad.padCount` pads; the 16/64 toggle refetches at the new count
+  (`LaunchpadController.onPadCountChanged` →
+  `SessionController.reloadKitForPadCountChange`, the kit.js
+  `setPadCount → reloadKit` twin). The hook never fires for a mounted
+  borrow (it re-arranges locally, D-029), and automatic resize reloads
+  pass `yieldToBorrow` so a borrow mounting mid-fetch (workspace
+  restore) is never clobbered. A toggle racing an in-flight fetch is
+  caught up after the mount (requestedPads vs current padCount).
+  The refetch keys on the CONTROLLER's `isKitGridMounted` (set by
+  `adoptAssignments`, cleared by `setChops`/borrow mounts), never on
+  the session's `activeGridPackId` alone: the panel's stem/sliceMode
+  Load mounts a chop grid behind the session's back (`loadChops` →
+  `setChops`) and nothing nils the pack id — which the attach-time
+  auto kit sets on EVERY song — so the stale id would turn the 16/64
+  toggle into a silent chop-grid → auto-kit replacement (the same
+  staleness class `effectsForPad` guards per-pad via assetId).
+- **The manifest is laid verbatim.** `KitGridMapper` (JamDesktopCore,
+  extracted from SessionController so it's test-pinned) converts pads →
+  (Chop, stem) in SERVER order — selection, ranking, grouping, labels
+  and colors are backend decisions; the client never re-sorts or
+  subsets. New `Chop.category` (additive, ToneForgeEngine) carries the
+  server's category so residual-`other` SYNTH pads group/color like web
+  (`PadCategory.synth`, #14B8A6) — stem+contentType recomputation
+  cannot see the graph's `residual_is_synth` flag and painted them
+  lead-orange. `displayColorHint` (D-031's single screen+LED source)
+  matches WEB precedence: a kit pad's own `colorHint` wins VERBATIM
+  when it parses (kit.js `parseColor(pad.colorHint)`), the explicit
+  category is only the fallback — kind=drums kits put category "DRUMS"
+  on every pad with PER-CLASS hints (kick red, snare amber, hats cyan,
+  grooves blue; `drum_kit.py _CLASS_HEX`), so category-first would
+  flood the whole drum kit one flat red on tiles AND LEDs. Riley chop
+  pads (contentType, no manifest category) keep the category accent
+  ahead of their own hint, same as web's chop bake
+  (`CHOP_CATEGORY_HEX[cat]`). SYNTH also landed on web in the same
+  pass (parity rule 3): kit.js/lpview.js `pickInstantGroove` targets,
+  kit.js `LAYER_ORDER`, and the `chopCategoryFor`/`categoryFor` stem
+  map + hex palettes gained SYNTH, so Instant Groove and the Layers
+  rack behave identically on a 6-stem song instead of desktop-only.
+- **Phantom purple "speaker" pads, root-caused.** Two purple tiles among
+  empty cells were persisted `.packPad` slot overrides in
+  `PadAssignmentStore` — UserDefaults `jamdesktop.padAssignments` is
+  MACHINE-GLOBAL, and `ProjectCoordinator.songDidActivate` restored a
+  workspace only when one existed; with no snapshot it returned early
+  and the previous song's (or a previous launch's) slots leaked onto
+  every grid, live and triggerable. Now a no-snapshot activation swaps
+  in the empty workspace (`ProjectStateBridge.clearGlobalPadState`:
+  pad assignments + pad FX, the same two global stores a restore
+  whole-value-swaps; running pad sequences stopped first). Per-song
+  slots still round-trip via working projects (D-030 auto-save);
+  chop edits/arrangement are per-analysisId stores and never leaked;
+  the sequencer pattern LIBRARY stays global by design. Songless
+  scratchpad assignments are cleared when a song loads — the workspace
+  contract is per-song, accepted trade-off.
+
+**Where:** `Sources/JamDesktopCore/Launchpad/KitGridMapper.swift`,
+`LaunchpadController.swift` (`onPadCountChanged`, `isKitGridMounted`,
+`PadCategory.synth`, `category(for:)`, `displayColorHint`),
+`backend/static/kit.js` + `lpview.js` (SYNTH in groove targets /
+layer order / category maps),
+`Sources/JamDesktopCore/Projects/ProjectStateBridge.swift`
+(`clearGlobalPadState`), `Sources/JamDesktop/SessionController.swift`
+(`loadAutoKit` pads/yieldToBorrow, `reloadKitForPadCountChange`),
+`Sources/JamDesktop/Projects/ProjectCoordinator.swift`
+(`songDidActivate` no-snapshot clear),
+`mobile-ios/Sources/ToneForgeEngine/SongBundle.swift` (`Chop.category`).
+Pinned by `KitGridFloodTests` (flood order/labels/colors, SYNTH teal,
+per-class drum-kit hints beat flat category red, `isKitGridMounted`
+provenance, toggle-hook gating) + `ProjectStateBridgeTests`
+(clearGlobalPadState empties + persists) + `kit.test.mjs`/
+`lpview.test.mjs` (SYNTH groove target + layer row + category map).
