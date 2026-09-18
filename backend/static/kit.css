@@ -98,8 +98,7 @@
   color: var(--jamn-text, #fff);
 }
 
-.kit-toggle,
-.kit-stop {
+.kit-toggle {
   appearance: none;
   font: inherit;
   font-size: 12px;
@@ -131,7 +130,6 @@
   pointer-events: none;
 }
 
-.kit-stop:hover,
 .kit-toggle:hover {
   color: var(--jamn-text, #fff);
 }
@@ -300,64 +298,12 @@
   display: none;
 }
 
-/* ---------- transport strip ---------- */
-
-.kit-transport {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  max-width: var(--kit-w); /* stay aligned with .kit-grid */
-  margin-inline: auto;
-  box-sizing: border-box;
-  padding: 6px 8px;
-  border: 1px solid var(--jamn-border, #2A2A36);
-  border-radius: var(--jamn-radius-md, 12px);
-  background: var(--jamn-surface1, #14141A);
-}
-
-.kit-play {
-  appearance: none;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 5px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--jamn-border, #2A2A36);
-  background: var(--jamn-surface2, #1C1C24);
-  color: var(--jamn-text, #fff);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.kit-play.is-playing {
-  border-color: var(--jamn-accent, #8B5CF6);
-  color: var(--jamn-accent, #8B5CF6);
-}
-
-/* Stop All lives in the transport bar next to Play — same row as Play +
- * Kill All so all three transport actions share one bar. Match Play's fill
- * so it reads as a transport control, not a header toggle. */
-.kit-transport-btn {
-  padding: 5px 14px;
-  background: var(--jamn-surface2, #1C1C24);
-  color: var(--jamn-text, #fff);
-  white-space: nowrap;
-}
-
-.kit-time {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--jamn-text2, #A1A1AA);
-  white-space: nowrap;
-}
-
-.kit-transport-spacer {
-  flex: 1 1 auto;
-}
-
-/* Kill All: the panic button — danger-tinted and unmissable. */
+/* Kill All: the panic button — danger-tinted and unmissable. Lives at the
+ * right edge of the controls row (margin-left:auto in the flex row) — the
+ * kit-level Play/Stop/time bar is gone, the page's bottom transport owns
+ * playback. */
 .kit-kill {
+  margin-left: auto;
   appearance: none;
   font: inherit;
   font-size: 12px;

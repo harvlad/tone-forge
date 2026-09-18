@@ -1141,17 +1141,6 @@
       } catch (_) {}
     });
 
-    var stop = document.createElement("button");
-    stop.type = "button";
-    stop.className = "kit-stop kit-transport-btn";
-    stop.textContent = "Stop All";
-    stop.addEventListener("click", function () {
-      try {
-        if (can(s.engine, "stopAll")) s.engine.stopAll();
-      } catch (_) {}
-      for (var i = 0; i < s.padEls.length; i++) if (s.padEls[i]) setUi(s, i, "idle");
-    });
-
     // Manual chop-slicing: Stem picker + Slices picker + Load — the feature
     // dropped when the old Launchpad (lpview) merged into this surface.
     var chopGroup = buildChopControls(s);
@@ -1192,35 +1181,10 @@
     head.appendChild(status);
     head.appendChild(controls);
 
-    // Transport strip: song Play/Pause + time readout (host-provided via
-    // window.JamnKitHost, feature-checked — no host hides them) and Kill
-    // All, which always works on engine voices even hostless.
-    var transport = document.createElement("div");
-    transport.className = "kit-transport";
-
-    var play = document.createElement("button");
-    play.type = "button";
-    play.className = "kit-play";
-    play.textContent = "▶ Play";
-    play.addEventListener("click", function () {
-      var host = getHost();
-      try {
-        var playing = can(host, "isPlaying") ? !!host.isPlaying() : false;
-        if (playing && can(host, "pauseSong")) host.pauseSong();
-        else if (!playing && can(host, "playSong")) host.playSong();
-      } catch (_) {}
-      updateTransport(s);
-    });
-    s.playEl = play;
-
-    var time = document.createElement("div");
-    time.className = "kit-time";
-    time.textContent = "0:00 / 0:00";
-    s.timeEl = time;
-
-    var tSpacer = document.createElement("div");
-    tSpacer.className = "kit-transport-spacer";
-
+    // No kit-level transport strip: the page's bottom transport already owns
+    // Play/Stop/time (user call — the duplicate row wasted a full-width bar).
+    // Kill All survives as the one kit-owned control, floated to the right
+    // of the controls row next to Groove.
     var kill = document.createElement("button");
     kill.type = "button";
     kill.className = "kit-kill";
@@ -1229,13 +1193,7 @@
     kill.addEventListener("click", function () {
       killAll(s);
     });
-
-    transport.appendChild(play);
-    transport.appendChild(stop);
-    transport.appendChild(time);
-    transport.appendChild(tSpacer);
-    transport.appendChild(kill);
-    s.transportEl = transport;
+    controls.appendChild(kill);
 
     var grid = document.createElement("div");
     // Set the 8-wide (64) class UP FRONT so the loading skeleton paints at the
@@ -1266,18 +1224,10 @@
     var arrEl = buildArrangement(s);
 
     s.root.appendChild(head);
-    s.root.appendChild(transport);
     s.root.appendChild(arrEl);
     s.root.appendChild(grid);
     s.root.appendChild(layers);
     syncPadCountUi(s);
-
-    // Transport polls on its own slow clock (not the pad rAF, which only
-    // runs once pads exist) so time/play state stay live from mount.
-    updateTransport(s);
-    s.transportTimer = setInterval(function () {
-      if (s.alive) updateTransport(s);
-    }, 250);
 
     // Arrangement poll: playhead + capture/replay. Own fast clock (100 ms)
     // so the playhead glides and block boundaries fire promptly. Only armed
@@ -1399,31 +1349,6 @@
     } catch (_) {}
   }
 
-  function updateTransport(s) {
-    if (!s.transportEl) return;
-    var host = getHost();
-    var hasPlay = can(host, "isPlaying") && (can(host, "playSong") || can(host, "pauseSong"));
-    var hasTime = can(host, "getTime") && can(host, "getDuration");
-    s.playEl.style.display = hasPlay ? "" : "none";
-    s.timeEl.style.display = hasTime ? "" : "none";
-    if (hasPlay) {
-      var playing = false;
-      try {
-        playing = !!host.isPlaying();
-      } catch (_) {}
-      var label = playing ? "❚❚ Pause" : "▶ Play";
-      if (s.playEl.textContent !== label) s.playEl.textContent = label;
-      s.playEl.classList.toggle("is-playing", playing);
-    }
-    if (hasTime) {
-      var text = "0:00 / 0:00";
-      try {
-        text = fmtTime(host.getTime()) + " / " + fmtTime(host.getDuration());
-      } catch (_) {}
-      if (s.timeEl.textContent !== text) s.timeEl.textContent = text;
-    }
-  }
-
   /** Kill All: silence every engine voice, reset pad UI, and ask the host
    * to stop song playback too (host absent → engine-only, still useful). */
   function killAll(s) {
@@ -1436,7 +1361,6 @@
       if (can(host, "killAll")) host.killAll();
       else if (can(host, "pauseSong")) host.pauseSong();
     } catch (_) {}
-    updateTransport(s);
   }
 
   // ---------- live-capture arrangement (runtime) ----------
