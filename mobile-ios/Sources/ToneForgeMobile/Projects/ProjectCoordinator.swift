@@ -1,8 +1,13 @@
 // ProjectCoordinator.swift
 //
-// Projects/Workspaces v1 — the runtime glue between AppState and the
-// ProjectSnapshot contract (ToneForgeEngine/Projects). Owns WHEN a
-// workspace is captured/restored:
+// Projects/Workspaces v1+v2 — the runtime glue between AppState and
+// the ProjectSnapshot contract (ToneForgeEngine/Projects). v2 adds
+// BLANK-CANVAS projects (`baseSongId == nil`): an empty 8×8 canvas
+// with no base song, filled from pins/borrows/local samples across
+// ANY analyzed song. Canvas state lives in the SAME stores under the
+// `canvasAnalysisId` sentinel; auto-save targets the blank project's
+// own durable file (there is no per-song working sidecar to key).
+// Owns WHEN a workspace is captured/restored:
 //
 //   * AUTO-SAVE: any tracked store mutation (pad assignments, pad FX /
 //     hidden pads / section gates, sequencer patterns, launchpad
@@ -36,6 +41,16 @@ public final class ProjectCoordinator: ObservableObject {
     /// User-facing restore problem ("Needs <donor>…"). Shown as a
     /// dismissible banner in RootView; nil = nothing to report.
     @Published public var notice: String?
+    /// The BLANK-CANVAS project currently live on the surface (v2), or
+    /// nil. While set (and no song is loaded) auto-save captures into
+    /// THIS project's durable file. Cleared when a song activates.
+    @Published public private(set) var activeBlankProjectId: UUID?
+
+    /// Sentinel "analysisId" the canvas keys its store-scoped state
+    /// under (section gates, arrangement — both inert on a canvas:
+    /// no sections exist). Same convention as the `__sketch__` layer
+    /// sentinel.
+    static let canvasAnalysisId = "__canvas__"
 
     /// Unowned: AppState owns this coordinator; identical lifetimes
     /// (same pattern as ArrangementModel / ModeCoordinator).
@@ -89,11 +104,28 @@ public final class ProjectCoordinator: ObservableObject {
     // MARK: - Capture
 
     /// The current workspace as a snapshot. nil when no song is loaded
-    /// (v1 projects are song-anchored).
+    /// (song projects are song-anchored; the canvas captures via
+    /// `captureCanvasSnapshot`).
     public func captureSnapshot() -> ProjectSnapshot? {
         guard let bundle = app.currentBundle else { return nil }
         return ProjectStateBridge.capture(
             analysisId: bundle.analysisId,
+            padAssignments: app.padAssignmentStore,
+            sampleSettings: app.sampleSettings,
+            patternStore: app.sequencerPatternStore,
+            jamSettings: app.jamSettings,
+            arrangementStore: arrangementStore,
+            borrows: currentBorrowRefs()
+        )
+    }
+
+    /// The blank canvas as a snapshot (v2). Same bridge, keyed by the
+    /// canvas sentinel — gates/arrangement come back empty (no
+    /// sections exist song-less), so a canvas snapshot is pins + FX +
+    /// sequences + launchpad settings + borrows.
+    func captureCanvasSnapshot() -> ProjectSnapshot {
+        ProjectStateBridge.capture(
+            analysisId: Self.canvasAnalysisId,
             padAssignments: app.padAssignmentStore,
             sampleSettings: app.sampleSettings,
             patternStore: app.sequencerPatternStore,
@@ -124,15 +156,26 @@ public final class ProjectCoordinator: ObservableObject {
     // MARK: - Auto-save (working project)
 
     /// Schedule a debounced capture into the loaded song's working
-    /// project. Cheap to call from any mutation point.
+    /// project — or, song-less with a live blank-canvas project (v2),
+    /// into that project's own durable file. Cheap to call from any
+    /// mutation point.
     public func noteWorkspaceChanged() {
-        guard !suppressAutoSave, let bundle = app.currentBundle else { return }
-        let analysisId = bundle.analysisId
-        workingSaveTask?.cancel()
-        workingSaveTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard !Task.isCancelled else { return }
-            self?.saveWorkingNow(analysisId: analysisId)
+        guard !suppressAutoSave else { return }
+        if let bundle = app.currentBundle {
+            let analysisId = bundle.analysisId
+            workingSaveTask?.cancel()
+            workingSaveTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.saveWorkingNow(analysisId: analysisId)
+            }
+        } else if let projectId = activeBlankProjectId {
+            workingSaveTask?.cancel()
+            workingSaveTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.saveBlankNow(projectId: projectId)
+            }
         }
     }
 
@@ -152,6 +195,36 @@ public final class ProjectCoordinator: ObservableObject {
         try? store.saveWorking(project)
     }
 
+    /// Blank-canvas auto-save target: the project's OWN durable file
+    /// (blank projects are always explicit Library rows — there is no
+    /// anonymous canvas, so no working sidecar). Every guard re-checks
+    /// the world at fire time: a song load or project switch during
+    /// the debounce voids the capture.
+    func saveBlankNow(projectId: UUID) {
+        guard app.currentBundle == nil,
+              activeBlankProjectId == projectId,
+              var project = try? store.load(projectId: projectId),
+              project.isBlankCanvas
+        else { return }
+        project.snapshot = captureCanvasSnapshot()
+        project.updatedAt = Date()
+        try? store.save(project)
+        refreshList()
+    }
+
+    /// Flush a pending debounced save NOW (song working project or
+    /// blank project). Called before the surface is torn down for a
+    /// different project/canvas so the last <2 s of edits aren't lost
+    /// with the cancelled task.
+    private func flushPendingSave() {
+        workingSaveTask?.cancel()
+        if let bundle = app.currentBundle {
+            saveWorkingNow(analysisId: bundle.analysisId)
+        } else if let projectId = activeBlankProjectId {
+            saveBlankNow(projectId: projectId)
+        }
+    }
+
     // MARK: - Song-load lifecycle (called from AppState)
 
     /// Called from `AppState.activate` once the song's baseline state
@@ -162,6 +235,10 @@ public final class ProjectCoordinator: ObservableObject {
         notice = nil
         pendingBorrowRefs = []
         workingSaveTask?.cancel()
+        // A song replaces any live blank canvas (AppState.activate has
+        // already cleared canvasModeOn); its project keeps whatever
+        // was last auto-saved.
+        activeBlankProjectId = nil
         let analysisId = bundle.analysisId
         let snapshot = pendingRestore
             ?? store.loadWorking(analysisId: analysisId)?.snapshot
@@ -246,31 +323,50 @@ public final class ProjectCoordinator: ObservableObject {
 
     // MARK: - Explicit save / load / reset
 
-    /// "Save workspace": name a durable copy of the current state.
+    /// "Save workspace": name a durable copy of the current state —
+    /// the loaded song's workspace, or (song-less, v2) the live blank
+    /// canvas as a new blank project that becomes the auto-save target.
     public func saveCurrentAsProject(named name: String) {
-        guard let bundle = app.currentBundle,
-              let snapshot = captureSnapshot() else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let project = Project(
-            name: trimmed.isEmpty ? "Untitled project" : trimmed,
-            baseSongId: bundle.analysisId,
-            baseSongTitle: bundle.meta.title,
-            snapshot: snapshot
-        )
-        try? store.save(project)
-        refreshList()
+        let title = trimmed.isEmpty ? "Untitled project" : trimmed
+        if let bundle = app.currentBundle {
+            guard let snapshot = captureSnapshot() else { return }
+            let project = Project(
+                name: title,
+                baseSongId: bundle.analysisId,
+                baseSongTitle: bundle.meta.title,
+                snapshot: snapshot
+            )
+            try? store.save(project)
+            refreshList()
+        } else if app.canvasModeOn {
+            let project = Project(
+                name: title,
+                baseSongId: nil,
+                snapshot: captureCanvasSnapshot()
+            )
+            try? store.save(project)
+            activeBlankProjectId = project.id
+            refreshList()
+        }
     }
 
-    /// Library → Projects tap: load the base song, then restore the
-    /// snapshot over it (songDidActivate consumes `pendingRestore`).
+    /// Library → Projects tap. Song project: load the base song, then
+    /// restore the snapshot over it (songDidActivate consumes
+    /// `pendingRestore`). Blank project (v2): mount the empty canvas
+    /// and restore over the sketch context — no song load at all.
     public func load(_ project: Project) {
+        guard let baseSongId = project.baseSongId else {
+            loadBlank(project)
+            return
+        }
         pendingRestore = project.snapshot
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.app.loadBundle(analysisId: project.baseSongId) {
+            await self.app.loadBundle(analysisId: baseSongId) {
                 [weak self] in self?.app.openSong()
             }
-            if self.app.currentBundle?.analysisId != project.baseSongId {
+            if self.app.currentBundle?.analysisId != baseSongId {
                 // Load failed — don't let the snapshot ambush the next
                 // unrelated song load.
                 self.pendingRestore = nil
@@ -278,6 +374,104 @@ public final class ProjectCoordinator: ObservableObject {
                     + (project.baseSongTitle ?? "the project's song")
                     + "\u{201D} for this project."
             }
+        }
+    }
+
+    // MARK: - Blank canvas (v2)
+
+    /// "New blank canvas": an empty 8×8 canvas project — no base song,
+    /// pads filled from Add Sound / Sounds / Borrow across any
+    /// analyzed song. Ejects a loaded song (after flushing its pending
+    /// working save), clears the pad surface, and saves the new
+    /// project immediately so it exists as a Library row from second
+    /// zero.
+    @discardableResult
+    public func createBlankProject(
+        named name: String = "Untitled canvas"
+    ) -> Project {
+        flushPendingSave()
+        notice = nil
+        pendingBorrowRefs = []
+        app.mountBlankCanvas()
+        // Fresh canvas: the surface starts EMPTY, whatever the
+        // previous song/canvas left in the shared stores.
+        suppressAutoSave = true
+        ProjectStateBridge.reset(
+            analysisId: Self.canvasAnalysisId,
+            padAssignments: app.padAssignmentStore,
+            sampleSettings: app.sampleSettings,
+            arrangementStore: arrangementStore
+        )
+        suppressAutoSave = false
+        app.modeCoordinator.applyGridContext()
+        app.modeCoordinator.refreshLayout()
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let project = Project(
+            name: trimmed.isEmpty ? "Untitled canvas" : trimmed,
+            baseSongId: nil,
+            snapshot: ProjectSnapshot()
+        )
+        try? store.save(project)
+        activeBlankProjectId = project.id
+        refreshList()
+        return project
+    }
+
+    /// Load a blank-canvas project: mount the empty canvas, restore
+    /// the snapshot's store-backed state synchronously, then re-derive
+    /// its borrows donor-only (no auto-kit to wait for — the canvas
+    /// has no song, so the borrow mount can run immediately).
+    private func loadBlank(_ project: Project) {
+        flushPendingSave()
+        notice = nil
+        pendingBorrowRefs = []
+        workingSaveTask?.cancel()
+        app.mountBlankCanvas()
+        activeBlankProjectId = project.id
+        suppressAutoSave = true
+        ProjectStateBridge.restore(
+            project.snapshot,
+            analysisId: Self.canvasAnalysisId,
+            padAssignments: app.padAssignmentStore,
+            sampleSettings: app.sampleSettings,
+            patternStore: app.sequencerPatternStore,
+            jamSettings: app.jamSettings,
+            arrangementStore: arrangementStore
+        )
+        suppressAutoSave = false
+        app.modeCoordinator.applyGridContext()
+        app.modeCoordinator.refreshLayout()
+        if !project.snapshot.borrows.isEmpty {
+            restoreBorrows(project.snapshot.borrows)
+        }
+    }
+
+    /// "Clear canvas" for the LIVE blank project: back to 64 empty
+    /// slots. There is no auto-kit to reset to — reset IS the empty
+    /// canvas. The stored project is emptied too (mirrors
+    /// resetToSong dropping the working file).
+    public func resetCanvas() {
+        guard let projectId = activeBlankProjectId else { return }
+        workingSaveTask?.cancel()
+        pendingBorrowRefs = []
+        suppressAutoSave = true
+        ProjectStateBridge.reset(
+            analysisId: Self.canvasAnalysisId,
+            padAssignments: app.padAssignmentStore,
+            sampleSettings: app.sampleSettings,
+            arrangementStore: arrangementStore
+        )
+        suppressAutoSave = false
+        // Re-front the empty canvas pack; activating a non-borrow pack
+        // also clears any mounted borrow context.
+        app.mountBlankCanvas()
+        app.modeCoordinator.applyGridContext()
+        app.modeCoordinator.refreshLayout()
+        if var project = try? store.load(projectId: projectId) {
+            project.snapshot = ProjectSnapshot()
+            project.updatedAt = Date()
+            try? store.save(project)
+            refreshList()
         }
     }
 
@@ -323,19 +517,27 @@ public final class ProjectCoordinator: ObservableObject {
 
     public func delete(_ project: Project) {
         try? store.delete(projectId: project.id)
+        // Deleting the LIVE blank project ends its auto-save session;
+        // the mounted canvas stays playable but unowned.
+        if activeBlankProjectId == project.id {
+            workingSaveTask?.cancel()
+            activeBlankProjectId = nil
+        }
         refreshList()
     }
 
-    /// Row "Reset to song": empty the STORED snapshot (the project
-    /// becomes "just the song"); when that project's song is loaded,
-    /// also reset the live surface.
+    /// Row "Reset to song" / "Clear canvas": empty the STORED snapshot
+    /// (the project becomes "just the song" / an empty canvas); when
+    /// that project is live, also reset the live surface.
     public func resetProjectToSong(_ project: Project) {
         var emptied = project
         emptied.snapshot = ProjectSnapshot()
         emptied.updatedAt = Date()
         try? store.save(emptied)
         refreshList()
-        if app.currentBundle?.analysisId == project.baseSongId {
+        if project.isBlankCanvas {
+            if activeBlankProjectId == project.id { resetCanvas() }
+        } else if app.currentBundle?.analysisId == project.baseSongId {
             resetToSong()
         }
     }

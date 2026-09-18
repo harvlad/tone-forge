@@ -1289,3 +1289,57 @@ relying on the desktop twin's coverage (rejected — the iOS quadrant shift is
 iOS-specific and was its own regression). Extraction keeps one source of truth
 the view actually uses. Supersedes the D-033 "bonus fix" note by making the math
 it referenced independently testable.
+
+## D-035 — Projects v2: blank creative canvas (baseSongId nil)
+
+**Decision:** A Project's `baseSongId` becomes OPTIONAL (`String?`) in the
+shared engine contract: nil marks a BLANK-CANVAS project — an empty 8×8 pad
+canvas with no base song, filled by pulling parts of ANY analyzed song. The
+canvas is a synthesized in-memory pack with ZERO pads
+(`SampleBank.blankCanvas()`, reserved packId `canvas`), so every cell is an
+empty "+" slot and the EXISTING fill paths (radial Add Sound, Sounds picker
+pins, local samples, sequences, Borrow) do all the work — no new pad-surface
+machinery. Song-less operation rides the D-016 sketch degrade (synthetic
+tempo grid; section strip/gates/arrangement inert).
+
+Three deliberate wire/flow choices:
+1. **Donor-only borrow = host==donor.** With no host song, the borrow request
+   is addressed `/api/song/{donor}/borrow?donor={donor}` and the backend
+   serves JUST the donor's curated kit (source `"donor"`, own tempo, no key
+   conform unless a Session target is set) instead of rendering the same
+   song twice. Content-addressed `BorrowRef`s keep working unchanged because
+   the single block keeps the `donor` tag and its donor-timeline spans.
+2. **Auto-save targets the blank project's own durable file.** Blank
+   projects are always explicit Library rows (`createBlankProject` saves at
+   second zero), so there is no anonymous canvas and no per-song working
+   sidecar; `ProjectStore.saveWorking` is a documented no-op for them. The
+   debounced capture keys stores under the `__canvas__` sentinel (the
+   `__sketch__` convention).
+3. **Reset = clear.** A canvas has no auto-kit to reset TO — "Reset to song"
+   becomes "Clear canvas": stores emptied, empty canvas pack re-fronted,
+   stored snapshot emptied.
+
+Cross-song sources: the Sounds picker gains an **All Songs** tab (the whole
+history list; picking a song mounts its kit via the same borrow path), and
+the Borrow picker song-less lists the full library unranked (tempo 0 = "no
+match data" row). `AppState.canvasModeOn` is a stored flag (not derived from
+the active pack) because a borrow mount REPLACES the canvas pack while the
+canvas session must keep auto-saving.
+
+**Where:** `Sources/ToneForgeEngine/Projects/ProjectSnapshot.swift`
+(optional baseSongId + isBlankCanvas), `Sources/ToneForgeEngine/SampleBank.swift`
+(blankCanvas), `Sources/ToneForgeMobile/Projects/ProjectCoordinator.swift`
+(createBlankProject / loadBlank / resetCanvas / saveBlankNow),
+`Sources/ToneForgeMobile/ToneForgeApp.swift` (mountBlankCanvas, donor-only
+loadBorrowLoops, canvasModeOn), Library `ProjectsListView` ("New blank
+canvas" row) + JamView's no-song strip ("Blank canvas" button), backend
+`tone_forge_api.py#get_borrow_loops` (host==donor branch). Pinned by
+`ProjectCoordinatorCanvasTests`, ProjectSnapshot/Store blank tests,
+BorrowLayoutTests donor-only cases, and `tests/test_borrow.py` route tests.
+
+**Alternatives:** re-using the kit route for cross-song sounds (rejected —
+kit pads are stemSlice-backed and need the donor's stems on device; borrow
+pads are file-backed renders that play with nothing downloaded); a separate
+canvas store keyed off-analysisId (rejected — the sentinel keeps ONE bridge
+and one snapshot shape across v1/v2); auto-creating an anonymous working
+canvas (rejected — a canvas with no Library row would strand its auto-saves).

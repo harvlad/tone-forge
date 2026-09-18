@@ -17,12 +17,14 @@ import ToneForgeEngine
 enum ChopPickerCategory: String, CaseIterable {
     case packs = "Sample Packs"
     case bundle = "Song Chops"
+    case songs = "All Songs"
     case local = "Recordings"
     case sequences = "Sequences"
 
     var icon: String {
         switch self {
         case .bundle: return "waveform"
+        case .songs: return "music.note.list"
         case .packs: return "square.grid.2x2"
         case .local: return "mic.fill"
         case .sequences: return "square.grid.3x3.fill"
@@ -41,6 +43,15 @@ struct ChopPickerSheet: View {
     let localSamples: [LocalSampleInfo]
     /// Saved sequencer patterns (empty = hide the Sequences tab).
     var sequences: [SequenceInfo] = []
+    /// EVERY analyzed song (the library list) — the All Songs tab, so
+    /// the picker's sources span the whole library, not just the
+    /// loaded song's chops. Picking one mounts that song's curated
+    /// kit onto the pads through the borrow path (donor-only on a
+    /// blank canvas), file-backed so it plays without the song's
+    /// stems on device. Empty (or no handler) = tab hidden.
+    var analyzedSongs: [PickerSongInfo] = []
+    /// Handler for an All Songs pick: (analysisId, display name).
+    var onSelectSong: ((String, String) -> Void)? = nil
     /// Curated catalog packs not yet downloaded — listed under the
     /// Sample Packs tab as download rows so packs can be pulled without
     /// leaving the pad picker. Once a download completes the parent
@@ -83,6 +94,8 @@ struct ChopPickerSheet: View {
                 switch category {
                 case .bundle:
                     bundleContent
+                case .songs:
+                    songsContent
                 case .packs:
                     packsContent
                 case .local:
@@ -107,10 +120,17 @@ struct ChopPickerSheet: View {
     // MARK: - Category Tabs
 
     /// Tabs to show — the Sequences tab only appears when there are
-    /// saved sequences to pick (i.e. when browsing from a pad).
+    /// saved sequences to pick (i.e. when browsing from a pad); the
+    /// All Songs tab only when the host wired a song handler and the
+    /// library has songs.
     private var availableCategories: [ChopPickerCategory] {
         ChopPickerCategory.allCases.filter {
-            $0 != .sequences || !sequences.isEmpty
+            switch $0 {
+            case .sequences: return !sequences.isEmpty
+            case .songs:
+                return onSelectSong != nil && !analyzedSongs.isEmpty
+            default: return true
+            }
         }
     }
 
@@ -368,6 +388,36 @@ struct ChopPickerSheet: View {
     private var filteredDownloadablePacks: [DownloadablePackInfo] {
         guard !searchText.isEmpty else { return downloadablePacks }
         return downloadablePacks.filter {
+            $0.name.lowercased().contains(searchText.lowercased())
+        }
+    }
+
+    // MARK: - All Songs Content
+
+    /// Every analyzed song as a source row. Tapping mounts that
+    /// song's curated kit onto the pads (borrow path) — from there
+    /// individual pads pin/place like any other sound.
+    private var songsContent: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                ForEach(filteredSongs) { song in
+                    PickerSongRow(song: song) {
+                        onStopPreview?()
+                        onSelectSong?(song.id, song.name)
+                        dismiss()
+                    }
+                }
+                if filteredSongs.isEmpty {
+                    emptySearchState
+                }
+            }
+            .padding()
+        }
+    }
+
+    private var filteredSongs: [PickerSongInfo] {
+        guard !searchText.isEmpty else { return analyzedSongs }
+        return analyzedSongs.filter {
             $0.name.lowercased().contains(searchText.lowercased())
         }
     }
@@ -793,6 +843,54 @@ struct LocalSampleInfo: Identifiable {
     let id: UUID
     let name: String
     let durationSec: Double
+}
+
+/// One analyzed song offered as a picker source (All Songs tab).
+/// `id` is the analysisId; `detail` is a display-only second line
+/// (summary/duration), nil to hide.
+struct PickerSongInfo: Identifiable, Equatable {
+    let id: String
+    let name: String
+    var detail: String? = nil
+}
+
+/// Row for the All Songs tab: song identity plus what selecting does
+/// ("loads its kit onto the pads").
+private struct PickerSongRow: View {
+    let song: PickerSongInfo
+    let onSelect: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "music.note")
+                .font(.title2)
+                .foregroundStyle(TFTheme.textSecondary)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(song.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(TFTheme.textPrimary)
+                    .lineLimit(1)
+                Text(song.detail ?? "Load this song's kit onto the pads")
+                    .font(.caption)
+                    .foregroundStyle(TFTheme.textSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button(action: onSelect) {
+                Image(systemName: "plus.circle")
+                    .font(.title2)
+                    .foregroundStyle(TFTheme.textSecondary)
+            }
+        }
+        .padding()
+        .background(TFTheme.surface, in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
+    }
 }
 
 // MARK: - Preview

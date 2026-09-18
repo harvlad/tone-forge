@@ -256,6 +256,33 @@ public final class SampleBank: @unchecked Sendable {
         ResolvedSamplePack(pack: pack, padFileURLs: padFileURLs)
     }
 
+    // MARK: - Blank canvas (Projects v2)
+
+    /// packId of the synthesized in-memory blank-canvas pack. Reserved:
+    /// no bundled/cached/song-derived pack may use it, and pack lookups
+    /// that miss it fall back to the starter pack on relaunch (the
+    /// canvas is re-mounted by loading its project, never from the
+    /// pack-id preference).
+    public static let canvasPackId = "canvas"
+
+    /// The Projects-v2 blank creative canvas: a pack with NO pads, so
+    /// every grid cell is an empty "+" slot the user fills from the
+    /// existing Add Sound / Sounds / Borrow paths (pins + local samples
+    /// overlay via PadAssignmentStore exactly as on any pack). Purely
+    /// in-memory — nothing on disk backs it, and activating it is safe
+    /// with no song loaded (no stem files, no buffers to decode).
+    public static func blankCanvas() -> ResolvedSamplePack {
+        ResolvedSamplePack(
+            pack: SamplePack(
+                packId: canvasPackId,
+                name: "Blank Canvas",
+                family: .mixed,
+                pads: []
+            ),
+            padFileURLs: [:]
+        )
+    }
+
     // MARK: - Borrow layout (web port-parity)
 
     /// Re-lay a Borrow manifest onto the 8×8 (64) grid, matching web

@@ -89,7 +89,11 @@ struct BorrowPickerSheet: View {
                 Task { await load() }
             }
         } footer: {
-            Text("Real loops from your other analyzed songs, locked to this song's tempo. Beat matches by tempo; Bass, Chords and Melody match by chord content (not just key). This song's sections fill the top pads, the borrowed song's the bottom — jump between either.")
+            // Blank canvas (no host song): loops arrive donor-only at
+            // their own tempo — the host-lock copy would be a lie.
+            Text(appState.currentBundle == nil
+                 ? "Real loops from your analyzed songs, played at their own tempo. Pick a song to mount its kit on the pads — set a Session key/BPM above to conform everything to one target."
+                 : "Real loops from your other analyzed songs, locked to this song's tempo. Beat matches by tempo; Bass, Chords and Melody match by chord content (not just key). This song's sections fill the top pads, the borrowed song's the bottom — jump between either.")
         }
     }
 
@@ -128,10 +132,14 @@ struct BorrowPickerSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(c.name).lineLimit(1)
-                    Text(isRhythmic
-                         ? "\(Int(c.tempo)) bpm"
-                         : "\(c.key ?? "?") · \(Int(c.tempo)) bpm")
-                        .font(.caption2).foregroundStyle(.secondary)
+                    // tempo 0 = client-synthesized blank-canvas row
+                    // (whole library, unranked — no match data to show).
+                    if c.tempo > 0 {
+                        Text(isRhythmic
+                             ? "\(Int(c.tempo)) bpm"
+                             : "\(c.key ?? "?") · \(Int(c.tempo)) bpm")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 if appState.borrowBusyDonor == c.entryId {

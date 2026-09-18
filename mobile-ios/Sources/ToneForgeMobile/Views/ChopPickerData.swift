@@ -116,6 +116,34 @@ extension AppState {
             }
     }
 
+    /// Analyzed songs for the picker's All Songs tab: every history
+    /// entry EXCEPT the loaded song (its chops already have their own
+    /// tab). Network fetch + pure mapping split so the mapping is
+    /// unit-testable.
+    func fetchPickerSongs() async -> [PickerSongInfo] {
+        let entries = (try? await HistoryClient(
+            timeout: AppConfig.historyTimeout
+        ).fetch(baseURL: backendBaseURL)) ?? []
+        return Self.pickerSongs(
+            from: entries, excludingId: currentBundle?.analysisId)
+    }
+
+    /// History entries → picker rows. Excludes `excludingId` (the
+    /// loaded song) and keeps the server's recency order.
+    static func pickerSongs(
+        from entries: [HistoryEntry], excludingId: String?
+    ) -> [PickerSongInfo] {
+        entries
+            .filter { $0.id != excludingId }
+            .map { entry in
+                PickerSongInfo(
+                    id: entry.id,
+                    name: entry.name ?? entry.id,
+                    detail: entry.summary
+                )
+            }
+    }
+
     /// packIds with an in-flight (not-complete) curated download.
     var pickerDownloadingPackIds: Set<String> {
         Set(curatedDownloads.values

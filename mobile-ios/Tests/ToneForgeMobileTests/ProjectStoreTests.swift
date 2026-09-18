@@ -103,6 +103,49 @@ final class ProjectStoreTests: XCTestCase {
                        "Renamed")
     }
 
+    // MARK: - Blank-canvas projects (v2)
+
+    private func makeBlankProject(name: String = "Canvas") -> Project {
+        Project(
+            name: name, baseSongId: nil,
+            snapshot: ProjectSnapshot(
+                padAssignments: ["sample": [
+                    "11": PadSlot(ref: .packPad(packId: "starter", padIdx: 0)),
+                ]],
+                borrows: [BorrowRef(
+                    donorSongId: "donor-1", stemRole: "drums",
+                    loopStartSec: 4.0, loopEndSec: 12.0,
+                    transposeSemis: 0, targetPadIdx: 0)]))
+    }
+
+    func testBlankProjectDurableRoundTripAndList() throws {
+        let blank = makeBlankProject()
+        try store.save(blank)
+        let loaded = try store.load(projectId: blank.id)
+        XCTAssertEqual(loaded, blank)
+        XCTAssertTrue(loaded.isBlankCanvas)
+        XCTAssertEqual(loaded.snapshot.borrows.count, 1)
+        // Blank projects are ordinary durable rows — they list beside
+        // song projects.
+        try store.save(makeProject(name: "Song project"))
+        XCTAssertEqual(Set(store.list().map(\.name)),
+                       ["Canvas", "Song project"])
+    }
+
+    func testSaveWorkingIsNoOpForBlankProject() throws {
+        // Blank projects have no per-song sidecar: a mis-routed
+        // saveWorking must not write anything (especially not under a
+        // fabricated key another song could collide with).
+        let blank = makeBlankProject()
+        XCTAssertNoThrow(try store.saveWorking(blank))
+        let workingDir = try store.projectsDir()
+            .appendingPathComponent("working", isDirectory: true)
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: workingDir, includingPropertiesForKeys: nil)) ?? []
+        XCTAssertTrue(files.isEmpty)
+        XCTAssertTrue(store.list().isEmpty)
+    }
+
     // MARK: - Working project
 
     func testWorkingSaveLoadDeleteIsPerSong() throws {

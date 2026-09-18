@@ -83,11 +83,55 @@ final class ProjectSnapshotTests: XCTestCase {
         let data = try JSONEncoder().encode(project)
         let decoded = try JSONDecoder().decode(Project.self, from: data)
         XCTAssertEqual(decoded, project)
+        XCTAssertFalse(decoded.isBlankCanvas)
 
         let copy = project.duplicated(name: "Friday jam copy")
         XCTAssertNotEqual(copy.id, project.id)
         XCTAssertEqual(copy.baseSongId, project.baseSongId)
         XCTAssertEqual(copy.snapshot, project.snapshot)
+    }
+
+    // MARK: - Blank-canvas projects (v2: baseSongId == nil)
+
+    func testBlankProjectRoundTripOmitsBaseSongIdOnTheWire() throws {
+        let project = Project(
+            name: "Canvas", baseSongId: nil, snapshot: fullSnapshot())
+        XCTAssertTrue(project.isBlankCanvas)
+
+        let data = try JSONEncoder().encode(project)
+        let obj = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        // nil must be ABSENT, never null — v1 readers only ever see
+        // files they wrote; new files simply omit the key.
+        XCTAssertNil(obj["baseSongId"])
+
+        let decoded = try JSONDecoder().decode(Project.self, from: data)
+        XCTAssertEqual(decoded, project)
+        XCTAssertNil(decoded.baseSongId)
+        // The snapshot payload — including borrows, the canvas's whole
+        // sound source — survives untouched.
+        XCTAssertEqual(decoded.snapshot.borrows.first?.donorSongId,
+                       "donor-1")
+
+        // A duplicate of a blank project stays blank.
+        let copy = project.duplicated(name: "Canvas copy")
+        XCTAssertTrue(copy.isBlankCanvas)
+        XCTAssertEqual(copy.snapshot, project.snapshot)
+    }
+
+    func testLegacyV1ProjectJSONStillDecodes() throws {
+        // A v1 writer always emitted baseSongId — that shape must keep
+        // decoding as a song project after the optional bump.
+        let json = Data("""
+        {"id": "6F9619FF-8B86-D011-B42D-00C04FC964FF",
+         "name": "Old save",
+         "createdAt": 715000000, "updatedAt": 715000001,
+         "baseSongId": "song-9", "baseSongTitle": "Nine",
+         "snapshot": {"schemaVersion": 1}}
+        """.utf8)
+        let decoded = try JSONDecoder().decode(Project.self, from: json)
+        XCTAssertEqual(decoded.baseSongId, "song-9")
+        XCTAssertFalse(decoded.isBlankCanvas)
     }
 
     // MARK: - sectionGates tri-state (load-bearing)

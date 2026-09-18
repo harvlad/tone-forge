@@ -41,6 +41,18 @@ public struct BorrowCandidate: Codable, Sendable, Identifiable, Equatable {
     public let key: String?
     public let harmonic: Double
     public var id: String { entryId }
+
+    /// Public memberwise init so the app can synthesize candidates
+    /// client-side (blank-canvas donor list = the history entries,
+    /// unranked: tempo 0 / key nil mean "no match data").
+    public init(entryId: String, name: String, tempo: Double,
+                key: String?, harmonic: Double) {
+        self.entryId = entryId
+        self.name = name
+        self.tempo = tempo
+        self.key = key
+        self.harmonic = harmonic
+    }
 }
 
 public struct RemixClient: Sendable {

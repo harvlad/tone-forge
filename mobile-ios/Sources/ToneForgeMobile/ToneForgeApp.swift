@@ -481,6 +481,32 @@ public final class AppState: ObservableObject {
     /// loaded (see ModeCoordinator.applyGridContext).
     public let sketchSettings = SketchSettingsStore()
 
+    // MARK: - Blank canvas (Projects v2)
+
+    /// True while a BLANK-CANVAS project session is active: no song
+    /// loaded, the pad surface is a from-scratch canvas the user fills
+    /// by pulling parts of any analyzed song (borrows, pins, local
+    /// samples). Set by `mountBlankCanvas`, cleared when a song
+    /// activates. A plain stored flag (not derived from the active
+    /// pack) because a borrow mount REPLACES the canvas pack while the
+    /// canvas session — and its project auto-save — must keep running.
+    @Published public internal(set) var canvasModeOn = false
+
+    /// Mount the Projects-v2 blank creative canvas: eject any loaded
+    /// song, front the empty canvas pack (64 "+" slots) on the Jam
+    /// Samples surface, and clear any stale kit error so the surface
+    /// reads as an invitation, not a failure. The transport + pads run
+    /// on the sketch context (D-016 synthetic tempo grid) — the same
+    /// degrade sketches already prove out.
+    public func mountBlankCanvas() {
+        if currentBundle != nil { ejectSong() }
+        canvasModeOn = true
+        autoKitError = nil
+        activateSamplePack(SampleBank.blankCanvas(), stemFiles: [:])
+        jamSettings.padMode = .samples
+        openSong()   // land on Build, same entry as a Library song tap
+    }
+
     /// Song-less click track (Sketch plan Phase 2). Runs only when no
     /// bundle is loaded, the toggle is on, and the transport plays —
     /// `syncMetronome` owns that decision. Jam in Key (Phase 7) is
@@ -1612,9 +1638,13 @@ public final class AppState: ObservableObject {
         // paint before the decode lands.
         modeCoordinator.refreshLayout()
         // Projects auto-save: pack changes (kit swap, borrow mount) are
-        // workspace state. Guarded so the init-time starter-pack load
-        // never constructs the lazy coordinator.
-        if currentBundle != nil { projects.noteWorkspaceChanged() }
+        // workspace state — for the loaded song's working project OR
+        // the active blank-canvas project (v2). Guarded so the
+        // init-time starter-pack load (no song, no canvas) never
+        // constructs the lazy coordinator.
+        if currentBundle != nil || canvasModeOn {
+            projects.noteWorkspaceChanged()
+        }
         // Register the pack's shipped starter groove (if any) into the
         // sequencer store so it shows up in the sequence picker.
         // Idempotent by the pattern's deterministic id.
@@ -1900,6 +1930,9 @@ public final class AppState: ObservableObject {
         bundle: SongBundle,
         onReady: (() -> Void)? = nil
     ) async {
+        // A song replaces any blank-canvas session (the coordinator
+        // clears its active blank project in songDidActivate below).
+        canvasModeOn = false
         currentBundle = bundle
         // Melody follow-along: rebuild the player for the new song.
         // gainScale trims the synth under the stems.
@@ -2251,6 +2284,17 @@ public final class AppState: ObservableObject {
     /// Donor song name for a borrow manifest. The backend names the pack
     /// "<donor> · kit" (the borrow route), so strip that suffix; fall back to
     /// a friendly default. Swift twin of web kit.js `borrowDonorName`.
+    /// Which analysisId to address `/api/song/{id}/borrow` to. With a
+    /// song loaded it is the host; with none (blank canvas) the DONOR
+    /// is the only song — host==donor, which the backend serves as a
+    /// donor-only kit (no host block). Pure so the donor-only rule is
+    /// unit-testable without a network.
+    static func borrowRequestHost(
+        currentAnalysisId: String?, donorId: String
+    ) -> String {
+        currentAnalysisId ?? donorId
+    }
+
     static func borrowDonorName(_ packName: String) -> String {
         var n = packName.trimmingCharacters(in: .whitespaces)
         // Strip a trailing " · kit" (with or without surrounding spaces).
@@ -2633,7 +2677,19 @@ public final class AppState: ObservableObject {
     }
 
     public func fetchBorrowCandidates(stem: String) async -> [BorrowCandidate] {
-        guard let analysisId = currentBundle?.analysisId else { return [] }
+        guard let analysisId = currentBundle?.analysisId else {
+            // Blank canvas (no host song): there is nothing to rank
+            // against, so every analyzed song is a candidate — the
+            // history list, unranked. tempo 0 / key nil signal "no
+            // match data" to the picker row.
+            let entries = (try? await HistoryClient(
+                timeout: AppConfig.historyTimeout
+            ).fetch(baseURL: backendBaseURL)) ?? []
+            return entries.map {
+                BorrowCandidate(entryId: $0.id, name: $0.name ?? $0.id,
+                                tempo: 0, key: nil, harmonic: 0)
+            }
+        }
         // Session on → conform candidates to the target; off → nil params,
         // ranked against the host song exactly as before.
         return (try? await RemixClient().fetchBorrowCandidates(
@@ -2645,6 +2701,13 @@ public final class AppState: ObservableObject {
     /// (bar-synced to this song). Real recorded loops, tempo-matched — the
     /// coherent alternative to synthesized Re-Drum.
     ///
+    /// DONOR-ONLY (Projects v2 blank canvas): with NO song loaded the
+    /// borrow still works — the request is addressed host==donor
+    /// (`Self.borrowRequestHost`), which the backend serves as the
+    /// donor's curated kit alone (source "donor", rendered at its own
+    /// tempo, no key conform unless a session target is set). The
+    /// canvas mounts those file-backed pads exactly like a song borrow.
+    ///
     /// `completion` (project restore): called once with the RAW fetched
     /// pack on a successful mount — its pads carry the content-address
     /// fields (`sourceLoopStartSec`/`assetId`) restore matches BorrowRefs
@@ -2655,17 +2718,19 @@ public final class AppState: ObservableObject {
         donorId: String, stem: String,
         completion: ((Result<SamplePack, Error>) -> Void)? = nil
     ) {
-        guard currentBundle != nil, borrowBusyDonor == nil else {
+        guard borrowBusyDonor == nil else {
             completion?(.failure(NSError(
                 domain: "Borrow", code: 1,
                 userInfo: [NSLocalizedDescriptionKey:
-                    "Another borrow is loading (or no song is loaded)."])))
+                    "Another borrow is loading."])))
             return
         }
         borrowBusyDonor = donorId
         remixError = nil
         let base = backendBaseURL
         let stems = currentStemLocalURLs
+        // nil = donor-only request (blank canvas / no song loaded).
+        let hostId = currentBundle?.analysisId
         // Snapshot the Session target now (nil/nil when off) so the render
         // conforms the borrowed loops to the session instead of the host.
         let targetBpm = sessionBorrowBpm
@@ -2676,7 +2741,8 @@ public final class AppState: ObservableObject {
         Task { @MainActor in
             defer { self.borrowBusyDonor = nil }
             do {
-                let analysisId = self.currentBundle?.analysisId ?? ""
+                let analysisId = Self.borrowRequestHost(
+                    currentAnalysisId: hostId, donorId: donorId)
                 let fetched = try await RemixClient().fetchBorrowPack(
                     baseURL: base, analysisId: analysisId,
                     donor: donorId, stem: stem,
@@ -2701,7 +2767,9 @@ public final class AppState: ObservableObject {
                             "Borrowed loops didn't download."])))
                     return
                 }
-                guard self.currentBundle?.analysisId == analysisId else {
+                guard self.currentBundle?.analysisId == hostId else {
+                    // Song changed — or a song loaded over the blank
+                    // canvas — while the render was in flight.
                     completion?(.failure(NSError(
                         domain: "Borrow", code: 3,
                         userInfo: [NSLocalizedDescriptionKey:
@@ -2727,11 +2795,17 @@ public final class AppState: ObservableObject {
                 await self.sampleScheduler.preloadPackAsync(
                     resolved, stemFiles: stems)
                 self.activateSamplePack(resolved, stemFiles: stems)
-                self.remixApplied = (targetBpm != nil || targetKey != nil)
-                    ? "Applied: Borrow — \(pack.name) on the pads, "
-                        + "conformed to your session target."
-                    : "Applied: Borrow — \(pack.name) on the pads, "
-                        + "locked to this song's tempo."
+                if targetBpm != nil || targetKey != nil {
+                    self.remixApplied = "Applied: Borrow — \(pack.name) "
+                        + "on the pads, conformed to your session target."
+                } else if hostId == nil {
+                    // Donor-only (blank canvas): no host song to lock to.
+                    self.remixApplied = "Applied: Borrow — \(pack.name) "
+                        + "on the pads at its own tempo."
+                } else {
+                    self.remixApplied = "Applied: Borrow — \(pack.name) "
+                        + "on the pads, locked to this song's tempo."
+                }
                 Haptics.padTrigger()
                 completion?(.success(fetched))
             } catch {
@@ -2804,7 +2878,11 @@ public final class AppState: ObservableObject {
             modeCoordinator.sequencePadManager.start(
                 patternId: pattern.id,
                 padIdx: Self.styleBeatPadIdx,
-                songBPM: currentBundle?.meta.tempoBpm ?? 120
+                // Song-less (sketch/blank canvas): the sketch tempo IS
+                // the session tempo — a hard-coded 120 fought the
+                // synthetic grid the pads quantize to (D-016).
+                songBPM: currentBundle?.meta.tempoBpm
+                    ?? sketchSettings.tempoBpm
             )
             activeStyleBeat = style
             updateDrumDuck()

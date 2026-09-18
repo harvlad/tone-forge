@@ -139,9 +139,14 @@ public final class ProjectStore {
     // MARK: - Working project (auto-save target)
 
     /// Persist the auto-saved workspace for `analysisId`. Overwrites
-    /// the previous working save for that song.
+    /// the previous working save for that song. Blank-canvas projects
+    /// (baseSongId nil, v2) have no per-song sidecar — their auto-save
+    /// goes to their own durable file via `save` — so this is a no-op
+    /// for them rather than a throw (a mis-routed call must never
+    /// fabricate a sidecar under a fake key).
     public func saveWorking(_ project: Project) throws {
-        try write(project, to: workingURL(analysisId: project.baseSongId))
+        guard let songId = project.baseSongId else { return }
+        try write(project, to: workingURL(analysisId: songId))
     }
 
     /// The auto-saved workspace for a song, or nil (never saved or

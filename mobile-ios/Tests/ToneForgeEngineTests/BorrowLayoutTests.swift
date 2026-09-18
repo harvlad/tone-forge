@@ -42,6 +42,32 @@ final class BorrowLayoutTests: XCTestCase {
         XCTAssertTrue(out.pads.allSatisfy { (0..<64).contains($0.padIdx) })
     }
 
+    // DONOR-ONLY manifest (Projects v2 blank canvas: host==donor serves just
+    // the donor's kit): with no initial block the donor pads fill from the
+    // TOP row — no phantom divider, no empty host rows above the sounds.
+    func testDonorOnlyFillsFromTopRow() {
+        let pads = (0..<12).map { pad(100 + $0, source: "donor") }
+        let out = SampleBank.arrangeBorrowLayout(
+            pack(pads), hostName: nil, donorName: "Donor")
+
+        let placed = out.pads.sorted { $0.padIdx < $1.padIdx }
+        XCTAssertEqual(placed.map(\.padIdx), Array(0..<12))
+        XCTAssertTrue(placed.allSatisfy { $0.source == "donor" })
+        XCTAssertTrue(placed.allSatisfy { $0.sourceName == "Donor" })
+    }
+
+    // Donor-only at COMPACT (16): the single block just takes the grid —
+    // the best-of-both split must not halve a lone donor to 8 pads.
+    func testDonorOnlyCompactKeepsWholeBlock() {
+        let pads = (0..<12).map {
+            scoredPad(100 + $0, source: "donor", score: Double($0))
+        }
+        let out = SampleBank.arrangeBorrowLayout(
+            pack(pads), donorName: "Donor", cols: 4, rows: 4)
+        XCTAssertEqual(out.pads.count, 12)
+        XCTAssertEqual(out.pads.map(\.padIdx).sorted(), Array(0..<12))
+    }
+
     // A full 4-stem borrow (32 initial + 32 donor) fills all 64 cells, so the
     // divider is dropped and the donor block packs flush after the initial one.
     func testFullBorrowDropsDivider() {

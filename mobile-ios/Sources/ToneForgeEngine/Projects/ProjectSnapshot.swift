@@ -8,9 +8,13 @@
 // in the store that happens to write it.
 //
 // A Project = { id, name, createdAt, updatedAt, baseSongId, snapshot }.
-// baseSongId is the analysisId and is REQUIRED in v1 — a workspace is
-// always anchored to one analyzed song; song-less (sketch) workspaces
-// are a later schema bump.
+// baseSongId is the analysisId. v1 required it (a workspace was always
+// anchored to one analyzed song); v2 makes it OPTIONAL — nil marks a
+// BLANK-CANVAS project: an empty pad canvas with no base song, filled
+// entirely from pins/borrows/local samples. Additive on the wire:
+// Swift's synthesized Codable decodes an absent key to nil and omits
+// nil on encode, so v1 files (key present) still decode and v1
+// readers only ever see files they wrote.
 //
 // Versioning: `schemaVersion` starts at 1. Readers must tolerate
 // unknown ADDITIVE fields (decodeIfPresent) and reject only a major
@@ -320,20 +324,26 @@ public struct Project: Codable, Equatable, Sendable, Identifiable {
     public var name: String
     public let createdAt: Date
     public var updatedAt: Date
-    /// The base song's analysisId. REQUIRED in v1 — loading a project
-    /// loads this song first, then restores the snapshot over it.
-    public let baseSongId: String
+    /// The base song's analysisId. Loading a song project loads this
+    /// song first, then restores the snapshot over it. nil (v2) = a
+    /// BLANK-CANVAS project: no base song — loading mounts the empty
+    /// canvas pack and restores the snapshot over the sketch context;
+    /// its pads are all pins/borrows/local refs.
+    public let baseSongId: String?
     /// Display-only: the base song's title at save time, so lists can
     /// show it without a history lookup. Additive/optional.
     public var baseSongTitle: String?
     public var snapshot: ProjectSnapshot
+
+    /// True for a v2 blank-canvas project (no base song).
+    public var isBlankCanvas: Bool { baseSongId == nil }
 
     public init(
         id: UUID = UUID(),
         name: String,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        baseSongId: String,
+        baseSongId: String?,
         baseSongTitle: String? = nil,
         snapshot: ProjectSnapshot
     ) {

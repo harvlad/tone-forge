@@ -40,6 +40,10 @@ struct JamView: View {
     // Launchpad action — see borrowSongChip / BorrowPickerSheet.
     @State private var showBorrowPicker = false
     @State private var pendingChop: ChopReference?
+    /// All analyzed songs for the Sounds browser's All Songs tab —
+    /// fetched when the sheet opens; picking one mounts that song's
+    /// kit via the borrow path (donor-only on a blank canvas).
+    @State private var pickerSongs: [PickerSongInfo] = []
     /// Progressive disclosure L3: long-pressing a Samples pad opens the
     /// deeper instrument-construction workspace (the ex-Contribute
     /// tools) — reached contextually from Jam, no permanent button.
@@ -152,6 +156,14 @@ struct JamView: View {
             samplePacks: appState.pickerSamplePacks,
             localSamples: [],
             sequences: appState.pickerSequences,
+            analyzedSongs: pickerSongs,
+            onSelectSong: { songId, _ in
+                // Mount the picked song's curated kit onto the pads —
+                // the same borrow path as Add Song. With no song
+                // loaded (blank canvas) the fetch is donor-only.
+                showSoundsBrowser = false
+                appState.loadBorrowLoops(donorId: songId, stem: "drums")
+            },
             downloadablePacks: appState.pickerDownloadablePacks,
             downloadingPackIds: appState.pickerDownloadingPackIds,
             downloadFractions: appState.pickerDownloadFractions,
@@ -171,7 +183,10 @@ struct JamView: View {
                 appState.previewPadDurationSec(packId: packId, padIdx: padIdx)
             }
         )
-        .task { await appState.refreshCuratedCatalog() }
+        .task {
+            await appState.refreshCuratedCatalog()
+            pickerSongs = await appState.fetchPickerSongs()
+        }
     }
 
     // MARK: - Section strip
@@ -580,13 +595,22 @@ struct JamView: View {
                     // Always visible in Samples mode — these are the core
                     // performance controls; gating them on an Auto Kit hid
                     // them from anyone who hadn't visited Library first.
+                    // Remix + Rekit are the exceptions: both operate on
+                    // the LOADED SONG's kit (loadAutoKit errors with
+                    // none), so song-less surfaces — sketch and the
+                    // blank canvas — drop them instead of offering
+                    // guaranteed failures.
                     if jamSettings.padMode == .samples {
-                        remixChip
+                        if appState.currentBundle != nil {
+                            remixChip
+                        }
                         instantGrooveChip
                         styleBeatChip
                         soundsChip
                         borrowSongChip
-                        refreshKitChip
+                        if appState.currentBundle != nil {
+                            refreshKitChip
+                        }
                         stopAllChip
                         loopLockChip
                     }
@@ -781,33 +805,66 @@ struct JamView: View {
                 Spacer()
             }
             .padding(.horizontal, 24)
-        } else if appState.autoKitError != nil {
-            // No song open isn't a failure — it's an invitation. Only a
-            // real fetch/build error gets the warning treatment.
-            let noSong = appState.currentBundle == nil
+        } else if appState.canvasModeOn, appState.currentBundle == nil,
+                  appState.activeSamplePack?.pack.packId
+                      == SampleBank.canvasPackId {
+            // Blank canvas with nothing mounted yet: a hint, not an
+            // error — the empty pads fill from Sounds / Add Song / the
+            // pad "+". Disappears once a borrow/kit fronts the grid.
             HStack(spacing: 8) {
-                Image(systemName: noSong ? "music.note"
-                                         : "exclamationmark.triangle")
+                Image(systemName: "square.grid.3x3.topleft.filled")
                     .font(.caption)
-                Text(noSong ? "Open a song to build your kit"
-                            : "Jam kit unavailable")
+                Text("Blank canvas — pull sounds from any song")
                     .font(.caption)
                 Spacer()
-                if noSong {
-                    Button("Library") { appState.selectedTab = .library }
-                        .font(.caption.weight(.semibold))
-                } else {
-                    Button("Retry") { appState.loadAutoKit() }
-                        .font(.caption.weight(.semibold))
-                }
             }
             .foregroundStyle(TFTheme.textPrimary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(
-                noSong ? TFTheme.accent.opacity(0.20)
-                       : Color.orange.opacity(0.25),
-                in: RoundedRectangle(cornerRadius: 8))
+            .background(TFTheme.accent.opacity(0.20),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+        } else if appState.currentBundle == nil, !appState.canvasModeOn {
+            // No song open isn't a failure — it's an invitation, with
+            // BOTH ways in: a Library song, or a from-scratch blank
+            // canvas (Projects v2). Always shown song-less (it used to
+            // hide behind a stale autoKitError, so the entry points
+            // were invisible on a fresh visit). A live canvas session
+            // with a borrow mounted is working-as-intended: no strip.
+            HStack(spacing: 8) {
+                Image(systemName: "music.note")
+                    .font(.caption)
+                Text("Open a song — or start from scratch")
+                    .font(.caption)
+                Spacer()
+                Button("Library") { appState.selectedTab = .library }
+                    .font(.caption.weight(.semibold))
+                Button("Blank canvas") {
+                    appState.projects.createBlankProject()
+                }
+                .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(TFTheme.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(TFTheme.accent.opacity(0.20),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+        } else if appState.autoKitError != nil {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.caption)
+                Text("Jam kit unavailable")
+                    .font(.caption)
+                Spacer()
+                Button("Retry") { appState.loadAutoKit() }
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(TFTheme.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.orange.opacity(0.25),
+                        in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 12)
         } else if appState.autoKitLoading {
             HStack(spacing: 8) {
