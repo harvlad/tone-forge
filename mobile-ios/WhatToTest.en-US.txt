@@ -1,43 +1,37 @@
 WHAT'S NEW IN THIS BUILD
 
-• The bottom Record button now records YOUR ACTUAL SESSION AUDIO — the
-  full mix you hear (song + pads + FX + master processing) — and saves
-  it to Library → Recordings as an audio file you can play, rename and
-  share.
-• The old arrangement Rec / Play / Clear chips are gone from the
-  Samples row (low value, cluttered the chrome).
-• The metronome click is NEVER recorded — you hear it while playing,
-  but takes stay clean.
-• Takes can be saved straight to the Files app ("Save to Files" in the
-  row menu), plus the existing Share.
-• (From the last build) One-Shot | Follow | Latch trigger modes.
-
-HOW TO USE
-
-1. Load a song → Build → jam on the pads (press transport Play if you
-   want the song underneath).
-2. Tap the transport Record pill — it starts capturing what you hear.
-   (Starts the song too if it was stopped.)
-3. Tap it again to stop. The take lands in Library → Recordings under
-   "Audio Recordings".
-4. Play it back there; rename / share (exports the m4a) / delete from
-   the row menu. Recording stops by itself at 15 minutes or if you
-   background the app.
+• PROJECTS — your pad workspace is now saved. Everything you tune on a
+  song (pad swaps, FX, borrowed pads, sequencer patterns, modes)
+  auto-saves and comes back when you reload the song. Library has a new
+  Projects tab: name workspaces, duplicate them, reset a song to
+  factory, delete. Borrowed pads reconnect to their source song.
+• Record no longer starts the song — it just records. Play (or don't)
+  is your call.
+• Section LOCK is now visible and controllable on the section strip:
+  chips covered by a lock show a lock glyph; LONG-PRESS a section chip
+  to lock/unlock playback to it. (This was why a song could seem
+  "stuck on the intro".)
+• The pad editing wheel works on EVERY pad now: Chop (trimmer) and
+  Effects were dead or opened the wrong sheet on the green/purple
+  64-grid pads; Delete/Reset fixed there too. Actions that can't apply
+  to a pad no longer appear on its wheel.
+• Recordings: metronome is never printed on takes; "Save to Files" on
+  every take.
 
 WHAT TO TEST
 
-1. Record a 20-second jam (song + pads) → stop → play the take in
-   Library. Expected = it sounds exactly like what you heard, pads
-   included.
-2. Record with ONLY pads (song stopped). Expected = pads captured.
-3. Stop recording while the song plays — the music keeps going, only
-   the capture stops.
-4. Rename and share a take (share sheet exports the audio file).
-5. Record with the metronome ON — expected = you hear the click, but
-   the take has NO click in it.
-6. Save a take to Files and confirm it plays there.
-7. Quick sanity on One-Shot / Follow / Latch from the last build.
+1. Tune a song's pads (swap a sound, set FX, borrow from another song),
+   force-quit, reload the song — everything back. Library → Projects →
+   "Save workspace as project…" via the Build gear too.
+2. Reset to song from a project row — pads return to the auto-kit.
+3. Long-press a section chip → lock glyph appears, song loops that
+   section; long-press again → plays through. Tap other sections while
+   locked — the lock follows.
+4. Edit mode → hold any pad (incl. green/purple) → try Chop, Effects,
+   Loop, Reset, Delete from the wheel. All should act correctly.
+5. Record a take with the metronome on — no click on the take. Save it
+   to Files.
 
 WHAT TO REPORT
-• Any crash on Record (this build fixes one).
-• A take that's silent or missing the pads.
+• A workspace that doesn't restore (say what you changed).
+• Any wheel action that does nothing.
