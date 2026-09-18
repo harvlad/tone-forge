@@ -83,15 +83,22 @@ struct RecordToggle: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        // FIXED content height in BOTH states — a minHeight only set a
+        // floor, so the recording meter+caption still grew the row past
+        // the toolbar. A hard height pins idle (dot) and recording
+        // (meter) to the same box, so starting a take never resizes the
+        // transport bar (user: "waveform keep same height as the toolbar
+        // when not recording").
+        .frame(height: 18)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(.sRGB, white: 0.10, opacity: 1))
+                .fill(pillFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(borderColor, lineWidth: 1)
+                .stroke(pillStroke, lineWidth: 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onTapGesture { handleTap() }
@@ -109,28 +116,64 @@ struct RecordToggle: View {
         )
     }
 
+    // MARK: - Pill chrome
+    //
+    // Hoisted out of the view builder: the inline `mode == .audioOutput ?`
+    // ternaries inside the modifier chain pushed the body over the Swift
+    // type-checker's time budget (archive-config sensitive). Audio mode
+    // reads inline with the transport glyphs — no filled/bordered pill
+    // towering over Play/Stop.
+
+    private var horizontalPadding: CGFloat { mode == .audioOutput ? 8 : 14 }
+
+    private var pillFill: Color {
+        mode == .audioOutput ? Color.clear : Color(.sRGB, white: 0.10, opacity: 1)
+    }
+
+    private var pillStroke: Color {
+        mode == .audioOutput ? Color.clear : borderColor
+    }
+
     // MARK: - Sub-views
 
-    /// Rolling realtime level bars while audio-recording — the visible
+    /// Rolling realtime waveform while audio-recording — the visible
     /// proof capture is alive. Fed by OutputRecorder's published `peak`
-    /// (per tap buffer); newest sample on the right.
-    @State private var levels: [Float] = []
+    /// (per tap buffer); newest sample on the right. The slot count is
+    /// fixed and pre-filled with silence so the meter never changes
+    /// width as samples arrive, and the frame height stays inside the
+    /// pill's idle height — the transport bar must not grow when
+    /// recording starts.
+    @State private var levels: [Float] = RecordToggle.emptyLevels
+
+    private static let meterSlots = 18
+    private static var emptyLevels: [Float] {
+        Array(repeating: 0, count: meterSlots)
+    }
+
+    /// sqrt lifts quiet material — linear peaks sat at the floor and
+    /// read as a dotted line instead of a recording waveform. Kept out
+    /// of the view builder: inline it and the type-checker times out.
+    private func meterBarHeight(_ level: Float) -> CGFloat {
+        let clamped = Double(min(max(level, 0), 1))
+        return max(2, CGFloat(clamped.squareRoot()) * 16)
+    }
 
     private var liveLevelMeter: some View {
         HStack(alignment: .center, spacing: 2) {
             ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
                 Capsule()
                     .fill(Color.red.opacity(0.85))
-                    .frame(width: 3,
-                           height: max(3, CGFloat(min(level, 1)) * 22))
+                    .frame(width: 3, height: meterBarHeight(level))
             }
         }
-        .frame(height: 24)
+        .frame(height: 16)
         .onReceive(appState.outputRecorder.$peak) { peak in
             levels.append(peak)
-            if levels.count > 18 { levels.removeFirst(levels.count - 18) }
+            if levels.count > Self.meterSlots {
+                levels.removeFirst(levels.count - Self.meterSlots)
+            }
         }
-        .onDisappear { levels = [] }
+        .onDisappear { levels = Self.emptyLevels }
     }
 
     @ViewBuilder

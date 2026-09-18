@@ -398,18 +398,23 @@ struct JamView: View {
                 // letter-wrap ("1/6", "Edi/t"). (The arrangement
                 // Rec/Play/Clear capture chips were removed — low-value,
                 // and the bottom-bar Record now captures session audio.)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        // Tap|Loop|Latch first — the most-used control, so
-                        // it's always visible without scrolling.
-                        sampleTriggerModeChips
-                        launchpadSizeChips
-                        Spacer(minLength: 8)
-                        launchpadEditChip
+                // Edit sits OUTSIDE the scroll region, pinned trailing —
+                // always visible even if the mode chips overflow and
+                // scroll (user ask: collapsing 16|64 to one chip buys the
+                // room; pinning makes it a guarantee).
+                HStack(spacing: 8) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            // Tap|Loop|Latch first — the most-used control,
+                            // so it's always visible without scrolling.
+                            sampleTriggerModeChips
+                            launchpadSizeChips
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.leading, 12)
                     }
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 12)
-                    .frame(minWidth: UIScreen.main.bounds.width - 24)
+                    launchpadEditChip
+                        .padding(.trailing, 12)
                 }
                 // Shared loop-cycle strip: makes the invisible 8 s lock grid
                 // VISIBLE — a sweep of the current cycle with a countdown to
@@ -450,36 +455,34 @@ struct JamView: View {
         }
     }
 
-    /// [16 | 64] pad-count toggle for the Launchpad surface — the mobile
-    /// mirror of the web kit's 16|64 segmented control (kit.js). 16 = the
-    /// native 4×4 kit; 64 = the full 8×8 grid. Disabled in place mode so a
-    /// picked sound always lands on the 4×4 kit rather than a bare 8×8 cell.
+    /// Pad-count toggle for the Launchpad surface — the mobile mirror of
+    /// the web kit's 16|64 control (kit.js), collapsed to ONE chip that
+    /// shows the current size and flips on tap. Two chips crowded the
+    /// chrome row and pushed Edit behind the horizontal scroll; one chip
+    /// keeps Edit always visible. 16 = the native 4×4 kit; 64 = the full
+    /// 8×8 grid. Disabled in place mode so a picked sound always lands on
+    /// the 4×4 kit rather than a bare 8×8 cell.
     private var launchpadSizeChips: some View {
-        HStack(spacing: 8) {
-            ForEach([16, 64], id: \.self) { count in
-                Button {
-                    guard jamSettings.launchpadPadCount != count else { return }
-                    Haptics.selectionChanged()
-                    jamSettings.launchpadPadCount = count
-                    // A mounted borrow RE-ARRANGES at the new capacity (16 =
-                    // best-of-both, 64 = full) so switching size never drops a
-                    // song — web/desktop parity (kit.js layoutBorrowPads).
-                    if appState.hasActiveBorrow {
-                        Task { await appState.relayoutActiveBorrow(capacity: count) }
-                    }
-                } label: {
-                    Text("\(count)")
-                        .tfChip(active: jamSettings.launchpadPadCount == count)
-                }
-                .buttonStyle(.plain)
-                .disabled(pendingChop != nil)
-                .accessibilityLabel("\(count) pads")
-                .accessibilityAddTraits(
-                    jamSettings.launchpadPadCount == count ? [.isSelected] : []
-                )
+        Button {
+            let next = jamSettings.launchpadPadCount == 64 ? 16 : 64
+            Haptics.selectionChanged()
+            jamSettings.launchpadPadCount = next
+            // A mounted borrow RE-ARRANGES at the new capacity (16 =
+            // best-of-both, 64 = full) so switching size never drops a
+            // song — web/desktop parity (kit.js layoutBorrowPads).
+            if appState.hasActiveBorrow {
+                Task { await appState.relayoutActiveBorrow(capacity: next) }
             }
+        } label: {
+            Text("\(jamSettings.launchpadPadCount)")
+                .tfChip(active: jamSettings.launchpadPadCount == 64)
         }
+        .buttonStyle(.plain)
+        .disabled(pendingChop != nil)
         .opacity(pendingChop != nil ? 0.4 : 1.0)
+        .accessibilityLabel("Pad grid size")
+        .accessibilityValue("\(jamSettings.launchpadPadCount) pads")
+        .accessibilityHint("Switches between 16 and 64 pads")
     }
 
     /// Edit toggle for the Launchpad (launchpad-edit-mode; this symbol

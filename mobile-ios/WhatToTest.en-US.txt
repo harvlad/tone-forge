@@ -1,37 +1,69 @@
 WHAT'S NEW IN THIS BUILD
 
-• PROJECTS — your pad workspace is now saved. Everything you tune on a
-  song (pad swaps, FX, borrowed pads, sequencer patterns, modes)
-  auto-saves and comes back when you reload the song. Library has a new
-  Projects tab: name workspaces, duplicate them, reset a song to
-  factory, delete. Borrowed pads reconnect to their source song.
-• Record no longer starts the song — it just records. Play (or don't)
-  is your call.
-• Section LOCK is now visible and controllable on the section strip:
-  chips covered by a lock show a lock glyph; LONG-PRESS a section chip
-  to lock/unlock playback to it. (This was why a song could seem
-  "stuck on the intro".)
-• The pad editing wheel works on EVERY pad now: Chop (trimmer) and
-  Effects were dead or opened the wrong sheet on the green/purple
-  64-grid pads; Delete/Reset fixed there too. Actions that can't apply
-  to a pad no longer appear on its wheel.
-• Recordings: metronome is never printed on takes; "Save to Files" on
-  every take.
+• PAD TRIGGER MODES — One-Shot / Follow / Latch (the chips above the
+  grid). One-Shot: hold to play from the top, release stops. Follow:
+  taps play in time with the shared clock. Latch: tap to start a
+  looping pad, tap again to stop.
+• RECORD is now just a red dot + a live waveform at the bottom
+  transport — no bordered box, same height as the toolbar (it no longer
+  grows the bar when you start). It captures the SESSION AUDIO OUT (song
+  + pads + FX) to Library → Recordings; the metronome is never printed.
+• 16 / 64 is now ONE toggle chip (tap to flip), so the Edit chip is
+  always visible next to it.
+• EDIT MODE holds are fixed: with Edit on, holding a pad opens the
+  editing wheel instead of firing the pad on/off.
+• SWITCHING SONGS no longer leaks sound — hitting pads on a newly
+  loaded song used to play stray synth notes from the previous song's
+  melody/chord tool. Fixed.
+• SEQUENCER (the Sequencer panel on the Samples surface): its pads are
+  now colored by instrument (drums red, bass green, guitar orange,
+  synth teal, vocals pink) — matching the main pad grid instead of a
+  flat block.
+• LAUNCHPAD PRO MK3 (hardware, optional): the function buttons around
+  the grid now work — mode select, global stop, Record Arm, Stop Clip,
+  16/64 arrows, right-column section jumps, and Session opens the
+  Sequencer. LEDs reflect state.
+
+HOW TO USE THE NEW FEATURES
+
+• Trigger modes: load a song → Build tab → Samples. The One-Shot /
+  Follow / Latch chips sit just under the A/B/C section row. Tap one,
+  then play the pads to feel the difference.
+• Record: the red dot is at the bottom, between the Stop square and the
+  music note. Tap it to start (waveform animates), tap again to stop —
+  the take lands in Library → Recordings. Open a take there → Save to
+  Files to export.
+• 16/64: the single chip in the chip row toggles the grid size.
+• Edit mode: tap the "Edit" chip (right end of the chip row) → now hold
+  any pad → the wheel (Chop / Effects / Loop / Reset / Delete) opens.
+• Sequencer: the list/notes icon on the Samples surface opens it.
 
 WHAT TO TEST
 
-1. Tune a song's pads (swap a sound, set FX, borrow from another song),
-   force-quit, reload the song — everything back. Library → Projects →
-   "Save workspace as project…" via the Build gear too.
-2. Reset to song from a project row — pads return to the auto-kit.
-3. Long-press a section chip → lock glyph appears, song loops that
-   section; long-press again → plays through. Tap other sections while
-   locked — the lock follows.
-4. Edit mode → hold any pad (incl. green/purple) → try Chop, Effects,
-   Loop, Reset, Delete from the wheel. All should act correctly.
-5. Record a take with the metronome on — no click on the take. Save it
-   to Files.
+1. Trigger modes. One-Shot: press and HOLD a pad — it plays; release —
+   it stops. Follow: tap several pads — they lock to the same clock.
+   Latch: tap a pad — it loops; tap again — it stops.
+2. Record height. Start a recording — the bottom bar must NOT grow or
+   jump; the waveform stays the same height as the Play/Stop row. Stop,
+   then find the take in Library → Recordings and Save to Files.
+3. Metronome off the take. Turn the metronome on, record, play the
+   take back — there should be no click in the recording.
+4. Song-switch leak. Load song A, open the Chords/Notes surface briefly,
+   then load song B from Library and hit its Samples pads — you should
+   hear ONLY the pad loops, no stray synth notes.
+5. Edit-mode holds. Turn Edit on, hold a pad (including a green/purple
+   chord pad) — the wheel opens; the pad does NOT trigger.
+6. Sequencer colors. Open the Sequencer — pads should be colored by
+   instrument (guitar orange, synth teal, vocals pink), not one flat
+   maroon block.
+
+KNOWN LIMITATIONS
+• The Launchpad Pro MK3 pattern-select row is intentionally dark (there
+  are no pattern slots on iOS yet).
+• Sequencer preview playback is reachable while its panel is open.
 
 WHAT TO REPORT
-• A workspace that doesn't restore (say what you changed).
-• Any wheel action that does nothing.
+• Any pad that lags or doesn't respond.
+• The record bar changing height or the layout jumping when recording.
+• Any stray note/sound after switching songs.
+• A wheel action that does nothing, or a pad colored wrongly.
