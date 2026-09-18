@@ -6,6 +6,10 @@ WHAT'S NEW IN THIS BUILD
   share.
 • The old arrangement Rec / Play / Clear chips are gone from the
   Samples row (low value, cluttered the chrome).
+• The metronome click is NEVER recorded — you hear it while playing,
+  but takes stay clean.
+• Takes can be saved straight to the Files app ("Save to Files" in the
+  row menu), plus the existing Share.
 • (From the last build) One-Shot | Follow | Latch trigger modes.
 
 HOW TO USE
@@ -29,7 +33,10 @@ WHAT TO TEST
 3. Stop recording while the song plays — the music keeps going, only
    the capture stops.
 4. Rename and share a take (share sheet exports the audio file).
-5. Quick sanity on One-Shot / Follow / Latch from the last build.
+5. Record with the metronome ON — expected = you hear the click, but
+   the take has NO click in it.
+6. Save a take to Files and confirm it plays there.
+7. Quick sanity on One-Shot / Follow / Latch from the last build.
 
 WHAT TO REPORT
 • Any crash on Record (this build fixes one).
